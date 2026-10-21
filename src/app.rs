@@ -1160,10 +1160,8 @@ impl eframe::App for App {
             let key = self.key();
             self.files.entry(key).or_default().extend(dropped);
         }
-        if !self.turns.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(500));
-        }
-        // Agent events repaint at once for the chat on screen (see turn_wake).
+        // Running turns don't tick the whole UI: spinners and counters ask for their
+        // own next step while on screen (w::repaint_in), and agent events wake by chat.
         let hidden = ctx.input(|i| i.viewport().minimized == Some(true) || i.viewport().occluded == Some(true));
         let shown = match self.view {
             View::Chat(id) if !hidden => id,
@@ -1412,16 +1410,21 @@ impl App {
     }
 }
 
-/// Repaints for a turn's events: at once while its chat is on screen, else one
-/// coalesced frame per `agent::HIDDEN_WAKE`. The turn's end always shows (status,
-/// notices), so it wakes at once.
+/// Repaints for a turn's events: while its chat is on screen at most 20 fps (a
+/// burst of streamed tokens is one frame), else one coalesced frame per
+/// `agent::HIDDEN_WAKE`. The turn's end always shows (status, notices) at once.
 pub fn turn_wake(ctx: &egui::Context, chat_id: i64) -> impl Fn(bool) + Send + Sync + 'static {
     let ctx = ctx.clone();
     move |ended: bool| {
-        if ended || agent::SHOWN_CHAT.load(std::sync::atomic::Ordering::Relaxed) == chat_id {
+        if ended {
             ctx.request_repaint();
+        } else if agent::SHOWN_CHAT.load(std::sync::atomic::Ordering::Relaxed) == chat_id {
+            ctx.request_repaint_after(SHOWN_WAKE);
         } else {
             ctx.request_repaint_after(agent::HIDDEN_WAKE);
         }
     }
 }
+
+/// How soon the chat on screen repaints after one of its turn's events.
+const SHOWN_WAKE: Duration = Duration::from_millis(50);

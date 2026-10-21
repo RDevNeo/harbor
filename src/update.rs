@@ -208,11 +208,17 @@ fn install(version: &str) -> Result<(), String> {
             let _ = std::fs::remove_dir_all(dir.join("licenses"));
             let _ = std::fs::rename(core.join("licenses"), dir.join("licenses"));
         }
+        let _ = std::fs::remove_file(dir.join(".skip"));
         // Last: the reload watcher sees this one change.
         replace(&core.join("harbor"), &dir.join("harbor"), Some(&prev))
     })();
     let _ = std::fs::remove_dir_all(&stage);
     result
+}
+
+/// The version "Restore previous version" moved away from: offered, not installed automatically.
+fn skipped(version: &str) -> bool {
+    install_dir().is_some_and(|d| read(&d.join(".skip")) == version)
 }
 
 /// Puts the files from `.previous/` back (that copy is used up).
@@ -223,6 +229,8 @@ fn rollback() -> Result<String, String> {
         return Err("no previous version kept".into());
     }
     let version = read(&prev.join("VERSION"));
+    // The version given up on isn't installed again by itself (only when asked).
+    let _ = std::fs::write(dir.join(".skip"), read(&dir.join("VERSION")));
     if prev.join("harbor-browser").is_file() {
         replace(&prev.join("harbor-browser"), &dir.join("harbor-browser"), None)?;
         // Its id is unknown now; the next update fetches the matching engine.
@@ -311,7 +319,7 @@ pub fn check(auto: bool, ctx: &eframe::egui::Context) {
         ctx2.request_repaint();
         match latest() {
             Ok(v) if newer(&v, VERSION) => {
-                if auto {
+                if auto && !skipped(&v) {
                     run_install(v);
                 } else {
                     set(State::Available(v));

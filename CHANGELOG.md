@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- After "Restore previous version", Harbor no longer installs the version you went back from
+  by itself a few seconds later; it offers it under Settings › General instead.
+
 ## [0.1.1] - 2026-10-21
 
 ### Added

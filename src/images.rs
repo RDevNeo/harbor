@@ -244,8 +244,8 @@ fn thumb_in(ui: &mut Ui, key: &str, size: Vec2, group: &[String]) -> Response {
             }
             Slot::Loading => {
                 p.rect_filled(rect, radius, t.gray(100));
+                // The spinner asks for its own next step; the decoder repaints when done.
                 w::spinner(p, rect.center(), 7.0, t.subtle());
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(80));
             }
             Slot::Failed(e) => {
                 p.rect_filled(rect, radius, t.gray(100));
@@ -386,14 +386,12 @@ pub fn lightbox(ctx: &egui::Context) {
             ui.interact(rect, Id::NULL.with("lightbox-image"), Sense::click());
             if loading {
                 w::spinner(ui.painter(), rect.center(), 12.0, Color32::WHITE);
-                ctx.request_repaint_after(std::time::Duration::from_millis(80));
             }
             caption = format!("{caption}  ·  {} × {}", dims[0], dims[1]);
         } else if let Some(e) = failed {
             ui.painter().text(room.center(), egui::Align2::CENTER_CENTER, format!("Can't show this image: {e}"), FontId::proportional(14.0), Color32::from_gray(220));
         } else {
             w::spinner(ui.painter(), room.center(), 12.0, Color32::WHITE);
-            ctx.request_repaint_after(std::time::Duration::from_millis(80));
         }
         let g = ui.painter().layout_no_wrap(caption, FontId::proportional(13.0), Color32::from_gray(210));
         ui.painter().galley(pos2(screen.center().x - g.size().x / 2.0, screen.bottom() - 40.0), g, Color32::from_gray(210));

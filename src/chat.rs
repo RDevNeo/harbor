@@ -443,7 +443,10 @@ impl App {
                             if let Some(fg) = fg {
                                 ui.visuals_mut().widgets.noninteractive.fg_stroke.color = fg;
                             }
-                            CommonMarkViewer::new().show(ui, &mut self.md, &linkify(text))
+                            // Its own id scope: egui_commonmark numbers tables from 0 in every
+                            // viewer, so two messages' tables shared an id and their grids and
+                            // scroll bars overwrote each other's state, repainting every frame.
+                            ui.push_id(("md", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, &linkify(text)))
                         })
                         .response
                         .rect;
@@ -609,7 +612,7 @@ impl App {
                             w::well(ui).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 if icon == "bot" {
-                                    CommonMarkViewer::new().show(ui, &mut self.md, detail);
+                                    ui.push_id(("md-detail", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, detail));
                                 } else {
                                     ui.label(RichText::new(clip(detail, 6000)).text_style(theme::ts("label-12-mono")));
                                 }

@@ -282,20 +282,43 @@ pub fn paint_status(p: &egui::Painter, right: egui::Pos2, s: &Status) {
     p.galley(egui::pos2(x, right.y - g.size().y / 2.0), g, col);
     let c = egui::pos2(x - 6.0 - STATUS_ICON / 2.0, right.y);
     match (s, icon) {
-        (Status::Working(_), _) => {
-            spinner(p, c, STATUS_ICON / 2.0 - 0.5, col);
-            // Keeps the dashes turning and the seconds counting.
-            p.ctx().request_repaint_after(std::time::Duration::from_millis(80));
-        }
+        // The spinner asks for its next step, which also keeps the seconds counting.
+        (Status::Working(_), _) => spinner(p, c, STATUS_ICON / 2.0 - 0.5, col),
         (_, Some(glyph)) => crate::icons::glyph(p, c, glyph, STATUS_ICON, col),
         _ => {}
     }
 }
 
-/// A slowly turning dashed ring.
+/// How often spinners step: each step repaints the whole window, so a spinner (and the
+/// seconds counter beside it) gets 2 fps.
+pub const SPIN_STEP: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Asks for a frame in `after`, for something animated or counting inside `rect`;
+/// nothing when `rect` is clipped away (scrolled out, collapsed), at most one frame
+/// per 2 s while the window is unfocused. Minimized or occluded windows paint no ui.
+pub fn repaint_in(p: &egui::Painter, rect: Rect, after: std::time::Duration) {
+    if !p.clip_rect().intersects(rect) {
+        return;
+    }
+    let focused = p.ctx().input(|i| i.viewport().focused.unwrap_or(true));
+    p.ctx().request_repaint_after(if focused { after } else { after.max(std::time::Duration::from_secs(2)) });
+}
+
+/// When a [`minutes`] label next changes.
+pub fn minute_step(secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(60 - secs % 60)
+}
+
+/// A slowly turning dashed ring, stepping every [`SPIN_STEP`] while it's on screen.
 pub fn spinner(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32) {
     use std::f32::consts::TAU;
-    let turn = (p.ctx().input(|i| i.time) as f32 * 0.6) % 1.0 * TAU;
+    // A fixed step per tick (a third of the gap between dashes) reads as turning,
+    // where a continuous angle sampled this slowly would jitter. The next frame
+    // lands on the next step.
+    let ticks = p.ctx().input(|i| i.time) / SPIN_STEP.as_secs_f64();
+    let next = SPIN_STEP.mul_f64(1.0 - ticks.fract()) + std::time::Duration::from_millis(2);
+    repaint_in(p, Rect::from_center_size(c, Vec2::splat(2.0 * r)), next);
+    let turn = (ticks as u64 % 24) as f32 * TAU / 24.0;
     let dashes = 8;
     for k in 0..dashes {
         let a0 = turn + k as f32 / dashes as f32 * TAU;

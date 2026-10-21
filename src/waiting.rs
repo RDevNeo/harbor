@@ -11,8 +11,8 @@ const OVERLAP: f32 = 6.0;
 const MAX_DOTS: usize = 4;
 
 impl App {
-    /// Nothing when the chat and its subagents are idle. Repaints come from the app's
-    /// running-turn tick (500 ms) and agent events; the pulse steps on that tick.
+    /// Nothing when the chat and its subagents are idle. While shown, the spinner and
+    /// the pulse ask for their own next step (see `w::repaint_in`).
     pub fn status_line(&mut self, ui: &mut Ui, id: i64) {
         self.queued_bubbles(ui, id);
         self.limit_line(ui, id);
@@ -26,7 +26,9 @@ impl App {
         if let Some(secs) = own {
             let queued = self.queued(id).iter().any(|q| !q.written);
             ui.horizontal(|ui| {
-                ui.spinner();
+                // Harbor's spinner steps at 4 fps; egui's would repaint every frame.
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                w::spinner(ui.painter(), r.center(), 6.5, ui.visuals().strong_text_color());
                 let also = match subs.len() {
                     0 => String::new(),
                     1 => "  ·  1 sub-agent running".into(),
@@ -59,6 +61,7 @@ impl App {
             let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
             let p = ui.painter();
             let lit = (ui.input(|i| i.time) / 0.5) as usize % shown;
+            w::repaint_in(p, rect, std::time::Duration::from_millis(500));
             let palette = [t.blue(700), t.green(700), t.amber(700), t.gray(700)];
             for (k, (c, _)) in subs.iter().take(shown).enumerate().rev() {
                 let ctr = pos2(rect.left() + DOT / 2.0 + k as f32 * (DOT - OVERLAP), rect.center().y);

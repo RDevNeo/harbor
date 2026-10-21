@@ -332,6 +332,9 @@ impl App {
             (None, n) if n > 0 => (format!("{n} queued"), t.amber(900)),
             _ => (format!("idle · {}", ago(c.updated)), t.subtle()),
         };
+        if let Some(s) = running {
+            w::repaint_in(ui.painter(), rect, w::minute_step(s));
+        }
         // On hover, Settle / Unsettle takes the status's place (idle agents only),
         // as in the sidebar.
         let hovered = ui.rect_contains_pointer(rect);
