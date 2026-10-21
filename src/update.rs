@@ -237,6 +237,40 @@ fn rollback() -> Result<String, String> {
     Ok(version)
 }
 
+// ------------------------------------------------------------------ command line
+
+/// `--update` installs the latest release now; `--restore-previous` puts the kept one back.
+/// A running Harbor reloads into the result by itself. None: not one of these options.
+pub fn cli(arg: &str) -> Option<i32> {
+    let r = match arg {
+        "--update" => {
+            if install_dir().is_none() {
+                Err("this copy wasn't installed by install.sh, so it doesn't update itself".to_string())
+            } else {
+                latest().and_then(|v| {
+                    if !newer(&v, VERSION) {
+                        return Ok(format!("Harbor {VERSION} is up to date."));
+                    }
+                    println!("Installing Harbor {v}…");
+                    install(&v).map(|()| format!("Harbor {v} is installed."))
+                })
+            }
+        }
+        "--restore-previous" => rollback().map(|v| format!("Harbor {v} is back.")),
+        _ => return None,
+    };
+    Some(match r {
+        Ok(msg) => {
+            println!("{msg}");
+            0
+        }
+        Err(e) => {
+            eprintln!("harbor: {e}");
+            1
+        }
+    })
+}
+
 // ------------------------------------------------------------------ driving it
 
 fn spawn(ctx: &eframe::egui::Context, job: impl FnOnce() + Send + 'static) {

@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-21
+
+### Added
+- `harbor --update` installs the latest release from a terminal, and `harbor --restore-previous`
+  puts the version before the last update back (also when a new version won't start).
+
+### Fixed
+- The release archives now include the licences of every Rust crate in the remote-screen viewer
+  and the browser engine (the licence report rejected one crate's WTFPL licence).
+- The README describes the installer, updates and signatures.
+- The release workflow uses the Node 24 versions of GitHub's actions.
+
 ## [0.1.0] - 2026-10-21
 
 The first public release.
@@ -32,5 +44,6 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/RDevNeo/harbor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/RDevNeo/harbor/releases/tag/v0.1.0

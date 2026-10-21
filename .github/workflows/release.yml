@@ -29,7 +29,7 @@ jobs:
     # Oldest supported base: the binary needs glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …).
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tag matches Cargo.toml
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -46,7 +46,7 @@ jobs:
         env:
           HARBOR_GIT_SHA: ${{ github.sha }}
       - run: ldd target/release/harbor && ./target/release/harbor --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: harbor
           path: target/release/harbor
@@ -54,10 +54,10 @@ jobs:
   stream:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y nasm pkg-config clang libclang-dev libva-dev libssl-dev libopus-dev libasound2-dev
       # A decoder-only FFmpeg (H.264/HEVC + VAAPI, swscale), static and LGPL (no --enable-gpl).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: ffmpeg
         with:
           path: ~/ffmpeg
@@ -95,7 +95,7 @@ jobs:
           mkdir out && cp stream/target/release/harbor-stream out/
           cp ~/ffmpeg/COPYING.LGPLv2.1 out/FFmpeg-LGPL-2.1.txt
           echo "FFmpeg $FFMPEG_TAG, configured: decoders h264,hevc; parsers h264,hevc; vaapi; swscale; static, LGPL" > out/FFmpeg-BUILD.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: harbor-stream
           path: out/
@@ -108,12 +108,12 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Rebuilt only when browser/ changes: the id is the git tree hash of browser/.
       - name: Engine id
         id: id
         run: echo "id=$(git rev-parse HEAD:browser)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: bin
         with:
           path: out/harbor-browser
@@ -153,7 +153,7 @@ jobs:
           cargo build --release --locked
           mkdir -p ../out && cp target/release/harbor-browser ../out/
       - run: ldd out/harbor-browser && echo "${{ steps.id.outputs.id }}" > out/browser.id
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: harbor-browser
           path: out/
@@ -162,8 +162,8 @@ jobs:
     needs: [core, stream, browser]
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: art
       - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
@@ -235,14 +235,14 @@ jobs:
           done
           rm -f /tmp/minisign.key
           /tmp/minisign-linux/x86_64/minisign -Vm dist/harbor-x86_64-linux.tar.gz -p packaging/minisign.pub
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           subject-path: |
             dist/harbor-x86_64-linux.tar.gz
             dist/harbor-browser-x86_64-linux.tar.gz
             dist/install.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
