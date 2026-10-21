@@ -19,7 +19,29 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 
 ## Install
 
-An installer and packages are coming. Until then, build from source (Rust stable):
+One build for Linux x86_64 (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), installed per
+user into `~/.local` without sudo:
+
+```sh
+curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh
+```
+
+- `… | sh -s -- --with-browser` also installs the built-in browser's engine (Servo, about 40 MB, glibc
+  2.39+); Harbor can download it later too.
+- `… | sh -s -- --uninstall` removes Harbor and keeps your chats (`--uninstall --purge` deletes them).
+- Files: `~/.local/lib/harbor/` (`harbor`, `harbor-stream`, `harbor-browser`), `~/.local/bin/harbor`, a
+  desktop entry and icons. Remote screens use the system's OpenSSL 3, Opus, ALSA and VA-API libraries.
+
+Harbor updates itself: it checks GitHub Releases, verifies the download's
+[minisign](https://jedisct1.github.io/minisign/) signature (key
+`RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh`), swaps the new version in and reloads
+without stopping running agents. Settings › General › Updates turns automatic installs off, checks now,
+or restores the previous version. Releases also carry `SHA256SUMS` and GitHub build attestations
+(`gh attestation verify <file> --repo RDevNeo/harbor`). Changes: [CHANGELOG.md](CHANGELOG.md).
+
+### From source
+
+Rust stable:
 
 ```sh
 cargo build --release   # target/release/harbor
