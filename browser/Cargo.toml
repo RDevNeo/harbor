@@ -1,0 +1,20 @@
+[package]
+name = "harbor-browser"
+version = "0.1.0"
+edition = "2024"
+description = "Off-screen Servo for Harbor's browser panel (separate process, built separately)"
+license = "MIT"
+
+[dependencies]
+servo = "0.7"
+dpi = "0.1"
+euclid = "0.22"
+url = "2.5"
+keyboard-types = "0.8.3"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

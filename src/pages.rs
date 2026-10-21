@@ -1,0 +1,999 @@
+//! Full-page views: Settings (providers, integrations, appearance), Usage,
+//! Pull requests, plus the modal dialogs.
+
+use crate::app::{App, CONTENT_W, Dialog, Tab, View, ago, tilde};
+use crate::chat::centered;
+use crate::icons as ic;
+use crate::mcp;
+use crate::providers::Kind;
+use crate::store::{self, Item};
+use crate::theme::{self, Mode};
+use crate::widgets::{self as w, Tone};
+use eframe::egui::{self, Align, CornerRadius, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
+use std::collections::{BTreeMap, HashMap};
+
+/// `PageHeader`: heading-24 title and a subtle description.
+fn page_header(ui: &mut Ui, title: &str, desc: &str) {
+    ui.add_space(40.0);
+    w::text(ui, title, "heading-24");
+    ui.add_space(2.0);
+    w::subtle(ui, desc, "copy-14");
+    ui.add_space(20.0);
+}
+
+pub fn section(ui: &mut Ui, title: &str) {
+    ui.add_space(8.0);
+    w::text(ui, title, "heading-16");
+    ui.add_space(6.0);
+}
+
+/// A settings card: rows split by `w::separator`, flush to its edges.
+pub fn rows(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 0.0;
+        add(ui);
+    });
+}
+
+impl Tab {
+    pub const ALL: [Tab; 7] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Webhooks];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::General => "General",
+            Tab::Appearance => "Appearance",
+            Tab::Keybindings => "Keybindings",
+            Tab::Providers => "Providers",
+            Tab::Limits => "Usage limits",
+            Tab::Integrations => "Integrations",
+            Tab::Webhooks => "Webhooks",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Tab::General => ic::SLIDERS,
+            Tab::Appearance => ic::PALETTE,
+            Tab::Keybindings => ic::KEYBOARD,
+            Tab::Providers => ic::BOT,
+            Tab::Limits => ic::GAUGE,
+            Tab::Integrations => ic::PLUG,
+            Tab::Webhooks => ic::WEBHOOK,
+        }
+    }
+
+    /// Its name in reload snapshots and HARBOR_VIEW.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Tab::General => "general",
+            Tab::Appearance => "appearance",
+            Tab::Keybindings => "keybindings",
+            Tab::Providers => "providers",
+            Tab::Limits => "limits",
+            Tab::Integrations => "integrations",
+            Tab::Webhooks => "webhooks",
+        }
+    }
+
+    pub fn from_slug(s: &str) -> Option<Tab> {
+        Tab::ALL.into_iter().find(|t| t.slug() == s)
+    }
+
+    /// What the settings search matches besides the name.
+    pub fn keywords(self) -> &'static str {
+        match self {
+            Tab::General => "restart resume continue order activity sort fast mode",
+            Tab::Appearance => "theme dark light omarchy colours colors",
+            Tab::Keybindings => "shortcuts keyboard keys hotkeys",
+            Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
+            Tab::Limits => "usage limit quota wait weekly switch accounts notify",
+            Tab::Integrations => "apps mcp servers sign in tools",
+            Tab::Webhooks => "hooks tailscale funnel public url",
+        }
+    }
+
+    fn desc(self) -> &'static str {
+        match self {
+            Tab::General => "How threads behave.",
+            Tab::Appearance => "How Harbor looks.",
+            Tab::Keybindings => "Harbor's keyboard shortcuts. Changes apply at once.",
+            Tab::Providers => "",
+            Tab::Limits => "What a thread does when its account hits a usage limit.",
+            Tab::Integrations => "",
+            Tab::Webhooks => "",
+        }
+    }
+}
+
+impl App {
+    // ------------------------------------------------------------ settings
+
+    /// One settings page; the sidebar lists the pages (`settings_nav`).
+    pub fn settings(&mut self, ui: &mut Ui, tab: Tab) {
+        let t = self.theme.t;
+        egui::Panel::top("settings_bar")
+            .frame(Frame::new().inner_margin(Margin { left: 18, right: 10, top: 8, bottom: 8 }).fill(t.bg100))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 30.0), Layout::left_to_right(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if !self.sidebar_docked(ui.ctx()) {
+                        if w::btn(ic::PANEL_LEFT).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
+                            let ctx = ui.ctx().clone();
+                            self.toggle_sidebar(&ctx);
+                        }
+                        ui.add_space(4.0);
+                    }
+                    let home = ui.add(egui::Label::new(RichText::new(format!("{}  Settings", ic::SETTINGS)).text_style(theme::ts("label-14")).color(t.subtle())).sense(Sense::click()));
+                    if home.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        self.open(View::Settings(Tab::General));
+                    }
+                    ui.label(RichText::new("/").text_style(theme::ts("label-14")).color(t.gray(600)));
+                    ui.label(RichText::new(tab.label()).text_style(theme::ts("label-14")).color(t.fg()));
+                });
+            });
+        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            centered(ui, CONTENT_W, |ui| {
+                ui.add_space(20.0);
+                w::text(ui, tab.label(), "heading-24");
+                if !tab.desc().is_empty() {
+                    ui.add_space(2.0);
+                    w::subtle(ui, tab.desc(), "copy-14");
+                }
+                ui.add_space(20.0);
+                match tab {
+                    Tab::General => self.general_tab(ui),
+                    Tab::Appearance => self.appearance_tab(ui),
+                    Tab::Keybindings => self.keybindings_tab(ui),
+                    Tab::Providers => self.providers_tab(ui),
+                    Tab::Limits => self.limits_settings(ui),
+                    Tab::Integrations => self.integrations_tab(ui),
+                    Tab::Webhooks => self.webhooks_tab(ui),
+                }
+                ui.add_space(40.0);
+            });
+        });
+    }
+
+    /// Back from Settings: to the view it was opened from.
+    pub fn leave_settings(&mut self) {
+        let v = match self.settings_back {
+            View::Chat(id) if self.chat(id).is_none() => View::Draft,
+            View::Settings(_) => View::Draft,
+            v => v,
+        };
+        self.open(v);
+    }
+
+    fn general_tab(&mut self, ui: &mut Ui) {
+        let (mut resume, mut order, mut fast) = (self.resume_on_restart(), self.order_by_activity, self.fast);
+        rows(ui, |ui| {
+            w::setting_row(
+                ui,
+                "Continue threads after restarts",
+                "A thread that was working when the computer restarted picks up where it stopped the next time Harbor opens. Turns still running across a Harbor reload always come back.",
+                |ui| w::toggle(ui, &mut resume),
+            );
+            w::separator(ui);
+            w::setting_row(ui, "Order threads by activity", "The sidebar lists the most recently active projects first. Off, you drag them into your own order.", |ui| {
+                w::toggle(ui, &mut order)
+            });
+            w::separator(ui);
+            w::setting_row(ui, "Fast mode", "Claude and Codex turns use fast mode where the model has it. Also in the composer's reasoning menu.", |ui| w::toggle(ui, &mut fast));
+        });
+        let b = |v: bool| if v { "1" } else { "0" };
+        if resume != self.resume_on_restart() {
+            self.store.set("resume_on_restart", b(resume));
+        }
+        if order != self.order_by_activity {
+            self.order_by_activity = order;
+            self.store.set("order_by_activity", b(order));
+        }
+        if fast != self.fast {
+            self.fast = fast;
+            self.store.set("fast_mode", b(fast));
+        }
+    }
+
+    fn keybindings_tab(&mut self, ui: &mut Ui) {
+        use crate::keys::{ACTIONS, GROUPS};
+        let t = self.theme.t;
+        ui.horizontal(|ui| {
+            let reset = ui.painter().layout_no_wrap("Reset all".into(), egui::FontId::new(12.0, theme::medium()), t.fg()).size().x + 40.0;
+            Frame::new().stroke(Stroke::new(1.0, t.border())).corner_radius(CornerRadius::same(theme::RADIUS_MD)).show(ui, |ui| {
+                w::search_field(ui, &mut self.keys.search, "Search shortcuts", Some(Id::NULL.with("keys-search")), (ui.available_width() - reset).max(120.0));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if w::btn("Reset all").sm().outline().enabled(self.keys.has_custom()).show(ui).clicked() {
+                    self.keys.reset_all(&self.store);
+                    self.keys.capture = None;
+                }
+            });
+        });
+        let q = self.keys.search.trim().to_lowercase();
+        let mut any = false;
+        for g in GROUPS {
+            let acts: Vec<&'static crate::keys::Action> = ACTIONS
+                .iter()
+                .filter(|a| a.group == *g)
+                .filter(|a| q.is_empty() || [a.label, a.when, a.group, &crate::keys::label(&self.keys.get(a.id))].iter().any(|s| s.to_lowercase().contains(&q)))
+                .collect();
+            if acts.is_empty() {
+                continue;
+            }
+            any = true;
+            ui.add_space(12.0);
+            section(ui, g);
+            rows(ui, |ui| {
+                for (i, a) in acts.iter().enumerate() {
+                    if i > 0 {
+                        w::separator(ui);
+                    }
+                    self.key_row(ui, a);
+                }
+            });
+        }
+        if !any {
+            ui.add_space(16.0);
+            w::subtle(ui, format!("No shortcut matches “{}”.", self.keys.search.trim()), "copy-14");
+        }
+        ui.add_space(10.0);
+        w::subtle(
+            ui,
+            "Click a shortcut, then press the new keys, e.g. Ctrl+Shift+K (Ctrl, Alt and Shift). Esc alone cancels, Backspace alone goes back to the default. Super combos can't be used: Hyprland takes most of them before Harbor sees them.",
+            "label-12",
+        );
+    }
+
+    /// A shortcut: what it does and when on the left, its keys on the right (a click
+    /// waits for new keys, unless it's fixed).
+    fn key_row(&mut self, ui: &mut Ui, a: &'static crate::keys::Action) {
+        let t = self.theme.t;
+        let capturing = self.keys.capture == Some(a.id);
+        let custom = self.keys.is_custom(a.id);
+        let conflicts = self.keys.conflicts(a.id);
+        Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+            let full = ui.available_width();
+            let top = ui.cursor().min;
+            let lw = full - 240.0;
+            let left = ui
+                .allocate_ui_with_layout(Vec2::new(lw, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(lw);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    w::text(ui, a.label, "label-14");
+                    if !a.when.is_empty() {
+                        w::subtle(ui, format!("when {}", a.when), "label-12-mono");
+                    }
+                    if capturing {
+                        let msg = match &self.keys.refused {
+                            Some(k) => format!("{k} would type instead · add Ctrl or Alt"),
+                            None => "Press the new keys · Esc cancels · Backspace resets".into(),
+                        };
+                        ui.label(RichText::new(msg).text_style(theme::ts("label-12")).color(if self.keys.refused.is_some() { t.amber(900) } else { t.blue(900) }));
+                    } else if !conflicts.is_empty() && !a.fixed {
+                        let names: Vec<String> = conflicts.iter().map(|c| format!("“{}”", c.label)).collect();
+                        ui.label(RichText::new(format!("{}  Also bound to {}", ic::ALERT, names.join(", "))).text_style(theme::ts("label-12")).color(t.amber(900)));
+                    }
+                })
+                .response
+                .rect;
+            let slot = Rect::from_min_max(pos2(top.x + lw + 12.0, top.y), pos2(top.x + full, left.bottom().max(top.y + 24.0)));
+            let mut right = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(Layout::right_to_left(Align::Center)));
+            let ui = &mut right;
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if capturing {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(112.0, 24.0), Sense::click());
+                ui.painter().rect(r, CornerRadius::same(theme::RADIUS_MD), t.blue(100), Stroke::new(1.0, t.blue(700)), egui::StrokeKind::Inside);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "Press keys…", egui::FontId::new(12.0, theme::medium()), t.blue(900));
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.keys.capture = None;
+                }
+                return;
+            }
+            let caps = w::kbd_combo(ui, &crate::keys::label(&self.keys.get(a.id)));
+            if a.fixed {
+                return;
+            }
+            if caps.hovered() {
+                ui.painter().rect_stroke(caps.rect.expand(3.0), CornerRadius::same(6), Stroke::new(1.0, t.gray(600)), egui::StrokeKind::Inside);
+            }
+            if caps.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Change").clicked() {
+                self.keys.capture = Some(a.id);
+                self.keys.refused = None;
+            }
+            if custom && w::btn(ic::ROTATE_CW).muted().icon_sm().show(ui).on_hover_text(format!("Back to {}", crate::keys::label(a.default))).clicked() {
+                self.keys.reset(&self.store, a.id);
+            }
+        });
+    }
+
+    fn providers_tab(&mut self, ui: &mut Ui) {
+        let t = self.theme.t;
+        let ctx = ui.ctx().clone();
+        // Button first, so the text wraps in the room left instead of running under it.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if w::btn(&format!("{}  Add Claude account", ic::PLUS)).sm().outline().show(ui).clicked() {
+                self.add_claude_account(&ctx);
+            }
+            ui.add_space(8.0);
+            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                w::subtle(ui, "Every agent CLI on this machine is a provider. Claude Code adds one per account.", "copy-14");
+            });
+        });
+        ui.add_space(8.0);
+        let accounts = self.accounts.clone();
+        let default = self.draft.sel.account.clone();
+        w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for (i, a) in accounts.iter().enumerate() {
+                if i > 0 {
+                    w::separator(ui);
+                }
+                Frame::new().inner_margin(Margin::symmetric(16, 12)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
+                        ic::account_mark(ui.painter(), r, a.kind, &a.badge, &t);
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.horizontal(|ui| {
+                                w::text(ui, if a.kind == Kind::Claude { &a.name } else { a.kind.label() }, "strong-14");
+                                if a.kind == Kind::Claude {
+                                    w::subtle(ui, format!("Claude · {}", a.badge), "label-13");
+                                }
+                                if !a.plan.is_empty() {
+                                    w::badge(ui, &a.plan, Tone::Gray);
+                                }
+                            });
+                            if a.installed() && !a.email.is_empty() {
+                                w::subtle(ui, &a.email, "label-13");
+                            }
+                            if !a.usage.is_empty() {
+                                ui.horizontal(|ui| {
+                                    for wdw in &a.usage {
+                                        w::subtle(ui, &wdw.label, "label-12");
+                                        w::meter(ui, wdw.percent, 70.0);
+                                        w::subtle(ui, format!("{:.0}%", wdw.percent * 100.0), "label-12-mono");
+                                        ui.add_space(6.0);
+                                    }
+                                });
+                            }
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if !a.installed() {
+                                if w::btn("Install").sm().show(ui).clicked() {
+                                    self.login(&ctx, &a.id);
+                                }
+                                w::badge(ui, "Not installed", Tone::Gray);
+                                return;
+                            }
+                            let sign = if a.logged_in == Some(false) { "Sign in" } else { "Re-auth" };
+                            if w::btn(sign).sm().variant(if a.logged_in == Some(false) { w::Variant::Primary } else { w::Variant::Ghost }).show(ui).clicked() {
+                                self.login(&ctx, &a.id);
+                            }
+                            if a.id == default {
+                                w::badge(ui, "Default", Tone::Blue);
+                            } else if w::btn("Make default").sm().variant(w::Variant::Ghost).show(ui).clicked() {
+                                let m = self.models_for(a.kind).iter().find(|m| !m.more).map(|m| m.id.clone()).unwrap_or_default();
+                                let s = crate::app::Sel { account: a.id.clone(), model: m, effort: String::new(), access: "full".into() };
+                                let v = self.view;
+                                self.view = View::Draft;
+                                self.set_sel(s);
+                                self.view = v;
+                            }
+                            match a.logged_in {
+                                Some(true) => w::badge(ui, "Ready", Tone::Green),
+                                Some(false) => w::badge(ui, "Signed out", Tone::Amber),
+                                None => w::badge(ui, "Installed", Tone::Green),
+                            };
+                        });
+                    });
+                });
+            }
+        });
+        ui.add_space(8.0);
+        w::subtle(ui, "Sign-in runs the provider's own login in Harbor's terminal. Press Refresh in the sidebar afterwards.", "label-12");
+    }
+
+    fn webhooks_tab(&mut self, ui: &mut Ui) {
+        let t = self.theme.t;
+        let ctx = ui.ctx().clone();
+        let port = self.hook_port.unwrap_or(crate::control::HOOK_PORT);
+        w::subtle(ui, "Leads create webhooks so other services can wake them. Harbor answers only /hooks/<secret-token> on this machine; anything else gets 404.", "copy-14");
+        section(ui, "Public URL");
+        w::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                match &self.funnel {
+                    Some(base) => {
+                        w::badge(ui, "Public", Tone::Green);
+                        w::text(ui, base, "label-13-mono");
+                    }
+                    None => {
+                        w::badge(ui, "Local only", Tone::Gray);
+                        w::text(ui, format!("http://127.0.0.1:{port}/hooks"), "label-13-mono");
+                    }
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if w::btn(&format!("{}  Check", ic::REFRESH)).sm().ghost().show(ui).clicked() {
+                        self.check_funnel();
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            w::subtle(
+                ui,
+                "Tailscale Funnel publishes only the /hooks path of this machine at https://<machine>.<tailnet>.ts.net/hooks. The first time, Tailscale may ask you to allow Funnel for this device in its admin console.",
+                "label-13",
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if self.funnel.is_none() {
+                    if w::btn("Enable with Tailscale Funnel").primary().show(ui).clicked() {
+                        let cmd = format!("{} && echo && echo 'Done. Press Check in Harbor.'", crate::control::funnel_enable_cmd(port));
+                        self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
+                    }
+                } else if w::btn("Disable").variant(w::Variant::GhostDestructive).show(ui).clicked() {
+                    let cmd = crate::control::funnel_disable_cmd();
+                    self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
+                    self.funnel = None;
+                }
+            });
+        });
+        section(ui, "Webhooks");
+        let hooks = self.webhooks.clone();
+        w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if hooks.is_empty() {
+                Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "None yet. Ask a project's lead to create one.", "label-13"));
+            }
+            for (i, h) in hooks.iter().enumerate() {
+                if i > 0 {
+                    w::separator(ui);
+                }
+                let (local, public) = self.hook_url(&h.token);
+                let url = public.unwrap_or(local);
+                Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            let project = self.repo(h.repo_id).map(|r| r.name.clone()).unwrap_or_default();
+                            w::text(ui, format!("{}  ·  {project}", h.name), "strong-14");
+                            let g = w::truncated(ui, &url, egui::FontId::new(12.0, egui::FontFamily::Monospace), t.subtle(), ui.available_width() - 120.0);
+                            ui.label(g);
+                            let last = if h.last_hit > 0 { format!(" · last {}", ago(h.last_hit)) } else { String::new() };
+                            w::subtle(ui, format!("{} calls{last}", h.hits), "label-12");
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if w::btn("Delete").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
+                                self.store.delete_webhook(h.id);
+                                self.webhooks = self.store.webhooks();
+                                self.sync_tokens();
+                            }
+                            if w::btn(&format!("{}  Copy", ic::COPY)).sm().ghost().show(ui).clicked() {
+                                ui.ctx().copy_text(url.clone());
+                            }
+                        });
+                    });
+                });
+            }
+        });
+    }
+
+    fn appearance_tab(&mut self, ui: &mut Ui) {
+        section(ui, "Theme");
+        ui.horizontal(|ui| {
+            for (m, icon, l) in [(Mode::System, ic::SUN_MOON, "Follow Omarchy"), (Mode::Light, ic::SUN, "Light"), (Mode::Dark, ic::MOON, "Dark")] {
+                if w::btn(&format!("{icon}  {l}")).outline().pressed(self.theme.mode == m).show(ui).clicked() {
+                    self.theme.set_mode(m, ui.ctx());
+                    self.store.set("theme", m.as_str());
+                }
+            }
+        });
+        ui.add_space(6.0);
+        w::subtle(ui, "Colours and type are the rengaf design system (Geist).", "label-13");
+    }
+
+    fn integrations_tab(&mut self, ui: &mut Ui) {
+        let t = self.theme.t;
+        let ctx = ui.ctx().clone();
+        w::subtle(ui, "Agents Harbor starts get the MCP servers below, plus only the apps you sign in to here. Your own sign-ins (gh, git, Claude Code, Convex) aren't shared with them.", "copy-14");
+        section(ui, "Apps");
+        let cols = if ui.available_width() > 600.0 { 2 } else { 1 };
+        let cw = (ui.available_width() - 8.0 * (cols as f32 - 1.0)) / cols as f32;
+        for row in mcp::APPS.chunks(cols) {
+            ui.horizontal(|ui| {
+                for a in row {
+                    ui.allocate_ui(Vec2::new(cw, 72.0), |ui| {
+                        w::card(ui).inner_margin(Margin::same(12)).show(ui, |ui| {
+                            ui.set_width(cw - 26.0);
+                            ui.vertical(|ui| self.app_card(ui, a, &ctx, &t));
+                        });
+                    });
+                }
+            });
+        }
+        for a in mcp::APPS {
+            let Some(err) = mcp::error(a.id) else { continue };
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{}  {}: {err}", ic::ALERT, a.label)).text_style(theme::ts("label-13")).color(t.red(900)));
+                if w::btn(ic::X).muted().icon_sm().show(ui).clicked() {
+                    mcp::dismiss(a.id);
+                }
+            });
+        }
+        section(ui, "MCP servers");
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+            for (l, def) in mcp::locals() {
+                let off = mcp::is_off(l.id);
+                let r = mcp_chip(ui, l.label, def.is_some(), off, &t);
+                if r.clicked() && def.is_some() {
+                    mcp::toggle_off(l.id);
+                }
+            }
+        });
+        ui.add_space(4.0);
+        w::subtle(ui, "Local tools on this machine, set up in your Claude Code config. Click one to turn it off or on for agents.", "label-12");
+    }
+
+    /// One app: logo, what it does or how its sign-in is going, and the action. The action
+    /// is laid out first so the text truncates in the room left; a device code or a key
+    /// field gets its own row underneath.
+    fn app_card(&mut self, ui: &mut Ui, a: &'static mcp::App, ctx: &egui::Context, t: &crate::theme::Tokens) {
+        let pending = mcp::pending(a.id);
+        let signed = mcp::signed_in(a.id);
+        let key_id = Id::NULL.with(("app-key", a.id));
+        let mut key: Option<String> = ui.data(|d| d.get_temp(key_id));
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if pending.is_some() {
+                    if w::btn("Cancel").sm().ghost().show(ui).clicked() {
+                        mcp::cancel(a.id);
+                    }
+                    ui.spinner();
+                } else if key.is_some() {
+                    if w::btn("Cancel").sm().ghost().show(ui).clicked() {
+                        key = None;
+                    }
+                } else if signed {
+                    if w::btn("Sign out").sm().ghost().show(ui).clicked() {
+                        mcp::sign_out(a.id);
+                    }
+                    w::badge(ui, "Signed in", Tone::Green);
+                } else if w::btn("Sign in").sm().primary().show(ui).clicked() {
+                    match a.auth {
+                        mcp::Auth::Key { .. } => key = Some(String::new()),
+                        _ => mcp::sign_in(a.id, ctx.clone()),
+                    }
+                }
+                ui.add_space(8.0);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    crate::logos::tile(ui, a.id, 36.0, t);
+                    ui.add_space(4.0);
+                    let wdt = ui.available_width().max(20.0);
+                    let (sub, color) = match &pending {
+                        Some(p) if p.code.is_some() => ("Enter the code below in your browser".to_string(), t.blue(900)),
+                        Some(_) => ("Finish in your browser…".to_string(), t.blue(900)),
+                        None if key.is_some() => ("Paste an API key below".to_string(), t.subtle()),
+                        None if signed && a.id == "github" => (mcp::github_user().map(|u| format!("Signed in as {u}")).unwrap_or_else(|| a.about.into()), t.subtle()),
+                        None => (a.about.to_string(), t.subtle()),
+                    };
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.label(w::truncated(ui, a.label, theme::ts("heading-14").resolve(ui.style()), t.fg(), wdt));
+                        ui.label(w::truncated(ui, &sub, theme::ts("label-13").resolve(ui.style()), color, wdt));
+                    });
+                });
+            });
+        });
+        if let Some(p) = &pending {
+            if p.code.is_some() || p.url.is_some() {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if let Some(c) = &p.code {
+                        Frame::new()
+                            .fill(t.gray(100))
+                            .stroke(Stroke::new(1.0, t.border()))
+                            .corner_radius(CornerRadius::same(theme::RADIUS_MD))
+                            .inner_margin(Margin::symmetric(10, 4))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(c).monospace().size(16.0).color(t.fg()));
+                            });
+                        if w::btn(&format!("{}  Copy", ic::COPY)).sm().ghost().show(ui).clicked() {
+                            ctx.copy_text(c.clone());
+                        }
+                    }
+                    if let Some(url) = &p.url {
+                        if w::btn(&format!("{}  Open page", ic::EXTERNAL)).sm().ghost().show(ui).on_hover_text("Open the sign-in page again").clicked() {
+                            crate::git::open_url(url);
+                        }
+                    }
+                });
+            }
+        } else if let Some(k) = &mut key {
+            ui.add_space(8.0);
+            let mut save = false;
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if let mcp::Auth::Key { get, .. } = a.auth {
+                        if w::btn(ic::EXTERNAL).muted().icon_sm().show(ui).on_hover_text("Get a key").clicked() {
+                            crate::git::open_url(get);
+                        }
+                    }
+                    save |= w::btn("Save").sm().primary().enabled(!k.trim().is_empty()).show(ui).clicked();
+                    ui.add_space(4.0);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let r = w::input(ui, k, "Paste your API key", true, ui.available_width());
+                        save |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !k.trim().is_empty();
+                    });
+                });
+            });
+            if save {
+                let _ = mcp::save_key(a.id, k);
+                key = None;
+            }
+        }
+        ui.data_mut(|d| match key {
+            Some(k) => {
+                d.insert_temp(key_id, k);
+            }
+            None => {
+                d.remove::<String>(key_id);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------ usage
+
+    pub fn usage(&mut self, ui: &mut Ui) {
+        let t = self.theme.t;
+        // Totals from every chat's result records (local, cheap).
+        let mut by_account: BTreeMap<String, (u64, u64, u64, f64)> = BTreeMap::new();
+        let mut by_day: BTreeMap<i64, u64> = BTreeMap::new();
+        let today = store::now() / 86400;
+        let ids: Vec<(i64, String)> = self.chats.iter().map(|c| (c.id, c.account.clone())).collect();
+        let mut cache: HashMap<i64, Vec<Item>> = HashMap::new();
+        for (id, acc) in &ids {
+            let items = match self.transcripts.get(id) {
+                Some(t) => t.items.clone(),
+                None => cache.entry(*id).or_insert_with(|| self.store.items(*id)).clone(),
+            };
+            for it in items {
+                if let Item::Result { input_tokens, output_tokens, cost_usd, at, account, .. } = it {
+                    let a = if account.is_empty() { acc.clone() } else { account };
+                    let e = by_account.entry(a).or_default();
+                    e.0 += 1;
+                    e.1 += input_tokens;
+                    e.2 += output_tokens;
+                    e.3 += cost_usd;
+                    if at > 0 && today - at / 86400 < 14 {
+                        *by_day.entry(at / 86400).or_default() += input_tokens + output_tokens;
+                    }
+                }
+            }
+        }
+        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            centered(ui, CONTENT_W, |ui| {
+                page_header(ui, "Usage", "Plan limits per account and what Harbor's chats used.");
+                section(ui, "Plan limits");
+                let accounts: Vec<_> = self.accounts.iter().filter(|a| !a.usage.is_empty() || self.blocked(&a.id).is_some()).cloned().collect();
+                if accounts.is_empty() {
+                    w::subtle(ui, "No limit data. Harbor reads the agents-usage-monitor cache when it exists.", "label-13");
+                }
+                for a in &accounts {
+                    let blocked = self.blocked(&a.id).map(|b| format!("{}  Blocked until {} ({} limit)", ic::CLOCK, crate::limits::when(b.until), crate::limits::window_label(&b.kind)));
+                    w::card(ui).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                            ic::account_mark(ui.painter(), r, a.kind, &a.badge, &t);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                w::text(ui, &a.short(), "strong-14");
+                                w::subtle(ui, format!("{} {}", a.email, a.plan), "label-12");
+                                if let Some(b) = &blocked {
+                                    ui.label(egui::RichText::new(b).text_style(crate::theme::ts("label-12")).color(t.amber(900)));
+                                }
+                            });
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                for wdw in a.usage.iter().rev() {
+                                    w::subtle(ui, format!("{:.0}%", wdw.percent * 100.0), "label-12-mono");
+                                    w::meter(ui, wdw.percent, 110.0);
+                                    let r = w::subtle(ui, &wdw.label, "label-12");
+                                    if let Some(at) = wdw.resets_at {
+                                        r.on_hover_ui(|ui| {
+                                            ui.label(format!("Resets {}", crate::limits::when(at)));
+                                        });
+                                    }
+                                    ui.add_space(10.0);
+                                }
+                            });
+                        });
+                    });
+                    ui.add_space(6.0);
+                }
+                section(ui, "Last 14 days");
+                w::card(ui).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let h = 120.0;
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h + 18.0), Sense::hover());
+                    let max = by_day.values().copied().max().unwrap_or(1).max(1) as f32;
+                    let bw = rect.width() / 14.0;
+                    for i in 0..14 {
+                        let day = today - 13 + i;
+                        let v = by_day.get(&day).copied().unwrap_or(0) as f32;
+                        let bh = (v / max) * h;
+                        let x = rect.left() + i as f32 * bw;
+                        let bar = Rect::from_min_max(pos2(x + bw * 0.2, rect.top() + h - bh), pos2(x + bw * 0.8, rect.top() + h));
+                        ui.painter().rect_filled(bar, CornerRadius::same(3), if i == 13 { t.gray(1000) } else { t.gray(700) });
+                        if i % 2 == 1 || i == 13 {
+                            let label = if i == 13 { "today".to_string() } else { format!("-{}d", 13 - i) };
+                            ui.painter().text(pos2(x + bw / 2.0, rect.bottom()), egui::Align2::CENTER_BOTTOM, label, egui::FontId::proportional(11.0), t.subtle());
+                        }
+                    }
+                    w::subtle(ui, "Tokens (in + out) per day across all providers.", "label-12");
+                });
+                section(ui, "By provider");
+                w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    if by_account.is_empty() {
+                        Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No turns yet.", "label-13"));
+                    }
+                    for (i, (aid, (turns, tin, tout, cost))) in by_account.iter().enumerate() {
+                        if i > 0 {
+                            w::separator(ui);
+                        }
+                        Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let (name, kind, badge) = self
+                                    .account(aid)
+                                    .map(|a| (a.short(), a.kind, a.badge.clone()))
+                                    .unwrap_or((aid.clone(), Kind::Claude, String::new()));
+                                let (r, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                                ic::account_mark(ui.painter(), r, kind, &badge, &t);
+                                w::text(ui, name, "strong-14");
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if *cost > 0.0 {
+                                        w::subtle(ui, format!("${cost:.2}"), "label-13-mono");
+                                    }
+                                    w::subtle(ui, format!("{}k in · {}k out · {turns} turns", tin / 1000, tout / 1000), "label-13-mono");
+                                });
+                            });
+                        });
+                    }
+                });
+                ui.add_space(40.0);
+            });
+        });
+    }
+
+    // ------------------------------------------------------------ pull requests
+
+    pub fn prs_view(&mut self, ui: &mut Ui) {
+        let t = self.theme.t;
+        let ctx = ui.ctx().clone();
+        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            centered(ui, CONTENT_W, |ui| {
+                page_header(ui, "Pull requests", "Open PRs of a project, from the GitHub CLI.");
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let repos = self.repos.clone();
+                    for r in &repos {
+                        if w::btn(&r.name).sm().outline().pressed(self.prs.repo == Some(r.id)).show(ui).clicked() {
+                            self.prs.repo = Some(r.id);
+                            self.load_prs();
+                        }
+                    }
+                    if w::btn(&format!("{}  Refresh", ic::REFRESH)).sm().ghost().show(ui).clicked() {
+                        self.load_prs();
+                    }
+                });
+                ui.add_space(12.0);
+                let Some(repo) = self.prs.repo.and_then(|r| self.repo(r)).cloned() else {
+                    w::subtle(ui, "Add a project to see its pull requests.", "label-14");
+                    return;
+                };
+                w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    match &self.prs.list {
+                        _ if self.prs.loading => {
+                            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    w::subtle(ui, "Loading…", "label-14");
+                                });
+                            });
+                        }
+                        Some(Err(e)) => {
+                            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
+                                ui.label(RichText::new(e).text_style(theme::ts("label-13-mono")).color(t.red(900)));
+                            });
+                        }
+                        Some(Ok(list)) if list.is_empty() => {
+                            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No open pull requests.", "label-14"));
+                        }
+                        Some(Ok(list)) => {
+                            let list = list.clone();
+                            for (i, pr) in list.iter().enumerate() {
+                                if i > 0 {
+                                    w::separator(ui);
+                                }
+                                let num = pr["number"].as_u64().unwrap_or(0);
+                                let title = pr["title"].as_str().unwrap_or("").to_string();
+                                let branch = pr["headRefName"].as_str().unwrap_or("").to_string();
+                                let author = pr["author"]["login"].as_str().unwrap_or("").to_string();
+                                let url = pr["url"].as_str().unwrap_or("").to_string();
+                                let draft = pr["isDraft"].as_bool().unwrap_or(false);
+                                Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(ic::PULL).size(16.0).color(if draft { t.gray(800) } else { t.green(900) }));
+                                        ui.vertical(|ui| {
+                                            ui.spacing_mut().item_spacing.y = 1.0;
+                                            w::text(ui, format!("{title}  #{num}"), "strong-14");
+                                            let mut meta = format!("{branch} · {author}");
+                                            if draft {
+                                                meta.push_str(" · draft");
+                                            }
+                                            if let (Some(a), Some(d)) = (pr["additions"].as_u64(), pr["deletions"].as_u64()) {
+                                                meta.push_str(&format!(" · +{a} −{d}"));
+                                            }
+                                            w::subtle(ui, meta, "label-12-mono");
+                                        });
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if w::btn(ic::EXTERNAL).muted().icon_sm().show(ui).on_hover_text("Open on GitHub").clicked() {
+                                                crate::git::open_url(&url);
+                                            }
+                                            if w::btn("Checkout").sm().variant(w::Variant::Ghost).show(ui).clicked() {
+                                                let argv = vec!["gh".into(), "pr".into(), "checkout".into(), num.to_string()];
+                                                self.open_terminal(&ctx, &format!("checkout #{num}"), repo.path.clone(), argv, vec![]);
+                                            }
+                                            if w::btn(&format!("{}  Review", ic::SPARKLES)).sm().show(ui).clicked() {
+                                                self.new_draft(Some(repo.id));
+                                                self.drafts.insert(
+                                                    crate::app::DRAFT,
+                                                    format!("Review PR #{num} ({title}). Read it with `gh pr view {num}` and `gh pr diff {num}`, then list concrete problems by severity."),
+                                                );
+                                            }
+                                        });
+                                    });
+                                });
+                            }
+                        }
+                        None => {}
+                    }
+                });
+                ui.add_space(6.0);
+                w::subtle(ui, format!("{} · {}", repo.name, tilde(&repo.path)), "label-12-mono");
+                let _ = ago(0);
+            });
+        });
+    }
+
+    // ------------------------------------------------------------ dialogs
+
+    pub fn dialogs(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.dialog.take() else { return };
+        let mut close = false;
+        let t = self.theme.t;
+        let modal = egui::Modal::new(Id::NULL.with("dialog"))
+            .frame(
+                Frame::new()
+                    .fill(t.bg100)
+                    .stroke(Stroke::new(1.0, t.border()))
+                    .corner_radius(CornerRadius::same(theme::RADIUS_XL))
+                    .inner_margin(Margin::same(24))
+                    .shadow(ctx.global_style().visuals.window_shadow),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(480.0);
+                match &mut dialog {
+                    Dialog::Rename { chat, title } => {
+                        w::text(ui, "Rename chat", "heading-20");
+                        ui.add_space(12.0);
+                        let r = w::input(ui, title, "Title", false, ui.available_width());
+                        r.request_focus();
+                        let enter = ui.input(|i| i.key_pressed(Key::Enter));
+                        ui.add_space(16.0);
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            if w::btn("Salvar Alterações").primary().show(ui).clicked() || enter {
+                                let id = *chat;
+                                let tt = title.trim().to_string();
+                                if let Some(c) = self.chat_mut(id) {
+                                    c.title = tt;
+                                    let c = c.clone();
+                                    self.store.save_chat(&c);
+                                }
+                                close = true;
+                            }
+                            if w::btn("Cancel").outline().show(ui).clicked() {
+                                close = true;
+                            }
+                        });
+                    }
+                    Dialog::DeleteChat(id) => {
+                        w::text(ui, "Delete chat?", "heading-20");
+                        ui.add_space(4.0);
+                        w::subtle(ui, "The transcript is removed from Harbor. The provider's session stays on disk.", "copy-14");
+                        ui.add_space(16.0);
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            if w::btn("Delete").variant(w::Variant::Destructive).show(ui).clicked() {
+                                let id = *id;
+                                self.stop(id);
+                                self.store.delete_chat(id);
+                                self.chats.retain(|c| c.id != id);
+                                self.transcripts.remove(&id);
+                                if self.view == View::Chat(id) {
+                                    self.view = View::Draft;
+                                }
+                                close = true;
+                            }
+                            if w::btn("Cancel").outline().show(ui).clicked() {
+                                close = true;
+                            }
+                        });
+                    }
+                    Dialog::StopAll(id) => self.stop_all_dialog(ui, *id, &mut close),
+                    Dialog::RemoveRepo(id) => {
+                        w::text(ui, "Remove project?", "heading-20");
+                        ui.add_space(4.0);
+                        w::subtle(ui, "Its chats are removed from Harbor. Nothing on disk is touched.", "copy-14");
+                        ui.add_space(16.0);
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                            if w::btn("Remove").variant(w::Variant::Destructive).show(ui).clicked() {
+                                let id = *id;
+                                let ids: Vec<i64> = self.chats.iter().filter(|c| c.repo_id == Some(id)).map(|c| c.id).collect();
+                                for c in ids {
+                                    self.stop(c);
+                                    self.transcripts.remove(&c);
+                                }
+                                self.store.remove_repo(id);
+                                self.repos = self.store.repos();
+                                self.chats = self.store.chats();
+                                if self.draft.repo == Some(id) {
+                                    self.draft.repo = None;
+                                }
+                                if matches!(self.view, View::Chat(c) if self.chat(c).is_none()) {
+                                    self.view = View::Draft;
+                                }
+                                close = true;
+                            }
+                            if w::btn("Cancel").outline().show(ui).clicked() {
+                                close = true;
+                            }
+                        });
+                    }
+                }
+            });
+        if modal.should_close() {
+            close = true;
+        }
+        if !close {
+            self.dialog = Some(dialog);
+        } else {
+            self.focus_composer = true;
+        }
+    }
+}
+
+/// A compact MCP chip: logo, name and a dot (green: on for agents, grey: off or not set up).
+fn mcp_chip(ui: &mut Ui, label: &str, found: bool, off: bool, t: &crate::theme::Tokens) -> egui::Response {
+    let font = egui::FontId::new(13.0, crate::theme::medium());
+    let fg = if found && !off { t.fg() } else { t.subtle() };
+    let g = ui.painter().layout_no_wrap(label.to_string(), font, fg);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 24.0 + 20.0 + 10.0, 28.0), Sense::click());
+    let p = ui.painter();
+    p.rect(rect, CornerRadius::same(theme::RADIUS_MD), if resp.hovered() && found { t.gray(200) } else { t.gray(100) }, Stroke::new(1.0, t.border()), egui::StrokeKind::Inside);
+    let x = rect.left() + 10.0;
+    crate::logos::paint(ui, p, Rect::from_center_size(pos2(x + 7.0, rect.center().y), Vec2::splat(14.0)), label, t);
+    p.galley(pos2(x + 20.0, rect.center().y - g.size().y / 2.0), g, fg);
+    let dot = if found && !off { t.green(700) } else { t.gray(600) };
+    p.circle_filled(pos2(rect.right() - 12.0, rect.center().y), 3.5, dot);
+    let hint = match (found, off) {
+        (false, _) => "Not set up on this machine",
+        (true, true) => "Off for agents · click to turn on",
+        (true, false) => "On for agents · click to turn off",
+    };
+    resp.on_hover_text(hint)
+}

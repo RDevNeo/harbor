@@ -1,0 +1,83 @@
+// deny, not forbid: src/yuv.rs (raw GL for video) is the one module allowed unsafe code.
+#![deny(unsafe_code)]
+
+mod addproject;
+mod agent;
+mod browser;
+mod app;
+mod chat;
+mod clipboard;
+mod control;
+mod detach;
+mod devices;
+mod favicon;
+mod git;
+mod icons;
+mod fork;
+mod images;
+mod keys;
+mod limits;
+mod mentions;
+mod logos;
+mod mcp;
+mod mcpshim;
+mod pages;
+mod procs;
+mod providers;
+mod queue;
+mod reload;
+mod sidebar;
+mod single;
+mod store;
+mod stream;
+mod surface;
+mod team;
+mod teamui;
+mod terminal;
+mod theme;
+mod undo;
+mod waiting;
+mod widgets;
+mod yuv;
+
+use eframe::egui;
+
+fn main() -> eframe::Result {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp") {
+        mcpshim::run(&args[2..]);
+        return Ok(());
+    }
+    if args.get(1).map(String::as_str) == Some("turn") {
+        detach::run(&args[2..]);
+        return Ok(());
+    }
+    // One window per session: a second launch brings the running Harbor to the front.
+    if !single::acquire() {
+        if single::focus_running() {
+            eprintln!("harbor: already running, brought it to the front");
+        } else {
+            eprintln!("harbor: already running, but it didn't answer on {}", control::socket_path().display());
+        }
+        return Ok(());
+    }
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Harbor")
+            .with_app_id("harbor")
+            .with_inner_size([1180.0, 780.0])
+            .with_min_inner_size([640.0, 420.0]),
+        // Ctrl+C/X/V go through src/clipboard.rs (wl-clipboard on Wayland) instead.
+        clipboard_shortcuts: false,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Harbor",
+        options,
+        Box::new(|cc| {
+            theme::install_fonts(&cc.egui_ctx);
+            cc.egui_ctx.add_plugin(clipboard::Plugin);
+            Ok(Box::new(app::App::new(&cc.egui_ctx)))
+        }),
+    )
+}

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harbor: a native Linux chat client for coding agents</title>
+<meta name="description" content="Harbor is a fast, native Linux desktop app for Claude Code, Codex, Gemini and other coding agents, organised by repository.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a0a">
+<meta property="og:title" content="Harbor">
+<meta property="og:description" content="A native Linux chat client for coding agents, organised by repository.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/Geist-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="/fonts/Geist-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav wrap">
+  <a class="brand" href="/"><img src="/favicon.svg" alt="" width="24" height="24">Harbor</a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/RDevNeo/harbor">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <p class="badge"><span class="dot"></span>Linux only · x86_64</p>
+    <h1>Harbor</h1>
+    <p class="pitch">A fast, native chat client for coding agents. Claude Code, Codex, Gemini and others, organised by repository.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download for Linux
+      </a>
+      <a class="btn" href="https://github.com/RDevNeo/harbor">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+    <div class="cmd" id="install">
+      <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
+      <button type="button" id="copy" aria-label="Copy install command">Copy</button>
+    </div>
+    <p class="note">x86_64 Linux. Install the agent CLIs you want to use (for example <code>claude</code>, <code>codex</code>, <code>gemini</code>) and sign in to them first.</p>
+  </section>
+
+  <section class="shot wrap" aria-label="Harbor window (illustration)">
+    <div class="window">
+      <div class="titlebar"><span></span><span></span><span></span><b>Harbor</b></div>
+      <div class="app">
+        <aside class="side">
+          <div class="side-h">Projects</div>
+          <div class="proj open">web-app</div>
+          <div class="chat active">Fix the login redirect</div>
+          <div class="chat">Add dark mode toggle</div>
+          <div class="chat">Release notes v2.3</div>
+          <div class="proj">api-server</div>
+          <div class="proj">docs</div>
+          <div class="side-h">Settled</div>
+          <div class="chat muted">Bump dependencies</div>
+        </aside>
+        <div class="conv">
+          <div class="msg user">The login page redirects to /home even when the session expired. Fix it and add a test.</div>
+          <div class="msg agent">
+            <div class="who">Lead · delegated to 2 agents</div>
+            <div class="task"><i class="ok"></i>auth: session check moved before redirect</div>
+            <div class="task"><i class="run"></i>tests: writing login_redirect.spec.ts</div>
+            <p>Found it: the redirect ran before the session was validated. Patch is in <code>src/auth/guard.ts</code>; tests are still running.</p>
+          </div>
+          <div class="composer">
+            <span class="ph">Message the lead…</span>
+            <span class="chip">Claude · high</span>
+            <span class="chip">Auto-edit</span>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="tabs"><span class="on">Terminal</span><span>Browser</span><span>Devices</span></div>
+          <pre><span class="g">$</span> npm test -- login
+<span class="g">✓</span> redirects to /login when expired
+<span class="g">✓</span> keeps valid sessions on /home
+<span class="d">2 passed (1.4s)</span></pre>
+        </div>
+      </div>
+    </div>
+    <p class="caption">Illustration of the Harbor window. Screenshots coming soon.</p>
+  </section>
+
+  <section class="features wrap" id="features">
+    <h2>Everything your agents need, in one native window</h2>
+    <div class="grid">
+      <article>
+        <h3>Every agent, one place</h3>
+        <p>Claude Code (with more than one account), Codex, Cursor, Gemini, Grok, OpenCode and more. Each runs as its own CLI, and nothing stays in memory between turns.</p>
+      </article>
+      <article>
+        <h3>Organised by repository</h3>
+        <p>Projects in the sidebar, with chats under each one. Search everything, and finished chats move to “Settled”.</p>
+      </article>
+      <article>
+        <h3>A lead with a team</h3>
+        <p>A lead agent splits the work and hands it to sub-agents that message each other, while you follow every step.</p>
+      </article>
+      <article>
+        <h3>Terminal, browser, devices</h3>
+        <p>A built-in panel with a real terminal, a browser and the screens of your remote devices, right next to the chat.</p>
+      </article>
+      <article>
+        <h3>Usage limits handled</h3>
+        <p>See your plan limits at a glance. When a limit runs out, Harbor waits and continues the chat when it resets.</p>
+      </article>
+      <article>
+        <h3>Native and light</h3>
+        <p>Rust and egui. No Electron, no webview. Starts fast and uses little memory.</p>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>; <code>harbor-stream</code> is <a href="https://github.com/RDevNeo/harbor/tree/main/stream">GPL-3.0</a>; the browser helper is <a href="https://github.com/RDevNeo/harbor/tree/main/browser">MIT</a> (it links Servo, MPL-2.0).
+  Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
+  <p>No cookies, no analytics. <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
+</footer>
+
+<script>
+document.getElementById('copy').addEventListener('click', function () {
+  var b = this;
+  navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(function () {
+    b.textContent = 'Copied';
+    setTimeout(function () { b.textContent = 'Copy'; }, 1500);
+  });
+});
+</script>
+</body>
+</html>

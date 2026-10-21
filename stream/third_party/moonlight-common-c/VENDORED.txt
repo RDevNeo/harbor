@@ -1,0 +1,1 @@
+Vendored from moonlight-qt 6.2 submodule, commit f900dd4767759c7b9d0e93bcea666b55c69ea62f (GPL-3.0). Built by ../build.rs.
