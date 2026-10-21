@@ -5,7 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-21
+
 ### Fixed
+- Harbor no longer redraws constantly while idle: chats with markdown tables kept it repainting
+  about 30 times a second (high CPU and heat); spinners and counters now redraw only while
+  visible, at most twice a second.
 - After "Restore previous version", Harbor no longer installs the version you went back from
   by itself a few seconds later; it offers it under Settings › General instead.
 
@@ -48,6 +53,7 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/RDevNeo/harbor/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/RDevNeo/harbor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/RDevNeo/harbor/releases/tag/v0.1.0
