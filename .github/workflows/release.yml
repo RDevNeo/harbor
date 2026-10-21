@@ -41,7 +41,7 @@ jobs:
         with:
           key: core
       - name: Updater tests (version order, signatures)
-        run: cargo test --locked update::
+        run: 'cargo test --locked -- update::'
       - run: cargo build --release --locked
         env:
           HARBOR_GIT_SHA: ${{ github.sha }}
