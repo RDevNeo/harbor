@@ -21,6 +21,8 @@ portable-pty = "0.9"
 # QR codes (a phone scans one to install the Remote Devices app); no image/svg extras
 qrcode = { version = "0.14", default-features = false }
 vt100 = "0.18"
+# Checks the signature of self-updates (minisign, pure Rust, no dependencies).
+minisign-verify = "0.2"
 
 [profile.release]
 opt-level = 3

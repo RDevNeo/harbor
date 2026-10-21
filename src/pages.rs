@@ -194,6 +194,63 @@ impl App {
             self.fast = fast;
             self.store.set("fast_mode", b(fast));
         }
+        ui.add_space(12.0);
+        section(ui, "Updates");
+        self.updates_rows(ui);
+    }
+
+    /// Version, "Install updates automatically", Check now / Install / Restore previous.
+    fn updates_rows(&mut self, ui: &mut Ui) {
+        use crate::update::{self as up, State};
+        let ctx = ui.ctx().clone();
+        let managed = up::managed();
+        let mut auto = self.auto_update();
+        let busy = up::busy();
+        let status = match up::state() {
+            _ if !managed => "Built from source: updates come from your checkout, not from GitHub.".to_string(),
+            State::Idle => "Harbor checks GitHub for a new version a little after it starts, then every few hours.".into(),
+            State::Checking => "Checking…".into(),
+            State::UpToDate => "Harbor is up to date.".into(),
+            State::Available(v) => format!("Harbor {v} is available."),
+            State::Installing(v) => format!("Installing {v}…"),
+            State::Installed(v) => format!("Harbor {v} is installed. It takes over the next time this window is focused; running agents carry on."),
+            State::Failed(e) => format!("The last update failed: {e}"),
+        };
+        rows(ui, |ui| {
+            w::setting_row(ui, &format!("Harbor {}", up::version_label()), &status, |ui| {
+                if !managed {
+                    return;
+                }
+                if let State::Available(v) = up::state() {
+                    if w::btn(&format!("Install {v}")).sm().primary().enabled(!busy).show(ui).clicked() {
+                        up::install_now(&ctx);
+                    }
+                }
+                if w::btn("Check now").sm().outline().enabled(!busy).show(ui).clicked() {
+                    up::check(auto, &ctx);
+                }
+            });
+            w::separator(ui);
+            w::setting_row(
+                ui,
+                "Install updates automatically",
+                "New versions are downloaded from GitHub, their signature checked, and swapped in without losing your place. Off, Harbor only says when one is out.",
+                |ui| {
+                    ui.add_enabled_ui(managed, |ui| w::toggle(ui, &mut auto));
+                },
+            );
+            if managed && up::has_previous() {
+                w::separator(ui);
+                w::setting_row(ui, "Previous version", "The version before the last update is kept, in case the new one misbehaves.", |ui| {
+                    if w::btn("Restore it").sm().outline().enabled(!busy).show(ui).clicked() {
+                        up::restore_previous(&ctx);
+                    }
+                });
+            }
+        });
+        if auto != self.auto_update() {
+            self.store.set("auto_update", if auto { "1" } else { "0" });
+        }
     }
 
     fn keybindings_tab(&mut self, ui: &mut Ui) {

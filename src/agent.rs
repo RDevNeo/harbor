@@ -140,7 +140,7 @@ pub struct Team {
 impl Team {
     fn server(&self, chat_id: i64) -> (String, Vec<String>) {
         // After a release swap the running binary reads "<path> (deleted)"; the new one is at <path>.
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string()).unwrap_or_else(|_| "harbor".into());
+        let exe = crate::update::self_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "harbor".into());
         let args = vec!["mcp".into(), "--chat".into(), chat_id.to_string(), "--role".into(), self.role.into()];
         (exe, args)
     }

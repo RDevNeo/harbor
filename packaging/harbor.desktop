@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Harbor
+GenericName=Coding Agents
+Comment=Chat with coding agents (Claude Code, Codex, Gemini, …), organised by project
+Exec=harbor
+Icon=harbor
+Terminal=false
+Categories=Development;
+Keywords=claude;codex;gemini;agent;ai;chat;
+StartupWMClass=harbor

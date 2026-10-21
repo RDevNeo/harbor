@@ -34,9 +34,47 @@ pub struct Meta {
     pub pid_start: u64,
 }
 
+/// The turns of this Harbor. A Harbor on another data folder (a test instance) gets
+/// its own, so instances never see, pick up or sweep each other's turns.
 pub fn root() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::store::home().join(".local/state"));
-    base.join("harbor/turns")
+    let data = crate::store::data_dir();
+    if data == crate::store::home().join(".local/share/harbor") {
+        return base.join("harbor/turns");
+    }
+    // FNV-1a of the data folder: stable across runs and builds.
+    let h = data.to_string_lossy().bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    base.join(format!("harbor/turns-{:012x}", h & 0xffff_ffff_ffff))
+}
+
+/// The chat a process runs a turn for, if it is a `harbor turn <root>/<chat>-…` runner.
+pub fn runner_chat(args: &[String], root: &Path) -> Option<i64> {
+    if args.get(1).map(String::as_str) != Some("turn") {
+        return None;
+    }
+    let dir = Path::new(args.get(2)?);
+    if dir.parent()? != root {
+        return None;
+    }
+    dir.file_name()?.to_str()?.split('-').next()?.parse().ok()
+}
+
+/// Live runners of this Harbor's turns, from the processes themselves (so one is found
+/// even if its folder is gone): chat id, folder, pid.
+pub fn runners() -> Vec<(i64, PathBuf, u32)> {
+    let root = root();
+    let mut v = vec![];
+    for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Ok(raw) = std::fs::read(e.path().join("cmdline")) else { continue };
+        let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+        if let Some(chat) = runner_chat(&args, &root) {
+            if proc_start(pid).is_some_and(|st| alive(pid, st)) {
+                v.push((chat, PathBuf::from(&args[2]), pid));
+            }
+        }
+    }
+    v
 }
 
 fn proc_start(pid: u32) -> Option<u64> {
@@ -75,7 +113,7 @@ pub fn spawn(cmd: &Command, input: Option<&str>, keep_input: bool, mut meta: Met
             std::fs::write(dir.join("in.closed"), "")?;
         }
     }
-    let exe = std::env::current_exe().map(|p| PathBuf::from(p.to_string_lossy().trim_end_matches(" (deleted)")))?;
+    let exe = crate::update::self_exe().ok_or_else(|| std::io::Error::other("cannot find harbor's own executable"))?;
     // setsid -f: the runner gets its own session and isn't Harbor's child, so neither
     // a reload (exec) nor Harbor exiting reaches it.
     Command::new("setsid")
@@ -181,6 +219,7 @@ pub fn leftovers() -> Vec<(PathBuf, Meta)> {
         let dir = e.path();
         match std::fs::read_to_string(dir.join("meta.json")).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()) {
             Some(m) => v.push((dir, m)),
+            None if runners().iter().any(|r| r.1 == dir) => {}
             None => {
                 let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_none_or(|a| a > KEEP);
                 if old {
@@ -261,7 +300,10 @@ impl crate::app::App {
         for (dir, meta) in leftovers() {
             let id = meta.chat_id;
             if self.chat(id).is_none() || self.turns.contains_key(&id) {
-                let _ = std::fs::remove_dir_all(&dir);
+                // Never pull a folder from under a runner that is still going.
+                if !alive(meta.pid, meta.pid_start) {
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
                 continue;
             }
             // The runner died without an exit code (a reboot, a logout) and wasn't stopped.
@@ -298,5 +340,76 @@ impl crate::app::App {
         }
         self.notice(chat_id, "restart", "The turn was cut off while Harbor was away · continuing", "");
         self.start_turn(chat_id, RESTARTED.into(), vec![], ctx);
+    }
+}
+
+impl crate::app::App {
+    /// A runner of this chat that Harbor isn't following (it lost track of it, say its
+    /// folder vanished before a reload) is taken back by its pid, so the chat counts as
+    /// busy and what's sent meanwhile waits for it. True if one was found.
+    pub fn adopt_runner(&mut self, chat_id: i64, ctx: &eframe::egui::Context) -> bool {
+        let Some((_, dir, pid)) = runners().into_iter().find(|r| r.0 == chat_id) else { return false };
+        let meta = std::fs::read_to_string(dir.join("meta.json")).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()).unwrap_or(Meta {
+            chat_id,
+            kind: crate::providers::Kind::Claude.label().to_string(),
+            started: crate::store::now(),
+            base: usize::MAX,
+            pid,
+            pid_start: proc_start(pid).unwrap_or(0),
+        });
+        // Its folder is gone: give the runner one back with its input closed, so the
+        // agent finishes what it's doing and exits (the runner looks for `in.closed` by
+        // path); its exit code lands there too.
+        if !dir.exists() && std::fs::create_dir_all(&dir).is_ok() {
+            let _ = std::fs::write(dir.join("in.closed"), "");
+        }
+        self.notice(chat_id, "alert", "A turn of this chat was still running: new messages wait for it", "");
+        let turn = crate::agent::reattach(dir, meta, self.tx.clone(), crate::app::turn_wake(ctx, chat_id));
+        self.turns.insert(chat_id, (turn, Instant::now()));
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn finds_the_chat_of_a_runner() {
+        let root = Path::new("/home/u/.local/state/harbor/turns");
+        assert_eq!(runner_chat(&args(&["/x/harbor", "turn", "/home/u/.local/state/harbor/turns/23-1792605157067846264"]), root), Some(23));
+        // Its folder may be gone: the command line still names it.
+        assert_eq!(runner_chat(&args(&["/x/harbor (deleted)", "turn", "/home/u/.local/state/harbor/turns/7-1"]), root), Some(7));
+    }
+
+    #[test]
+    fn ignores_other_processes_and_other_harbors() {
+        let root = Path::new("/home/u/.local/state/harbor/turns");
+        assert_eq!(runner_chat(&args(&["/x/harbor", "mcp", "--chat", "23"]), root), None);
+        assert_eq!(runner_chat(&args(&["/x/harbor"]), root), None);
+        // A test instance's turns live in another folder.
+        assert_eq!(runner_chat(&args(&["/x/harbor", "turn", "/home/u/.local/state/harbor/turns-0a1b2c3d4e5f/23-1"]), root), None);
+        assert_eq!(runner_chat(&args(&["/x/harbor", "turn", "/elsewhere/23-1"]), root), None);
+    }
+
+    #[test]
+    fn sees_a_live_runner_by_its_process() {
+        // `python3 turn <dir>` (a script named "turn") has a runner's command line.
+        let tmp = std::env::temp_dir().join(format!("harbor-runner-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("turn"), "import time\ntime.sleep(10)\n").unwrap();
+        let dir = root().join("424242-1");
+        let mut p = Command::new("python3").current_dir(&tmp).arg("turn").arg(&dir).spawn().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        let found = runners().into_iter().find(|r| r.0 == 424242);
+        let _ = p.kill();
+        let _ = p.wait();
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(found.map(|r| (r.1, r.2)), Some((dir, p.id())));
+        assert!(!runners().iter().any(|r| r.0 == 424242), "gone once it exits");
     }
 }

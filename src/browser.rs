@@ -361,12 +361,26 @@ pub fn missing_ui(ui: &mut Ui, t: &Tokens) -> (bool, bool) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| {
         ui.label(egui::RichText::new(ic::GLOBE).size(28.0).color(t.subtle()));
-        w::text(ui, "Browser engine not built", "heading-16");
-        w::subtle(ui, "It's a separate program (Servo), so Harbor stays small. The first build takes a while.", "label-13");
+        // Installed copies download the engine; a source checkout builds it.
+        let download = source_dir().is_none() && crate::update::managed();
+        let failed = crate::update::browser_result().and_then(|r| r.err());
+        let working = download && crate::update::busy();
+        w::text(ui, if download { "Browser engine not installed" } else { "Browser engine not built" }, "heading-16");
+        let note = match (&failed, download) {
+            (Some(e), _) => format!("The download failed: {e}"),
+            (None, true) => "It's a separate download (Servo, about 40 MB), so Harbor stays small.".into(),
+            (None, false) => "It's a separate program (Servo), so Harbor stays small. The first build takes a while.".into(),
+        };
+        w::subtle(ui, note, "label-13");
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.add_space((ui.available_width() - 220.0).max(0.0) / 2.0);
-            if w::btn(&format!("{}  Build engine", ic::HAMMER)).primary().show(ui).clicked() {
+            let label = match (download, working) {
+                (true, true) => "Installing…".to_string(),
+                (true, false) => format!("{}  Install engine", ic::DOWNLOAD),
+                _ => format!("{}  Build engine", ic::HAMMER),
+            };
+            if w::btn(&label).primary().enabled(!working).show(ui).clicked() {
                 build = true;
             }
             if w::btn("Close").outline().show(ui).clicked() {

@@ -44,7 +44,8 @@
       <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
       <button type="button" id="copy" aria-label="Copy install command">Copy</button>
     </div>
-    <p class="note">x86_64 Linux. Install the agent CLIs you want to use (for example <code>claude</code>, <code>codex</code>, <code>gemini</code>) and sign in to them first.</p>
+    <p class="note">Linux x86_64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. Installs into <code>~/.local</code> without sudo and updates itself.
+    Needs a coding-agent CLI such as <code>claude</code>, <code>codex</code> or <code>gemini</code>. Optional browser engine: add <code>sh -s -- --with-browser</code>. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> (signed with minisign).</p>
   </section>
 
   <section class="shot wrap" aria-label="Harbor window (illustration)">

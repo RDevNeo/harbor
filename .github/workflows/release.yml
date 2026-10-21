@@ -1,0 +1,261 @@
+# Builds Harbor for Linux x86_64 and publishes a GitHub Release on a v* tag.
+#
+# Assets: harbor-x86_64-linux.tar.gz (harbor + harbor-stream + desktop entry, icons, licences,
+# install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
+# SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with
+# the public key in src/update.rs.
+#
+# Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FFMPEG_TAG: n9.0.2
+  MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+  MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+
+jobs:
+  core:
+    # Oldest supported base: the binary needs glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: core
+      - name: Updater tests (version order, signatures)
+        run: cargo test --locked update::
+      - run: cargo build --release --locked
+        env:
+          HARBOR_GIT_SHA: ${{ github.sha }}
+      - run: ldd target/release/harbor && ./target/release/harbor --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harbor
+          path: target/release/harbor
+
+  stream:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nasm pkg-config clang libclang-dev libva-dev libssl-dev libopus-dev libasound2-dev
+      # A decoder-only FFmpeg (H.264/HEVC + VAAPI, swscale), static and LGPL (no --enable-gpl).
+      - uses: actions/cache@v4
+        id: ffmpeg
+        with:
+          path: ~/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-ubuntu22-v1
+      - name: Build FFmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/$FFMPEG_TAG.tar.gz" | tar -xz -C /tmp
+          cd "/tmp/FFmpeg-$FFMPEG_TAG"
+          ./configure --prefix="$HOME/ffmpeg" --enable-static --disable-shared --enable-pic \
+            --disable-programs --disable-doc --disable-network --disable-autodetect \
+            --disable-avformat --disable-avdevice --disable-avfilter --disable-swresample \
+            --disable-everything --enable-decoder=h264,hevc --enable-parser=h264,hevc \
+            --enable-vaapi --enable-hwaccel=h264_vaapi,hevc_vaapi
+          make -j"$(nproc)"
+          make install
+          cp COPYING.LGPLv2.1 "$HOME/ffmpeg/COPYING.LGPLv2.1"
+          grep 'define FFMPEG_LICENSE "LGPL' config.h
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stream
+          key: stream
+      - name: Build harbor-stream
+        working-directory: stream
+        env:
+          FFMPEG_DIR: /home/runner/ffmpeg
+          RUSTFLAGS: -C link-arg=-lva-drm -C link-arg=-lva
+        run: cargo build --release --locked --features ffmpeg-sys-next/static
+      - name: No system FFmpeg linked
+        run: |
+          ldd stream/target/release/harbor-stream
+          ! ldd stream/target/release/harbor-stream | grep -E 'libav|libsw'
+      - run: |
+          mkdir out && cp stream/target/release/harbor-stream out/
+          cp ~/ffmpeg/COPYING.LGPLv2.1 out/FFmpeg-LGPL-2.1.txt
+          echo "FFmpeg $FFMPEG_TAG, configured: decoders h264,hevc; parsers h264,hevc; vaapi; swscale; static, LGPL" > out/FFmpeg-BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harbor-stream
+          path: out/
+
+  browser:
+    # Servo's prebuilt SpiderMonkey wants a newer base; the engine is optional, so it may need
+    # glibc 2.39+ (Ubuntu 24.04, Debian 13, Arch, …) while Harbor itself runs on older systems.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      # Rebuilt only when browser/ changes: the id is the git tree hash of browser/.
+      - name: Engine id
+        id: id
+        run: echo "id=$(git rev-parse HEAD:browser)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: bin
+        with:
+          path: out/harbor-browser
+          key: harbor-browser-bin-${{ steps.id.outputs.id }}
+      - name: Reuse the previous release's engine
+        id: prev
+        if: steps.bin.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p out /tmp/prev
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'harbor-browser-x86_64-linux.tar.gz' --dir /tmp/prev 2>/dev/null \
+             && tar -xzf /tmp/prev/harbor-browser-x86_64-linux.tar.gz -C /tmp/prev \
+             && [ "$(cat /tmp/prev/harbor-browser-x86_64-linux/browser.id)" = "${{ steps.id.outputs.id }}" ]; then
+            cp /tmp/prev/harbor-browser-x86_64-linux/harbor-browser out/
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Free disk space
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Install Servo build dependencies
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm-dev libclang-dev cmake python3 pkg-config m4 gperf \
+            libfontconfig-dev libfreetype-dev libx11-dev libxkbcommon-dev libwayland-dev libegl-dev libgl-dev \
+            libgles-dev libudev-dev libdbus-1-dev libunwind-dev
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+        with:
+          workspaces: browser
+          key: browser
+      - name: Build harbor-browser
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+        working-directory: browser
+        run: |
+          cargo build --release --locked
+          mkdir -p ../out && cp target/release/harbor-browser ../out/
+      - run: ldd out/harbor-browser && echo "${{ steps.id.outputs.id }}" > out/browser.id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harbor-browser
+          path: out/
+
+  package:
+    needs: [core, stream, browser]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - name: Third-party licences
+        continue-on-error: true
+        run: |
+          mkdir -p lic
+          cargo about generate -c packaging/about.toml packaging/about.hbs -o lic/harbor.html
+          (cd stream && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-stream.html)
+          (cd browser && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-browser.html)
+      - name: Assemble
+        run: |
+          set -eu
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          mkdir -p dist
+          d=pkg/harbor-x86_64-linux
+          mkdir -p "$d/licenses"
+          install -m755 art/harbor/harbor "$d/harbor"
+          install -m755 art/harbor-stream/harbor-stream "$d/harbor-stream"
+          install -m755 packaging/install.sh "$d/install.sh"
+          cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
+          rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$d/harbor-256.png"
+          echo "$ver" > "$d/VERSION"
+          cp art/harbor-browser/browser.id "$d/browser.id"
+          cp LICENSE "$d/licenses/Harbor-MIT.txt"
+          cp stream/LICENSE "$d/licenses/harbor-stream-GPL-3.0.txt"
+          cp art/harbor-stream/FFmpeg-LGPL-2.1.txt art/harbor-stream/FFmpeg-BUILD.txt "$d/licenses/"
+          cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
+          cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
+          cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
+          [ -f lic/harbor.html ] && cp lic/harbor.html "$d/licenses/third-party-harbor.html"
+          [ -f lic/harbor-stream.html ] && cp lic/harbor-stream.html "$d/licenses/third-party-harbor-stream.html"
+          cat > "$d/licenses/README.txt" <<EOF
+          Harbor is MIT licensed. harbor-stream is a separate program under GPL-3.0-or-later
+          (it includes moonlight-common-c, GPL-3.0, and a static LGPL-2.1+ FFmpeg). Its source
+          code is at https://github.com/$GITHUB_REPOSITORY/tree/v$ver/stream
+          EOF
+          tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
+
+          b=pkg/harbor-browser-x86_64-linux
+          mkdir -p "$b/licenses"
+          install -m755 art/harbor-browser/harbor-browser "$b/harbor-browser"
+          cp art/harbor-browser/browser.id "$b/browser.id"
+          cp browser/LICENSE "$b/licenses/harbor-browser-MIT.txt"
+          [ -f lic/harbor-browser.html ] && cp lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
+          echo "harbor-browser is MIT; it links Servo (MPL-2.0), whose source is at https://github.com/servo/servo" > "$b/licenses/README.txt"
+          tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
+
+          cp packaging/install.sh dist/install.sh
+          (cd dist && sha256sum harbor-x86_64-linux.tar.gz harbor-browser-x86_64-linux.tar.gz install.sh > SHA256SUMS)
+          ls -la dist
+      - name: Sign
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -eu
+          [ -n "$MINISIGN_SECRET_KEY" ] || { echo "::error::MINISIGN_SECRET_KEY is not set"; exit 1; }
+          curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
+          echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
+          tar -xzf /tmp/minisign.tgz -C /tmp 2>/dev/null
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          for f in dist/harbor-x86_64-linux.tar.gz dist/harbor-browser-x86_64-linux.tar.gz dist/install.sh dist/SHA256SUMS; do
+            /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
+          done
+          rm -f /tmp/minisign.key
+          /tmp/minisign-linux/x86_64/minisign -Vm dist/harbor-x86_64-linux.tar.gz -p packaging/minisign.pub
+      - uses: actions/attest-build-provenance@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          subject-path: |
+            dist/harbor-x86_64-linux.tar.gz
+            dist/harbor-browser-x86_64-linux.tar.gz
+            dist/install.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ver="${GITHUB_REF_NAME#v}"
+          # This version's CHANGELOG section, then GitHub's generated notes.
+          awk -v v="$ver" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          printf '\n**Install:** `curl -fsSL https://github.com/%s/releases/latest/download/install.sh | sh`\n' "$GITHUB_REPOSITORY" >> notes.md
+          pre=""
+          case "$ver" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Harbor $ver" --notes-file notes.md --generate-notes $pre

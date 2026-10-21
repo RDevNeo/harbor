@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Third-party licences</title>
+<style>body{font:14px/1.5 sans-serif;max-width:860px;margin:2em auto;padding:0 1em}pre{white-space:pre-wrap;background:#f4f4f4;padding:1em}</style>
+</head><body>
+<h1>Third-party licences</h1>
+<p>Open-source crates compiled into this program, grouped by licence.</p>
+{{#each licenses}}
+<h2>{{name}}</h2>
+<p>Used by: {{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}</p>
+<pre>{{text}}</pre>
+{{/each}}
+</body></html>

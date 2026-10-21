@@ -61,7 +61,7 @@ h1 { margin: 0; font-size: clamp(48px, 9vw, 80px); line-height: 1; font-weight: 
   background: var(--gray200); color: var(--gray1000); font: 600 13px Geist, sans-serif; cursor: pointer;
 }
 .cmd button:hover { background: var(--gray300); }
-.note { color: var(--gray600); font-size: 13px; margin-top: 14px; }
+.note { max-width: 760px; margin: 14px auto 0; color: var(--gray600); font-size: 13px; }
 
 /* Illustration of the app window. */
 .shot { padding-bottom: 32px; }

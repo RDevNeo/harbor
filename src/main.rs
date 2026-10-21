@@ -36,6 +36,7 @@ mod teamui;
 mod terminal;
 mod theme;
 mod undo;
+mod update;
 mod waiting;
 mod widgets;
 mod yuv;
@@ -44,6 +45,10 @@ use eframe::egui;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
+    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V")) {
+        println!("harbor {}", update::version_label());
+        return Ok(());
+    }
     if args.get(1).map(String::as_str) == Some("mcp") {
         mcpshim::run(&args[2..]);
         return Ok(());

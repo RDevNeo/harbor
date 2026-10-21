@@ -12,9 +12,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
-fn stamp(p: &PathBuf) -> Option<(SystemTime, u64)> {
+/// A new build is written in place; an update or a package manager renames a new file over
+/// it (another inode, possibly the same size and time).
+fn stamp(p: &PathBuf) -> Option<(SystemTime, u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
     let m = std::fs::metadata(p).ok()?;
-    Some((m.modified().ok()?, m.len()))
+    Some((m.modified().ok()?, m.len(), m.ino()))
 }
 
 /// Watches the executable; sets `ready` once a different build has finished writing.
@@ -154,7 +157,7 @@ impl App {
         for d in [Dock::Right, Dock::Bottom] {
             self.drop_surfaces(d);
         }
-        let Ok(exe) = std::env::current_exe().map(|p| PathBuf::from(p.to_string_lossy().trim_end_matches(" (deleted)"))) else { return };
+        let Some(exe) = crate::update::self_exe() else { return };
         let args: Vec<String> = std::env::args().skip(1).collect();
         // Development hooks describe the first launch only.
         let err = std::process::Command::new(&exe).args(args).env_remove("HARBOR_VIEW").env_remove("HARBOR_POINTER").env(crate::single::RELOADED_PID, std::process::id().to_string()).exec();

@@ -471,6 +471,8 @@ impl App {
                             if let Some(dir) = browser::source_dir() {
                                 let cmd = "mise exec rust -- cargo build --release 2>/dev/null || cargo build --release; echo; echo 'Done: switch back to the Browser tab.'".to_string();
                                 self.open_terminal(&ctx, "Build browser", dir, vec!["bash".into(), "-lc".into(), cmd], vec![]);
+                            } else {
+                                crate::update::install_browser(&ctx);
                             }
                         }
                     }

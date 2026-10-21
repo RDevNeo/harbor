@@ -780,6 +780,17 @@ impl App {
 
     /// Starts one agent turn for a chat (user message, report, wake-up, webhook…).
     pub fn start_turn(&mut self, chat_id: i64, prompt: String, files: Vec<PathBuf>, ctx: &egui::Context) {
+        // One turn per chat. A runner still going for it, even one this Harbor lost
+        // track of, holds the session: the prompt waits for that turn instead.
+        if self.turns.contains_key(&chat_id) || self.adopt_runner(chat_id, ctx) {
+            let mut p = prompt;
+            for f in &files {
+                p.push_str(&format!("\n(attached: {})", f.display()));
+            }
+            self.pending.entry(chat_id).or_default().push(p);
+            self.persist(chat_id);
+            return;
+        }
         // An account at its usage limit takes no turns: the prompt waits for the reset.
         if self.limit_guard(chat_id, &prompt, &files) {
             return;
@@ -1143,6 +1154,7 @@ impl eframe::App for App {
         if let Some(next) = self.fire_limit_timers(ctx) {
             ctx.request_repaint_after(next);
         }
+        crate::update::tick(self.auto_update(), ctx);
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
         if !dropped.is_empty() && !crate::devices::claims_drop(ctx) {
             let key = self.key();
