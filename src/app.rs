@@ -53,6 +53,7 @@ pub enum Tab {
     Limits,
     Integrations,
     Webhooks,
+    Devices,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -64,6 +65,8 @@ pub enum Popup {
     Filter,
     /// Snooze menu for `App::snooze_for` (a chat or a project).
     Snooze,
+    /// Which device the agent runs on.
+    Device,
 }
 
 pub enum Dialog {
@@ -91,6 +94,8 @@ pub struct Sel {
     pub model: String,
     pub effort: String,
     pub access: String,
+    /// remote.rs `Host::id`; empty: this PC.
+    pub device: String,
 }
 
 pub struct Draft {
@@ -189,6 +194,10 @@ pub struct App {
     /// A new build of Harbor is on disk; reload when it's a good moment.
     pub update_ready: Arc<std::sync::atomic::AtomicBool>,
     pub hold_reload: bool,
+    /// The IME composition in progress, as its last pre-edit (see [`drop_idle_ime`]).
+    ime_preedit: Option<egui::Event>,
+    /// The Update button was clicked: reload as soon as the new version is on disk.
+    pub reload_asked: bool,
     /// Long-running processes Harbor owns (dev servers, watchers, data pulls).
     pub procs: Vec<crate::procs::Proc>,
     pub proc_tx: Sender<crate::procs::ProcEvent>,
@@ -200,6 +209,9 @@ pub struct App {
     /// Chats whose turn was cut off while Harbor was away (the runner died, as in a
     /// reboot): they continue when its replay ends, if `resume_on_restart` is on.
     pub cut_off: HashSet<i64>,
+    /// Settings › Devices (remote.rs) and its page's state.
+    pub remote: crate::remote::Config,
+    pub devices_ui: crate::remoteui::State,
 }
 
 impl App {
@@ -229,6 +241,7 @@ impl App {
             model,
             effort: get("default_effort", ""),
             access: get("default_access", "full"),
+            device: get("default_device", ""),
         };
         let favorites = get("favorites", "")
             .split(',')
@@ -299,6 +312,8 @@ impl App {
             team_docks: true,
             update_ready: crate::reload::new_flag(),
             hold_reload: false,
+            ime_preedit: None,
+            reload_asked: false,
             procs: vec![],
             proc_tx,
             proc_rx,
@@ -306,8 +321,11 @@ impl App {
             keys: Default::default(),
             settings_back: View::Draft,
             cut_off: HashSet::new(),
+            remote: Default::default(),
+            devices_ui: Default::default(),
         };
         app.keys = crate::keys::Keys::load(&app.store);
+        app.remote = crate::remote::load(&app.store);
         app.timers = app.store.timers();
         app.webhooks = app.store.webhooks();
         app.sync_tokens();
@@ -357,6 +375,10 @@ impl App {
                 self.open(View::Draft);
                 self.popup = Some(Popup::Model);
                 self.picker = Picker { rail: Some(self.draft.sel.account.clone()), just_opened: true, ..Default::default() };
+            }
+            "device" => {
+                self.open(View::Draft);
+                self.popup = Some(Popup::Device);
             }
             "effort" => {
                 if let Some(r) = self.repos.first().map(|r| r.id) {
@@ -456,7 +478,7 @@ impl App {
         match self.view {
             View::Chat(id) => self
                 .chat(id)
-                .map(|c| Sel { account: c.account.clone(), model: c.model.clone(), effort: c.effort.clone(), access: c.access.clone() })
+                .map(|c| Sel { account: c.account.clone(), model: c.model.clone(), effort: c.effort.clone(), access: c.access.clone(), device: c.device.clone() })
                 .unwrap_or_else(|| self.draft.sel.clone()),
             _ => self.draft.sel.clone(),
         }
@@ -472,7 +494,7 @@ impl App {
                 s.access = providers::access(kind)[0].0.into();
             }
         }
-        for (k, v) in [("default_account", &s.account), ("default_model", &s.model), ("default_effort", &s.effort), ("default_access", &s.access)] {
+        for (k, v) in [("default_account", &s.account), ("default_model", &s.model), ("default_effort", &s.effort), ("default_access", &s.access), ("default_device", &s.device)] {
             self.store.set(k, v);
         }
         self.draft.sel = s.clone();
@@ -482,6 +504,10 @@ impl App {
                 c.model = s.model;
                 c.effort = s.effort;
                 c.access = s.access;
+                // The session lives on the device it started on.
+                if !c.started {
+                    c.device = s.device;
+                }
                 let c = c.clone();
                 self.store.save_chat(&c);
             }
@@ -801,6 +827,14 @@ impl App {
             let items = self.store.items(chat_id);
             self.transcripts.insert(chat_id, Transcript { items, ..Default::default() });
         }
+        let remote = match self.remote_spec(&chat, &account, ctx) {
+            Ok(r) => r,
+            Err(e) => {
+                self.transcripts.get_mut(&chat_id).unwrap().items.push(Item::Error { text: e });
+                self.persist(chat_id);
+                return;
+            }
+        };
         let spec = agent::TurnSpec {
             chat_id,
             cwd: self.cwd_of(chat.repo_id),
@@ -815,6 +849,7 @@ impl App {
             team: self.team_for(&chat),
             fast: self.fast,
             base: self.transcripts.get(&chat_id).map_or(0, |t| t.items.len()),
+            remote,
         };
         let wake = turn_wake(ctx, chat_id);
         let tr = self.transcripts.get_mut(&chat_id).unwrap();
@@ -1078,6 +1113,7 @@ impl eframe::App for App {
         // Browser pages and device screens copy their own selection on Ctrl+C/X.
         let keep_copy_keys = (0..2usize).any(|i| focused == Some(Id::NULL.with(("browser-page", i))) || focused == Some(Id::NULL.with(("device-view", i))));
         crate::clipboard::shortcuts(raw, in_terminal, keep_copy_keys);
+        drop_idle_ime(raw, &mut self.ime_preedit);
         self.paste_attachments(ctx, raw);
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         static CLICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -1408,6 +1444,24 @@ impl App {
             }
         }
     }
+}
+
+/// Drops the IME events that change nothing: empty pre-edits and commits while
+/// nothing is being composed, and a pre-edit repeated as is. On Wayland with an
+/// input method (fcitx5, ibus), every `set_ime_cursor_area` is a text-input commit
+/// that the compositor answers with `done`, which winit turns into a pre-edit
+/// event (`Preedit("")` when idle); egui-winit sets the cursor area again on any
+/// frame with input events, so a focused text field would repaint at the
+/// monitor's refresh rate for as long as the window has focus. egui's TextEdit
+/// ignores the empty ones outside a composition anyway.
+fn drop_idle_ime(raw: &mut egui::RawInput, preedit: &mut Option<egui::Event>) {
+    use egui::{Event, ImeEvent};
+    raw.events.retain(|e| match e {
+        Event::Ime(ImeEvent::Preedit { text, .. }) if text.is_empty() => preedit.take().is_some(),
+        Event::Ime(ImeEvent::Preedit { .. }) => preedit.replace(e.clone()).as_ref() != Some(e),
+        Event::Ime(ImeEvent::Commit(text)) => preedit.take().is_some() || !text.is_empty(),
+        _ => true,
+    });
 }
 
 /// Repaints for a turn's events: while its chat is on screen at most 20 fps (a

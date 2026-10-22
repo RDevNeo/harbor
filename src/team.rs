@@ -104,6 +104,7 @@ impl App {
             role: Role::Lead,
             parent: None,
             name: "lead".into(),
+            device: sel.device,
         });
         let id = chat.id;
         self.chats.push(chat);
@@ -133,6 +134,7 @@ impl App {
             role: Role::Lead,
             parent: None,
             name: "lead".into(),
+            device: sel.device,
         });
         let id = chat.id;
         self.chats.push(chat);
@@ -527,6 +529,8 @@ impl App {
                     role: Role::Sub,
                     parent: Some(lead_id),
                     name: name.clone(),
+                    // Claude subagents run where their lead does; other CLIs only run here.
+                    device: if acc.kind == Kind::Claude { me.device.clone() } else { String::new() },
                 });
                 let id = chat.id;
                 self.chats.push(chat);

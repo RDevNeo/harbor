@@ -354,7 +354,7 @@ fn desktop_icons(r: &Path) -> Vec<PathBuf> {
 // ------------------------------------------------------------ decoding
 
 /// Decodes a PNG/ICO/JPEG/WebP/GIF or SVG file into a SIZE x SIZE square.
-fn decode(p: &Path) -> Option<egui::ColorImage> {
+pub fn decode(p: &Path) -> Option<egui::ColorImage> {
     let bytes = std::fs::read(p).ok()?;
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_lowercase();
     let is_svg = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) || head.contains("<svg") || head.starts_with("<?xml");

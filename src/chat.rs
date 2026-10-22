@@ -24,6 +24,24 @@ struct Row {
     enabled: bool,
 }
 
+/// How far beyond the visible part of a transcript messages are still laid out.
+const CULL_MARGIN: f32 = 800.0;
+
+/// Tells items apart cheaply, so a remembered height never belongs to another item
+/// after the list changes (an undone send, a queued message shown in place).
+fn item_sig(item: &Item) -> (u8, usize) {
+    match item {
+        Item::User { text, files, mentions, .. } => (0, text.len() + files.len() + mentions.len()),
+        Item::Text { text, .. } => (1, text.len()),
+        Item::Thinking { text } => (2, text.len()),
+        Item::Tool { input, result, .. } => (3, input.len() + result.as_ref().map_or(0, |r| r.len() + 1)),
+        Item::Result { output_tokens, .. } => (4, *output_tokens as usize),
+        Item::Error { text } => (5, text.len()),
+        Item::Notice { text, detail, .. } => (6, text.len() + detail.len()),
+        Item::Message { text, .. } => (7, text.len()),
+    }
+}
+
 pub fn centered(ui: &mut Ui, max: f32, add: impl FnOnce(&mut Ui)) {
     let avail = ui.available_width();
     // 24pt gutters, narrowing to 12pt on small columns.
@@ -104,12 +122,20 @@ impl App {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     ui.add_space(4.0);
-                    if self.update_ready.load(std::sync::atomic::Ordering::Relaxed) {
-                        let tip = if self.turns.is_empty() { "Reload into the new build" } else { "Reload into the new build; running agents keep going" };
+                    if let Some(offer) = self.update_offered() {
+                        use crate::update::State;
+                        let keep = if self.turns.is_empty() { "" } else { "; running agents keep going" };
+                        let (text, tip) = match &offer {
+                            State::Available(v) => ("Update", format!("Install Harbor {v} and reload into it{keep}")),
+                            State::Installing(v) => ("Updating…", format!("Installing Harbor {v}…")),
+                            _ => ("Update ready", format!("Reload into the new build{keep}")),
+                        };
                         // Icon-only when the bar is narrow.
-                        let label = if row.width() < 560.0 { ic::REFRESH.to_string() } else { format!("{}  Update ready", ic::REFRESH) };
-                        if w::btn(&label).sm().primary().show(ui).on_hover_text(tip).clicked() {
-                            self.reload_now();
+                        let label = if row.width() < 560.0 { ic::REFRESH.to_string() } else { format!("{}  {text}", ic::REFRESH) };
+                        let installing = matches!(offer, State::Installing(_)) || (self.reload_asked && !matches!(offer, State::Available(_)));
+                        if w::btn(&label).sm().primary().enabled(!installing).show(ui).on_hover_text(tip).clicked() {
+                            let ctx = ui.ctx().clone();
+                            self.update_clicked(&ctx);
                         }
                         ui.add_space(6.0);
                     }
@@ -369,6 +395,20 @@ impl App {
                 }
             }
             let top = ui.cursor().top();
+            // Far off screen: a message whose height is known at this width is only
+            // space, not laid out or painted. Long chats would otherwise lay out every
+            // message on every frame. The last few (still streaming) always draw.
+            let height_key = Id::NULL.with(("item-height", id, i, item_sig(item)));
+            let flashing = self.mentions.flash.is_some_and(|(c, f, _, _)| c == id && f == i);
+            if i + 3 < tr.items.len() && !flashing {
+                if let Some((w, h)) = ui.data(|d| d.get_temp::<(f32, f32)>(height_key)) {
+                    let view = ui.clip_rect();
+                    if w == width && (top > view.bottom() + CULL_MARGIN || top + h < view.top() - CULL_MARGIN) {
+                        ui.add_space(h);
+                        continue;
+                    }
+                }
+            }
             match item {
                 Item::User { text, files, at, mentions } => {
                     let bubble = ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
@@ -654,6 +694,7 @@ impl App {
             // A mention chip was clicked: this item scrolls into view and lights up.
             let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=(ui.cursor().top() - 12.0).max(top));
             self.mentions.flash(ui, id, i, rect);
+            ui.data_mut(|d| d.insert_temp(height_key, (width, ui.cursor().top() - top)));
         }
         if let Some(f) = fork_dividers(ui, &forks, tr.items.len()) {
             action = Some(MsgAction::Open(f));
@@ -837,6 +878,13 @@ impl App {
                 } else if self.popup == Some(Popup::Access) {
                     self.popup_anchor = r.rect;
                 }
+                w::vsep(ui, 18.0);
+                let r = self.device_trigger(ui, compact, &sel);
+                if r.clicked() {
+                    open = Some((Popup::Device, r.rect));
+                } else if self.popup == Some(Popup::Device) {
+                    self.popup_anchor = r.rect;
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     if running.is_some() {
@@ -1018,6 +1066,7 @@ impl App {
                 let ((), close) = w::popover(ctx, "filter", anchor, 260.0, false, &t, |ui| self.filter_menu(ui));
                 close
             }
+            Popup::Device => self.device_menu(ctx),
             Popup::Snooze => {
                 let ((), close) = w::popover(ctx, "snooze", anchor, 220.0, false, &t, |ui| self.snooze_menu(ui));
                 close

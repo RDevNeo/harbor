@@ -37,7 +37,7 @@ pub fn rows(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 7] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Webhooks];
+    pub const ALL: [Tab; 8] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Webhooks];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -48,6 +48,7 @@ impl Tab {
             Tab::Limits => "Usage limits",
             Tab::Integrations => "Integrations",
             Tab::Webhooks => "Webhooks",
+            Tab::Devices => "Devices",
         }
     }
 
@@ -60,6 +61,7 @@ impl Tab {
             Tab::Limits => ic::GAUGE,
             Tab::Integrations => ic::PLUG,
             Tab::Webhooks => ic::WEBHOOK,
+            Tab::Devices => ic::MONITOR,
         }
     }
 
@@ -73,6 +75,7 @@ impl Tab {
             Tab::Limits => "limits",
             Tab::Integrations => "integrations",
             Tab::Webhooks => "webhooks",
+            Tab::Devices => "devices",
         }
     }
 
@@ -90,6 +93,7 @@ impl Tab {
             Tab::Limits => "usage limit quota wait weekly switch accounts notify",
             Tab::Integrations => "apps mcp servers sign in tools",
             Tab::Webhooks => "hooks tailscale funnel public url",
+            Tab::Devices => "remote machines pcs tailscale ssh run agents elsewhere mcp bridge",
         }
     }
 
@@ -102,6 +106,7 @@ impl Tab {
             Tab::Limits => "What a thread does when its account hits a usage limit.",
             Tab::Integrations => "",
             Tab::Webhooks => "",
+            Tab::Devices => "Run agents on your other PCs. They work in that PC's folders, with this PC's MCP servers and apps.",
         }
     }
 }
@@ -150,6 +155,7 @@ impl App {
                     Tab::Limits => self.limits_settings(ui),
                     Tab::Integrations => self.integrations_tab(ui),
                     Tab::Webhooks => self.webhooks_tab(ui),
+                    Tab::Devices => self.devices_tab(ui),
                 }
                 ui.add_space(40.0);
             });
@@ -199,7 +205,7 @@ impl App {
         self.updates_rows(ui);
     }
 
-    /// Version, "Install updates automatically", Check now / Install / Restore previous.
+    /// Version, Updates (Ask me / Automatically), Check now / Install / Restore previous.
     fn updates_rows(&mut self, ui: &mut Ui) {
         use crate::update::{self as up, State};
         let ctx = ui.ctx().clone();
@@ -213,7 +219,8 @@ impl App {
             State::UpToDate => "Harbor is up to date.".into(),
             State::Available(v) => format!("Harbor {v} is available."),
             State::Installing(v) => format!("Installing {v}…"),
-            State::Installed(v) => format!("Harbor {v} is installed. It takes over the next time this window is focused; running agents carry on."),
+            State::Installed(v) if auto => format!("Harbor {v} is installed. It takes over the next time this window is focused; running agents carry on."),
+            State::Installed(v) => format!("Harbor {v} is installed. Click Update ready at the top to switch to it; running agents carry on."),
             State::Failed(e) => format!("The last update failed: {e}"),
         };
         rows(ui, |ui| {
@@ -223,7 +230,7 @@ impl App {
                 }
                 if let State::Available(v) = up::state() {
                     if w::btn(&format!("Install {v}")).sm().primary().enabled(!busy).show(ui).clicked() {
-                        up::install_now(&ctx);
+                        self.update_clicked(&ctx);
                     }
                 }
                 if w::btn("Check now").sm().outline().enabled(!busy).show(ui).clicked() {
@@ -233,16 +240,22 @@ impl App {
             w::separator(ui);
             w::setting_row(
                 ui,
-                "Install updates automatically",
-                "New versions are downloaded from GitHub, their signature checked, and swapped in without losing your place. Off, Harbor only says when one is out.",
+                "Updates",
+                "Ask me: an Update button appears at the top when a new version or build is out; clicking it installs it and reloads Harbor in place, without losing your place. Automatically: new versions are downloaded, their signature checked, and swapped in when the window is focused.",
                 |ui| {
-                    ui.add_enabled_ui(managed, |ui| w::toggle(ui, &mut auto));
+                    // Right to left: shows as "Ask me | Automatically".
+                    for (on, l) in [(true, "Automatically"), (false, "Ask me")] {
+                        if w::btn(l).sm().outline().pressed(auto == on).show(ui).clicked() {
+                            auto = on;
+                        }
+                    }
                 },
             );
             if managed && up::has_previous() {
                 w::separator(ui);
                 w::setting_row(ui, "Previous version", "The version before the last update is kept, in case the new one misbehaves.", |ui| {
                     if w::btn("Restore it").sm().outline().enabled(!busy).show(ui).clicked() {
+                        self.reload_asked = true;
                         up::restore_previous(&ctx);
                     }
                 });
@@ -433,7 +446,7 @@ impl App {
                                 w::badge(ui, "Default", Tone::Blue);
                             } else if w::btn("Make default").sm().variant(w::Variant::Ghost).show(ui).clicked() {
                                 let m = self.models_for(a.kind).iter().find(|m| !m.more).map(|m| m.id.clone()).unwrap_or_default();
-                                let s = crate::app::Sel { account: a.id.clone(), model: m, effort: String::new(), access: "full".into() };
+                                let s = crate::app::Sel { account: a.id.clone(), model: m, effort: String::new(), access: "full".into(), device: self.draft.sel.device.clone() };
                                 let v = self.view;
                                 self.view = View::Draft;
                                 self.set_sel(s);

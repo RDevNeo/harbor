@@ -1,0 +1,111 @@
+# The optional Servo engine, harbor-browser. Its id is the git tree hash of browser/, so it is
+# rebuilt only when browser/ changes. Looked up in this order: the actions cache, then the
+# latest release's harbor-browser-x86_64-linux.tar.gz. Servo is compiled only when neither has
+# this id AND the caller asks for it:
+#   - release.yml calls this with build=true on a v* tag (a release must ship the engine) and
+#     build=false on main pushes, which then just package no browser.
+#   - Run it by hand (Actions > browser > Run workflow, on main) after changing browser/, so
+#     the engine is cached on main and the next tag reuses it instead of compiling.
+name: browser
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: Compile Servo if no engine with this id is cached or released
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      build:
+        type: boolean
+        default: false
+    outputs:
+      found:
+        description: '"true" when the harbor-browser artifact was uploaded'
+        value: ${{ jobs.engine.outputs.found }}
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    # Servo's prebuilt SpiderMonkey wants a newer base; the engine is optional, so it may need
+    # glibc 2.39+ (Ubuntu 24.04, Debian 13, Arch, …) while Harbor itself runs on older systems.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    outputs:
+      found: ${{ steps.done.outputs.found }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Engine id
+        id: id
+        run: echo "id=$(git rev-parse HEAD:browser)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        id: bin
+        with:
+          path: out/harbor-browser
+          key: harbor-browser-bin-${{ steps.id.outputs.id }}
+      - name: Reuse the latest release's engine
+        id: prev
+        if: steps.bin.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p out /tmp/prev
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'harbor-browser-x86_64-linux.tar.gz' --dir /tmp/prev 2>/dev/null \
+             && tar -xzf /tmp/prev/harbor-browser-x86_64-linux.tar.gz -C /tmp/prev \
+             && [ "$(cat /tmp/prev/harbor-browser-x86_64-linux/browser.id)" = "${{ steps.id.outputs.id }}" ]; then
+            cp /tmp/prev/harbor-browser-x86_64-linux/harbor-browser out/
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compile?
+        id: need
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+        run: |
+          if [ "${{ inputs.build }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No prebuilt engine for browser/ ${{ steps.id.outputs.id }}; skipping the browser (run the browser workflow on main to build it)."
+          fi
+      - name: Free disk space
+        if: steps.need.outputs.build == 'true'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Install Servo build dependencies
+        if: steps.need.outputs.build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm-dev libclang-dev cmake python3 pkg-config m4 gperf \
+            libfontconfig-dev libfreetype-dev libx11-dev libxkbcommon-dev libwayland-dev libegl-dev libgl-dev \
+            libgles-dev libudev-dev libdbus-1-dev libunwind-dev
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.need.outputs.build == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.need.outputs.build == 'true'
+        with:
+          workspaces: browser
+          key: browser
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build harbor-browser
+        if: steps.need.outputs.build == 'true'
+        working-directory: browser
+        run: |
+          cargo build --release --locked
+          mkdir -p ../out && cp target/release/harbor-browser ../out/
+      # Saved on main (a manual run) it is restorable by every later tag and main push.
+      - uses: actions/cache/save@v6
+        if: steps.need.outputs.build == 'true'
+        with:
+          path: out/harbor-browser
+          key: ${{ steps.bin.outputs.cache-primary-key }}
+      - name: Engine found
+        id: done
+        if: steps.bin.outputs.cache-hit == 'true' || steps.prev.outputs.hit == 'true' || steps.need.outputs.build == 'true'
+        run: |
+          ldd out/harbor-browser && echo "${{ steps.id.outputs.id }}" > out/browser.id
+          echo "found=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        if: steps.done.outputs.found == 'true'
+        with:
+          name: harbor-browser
+          path: out/

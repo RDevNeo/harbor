@@ -7,13 +7,16 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
   Gemini, Meta (Muse) and OpenCode. Each is its own CLI, run headless per message; the conversation
   continues through the provider's session id. Nothing stays resident between turns.
 - **Composer**: model picker (favourites, provider rail with account badges, search, Ctrl+1–9),
-  reasoning effort, access level (full / auto-edit / read only), attachments (button, paste or drag and drop).
+  reasoning effort, access level (full / auto-edit / read only), the device it runs on, attachments
+  (button, paste or drag and drop).
+- **Remote devices**: a chat can run its Claude Code agent on another PC (Tailscale peers are found by
+  themselves, others are added by SSH). See below.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks.
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
 - **Side panes**: a browser (optional Servo helper, `browser/`), terminals, and Devices.
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
-  integrations, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
+  integrations, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
 - **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex presets plus custom
   servers, managed through `claude mcp` so the terminal CLI sees the same config.
 
@@ -60,6 +63,38 @@ Optional helpers, each built separately:
 (`remote-pcs`, a separate app) installed, found through `$HARBOR_REMOTE_DEVICES`, `remote-pcs` on `PATH`
 or `$XDG_DATA_HOME/remote-pcs/remote-pcs.py`. Without it, Devices isn't offered.
 
+### Running agents on another PC
+
+Settings › Devices lists the PCs on your tailnet (`tailscale status --json`) and SSH hosts you add, with
+a name, icon, user/key/port, the folder agents start in and a Test button. The composer's device menu
+("This PC" by default) pins a new chat to one of them; a started chat stays where its session is.
+
+- The turn runs `ssh <device> claude -p …` under Harbor's detached runner, so it streams, takes messages
+  mid-turn and survives a Harbor reload like a local turn. On the device it runs in a login shell, in the
+  device's folder (the project's path mirrored under its home, or the device's folder + project name),
+  under the device's own Claude login (`~/.claudeN` too, when the device has it). Only key-based ssh and
+  Claude Code are needed there.
+- **The bridge** (`src/bridge.rs`) gives the remote agent this PC's MCP servers: Harbor serves them on
+  `127.0.0.1` as streamable-HTTP MCP and `ssh -R` forwards that port to the device's `127.0.0.1`; the
+  remote `--mcp-config` points there, with a random per-turn token in each URL. Stdio servers (Omarchy,
+  Blender, Playwright, Harbor's own team tools…) run here; HTTP apps (GitHub, Vercel…) are proxied with
+  their tokens added here, so no credential is copied to the device. The bridge's own `origin` server
+  offers your `~/.claude/commands` and `~/.claude/skills` as prompts and, if the device is allowed it,
+  `run_command` on this PC.
+- **Work on this PC's files** (per device, on by default): the remote Claude runs without its own Bash,
+  Read, Write, Edit, Glob, Grep (and LSP, Monitor, worktrees) and starts in its home, so the project
+  needn't exist there; `origin` offers `bash`, `read`, `write`, `edit`, `glob` and `grep` instead
+  (`src/workspace.rs`), running here in the chat's project, so edits, builds and git commits happen in
+  one place. They follow Claude Code's tools (bash keeps its folder per chat, has timeouts and a
+  background option; edit is exact-string replace; grep is ripgrep), the project's `CLAUDE.md` files
+  go into the system prompt, and the chat's access applies: read only gets read/glob/grep, auto-edit adds
+  write/edit, full adds bash. Off: everything runs on the device, in its mirrored copy of the project.
+- Limits: Claude Code only (other CLIs stay local; their subagents of a remote lead run here); tested with
+  Linux devices (macOS should work, untested); a turn ends if the connection drops; `start_process` still starts processes
+  on this PC; with the device's own files, non-image attachments are paths on this PC; server-initiated MCP streams (sampling,
+  notifications) aren't carried; the per-turn token is visible in the device's process list, so treat the
+  device's other local users as trusted.
+
 ## Use
 
 Data: `~/.local/share/harbor/harbor.db` (SQLite). Override the agent binary with `HARBOR_CLAUDE`.
@@ -68,7 +103,8 @@ Keys: Enter send · Shift+Enter newline · Esc stop · Ctrl+N new chat · Ctrl+`
 rebind them in Settings → Keybindings.
 
 `HARBOR_VIEW=draft|picker|settings|usage|prs|terminal` opens a view at start (for screenshots); a settings
-page by name too (`general|appearance|keybindings|providers|limits|integrations|webhooks`).
+page by name too (`general|appearance|keybindings|providers|limits|integrations|devices|webhooks`);
+`device` opens the composer's device menu.
 
 ## Licences and credits
 

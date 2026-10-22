@@ -529,6 +529,8 @@ pub fn menu_item(ui: &mut Ui, icon: &str, label: &str, desc: Option<&str>, check
 pub enum Lead<'a> {
     Icon(&'a str),
     Provider(crate::providers::Kind, &'a str),
+    /// Painted by the caller in the icon's rect, with the trigger's text colour.
+    Paint(&'a dyn Fn(&egui::Painter, Rect, Color32)),
 }
 
 /// Composer control (model / effort / access): ghost-muted with icon, label, chevron.
@@ -548,6 +550,7 @@ pub fn trigger(ui: &mut Ui, lead: Lead, label: &str, open: bool) -> Response {
     match lead {
         Lead::Icon(i) => crate::icons::glyph(p, icon_rect.center(), i, 15.0, fg),
         Lead::Provider(k, badge) => crate::icons::account_mark(p, icon_rect.expand(2.0), k, badge, &t),
+        Lead::Paint(f) => f(p, icon_rect, fg),
     }
     let tx = icon_rect.right() + 6.0;
     p.galley(egui::pos2(tx, rect.center().y - g.size().y / 2.0), g.clone(), fg);

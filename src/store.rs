@@ -100,6 +100,8 @@ pub struct Chat {
     pub parent: Option<i64>,
     /// Short handle agents use to address each other.
     pub name: String,
+    /// The device its agent runs on (remote.rs `Host::id`); empty: this PC.
+    pub device: String,
 }
 
 /// One rendered entry in a chat transcript.
@@ -255,6 +257,15 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
             "BEGIN;
              ALTER TABLE timers ADD COLUMN kind TEXT NOT NULL DEFAULT 'wake';
              PRAGMA user_version=4;
+             COMMIT;",
+        )?;
+    }
+    if v < 5 {
+        // A chat's device: its agent runs there for the life of the chat.
+        db.execute_batch(
+            "BEGIN;
+             ALTER TABLE chats ADD COLUMN device TEXT NOT NULL DEFAULT '';
+             PRAGMA user_version=5;
              COMMIT;",
         )?;
     }
@@ -433,7 +444,7 @@ impl Store {
         let mut st = self
             .db
             .prepare(
-                "SELECT id, repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name
+                "SELECT id, repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device
                  FROM chats ORDER BY updated DESC",
             )
             .unwrap();
@@ -453,6 +464,7 @@ impl Store {
                 role: Role::parse(&r.get::<_, String>(11)?),
                 parent: r.get(12)?,
                 name: r.get(13)?,
+                device: r.get(14)?,
             })
         })
         .unwrap()
@@ -465,10 +477,10 @@ impl Store {
         c.updated = now();
         self.db
             .execute(
-                "INSERT INTO chats(repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                "INSERT INTO chats(repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated,
-                    c.role.as_str(), c.parent, c.name],
+                    c.role.as_str(), c.parent, c.name, c.device],
             )
             .unwrap();
         c.id = self.db.last_insert_rowid();
@@ -478,8 +490,8 @@ impl Store {
     pub fn save_chat(&self, c: &Chat) {
         let _ = self.db.execute(
             "UPDATE chats SET repo_id=?2, title=?3, session_id=?4, started=?5, account=?6, model=?7, effort=?8,
-                access=?9, settled=?10, updated=?11 WHERE id=?1",
-            params![c.id, c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated],
+                access=?9, settled=?10, updated=?11, device=?12 WHERE id=?1",
+            params![c.id, c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated, c.device],
         );
     }
 

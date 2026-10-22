@@ -1,0 +1,539 @@
+//! Devices in the UI: the composer's "runs on" picker and Settings › Devices
+//! (Tailscale, SSH defaults, every device's name, icon, folder and bridge).
+
+use crate::app::{App, Popup, Sel, Tab, View};
+use crate::icons as ic;
+use crate::pages::{rows, section};
+use crate::providers::{Account, Kind};
+use crate::remote::{self, Host};
+use crate::store::Chat;
+use crate::theme::{self, RADIUS_MD, Tokens};
+use crate::widgets::{self as w, Tone};
+use eframe::egui::{self, Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Painter, Rect, Response, ScrollArea, Sense, TextureId, Ui, Vec2, pos2};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+pub struct State {
+    /// The device whose settings are unfolded.
+    open: Option<String>,
+    add_name: String,
+    add_host: String,
+    add_user: String,
+    /// Devices whose picked image was just copied in (by the file chooser's thread).
+    picked: Arc<Mutex<Vec<String>>>,
+    /// Their images, by device id (None: the file didn't decode).
+    icons: HashMap<String, Option<egui::TextureHandle>>,
+}
+
+/// A device's mark: its image or glyph, with a dot when its online state is known.
+fn paint_mark(p: &Painter, rect: Rect, glyph: &str, tex: Option<TextureId>, online: Option<bool>, fg: Color32, t: &Tokens) {
+    match tex {
+        Some(id) => {
+            let r = rect.shrink(rect.width() * 0.06);
+            p.image(id, r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+        None => ic::glyph(p, rect.center(), glyph, rect.height() * 0.94, fg),
+    }
+    if let Some(on) = online {
+        let c = pos2(rect.right() - 1.0, rect.bottom() - 1.0);
+        let r = (rect.width() * 0.17).max(2.5);
+        p.circle_filled(c, r + 1.5, t.bg100);
+        p.circle_filled(c, r, if on { t.green(700) } else { t.gray(600) });
+    }
+}
+
+/// A menu row with a device mark (as `w::menu_item`), dimmed when it can't be picked.
+fn device_row(ui: &mut Ui, mark: impl Fn(&Painter, Rect, Color32), label: &str, desc: &str, checked: bool, enabled: bool) -> Response {
+    let t = w::tokens(ui);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), if enabled { Sense::click() } else { Sense::hover() });
+    let p = ui.painter();
+    if resp.hovered() && enabled {
+        p.rect_filled(rect, CornerRadius::same(RADIUS_MD), t.gray(100));
+    }
+    let a = if enabled { 1.0 } else { 0.45 };
+    let x = rect.left() + 10.0;
+    mark(p, Rect::from_center_size(pos2(x + 7.0, rect.top() + 16.0), Vec2::splat(16.0)), w::alpha(t.subtle(), a));
+    p.text(pos2(x + 24.0, rect.top() + 7.0), Align2::LEFT_TOP, label, FontId::new(14.0, theme::medium()), w::alpha(t.fg(), a));
+    p.text(pos2(x + 24.0, rect.top() + 25.0), Align2::LEFT_TOP, desc, FontId::proportional(12.0), w::alpha(t.subtle(), a));
+    if checked {
+        ic::glyph(p, pos2(rect.right() - 16.0, rect.top() + 16.0), ic::CHECK, 15.0, t.fg());
+    }
+    if enabled { resp.on_hover_cursor(CursorIcon::PointingHand) } else { resp }
+}
+
+fn where_(h: &Host, online: Option<bool>) -> String {
+    let state = match online {
+        Some(true) => "Online · ",
+        Some(false) => "Offline · ",
+        None => "",
+    };
+    format!("{state}{}", h.host)
+}
+
+impl App {
+    /// The image of a device with a custom icon (loaded once).
+    fn device_tex(&mut self, ctx: &egui::Context, h: &Host) -> Option<TextureId> {
+        if h.icon != "file" {
+            return None;
+        }
+        let e = self.devices_ui.icons.entry(h.id.clone()).or_insert_with(|| {
+            let img = crate::favicon::decode(&remote::icon_path(&h.id))?;
+            Some(ctx.load_texture(format!("device-{}", h.id), img, egui::TextureOptions::LINEAR))
+        });
+        e.as_ref().map(|t| t.id())
+    }
+
+    /// The composer's device control: "This PC" or the chat's device, with its dot.
+    pub fn device_trigger(&mut self, ui: &mut Ui, compact: bool, sel: &Sel) -> Response {
+        let t = self.theme.t;
+        let ctx = ui.ctx().clone();
+        let net = remote::tailnet(&ctx);
+        let found = remote::devices(&self.remote, &net).into_iter().find(|(h, _)| h.id == sel.device);
+        let (label, glyph, tex, online) = match &found {
+            _ if sel.device.is_empty() => ("This PC".to_string(), ic::HOUSE, None, None),
+            None => ("Missing device".to_string(), ic::ALERT, None, None),
+            Some((h, o)) => (h.label().to_string(), remote::glyph(h), self.device_tex(&ctx, h), *o),
+        };
+        let paint = move |p: &Painter, r: Rect, fg: Color32| paint_mark(p, r, glyph, tex, online, fg, &t);
+        let r = w::trigger(ui, w::Lead::Paint(&paint), if compact { "" } else { &label }, self.popup == Some(Popup::Device));
+        let tip = match &found {
+            Some((h, o)) => format!("Runs on {} · {}", h.label(), where_(h, *o)),
+            None if sel.device.is_empty() => "Runs on this PC".into(),
+            None => "This chat's device was removed in Settings › Devices".into(),
+        };
+        r.on_hover_text(tip)
+    }
+
+    /// The device menu above the composer; returns whether it should close.
+    pub fn device_menu(&mut self, ctx: &egui::Context) -> bool {
+        let t = self.theme.t;
+        let sel = self.sel();
+        let kind = self.account(&sel.account).map(|a| a.kind).unwrap_or(Kind::Claude);
+        // A started chat's session lives on its device: it stays there.
+        let locked = matches!(self.view, View::Chat(id) if self.chat(id).is_some_and(|c| c.started));
+        let net = remote::tailnet(ctx);
+        let devs: Vec<(Host, Option<bool>)> = remote::devices(&self.remote, &net).into_iter().filter(|(h, _)| !h.hidden || h.id == sel.device).collect();
+        let texs: Vec<Option<TextureId>> = devs.iter().map(|(h, _)| self.device_tex(ctx, h)).collect();
+        let me = remote::hostname();
+        let (pick, close) = w::popover(ctx, "device", self.popup_anchor, 300.0, true, &t, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            w::subtle(ui, "  Runs on", "label-12");
+            ui.add_space(4.0);
+            let mut pick: Option<Option<String>> = None;
+            let here = sel.device.is_empty();
+            let r = device_row(ui, |p, r, fg| paint_mark(p, r, ic::HOUSE, None, None, fg, &t), "This PC", &me, here, !locked || here);
+            if r.clicked() {
+                pick = Some(Some(String::new()));
+            }
+            ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                for ((h, online), tex) in devs.iter().zip(&texs) {
+                    let current = h.id == sel.device;
+                    let ok = kind == Kind::Claude && (!locked || current);
+                    let glyph = remote::glyph(h);
+                    let desc = if kind != Kind::Claude { "Claude Code only".to_string() } else { where_(h, *online) };
+                    let r = device_row(ui, |p, r, fg| paint_mark(p, r, glyph, *tex, *online, fg, &t), h.label(), &desc, current, ok);
+                    let r = if locked && !current { r.on_hover_text("A started chat stays on the device it started on. Start a new chat to use another.") } else { r };
+                    if r.clicked() {
+                        pick = Some(Some(h.id.clone()));
+                    }
+                }
+            });
+            if devs.is_empty() {
+                w::subtle(ui, "  No other PCs yet: Tailscale finds them, or add one by SSH.", "label-12");
+                ui.add_space(4.0);
+            }
+            ui.add_space(4.0);
+            w::separator(ui);
+            ui.add_space(4.0);
+            if w::menu_item(ui, ic::SETTINGS, "Manage devices…", None, false).clicked() {
+                pick = Some(None);
+            }
+            pick
+        });
+        match pick {
+            Some(Some(id)) => {
+                // A Tailscale PC picked for the first time is saved, so the chat finds it
+                // even before Tailscale answers after a restart.
+                if let Some((h, _)) = devs.iter().find(|(h, _)| h.id == id) {
+                    if !self.remote.devices.iter().any(|d| d.id == id) {
+                        self.remote.devices.push(h.clone());
+                        remote::save(&self.store, &self.remote);
+                    }
+                }
+                self.set_sel(Sel { device: id, ..sel });
+                self.popup = None;
+            }
+            Some(None) => {
+                self.popup = None;
+                self.open(View::Settings(Tab::Devices));
+            }
+            None => {}
+        }
+        close
+    }
+
+    /// How a chat's turn reaches its device; None for this PC.
+    pub fn remote_spec(&self, chat: &Chat, account: &Account, ctx: &egui::Context) -> Result<Option<crate::agent::Remote>, String> {
+        if chat.device.is_empty() {
+            return Ok(None);
+        }
+        let net = remote::tailnet(ctx);
+        let h = remote::find(&self.remote, &net, &chat.device).ok_or("This chat's device isn't in Settings › Devices anymore. Add it again, or start a new chat on this PC.")?;
+        if account.kind != Kind::Claude {
+            return Err(format!("Only Claude Code runs on other devices so far; this chat uses {}.", account.kind.label()));
+        }
+        let project = chat.repo_id.and_then(|r| self.repo(r)).map(|r| r.path.clone());
+        let dir = remote::remote_dir(&h, project.as_deref());
+        // Read only stays read only: no commands on this PC either.
+        let commands = h.commands && chat.access != "plan";
+        let note = format!(
+            "You run on the device '{}', started over SSH from '{}' (the PC running Harbor, where the user is), in {dir}. {}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. {}",
+            h.label(),
+            remote::hostname(),
+            if h.device_files { "Files, shell, git and builds are that device's. " } else { "" },
+            match (h.bridge, commands && h.device_files) {
+                (true, true) => "Your MCP servers are the Harbor PC's, through a bridge; the `origin` server's run_command runs shell commands on the Harbor PC.",
+                (true, false) => "Your MCP servers are the Harbor PC's, through a bridge.",
+                (false, _) => "",
+            }
+        );
+        Ok(Some(crate::agent::Remote {
+            ssh: remote::ssh_opts(&self.remote, &h),
+            host: h.host.clone(),
+            dir,
+            setup: remote::profile_setup(account.config_dir.as_deref()),
+            bridge: h.bridge,
+            commands,
+            workspace: !h.device_files,
+            note: note.trim_end().to_string(),
+        }))
+    }
+
+    // ------------------------------------------------------------ settings
+
+    pub fn devices_tab(&mut self, ui: &mut Ui) {
+        let t = self.theme.t;
+        let ctx = ui.ctx().clone();
+        let net = remote::tailnet(&ctx);
+        let before = self.remote.clone();
+        let picked = std::mem::take(&mut *self.devices_ui.picked.lock().unwrap());
+        for id in picked {
+            self.devices_ui.icons.remove(&id);
+            if let Some(h) = remote::find(&self.remote, &net, &id) {
+                self.upsert(Host { icon: "file".into(), ..h });
+            }
+        }
+
+        section(ui, "Tailscale");
+        let mut via = self.remote.tailscale;
+        rows(ui, |ui| {
+            let (desc, tone, badge) = if !net.installed {
+                ("Not installed. With it, your PCs on the tailnet show up here by themselves.".to_string(), Tone::Gray, "Not installed")
+            } else if net.state == "Running" {
+                (format!("Connected as {} · {} other PCs on the tailnet", net.me, net.peers.len()), Tone::Green, "Connected")
+            } else if net.state.is_empty() {
+                ("Installed, but tailscaled didn't answer.".into(), Tone::Amber, "Not running")
+            } else {
+                (format!("Installed · {}", net.state), Tone::Amber, "Not connected")
+            };
+            w::setting_row(ui, "Tailscale", &desc, |ui| {
+                if w::btn(&format!("{}  Refresh", ic::REFRESH)).sm().ghost().show(ui).clicked() {
+                    remote::refresh(&ctx);
+                }
+                if !net.installed {
+                    if w::btn("Install").sm().primary().show(ui).clicked() {
+                        let cmd = "curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up && echo && echo 'Done. Press Refresh in Harbor.'";
+                        self.open_terminal(&ctx, "Install Tailscale", crate::store::home(), vec!["bash".into(), "-lc".into(), cmd.into()], vec![]);
+                    }
+                } else if net.state != "Running" && w::btn("Connect").sm().primary().show(ui).clicked() {
+                    let cmd = "sudo tailscale up && echo && echo 'Done. Press Refresh in Harbor.'";
+                    self.open_terminal(&ctx, "Tailscale", crate::store::home(), vec!["bash".into(), "-lc".into(), cmd.into()], vec![]);
+                }
+                w::badge(ui, badge, tone);
+            });
+            w::separator(ui);
+            w::setting_row(
+                ui,
+                "Connect through Tailscale",
+                "ssh reaches Tailscale devices through `tailscale nc`: no MagicDNS needed, and it works with Tailscale SSH on the device. Off, plain ssh to their MagicDNS names.",
+                |ui| w::toggle(ui, &mut via),
+            );
+        });
+        self.remote.tailscale = via;
+
+        ui.add_space(12.0);
+        section(ui, "SSH");
+        let mut port = if self.remote.port == 0 { String::new() } else { self.remote.port.to_string() };
+        rows(ui, |ui| {
+            w::setting_row(ui, "User", "Your user on the devices. Empty: ssh's default (your ~/.ssh/config, or this PC's user).", |ui| {
+                w::input(ui, &mut self.remote.user, &crate::store::home().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), false, 180.0);
+            });
+            w::separator(ui);
+            w::setting_row(ui, "Key", "Identity file. Empty: ssh's own keys and agent.", |ui| {
+                w::input(ui, &mut self.remote.key, "~/.ssh/id_ed25519", true, 220.0);
+            });
+            w::separator(ui);
+            w::setting_row(ui, "Port", "Empty: 22, or what ~/.ssh/config says.", |ui| {
+                w::input(ui, &mut port, "22", true, 80.0);
+            });
+        });
+        self.remote.port = port.trim().parse().unwrap_or(0);
+
+        ui.add_space(12.0);
+        section(ui, "Devices");
+        let devs = remote::devices(&self.remote, &net);
+        w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if devs.is_empty() {
+                Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "None yet. Tailscale PCs appear here by themselves; add any other one by SSH below.", "label-13"));
+            }
+            for (i, (h, online)) in devs.iter().enumerate() {
+                if i > 0 {
+                    w::separator(ui);
+                }
+                self.device_card(ui, &ctx, &t, h, *online);
+            }
+        });
+
+        ui.add_space(12.0);
+        section(ui, "Add a device by SSH");
+        w::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let st = &mut self.devices_ui;
+                w::input(ui, &mut st.add_name, "Name", false, 140.0);
+                w::input(ui, &mut st.add_host, "host, IP or ssh alias", true, 200.0);
+                w::input(ui, &mut st.add_user, "user (optional)", true, 130.0);
+                let ok = !st.add_host.trim().is_empty();
+                if w::btn(&format!("{}  Add", ic::PLUS)).sm().primary().enabled(ok).show(ui).clicked() {
+                    let n = (1..).find(|n| !self.remote.devices.iter().any(|d| d.id == format!("ssh:{n}"))).unwrap_or(1);
+                    let st = &mut self.devices_ui;
+                    let h = Host {
+                        id: format!("ssh:{n}"),
+                        name: st.add_name.trim().into(),
+                        host: st.add_host.trim().into(),
+                        user: st.add_user.trim().into(),
+                        bridge: true,
+                        ..Default::default()
+                    };
+                    st.add_name.clear();
+                    st.add_host.clear();
+                    st.add_user.clear();
+                    st.open = Some(h.id.clone());
+                    remote::test(&self.remote, &h, &ctx);
+                    self.remote.devices.push(h);
+                }
+            });
+        });
+
+        ui.add_space(12.0);
+        w::subtle(
+            ui,
+            "A chat picks its device in the composer and stays on it. The agent works in that PC's folder (a project's path is mirrored there unless the device sets a folder) under that PC's Claude login, and pushes through its own git. The device needs Claude Code and key-based ssh; nothing else is installed on it.",
+            "label-12",
+        );
+        ui.add_space(4.0);
+        w::subtle(
+            ui,
+            "The MCP bridge runs this PC's MCP servers and apps here and forwards them to the device over the same ssh connection (ssh -R), so their sign-ins never leave this PC. Your slash commands and skills come along as prompts of the `origin` server. Harbor's processes still start on this PC. A turn ends if the connection drops.",
+            "label-12",
+        );
+        if self.remote != before {
+            remote::save(&self.store, &self.remote);
+        }
+    }
+
+    /// Adds or replaces a device in the settings.
+    fn upsert(&mut self, h: Host) {
+        match self.remote.devices.iter_mut().find(|d| d.id == h.id) {
+            Some(d) => *d = h,
+            None => self.remote.devices.push(h),
+        }
+    }
+
+    fn device_card(&mut self, ui: &mut Ui, ctx: &egui::Context, t: &Tokens, h: &Host, online: Option<bool>) {
+        let mut e = h.clone();
+        let open = self.devices_ui.open.as_deref() == Some(h.id.as_str());
+        let probe = remote::probe(&h.id);
+        let tex = self.device_tex(ctx, h);
+        let mut remove = false;
+        Frame::new().inner_margin(Margin::symmetric(16, 12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
+                paint_mark(ui.painter(), r.shrink(5.0), remote::glyph(h), tex, online, t.fg(), t);
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.horizontal(|ui| {
+                        w::text(ui, h.label(), "strong-14");
+                        w::badge(ui, if h.tailscale() { "Tailscale" } else { "SSH" }, Tone::Gray);
+                        match online {
+                            Some(true) => w::badge(ui, "Online", Tone::Green),
+                            Some(false) => w::badge(ui, "Offline", Tone::Gray),
+                            None => ui.label(""),
+                        };
+                        if h.hidden {
+                            w::badge(ui, "Hidden", Tone::Amber);
+                        }
+                    });
+                    let os = if h.os.is_empty() { String::new() } else { format!(" · {}", h.os) };
+                    let user = remote::login(&self.remote, h).map(|(u, _)| format!("{u}@")).unwrap_or_default();
+                    w::subtle(ui, format!("{user}{}{os}", h.host), "label-13");
+                    if let Some(p) = &probe {
+                        let col = match p.ok {
+                            Some(true) if p.text.contains("claude ") => t.green(900),
+                            Some(true) => t.amber(900),
+                            Some(false) => t.red(900),
+                            None => t.subtle(),
+                        };
+                        ui.label(egui::RichText::new(&p.text).text_style(theme::ts("label-12")).color(col));
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let label = if h.tailscale() { if h.hidden { "Show" } else { "Hide" } } else { "Remove" };
+                    if w::btn(label).sm().variant(if h.tailscale() { w::Variant::Ghost } else { w::Variant::GhostDestructive }).show(ui).clicked() {
+                        if h.tailscale() {
+                            e.hidden = !e.hidden;
+                        } else {
+                            remove = true;
+                        }
+                    }
+                    if w::btn(if open { "Done" } else { "Edit" }).sm().ghost().show(ui).clicked() {
+                        self.devices_ui.open = if open { None } else { Some(h.id.clone()) };
+                    }
+                    let busy = probe.as_ref().is_some_and(|p| p.running);
+                    if w::btn("Test").sm().outline().enabled(!busy).show(ui).clicked() {
+                        remote::test(&self.remote, h, ctx);
+                    }
+                });
+            });
+            if open {
+                ui.add_space(10.0);
+                self.device_editor(ui, ctx, &mut e);
+            }
+        });
+        if remove {
+            self.remote.devices.retain(|d| d.id != h.id);
+            let _ = std::fs::remove_file(remote::icon_path(&h.id));
+            return;
+        }
+        if e != *h {
+            self.upsert(e);
+        }
+    }
+
+    fn device_editor(&mut self, ui: &mut Ui, ctx: &egui::Context, e: &mut Host) {
+        let t = self.theme.t;
+        w::well(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
+            let field = |ui: &mut Ui, label: &str, add: &mut dyn FnMut(&mut Ui)| {
+                ui.horizontal(|ui| {
+                    // A fixed label column, so the fields line up.
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(100.0, 30.0), Sense::hover());
+                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, label, FontId::proportional(13.0), t.subtle());
+                    add(ui);
+                });
+            };
+            let fw = (ui.available_width() - 130.0).clamp(120.0, 320.0);
+            field(ui, "Name", &mut |ui| {
+                w::input(ui, &mut e.name, &e.host.clone(), false, fw);
+            });
+            field(ui, "Address", &mut |ui| {
+                w::input(ui, &mut e.host, "host, IP or ssh alias", true, fw);
+            });
+            let mut port = if e.port == 0 { String::new() } else { e.port.to_string() };
+            // What applies when the field is empty: the global setting or ~/.ssh/config.
+            let shown = Host { user: String::new(), port: 0, ..e.clone() };
+            let hint = match remote::login(&self.remote, &shown) {
+                Some((u, true)) => format!("{u} (from ~/.ssh/config)"),
+                Some((u, false)) => u,
+                None => "default".into(),
+            };
+            let port_hint = match remote::ssh_port(&self.remote, &shown) {
+                0 => "port".to_string(),
+                p => p.to_string(),
+            };
+            field(ui, "User · port", &mut |ui| {
+                w::input(ui, &mut e.user, &hint, true, fw - 90.0);
+                w::input(ui, &mut port, &port_hint, true, 80.0);
+            });
+            e.port = port.trim().parse().unwrap_or(0);
+            field(ui, "Folder", &mut |ui| {
+                w::input(ui, &mut e.dir, "mirrors this PC's project path", true, fw);
+            });
+            field(ui, "Icon", &mut |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                if w::btn("Auto").sm().outline().pressed(e.icon.is_empty()).show(ui).clicked() {
+                    e.icon.clear();
+                }
+                for (name, g) in remote::ICONS {
+                    if w::btn(g).muted().icon_sm().pressed(e.icon == *name).show(ui).on_hover_text(*name).clicked() {
+                        e.icon = name.to_string();
+                    }
+                }
+                ui.add_space(4.0);
+                if w::btn(&format!("{}  Image…", ic::IMAGE)).sm().outline().pressed(e.icon == "file").show(ui).clicked() {
+                    let (id, done, ctx) = (e.id.clone(), self.devices_ui.picked.clone(), ctx.clone());
+                    std::thread::spawn(move || {
+                        let out = std::process::Command::new("zenity")
+                            .args(["--file-selection", "--title=Device icon", "--file-filter=Images | *.png *.svg *.ico *.jpg *.jpeg *.webp *.gif"])
+                            .output();
+                        let Some(file) = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()) else { return };
+                        let dst = remote::icon_path(&id);
+                        let _ = std::fs::create_dir_all(dst.parent().unwrap());
+                        if !file.is_empty() && std::fs::copy(&file, &dst).is_ok() {
+                            done.lock().unwrap().push(id);
+                            ctx.request_repaint();
+                        }
+                    });
+                }
+            });
+            ui.add_space(2.0);
+            let mut shown = !e.hidden;
+            w::separator(ui);
+            ui.horizontal(|ui| {
+                w::toggle(ui, &mut shown);
+                w::text(ui, "In the composer", "label-13");
+                ui.add_space(12.0);
+                w::toggle(ui, &mut e.bridge).on_hover_text("This PC's MCP servers and signed-in apps, through the ssh connection");
+                w::text(ui, "MCP bridge", "label-13");
+                ui.add_space(12.0);
+                w::toggle(ui, &mut e.commands).on_hover_text("A run_command tool: the agent there can run shell commands on this PC");
+                w::text(ui, "Commands on this PC", "label-13");
+            });
+            let mut here = !e.device_files;
+            ui.horizontal(|ui| {
+                w::toggle(ui, &mut here).on_hover_text("The agent there edits, builds and commits this PC's project: its shell, git and file tools run here (in the chat's mode). Off: it works on the device's own copy");
+                w::text(ui, "Work on this PC's files (shell, git and files run here)", "label-13");
+            });
+            e.device_files = !here;
+            e.hidden = !shown;
+            if e.commands || here {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}  The agent on {} can run any command{} on this PC, as you.",
+                        ic::ALERT,
+                        e.label(),
+                        if here { " and change any file" } else { "" }
+                    ))
+                        .text_style(theme::ts("label-12"))
+                        .color(t.amber(900)),
+                );
+            }
+            ui.horizontal(|ui| {
+                if w::btn(&format!("{}  Terminal there", ic::TERMINAL)).sm().outline().show(ui).clicked() {
+                    let argv = remote::shell_argv(&self.remote, e, None);
+                    self.open_terminal(ctx, &format!("ssh · {}", e.label()), crate::store::home(), argv, vec![]);
+                }
+                if w::btn("Sign in to Claude there").sm().ghost().show(ui).clicked() {
+                    let argv = remote::shell_argv(&self.remote, e, Some("claude /login"));
+                    self.open_terminal(ctx, &format!("Claude · {}", e.label()), crate::store::home(), argv, vec![]);
+                }
+            });
+        });
+    }
+}

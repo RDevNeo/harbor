@@ -138,9 +138,21 @@ impl App {
         self.queue_restore(&v["queue"]);
     }
 
-    /// Called every frame: reloads when an update is ready and it's a good moment.
+    /// Called every frame: reloads when the Update button asked for it, or (updating
+    /// automatically) when an update is ready and it's a good moment.
     pub fn maybe_reload(&mut self, ctx: &eframe::egui::Context) {
+        if self.reload_asked && matches!(crate::update::state(), crate::update::State::Failed(_)) {
+            self.reload_asked = false;
+        }
         if !self.update_ready.load(Ordering::Relaxed) {
+            return;
+        }
+        if self.reload_asked {
+            self.reload_now();
+            return;
+        }
+        // "Ask me": the Update button waits for a click.
+        if !self.auto_update() {
             return;
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
@@ -148,6 +160,25 @@ impl App {
         if focused && !self.hold_reload {
             self.reload_now();
         }
+    }
+
+    /// Something to update to: a build already on disk, or a release to install first.
+    pub fn update_offered(&self) -> Option<crate::update::State> {
+        use crate::update::State;
+        if self.update_ready.load(Ordering::Relaxed) {
+            return Some(State::Installed(String::new()));
+        }
+        Some(crate::update::state()).filter(|s| crate::update::managed() && matches!(s, State::Available(_) | State::Installing(_) | State::Installed(_)))
+    }
+
+    /// The Update button: reloads into the new build, installing the release first if needed.
+    pub fn update_clicked(&mut self, ctx: &eframe::egui::Context) {
+        if self.update_ready.load(Ordering::Relaxed) {
+            self.reload_now();
+            return;
+        }
+        self.reload_asked = true;
+        crate::update::install_now(ctx);
     }
 
     pub fn reload_now(&mut self) {
@@ -162,11 +193,12 @@ impl App {
         // Development hooks describe the first launch only.
         let err = std::process::Command::new(&exe).args(args).env_remove("HARBOR_VIEW").env_remove("HARBOR_POINTER").env(crate::single::RELOADED_PID, std::process::id().to_string()).exec();
         eprintln!("harbor: reload failed: {err}");
+        self.reload_asked = false;
         self.update_ready.store(false, Ordering::Relaxed);
     }
 }
 
-/// Keeps a flag the UI can show ("Update ready").
+/// Keeps a flag the UI can show (the Update button).
 pub fn new_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
 }

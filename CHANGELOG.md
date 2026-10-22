@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Devices: run a chat's Claude Code agent on another PC over ssh. Settings › Devices finds your
+  Tailscale PCs, adds others by SSH, and sets each one's name, icon, folder and access; the
+  composer picks the device ("This PC" by default).
+- The MCP bridge: agents on another PC use this PC's MCP servers, signed-in apps, Harbor's team
+  tools and your slash commands and skills (and, if allowed, commands on this PC), through the
+  same ssh connection; no credentials are copied to the device.
+- Devices: agents on another PC work on this PC's files by default: their shell, git and file
+  tools run here, in the chat's project (and its access mode), so edits and commits stay
+  together. Turn off "Work on this PC's files" in the device's settings to use the device's copy.
+
 ## [0.1.3] - 2026-10-21
 
 ### Added

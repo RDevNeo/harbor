@@ -128,6 +128,26 @@ pub struct TurnSpec {
     pub fast: bool,
     /// Transcript length when the turn starts, for replaying it after a restart.
     pub base: usize,
+    /// Runs on another device over ssh instead of on this PC.
+    pub remote: Option<Remote>,
+}
+
+/// Where a remote turn runs (see remote.rs); Claude Code only.
+pub struct Remote {
+    /// ssh's options and destination.
+    pub ssh: Vec<String>,
+    pub host: String,
+    /// The folder there, and shell lines run before the agent starts.
+    pub dir: String,
+    pub setup: Vec<String>,
+    /// This PC's MCP servers and apps through the bridge (Harbor's team tools always go).
+    pub bridge: bool,
+    /// `run_command` on this PC.
+    pub commands: bool,
+    /// Shell, git and files on this PC (workspace.rs) instead of the device's.
+    pub workspace: bool,
+    /// Told to the agent: where it runs and what that means for its tools.
+    pub note: String,
 }
 
 /// Team wiring for a turn: role instructions and Harbor's tool server.
@@ -213,8 +233,12 @@ fn claude_message(prompt: &str, files: &[PathBuf]) -> String {
     format!("{msg}\n")
 }
 
-/// Builds the command line and the bytes to write to stdin, per provider.
-fn build(spec: &TurnSpec) -> (Command, Option<String>) {
+/// Builds the command line and the bytes to write to stdin, per provider, and the
+/// bridge grant of a remote turn.
+fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<crate::bridge::Grant>)> {
+    if spec.remote.is_some() && spec.account.kind != Kind::Claude {
+        return Err(std::io::Error::other(format!("only Claude Code runs on other devices so far, not {}", spec.account.kind.label())));
+    }
     // CLIs without a system-prompt flag get the team instructions in the first message.
     let owned;
     let spec = if spec.team.is_some() && spec.account.kind != Kind::Claude && !spec.resume {
@@ -229,6 +253,7 @@ fn build(spec: &TurnSpec) -> (Command, Option<String>) {
             model: spec.model.clone(),
             effort: spec.effort.clone(),
             access: spec.access.clone(),
+            remote: None,
             ..*spec
         };
         &owned
@@ -261,6 +286,9 @@ fn build(spec: &TurnSpec) -> (Command, Option<String>) {
         None => spec.prompt.clone(),
     };
     let mut stdin = None;
+    // A remote turn's servers go through the bridge, at a port forwarded to the device.
+    let mut grant = None;
+    let remote_port = 20000 + u16::from_str_radix(&crate::bridge::token()[..4], 16).unwrap_or(0) % 40000;
 
     match a.kind {
         Kind::Claude | Kind::Grok => {
@@ -283,12 +311,38 @@ fn build(spec: &TurnSpec) -> (Command, Option<String>) {
                         cmd.args(["--permission-mode", mode]);
                     }
                 }
-                if let Some(t) = &spec.team {
-                    cmd.args(["--append-system-prompt", &t.system]);
+                // Working on this PC's files: the device's own file and shell tools are off,
+                // and the bridge's stand in (only those this access allows).
+                let lead = spec.team.as_ref().is_some_and(|t| t.role == "lead");
+                let workspace = match &spec.remote {
+                    Some(r) if r.workspace => crate::workspace::for_access(&spec.access, lead),
+                    _ => vec![],
+                };
+                let mut note = spec.remote.as_ref().map(|r| r.note.clone()).unwrap_or_default();
+                if !workspace.is_empty() {
+                    let allowed = workspace.iter().map(|t| format!("mcp__{}__{t}", crate::bridge::ORIGIN)).collect::<Vec<_>>().join(",");
+                    cmd.arg(format!("--disallowedTools={}", crate::workspace::REPLACED)).arg(format!("--allowedTools={allowed}"));
+                    note = format!("{note}\n\n{}", crate::workspace::note(&workspace, &spec.cwd)).trim().to_string();
                 }
+                match (&spec.team, note.as_str()) {
+                    (Some(t), "") => cmd.args(["--append-system-prompt", &t.system]),
+                    (Some(t), n) => cmd.args(["--append-system-prompt", &format!("{}\n\n{n}", t.system)]),
+                    (None, "") => &mut cmd,
+                    (None, n) => cmd.args(["--append-system-prompt", n]),
+                };
                 // Only Harbor's servers: not the user's global, project or claude.ai ones.
                 let harbor = spec.team.as_ref().map(|t| ("harbor", t.mcp_entry(spec.chat_id)));
-                cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::mcp::claude_config(spec.chat_id, harbor));
+                match &spec.remote {
+                    None => {
+                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::mcp::claude_config(spec.chat_id, harbor));
+                    }
+                    Some(r) => {
+                        let servers = if r.bridge { crate::mcp::claude_servers(harbor) } else { harbor.map(|(k, v)| (k.to_string(), v)).into_iter().collect() };
+                        let g = crate::bridge::Grant { token: crate::bridge::token(), chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers, commands: r.commands && spec.access != "plan", workspace: workspace.clone() };
+                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::bridge::remote_config(&g, remote_port).to_string());
+                        grant = Some(g);
+                    }
+                }
                 if let Some(e) = effort {
                     cmd.args(["--effort", e]);
                 }
@@ -405,7 +459,34 @@ fn build(spec: &TurnSpec) -> (Command, Option<String>) {
             cmd.arg(prompt_with_paths(&spec.prompt, &all));
         }
     }
-    (cmd, stdin)
+    if let (Some(r), Some(g)) = (&spec.remote, &grant) {
+        let port = crate::bridge::grant(g.clone()).ok_or_else(|| std::io::Error::other("Harbor's MCP bridge couldn't open a port on 127.0.0.1"))?;
+        // The device's own `claude` (from its login shell's PATH), with the same arguments.
+        let argv: Vec<String> = std::iter::once("claude".to_string()).chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned())).collect();
+        let mut setup = r.setup.clone();
+        if spec.resume {
+            setup.push(session_here(&spec.session_id));
+        }
+        let mut ssh = Command::new("ssh");
+        ssh.args(&r.ssh)
+            .args(["-o", "ExitOnForwardFailure=yes", "-R", &format!("127.0.0.1:{remote_port}:127.0.0.1:{port}")])
+            .arg(&r.host)
+            .arg(crate::remote::remote_command(&r.dir, &setup, &argv));
+        ssh.current_dir(if spec.cwd.is_dir() { spec.cwd.clone() } else { crate::store::home() });
+        ssh.env("PATH", crate::providers::child_path());
+        cmd = ssh;
+    }
+    Ok((cmd, stdin, grant))
+}
+
+/// A shell line for the device: Claude Code resumes only sessions of the folder it runs
+/// in, so one started in another folder there (the chat moved between this PC's files
+/// and the device's) is copied to this one's first.
+fn session_here(id: &str) -> String {
+    let f = crate::remote::quote(&format!("{id}.jsonl"));
+    format!(
+        "c=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects\"; d=\"$c/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')\"; [ -e \"$d\"/{f} ] || {{ s=$(ls \"$c\"/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] && mkdir -p \"$d\" && cp \"$s\" \"$d\"/; }}"
+    )
 }
 
 /// The chat on screen (0: none), set by the UI each frame: its events repaint at once,
@@ -416,7 +497,7 @@ pub const HIDDEN_WAKE: std::time::Duration = std::time::Duration::from_secs(1);
 /// Spawns the turn; events go to `tx` tagged with the chat id, `wake` repaints the UI
 /// (`wake(true)` once the turn has ended).
 pub fn start(spec: TurnSpec, tx: Sender<(i64, Event)>, wake: impl Fn(bool) + Send + Sync + 'static) -> std::io::Result<Turn> {
-    let (cmd, input) = build(&spec);
+    let (cmd, input, grant) = build(&spec)?;
     let meta = crate::detach::Meta {
         chat_id: spec.chat_id,
         kind: spec.account.kind.label().to_string(),
@@ -426,7 +507,18 @@ pub fn start(spec: TurnSpec, tx: Sender<(i64, Event)>, wake: impl Fn(bool) + Sen
         pid_start: 0,
     };
     // Claude's input stays open for messages sent mid-turn (closed after its result).
-    let (dir, meta) = crate::detach::spawn(&cmd, input.as_deref(), spec.account.kind == Kind::Claude, meta)?;
+    let (dir, meta) = match crate::detach::spawn(&cmd, input.as_deref(), spec.account.kind == Kind::Claude, meta) {
+        Ok(x) => x,
+        Err(e) => {
+            if let Some(g) = &grant {
+                crate::bridge::revoke(&g.token);
+            }
+            return Err(e);
+        }
+    };
+    if let Some(g) = &grant {
+        crate::bridge::save(&dir, g);
+    }
     Ok(follow(dir, meta, tx, wake))
 }
 
@@ -440,6 +532,8 @@ pub fn reattach(dir: PathBuf, meta: crate::detach::Meta, tx: Sender<(i64, Event)
 fn follow(dir: PathBuf, meta: crate::detach::Meta, tx: Sender<(i64, Event)>, wake: impl Fn(bool) + Send + Sync + 'static) -> Turn {
     let id = meta.chat_id;
     let kind = Kind::ALL.into_iter().find(|k| k.label() == meta.kind).unwrap_or(Kind::Claude);
+    // A remote turn picked up after a reload: its MCP servers are served again.
+    crate::bridge::resume(&dir);
     {
         let (dir, meta) = (dir.clone(), meta.clone());
         std::thread::spawn(move || {
@@ -488,6 +582,7 @@ fn follow(dir: PathBuf, meta: crate::detach::Meta, tx: Sender<(i64, Event)>, wak
                     }
                 },
             );
+            crate::bridge::end(&dir);
             let _ = tx.send((id, Event::Exited { ok }));
             wake(true);
             // Its events are out: the folder is done. (A reload or quit ends this thread
@@ -911,4 +1006,217 @@ fn parse_opencode(v: &Value, st: &mut ParseState) -> Vec<Event> {
         _ => {}
     }
     e
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resumed_sessions_follow_the_folder() {
+        let root = std::env::temp_dir().join(format!("harbor-sess-{}", crate::bridge::token()));
+        let (cfg, work) = (root.join("cfg"), root.join("my work"));
+        std::fs::create_dir_all(cfg.join("projects/-elsewhere")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(cfg.join("projects/-elsewhere/abc.jsonl"), "{}").unwrap();
+        let st = Command::new("sh").arg("-c").arg(session_here("abc")).current_dir(&work).env("CLAUDE_CONFIG_DIR", &cfg).status().unwrap();
+        assert!(st.success());
+        let slug: String = work.canonicalize().unwrap().to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        assert!(cfg.join("projects").join(slug).join("abc.jsonl").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A real Claude turn on "another device" (ssh to this PC), with the bridge:
+    /// `cargo test -- --ignored remote_turn_over_ssh --nocapture`. Needs key-based ssh
+    /// to 127.0.0.1 and a signed-in Claude Code.
+    #[test]
+    #[ignore]
+    fn remote_turn_over_ssh() {
+        let account = crate::providers::discover().into_iter().find(|a| a.id == "claude").expect("a claude account");
+        let cfg = crate::remote::Config::default();
+        let host = crate::remote::Host { id: "ssh:1".into(), host: "127.0.0.1".into(), bridge: true, commands: true, ..Default::default() };
+        let mut ssh = crate::remote::ssh_opts(&cfg, &host);
+        ssh.extend(["-o".into(), "UserKnownHostsFile=/tmp/harbor-dev-kh".into()]);
+        let cwd = std::env::temp_dir();
+        let spec = TurnSpec {
+            chat_id: 999_999,
+            cwd: cwd.clone(),
+            prompt: "Call the run_command tool of the origin MCP server with the command `echo bridged-$((6*7))`, then answer with only its first output line.".into(),
+            files: vec![],
+            session_id: crate::store::new_uuid(),
+            resume: false,
+            account,
+            model: "claude-haiku-5-5".into(),
+            effort: String::new(),
+            access: "full".into(),
+            team: None,
+            fast: false,
+            base: 0,
+            remote: Some(Remote { ssh, host: host.host.clone(), dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, note: "You run on a test device.".into() }),
+        };
+        let (mut cmd, input, grant) = build(&spec).unwrap();
+        let grant = grant.unwrap();
+        let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
+        {
+            use std::io::Write;
+            let mut sin = child.stdin.take().unwrap();
+            sin.write_all(input.unwrap().as_bytes()).unwrap();
+            // Kept open like the runner does, closed after the result.
+            let out = child.stdout.take().unwrap();
+            let mut servers = vec![];
+            let mut answer = String::new();
+            for line in std::io::BufRead::lines(std::io::BufReader::new(out)).map_while(Result::ok) {
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                if v["type"] == "system" && v["subtype"] == "init" {
+                    servers = v["mcp_servers"].as_array().cloned().unwrap_or_default();
+                    eprintln!("mcp servers: {servers:?}");
+                }
+                if v["type"] == "result" {
+                    answer = v["result"].as_str().unwrap_or("").to_string();
+                    break;
+                }
+            }
+            drop(sin);
+            eprintln!("answer: {answer}");
+            assert!(servers.iter().any(|s| s["name"] == "origin" && s["status"] == "connected"));
+            assert!(answer.contains("bridged-42"));
+        }
+        let _ = child.wait();
+        crate::bridge::revoke(&grant.token);
+    }
+
+    /// A real turn on "another device" that works on this PC's files: git and edits go
+    /// through the origin tools, the device's own are off. Needs what the test above does:
+    /// `cargo test -- --ignored remote_turn_works_here --nocapture`.
+    #[test]
+    #[ignore]
+    fn remote_turn_works_here() {
+        let account = crate::providers::discover().into_iter().find(|a| a.id == "claude").expect("a claude account");
+        let host = crate::remote::Host { id: "ssh:1".into(), host: "127.0.0.1".into(), bridge: false, ..Default::default() };
+        let mut ssh = crate::remote::ssh_opts(&crate::remote::Config::default(), &host);
+        ssh.extend(["-o".into(), "UserKnownHostsFile=/tmp/harbor-dev-kh".into()]);
+        let repo = std::env::temp_dir().join(format!("harbor-ws-e2e-{}", &crate::bridge::token()[..8]));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("hello.txt"), "hello world\n").unwrap();
+        let git = |args: &[&str]| Command::new("git").args(args).current_dir(&repo).output().unwrap();
+        git(&["init", "-q"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "init", "--allow-empty"]);
+        git(&["add", "."]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "hello"]);
+        let spec = TurnSpec {
+            chat_id: 999_998,
+            cwd: repo.clone(),
+            prompt: "Run `git status --short --branch` in the project, then change 'world' to 'harbor' in hello.txt with the edit tool, then run `git diff --stat`. Answer with only the first line git status printed.".into(),
+            files: vec![],
+            session_id: crate::store::new_uuid(),
+            resume: false,
+            account,
+            model: "claude-haiku-5-5".into(),
+            effort: String::new(),
+            access: "full".into(),
+            team: None,
+            fast: false,
+            base: 0,
+            remote: Some(Remote { ssh, host: host.host.clone(), dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, note: "You run on a test device.".into() }),
+        };
+        let (mut cmd, input, grant) = build(&spec).unwrap();
+        let grant = grant.unwrap();
+        let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
+        let mut sin = child.stdin.take().unwrap();
+        {
+            use std::io::Write;
+            sin.write_all(input.unwrap().as_bytes()).unwrap();
+        }
+        let (mut tools, mut used, mut answer, mut remote_cwd) = (vec![], vec![], String::new(), String::new());
+        for line in std::io::BufRead::lines(std::io::BufReader::new(child.stdout.take().unwrap())).map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            if v["type"] == "system" && v["subtype"] == "init" {
+                tools = v["tools"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).map(String::from).collect();
+                remote_cwd = s(&v["cwd"]);
+            }
+            if v["type"] == "assistant" {
+                for b in v["message"]["content"].as_array().into_iter().flatten().filter(|b| b["type"] == "tool_use") {
+                    used.push(s(&b["name"]));
+                }
+            }
+            if v["type"] == "result" {
+                answer = s(&v["result"]);
+                break;
+            }
+        }
+        drop(sin);
+        let _ = child.wait();
+        crate::bridge::revoke(&grant.token);
+        eprintln!("cwd there: {remote_cwd}\ntools: {tools:?}\nused: {used:?}\nanswer: {answer}");
+        for t in ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "LSP", "Monitor"] {
+            assert!(!tools.iter().any(|x| x == t), "{t} wasn't disallowed");
+        }
+        assert!(tools.iter().any(|x| x == "mcp__origin__bash") && tools.iter().any(|x| x == "mcp__origin__edit"));
+        assert!(used.iter().any(|x| x == "mcp__origin__bash") && used.iter().any(|x| x == "mcp__origin__edit"));
+        assert_eq!(std::fs::read_to_string(repo.join("hello.txt")).unwrap(), "hello harbor\n");
+        assert!(answer.contains("## "), "git status' branch line: {answer}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// Read only (plan) on this PC's files, from a real device:
+    /// `HARBOR_TEST_DEVICE=acer cargo test -- --ignored remote_turn_reads_here --nocapture`
+    /// (an ssh alias; default 127.0.0.1). The file only exists here.
+    #[test]
+    #[ignore]
+    fn remote_turn_reads_here() {
+        let account = crate::providers::discover().into_iter().find(|a| a.id == "claude").expect("a claude account");
+        let dest = std::env::var("HARBOR_TEST_DEVICE").unwrap_or_else(|_| "127.0.0.1".into());
+        let host = crate::remote::Host { id: "ssh:1".into(), host: dest.clone(), ..Default::default() };
+        let mut ssh = crate::remote::ssh_opts(&crate::remote::Config::default(), &host);
+        if dest == "127.0.0.1" {
+            ssh.extend(["-o".into(), "UserKnownHostsFile=/tmp/harbor-dev-kh".into()]);
+        }
+        let secret = crate::bridge::token();
+        let dir = std::env::temp_dir().join(format!("harbor-ws-ro-{}", &secret[..8]));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("note.txt"), format!("the word is {}\n", &secret[..10])).unwrap();
+        let spec = TurnSpec {
+            chat_id: 999_997,
+            cwd: dir.clone(),
+            prompt: "Read note.txt in the project and answer with only the word after 'the word is'.".into(),
+            files: vec![],
+            session_id: crate::store::new_uuid(),
+            resume: false,
+            account,
+            model: "claude-haiku-5-5".into(),
+            effort: String::new(),
+            access: "plan".into(),
+            team: None,
+            fast: false,
+            base: 0,
+            remote: Some(Remote { ssh, host: dest, dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, note: "You run on a test device.".into() }),
+        };
+        let (mut cmd, input, grant) = build(&spec).unwrap();
+        let grant = grant.unwrap();
+        let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
+        let mut sin = child.stdin.take().unwrap();
+        {
+            use std::io::Write;
+            sin.write_all(input.unwrap().as_bytes()).unwrap();
+        }
+        let (mut tools, mut answer, mut there) = (vec![], String::new(), String::new());
+        for line in std::io::BufRead::lines(std::io::BufReader::new(child.stdout.take().unwrap())).map_while(Result::ok) {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            if v["type"] == "system" && v["subtype"] == "init" {
+                tools = v["tools"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).filter(|t| t.starts_with("mcp__") || ["Bash", "Read", "Edit", "Write"].contains(t)).map(String::from).collect();
+                there = s(&v["cwd"]);
+            }
+            if v["type"] == "result" {
+                answer = s(&v["result"]);
+                break;
+            }
+        }
+        drop(sin);
+        let _ = child.wait();
+        crate::bridge::revoke(&grant.token);
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!("cwd there: {there}\ntools: {tools:?}\nanswer: {answer}");
+        assert_eq!(tools, ["mcp__origin__glob", "mcp__origin__grep", "mcp__origin__read"]);
+        assert!(answer.contains(&secret[..10]));
+    }
 }

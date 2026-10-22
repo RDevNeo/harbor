@@ -104,7 +104,7 @@ pub fn dir() -> PathBuf {
     private_dir(store::data_dir().join("apps"))
 }
 
-fn write_private(p: &Path, data: &str) -> std::io::Result<()> {
+pub fn write_private(p: &Path, data: &str) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let tmp = p.with_extension("tmp");
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
@@ -785,6 +785,14 @@ fn token_var(id: &str) -> String {
 /// local servers that are on, the signed-in apps and `extra` (Harbor's team server).
 /// Written 0600 into Harbor's store, since it holds tokens.
 pub fn claude_config(chat_id: i64, extra: Option<(&str, Value)>) -> PathBuf {
+    let m = claude_servers(extra);
+    let p = private_dir(dir().join("run")).join(format!("claude-{chat_id}.json"));
+    let _ = write_private(&p, &json!({ "mcpServers": m }).to_string());
+    p
+}
+
+/// The servers of [`claude_config`], by name.
+pub fn claude_servers(extra: Option<(&str, Value)>) -> Map<String, Value> {
     let mut m = Map::new();
     for (l, def) in locals() {
         if let Some((name, v)) = def.filter(|_| !is_off(l.id)) {
@@ -803,9 +811,7 @@ pub fn claude_config(chat_id: i64, extra: Option<(&str, Value)>) -> PathBuf {
     if let Some((k, v)) = extra {
         m.insert(k.into(), v);
     }
-    let p = private_dir(dir().join("run")).join(format!("claude-{chat_id}.json"));
-    let _ = write_private(&p, &json!({ "mcpServers": m }).to_string());
-    p
+    m
 }
 
 /// `-c` overrides for `codex exec`: servers in ~/.codex/config.toml that aren't local

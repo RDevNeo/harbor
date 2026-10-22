@@ -121,6 +121,7 @@ impl App {
             role: Role::Lead,
             parent: None,
             name: "lead".into(),
+            device: src.device.clone(),
         });
         let id = chat.id;
         self.chats.push(chat);

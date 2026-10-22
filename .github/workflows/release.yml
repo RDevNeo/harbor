@@ -8,10 +8,19 @@
 # Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents).
 name: release
 
+# Pushes to main (each publish.sh) build everything except Servo (see browser.yml) but sign or
+# release nothing. They exist to save the caches: a tag run can only restore caches saved on its
+# own ref or on the default branch, so caches saved by a tag run were never seen again.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+
+# One run per ref; a newer push to main waits instead of cancelling (cancelled runs save no cache).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -40,6 +49,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Updater tests (version order, signatures)
         run: 'cargo test --locked -- update::'
       - run: cargo build --release --locked
@@ -81,6 +91,7 @@ jobs:
         with:
           workspaces: stream
           key: stream
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build harbor-stream
         working-directory: stream
         env:
@@ -100,63 +111,12 @@ jobs:
           name: harbor-stream
           path: out/
 
+  # Never compiles Servo on a main push (no engine found = no browser in that run's package).
+  # A tag compiles it only when browser/ changed and nobody ran the browser workflow on main.
   browser:
-    # Servo's prebuilt SpiderMonkey wants a newer base; the engine is optional, so it may need
-    # glibc 2.39+ (Ubuntu 24.04, Debian 13, Arch, …) while Harbor itself runs on older systems.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v7
-      # Rebuilt only when browser/ changes: the id is the git tree hash of browser/.
-      - name: Engine id
-        id: id
-        run: echo "id=$(git rev-parse HEAD:browser)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        id: bin
-        with:
-          path: out/harbor-browser
-          key: harbor-browser-bin-${{ steps.id.outputs.id }}
-      - name: Reuse the previous release's engine
-        id: prev
-        if: steps.bin.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p out /tmp/prev
-          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'harbor-browser-x86_64-linux.tar.gz' --dir /tmp/prev 2>/dev/null \
-             && tar -xzf /tmp/prev/harbor-browser-x86_64-linux.tar.gz -C /tmp/prev \
-             && [ "$(cat /tmp/prev/harbor-browser-x86_64-linux/browser.id)" = "${{ steps.id.outputs.id }}" ]; then
-            cp /tmp/prev/harbor-browser-x86_64-linux/harbor-browser out/
-            echo "hit=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Free disk space
-        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
-      - name: Install Servo build dependencies
-        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang llvm-dev libclang-dev cmake python3 pkg-config m4 gperf \
-            libfontconfig-dev libfreetype-dev libx11-dev libxkbcommon-dev libwayland-dev libegl-dev libgl-dev \
-            libgles-dev libudev-dev libdbus-1-dev libunwind-dev
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
-      - uses: Swatinem/rust-cache@v2
-        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
-        with:
-          workspaces: browser
-          key: browser
-      - name: Build harbor-browser
-        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
-        working-directory: browser
-        run: |
-          cargo build --release --locked
-          mkdir -p ../out && cp target/release/harbor-browser ../out/
-      - run: ldd out/harbor-browser && echo "${{ steps.id.outputs.id }}" > out/browser.id
-      - uses: actions/upload-artifact@v7
-        with:
-          name: harbor-browser
-          path: out/
+    uses: ./.github/workflows/browser.yml
+    with:
+      build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
   package:
     needs: [core, stream, browser]
@@ -167,16 +127,30 @@ jobs:
         with:
           path: art
       - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
+      # The licence reports (~3 min) only change with the dependencies or the template.
+      - uses: actions/cache/restore@v6
+        id: lic
+        with:
+          path: lic
+          key: lic-${{ hashFiles('Cargo.lock', 'stream/Cargo.lock', 'browser/Cargo.lock', 'packaging/about.toml', 'packaging/about.hbs') }}
       - uses: taiki-e/install-action@v2
+        if: steps.lic.outputs.cache-hit != 'true'
         with:
           tool: cargo-about
       - name: Third-party licences
+        id: about
+        if: steps.lic.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
           mkdir -p lic
           cargo about generate -c packaging/about.toml packaging/about.hbs -o lic/harbor.html
           (cd stream && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-stream.html)
           (cd browser && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-browser.html)
+      - uses: actions/cache/save@v6
+        if: steps.lic.outputs.cache-hit != 'true' && steps.about.outcome == 'success'
+        with:
+          path: lic
+          key: ${{ steps.lic.outputs.cache-primary-key }}
       - name: Assemble
         run: |
           set -eu
@@ -190,7 +164,8 @@ jobs:
           cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
           rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$d/harbor-256.png"
           echo "$ver" > "$d/VERSION"
-          cp art/harbor-browser/browser.id "$d/browser.id"
+          # The engine's id, also when this run has no engine (only main pushes; tags always do).
+          git rev-parse HEAD:browser > "$d/browser.id"
           cp LICENSE "$d/licenses/Harbor-MIT.txt"
           cp stream/LICENSE "$d/licenses/harbor-stream-GPL-3.0.txt"
           cp art/harbor-stream/FFmpeg-LGPL-2.1.txt art/harbor-stream/FFmpeg-BUILD.txt "$d/licenses/"
@@ -206,14 +181,18 @@ jobs:
           EOF
 
           b=pkg/harbor-browser-x86_64-linux
-          mkdir -p "$b/licenses"
-          install -m755 art/harbor-browser/harbor-browser "$b/harbor-browser"
-          cp art/harbor-browser/browser.id "$b/browser.id"
-          cp browser/LICENSE "$b/licenses/harbor-browser-MIT.txt"
-          [ -f lic/harbor-browser.html ] && cp lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
-          echo "harbor-browser is MIT; it links Servo (MPL-2.0), whose source is at https://github.com/servo/servo" > "$b/licenses/README.txt"
+          if [ "${{ needs.browser.outputs.found }}" = "true" ]; then
+            mkdir -p "$b/licenses"
+            install -m755 art/harbor-browser/harbor-browser "$b/harbor-browser"
+            cp art/harbor-browser/browser.id "$b/browser.id"
+            cp browser/LICENSE "$b/licenses/harbor-browser-MIT.txt"
+            [ -f lic/harbor-browser.html ] && cp lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
+            echo "harbor-browser is MIT; it links Servo (MPL-2.0), whose source is at https://github.com/servo/servo" > "$b/licenses/README.txt"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::a release needs the browser engine"; exit 1
+          fi
           # A checksum list inside each archive: install.sh run from an extracted folder checks it offline.
-          for x in "$d" "$b"; do
+          for x in pkg/*/; do
             (cd "$x" && find . -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
           done
       - name: Get minisign
@@ -239,9 +218,9 @@ jobs:
         run: |
           set -eu
           tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
-          tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
+          [ ! -d pkg/harbor-browser-x86_64-linux ] || tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
           cp packaging/install.sh dist/install.sh
-          (cd dist && sha256sum harbor-x86_64-linux.tar.gz harbor-browser-x86_64-linux.tar.gz install.sh > SHA256SUMS)
+          (cd dist && sha256sum *.tar.gz install.sh > SHA256SUMS)
           ls -la dist
           tar -tzf dist/harbor-x86_64-linux.tar.gz | grep SHA256SUMS
       - name: Sign

@@ -1,8 +1,10 @@
 //! Self-update for per-user installs (packaging/install.sh puts Harbor in ~/.local/lib/harbor
 //! and leaves a `.managed` marker there). Harbor asks GitHub for the latest release now and
-//! then, downloads it, checks its minisign signature against the key below, and renames the
-//! new files over the old ones (helpers first, harbor last). The hot reload (reload.rs) sees
-//! its own file change and restarts into the new version; agent turns run detached and live on.
+//! then. By default it only offers it (the Update button); clicking it, or "Automatically"
+//! in Settings, downloads it, checks its minisign signature against the key below, and renames
+//! the new files over the old ones (helpers first, harbor last). The hot reload (reload.rs)
+//! sees its own file change and restarts into the new version; agent turns run detached and
+//! live on.
 //!
 //! The previous files are kept in `.previous/` (hard links), for "Restore previous version".
 //! Builds from a source tree have no marker and are never touched.
@@ -29,7 +31,8 @@ pub enum State {
     UpToDate,
     Available(String),
     Installing(String),
-    /// Installed; the reload into it happens when the window is focused.
+    /// Installed; the reload into it happens on the Update button (or, updating automatically,
+    /// when the window is focused).
     Installed(String),
     Failed(String),
 }
@@ -339,7 +342,7 @@ fn run_install(v: String) {
     }
 }
 
-/// "Install" for an available update (automatic installs off).
+/// "Install" for an available update (the Update button, or automatic installs off).
 pub fn install_now(ctx: &eframe::egui::Context) {
     if let State::Available(v) = state() {
         spawn(ctx, move || run_install(v));
@@ -424,8 +427,9 @@ N5LtPI0Gsk3pOwxTI4SLqgkXbXPZe3xgdluvQMXHbmDLg/UIFKQnNC3sdYQke6ZBlrU6os7Moa5CZJTZ
 }
 
 impl crate::app::App {
-    /// Settings › General › "Install updates automatically" (on unless turned off).
+    /// Settings › General › Updates: "Automatically", or (the default) "Ask me", where new
+    /// versions and builds wait for the Update button.
     pub fn auto_update(&self) -> bool {
-        self.store.get("auto_update").as_deref() != Some("0")
+        self.store.get("auto_update").as_deref() == Some("1")
     }
 }
