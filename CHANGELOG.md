@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-21
+
 ### Added
 - Offline install: `./install.sh` run from an extracted release archive installs the files
   next to it, checked against the signed `SHA256SUMS` now included in each archive; only
@@ -58,7 +60,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/RDevNeo/harbor/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/RDevNeo/harbor/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/RDevNeo/harbor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/RDevNeo/harbor/releases/tag/v0.1.0
