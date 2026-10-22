@@ -6,6 +6,11 @@
 #   curl -fsSL …/install.sh | sh -s -- --uninstall        # remove Harbor (keeps your chats)
 #   curl -fsSL …/install.sh | sh -s -- --uninstall --purge  # …and its data
 #
+# Offline: run ./install.sh from an extracted harbor-x86_64-linux.tar.gz. It installs the files
+# next to it, checked against the SHA256SUMS (and its signature, with minisign) in that folder.
+# --with-browser then uses an extracted harbor-browser-x86_64-linux folder (or its .tar.gz)
+# beside it, and downloads only if there is neither.
+#
 # Layout: ~/.local/lib/harbor/{harbor,harbor-stream,harbor-browser}, ~/.local/bin/harbor (link),
 # ~/.local/share/applications/harbor.desktop, ~/.local/share/icons/hicolor/…/harbor.{svg,png}.
 # Harbor updates itself afterwards (Settings › General).
@@ -65,7 +70,13 @@ case "$(uname -m)" in
   *) die "no build for $(uname -m) yet (x86_64 only)." ;;
 esac
 for c in tar sha256sum; do command -v "$c" >/dev/null 2>&1 || die "$c is required."; done
-[ -n "$FROM" ] || command -v curl >/dev/null 2>&1 || die "curl is required."
+
+# Run from an extracted release folder (not piped from curl): install the files next to this script.
+HERE=""
+if [ -z "$FROM" ] && [ "$(basename -- "$0")" = install.sh ]; then
+  HERE="$(cd "$(dirname -- "$0")" && pwd)"
+  [ -x "$HERE/harbor" ] && [ -f "$HERE/VERSION" ] || HERE=""
+fi
 
 if [ "$VERSION" = latest ]; then
   BASE="https://github.com/$REPO/releases/latest/download"
@@ -96,24 +107,78 @@ verify() {
   fi
 }
 
-say "Downloading Harbor ($VERSION)…"
-fetch SHA256SUMS || die "could not reach the release ($BASE)."
-CORE="harbor-$ARCH-linux.tar.gz"
-fetch "$CORE" || die "could not download $CORE"
-verify "$CORE"
-mkdir -p "$TMP/core"
-tar -xzf "$TMP/$CORE" -C "$TMP/core"
-SRC="$TMP/core/harbor-$ARCH-linux"
-[ -x "$SRC/harbor" ] || die "the archive has no harbor binary."
+# Checks a release folder against its own SHA256SUMS (and signature, when minisign is installed).
+check_folder() { # dir name
+  if [ -f "$1/SHA256SUMS" ]; then
+    (cd "$1" && sha256sum -c --quiet SHA256SUMS) || die "$2: files don't match its SHA256SUMS."
+    if [ -f "$1/SHA256SUMS.minisig" ] && command -v minisign >/dev/null 2>&1; then
+      minisign -Vqm "$1/SHA256SUMS" -P "$PUBKEY" || die "$2: bad signature on SHA256SUMS."
+      say "$2: checksums and signature verified."
+    else
+      say "$2: checksums verified."
+    fi
+  else
+    say "Note: $2 has no SHA256SUMS; installing its files unchecked."
+  fi
+}
 
 # Keep the browser engine if it's already installed; add it with --with-browser.
 [ -x "$LIB/harbor-browser" ] && BROWSER=1
-if [ "$BROWSER" = 1 ]; then
+BSRC=""
+if [ -n "$HERE" ]; then
+  SRC="$HERE"
+  say "Installing Harbor $(cat "$SRC/VERSION") from $SRC…"
+  check_folder "$SRC" "harbor-$ARCH-linux"
+  if [ "$BROWSER" = 1 ]; then
+    side="$(dirname -- "$HERE")"
+    if [ -x "$side/harbor-browser-$ARCH-linux/harbor-browser" ]; then
+      BSRC="$side/harbor-browser-$ARCH-linux"
+    elif [ -f "$side/harbor-browser-$ARCH-linux.tar.gz" ]; then
+      mkdir -p "$TMP/browser"
+      tar -xzf "$side/harbor-browser-$ARCH-linux.tar.gz" -C "$TMP/browser"
+      BSRC="$TMP/browser/harbor-browser-$ARCH-linux"
+    fi
+    if [ -n "$BSRC" ]; then
+      check_folder "$BSRC" "harbor-browser-$ARCH-linux"
+      [ "$(cat "$BSRC/browser.id" 2>/dev/null)" = "$(cat "$SRC/browser.id" 2>/dev/null)" ] || \
+        say "Note: that browser engine is from another release; Harbor's updater replaces it later."
+    else
+      # Only the engine needs the network; Harbor itself came from this folder.
+      VERSION="$(cat "$SRC/VERSION")"
+      BASE="https://github.com/$REPO/releases/download/v$VERSION"
+    fi
+  fi
+fi
+
+if [ -z "$HERE" ]; then
+  [ -n "$FROM" ] || command -v curl >/dev/null 2>&1 || die "curl is required."
+  fetch SHA256SUMS || die "could not reach the release ($BASE)."
+elif [ "$BROWSER" = 1 ] && [ -z "$BSRC" ]; then
+  # Harbor itself is here; without the network, skip just the engine.
+  if ! command -v curl >/dev/null 2>&1 || ! fetch SHA256SUMS 2>/dev/null; then
+    say "Note: the browser engine needs a download ($BASE), which failed; installing Harbor without it."
+    BROWSER=0
+  fi
+fi
+if [ -z "$HERE" ]; then
+  say "Downloading Harbor ($VERSION)…"
+  CORE="harbor-$ARCH-linux.tar.gz"
+  fetch "$CORE" || die "could not download $CORE"
+  verify "$CORE"
+  mkdir -p "$TMP/core"
+  tar -xzf "$TMP/$CORE" -C "$TMP/core"
+  SRC="$TMP/core/harbor-$ARCH-linux"
+fi
+[ -x "$SRC/harbor" ] || die "no harbor binary in $SRC."
+
+if [ "$BROWSER" = 1 ] && [ -z "$BSRC" ]; then
   BR="harbor-browser-$ARCH-linux.tar.gz"
+  say "Downloading the browser engine…"
   if fetch "$BR"; then
     verify "$BR"
     mkdir -p "$TMP/browser"
     tar -xzf "$TMP/$BR" -C "$TMP/browser"
+    BSRC="$TMP/browser/harbor-browser-$ARCH-linux"
   else
     say "Note: this release has no browser engine; skipping it."
     BROWSER=0
@@ -129,8 +194,8 @@ cp -p "$SRC/VERSION" "$STAGE/VERSION"
 [ -f "$SRC/browser.id" ] && cp -p "$SRC/browser.id" "$STAGE/browser.id"
 cp -rp "$SRC/licenses" "$STAGE/licenses"
 if [ "$BROWSER" = 1 ]; then
-  cp -p "$TMP/browser/harbor-browser-$ARCH-linux/harbor-browser" "$STAGE/"
-  cp -p "$TMP/browser/harbor-browser-$ARCH-linux/browser.id" "$STAGE/browser.installed"
+  cp -p "$BSRC/harbor-browser" "$STAGE/"
+  cp -p "$BSRC/browser.id" "$STAGE/browser.installed"
 fi
 # Helpers first, harbor last: a running Harbor sees its file change and reloads into the new
 # version (rename is atomic; running processes keep the old file).

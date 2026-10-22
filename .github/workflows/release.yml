@@ -204,7 +204,6 @@ jobs:
           (it includes moonlight-common-c, GPL-3.0, and a static LGPL-2.1+ FFmpeg). Its source
           code is at https://github.com/$GITHUB_REPOSITORY/tree/v$ver/stream
           EOF
-          tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
 
           b=pkg/harbor-browser-x86_64-linux
           mkdir -p "$b/licenses"
@@ -213,21 +212,44 @@ jobs:
           cp browser/LICENSE "$b/licenses/harbor-browser-MIT.txt"
           [ -f lic/harbor-browser.html ] && cp lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
           echo "harbor-browser is MIT; it links Servo (MPL-2.0), whose source is at https://github.com/servo/servo" > "$b/licenses/README.txt"
-          tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
-
-          cp packaging/install.sh dist/install.sh
-          (cd dist && sha256sum harbor-x86_64-linux.tar.gz harbor-browser-x86_64-linux.tar.gz install.sh > SHA256SUMS)
-          ls -la dist
-      - name: Sign
+          # A checksum list inside each archive: install.sh run from an extracted folder checks it offline.
+          for x in "$d" "$b"; do
+            (cd "$x" && find . -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
+          done
+      - name: Get minisign
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
+          echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
+          tar -xzf /tmp/minisign.tgz -C /tmp 2>/dev/null
+      - name: Sign the checksum lists inside the archives
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           set -eu
           [ -n "$MINISIGN_SECRET_KEY" ] || { echo "::error::MINISIGN_SECRET_KEY is not set"; exit 1; }
-          curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
-          echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
-          tar -xzf /tmp/minisign.tgz -C /tmp 2>/dev/null
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          for x in harbor-x86_64-linux harbor-browser-x86_64-linux; do
+            /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "pkg/$x/SHA256SUMS" -t "harbor $GITHUB_REF_NAME $x/SHA256SUMS"
+          done
+          rm -f /tmp/minisign.key
+      - name: Pack
+        run: |
+          set -eu
+          tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
+          tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
+          cp packaging/install.sh dist/install.sh
+          (cd dist && sha256sum harbor-x86_64-linux.tar.gz harbor-browser-x86_64-linux.tar.gz install.sh > SHA256SUMS)
+          ls -la dist
+          tar -tzf dist/harbor-x86_64-linux.tar.gz | grep SHA256SUMS
+      - name: Sign
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
           for f in dist/harbor-x86_64-linux.tar.gz dist/harbor-browser-x86_64-linux.tar.gz dist/install.sh dist/SHA256SUMS; do

@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Offline install: `./install.sh` run from an extracted release archive installs the files
+  next to it, checked against the signed `SHA256SUMS` now included in each archive; only
+  `curl … | sh` downloads.
+
 ## [0.1.2] - 2026-10-21
 
 ### Fixed

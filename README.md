@@ -29,6 +29,9 @@ curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh
 - `… | sh -s -- --with-browser` also installs the built-in browser's engine (Servo, about 40 MB, glibc
   2.39+); Harbor can download it later too.
 - `… | sh -s -- --uninstall` removes Harbor and keeps your chats (`--uninstall --purge` deletes them).
+- Offline: download `harbor-x86_64-linux.tar.gz` (and optionally `harbor-browser-x86_64-linux.tar.gz`
+  beside it), extract it and run `./install.sh` in that folder; it installs those files after checking them
+  against the signed `SHA256SUMS` inside.
 - Files: `~/.local/lib/harbor/` (`harbor`, `harbor-stream`, `harbor-browser`), `~/.local/bin/harbor`, a
   desktop entry and icons. Remote screens use the system's OpenSSL 3, Opus, ALSA and VA-API libraries.
 
