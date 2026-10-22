@@ -19,6 +19,7 @@
 <header class="nav wrap">
   <a class="brand" href="/"><img src="/favicon.svg" alt="" width="24" height="24">Harbor</a>
   <nav>
+    <a href="#performance">Performance</a>
     <a href="#features">Features</a>
     <a href="#install">Install</a>
     <a href="https://github.com/RDevNeo/harbor">GitHub</a>
@@ -29,23 +30,36 @@
   <section class="hero wrap">
     <p class="badge"><span class="dot"></span>Linux only · x86_64</p>
     <h1>Harbor</h1>
-    <p class="pitch">A fast, native chat client for coding agents. Claude Code, Codex, Gemini and others, organised by repository.</p>
-    <div class="cta">
-      <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Download for Linux
-      </a>
-      <a class="btn" href="https://github.com/RDevNeo/harbor">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
-        View on GitHub
-      </a>
+    <p class="pitch">A native chat client for coding agents. Claude Code, Codex, Gemini and others, organised by repository. Written in Rust: no Electron, no WebView.</p>
+    <ul class="stats" aria-label="Measured on Harbor 0.1.2">
+      <li><b>0%</b> CPU when idle</li>
+      <li><b>~70 MB</b> memory when idle</li>
+      <li><b>~15 MB</b> app binary</li>
+    </ul>
+    <div class="install" id="install">
+      <div class="card rec">
+        <p class="label"><span class="tag">Recommended</span> One command, installs and updates itself</p>
+        <div class="cmd">
+          <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
+          <button type="button" id="copy" aria-label="Copy install command">Copy</button>
+        </div>
+        <p class="small">Installs into <code>~/.local</code> without sudo. Add <code>sh -s -- --with-browser</code> for the optional browser engine (about 45 MB).</p>
+      </div>
+      <div class="card">
+        <p class="label">Manual install</p>
+        <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Download for Linux (.tar.gz)
+        </a>
+        <ol class="steps">
+          <li>Extract it: <code>tar xzf harbor-x86_64-linux.tar.gz</code></li>
+          <li>Run <code>./install.sh</code> inside the folder (it fetches and checks the latest release, so it needs internet)</li>
+          <li>Open Harbor from your app menu</li>
+        </ol>
+      </div>
     </div>
-    <div class="cmd" id="install">
-      <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
-      <button type="button" id="copy" aria-label="Copy install command">Copy</button>
-    </div>
-    <p class="note">Linux x86_64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. Installs into <code>~/.local</code> without sudo and updates itself.
-    Needs a coding-agent CLI such as <code>claude</code>, <code>codex</code> or <code>gemini</code>. Optional browser engine (about 45 MB): add <code>sh -s -- --with-browser</code>. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> (signed with minisign).</p>
+    <p class="note">One universal build for Linux x86_64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. No .deb or distro packages.
+    Needs a coding-agent CLI such as <code>claude</code>, <code>codex</code> or <code>gemini</code>. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> (signed with minisign) · <a href="https://github.com/RDevNeo/harbor">View on GitHub</a></p>
   </section>
 
   <section class="shot wrap" aria-label="Harbor window (illustration)">
@@ -89,6 +103,38 @@
     <p class="caption">Illustration of the Harbor window. Screenshots coming soon.</p>
   </section>
 
+  <section class="perf wrap" id="performance">
+    <h2>Light by design</h2>
+    <p class="lede">Harbor is a native Rust app (egui). There is no Electron, no WebView, and no Node or Chromium runtime behind the app window.</p>
+    <div class="grid">
+      <article>
+        <h3>0% CPU when idle</h3>
+        <p>Harbor only redraws when something changes. Measured on 0.1.2: no CPU time used over 30 seconds with the window open and nothing running.</p>
+      </article>
+      <article>
+        <h3>Small and lean</h3>
+        <p>A single binary of about 15 MB that uses about 70 MB of memory when idle. Memory grows with what you open, not with a bundled browser.</p>
+      </article>
+      <article>
+        <h3>Agents run directly</h3>
+        <p>Each turn runs the agent's own CLI (Claude Code, Codex, Gemini…) headless and streams its output into Harbor. No terminal emulator or browser wrapper per chat, and the CLIs are not modified.</p>
+      </article>
+      <article>
+        <h3>Survives restarts and updates</h3>
+        <p>Turns run outside the window, so an agent keeps working if you close Harbor, restart it or update it, and the chat picks up where it is.</p>
+      </article>
+      <article>
+        <h3>Browser only when you want it</h3>
+        <p>The optional browser panel uses Servo in a separate helper process. It isn't installed by default and only runs while that panel is open.</p>
+      </article>
+      <article>
+        <h3>Updates itself</h3>
+        <p>New versions are checked against their signatures and swapped in place, without a restart.</p>
+      </article>
+    </div>
+    <p class="caption">Measured with Harbor 0.1.2 on x86_64 Linux, idle window. Memory varies with your GPU driver and how many chats are open.</p>
+  </section>
+
   <section class="features wrap" id="features">
     <h2>Everything your agents need, in one native window</h2>
     <div class="grid">
@@ -113,8 +159,8 @@
         <p>See your plan limits at a glance. When a limit runs out, Harbor waits and continues the chat when it resets.</p>
       </article>
       <article>
-        <h3>Native and light</h3>
-        <p>Rust and egui. No Electron, no webview. Starts fast and uses little memory.</p>
+        <h3>Pull requests and integrations</h3>
+        <p>Review pull requests from <code>gh</code>, and add GitHub, Vercel, Linear, Sentry, Supabase or your own MCP servers from Settings.</p>
       </article>
     </div>
   </section>

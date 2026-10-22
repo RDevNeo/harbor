@@ -39,6 +39,18 @@ code { font-family: var(--mono); font-size: .9em; }
 h1 { margin: 0; font-size: clamp(48px, 9vw, 80px); line-height: 1; font-weight: 600; letter-spacing: -.04em; }
 .pitch { max-width: 600px; margin: 20px auto 0; color: var(--gray900); font-size: 20px; line-height: 1.5; }
 
+.stats { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px 28px; margin: 28px 0 0; padding: 0; list-style: none; color: var(--gray900); font-size: 14px; }
+.stats b { color: var(--gray1000); font-weight: 600; }
+.install { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; max-width: 1000px; margin: 36px auto 0; text-align: left; }
+.card { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px; border: 1px solid var(--gray400); border-radius: var(--r-xl); background: var(--bg100); }
+.card.rec { border-color: var(--gray500); background: var(--bg200); }
+.card .cmd { width: 100%; margin: 0; background: var(--bg100); }
+.card .cmd code { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+.label { margin: 0; font-weight: 600; font-size: 15px; }
+.tag { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 999px; background: var(--gray1000); color: var(--bg100); font-size: 12px; vertical-align: 1px; }
+.small { margin: 0; color: var(--gray600); font-size: 13px; }
+.steps { margin: 0; padding-left: 20px; color: var(--gray900); font-size: 13px; }
+.steps li + li { margin-top: 4px; }
 .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 36px; }
 .btn {
   display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 20px;
@@ -61,7 +73,7 @@ h1 { margin: 0; font-size: clamp(48px, 9vw, 80px); line-height: 1; font-weight: 
   background: var(--gray200); color: var(--gray1000); font: 600 13px Geist, sans-serif; cursor: pointer;
 }
 .cmd button:hover { background: var(--gray300); }
-.note { max-width: 760px; margin: 14px auto 0; color: var(--gray600); font-size: 13px; }
+.note { max-width: 760px; margin: 20px auto 0; color: var(--gray600); font-size: 13px; }
 
 /* Illustration of the app window. */
 .shot { padding-bottom: 32px; }
@@ -103,6 +115,10 @@ h1 { margin: 0; font-size: clamp(48px, 9vw, 80px); line-height: 1; font-weight: 
 .caption { text-align: center; color: var(--gray600); font-size: 12px; }
 
 .features { padding-top: 64px; padding-bottom: 80px; }
+.perf { padding-top: 64px; }
+.perf h2 { margin-bottom: 12px; }
+.lede { max-width: 640px; margin: 0 auto 36px; text-align: center; color: var(--gray900); }
+.perf .caption { margin-top: 16px; }
 h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 600; letter-spacing: -.02em; text-align: center; margin: 0 0 40px; }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border: 1px solid var(--gray400); border-radius: var(--r-xl); background: var(--gray400); overflow: hidden; }
 .grid article { padding: 28px; background: var(--bg100); }
@@ -115,6 +131,7 @@ footer a { color: var(--gray900); }
 footer a:hover { color: var(--gray1000); }
 
 @media (max-width: 900px) {
+  .install { grid-template-columns: 1fr; }
   .app { grid-template-columns: 170px 1fr; }
   .panel { display: none; }
   .grid { grid-template-columns: 1fr 1fr; }
