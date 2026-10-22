@@ -160,8 +160,11 @@ pub fn input_open(dir: &Path) -> bool {
 /// Follows the turn's output from the start: `line` gets each stdout line, `err` each
 /// stderr line; returns whether it exited cleanly once it is done.
 pub fn follow(dir: &Path, meta: &Meta, mut line: impl FnMut(&str), mut err: impl FnMut(&str)) -> bool {
-    let mut out = Tail::new(dir.join("out"));
-    let mut errs = Tail::new(dir.join("err"));
+    // A folder that was deleted under a live runner: its output is still open in the
+    // runner, reachable through /proc/<pid>/fd.
+    let file = |name: &str| if dir.join(name).exists() { dir.join(name) } else { fd_of(meta.pid, dir, name).unwrap_or_else(|| dir.join(name)) };
+    let mut out = Tail::new(file("out"));
+    let mut errs = Tail::new(file("err"));
     loop {
         // Checked before reading, so nothing written before the exit is missed.
         let done = dir.join("exit").exists() || !alive(meta.pid, meta.pid_start);
@@ -181,27 +184,27 @@ pub fn follow(dir: &Path, meta: &Meta, mut line: impl FnMut(&str), mut err: impl
 /// Reads whole lines appended to a file since the last look.
 struct Tail {
     path: PathBuf,
-    pos: u64,
+    /// Kept open once found: a /proc fd link vanishes with its process, the file doesn't.
+    file: Option<std::fs::File>,
     buf: Vec<u8>,
 }
 
 impl Tail {
     fn new(path: PathBuf) -> Self {
-        Tail { path, pos: 0, buf: vec![] }
+        Tail { path, file: None, buf: vec![] }
     }
 
     /// True if anything was read.
     fn lines(&mut self, f: &mut impl FnMut(&str)) -> bool {
-        let Ok(mut file) = std::fs::File::open(&self.path) else { return false };
-        if file.seek(SeekFrom::Start(self.pos)).is_err() {
-            return false;
+        if self.file.is_none() {
+            self.file = std::fs::File::open(&self.path).ok();
         }
+        let Some(file) = self.file.as_mut() else { return false };
         let mut chunk = vec![];
         let n = file.read_to_end(&mut chunk).unwrap_or(0);
         if n == 0 {
             return false;
         }
-        self.pos += n as u64;
         self.buf.extend_from_slice(&chunk);
         while let Some(i) = self.buf.iter().position(|b| *b == b'\n') {
             let l: Vec<u8> = self.buf.drain(..=i).collect();
@@ -209,6 +212,53 @@ impl Tail {
         }
         true
     }
+}
+
+/// The runner's open `<dir>/<name>` (also once deleted), as a /proc/<pid>/fd path.
+fn fd_of(pid: u32, dir: &Path, name: &str) -> Option<PathBuf> {
+    let want = dir.join(name).to_string_lossy().into_owned();
+    std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?.flatten().map(|e| e.path()).find(|p| {
+        std::fs::read_link(p).is_ok_and(|t| {
+            let t = t.to_string_lossy();
+            t == want || t.strip_suffix(" (deleted)") == Some(want.as_str())
+        })
+    })
+}
+
+/// Unix time a process started.
+fn started_at(pid: u32) -> Option<i64> {
+    let ticks = proc_start(pid)? as i64;
+    let btime: i64 = std::fs::read_to_string("/proc/stat").ok()?.lines().find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok())?;
+    Some(btime + ticks / 100)
+}
+
+/// A live runner whose folder is gone gets it back: what Harbor needs to follow it
+/// (its provider from the agent process, its start, where its turn began in the
+/// transcript), and its input closed, so the agent finishes what it's doing and exits
+/// (the runner looks for `in.closed` by path; its exit code lands there too).
+pub fn recover(dir: &Path, pid: u32, chat_id: i64, items: &[crate::store::Item]) -> Meta {
+    let started = started_at(pid).unwrap_or_else(crate::store::now);
+    let kind = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|c| std::fs::read_to_string(format!("/proc/{c}/stat")).ok().and_then(|s| s.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse::<u32>().ok()) == Some(pid))
+        .find_map(|c| {
+            let raw = std::fs::read(format!("/proc/{c}/cmdline")).ok()?;
+            let exe = String::from_utf8_lossy(raw.split(|b| *b == 0).next()?).into_owned();
+            let name = Path::new(&exe).file_name()?.to_string_lossy().into_owned();
+            crate::providers::Kind::ALL.into_iter().find(|k| k.bin() == name)
+        })
+        .unwrap_or(crate::providers::Kind::Claude);
+    // The turn began after the last message sent before the runner started.
+    let base = items.iter().rposition(|it| matches!(it, crate::store::Item::User { at, .. } if *at <= started + 5)).map_or(items.len(), |i| i + 1);
+    let meta = Meta { chat_id, kind: kind.label().to_string(), started, base, pid, pid_start: proc_start(pid).unwrap_or(0) };
+    if std::fs::create_dir_all(dir).is_ok() {
+        let _ = std::fs::write(dir.join("in.closed"), "");
+        let _ = std::fs::write(dir.join("meta.json"), serde_json::to_string(&meta).unwrap_or_default());
+    }
+    meta
 }
 
 /// Turn folders left by an earlier Harbor: still running, or done while it was away
@@ -296,7 +346,6 @@ impl crate::app::App {
     /// while it was away). Each chat's transcript goes back to where its turn began,
     /// keeping notices and messages that arrived since, and the turn is replayed.
     pub fn reattach_turns(&mut self, ctx: &eframe::egui::Context) {
-        use crate::store::Item;
         for (dir, meta) in leftovers() {
             let id = meta.chat_id;
             if self.chat(id).is_none() || self.turns.contains_key(&id) {
@@ -310,15 +359,37 @@ impl crate::app::App {
             if !dir.join("exit").exists() && !dir.join("stopped").exists() && !alive(meta.pid, meta.pid_start) {
                 self.cut_off.insert(id);
             }
-            let mut items = self.store.items(id);
-            let since: Vec<Item> = items.split_off(meta.base.min(items.len())).into_iter().filter(|it| matches!(it, Item::Notice { .. } | Item::Message { .. })).collect();
-            items.extend(since);
-            self.transcripts.insert(id, crate::app::Transcript { items, ..Default::default() });
-            let age = Duration::from_secs((crate::store::now() - meta.started).max(0) as u64);
-            let at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
-            let turn = crate::agent::reattach(dir, meta, self.tx.clone(), crate::app::turn_wake(ctx, id));
-            self.turns.insert(id, (turn, at));
+            self.pick_up(dir, meta, ctx);
         }
+        // Runners still going whose folder vanished: they are recovered, not forgotten
+        // (a forgotten one would get a second turn on its session).
+        for (id, dir, pid) in runners() {
+            if self.turns.contains_key(&id) || self.chat(id).is_none() {
+                continue;
+            }
+            let meta = recover(&dir, pid, id, &self.store.items(id));
+            self.notice(id, "alert", "Picked up a turn Harbor had lost track of", "");
+            self.pick_up(dir, meta, ctx);
+        }
+    }
+
+    /// Follows a turn again: the chat's transcript goes back to where the turn began,
+    /// keeping notices, messages and anything sent since, and the turn is replayed.
+    fn pick_up(&mut self, dir: PathBuf, meta: Meta, ctx: &eframe::egui::Context) {
+        use crate::store::Item;
+        let id = meta.chat_id;
+        let mut items = self.store.items(id);
+        let since: Vec<Item> = items
+            .split_off(meta.base.min(items.len()))
+            .into_iter()
+            .filter(|it| matches!(it, Item::Notice { .. } | Item::Message { .. }) || matches!(it, Item::User { at, .. } if *at > meta.started))
+            .collect();
+        items.extend(since);
+        self.transcripts.insert(id, crate::app::Transcript { items, ..Default::default() });
+        let age = Duration::from_secs((crate::store::now() - meta.started).max(0) as u64);
+        let at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+        let turn = crate::agent::reattach(dir, meta, self.tx.clone(), crate::app::turn_wake(ctx, id));
+        self.turns.insert(id, (turn, at));
     }
 
     /// Settings → General, "Continue threads after restarts" (on by default).
@@ -349,23 +420,12 @@ impl crate::app::App {
     /// busy and what's sent meanwhile waits for it. True if one was found.
     pub fn adopt_runner(&mut self, chat_id: i64, ctx: &eframe::egui::Context) -> bool {
         let Some((_, dir, pid)) = runners().into_iter().find(|r| r.0 == chat_id) else { return false };
-        let meta = std::fs::read_to_string(dir.join("meta.json")).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()).unwrap_or(Meta {
-            chat_id,
-            kind: crate::providers::Kind::Claude.label().to_string(),
-            started: crate::store::now(),
-            base: usize::MAX,
-            pid,
-            pid_start: proc_start(pid).unwrap_or(0),
-        });
-        // Its folder is gone: give the runner one back with its input closed, so the
-        // agent finishes what it's doing and exits (the runner looks for `in.closed` by
-        // path); its exit code lands there too.
-        if !dir.exists() && std::fs::create_dir_all(&dir).is_ok() {
-            let _ = std::fs::write(dir.join("in.closed"), "");
-        }
+        // What's on screen (a message just sent) is kept: it goes to the store first.
+        self.persist(chat_id);
+        let items = self.store.items(chat_id);
+        let meta = std::fs::read_to_string(dir.join("meta.json")).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()).unwrap_or_else(|| recover(&dir, pid, chat_id, &items));
         self.notice(chat_id, "alert", "A turn of this chat was still running: new messages wait for it", "");
-        let turn = crate::agent::reattach(dir, meta, self.tx.clone(), crate::app::turn_wake(ctx, chat_id));
-        self.turns.insert(chat_id, (turn, Instant::now()));
+        self.pick_up(dir, meta, ctx);
         true
     }
 }
