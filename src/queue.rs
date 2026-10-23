@@ -65,6 +65,11 @@ impl App {
         }
     }
 
+/// Takes a chat's waiting messages out of the queue (a phone's Stop hands them back to it).
+    pub fn take_queue(&mut self, chat_id: i64) -> Vec<Queued> {
+        self.queue.chats.remove(&chat_id).unwrap_or_default()
+    }
+
     pub fn queued(&self, chat_id: i64) -> &[Queued] {
         self.queue.chats.get(&chat_id).map(|q| q.as_slice()).unwrap_or_default()
     }
