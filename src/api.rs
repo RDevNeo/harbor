@@ -65,6 +65,62 @@ struct Revs {
     /// The revision `/v1/state` last changed at.
     state: u64,
     chats: HashMap<i64, u64>,
+    /// Who is typing in which chat, until when.
+    typing: HashMap<i64, Vec<Typer>>,
+}
+
+impl Revs {
+    /// A new revision for `chat`, in the state too.
+    fn mark(&mut self, chat: i64) {
+        self.rev += 1;
+        self.chats.insert(chat, self.rev);
+        self.state = self.rev;
+    }
+
+    /// Drops typers whose lease ran out; true when any did (their chats are marked).
+    fn prune(&mut self, now: Instant) -> bool {
+        let mut gone = vec![];
+        for (chat, v) in self.typing.iter_mut() {
+            let n = v.len();
+            v.retain(|t| t.until > now);
+            if v.len() != n {
+                gone.push(*chat);
+            }
+        }
+        self.typing.retain(|_, v| !v.is_empty());
+        for c in &gone {
+            self.mark(*c);
+        }
+        !gone.is_empty()
+    }
+
+    fn next_expiry(&self) -> Option<Instant> {
+        self.typing.values().flatten().map(|t| t.until).min()
+    }
+}
+
+/// Someone typing in a chat: a phone, another client, or this PC's own composer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Typer {
+    /// "tok:<8 hex>" for an API client (see [`device_id`]), "pc:<hostname>" for this PC.
+    pub device: String,
+    /// "phone" or "pc".
+    pub kind: String,
+    pub label: String,
+    pub until: Instant,
+}
+
+/// How long one typing signal lasts (clients renew it every ~3 s).
+pub const TYPING_TTL: Duration = Duration::from_secs(6);
+
+/// A client's device id: stable per token, without giving the token away.
+pub fn device_id(token: &str) -> String {
+    format!("tok:{:08x}", hash_of(&token) as u32)
+}
+
+/// This PC's own composer as a typer.
+pub fn local_device() -> String {
+    format!("pc:{}", crate::remote::hostname())
 }
 
 /// Where the listener is reachable, for Settings › Phones.
@@ -100,7 +156,7 @@ impl Hub {
             port: Mutex::new(port),
             tokens: Mutex::new(tokens),
             seen: Mutex::new(HashMap::new()),
-            revs: Mutex::new(Revs { rev: base, state: base, chats: HashMap::new() }),
+            revs: Mutex::new(Revs { rev: base, state: base, ..Default::default() }),
             cv: Condvar::new(),
             net: Mutex::new(Net::default()),
         }
@@ -133,6 +189,58 @@ impl Hub {
         r.rev
     }
 
+    /// Someone starts, keeps or stops typing in `chat`. Starting and stopping wake the
+    /// long-polls; a renewal only extends the lease. True when anything visible changed.
+    pub fn set_typing(&self, chat: i64, device: &str, kind: &str, label: &str, on: bool) -> bool {
+        let now = Instant::now();
+        let mut r = self.revs.lock().unwrap();
+        let mut changed = r.prune(now);
+        let v = r.typing.entry(chat).or_default();
+        let at = v.iter().position(|t| t.device == device);
+        match (at, on) {
+            (Some(i), true) => {
+                v[i].until = now + TYPING_TTL;
+                if v[i].label != label || v[i].kind != kind {
+                    v[i].label = label.into();
+                    v[i].kind = kind.into();
+                    changed = true;
+                }
+            }
+            (None, true) => {
+                v.push(Typer { device: device.into(), kind: kind.into(), label: label.into(), until: now + TYPING_TTL });
+                changed = true;
+            }
+            (Some(i), false) => {
+                v.remove(i);
+                changed = true;
+            }
+            (None, false) => {}
+        }
+        r.typing.retain(|_, v| !v.is_empty());
+        if changed {
+            r.mark(chat);
+            drop(r);
+            self.cv.notify_all();
+        }
+        changed
+    }
+
+    /// Who is typing in `chat` now.
+    pub fn typing(&self, chat: i64) -> Vec<Typer> {
+        let now = Instant::now();
+        self.revs.lock().unwrap().typing.get(&chat).map(|v| v.iter().filter(|t| t.until > now).cloned().collect()).unwrap_or_default()
+    }
+
+    /// The soonest a typing lease runs out (for a repaint then).
+    pub fn next_typing_expiry(&self) -> Option<Instant> {
+        let mut r = self.revs.lock().unwrap();
+        // Run-out leases go now (and wake the long-polls), so this never points at the past.
+        if r.prune(Instant::now()) {
+            self.cv.notify_all();
+        }
+        r.next_expiry()
+    }
+
     pub fn chat_rev(&self, chat: i64) -> u64 {
         self.revs.lock().unwrap().chats.get(&chat).copied().unwrap_or(0)
     }
@@ -145,12 +253,21 @@ impl Hub {
         if since > r.rev {
             return (r.rev, vec![], true);
         }
-        while r.rev <= since {
-            let left = deadline.saturating_duration_since(Instant::now());
+        loop {
+            // A typing lease that runs out is a change too.
+            if r.prune(Instant::now()) {
+                self.cv.notify_all();
+            }
+            if r.rev > since {
+                break;
+            }
+            let now = Instant::now();
+            let left = deadline.saturating_duration_since(now);
             if left.is_zero() {
                 break;
             }
-            r = self.cv.wait_timeout(r, left).unwrap().0;
+            let until = r.next_expiry().map_or(left, |e| e.saturating_duration_since(now).max(Duration::from_millis(10)).min(left));
+            r = self.cv.wait_timeout(r, until).unwrap().0;
         }
         if r.rev > since && !wait.is_zero() {
             // A streaming reply changes many times a second: one answer for a short burst.
@@ -200,6 +317,8 @@ pub struct Local {
     /// Chat → hash of what `/v1/state` says about it; plus the projects/accounts part.
     chats: HashMap<i64, u64>,
     rest: u64,
+    /// The open chat and a hash of its draft at the last frame (this PC typing).
+    draft: Option<(i64, u64)>,
     pub ui: PhonesUi,
 }
 
@@ -212,7 +331,7 @@ pub struct PhonesUi {
 
 impl Local {
     pub fn new(hub: Arc<Hub>) -> Self {
-        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, ui: Default::default() }
+        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, ui: Default::default() }
     }
 }
 
@@ -604,6 +723,21 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             let since = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
             let (rev, chats, state) = hub.wait(since, POLL);
             send_json(&mut w, 200, &json!({ "rev": rev, "changed_chats": chats, "state_changed": state }));
+        }
+        ("POST", ["v1", "chats", c, "typing"]) => {
+            let Some(chat) = c.parse::<i64>().ok() else { return send_json(&mut w, 404, &json!({ "error": "no such chat" })) };
+            let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let on = body["typing"].as_bool().unwrap_or(true);
+            let kind = if body["kind"].as_str() == Some("pc") { "pc" } else { "phone" };
+            let label = if !device.is_empty() {
+                device.clone()
+            } else {
+                hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| if kind == "pc" { "A PC".into() } else { "Phone".into() })
+            };
+            if hub.set_typing(chat, &device_id(&token), kind, &label, on) {
+                wake(); // this PC's window shows it
+            }
+            send_json(&mut w, 200, &json!({ "ok": true }));
         }
         ("POST", ["v1", "upload"]) => {
             let r = upload(&mut r, &req, &uploads_dir());
@@ -1028,6 +1162,85 @@ fn icon_name(h: &crate::remote::Host) -> &'static str {
     }
 }
 
+/// A chat's run settings after a PATCH of account/model/effort/access/device/fast, checked
+/// with the desktop composer's rules: `allowed` are the accounts it may switch to (see
+/// `App::allowed_accounts`), `devices` the ids of the devices there are. Ok(None): nothing
+/// asked; Ok(Some((chat, fast))): the changed chat and the hub-wide fast flag to set.
+pub fn check_run(
+    c: &store::Chat,
+    body: &Value,
+    accounts: &[providers::Account],
+    allowed: &[String],
+    models_for: &dyn Fn(Kind) -> Vec<providers::Model>,
+    devices: &[&str],
+) -> Result<Option<(store::Chat, Option<bool>)>, Reply> {
+    let field = |k: &str| -> Result<Option<String>, Reply> {
+        match &body[k] {
+            Value::Null => Ok(None),
+            Value::String(s) => Ok(Some(s.clone())),
+            _ => Err(err(400, format!("{k} must be a string"))),
+        }
+    };
+    let (account, model, effort, access, device) = (field("account")?, field("model")?, field("effort")?, field("access")?, field("device")?);
+    let fast = match &body["fast"] {
+        Value::Null => None,
+        Value::Bool(b) => Some(*b),
+        _ => return Err(err(400, "fast must be true or false")),
+    };
+    if [&account, &model, &effort, &access, &device].iter().all(|f| f.is_none()) && fast.is_none() {
+        return Ok(None);
+    }
+    let kind_of = |id: &str| accounts.iter().find(|a| a.id == id).map(|a| a.kind);
+    let old_kind = kind_of(&c.account).unwrap_or(Kind::Claude);
+    let mut n = c.clone();
+    if let Some(a) = account {
+        let Some(acc) = accounts.iter().find(|x| x.id == a && x.installed()) else { return Err(err(400, format!("no account {a}"))) };
+        if !allowed.contains(&a) {
+            let why = if c.role == store::Role::Lead { "a lead runs on Claude".to_string() } else { format!("a started chat stays on {}", old_kind.label()) };
+            return Err(err(409, format!("can't switch to {}: {why}", acc.short())));
+        }
+        n.account = a;
+    }
+    let kind = kind_of(&n.account).unwrap_or(Kind::Claude);
+    let models = models_for(kind);
+    match model {
+        Some(m) if !models.is_empty() && !models.iter().any(|x| x.id == m) => return Err(err(400, format!("{} has no model {m}", kind.label()))),
+        Some(m) => n.model = m,
+        // Another provider without a model asked for: its first one, as the picker shows it.
+        None if kind != old_kind => n.model = models.iter().find(|m| !m.more).or(models.first()).map(|m| m.id.clone()).unwrap_or_default(),
+        None => {}
+    }
+    // Effort and access stay valid for the provider, as `App::set_sel` keeps them.
+    match effort {
+        Some(e) if !e.is_empty() && !providers::efforts(kind).iter().any(|x| x.0 == e) => return Err(err(400, format!("{} has no effort {e}", kind.label()))),
+        Some(e) => n.effort = e,
+        None if !n.effort.is_empty() && !providers::efforts(kind).iter().any(|x| x.0 == n.effort) => n.effort = providers::default_effort(kind).into(),
+        None => {}
+    }
+    match access {
+        Some(a) if !providers::access(kind).iter().any(|x| x.0 == a) => return Err(err(400, format!("{} has no access level {a}", kind.label()))),
+        Some(a) => n.access = a,
+        None if !providers::access(kind).iter().any(|x| x.0 == n.access) => n.access = providers::access(kind)[0].0.into(),
+        None => {}
+    }
+    if let Some(d) = device.filter(|d| *d != c.device) {
+        if c.started {
+            return Err(err(409, "a started chat stays on the device it started on; start a new chat to use another"));
+        }
+        if !d.is_empty() && kind != Kind::Claude {
+            return Err(err(400, "only Claude chats run on another device"));
+        }
+        if !d.is_empty() && !devices.contains(&d.as_str()) {
+            return Err(err(400, format!("no device {d}")));
+        }
+        n.device = d;
+    }
+    if fast == Some(true) && !providers::has_fast(kind) {
+        return Err(err(400, format!("{} has no fast mode", kind.label())));
+    }
+    Ok(Some((n, fast)))
+}
+
 // ================================================================== the UI thread's side
 
 impl App {
@@ -1043,6 +1256,7 @@ impl App {
         if !self.api.hub.enabled.load(Ordering::Relaxed) {
             return;
         }
+        self.local_typing();
         let mut seen = HashMap::with_capacity(self.chats.len());
         let mut changed = vec![];
         for c in &self.chats {
@@ -1069,6 +1283,28 @@ impl App {
         if (gone || rest_changed) && changed.is_empty() {
             hub.touch(None, true);
         }
+    }
+
+    /// This PC's composer as a typer: an edit to an open chat's draft renews the lease, an
+    /// emptied draft (sent or cleared) ends it.
+    fn local_typing(&mut self) {
+        let crate::app::View::Chat(id) = self.view else { return };
+        let draft = self.drafts.get(&id).map(|d| d.trim()).unwrap_or("");
+        let h = hash_of(&draft);
+        if self.api.draft == Some((id, h)) {
+            return;
+        }
+        let was = self.api.draft.replace((id, h));
+        let me = local_device();
+        if let Some((old, _)) = was.filter(|(old, _)| *old != id) {
+            self.api.hub.set_typing(old, &me, "pc", "", false);
+        }
+        // The first look at a chat isn't typing (a draft left from earlier).
+        if was.is_none_or(|(old, _)| old != id) {
+            return;
+        }
+        let label = crate::remote::hostname();
+        self.api.hub.set_typing(id, &me, "pc", &label, !draft.is_empty());
     }
 
     fn queued_count(&self, id: i64) -> usize {
@@ -1111,7 +1347,7 @@ impl App {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
         let id = |s: &str| s.parse::<i64>().ok();
         match (call.method.as_str(), p.as_slice()) {
-            ("GET", ["v1", "state"]) => ok(self.api_state(ctx)),
+            ("GET", ["v1", "state"]) => ok(self.api_state(ctx, &device_id(&call.token))),
             ("GET", ["v1", "chats", c, "items"]) => match id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_items(c, call.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
                 None => err(404, "no such chat"),
@@ -1133,11 +1369,15 @@ impl App {
             }
             ("PATCH", ["v1", "chats", c]) => {
                 let Some(c) = id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
-                if let Some(t) = call.body["title"].as_str() {
-                    let t = t.trim();
-                    if t.is_empty() {
-                        return err(400, "empty title");
-                    }
+                let title = call.body["title"].as_str().map(str::trim);
+                if title == Some("") {
+                    return err(400, "empty title");
+                }
+                // Run settings first: they are checked as a whole, and nothing changes if one fails.
+                if let Err(r) = self.api_patch_run(c, &call.body, ctx) {
+                    return r;
+                }
+                if let Some(t) = title {
                     if let Some(ch) = self.chat_mut(c) {
                         ch.title = t.chars().take(200).collect();
                     }
@@ -1146,7 +1386,8 @@ impl App {
                 if let Some(s) = call.body["settled"].as_bool() {
                     self.set_chat_settled(c, s);
                 }
-                ok(json!({ "ok": true }))
+                let chat = self.chat(c).map(|ch| self.chat_json(ch)).unwrap_or_default();
+                ok(json!({ "ok": true, "chat": chat }))
             }
             ("DELETE", ["v1", "chats", c]) => {
                 let Some(c) = id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
@@ -1166,23 +1407,71 @@ impl App {
         }
     }
 
-    pub fn api_state(&self, ctx: &egui::Context) -> Value {
+    /// Who is typing in a chat, as the wire says it.
+    fn typing_json(&self, chat: i64) -> Vec<Value> {
+        self.api.hub.typing(chat).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect()
+    }
+
+    /// The accounts a chat may switch to: a started chat stays on its provider, a lead on Claude.
+    pub fn allowed_accounts(&self, chat: i64) -> Vec<String> {
+        let locked = self.locked_kind_of(chat);
+        self.accounts.iter().filter(|a| a.installed() && locked.is_none_or(|k| a.kind == k)).map(|a| a.id.clone()).collect()
+    }
+
+    pub fn chat_json(&self, c: &store::Chat) -> Value {
+        let kind = self.account(&c.account).map_or(Kind::Claude, |a| a.kind);
+        let allowed = self.allowed_accounts(c.id);
+        json!({
+            "id": c.id, "project_id": c.repo_id, "title": c.title, "device": c.device, "account": c.account,
+            "model": c.model, "effort": c.effort, "access": c.access, "fast": self.fast, "settled": c.settled,
+            "running": self.turns.contains_key(&c.id), "queued": self.queued_count(c.id),
+            "updated_ms": c.updated * 1000, "rev": self.api.hub.chat_rev(c.id),
+            "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
+            "parent": c.parent,
+            "typing": self.typing_json(c.id),
+            "switchable": {
+                "account": allowed.iter().any(|a| *a != c.account),
+                "model": true,
+                "effort": !providers::efforts(kind).is_empty(),
+                "access": providers::access(kind).len() > 1,
+                // A started chat's session lives on its device; other providers run here only.
+                "device": !c.started && kind == Kind::Claude,
+                "fast": providers::has_fast(kind),
+            },
+            "allowed_accounts": allowed,
+        })
+    }
+
+    /// PATCH's account/model/effort/access/device/fast, with the desktop composer's rules.
+    fn api_patch_run(&mut self, chat: i64, body: &Value, ctx: &egui::Context) -> Result<(), Reply> {
+        let Some(c) = self.chat(chat).cloned() else { return Err(err(404, "no such chat")) };
+        let net = crate::remote::tailnet(ctx);
+        let hosts: Vec<crate::remote::Host> = crate::remote::devices(&self.remote, &net).into_iter().map(|(h, _)| h).collect();
+        let ids: Vec<&str> = hosts.iter().map(|h| h.id.as_str()).collect();
+        let allowed = self.allowed_accounts(chat);
+        let Some((n, fast)) = check_run(&c, body, &self.accounts, &allowed, &|k| self.models_for(k).to_vec(), &ids)? else { return Ok(()) };
+        // Checked: apply. A Tailscale PC picked once is kept, as the desktop's device menu does.
+        if let Some(h) = hosts.iter().find(|h| h.id == n.device && n.device != c.device) {
+            if !self.remote.devices.iter().any(|x| x.id == h.id) {
+                self.remote.devices.push(h.clone());
+                crate::remote::save(&self.store, &self.remote);
+            }
+        }
+        if let Some(f) = fast.filter(|f| *f != self.fast) {
+            self.fast = f;
+            self.store.set("fast_mode", if f { "1" } else { "0" });
+        }
+        if let Some(ch) = self.chat_mut(chat) {
+            *ch = n;
+        }
+        self.persist(chat);
+        Ok(())
+    }
+
+    pub fn api_state(&self, ctx: &egui::Context, you: &str) -> Value {
         let projects: Vec<Value> = self.repos.iter().map(|r| json!({ "id": r.id, "name": r.name, "path": r.path.to_string_lossy() })).collect();
         let hub = &self.api.hub;
-        let chats: Vec<Value> = self
-            .chats
-            .iter()
-            .map(|c| {
-                json!({
-                    "id": c.id, "project_id": c.repo_id, "title": c.title, "device": c.device, "account": c.account,
-                    "model": c.model, "effort": c.effort, "access": c.access, "fast": self.fast, "settled": c.settled,
-                    "running": self.turns.contains_key(&c.id), "queued": self.queued_count(c.id),
-                    "updated_ms": c.updated * 1000, "rev": hub.chat_rev(c.id),
-                    "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
-                    "parent": c.parent,
-                })
-            })
-            .collect();
+        let chats: Vec<Value> = self.chats.iter().map(|c| self.chat_json(c)).collect();
         let accounts: Vec<Value> = self
             .accounts
             .iter()
@@ -1217,6 +1506,7 @@ impl App {
         json!({
             "version": crate::update::VERSION,
             "hub_name": crate::remote::hostname(),
+            "you": you,
             "rev": hub.rev(),
             "projects": projects,
             "chats": chats,
@@ -1265,6 +1555,7 @@ impl App {
             "count": items.len(),
             "running": self.turns.contains_key(&chat),
             "queued": self.queued_count(chat),
+            "typing": self.typing_json(chat),
             "items": out,
         })
     }
@@ -1486,6 +1777,99 @@ mod tests {
     }
 
     #[test]
+    fn typing_leases() {
+        let hub = Arc::new(Hub::new(vec![], DEFAULT_PORT));
+        let r0 = hub.rev();
+        assert!(hub.set_typing(5, "tok:1", "phone", "Galaxy", true), "starting is a change");
+        assert_eq!(hub.typing(5).iter().map(|t| (t.device.as_str(), t.kind.as_str(), t.label.as_str())).collect::<Vec<_>>(), [("tok:1", "phone", "Galaxy")]);
+        let (_, chats, state) = hub.wait(r0, Duration::ZERO);
+        assert_eq!((chats, state), (vec![5], true));
+        let r1 = hub.rev();
+        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true), "a renewal only extends the lease");
+        assert_eq!(hub.rev(), r1);
+        assert!(hub.set_typing(5, "pc:desk", "pc", "desk", true));
+        assert_eq!(hub.typing(5).len(), 2);
+        assert!(hub.set_typing(5, "tok:1", "phone", "", false), "stopping is a change");
+        assert!(!hub.set_typing(5, "tok:1", "phone", "", false));
+        assert_eq!(hub.typing(5).len(), 1);
+        assert!(hub.typing(6).is_empty());
+        // A lease that runs out wakes a waiting long-poll without anyone calling in.
+        {
+            let mut r = hub.revs.lock().unwrap();
+            for t in r.typing.values_mut().flatten() {
+                t.until = Instant::now() + Duration::from_millis(80);
+            }
+        }
+        let since = hub.rev();
+        let t = Instant::now();
+        let (rev, chats, state) = hub.wait(since, Duration::from_secs(5));
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        assert!(rev > since);
+        assert_eq!((chats, state), (vec![5], true));
+        assert!(hub.typing(5).is_empty());
+        assert_eq!(hub.next_typing_expiry(), None);
+        assert_eq!(device_id("abc"), device_id("abc"));
+        assert_ne!(device_id("abc"), device_id("abd"));
+        assert!(device_id("abc").starts_with("tok:") && device_id("abc").len() == 12);
+    }
+
+    fn account(id: &str, kind: Kind) -> providers::Account {
+        providers::Account {
+            id: id.into(), kind, name: id.into(), email: String::new(), badge: "AB".into(), plan: String::new(),
+            config_dir: None, bin: Some(PathBuf::from("/bin/true")), logged_in: Some(true), usage: vec![],
+        }
+    }
+
+    fn chat(account: &str, started: bool, role: store::Role) -> store::Chat {
+        store::Chat {
+            id: 1, repo_id: None, title: "t".into(), session_id: "s".into(), started, account: account.into(), model: "claude-opus-5-5".into(),
+            effort: "high".into(), access: "full".into(), settled: false, updated: 0, role, parent: None, name: "lead".into(), device: String::new(),
+        }
+    }
+
+    #[test]
+    fn run_settings_follow_the_desktop_rules() {
+        let accounts = vec![account("claude", Kind::Claude), account("claude2", Kind::Claude), account("codex", Kind::Codex)];
+        let models = |k: Kind| providers::static_models(k);
+        let devs = ["ts:laptop"];
+        let all: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
+        let claude: Vec<String> = vec!["claude".into(), "claude2".into()];
+        let run = |c: &store::Chat, allowed: &[String], b: Value| check_run(c, &b, &accounts, allowed, &models, &devs);
+        let lead = chat("claude", false, store::Role::Lead);
+        assert!(matches!(run(&lead, &claude, json!({ "title": "x" })), Ok(None)), "nothing asked");
+        // Another Claude account: fine; another provider: 409 (a lead runs on Claude).
+        let (n, _) = run(&lead, &claude, json!({ "account": "claude2" })).unwrap().unwrap();
+        assert_eq!((n.account.as_str(), n.model.as_str()), ("claude2", "claude-opus-5-5"));
+        assert_eq!(run(&lead, &claude, json!({ "account": "codex" })).unwrap_err().status, 409);
+        assert_eq!(run(&lead, &claude, json!({ "account": "nope" })).unwrap_err().status, 400);
+        // A sub that hasn't started may change provider: its model, effort and access follow.
+        let sub = store::Chat { effort: "ultracode".into(), access: "plan".into(), ..chat("claude", false, store::Role::Sub) };
+        let (n, _) = run(&sub, &all, json!({ "account": "codex" })).unwrap().unwrap();
+        assert_eq!(n.account, "codex");
+        assert!(models(Kind::Codex).iter().any(|m| m.id == n.model), "{}", n.model);
+        assert!(providers::efforts(Kind::Codex).iter().any(|e| e.0 == n.effort), "{}", n.effort);
+        assert_eq!(n.access, "plan");
+        // Values are checked against the provider's lists.
+        assert_eq!(run(&lead, &claude, json!({ "model": "gpt-9" })).unwrap_err().status, 400);
+        assert_eq!(run(&lead, &claude, json!({ "effort": "warp" })).unwrap_err().status, 400);
+        assert_eq!(run(&lead, &claude, json!({ "access": "root" })).unwrap_err().status, 400);
+        assert_eq!(run(&lead, &claude, json!({ "effort": 3 })).unwrap_err().status, 400);
+        let (n, fast) = run(&lead, &claude, json!({ "effort": "max", "access": "edits", "fast": true })).unwrap().unwrap();
+        assert_eq!((n.effort.as_str(), n.access.as_str(), fast), ("max", "edits", Some(true)));
+        // Devices: before the first turn only, Claude only, known ones only.
+        let (n, _) = run(&lead, &claude, json!({ "device": "ts:laptop" })).unwrap().unwrap();
+        assert_eq!(n.device, "ts:laptop");
+        assert_eq!(run(&lead, &claude, json!({ "device": "ts:gone" })).unwrap_err().status, 400);
+        let started = chat("claude", true, store::Role::Lead);
+        assert_eq!(run(&started, &claude, json!({ "device": "ts:laptop" })).unwrap_err().status, 409);
+        assert!(run(&started, &claude, json!({ "device": "" })).is_ok(), "its own device again is no change");
+        let codex = chat("codex", false, store::Role::Sub);
+        assert_eq!(run(&codex, &all, json!({ "device": "ts:laptop" })).unwrap_err().status, 400);
+        // One bad field and nothing is applied: the error comes before any change.
+        assert!(run(&lead, &claude, json!({ "effort": "max", "access": "root" })).is_err());
+    }
+
+    #[test]
     fn revisions_and_long_poll() {
         let hub = Arc::new(Hub::new(vec![], DEFAULT_PORT));
         let r0 = hub.rev();
@@ -1573,6 +1957,14 @@ mod tests {
         let mut out = String::new();
         c.read_to_string(&mut out).unwrap();
         assert!(out.starts_with("HTTP/1.1 200") || out.starts_with("HTTP/1.1 404"), "{out}");
+        // Typing is answered on the connection's thread (no UI round trip).
+        let (st, _) = call(port, "POST /v1/chats/4/typing HTTP/1.1\r\nAuthorization: Bearer tok\r\nX-Harbor-Device: Pixel\r\nContent-Length: 2\r\n\r\n{}");
+        assert_eq!(st, 200);
+        let t = hub.typing(4);
+        assert_eq!((t[0].label.as_str(), t[0].kind.as_str(), t[0].device.clone()), ("Pixel", "phone", device_id("tok")));
+        let body = r#"{"typing":false}"#;
+        call(port, &format!("POST /v1/chats/4/typing HTTP/1.1\r\nAuthorization: Bearer tok\r\nContent-Length: {}\r\n\r\n{body}", body.len()));
+        assert!(hub.typing(4).is_empty());
         // The long-poll returns as soon as a chat changes.
         let since = hub.rev();
         let h = hub.clone();

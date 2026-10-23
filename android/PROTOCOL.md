@@ -43,13 +43,16 @@ refetch everything.
 
 ```json
 {
-  "version": "0.7.0", "hub_name": "desk", "rev": 1761200000123,
+  "version": "0.9.0", "hub_name": "desk", "you": "tok:1a2b3c4d", "rev": 1761200000123,
   "projects": [{"id": 1, "name": "harbor", "path": "/home/user/Projects/harbor"}],
   "chats": [{
     "id": 12, "project_id": 1, "title": "Fix the build", "device": "", "account": "claude",
     "model": "claude-opus-5-5", "effort": "high", "access": "full", "fast": false,
     "settled": false, "running": true, "queued": 0, "updated_ms": 1761200000000, "rev": 1761200000100,
-    "role": "lead", "parent": null
+    "role": "lead", "parent": null,
+    "typing": [{"device": "pc:desk", "kind": "pc", "label": "desk"}],
+    "switchable": {"account": true, "model": true, "effort": true, "access": true, "device": false, "fast": true},
+    "allowed_accounts": ["claude", "claude2"]
   }],
   "accounts": [{"id": "claude", "label": "Claude · AB", "name": "…", "kind": "claude",
                 "signed_in": true, "can_start": true, "usage": [{"label": "5h", "percent": 42.0}]}],
@@ -75,11 +78,15 @@ refetch everything.
   window ("5h", "Weekly", …).
 - `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
 - `queued`: messages waiting for the running turn.
+- `you`: this client's own device id, as it appears in `typing` (hide yourself with it).
+- `typing`: who is writing in the chat now (see [Typing](#typing)).
+- `switchable` / `allowed_accounts`: which run settings `PATCH /v1/chats/{id}` may change now,
+  and the accounts it may switch to (see [Run settings](#run-settings)).
 
 ### `GET /v1/chats/{id}/items?since=<rev>`
 
 ```json
-{"rev": 1761200000200, "count": 31, "running": true, "queued": 1, "items": [ … ]}
+{"rev": 1761200000200, "count": 31, "running": true, "queued": 1, "typing": [ … ], "items": [ … ]}
 ```
 
 Items whose revision is greater than `since` (`since=0`: all). `seq` is the item's index
@@ -123,7 +130,8 @@ gathers a burst of streaming changes), or after 20 s with nothing:
 ```
 
 `state_changed` is true when anything in `/v1/state` changed (a chat's title, settled, running,
-queued, updated time; chats added or removed; projects; accounts' usage). Use a read timeout of
+queued, updated time, run settings, who is typing; chats added or removed; projects; accounts'
+usage). A typing lease running out is a change too (its chat is in `changed_chats`). Use a read timeout of
 25 s and reconnect on any error.
 
 ### `POST /v1/chats`
@@ -149,7 +157,47 @@ first, so the app can put them back in its composer (files that weren't phone up
 
 ### `PATCH /v1/chats/{id}`
 
-`{"title"?: "…", "settled"?: true}` → `{"ok": true}`.
+`{"title"?: "…", "settled"?: true, "account"?, "model"?, "effort"?, "access"?, "device"?, "fast"?}`
+→ `{"ok": true, "chat": {…the chat as in /v1/state…}}`.
+
+#### Run settings
+
+The same changes the desktop composer allows, with its rules. The whole request is checked
+first; if any field fails nothing changes (`400` an unknown value, `409` not switchable now).
+
+- `account`: one of the chat's `allowed_accounts`. A lead runs on Claude; a chat that has
+  started keeps its provider (Claude accounts share sessions, so it may move between them).
+  When the provider changes and no `model` is given, the model becomes that provider's first one.
+- `model`: one of `models[kind]` of the (new) account's kind.
+- `effort`: one of `efforts[kind]`, or `""`. Left out and no longer valid for the provider: its default.
+- `access`: one of `access[kind]`. Left out and no longer valid: the provider's first level.
+- `device`: `""` (the hub) or an id from `devices`; only before the chat's first turn
+  (`switchable.device`); other providers than Claude run on the hub only.
+- `fast`: the hub-wide flag; `true` only for providers with a fast mode (claude, codex).
+
+`switchable` tells which of these make sense now: `account` (another allowed account exists),
+`model`, `effort` (the provider has efforts), `access` (it has more than one level),
+`device` (not started, Claude), `fast` (the provider has a fast mode). Changes apply from the
+next turn; a running turn keeps its settings.
+
+### `POST /v1/chats/{id}/typing`
+
+`{"typing"?: true, "kind"?: "phone"}` → `{"ok": true}`.
+
+#### Typing
+
+Send `typing: true` every ~3 s while the composer has fresh input, and `typing: false` when the
+message is sent or the composer is cleared. A lease lasts 6 s after the last `true`. `kind` is
+`phone` (default) or `pc` (another PC acting as a client). The label shown is the
+`X-Harbor-Device` header, else the name saved for the token, else "Phone" / "A PC".
+
+Every chat's `typing` lists `{device, kind, label}`: API clients as `tok:<8 hex>` (stable per
+token; compare with `you`), and the hub's own desktop composer as `pc:<hostname>` (kind `pc`,
+label the hostname) while someone types there. The desktop shows the others as "✎ Galaxy A13 is
+typing…" above its composer and a ✎ on the sidebar row.
+
+Other PCs: any client with a paired token can report typing with `kind: "pc"`; another PC's
+Harbor doesn't act as a client of a hub yet (chats aren't shared between PCs' Harbors).
 
 ### `DELETE /v1/chats/{id}`
 

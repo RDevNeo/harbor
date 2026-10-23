@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Typing presence: a chat shows who is writing in it and on which device. Phones (Harbor for
+  Android) and this PC's own composer report it; the desktop shows "✎ <phone> is typing…" above
+  the composer and a ✎ on the chat's sidebar row, and the phone sees the PC typing.
+- Harbor for Android can change an open chat's account, model, effort, access, device and fast
+  mode, with the same rules as the desktop composer (a started chat keeps its provider and
+  device).
+
 ## [0.8.4] - 2026-10-23
 
 ### Security

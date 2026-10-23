@@ -37,6 +37,9 @@ impl App {
             // Waiting out a usage limit: when it continues.
             let at = p.at.map(crate::limits::when).unwrap_or_else(|| "limit".into());
             w::Status::Text(format!("{} {at}", crate::icons::CLOCK), self.theme.t.amber(900))
+        } else if self.others_typing(id).first().is_some() {
+            // Someone on another device (a phone) is writing in it.
+            w::Status::Text(crate::icons::PEN_LINE.to_string(), self.theme.t.blue(900))
         } else if self.failed.contains(&id) {
             w::Status::Failed
         } else if self.unread.contains(&id) {

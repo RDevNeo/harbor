@@ -758,6 +758,9 @@ impl App {
                 return;
             }
         }
+        if let View::Chat(id) = self.view {
+            self.typing_line(ui, id);
+        }
         let t = self.theme.t;
         let key = self.key();
         let cid = Id::NULL.with(("composer", key));

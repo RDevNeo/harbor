@@ -218,3 +218,37 @@ impl App {
         });
     }
 }
+
+impl App {
+    /// A frame when the next typing lease runs out, so the sidebar's ✎ goes on time.
+    pub fn typing_repaint(&self, ctx: &egui::Context) {
+        if let Some(e) = self.api.hub.next_typing_expiry() {
+            ctx.request_repaint_after(e.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Who is typing in `chat` on another device (this PC's own composer left out).
+    pub fn others_typing(&self, chat: i64) -> Vec<api::Typer> {
+        let me = api::local_device();
+        self.api.hub.typing(chat).into_iter().filter(|t| t.device != me).collect()
+    }
+
+    /// "✎ Galaxy A13 is typing…" above the composer while another device writes in this chat.
+    pub fn typing_line(&self, ui: &mut Ui, chat: i64) {
+        let who = self.others_typing(chat);
+        let Some(soonest) = who.iter().map(|t| t.until).min() else { return };
+        let names: Vec<&str> = who.iter().map(|t| t.label.as_str()).collect();
+        let text = match names.as_slice() {
+            [one] => format!("{}  {one} is typing…", ic::PEN_LINE),
+            [a, b] => format!("{}  {a} and {b} are typing…", ic::PEN_LINE),
+            _ => format!("{}  {} people are typing…", ic::PEN_LINE, names.len()),
+        };
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            w::subtle(ui, text, "label-12");
+        });
+        ui.add_space(4.0);
+        // The line goes when the lease runs out, even if nothing else repaints.
+        ui.ctx().request_repaint_after(soonest.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
+    }
+}

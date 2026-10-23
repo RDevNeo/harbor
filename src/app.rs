@@ -548,6 +548,11 @@ impl App {
     /// A started chat can only switch within its provider (Claude accounts share sessions).
     pub fn locked_kind(&self) -> Option<Kind> {
         let View::Chat(id) = self.view else { return None };
+        self.locked_kind_of(id)
+    }
+
+    /// [`Self::locked_kind`] for any chat (the phone API changes chats that aren't open).
+    pub fn locked_kind_of(&self, id: i64) -> Option<Kind> {
         let c = self.chat(id)?;
         if c.role == store::Role::Lead {
             // The lead needs Harbor's tools through --mcp-config; Claude for now.
@@ -1251,6 +1256,7 @@ impl eframe::App for App {
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
         self.api_tick();
+        self.typing_repaint(ctx);
         self.maybe_reload(ctx);
     }
 
