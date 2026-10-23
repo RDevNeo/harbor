@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-23
+
+### Removed
+- The Azure DevOps and Bitbucket placeholders in Add project (they were never set up); GitHub,
+  Git URL, local folder and new project remain.
+
 ## [0.4.1] - 2026-10-23
 
 ### Fixed
@@ -139,7 +145,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/RDevNeo/harbor/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/RDevNeo/harbor/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/RDevNeo/harbor/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RDevNeo/harbor/compare/v0.2.3...v0.3.0
