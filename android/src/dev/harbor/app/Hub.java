@@ -14,9 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ConnectException;
-import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
-import java.net.URL;
 import java.net.URLEncoder;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -41,11 +39,6 @@ final class Hub {
 
     Hub(String id, String name, String host, int port, String token) {
         this.id = id; this.name = name; this.host = host; this.port = port; this.token = token;
-    }
-
-    String base() {
-        String h = host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
-        return "http://" + h + ":" + port;
     }
 
     String label() { return name == null || name.isEmpty() ? host : name; }
@@ -132,15 +125,16 @@ final class Hub {
         ApiError(int code, String msg) { super(msg); this.code = code; }
     }
 
-    HttpURLConnection open(String method, String path, int readTimeout) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(base() + path).openConnection();
-        c.setRequestMethod(method);
-        c.setConnectTimeout(8_000);
-        c.setReadTimeout(readTimeout);
-        c.setUseCaches(false);
-        c.setRequestProperty("Authorization", "Bearer " + token);
-        c.setRequestProperty("Accept", "application/json");
-        c.setRequestProperty("X-Harbor-Device", android.os.Build.MODEL);
+    Tailnet.Http open(String method, String path, int readTimeout) throws IOException { return open(method, path, readTimeout, true); }
+
+    /** auth false: no token (GET /app.apk needs none). Only ever through Tailscale (Tailnet). */
+    Tailnet.Http open(String method, String path, int readTimeout, boolean auth) throws IOException {
+        Tailnet.Http c = new Tailnet.Http(host, port, method, path, readTimeout);
+        if (auth) {
+            c.header("Authorization", "Bearer " + token);
+            c.header("X-Harbor-Device", android.os.Build.MODEL);
+        }
+        c.header("Accept", "application/json");
         return c;
     }
 
@@ -149,30 +143,26 @@ final class Hub {
     JSONObject call(String method, String path, JSONObject body) throws IOException { return call(method, path, body, TIMEOUT); }
 
     JSONObject call(String method, String path, JSONObject body, int readTimeout) throws IOException {
-        HttpURLConnection c = open(method, path, readTimeout);
+        Tailnet.Http c = open(method, path, readTimeout);
         try {
             if (body != null) {
                 byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
-                c.setDoOutput(true);
-                c.setFixedLengthStreamingMode(b.length);
-                c.setRequestProperty("Content-Type", "application/json");
-                try (OutputStream o = c.getOutputStream()) { o.write(b); }
+                c.header("Content-Type", "application/json");
+                try (OutputStream o = c.body(b.length)) { o.write(b); }
             }
             return reply(c);
         } finally {
-            c.disconnect();
+            c.close();
         }
     }
 
     /** Streams a file to POST /v1/upload; returns {id, path}. */
     JSONObject upload(String name, String chat, InputStream in, long len) throws IOException {
         String q = "/v1/upload?name=" + URLEncoder.encode(name, "UTF-8") + (chat == null ? "" : "&chat=" + URLEncoder.encode(chat, "UTF-8"));
-        HttpURLConnection c = open("POST", q, 120_000);
+        Tailnet.Http c = open("POST", q, 120_000);
         try {
-            c.setDoOutput(true);
-            c.setFixedLengthStreamingMode(len);
-            c.setRequestProperty("Content-Type", "application/octet-stream");
-            try (OutputStream o = c.getOutputStream()) {
+            c.header("Content-Type", "application/octet-stream");
+            try (OutputStream o = c.body(len)) {
                 byte[] buf = new byte[1 << 16];
                 long left = len;
                 for (int n; left > 0 && (n = in.read(buf, 0, (int) Math.min(buf.length, left))) > 0; left -= n) o.write(buf, 0, n);
@@ -180,7 +170,7 @@ final class Hub {
             }
             return reply(c);
         } finally {
-            c.disconnect();
+            c.close();
         }
     }
 
@@ -190,10 +180,9 @@ final class Hub {
         return s;
     }
 
-    private static JSONObject reply(HttpURLConnection c) throws IOException {
-        int code = c.getResponseCode();
-        InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-        String body = in == null ? "" : read(in);
+    private static JSONObject reply(Tailnet.Http c) throws IOException {
+        int code = c.code();
+        String body = read(c.in());
         if (code >= 400) {
             String msg = null;
             try { msg = new JSONObject(body).optString("error", null); } catch (JSONException ignored) { }
@@ -219,7 +208,7 @@ final class Hub {
 
     /** A short human message for any failure. */
     static String why(Throwable e) {
-        if (e instanceof ApiError) return e.getMessage();
+        if (e instanceof ApiError || e instanceof Tailnet.Refused) return e.getMessage();
         if (e instanceof UnknownHostException) return "Can't find the PC. Is Tailscale on?";
         if (e instanceof ConnectException) return "The PC isn't answering. Is Harbor open there?";
         if (e instanceof SocketTimeoutException) return "The PC took too long to answer.";

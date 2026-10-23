@@ -13,7 +13,6 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.net.HttpURLConnection;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -26,7 +25,7 @@ abstract class Base extends Activity {
     LinearLayout barActions;
 
     private int gen;                 // bumped to stop the current poll loop
-    private volatile HttpURLConnection polling;
+    private volatile Tailnet.Http polling;
     private long rev = -1;
     boolean offline;
 
@@ -117,8 +116,8 @@ abstract class Base extends Activity {
     protected void onPause() {
         super.onPause();
         gen++;
-        HttpURLConnection c = polling;
-        if (c != null) Ui.pool.execute(c::disconnect);
+        Tailnet.Http c = polling;
+        if (c != null) Ui.pool.execute(c::close);
     }
 
     private void startPolling() {
@@ -131,17 +130,17 @@ abstract class Base extends Activity {
                 boolean connected = false;
                 try {
                     // since=-1 (first call) answers at once with the current revision.
-                    HttpURLConnection c = h.open("GET", "/v1/events?since=" + Math.max(rev, 0), Hub.TIMEOUT);
+                    Tailnet.Http c = h.open("GET", "/v1/events?since=" + Math.max(rev, 0), Hub.TIMEOUT);
+                    connected = true;
                     polling = c;
                     JSONObject r;
                     try {
-                        c.connect();
-                        connected = true;
-                        int code = c.getResponseCode();
+                        if (my != gen) return; // paused while connecting
+                        int code = c.code();
                         if (code >= 400) throw new Hub.ApiError(code, code == 401 ? "This PC refused the pairing token. Pair it again." : "HTTP " + code);
-                        r = new JSONObject(Hub.read(c.getInputStream()));
+                        r = new JSONObject(Hub.read(c.in()));
                     } finally {
-                        c.disconnect();
+                        c.close();
                         polling = null;
                     }
                     if (my != gen) return;

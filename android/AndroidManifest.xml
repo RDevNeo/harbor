@@ -4,13 +4,16 @@
      chats, Chat shows and drives one, NewChat starts one, Settings updates the app. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.app">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Tailnet: finds Tailscale's VPN network, the only way to a hub -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Settings › Update installs the APK the hub serves ("Install unknown apps" for Harbor) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Android 12+: updates of itself install without the system dialog -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
-    <!-- Harbor talks plain HTTP: the tailnet (WireGuard) already encrypts every hop -->
+    <!-- Harbor talks plain HTTP, but only inside the tailnet (WireGuard encrypts every hop):
+         Tailnet.java checks that; the platform HTTP stack gets no cleartext at all -->
     <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false" android:usesCleartextTraffic="true"
+        android:allowBackup="false" android:networkSecurityConfig="@xml/network"
         android:theme="@style/Harbor">
         <activity android:name=".Hubs" android:exported="true" android:launchMode="singleTask">
             <intent-filter>

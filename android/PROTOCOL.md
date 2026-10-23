@@ -15,6 +15,8 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   `401` unknown token (pair again), `400` bad input, `404` no such chat/route,
   `409` not possible now (e.g. fork of a running turn), `413` too large, `503` Harbor busy/closing.
 - When phone access is turned off, connections are closed without an answer.
+- The app only connects through Tailscale: a socket bound to Tailscale's VPN network, to a tailnet
+  address (100.64/10, fd7a:115c:a1e0::/48) or loopback. Otherwise it sends nothing.
 
 ## Pairing
 

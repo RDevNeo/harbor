@@ -11,7 +11,6 @@ import android.widget.Toast;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 
 /** Installs the APK the hub serves (GET /app.apk) over this app, through a PackageInstaller
  *  session. Needs "Install unknown apps" for Harbor once. Android 12+ updates an app that
@@ -25,18 +24,18 @@ public class Update extends BroadcastReceiver {
     /** Blocking: downloads and commits the session. Run off the UI thread. */
     static void install(Context c, Hub hub, Progress progress) throws Exception {
         if (busy) throw new IOException("already updating");
-        HttpURLConnection http = hub.open("GET", "/app.apk", 60_000);
+        Tailnet.Http http = hub.open("GET", "/app.apk", 60_000, false);
         try {
-            int code = http.getResponseCode();
+            int code = http.code();
             if (code != 200) throw new IOException("the PC has no app to send (HTTP " + code + ")");
-            long size = http.getContentLengthLong();
+            long size = http.length();
             if (size <= 0) throw new IOException("the PC sent no size for the app");
             PackageInstaller pi = c.getPackageManager().getPackageInstaller();
             PackageInstaller.SessionParams p = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             p.setAppPackageName(c.getPackageName());
             if (Build.VERSION.SDK_INT >= 31) p.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
             int id = pi.createSession(p);
-            try (PackageInstaller.Session s = pi.openSession(id); InputStream in = http.getInputStream()) {
+            try (PackageInstaller.Session s = pi.openSession(id); InputStream in = http.in()) {
                 try (OutputStream out = s.openWrite("app.apk", 0, size)) {
                     byte[] buf = new byte[1 << 16];
                     long done = 0;
@@ -58,7 +57,7 @@ public class Update extends BroadcastReceiver {
                 throw e;
             }
         } finally {
-            http.disconnect();
+            http.close();
         }
     }
 
