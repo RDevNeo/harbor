@@ -24,7 +24,8 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// First port tried; a stable one lets turns that outlive a reload find it again.
-const PORT: u16 = 47930;
+/// Not the phone API's (47930, api.rs): that one has no other port to go to.
+const PORT: u16 = 47940;
 /// The bridge's own server, as the remote agent sees it.
 pub const ORIGIN: &str = "origin";
 /// `run_command` output beyond this keeps only its end.
@@ -92,6 +93,14 @@ fn listen(port: u16) -> Option<u16> {
     Some(port)
 }
 
+/// The bridge port a turn's ssh forwards to (its `-R …:127.0.0.1:<port>` in cmd.json).
+fn forwarded_port(dir: &Path) -> Option<u16> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("cmd.json")).ok()?).ok()?;
+    let args: Vec<&str> = v["args"].as_array()?.iter().filter_map(|a| a.as_str()).collect();
+    let i = args.iter().position(|a| *a == "-R")?;
+    args.get(i + 1)?.rsplit(':').next()?.parse().ok()
+}
+
 pub fn token() -> std::io::Result<String> {
     crate::store::random_hex(18)
 }
@@ -122,10 +131,18 @@ fn saved(dir: &Path) -> Option<Grant> {
     serde_json::from_str(&std::fs::read_to_string(dir.join("bridge.json")).ok()?).ok()
 }
 
-/// A turn followed again (after a reload): its grant is served again.
+/// A turn followed again (after a reload): its grant is served again, also on the port its
+/// ssh forwards to when that isn't this run's (a turn started by an older build).
 pub fn resume(dir: &Path) {
     if let Some(g) = saved(dir) {
-        grant(g);
+        let here = grant(g);
+        static EXTRA: LazyLock<Mutex<Vec<u16>>> = LazyLock::new(Default::default);
+        if let Some(p) = forwarded_port(dir).filter(|p| Some(*p) != here) {
+            let mut extra = EXTRA.lock().unwrap();
+            if !extra.contains(&p) && listen(p).is_some() {
+                extra.push(p);
+            }
+        }
     }
 }
 
@@ -695,6 +712,18 @@ mod tests {
         let out = raw(port, ok.as_bytes());
         assert!(out.starts_with("HTTP/1.1 200") && out.contains("\"id\":4"), "{out}");
         revoke(&g.token);
+    }
+
+    #[test]
+    fn finds_the_forwarded_port() {
+        let dir = std::env::temp_dir().join(format!("harbor-fwd-{}", token().unwrap()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cmd.json"), json!({ "program": "ssh", "args": ["-o", "BatchMode=yes", "-R", "127.0.0.1:31234:127.0.0.1:47931", "host", "cmd"] }).to_string()).unwrap();
+        assert_eq!(forwarded_port(&dir), Some(47931));
+        std::fs::write(dir.join("cmd.json"), json!({ "program": "claude", "args": ["-p"] }).to_string()).unwrap();
+        assert_eq!(forwarded_port(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_ne!(PORT, crate::api::DEFAULT_PORT);
     }
 
     #[test]

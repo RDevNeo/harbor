@@ -19,6 +19,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   are size-limited before the URL key is checked, and while automatic turns are paused, at most
   100 automatic messages wait per chat.
 
+### Fixed
+- Remote devices: the MCP bridge has its own port (47940) and no longer takes the phone API's
+  (47930) when it starts first; turns started before the update keep being served.
+
 
 ## [0.8.3] - 2026-10-23
 
