@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-23
+
 ### Added
 - Pull Requests navigation after T3 Code's: clicking a PR opens it in a panel beside the list,
   as a tab (open several; close with ×, a middle click, Ctrl+W or the tab's menu). The panel
@@ -131,7 +133,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/RDevNeo/harbor/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RDevNeo/harbor/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/RDevNeo/harbor/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/RDevNeo/harbor/compare/v0.2.1...v0.2.2
