@@ -69,7 +69,7 @@ impl App {
         }
 
         section(ui, "Pair a phone");
-        w::subtle(ui, "Each phone gets its own key. Scan the code with the camera in Harbor for Android (Pair a PC), or type the details shown under it.", "copy-14");
+        w::subtle(ui, "Each phone gets its own key. Scan the code with the phone's camera app, or tap + in Harbor for Android to scan it, paste the link or type the details shown beside it.", "copy-14");
         ui.add_space(8.0);
         if self.api.ui.pairing.is_none() {
             let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).primary().show(ui);
