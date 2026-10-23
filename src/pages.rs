@@ -193,6 +193,9 @@ impl App {
             self.store.set("fast_mode", b(fast));
         }
         ui.add_space(12.0);
+        section(ui, "Issues and pull requests");
+        self.auto_rows(ui);
+        ui.add_space(12.0);
         section(ui, "Updates");
         self.updates_rows(ui);
     }

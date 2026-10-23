@@ -155,6 +155,7 @@ pub struct App {
     pub picker: Picker,
     pub prs: Prs,
     pub issues: crate::issues::Issues,
+    pub auto: crate::autowork::State,
     pub search: String,
     pub settled_open: bool,
     pub favorites: Vec<(String, String)>,
@@ -283,6 +284,7 @@ impl App {
             picker: Picker::default(),
             prs: Prs::default(),
             issues: Default::default(),
+            auto: Default::default(),
             search: String::new(),
             settled_open: false,
             favorites,
@@ -1123,6 +1125,7 @@ impl eframe::App for App {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.auto_tick(ctx);
         while let Ok((id, ev)) = self.rx.try_recv() {
             if self.undo_swallows(id, &ev) || self.queue_event(id, &ev) || self.limit_event(id, &ev) {
                 continue;

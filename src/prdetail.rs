@@ -518,6 +518,16 @@ impl App {
                         }
                     });
                     if open {
+                        let tip = if project.is_none() {
+                            crate::issues::NOT_PROJECT
+                        } else if list.is_none() {
+                            "Refresh the list first"
+                        } else {
+                            "Start a thread where an agent rebases it, fixes checks and reviews, then merges it (gh pr merge)"
+                        };
+                        if self.agent_button(ui, "Merge", project.is_some() && list.is_some(), tip) {
+                            act = Some(Act::Merge);
+                        }
                         let tip = if project.is_some() { "Check out this branch in a terminal (gh pr checkout)" } else { "Add this repo as a project to check it out here" };
                         if w::btn(&format!("{}  Check out", ic::BRANCH)).sm().outline().enabled(project.is_some()).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
                             act = Some(Act::Checkout);
@@ -664,6 +674,11 @@ impl App {
                     if let Some(r) = project.and_then(|id| self.repo(id)).cloned() {
                         let argv = vec!["gh".into(), "pr".into(), "checkout".into(), number.to_string()];
                         self.open_terminal(&ctx, &format!("checkout #{number}"), r.path.clone(), argv, vec![]);
+                    }
+                }
+                Act::Merge => {
+                    if let (Some(id), Some(p)) = (project, &list) {
+                        self.merge_pr(&ctx, id, p);
                     }
                 }
                 Act::Review => {
@@ -936,6 +951,7 @@ enum Act {
     Ready,
     Checkout,
     Review,
+    Merge,
 }
 
 /// A segmented-control button.

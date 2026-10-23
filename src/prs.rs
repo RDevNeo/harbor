@@ -51,6 +51,8 @@ pub struct Pr {
     pub created: i64,
     pub updated: i64,
     pub branch: String,
+    /// The head commit (Auto-Merge acts once per commit).
+    pub head: String,
     pub review: Review,
     pub checks: Checks,
     pub conflicting: bool,
@@ -216,7 +218,7 @@ pub struct Prs {
 
 // ------------------------------------------------------------------ fetching
 
-const FIELDS: &str = "... on PullRequest { number title url state isDraft additions deletions createdAt updatedAt headRefName reviewDecision mergeable \
+const FIELDS: &str = "... on PullRequest { number title url state isDraft additions deletions createdAt updatedAt headRefName headRefOid reviewDecision mergeable \
 repository { nameWithOwner } author { login avatarUrl(size: 40) } labels(first: 10) { nodes { name color } } \
 commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }";
 
@@ -321,6 +323,7 @@ fn node(n: &serde_json::Value) -> Option<Pr> {
         created: iso_secs(&s("createdAt")).unwrap_or(0),
         updated: iso_secs(&s("updatedAt")).unwrap_or(0),
         branch: s("headRefName"),
+        head: s("headRefOid"),
         review: match n["reviewDecision"].as_str() {
             Some("APPROVED") => Review::Approved,
             Some("CHANGES_REQUESTED") => Review::Changes,
@@ -1139,6 +1142,8 @@ impl App {
         let mut open_url = None;
         let mut browse = None;
         let mut action = None;
+        let mut merge = None;
+        let merge_label = format!("Merge with {}", self.agent_label());
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             centered(ui, 1180.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -1203,6 +1208,16 @@ impl App {
                                             ui.close();
                                         }
                                     }
+                                    if p.state == PrState::Open {
+                                        if proj.is_none() {
+                                            ui.separator();
+                                        }
+                                        let b = ui.add_enabled(proj.is_some(), egui::Button::new(format!("{}  {merge_label}", ic::SPARKLES)));
+                                        if b.on_disabled_hover_text(crate::issues::NOT_PROJECT).clicked() {
+                                            merge = proj.map(|id| (id, p.clone()));
+                                            ui.close();
+                                        }
+                                    }
                                 });
                             }
                             ui.add_space(14.0);
@@ -1217,6 +1232,9 @@ impl App {
         }
         if let Some(url) = browse {
             self.open_browser(Some(url));
+        }
+        if let Some((id, p)) = merge {
+            self.merge_pr(&ctx, id, &p);
         }
         if let Some((id, p, review)) = action {
             let Some(repo) = self.repo(id).cloned() else { return };
@@ -1658,6 +1676,7 @@ mod tests {
             created: n as i64,
             updated: n as i64,
             branch: format!("b{n}"),
+            head: String::new(),
             review: Review::None,
             checks: Checks::None,
             conflicting: false,

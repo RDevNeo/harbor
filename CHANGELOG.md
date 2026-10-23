@@ -5,6 +5,21 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Fix with <provider> on an issue (its panel and right-click menu): a new thread in the issue's
+  project where an agent fixes it on a `fix/issue-N` branch and opens a PR that says
+  `Fixes #N`. Replaces Work on it.
+- Merge with <provider> on a pull request (its panel and right-click menu): a new thread where
+  an agent checks it out, rebases and resolves conflicts, makes the checks pass, answers the
+  reviews and merges it with `gh pr merge`.
+- Both buttons have a ▾ to pick the provider (any installed account; a non-Claude one does the
+  work as the thread's subagent), and are off, with a tooltip, for repos that aren't Harbor
+  projects.
+- Settings → General → Auto-Fix and Auto-Merge (off by default): Harbor checks every 10 minutes
+  and starts those threads by itself, for open issues assigned to you without an open PR (once
+  per issue) and for your own ready PRs (not drafts, checks passing or none, no changes
+  requested; once per head commit), only in your projects' repos and at most 2 at a time.
+
 ## [0.5.0] - 2026-10-23
 
 ### Added

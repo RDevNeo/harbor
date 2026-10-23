@@ -45,6 +45,8 @@ pub struct Issue {
     pub milestone: Option<String>,
     /// It mentions the viewer.
     pub mentioned: bool,
+    /// An open pull request says it fixes it.
+    pub linked_pr: bool,
 }
 
 #[derive(Clone, Default)]
@@ -193,7 +195,7 @@ pub struct Issues {
 
 const FIELDS: &str = "... on Issue { number title url state stateReason createdAt updatedAt repository { nameWithOwner } \
 author { login avatarUrl(size: 40) } labels(first: 10) { nodes { name color } } assignees(first: 10) { nodes { login } } \
-milestone { title } comments { totalCount } }";
+milestone { title } comments { totalCount } closedByPullRequestsReferences(first: 5, includeClosedPrs: false) { nodes { state } } }";
 
 fn state_qualifier(s: StateF) -> &'static str {
     match s {
@@ -271,6 +273,7 @@ fn node(n: &serde_json::Value) -> Option<Issue> {
         assignees: n["assignees"]["nodes"].as_array().into_iter().flatten().filter_map(|a| a["login"].as_str().map(String::from)).collect(),
         milestone: n["milestone"]["title"].as_str().map(String::from),
         mentioned: false,
+        linked_pr: n["closedByPullRequestsReferences"]["nodes"].as_array().into_iter().flatten().any(|p| p["state"].as_str() == Some("OPEN")),
     })
 }
 
@@ -543,6 +546,9 @@ impl App {
 
 // ------------------------------------------------------------------ ui
 
+/// Why the agent actions are off for a repo that isn't a Harbor project.
+pub const NOT_PROJECT: &str = "Add this repo as a Harbor project to let an agent work on it";
+
 fn done_color(t: &theme::Tokens) -> Color32 {
     if t.dark { Color32::from_rgb(196, 181, 253) } else { Color32::from_rgb(124, 58, 237) }
 }
@@ -645,6 +651,7 @@ impl App {
         let mut open_url = None;
         let mut browse = None;
         let mut work = None;
+        let fix_label = format!("Fix with {}", self.agent_label());
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             centered(ui, 1180.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -697,12 +704,11 @@ impl App {
                                         ui.ctx().copy_text(i.url.clone());
                                         ui.close();
                                     }
-                                    if let Some(id) = proj {
-                                        ui.separator();
-                                        if ui.button(format!("{}  Work on it with an agent", ic::SPARKLES)).clicked() {
-                                            work = Some((id, i.number, i.title.clone()));
-                                            ui.close();
-                                        }
+                                    ui.separator();
+                                    let b = ui.add_enabled(proj.is_some() && i.state == IssueState::Open, egui::Button::new(format!("{}  {fix_label}", ic::SPARKLES)));
+                                    if b.on_disabled_hover_text(NOT_PROJECT).clicked() {
+                                        work = proj.map(|id| (id, i.clone()));
+                                        ui.close();
                                     }
                                 });
                             }
@@ -719,20 +725,11 @@ impl App {
         if let Some(url) = browse {
             self.open_browser(Some(url));
         }
-        if let Some((id, n, title)) = work {
-            self.work_on_issue(id, n, &title);
+        if let Some((id, i)) = work {
+            self.fix_issue(&ctx, id, &i);
         }
 
         self.issue_menus(&ctx, &fetched, &projects);
-    }
-
-    /// A new thread in the project, its composer asking an agent to resolve the issue.
-    pub fn work_on_issue(&mut self, project: i64, number: u64, title: &str) {
-        self.new_draft(Some(project));
-        self.drafts.insert(
-            crate::app::DRAFT,
-            format!("Work on issue #{number} ({title}). Read it with `gh issue view {number} --comments`, then fix it and say what you changed."),
-        );
     }
 
     fn toggle_issue_menu(&mut self, m: Menu, anchor: Rect) {
@@ -1105,6 +1102,7 @@ mod tests {
             assignees: vec![],
             milestone: None,
             mentioned: false,
+            linked_pr: false,
         }
     }
 

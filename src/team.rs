@@ -113,7 +113,11 @@ impl App {
 
     /// A new chat, in a project or project-less ("No project / New thread").
     pub fn new_thread(&mut self, repo: Option<i64>, first_message: &str) -> i64 {
-        let mut sel = self.draft.sel.clone();
+        self.new_thread_with(repo, first_message, self.draft.sel.clone())
+    }
+
+    /// A new chat with the given account and model (a lead runs on Claude: others fall back to it).
+    pub fn new_thread_with(&mut self, repo: Option<i64>, first_message: &str, mut sel: crate::app::Sel) -> i64 {
         if self.account(&sel.account).is_none_or(|a| a.kind != Kind::Claude) {
             sel.account = "claude".into();
             sel.model = "claude-opus-5-5".into();

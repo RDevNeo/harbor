@@ -1,12 +1,12 @@
 //! One issue in the Issues page's side panel, laid out like a pull request's
 //! (prdetail.rs): repo and number (a link), title, author and state, then
 //! Assignees, Labels and Milestone, the description and the comments.
-//! Actions: Close / Reopen, Work on it (an agent thread in the project), and a
+//! Actions: Close / Reopen, Fix with <provider> (an agent thread in the project), and a
 //! ⋯ menu (refresh, open, copy link / number).
 
 use crate::app::App;
 use crate::icons as ic;
-use crate::issues::{IssueState, state_icon, state_of};
+use crate::issues::{Issue, IssueState, state_icon, state_of};
 use crate::prdetail::{Note, chip, clean_md, ctx_repaint, field, gh, section_toggle};
 use crate::prs::{ago, hex_rgb, iso_secs, paint_avatar};
 use crate::theme;
@@ -227,8 +227,8 @@ impl App {
                         act = Some(a);
                     }
                     if state == IssueState::Open {
-                        let tip = if project.is_some() { "Start a thread asking an agent to resolve it" } else { "Add this repo as a project to work on it here" };
-                        if w::btn(&format!("{}  Work on it", ic::SPARKLES)).sm().primary().enabled(project.is_some()).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                        let tip = if project.is_some() { "Start a thread where an agent fixes it on a branch and opens a PR" } else { crate::issues::NOT_PROJECT };
+                        if self.agent_button(ui, "Fix", project.is_some(), tip) {
                             act = Some(Act::Work);
                         }
                     }
@@ -292,8 +292,27 @@ impl App {
                     }
                 }
                 Act::Work => {
-                    if let Some(id) = project {
-                        self.work_on_issue(id, number, &title);
+                    let item = list.clone().or_else(|| {
+                        full.as_ref().map(|f| Issue {
+                            number: f.number,
+                            title: f.title.clone(),
+                            url: url.to_string(),
+                            repo: repo.clone(),
+                            state: f.state,
+                            created: f.created,
+                            updated: f.updated,
+                            comments: f.comments.len() as u64,
+                            author: f.author.clone(),
+                            avatar: String::new(),
+                            labels: f.labels.clone(),
+                            assignees: f.assignees.clone(),
+                            milestone: f.milestone.clone(),
+                            mentioned: false,
+                            linked_pr: false,
+                        })
+                    });
+                    if let (Some(id), Some(i)) = (project, item) {
+                        self.fix_issue(&ctx, id, &i);
                     }
                 }
             }

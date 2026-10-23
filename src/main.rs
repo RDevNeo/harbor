@@ -5,6 +5,7 @@ mod addproject;
 mod agent;
 mod browser;
 mod app;
+mod autowork;
 mod bridge;
 mod chat;
 mod clipboard;
