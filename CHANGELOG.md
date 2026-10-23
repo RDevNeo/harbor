@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-23
+
 ### Added
 - Fix with <provider> on an issue (its panel and right-click menu): a new thread in the issue's
   project where an agent fixes it on a `fix/issue-N` branch and opens a PR that says
@@ -177,7 +179,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/RDevNeo/harbor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/RDevNeo/harbor/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/RDevNeo/harbor/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/RDevNeo/harbor/compare/v0.4.0...v0.4.1
