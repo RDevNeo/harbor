@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-23
+
 ### Fixed
 - Android: the app also reaches the PC (and updates itself) on phones where Tailscale isn't recognised as a VPN network: the request then goes over the default network, but still only to a tailnet address and only while Tailscale is up on the phone.
 
@@ -225,7 +227,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/RDevNeo/harbor/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/RDevNeo/harbor/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/RDevNeo/harbor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/RDevNeo/harbor/compare/v0.6.2...v0.7.0
