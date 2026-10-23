@@ -218,6 +218,8 @@ pub struct App {
     /// Settings › Devices (remote.rs) and its page's state.
     pub remote: crate::remote::Config,
     pub devices_ui: crate::remoteui::State,
+    /// Settings › Usage totals, summed off the UI thread.
+    pub usage_totals: crate::pages::UsageTotals,
 }
 
 impl App {
@@ -338,6 +340,7 @@ impl App {
             cut_off: HashSet::new(),
             remote: Default::default(),
             devices_ui: Default::default(),
+            usage_totals: Default::default(),
         };
         app.keys = crate::keys::Keys::load(&app.store);
         app.remote = crate::remote::load(&app.store);

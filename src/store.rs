@@ -528,3 +528,13 @@ impl Store {
         let _ = self.db.execute("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)", [k, v]);
     }
 }
+
+/// Every chat's turn results, (chat id, item), read on a connection of its own so a
+/// thread can sum them without the UI's store. Only result rows are parsed.
+pub fn results() -> Vec<(i64, Item)> {
+    let Ok(db) = Connection::open_with_flags(data_dir().join("harbor.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
+    let Ok(mut st) = db.prepare(r#"SELECT chat_id, body FROM items WHERE body LIKE '{"kind":"result"%'"#) else { return vec![] };
+    st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map(|rows| rows.flatten().filter_map(|(c, b)| Some((c, serde_json::from_str(&b).ok()?))).collect())
+        .unwrap_or_default()
+}

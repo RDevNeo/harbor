@@ -27,6 +27,62 @@ pub fn rows(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     });
 }
 
+/// What Settings › Usage shows: per account (turns, tokens in, out, cost) and tokens per day.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Totals {
+    pub by_account: BTreeMap<String, (u64, u64, u64, f64)>,
+    pub by_day: BTreeMap<i64, u64>,
+}
+
+/// Sums turn results; `accounts` is each chat's account, for results saved without one.
+pub fn sum_results(results: Vec<(i64, Item)>, accounts: &HashMap<i64, String>, today: i64) -> Totals {
+    let mut t = Totals::default();
+    for (chat, it) in results {
+        if let Item::Result { input_tokens, output_tokens, cost_usd, at, account, .. } = it {
+            let a = if account.is_empty() { accounts.get(&chat).cloned().unwrap_or_default() } else { account };
+            let e = t.by_account.entry(a).or_default();
+            e.0 += 1;
+            e.1 += input_tokens;
+            e.2 += output_tokens;
+            e.3 += cost_usd;
+            if at > 0 && today - at / 86400 < 14 {
+                *t.by_day.entry(at / 86400).or_default() += input_tokens + output_tokens;
+            }
+        }
+    }
+    t
+}
+
+/// The Usage page's totals: read from the store on a thread, again only when the
+/// chats change (a turn ends, a chat goes away) or a minute has passed, never per frame.
+#[derive(Default)]
+pub struct UsageTotals {
+    asked: Option<(usize, i64, i64)>,
+    running: bool,
+    done: std::sync::Arc<std::sync::Mutex<Option<Totals>>>,
+    totals: Totals,
+}
+
+impl UsageTotals {
+    fn get(&mut self, ctx: &egui::Context, key: (usize, i64, i64), accounts: HashMap<i64, String>, today: i64) -> &Totals {
+        if let Some(t) = self.done.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            self.totals = t;
+            self.running = false;
+        }
+        if !self.running && self.asked != Some(key) {
+            self.asked = Some(key);
+            self.running = true;
+            let (done, ctx) = (self.done.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let t = sum_results(store::results(), &accounts, today);
+                *done.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
+                ctx.request_repaint();
+            });
+        }
+        &self.totals
+    }
+}
+
 impl Tab {
     pub const ALL: [Tab; 9] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
 
@@ -722,31 +778,12 @@ impl App {
     /// and what Harbor's chats used.
     pub fn usage_tab(&mut self, ui: &mut Ui) {
         let t = self.theme.t;
-        // Totals from every chat's result records (local, cheap).
-        let mut by_account: BTreeMap<String, (u64, u64, u64, f64)> = BTreeMap::new();
-        let mut by_day: BTreeMap<i64, u64> = BTreeMap::new();
+        // Totals from every chat's result records, summed on a thread (see `UsageTotals`).
         let today = store::now() / 86400;
-        let ids: Vec<(i64, String)> = self.chats.iter().map(|c| (c.id, c.account.clone())).collect();
-        let mut cache: HashMap<i64, Vec<Item>> = HashMap::new();
-        for (id, acc) in &ids {
-            let items = match self.transcripts.get(id) {
-                Some(t) => t.items.clone(),
-                None => cache.entry(*id).or_insert_with(|| self.store.items(*id)).clone(),
-            };
-            for it in items {
-                if let Item::Result { input_tokens, output_tokens, cost_usd, at, account, .. } = it {
-                    let a = if account.is_empty() { acc.clone() } else { account };
-                    let e = by_account.entry(a).or_default();
-                    e.0 += 1;
-                    e.1 += input_tokens;
-                    e.2 += output_tokens;
-                    e.3 += cost_usd;
-                    if at > 0 && today - at / 86400 < 14 {
-                        *by_day.entry(at / 86400).or_default() += input_tokens + output_tokens;
-                    }
-                }
-            }
-        }
+        // A minute's step too, for results saved after the turn's chat update.
+        let key = (self.chats.len(), self.chats.iter().map(|c| c.updated).max().unwrap_or(0), store::now() / 60);
+        let accounts: HashMap<i64, String> = self.chats.iter().map(|c| (c.id, c.account.clone())).collect();
+        let Totals { by_account, by_day } = self.usage_totals.get(ui.ctx(), key, accounts, today).clone();
         section(ui, "Accounts");
         w::subtle(ui, "Drag the marker on a bar to cap how much of that limit Harbor uses. At the cap, Harbor treats the account as limited: threads wait for the reset or move to another account.", "label-13");
         ui.add_space(4.0);
@@ -937,4 +974,37 @@ fn mcp_chip(ui: &mut Ui, label: &str, found: bool, off: bool, t: &crate::theme::
         (true, false) => "On for agents · click to turn off",
     };
     resp.on_hover_text(hint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(account: &str, tin: u64, tout: u64, at: i64) -> Item {
+        Item::Result { cost_usd: 0.5, duration_ms: 0, turns: 1, input_tokens: tin, output_tokens: tout, at, account: account.into(), model: String::new() }
+    }
+
+    #[test]
+    fn usage_sums_results_per_account_and_day() {
+        let today = 20_000;
+        let accounts: HashMap<i64, String> = [(1, "claude".to_string()), (2, "codex".to_string())].into();
+        let results = vec![
+            (1, result("", 1000, 10, today * 86400)),
+            (1, result("claude2", 2000, 20, today * 86400)),
+            (2, result("", 3000, 30, (today - 20) * 86400)),
+            (2, Item::Error { text: "x".into() }),
+        ];
+        let t = sum_results(results, &accounts, today);
+        assert_eq!(t.by_account["claude"], (1, 1000, 10, 0.5));
+        assert_eq!(t.by_account["claude2"], (1, 2000, 20, 0.5));
+        assert_eq!(t.by_account["codex"], (1, 3000, 30, 0.5));
+        // Older than 14 days: in the account totals, not in the chart.
+        assert_eq!(t.by_day, [(today, 3030)].into());
+    }
+
+    #[test]
+    fn result_rows_are_found_by_their_prefix() {
+        // store::results() selects rows by this prefix of the saved JSON.
+        assert!(serde_json::to_string(&result("a", 1, 1, 1)).unwrap().starts_with(r#"{"kind":"result""#));
+    }
 }
