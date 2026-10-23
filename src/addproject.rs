@@ -1,6 +1,5 @@
 //! "Add project" palette (T3 style): pick a source (new repository, local folder,
-//! Git URL, GitHub repository; Azure DevOps and Bitbucket are placeholders marked
-//! "Setup Required"), then search inside it. Arrows move, Enter picks, Backspace on
+//! Git URL, GitHub repository), then search inside it. Arrows move, Enter picks, Backspace on
 //! an empty search goes back, Esc closes. Pointing at a row only highlights it;
 //! only the keys and the header buttons act.
 //!
@@ -41,8 +40,6 @@ pub struct AddProject {
     /// Clone in progress ("Cloning owner/repo…").
     pub busy: Option<String>,
     pub error: Option<String>,
-    /// Amber note, e.g. a source that is not set up yet.
-    notice: Option<String>,
     focus: bool,
 }
 
@@ -101,16 +98,12 @@ enum Act {
     Enter(PathBuf),
     Create(String),
     Clone { url: String, name: String },
-    /// A source that is not set up yet.
-    Unavailable(&'static str),
 }
 
 struct Row {
     icon: Icon,
     title: String,
     detail: String,
-    /// Shows the "Setup Required" pill.
-    setup_required: bool,
     act: Act,
 }
 
@@ -136,7 +129,6 @@ impl App {
             gh_loading: false,
             busy: None,
             error: None,
-            notice: None,
             focus: true,
         });
     }
@@ -183,20 +175,18 @@ impl App {
         let ql = q.to_lowercase();
         let known: HashSet<PathBuf> = self.repos.iter().map(|r| r.path.clone()).collect();
         let g = |i| Icon::Glyph(i);
-        let row = |icon, title: String, detail: String, act| Row { icon, title, detail, setup_required: false, act };
+        let row = |icon, title: String, detail: String, act| Row { icon, title, detail, act };
         let mut v = vec![];
         match ap.step {
             Step::Sources => {
-                for (icon, title, detail, act, setup_required) in [
-                    (g(ic::FOLDER), "New project", "Start a new Git repository from a name", Act::Step(Step::New), false),
-                    (g(ic::FOLDER_PLUS), "Local folder", "Browse a folder on disk", Act::Step(Step::Local), false),
-                    (g(ic::LINK), "Git URL", "Clone from a remote URL", Act::Step(Step::Url), false),
-                    (Icon::Logo("github"), "GitHub repository", "Clone GitHub owner/repo", Act::Step(Step::GitHub), false),
-                    (Icon::Logo("azuredevops"), "Azure DevOps repository", "Clone Azure DevOps project/repository", Act::Unavailable("Azure DevOps"), true),
-                    (Icon::Logo("bitbucket"), "Bitbucket repository", "Clone Bitbucket workspace/repository", Act::Unavailable("Bitbucket"), true),
+                for (icon, title, detail, act) in [
+                    (g(ic::FOLDER), "New project", "Start a new Git repository from a name", Act::Step(Step::New)),
+                    (g(ic::FOLDER_PLUS), "Local folder", "Browse a folder on disk", Act::Step(Step::Local)),
+                    (g(ic::LINK), "Git URL", "Clone from a remote URL", Act::Step(Step::Url)),
+                    (Icon::Logo("github"), "GitHub repository", "Clone GitHub owner/repo", Act::Step(Step::GitHub)),
                 ] {
                     if ql.is_empty() || title.to_lowercase().contains(&ql) {
-                        v.push(Row { icon, title: title.into(), detail: detail.into(), setup_required, act });
+                        v.push(Row { icon, title: title.into(), detail: detail.into(), act });
                     }
                 }
             }
@@ -263,7 +253,7 @@ impl App {
             Some(p) => (format!("Add your clone at {}", tilde(&p)), Act::Add(p)),
             None => (if desc.is_empty() { format!("Clone into {}", tilde(&target)) } else { desc.to_string() }, Act::Clone { url: full.into(), name }),
         };
-        Row { icon: Icon::Logo("github"), title: full.into(), detail, setup_required: false, act }
+        Row { icon: Icon::Logo("github"), title: full.into(), detail, act }
     }
 
     fn run(&mut self, act: Act, ctx: &egui::Context) {
@@ -273,7 +263,6 @@ impl App {
         let tx = Waker { tx, ctx };
         let Some(ap) = self.add_project.as_mut() else { return };
         ap.error = None;
-        ap.notice = None;
         match act {
             Act::Step(s) => {
                 ap.go(s);
@@ -283,7 +272,6 @@ impl App {
                 }
             }
             Act::Enter(dir) => ap.enter(dir),
-            Act::Unavailable(name) => ap.notice = Some(format!("{name} is not set up yet")),
             Act::Add(p) => match self.add_project_path(&p) {
                 Ok(()) => self.add_project = None,
                 Err(e) => self.add_project.as_mut().unwrap().error = Some(e),
@@ -415,7 +403,6 @@ impl App {
                             if r.changed() {
                                 ap.sel = 0;
                                 ap.error = None;
-                                ap.notice = None;
                             }
                             if ap.focus {
                                 r.request_focus();
@@ -447,9 +434,6 @@ impl App {
                     }
                     if let Some(e) = &ap.error {
                         status_line(ui, &t, e, Some(t.red(900)));
-                    }
-                    if let Some(n) = &ap.notice {
-                        status_line(ui, &t, n, Some(t.amber(900)));
                     }
                     if ap.step == Step::GitHub {
                         match &ap.gh {
@@ -546,10 +530,7 @@ fn palette_row(ui: &mut Ui, t: &crate::theme::Tokens, row: &Row, selected: bool)
     }
     icon(ui, t, &row.icon, pos2(rect.left() + 20.0, rect.center().y));
     let x = rect.left() + 42.0;
-    let mut max = rect.right() - x - 10.0;
-    if row.setup_required {
-        max -= badge(ui, t, "Setup Required", pos2(rect.right() - 10.0, rect.center().y)) + 10.0;
-    }
+    let max = rect.right() - x - 10.0;
     let p = ui.painter();
     let tg = w::truncated(ui, &row.title, FontId::new(14.0, crate::theme::medium()), t.fg(), max);
     let dg = w::truncated(ui, &row.detail, FontId::proportional(12.5), t.subtle(), max);
@@ -570,16 +551,6 @@ fn dir_row(ui: &mut Ui, t: &crate::theme::Tokens, row: &Row, selected: bool) -> 
     let y = rect.center().y - tg.size().y / 2.0;
     ui.painter().galley(pos2(x, y), tg, t.fg());
     resp
-}
-
-/// Amber outlined pill, right-aligned at `right`; returns its width.
-fn badge(ui: &Ui, t: &crate::theme::Tokens, text: &str, right: egui::Pos2) -> f32 {
-    let p = ui.painter();
-    let g = p.layout_no_wrap(text.into(), FontId::new(11.5, crate::theme::medium()), t.amber(900));
-    let r = Rect::from_min_size(pos2(right.x - g.size().x - 16.0, right.y - 10.0), Vec2::new(g.size().x + 16.0, 20.0));
-    p.rect(r, CornerRadius::same(10), egui::Color32::TRANSPARENT, Stroke::new(1.0, t.amber(600)), StrokeKind::Inside);
-    p.galley(r.center() - g.size() / 2.0, g, t.amber(900));
-    r.width()
 }
 
 /// Outlined "Add" button with the Ctrl+Enter chip inside it.
