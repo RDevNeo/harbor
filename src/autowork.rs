@@ -156,6 +156,10 @@ impl App {
             format!("{prompt}\n\nDo the work through one subagent: spawn_agent with account `{}` ({}).", acc.id, acc.kind.label())
         };
         sel.device = String::new();
+        if !quiet {
+            // As when the user writes: their own run lifts a project's pause.
+            self.paused.remove(&project);
+        }
         let id = self.new_thread_with(Some(project), &prompt, sel);
         let tr = self.transcripts.entry(id).or_default();
         tr.items.push(Item::User { text: prompt.clone(), files: vec![], at: store::now(), mentions: vec![] });
@@ -247,7 +251,9 @@ impl App {
             }
             return;
         }
-        let projects = self.pr_projects();
+        // Never in a project whose automatic turns hit the hourly limit.
+        let paused = self.paused.clone();
+        let projects: Vec<_> = self.pr_projects().into_iter().filter(|p| !paused.contains(&p.0)).collect();
         let handled: HashSet<String> = self.handled().iter().cloned().collect();
         let mut room = MAX_AUTO.saturating_sub(self.auto_running());
         if fix && room > 0 {
