@@ -1623,7 +1623,16 @@ pub struct View {
     error: Option<String>,
     wake: Wake,
     stream: Option<crate::stream::Stream>,
+    /// When the view was last drawn: a stream nobody sees for [`PARK_AFTER`] is ended.
+    drawn: Instant,
+    /// Its stream was ended while hidden: reconnect when it is shown again.
+    parked: bool,
 }
+
+/// How long a device screen may stay out of sight (another tab, a hidden pane) before
+/// its stream ends: the phone or PC stops encoding, this PC stops decoding, and the
+/// heartbeats stop. Quick tab switches keep it.
+const PARK_AFTER: Duration = Duration::from_secs(15);
 
 pub enum ViewAction {
     Close,
@@ -1633,9 +1642,18 @@ pub enum ViewAction {
 
 impl View {
     pub fn new(dev: Device, control: bool, wake: impl Fn() + Send + Sync + 'static) -> Self {
-        let mut v = Self { dev, control, prep: None, error: None, wake: Arc::new(wake), stream: None };
+        let mut v = Self { dev, control, prep: None, error: None, wake: Arc::new(wake), stream: None, drawn: Instant::now(), parked: false };
         v.prepare();
         v
+    }
+
+    /// Ends the stream if the view hasn't been drawn for a while (called every frame,
+    /// drawn or not). It comes back by itself when the view is shown again.
+    pub fn park_if_hidden(&mut self) {
+        if self.stream.is_some() && self.drawn.elapsed() > PARK_AFTER {
+            self.stream = None;
+            self.parked = true;
+        }
     }
 
     pub fn title(&self) -> String {
@@ -1671,6 +1689,10 @@ impl View {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, t: &Tokens, id: Id) -> Option<ViewAction> {
+        self.drawn = Instant::now();
+        if std::mem::take(&mut self.parked) {
+            self.prepare();
+        }
         if let Some(Ok(r)) = self.prep.as_ref().map(|rx| rx.try_recv()) {
             self.prep = None;
             match r.and_then(|v| {

@@ -1253,6 +1253,7 @@ impl eframe::App for App {
 
         // Surface panes (browser, terminals, device): right and/or bottom, or one maximized.
         use crate::surface::Dock;
+        self.park_hidden_views();
         if let Some(d) = self.surface_max {
             if self.pane(d).open {
                 egui::CentralPanel::default().frame(Frame::new().fill(t.bg200)).show(ui, |ui| self.pane_ui(ui, d));

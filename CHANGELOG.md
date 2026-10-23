@@ -6,6 +6,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ## [Unreleased]
 
 ### Fixed
+- Device screens: a phone or PC view that stays out of sight for 15 s (another tab, a closed panel) ends its stream, so the device stops encoding and this PC stops decoding; it reconnects when shown again.
 - Project and device icons: images with huge or extreme dimensions (say a 65535×1 PNG in a repo or on its website) are refused or shrunk before use instead of exhausting memory; device icons load off the UI thread.
 
 ## [0.8.2] - 2026-10-23

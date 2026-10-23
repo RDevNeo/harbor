@@ -371,6 +371,17 @@ impl App {
         p.open = open && !p.surfaces.is_empty();
     }
 
+    /// Device screens out of sight for a while end their streams (see `View::park_if_hidden`).
+    pub fn park_hidden_views(&mut self) {
+        for p in &mut self.panes {
+            for s in &mut p.surfaces {
+                if let Surface::DeviceView(v) = s {
+                    v.park_if_hidden();
+                }
+            }
+        }
+    }
+
     /// Ends a pane's terminals and browser engines (their Drop reaps the processes).
     pub fn drop_surfaces(&mut self, d: Dock) {
         self.pane_mut(d).surfaces.clear();
