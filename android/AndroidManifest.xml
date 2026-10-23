@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Harbor for Android: a chat-only client of a desktop Harbor (the hub) on the tailnet.
+     Hubs pairs and lists PCs (also from harbor://pair links and QR codes), Chats lists one hub's
+     chats, Chat shows and drives one, NewChat starts one, Settings updates the app. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.app">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Settings › Update installs the APK the hub serves ("Install unknown apps" for Harbor) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Android 12+: updates of itself install without the system dialog -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Harbor talks plain HTTP: the tailnet (WireGuard) already encrypts every hop -->
+    <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false" android:usesCleartextTraffic="true"
+        android:theme="@style/Harbor">
+        <activity android:name=".Hubs" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="harbor" android:host="pair" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".Chats" android:exported="false" />
+        <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".NewChat" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".Settings" android:exported="false" />
+        <receiver android:name=".Update" android:exported="false" />
+    </application>
+</manifest>
