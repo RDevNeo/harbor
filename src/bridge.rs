@@ -80,12 +80,8 @@ pub fn port() -> Option<u16> {
     })
 }
 
-pub fn token() -> String {
-    let mut b = [0u8; 18];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut b);
-    }
-    b.iter().map(|x| format!("{x:02x}")).collect()
+pub fn token() -> std::io::Result<String> {
+    crate::store::random_hex(18)
 }
 
 /// Serves `g` from now on; returns the bridge's port.
@@ -376,7 +372,8 @@ fn forward(s: &TcpStream, req: &Req, def: &Value) {
         }
     }
     // Headers through a private file, so tokens stay out of argv.
-    let hfile = crate::mcp::dir().join(format!("bridge-{}.h", token()));
+    let Ok(tag) = token() else { return respond(s, 502, "text/plain", b"bridge: no randomness for a file name") };
+    let hfile = crate::mcp::dir().join(format!("bridge-{tag}.h"));
     if crate::mcp::write_private(&hfile, &(lines.join("\n") + "\n")).is_err() {
         return respond(s, 502, "text/plain", b"bridge: cannot write headers");
     }
@@ -666,7 +663,7 @@ mod tests {
         let echo = r#"while read -r l; do id=$(printf '%s' "$l" | sed -n 's/.*"id":\([0-9]*\).*/\1/p'); [ -n "$id" ] && printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n' "$id"; done"#;
         let mut servers = Map::new();
         servers.insert("echo".into(), json!({ "type": "stdio", "command": "sh", "args": ["-c", echo] }));
-        let g = Grant { token: token(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: true, workspace: vec![] };
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: true, workspace: vec![] };
         let port = grant(g.clone()).unwrap();
         let (code, body) = post(port, &format!("/{}/echo", g.token), r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#);
         assert_eq!(code, 200);
@@ -678,7 +675,7 @@ mod tests {
         assert!(v["result"]["content"][0]["text"].as_str().unwrap().starts_with("hi\n"));
         assert_eq!(post(port, "/nope/echo", "{}").0, 404);
         // Read only: no run_command (and no workspace tools that write or run).
-        let ro = Grant { token: token(), commands: false, workspace: crate::workspace::for_access("plan", false), ..g.clone() };
+        let ro = Grant { token: token().unwrap(), commands: false, workspace: crate::workspace::for_access("plan", false), ..g.clone() };
         grant(ro.clone());
         let (_, body) = post(port, &format!("/{}/origin", ro.token), r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         let names: Vec<String> = serde_json::from_str::<Value>(&body).unwrap()["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();

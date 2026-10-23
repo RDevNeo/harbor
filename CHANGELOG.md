@@ -8,6 +8,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ### Security
 - Remote devices: the MCP bridge's key no longer appears on command lines (`ps`) on either PC.
   It reaches the device on the connection's input, in a file only you can read, removed when the turn ends.
+- Keys and sign-in secrets (phone keys, webhook URLs, the MCP bridge's key, MCP sign-in state)
+  come from the system's random source or not at all: a failure is an error, never a guessable key.
 
 
 ## [0.8.3] - 2026-10-23

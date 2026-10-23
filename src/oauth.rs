@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     fn dir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("harbor-oauth-{}", crate::bridge::token()));
+        let d = std::env::temp_dir().join(format!("harbor-oauth-{}", crate::bridge::token().unwrap()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }

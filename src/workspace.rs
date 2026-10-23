@@ -338,7 +338,7 @@ fn rg(args: &[&str], target: &Path) -> Result<String, String> {
 fn bash(cwd: &Path, chat_id: i64, a: &Value) -> (bool, Vec<Value>) {
     let Some(command) = a["command"].as_str().filter(|c| !c.trim().is_empty()) else { return text(false, "command is required") };
     let here = CWDS.lock().unwrap().get(&chat_id).filter(|d| d.is_dir()).cloned().unwrap_or_else(|| cwd.to_path_buf());
-    let tag = crate::bridge::token();
+    let Ok(tag) = crate::bridge::token() else { return text(false, "no randomness for a log name") };
     if a["run_in_background"].as_bool() == Some(true) {
         let log = std::env::temp_dir().join(format!("harbor-bash-{}.log", &tag[..12]));
         let Ok(f) = std::fs::File::create(&log) else { return text(false, format!("cannot create {}", log.display())) };
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn tools_run_in_the_project() {
-        let dir = std::env::temp_dir().join(format!("harbor-ws-{}", crate::bridge::token()));
+        let dir = std::env::temp_dir().join(format!("harbor-ws-{}", crate::bridge::token().unwrap()));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let id = -7;
         let t = |r: (bool, Vec<Value>)| (r.0, r.1[0]["text"].as_str().unwrap_or("").to_string());

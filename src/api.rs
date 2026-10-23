@@ -175,15 +175,8 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
-pub fn new_token() -> String {
-    let mut b = [0u8; 24];
-    let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).is_ok();
-    if !ok {
-        // Not expected on Linux; still unguessable enough for a tailnet-only port.
-        let s = format!("{}{}", store::new_uuid(), store::new_uuid());
-        return s.replace('-', "")[..48].to_string();
-    }
-    b.iter().map(|x| format!("{x:02x}")).collect()
+pub fn new_token() -> std::io::Result<String> {
+    store::random_hex(24)
 }
 
 pub fn load_tokens(s: &store::Store) -> Vec<Token> {
@@ -1288,8 +1281,8 @@ mod tests {
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Bearer\r\n\r\n").unwrap().bearer(), None);
         let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0 }], DEFAULT_PORT);
         assert!(!empty.known(""));
-        assert_eq!(new_token().len(), 48);
-        assert_ne!(new_token(), new_token());
+        assert_eq!(new_token().unwrap().len(), 48);
+        assert_ne!(new_token().unwrap(), new_token().unwrap());
     }
 
     #[test]

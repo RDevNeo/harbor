@@ -755,7 +755,7 @@ mod tests {
     /// line that names the machine, not bash's "command not found".
     #[test]
     fn remote_command_finds_the_cli_off_the_login_path() {
-        let home = std::env::temp_dir().join(format!("harbor-home-{}", crate::bridge::token()));
+        let home = std::env::temp_dir().join(format!("harbor-home-{}", crate::bridge::token().unwrap()));
         std::fs::create_dir_all(home.join(".local/bin")).unwrap();
         let cli = home.join(".local/bin/harbor-fake-cli");
         std::fs::write(&cli, "#!/bin/sh\necho \"fake $1 $(cat)\"\n").unwrap();

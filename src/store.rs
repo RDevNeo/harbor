@@ -184,6 +184,20 @@ pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
 
+/// `n` bytes from the kernel's random source, for tokens and secrets: an error when it
+/// can't be read, never a guessable fallback.
+pub fn random_bytes(n: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut b = vec![0u8; n];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
+    Ok(b)
+}
+
+/// [`random_bytes`] as `2n` hex digits.
+pub fn random_hex(n: usize) -> std::io::Result<String> {
+    Ok(random_bytes(n)?.iter().map(|x| format!("{x:02x}")).collect())
+}
+
 pub fn new_uuid() -> String {
     std::fs::read_to_string("/proc/sys/kernel/random/uuid")
         .map(|s| s.trim().to_string())

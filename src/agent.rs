@@ -294,7 +294,7 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
     // A remote turn's servers go through the bridge, at a port forwarded to the device.
     let mut grant = None;
     let mut remote_mcp: Option<String> = None;
-    let remote_port = 20000 + u16::from_str_radix(&crate::bridge::token()[..4], 16).unwrap_or(0) % 40000;
+    let remote_port = 20000 + u16::from_str_radix(&crate::bridge::token()?[..4], 16).unwrap_or(0) % 40000;
 
     match a.kind {
         Kind::Claude | Kind::Grok => {
@@ -344,7 +344,7 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                     }
                     Some(r) => {
                         let servers = if r.bridge { crate::mcp::claude_servers(harbor) } else { harbor.map(|(k, v)| (k.to_string(), v)).into_iter().collect() };
-                        let g = crate::bridge::Grant { token: crate::bridge::token(), chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers, commands: r.commands && spec.access != "plan", workspace: workspace.clone() };
+                        let g = crate::bridge::Grant { token: crate::bridge::token()?, chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers, commands: r.commands && spec.access != "plan", workspace: workspace.clone() };
                         // The config holds the grant's token: it goes on stdin, not on a command line.
                         cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::remote::MCP_CONFIG_ARG);
                         remote_mcp = Some(crate::bridge::remote_config(&g, remote_port).to_string());
@@ -1042,7 +1042,7 @@ mod tests {
 
     #[test]
     fn resumed_sessions_follow_the_folder() {
-        let root = std::env::temp_dir().join(format!("harbor-sess-{}", crate::bridge::token()));
+        let root = std::env::temp_dir().join(format!("harbor-sess-{}", crate::bridge::token().unwrap()));
         let (cfg, work) = (root.join("cfg"), root.join("my work"));
         std::fs::create_dir_all(cfg.join("projects/-elsewhere")).unwrap();
         std::fs::create_dir_all(&work).unwrap();
@@ -1185,7 +1185,7 @@ mod tests {
         let host = crate::remote::Host { id: "ssh:1".into(), host: "127.0.0.1".into(), bridge: false, ..Default::default() };
         let mut ssh = crate::remote::ssh_opts(&crate::remote::Config::default(), &host);
         ssh.extend(["-o".into(), "UserKnownHostsFile=/tmp/harbor-dev-kh".into()]);
-        let repo = std::env::temp_dir().join(format!("harbor-ws-e2e-{}", &crate::bridge::token()[..8]));
+        let repo = std::env::temp_dir().join(format!("harbor-ws-e2e-{}", &crate::bridge::token().unwrap()[..8]));
         std::fs::create_dir_all(&repo).unwrap();
         std::fs::write(repo.join("hello.txt"), "hello world\n").unwrap();
         let git = |args: &[&str]| Command::new("git").args(args).current_dir(&repo).output().unwrap();
@@ -1261,7 +1261,7 @@ mod tests {
         if dest == "127.0.0.1" {
             ssh.extend(["-o".into(), "UserKnownHostsFile=/tmp/harbor-dev-kh".into()]);
         }
-        let secret = crate::bridge::token();
+        let secret = crate::bridge::token().unwrap();
         let dir = std::env::temp_dir().join(format!("harbor-ws-ro-{}", &secret[..8]));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("note.txt"), format!("the word is {}\n", &secret[..10])).unwrap();

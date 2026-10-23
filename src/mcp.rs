@@ -432,12 +432,8 @@ fn well_known(url: &str, suffix: &str) -> [String; 2] {
     [format!("{o}/.well-known/{suffix}{p}"), format!("{o}/.well-known/{suffix}")]
 }
 
-fn random(n: usize) -> Vec<u8> {
-    let mut b = vec![0u8; n];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut b);
-    }
-    b
+fn random(n: usize) -> Result<Vec<u8>, String> {
+    store::random_bytes(n).map_err(|e| format!("No randomness for the sign-in: {e}"))
 }
 
 fn b64url(data: &[u8]) -> String {
@@ -476,9 +472,9 @@ fn oauth_login(id: &str, url: &str, cancel: &AtomicBool, update: &dyn Fn(Pending
         return Err(format!("Registering Harbor failed ({code}): {}", client["error_description"].as_str().or(client["error"].as_str()).unwrap_or("")));
     }
     let client_secret = client["client_secret"].as_str().unwrap_or("").to_string();
-    let verifier = b64url(&random(32));
+    let verifier = b64url(&random(32)?);
     let challenge = b64url(&sha256(verifier.as_bytes()));
-    let state = b64url(&random(16));
+    let state = b64url(&random(16)?);
     let q = form(&[
         ("response_type", "code"),
         ("client_id", &client_id),

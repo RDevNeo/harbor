@@ -620,7 +620,7 @@ impl App {
                 if self.webhooks.iter().any(|w| w.repo_id == repo_id && w.name == name) {
                     return Err(format!("webhook '{name}' already exists; use list_webhooks"));
                 }
-                let token = format!("{}{}", store::new_uuid().replace('-', ""), &store::new_uuid().replace('-', "")[..8]);
+                let token = store::random_hex(20).map_err(|e| format!("cannot make a webhook token: {e}"))?;
                 self.store.add_webhook(repo_id, &name, &token, arg(a, "description"));
                 self.webhooks = self.store.webhooks();
                 self.sync_tokens();

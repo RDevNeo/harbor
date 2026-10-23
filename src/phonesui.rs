@@ -73,8 +73,7 @@ impl App {
         ui.add_space(8.0);
         if self.api.ui.pairing.is_none() {
             let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).primary().show(ui);
-            if b.clicked() {
-                let token = api::new_token();
+            if let Some(token) = b.clicked().then(api::new_token).and_then(|t| t.map_err(|e| eprintln!("harbor: no key for a phone: {e}")).ok()) {
                 let mut tokens = hub.tokens.lock().unwrap();
                 tokens.push(Token { token: token.clone(), name: String::new(), created: crate::store::now() });
                 api::save_tokens(&self.store, &tokens);
