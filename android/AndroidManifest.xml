@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Android 12+: updates of itself install without the system dialog -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Pairing: the in-app QR scanner (QrScan) reads the PC's code; asked for only when used -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Harbor talks plain HTTP, but only inside the tailnet (WireGuard encrypts every hop):
          Tailnet.java checks that; the platform HTTP stack gets no cleartext at all -->
     <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher"
@@ -31,6 +34,8 @@
         <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".NewChat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".Settings" android:exported="false" />
+        <activity android:name=".QrScan" android:exported="false" android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
         <receiver android:name=".Update" android:exported="false" />
     </application>
 </manifest>

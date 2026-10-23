@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build Harbor for Android -> android/build/harbor-android.apk. No Gradle: aapt2 + javac + d8 +
-# zipalign + apksigner straight from an Android SDK. No third-party code.
+# zipalign + apksigner straight from an Android SDK. The only third-party code is ZXing's QR
+# decoder, vendored as source in third_party/zxing (Apache-2.0).
 #
 # Version: versionName is Cargo.toml's version; versionCode is major*1000000 + minor*1000 + patch
 # (0.7.0 -> 7000), so the app the desktop serves and the one on the phone compare as numbers.
@@ -52,10 +53,13 @@ cp "$ROOT/assets/fonts/"{Geist-Regular,Geist-SemiBold,GeistMono-Regular,lucide}.
   -A "$W/assets" --java "$W/gen" --min-sdk-version 26 --target-sdk-version 34 \
   --version-code "$CODE" --version-name "$VER"
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR" -d "$W/classes" \
-  $(find "$HERE/src" "$W/gen" -name '*.java')
+  $(find "$HERE/src" "$HERE/third_party/zxing/src" "$W/gen" -name '*.java')
 # Tailnet's address rules are plain Java: check them on this JVM before packaging.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.AddrTest
+# So is the QR scanner's decoding of a camera frame.
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/QrTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.QrTest "$HERE/test/pair-qr.png"
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class')
 (cd "$W" && zip -qj base.apk classes.dex)
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
