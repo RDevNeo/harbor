@@ -746,44 +746,11 @@ impl App {
         }
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             centered(ui, CONTENT_W, |ui| {
-                page_header(ui, "Usage", "Plan limits per account and what Harbor's chats used.");
-                section(ui, "Plan limits");
-                let accounts: Vec<_> = self.accounts.iter().filter(|a| !a.usage.is_empty() || self.blocked(&a.id).is_some()).cloned().collect();
-                if accounts.is_empty() {
-                    w::subtle(ui, "No limit data. Harbor reads the agents-usage-monitor cache when it exists.", "label-13");
-                }
-                for a in &accounts {
-                    let blocked = self.blocked(&a.id).map(|b| format!("{}  Blocked until {} ({} limit)", ic::CLOCK, crate::limits::when(b.until), crate::limits::window_label(&b.kind)));
-                    w::card(ui).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let (r, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
-                            ic::account_mark(ui.painter(), r, a.kind, &a.badge, &t);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                w::text(ui, &a.short(), "strong-14");
-                                w::subtle(ui, format!("{} {}", a.email, a.plan), "label-12");
-                                if let Some(b) = &blocked {
-                                    ui.label(egui::RichText::new(b).text_style(crate::theme::ts("label-12")).color(t.amber(900)));
-                                }
-                            });
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                for wdw in a.usage.iter().rev() {
-                                    w::subtle(ui, format!("{:.0}%", wdw.percent * 100.0), "label-12-mono");
-                                    w::meter(ui, wdw.percent, 110.0);
-                                    let r = w::subtle(ui, &wdw.label, "label-12");
-                                    if let Some(at) = wdw.resets_at {
-                                        r.on_hover_ui(|ui| {
-                                            ui.label(format!("Resets {}", crate::limits::when(at)));
-                                        });
-                                    }
-                                    ui.add_space(10.0);
-                                }
-                            });
-                        });
-                    });
-                    ui.add_space(6.0);
-                }
+                page_header(ui, "Usage", "What each account has used, and how much of it Harbor may use.");
+                section(ui, "Accounts");
+                w::subtle(ui, "Drag the marker on a bar to cap how much of that limit Harbor uses. At the cap, Harbor treats the account as limited: threads wait for the reset or move to another account.", "label-13");
+                ui.add_space(4.0);
+                self.usage_controller(ui);
                 section(ui, "Last 14 days");
                 w::card(ui).show(ui, |ui| {
                     ui.set_width(ui.available_width());

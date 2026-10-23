@@ -114,10 +114,38 @@ pub fn listening_ports() -> Vec<u16> {
     ports
 }
 
+/// The shortest step between frames woken by a terminal's output (30 fps).
+const TERM_STEP: std::time::Duration = std::time::Duration::from_millis(33);
+
 impl App {
     fn wake(ctx: &egui::Context) -> impl Fn() + Send + Sync + Clone + 'static {
         let ctx = ctx.clone();
         move || ctx.request_repaint()
+    }
+
+    /// A terminal's output wakes at most every [`TERM_STEP`] (4 fps while the window is
+    /// unfocused): a build or a TUI writing nonstop would otherwise repaint the whole
+    /// window at the refresh rate. Output after a quiet spell (an echoed key) shows at once.
+    fn term_wake(ctx: &egui::Context) -> impl Fn() + Send + 'static {
+        let ctx = ctx.clone();
+        // When the last woken frame was drawn, or will be.
+        let frame = std::sync::Mutex::new(None::<std::time::Instant>);
+        move || {
+            let now = std::time::Instant::now();
+            let step = crate::app::live_step(TERM_STEP);
+            let mut frame = frame.lock().unwrap();
+            match *frame {
+                Some(at) if at > now => {}
+                Some(at) if now < at + step => {
+                    *frame = Some(at + step);
+                    ctx.request_repaint_after(at + step - now);
+                }
+                _ => {
+                    *frame = Some(now);
+                    ctx.request_repaint();
+                }
+            }
+        }
     }
 
     pub fn pane(&self, d: Dock) -> &Pane {
@@ -188,7 +216,7 @@ impl App {
         if !env.iter().any(|(k, _)| k == "PATH") {
             env.push(("PATH".into(), Some(crate::providers::child_path())));
         }
-        match Terminal::spawn(title, &cwd, &argv, &env, Self::wake(ctx)) {
+        match Terminal::spawn(title, &cwd, &argv, &env, Self::term_wake(ctx)) {
             Ok(t) => self.place(d, Surface::Terminal(t)),
             Err(e) => eprintln!("terminal: {e}"),
         }
@@ -332,7 +360,7 @@ impl App {
 
     pub fn restore_terminal(&mut self, d: Dock, ctx: &egui::Context, title: &str, cwd: PathBuf) {
         let env = vec![("PATH".to_string(), Some(crate::providers::child_path()))];
-        if let Ok(t) = Terminal::spawn(title, &cwd, &[], &env, Self::wake(ctx)) {
+        if let Ok(t) = Terminal::spawn(title, &cwd, &[], &env, Self::term_wake(ctx)) {
             self.pane_mut(d).surfaces.push(Surface::Terminal(t));
         }
     }

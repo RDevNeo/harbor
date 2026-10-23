@@ -494,6 +494,10 @@ fn session_here(id: &str) -> String {
 pub static SHOWN_CHAT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 pub const HIDDEN_WAKE: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Whether the window has keyboard focus, set by the UI each frame: live output
+/// (a streaming chat, a terminal) repaints a few times a second while it's unfocused.
+pub static FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 /// Spawns the turn; events go to `tx` tagged with the chat id, `wake` repaints the UI
 /// (`wake(true)` once the turn has ended).
 pub fn start(spec: TurnSpec, tx: Sender<(i64, Event)>, wake: impl Fn(bool) + Send + Sync + 'static) -> std::io::Result<Turn> {

@@ -37,6 +37,10 @@ pub struct Block {
     pub known: bool,
     /// Hits in a row with the same `until`.
     pub tries: u32,
+    /// Set when it's the user's own cap (usage_ctl.rs) rather than the provider's
+    /// limit: the cap in percent.
+    #[serde(default)]
+    pub cap: Option<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -58,7 +62,8 @@ pub struct State {
     #[serde(default)]
     pending: HashMap<i64, Vec<String>>,
     /// Per account: the last quota seen in a turn (window, utilization 0–1, resets at).
-    #[serde(skip)]
+    /// Stored, so a cap that a turn's report reached still holds after a restart.
+    #[serde(default)]
     pub quota: HashMap<String, Vec<(String, f64, i64)>>,
     /// Chats whose running turn hit a limit (until it exits).
     #[serde(skip)]
@@ -66,6 +71,8 @@ pub struct State {
     /// Chats to move to another account once their limited turn has exited.
     #[serde(skip)]
     switch: HashMap<i64, String>,
+    #[serde(skip)]
+    pub ctl: crate::usage_ctl::Ctl,
 }
 
 /// "5-hour", "weekly", … for a limit window.
@@ -164,6 +171,7 @@ impl App {
             self.limits.blocks = s.blocks;
             self.limits.paused = s.paused;
             self.limits.pending = s.pending;
+            self.limits.quota = s.quota;
         }
         let now = store::now();
         self.limits.blocks.retain(|_, b| b.until > now - 24 * 3600);
@@ -194,6 +202,34 @@ impl App {
         self.limits.blocks.get(account).filter(|b| b.until > store::now())
     }
 
+    /// The account reached the user's cap on a window: blocked like at a limit, until
+    /// the window resets.
+    pub fn cap_block(&mut self, account: &str, kind: String, cap: u8, until: i64, known: bool) {
+        self.limits.blocks.insert(account.to_string(), Block { until, kind, known, tries: 0, cap: Some(cap) });
+        self.limits_save();
+    }
+
+    /// A cap block that no longer applies (the cap was raised, the usage went down):
+    /// it goes, and the chats waiting on it continue now.
+    pub fn lift_block(&mut self, account: &str, ctx: &egui::Context) {
+        self.limits.blocks.remove(account);
+        self.limits_save();
+        let waiting: Vec<i64> = self.limits.paused.iter().filter(|(_, p)| p.account == account).map(|(id, _)| *id).collect();
+        self.limits.ctl.lifting = true;
+        for id in waiting {
+            self.continue_chat(id, false, ctx);
+        }
+        self.limits.ctl.lifting = false;
+    }
+
+    /// "Paused at your 80% cap of the weekly limit" or "Hit the weekly limit".
+    pub fn block_reason(b: &Block) -> String {
+        match b.cap {
+            Some(c) => format!("Paused at your {c}% cap of the {} limit", window_label(&b.kind)),
+            None => format!("Hit the {} limit", window_label(&b.kind)),
+        }
+    }
+
     pub fn paused(&self, chat_id: i64) -> Option<&Paused> {
         self.limits.paused.get(&chat_id)
     }
@@ -209,6 +245,7 @@ impl App {
         match ev {
             Event::Quota(w) => {
                 self.limits.quota.insert(account, w.clone());
+                self.limits_save();
                 true
             }
             Event::Limit { kind, resets_at, text } => {
@@ -247,13 +284,13 @@ impl App {
         let block = match resets_at.filter(|t| *t > now) {
             Some(until) => {
                 let tries = prev.as_ref().filter(|b| b.until == until).map_or(0, |b| b.tries + 1);
-                Block { until, kind: kind.to_string(), known: true, tries }
+                Block { until, kind: kind.to_string(), known: true, tries, cap: None }
             }
             None => {
                 // Unknown reset: back off 15, 30, then 60 minutes.
                 let tries = prev.as_ref().filter(|b| !b.known && b.until > now - 3 * 3600).map_or(0, |b| b.tries + 1);
                 let mins = [15, 30, 60].get(tries as usize).copied().unwrap_or(60);
-                Block { until: now + mins * 60, kind: kind.to_string(), known: false, tries }
+                Block { until: now + mins * 60, kind: kind.to_string(), known: false, tries, cap: None }
             }
         };
         if !first && prev.as_ref().is_some_and(|b| b.until == block.until) {
@@ -263,7 +300,7 @@ impl App {
         let label = window_label(&block.kind);
         // Auto-switch: it moves to another account once this turn has exited.
         if let Some(to) = self.auto_target(chat_id) {
-            let name = self.account(&to).map(|a| a.short()).unwrap_or_else(|| to.clone());
+            let name = self.account(&to).map(account_name).unwrap_or_else(|| to.clone());
             self.notice(chat_id, "clock", &format!("Hit the {label} limit · moving to {name}"), said);
             self.limits.switch.insert(chat_id, to);
             self.limits_save();
@@ -324,14 +361,18 @@ impl App {
         }
         // Auto-switch: the turn starts on another account instead.
         if let Some(to) = self.auto_target(chat_id).filter(|to| self.bring_session(chat_id, to).is_ok()) {
-            let from = self.account(&account).map(|a| a.short()).unwrap_or_default();
-            let name = self.account(&to).map(|a| a.short()).unwrap_or_else(|| to.clone());
+            let from = self.account(&account).map(account_name).unwrap_or_default();
+            let name = self.account(&to).map(account_name).unwrap_or_else(|| to.clone());
             if let Some(c) = self.chat_mut(chat_id) {
                 c.account = to;
                 let c = c.clone();
                 self.store.save_chat(&c);
             }
-            self.notice(chat_id, "clock", &format!("Switched to {name} ({from} is at its usage limit)"), "");
+            let why = match self.limits.blocks.get(&account).and_then(|b| b.cap) {
+                Some(c) => format!("is at your {c}% cap"),
+                None => "is at its usage limit".to_string(),
+            };
+            self.notice(chat_id, "clock", &format!("Switched to {name} ({from} {why})"), "");
             return false;
         }
         let mut p = prompt.to_string();
@@ -343,6 +384,10 @@ impl App {
         self.persist(chat_id);
         if !self.limits.paused.contains_key(&chat_id) {
             self.pause(chat_id, false);
+            if let Some(b) = self.limits.blocks.get(&account).filter(|b| b.cap.is_some()).cloned() {
+                let then = self.paused(chat_id).and_then(|p| p.at).map(|at| format!(" · continuing at {}", when(at))).unwrap_or_default();
+                self.notice(chat_id, "clock", &format!("{}{then}", Self::block_reason(&b)), "");
+            }
         } else {
             self.limits_sync_pending();
         }
@@ -352,12 +397,19 @@ impl App {
     /// Every frame: continues the chats whose time has come. Returns how long until
     /// the next one.
     pub fn fire_limit_timers(&mut self, ctx: &egui::Context) -> Option<Duration> {
+        self.check_caps(ctx);
         let now = store::now();
         let due: Vec<i64> = self.limits.paused.iter().filter(|(_, p)| p.at.is_some_and(|a| a <= now)).map(|(id, _)| *id).collect();
         for id in due {
             self.continue_chat(id, false, ctx);
         }
-        self.limits.paused.values().filter_map(|p| p.at).min().map(|at| Duration::from_secs((at - now).max(1) as u64))
+        let next = self.limits.paused.values().filter_map(|p| p.at).min().map(|at| Duration::from_secs((at - now).max(1) as u64));
+        // A cap can lift any moment (the user raises it, usage drops): look again soon.
+        if self.limits.blocks.values().any(|b| b.cap.is_some() && b.until > now) {
+            let soon = Duration::from_secs(5);
+            return Some(next.map_or(soon, |n| n.min(soon)));
+        }
+        next
     }
 
     /// Continues a paused chat: at its time, or now (`force`, "Continue now").
@@ -404,7 +456,8 @@ impl App {
         if parts.is_empty() {
             return;
         }
-        self.notice(chat_id, "clock", "Usage limit reset · continuing", "");
+        let text = if self.limits.ctl.lifting { "Under your cap again · continuing" } else { "Usage limit reset · continuing" };
+        self.notice(chat_id, "clock", text, "");
         if self.limit_settings().3 {
             notify("Work resumed", &format!("{} continues after the usage limit.", chat.title));
         }
@@ -431,10 +484,15 @@ impl App {
         }
         let block = self.limits.blocks.get(&p.account).cloned();
         let t = self.theme.t;
+        // The user's own cap reads differently from the provider's limit.
+        let what = match block.as_ref().and_then(|b| b.cap.map(|c| (c, b))) {
+            Some((c, b)) => format!("Paused at your {c}% cap · resets {}", when(b.until)),
+            None => "Usage limit".to_string(),
+        };
         let text = match (p.at, &block) {
-            (Some(at), _) => format!("Usage limit · continuing at {} (in {})", when(at), w::minutes((at - store::now()).max(0) as u64)),
-            (None, Some(b)) if b.until > store::now() => format!("Usage limit · resets {} · waiting for you", when(b.until)),
-            _ => "Usage limit · waiting for you".to_string(),
+            (Some(at), _) => format!("{what} · continuing at {} (in {})", when(at), w::minutes((at - store::now()).max(0) as u64)),
+            (None, Some(b)) if b.until > store::now() && b.cap.is_none() => format!("{what} · resets {} · waiting for you", when(b.until)),
+            _ => format!("{what} · waiting for you"),
         };
         // Nothing else repaints an idle chat: keep "in 2h 10m" current.
         ui.ctx().request_repaint_after(Duration::from_secs(30));
@@ -510,7 +568,13 @@ impl App {
     }
 }
 
-fn notify(title: &str, body: &str) {
+/// How notices name an account: a Claude account by its own name ("Sam (work)"),
+/// which tells accounts apart even when their badges match; others by provider.
+pub fn account_name(a: &crate::providers::Account) -> String {
+    if a.kind == crate::providers::Kind::Claude && !a.name.is_empty() { a.name.clone() } else { a.short() }
+}
+
+pub fn notify(title: &str, body: &str) {
     let (title, body) = (title.to_string(), body.to_string());
     // Waited on a thread so finished notifiers don't linger as zombies.
     std::thread::spawn(move || {
@@ -572,7 +636,7 @@ impl App {
         let mut v: Vec<(String, (f64, f64))> = self
             .accounts
             .iter()
-            .filter(|a| a.kind == kind && a.id != chat.account && a.logged_in != Some(false) && self.blocked(&a.id).is_none())
+            .filter(|a| a.kind == kind && a.id != chat.account && a.logged_in != Some(false) && self.blocked(&a.id).is_none() && self.over_cap(&a.id).is_none())
             .filter(|a| !opted || allowed.contains(&a.id))
             .map(|a| (a.id.clone(), self.usage_of(&a.id)))
             .filter(|(_, (w, f))| !opted || (*w < FULL && *f < FULL))
@@ -589,6 +653,11 @@ impl App {
         let target = self.account(to).ok_or("no account")?;
         if from.kind != crate::providers::Kind::Claude || !chat.started || chat.session_id.is_empty() {
             return Ok(()); // nothing to carry (or the provider keeps one store)
+        }
+        // A chat on another device keeps its session there: the next turn finds it in
+        // the device's folders (agent.rs `session_here`), whichever account it runs as.
+        if !chat.device.is_empty() {
+            return Ok(());
         }
         let dir = |a: &crate::providers::Account| a.config_dir.clone().unwrap_or_else(|| store::home().join(".claude")).join("projects");
         let (src_root, dst_root) = (dir(from), dir(target));
@@ -631,8 +700,8 @@ impl App {
             self.notice(chat_id, "alert", &format!("Couldn't move to another account: {e}"), "");
             return false;
         }
-        let from = self.chat(chat_id).and_then(|c| self.account(&c.account)).map(|a| a.short()).unwrap_or_default();
-        let name = self.account(to).map(|a| a.short()).unwrap_or_else(|| to.to_string());
+        let from = self.chat(chat_id).and_then(|c| self.account(&c.account)).map(account_name).unwrap_or_default();
+        let name = self.account(to).map(account_name).unwrap_or_else(|| to.to_string());
         if let Some(c) = self.chat_mut(chat_id) {
             c.account = to.to_string();
             let c = c.clone();
@@ -660,31 +729,27 @@ impl App {
 
     /// Settings › Usage limits, the switching part.
     pub fn switch_settings_ui(&mut self, ui: &mut Ui) {
-        let (mut on, mut ids) = self.switch_settings();
+        let (mut on, ids) = self.switch_settings();
         let before = (on, ids.clone());
+        let mut open_usage = false;
         ui.add_space(16.0);
         crate::pages::section(ui, "Switching accounts");
-        let claude: Vec<(String, String, String)> =
-            self.accounts.iter().filter(|a| a.kind == crate::providers::Kind::Claude).map(|a| (a.id.clone(), a.short(), a.email.clone())).collect();
         crate::pages::rows(ui, |ui| {
-            w::setting_row(ui, "Switch to another account at a limit", "The thread moves to another of your accounts below that has quota left, and continues there.", |ui| {
+            w::setting_row(ui, "Switch to another account at a limit", "The thread moves to another of your accounts that has quota left (and is under its caps), and continues there.", |ui| {
                 w::toggle(ui, &mut on)
             });
-            for (id, name, email) in claude {
-                w::separator(ui);
-                let mut use_it = ids.contains(&id);
-                ui.add_enabled_ui(on, |ui| w::setting_row(ui, &name, &email, |ui| w::toggle(ui, &mut use_it)));
-                if use_it != ids.contains(&id) {
-                    ids.retain(|x| *x != id);
-                    if use_it {
-                        ids.push(id);
-                    }
+            w::separator(ui);
+            w::setting_row(ui, "Accounts to switch to", &format!("{} chosen. Pick them on the Usage page, next to each account's caps.", ids.len()), |ui| {
+                if w::btn("Open Usage").sm().show(ui).clicked() {
+                    open_usage = true;
                 }
-            }
+            });
         });
         if (on, ids.clone()) != before {
             self.store.set("limit_switch", if on { "1" } else { "0" });
-            self.store.set("limit_switch_accounts", &serde_json::to_string(&ids).unwrap_or_default());
+        }
+        if open_usage {
+            self.open(crate::app::View::Usage);
         }
     }
 }

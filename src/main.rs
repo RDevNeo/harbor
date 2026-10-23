@@ -39,6 +39,7 @@ mod teamui;
 mod terminal;
 mod theme;
 mod undo;
+mod usage_ctl;
 mod update;
 mod waiting;
 mod widgets;

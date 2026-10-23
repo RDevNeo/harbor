@@ -22,6 +22,10 @@ fn mark_for(name: &str) -> Option<Mark> {
     let has = |k: &str| n.contains(k);
     Some(if has("github") {
         mask!("github", 0x181717)
+    } else if has("azuredevops") {
+        mask!("azuredevops", 0x0078D7)
+    } else if has("bitbucket") {
+        mask!("bitbucket", 0x0052CC)
     } else if has("vercel") {
         mask!("vercel", 0x000000)
     } else if has("linear") {

@@ -1204,6 +1204,8 @@ impl eframe::App for App {
             _ => 0,
         };
         agent::SHOWN_CHAT.store(shown, std::sync::atomic::Ordering::Relaxed);
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
         self.maybe_reload(ctx);
     }
@@ -1465,15 +1467,16 @@ fn drop_idle_ime(raw: &mut egui::RawInput, preedit: &mut Option<egui::Event>) {
 }
 
 /// Repaints for a turn's events: while its chat is on screen at most 20 fps (a
-/// burst of streamed tokens is one frame), else one coalesced frame per
-/// `agent::HIDDEN_WAKE`. The turn's end always shows (status, notices) at once.
+/// burst of streamed tokens is one frame), 4 fps while the window is unfocused,
+/// else one coalesced frame per `agent::HIDDEN_WAKE`. The turn's end always shows
+/// (status, notices) at once.
 pub fn turn_wake(ctx: &egui::Context, chat_id: i64) -> impl Fn(bool) + Send + Sync + 'static {
     let ctx = ctx.clone();
     move |ended: bool| {
         if ended {
             ctx.request_repaint();
         } else if agent::SHOWN_CHAT.load(std::sync::atomic::Ordering::Relaxed) == chat_id {
-            ctx.request_repaint_after(SHOWN_WAKE);
+            ctx.request_repaint_after(live_step(SHOWN_WAKE));
         } else {
             ctx.request_repaint_after(agent::HIDDEN_WAKE);
         }
@@ -1482,3 +1485,12 @@ pub fn turn_wake(ctx: &egui::Context, chat_id: i64) -> impl Fn(bool) + Send + Sy
 
 /// How soon the chat on screen repaints after one of its turn's events.
 const SHOWN_WAKE: Duration = Duration::from_millis(50);
+
+/// The step between frames of live output on screen: `focused` while the window has
+/// focus, [`UNFOCUSED_WAKE`] at the least while it doesn't (each frame repaints the
+/// whole window and makes the compositor redraw it).
+pub fn live_step(focused: Duration) -> Duration {
+    if agent::FOCUSED.load(std::sync::atomic::Ordering::Relaxed) { focused } else { focused.max(UNFOCUSED_WAKE) }
+}
+
+const UNFOCUSED_WAKE: Duration = Duration::from_millis(250);

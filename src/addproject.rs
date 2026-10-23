@@ -1,12 +1,19 @@
 //! "Add project" palette (T3 style): pick a source (new repository, local folder,
-//! Git URL, GitHub repository), then search inside it. Arrows move, Enter picks,
-//! Backspace on an empty search goes back, Esc closes.
+//! Git URL, GitHub repository; Azure DevOps and Bitbucket are placeholders marked
+//! "Setup Required"), then search inside it. Arrows move, Enter picks, Backspace on
+//! an empty search goes back, Esc closes. Pointing at a row only highlights it;
+//! only the keys and the header buttons act.
+//!
+//! "Local folder" is a built-in directory browser: it starts at home, Enter descends
+//! into the highlighted directory (".." goes up), typing filters, Backspace on an
+//! empty filter goes up, and Ctrl+Enter (or the Add button) adds the directory
+//! being browsed. "Open in Files" shows it in the system file manager.
 
 use crate::app::{App, Bg, View, tilde};
 use crate::icons as ic;
 use crate::store;
 use crate::widgets as w;
-use eframe::egui::{self, CornerRadius, FontId, Frame, Id, Key, Margin, Rect, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
+use eframe::egui::{self, Align, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Rect, ScrollArea, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -23,7 +30,9 @@ pub struct AddProject {
     step: Step,
     query: String,
     sel: usize,
-    found: Vec<PathBuf>,
+    /// Directory the Local step is browsing, and its visible subdirectories.
+    dir: PathBuf,
+    dirs: Vec<PathBuf>,
     /// "owner/repo" (lowercase) of each discovered repository's GitHub origin → its folder.
     clones: HashMap<String, PathBuf>,
     /// GitHub repositories (owner/name, description) from `gh repo list`.
@@ -32,7 +41,28 @@ pub struct AddProject {
     /// Clone in progress ("Cloning owner/repo…").
     pub busy: Option<String>,
     pub error: Option<String>,
+    /// Amber note, e.g. a source that is not set up yet.
+    notice: Option<String>,
     focus: bool,
+}
+
+impl AddProject {
+    /// Shows a step from its top.
+    fn go(&mut self, s: Step) {
+        self.step = s;
+        self.query.clear();
+        self.sel = 0;
+        self.focus = true;
+    }
+
+    /// Browses `dir` in the Local step.
+    fn enter(&mut self, dir: PathBuf) {
+        self.dirs = subdirs(&dir);
+        self.dir = dir;
+        self.query.clear();
+        self.sel = 0;
+        self.focus = true;
+    }
 }
 
 /// Where new and cloned repositories go.
@@ -45,6 +75,18 @@ fn expand(p: &str) -> PathBuf {
     p.strip_prefix("~/").map(|r| store::home().join(r)).unwrap_or_else(|| if p == "~" { store::home() } else { PathBuf::from(p) })
 }
 
+/// Visible (non-dot) subdirectories of `dir`, sorted by name; none when it can't be read.
+fn subdirs(dir: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut v: Vec<PathBuf> = rd.flatten().filter(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir()).map(|e| e.path()).collect();
+    v.sort_by_cached_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default());
+    v
+}
+
+fn file_name(p: &Path) -> String {
+    p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
 /// "https://github.com/a/b.git" / "git@host:a/b" → "b".
 fn repo_name(url: &str) -> String {
     let last = url.trim().trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or("");
@@ -55,38 +97,46 @@ fn repo_name(url: &str) -> String {
 enum Act {
     Step(Step),
     Add(PathBuf),
-    Browse,
+    /// Browse this directory.
+    Enter(PathBuf),
     Create(String),
     Clone { url: String, name: String },
+    /// A source that is not set up yet.
+    Unavailable(&'static str),
 }
 
 struct Row {
     icon: Icon,
     title: String,
     detail: String,
+    /// Shows the "Setup Required" pill.
+    setup_required: bool,
     act: Act,
 }
 
 enum Icon {
     Glyph(&'static str),
-    GitHub,
+    /// A logo name `logos::paint` knows.
+    Logo(&'static str),
 }
 
 impl App {
     pub fn open_add_project(&mut self) {
         self.popup = None;
-        let found = crate::git::discover();
-        let clones = found.iter().filter_map(|p| github_slug(p).map(|s| (s, p.clone()))).collect();
+        let clones = crate::git::discover().iter().filter_map(|p| github_slug(p).map(|s| (s, p.clone()))).collect();
+        let home = store::home();
         self.add_project = Some(AddProject {
             step: Step::Sources,
             query: String::new(),
             sel: 0,
+            dirs: subdirs(&home),
+            dir: home,
             clones,
-            found,
             gh: None,
             gh_loading: false,
             busy: None,
             error: None,
+            notice: None,
             focus: true,
         });
     }
@@ -133,42 +183,49 @@ impl App {
         let ql = q.to_lowercase();
         let known: HashSet<PathBuf> = self.repos.iter().map(|r| r.path.clone()).collect();
         let g = |i| Icon::Glyph(i);
+        let row = |icon, title: String, detail: String, act| Row { icon, title, detail, setup_required: false, act };
         let mut v = vec![];
         match ap.step {
             Step::Sources => {
-                for (icon, title, detail, step) in [
-                    (g(ic::FOLDER), "New project", "Start a new Git repository from a name", Step::New),
-                    (g(ic::FOLDER_PLUS), "Local folder", "Pick a folder on disk", Step::Local),
-                    (g(ic::LINK), "Git URL", "Clone from a remote URL", Step::Url),
-                    (Icon::GitHub, "GitHub repository", "Clone GitHub owner/repo", Step::GitHub),
+                for (icon, title, detail, act, setup_required) in [
+                    (g(ic::FOLDER), "New project", "Start a new Git repository from a name", Act::Step(Step::New), false),
+                    (g(ic::FOLDER_PLUS), "Local folder", "Browse a folder on disk", Act::Step(Step::Local), false),
+                    (g(ic::LINK), "Git URL", "Clone from a remote URL", Act::Step(Step::Url), false),
+                    (Icon::Logo("github"), "GitHub repository", "Clone GitHub owner/repo", Act::Step(Step::GitHub), false),
+                    (Icon::Logo("azuredevops"), "Azure DevOps repository", "Clone Azure DevOps project/repository", Act::Unavailable("Azure DevOps"), true),
+                    (Icon::Logo("bitbucket"), "Bitbucket repository", "Clone Bitbucket workspace/repository", Act::Unavailable("Bitbucket"), true),
                 ] {
                     if ql.is_empty() || title.to_lowercase().contains(&ql) {
-                        v.push(Row { icon, title: title.into(), detail: detail.into(), act: Act::Step(step) });
+                        v.push(Row { icon, title: title.into(), detail: detail.into(), setup_required, act });
                     }
                 }
             }
             Step::New => {
                 if !q.is_empty() {
                     let dir = projects_dir().join(q);
-                    v.push(Row { icon: g(ic::FOLDER), title: format!("Create “{q}”"), detail: format!("git init in {}", tilde(&dir)), act: Act::Create(q.into()) });
+                    v.push(row(g(ic::FOLDER), format!("Create “{q}”"), format!("git init in {}", tilde(&dir)), Act::Create(q.into())));
                 }
             }
             Step::Local => {
                 let typed = expand(q);
                 if (q.starts_with('/') || q.starts_with('~')) && typed.is_dir() {
-                    v.push(Row { icon: g(ic::FOLDER), title: format!("Use {}", tilde(&typed)), detail: "Add this folder".into(), act: Act::Add(typed) });
+                    v.push(row(g(ic::FOLDER), format!("Go to {}", tilde(&typed)), String::new(), Act::Enter(typed)));
                 }
-                v.push(Row { icon: g(ic::FOLDER_PLUS), title: "Browse…".into(), detail: "Choose a folder with the file picker".into(), act: Act::Browse });
-                for p in ap.found.iter().filter(|p| !known.contains(*p) && p.to_string_lossy().to_lowercase().contains(&ql)) {
-                    let name = p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    v.push(Row { icon: g(ic::FOLDER), title: name, detail: tilde(p), act: Act::Add(p.clone()) });
+                if ql.is_empty() && ap.dir != store::home() && let Some(parent) = ap.dir.parent() {
+                    v.push(row(g(ic::ARROW_UP), "..".into(), String::new(), Act::Enter(parent.to_path_buf())));
+                }
+                for p in &ap.dirs {
+                    let name = file_name(p);
+                    if name.to_lowercase().contains(&ql) {
+                        v.push(row(g(ic::FOLDER), name, String::new(), Act::Enter(p.clone())));
+                    }
                 }
             }
             Step::Url => {
                 if !q.is_empty() {
                     let name = repo_name(q);
                     let dir = projects_dir().join(&name);
-                    v.push(Row { icon: g(ic::LINK), title: format!("Clone {q}"), detail: format!("into {}", tilde(&dir)), act: Act::Clone { url: q.into(), name } });
+                    v.push(row(g(ic::LINK), format!("Clone {q}"), format!("into {}", tilde(&dir)), Act::Clone { url: q.into(), name }));
                 }
             }
             Step::GitHub => {
@@ -201,14 +258,12 @@ impl App {
             .or_else(|| ap.clones.iter().find(|(slug, p)| slug.split('/').next() == Some(owner) && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name))).map(|(_, p)| p))
             .cloned()
             .or_else(|| target.join(".git").exists().then(|| target.clone()));
-        match local {
-            Some(p) if known.contains(&p) => Row { icon: Icon::GitHub, title: full.into(), detail: format!("Already in Harbor: {}", tilde(&p)), act: Act::Add(p) },
-            Some(p) => Row { icon: Icon::GitHub, title: full.into(), detail: format!("Add your clone at {}", tilde(&p)), act: Act::Add(p) },
-            None => {
-                let detail = if desc.is_empty() { format!("Clone into {}", tilde(&target)) } else { desc.to_string() };
-                Row { icon: Icon::GitHub, title: full.into(), detail, act: Act::Clone { url: full.into(), name } }
-            }
-        }
+        let (detail, act) = match local {
+            Some(p) if known.contains(&p) => (format!("Already in Harbor: {}", tilde(&p)), Act::Add(p)),
+            Some(p) => (format!("Add your clone at {}", tilde(&p)), Act::Add(p)),
+            None => (if desc.is_empty() { format!("Clone into {}", tilde(&target)) } else { desc.to_string() }, Act::Clone { url: full.into(), name }),
+        };
+        Row { icon: Icon::Logo("github"), title: full.into(), detail, setup_required: false, act }
     }
 
     fn run(&mut self, act: Act, ctx: &egui::Context) {
@@ -218,32 +273,21 @@ impl App {
         let tx = Waker { tx, ctx };
         let Some(ap) = self.add_project.as_mut() else { return };
         ap.error = None;
+        ap.notice = None;
         match act {
             Act::Step(s) => {
-                ap.step = s;
-                ap.query.clear();
-                ap.sel = 0;
-                ap.focus = true;
+                ap.go(s);
                 if s == Step::GitHub && ap.gh.is_none() && !ap.gh_loading {
                     ap.gh_loading = true;
                     std::thread::spawn(move || tx.send(Bg::GhRepos(gh_repos())));
                 }
             }
+            Act::Enter(dir) => ap.enter(dir),
+            Act::Unavailable(name) => ap.notice = Some(format!("{name} is not set up yet")),
             Act::Add(p) => match self.add_project_path(&p) {
                 Ok(()) => self.add_project = None,
                 Err(e) => self.add_project.as_mut().unwrap().error = Some(e),
             },
-            Act::Browse => {
-                std::thread::spawn(move || {
-                    let out = std::process::Command::new("zenity").args(["--file-selection", "--directory", "--title=Add project"]).output();
-                    if let Ok(o) = out {
-                        let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if !p.is_empty() {
-                            tx.send(Bg::Cloned(Ok(PathBuf::from(p))));
-                        }
-                    }
-                });
-            }
             Act::Create(name) => {
                 let dir = projects_dir().join(&name);
                 let r = if dir.exists() {
@@ -292,13 +336,15 @@ impl App {
         let mut act: Option<Act> = None;
         let mut close = false;
         let search_id = Id::NULL.with("add-project-search");
+        let local = ap.step == Step::Local;
 
         // Keys: handled before the search field so Enter/arrows don't reach it.
-        let (up, down, enter, back) = ctx.input_mut(|i| {
+        let (up, down, enter, add, back) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::NONE, Key::ArrowUp),
                 i.consume_key(egui::Modifiers::NONE, Key::ArrowDown),
                 i.consume_key(egui::Modifiers::NONE, Key::Enter),
+                local && i.consume_key(egui::Modifiers::CTRL, Key::Enter),
                 ap.query.is_empty() && ap.step != Step::Sources && i.consume_key(egui::Modifiers::NONE, Key::Backspace),
             )
         });
@@ -316,9 +362,14 @@ impl App {
             act = Some(rows.swap_remove(ap.sel).act);
             rows.clear();
         }
+        if add && ap.busy.is_none() {
+            act = Some(Act::Add(ap.dir.clone()));
+        }
         if back {
-            ap.step = Step::Sources;
-            ap.sel = 0;
+            match ap.dir.parent() {
+                Some(parent) if local => ap.enter(parent.to_path_buf()),
+                _ => ap.go(Step::Sources),
+            }
         }
 
         let modal = egui::Modal::new(Id::NULL.with("add-project"))
@@ -333,40 +384,44 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_width(560.0);
                 ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
-                // ---- search row with the back arrow
+                // ---- search row with the back arrow (and the Add button while browsing)
                 Frame::new().inner_margin(Margin { left: 12, right: 16, top: 10, bottom: 10 }).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let b = w::btn(ic::ARROW_LEFT).muted().icon_sm().enabled(ap.step != Step::Sources).show(ui);
                         if b.clicked() {
-                            ap.step = Step::Sources;
-                            ap.query.clear();
-                            ap.sel = 0;
+                            ap.go(Step::Sources);
                         }
                         let hint = match ap.step {
-                            Step::Sources => "Search…",
-                            Step::New => "Project name",
-                            Step::Local => "Filter, or type a path (~/…)",
-                            Step::Url => "https://… or git@…",
-                            Step::GitHub => "Search your repositories, or type owner/repo",
+                            Step::Sources => "Search…".to_string(),
+                            Step::New => "Project name".into(),
+                            Step::Local => format!("{}/", tilde(&ap.dir)).replace("//", "/"),
+                            Step::Url => "https://… or git@…".into(),
+                            Step::GitHub => "Search your repositories, or type owner/repo".into(),
                         };
-                        let r = egui::TextEdit::singleline(&mut ap.query)
-                            .id(search_id)
-                            .hint_text(egui::WidgetText::from(hint).color(t.subtle()))
-                            .font(crate::theme::ts("label-14"))
-                            .frame(Frame::NONE.inner_margin(Margin::symmetric(4, 6)))
-                            .desired_width(ui.available_width())
-                            .show(ui)
-                            .response
-                            .response;
-                        if r.changed() {
-                            ap.sel = 0;
-                            ap.error = None;
-                        }
-                        if ap.focus {
-                            r.request_focus();
-                            ap.focus = false;
-                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if local && add_button(ui, &t).clicked() && ap.busy.is_none() {
+                                act = Some(Act::Add(ap.dir.clone()));
+                            }
+                            let r = egui::TextEdit::singleline(&mut ap.query)
+                                .id(search_id)
+                                .hint_text(egui::WidgetText::from(hint).color(t.subtle()))
+                                .font(crate::theme::ts("label-14"))
+                                .frame(Frame::NONE.inner_margin(Margin::symmetric(4, 6)))
+                                .desired_width(ui.available_width())
+                                .show(ui)
+                                .response
+                                .response;
+                            if r.changed() {
+                                ap.sel = 0;
+                                ap.error = None;
+                                ap.notice = None;
+                            }
+                            if ap.focus {
+                                r.request_focus();
+                                ap.focus = false;
+                            }
+                        });
                     });
                 });
                 ui.painter().hline(ui.min_rect().x_range(), ui.min_rect().bottom(), Stroke::new(1.0, t.border()));
@@ -377,7 +432,7 @@ impl App {
                     let label = match ap.step {
                         Step::Sources => "Sources",
                         Step::New => "New project",
-                        Step::Local => "Local folder",
+                        Step::Local => "Directories",
                         Step::Url => "Git URL",
                         Step::GitHub => "GitHub repository",
                     };
@@ -393,6 +448,9 @@ impl App {
                     if let Some(e) = &ap.error {
                         status_line(ui, &t, e, Some(t.red(900)));
                     }
+                    if let Some(n) = &ap.notice {
+                        status_line(ui, &t, n, Some(t.amber(900)));
+                    }
                     if ap.step == Step::GitHub {
                         match &ap.gh {
                             Some(Err(e)) => status_line(ui, &t, &format!("gh: {e}"), Some(t.amber(900))),
@@ -404,34 +462,26 @@ impl App {
                         let empty = match ap.step {
                             Step::New => "Type a name, then Enter",
                             Step::Url => "Paste a URL, then Enter",
+                            Step::Local if ap.query.is_empty() => "No subdirectories",
                             _ => "No match",
                         };
                         status_line(ui, &t, empty, None);
                     }
                     ScrollArea::vertical().max_height(340.0).auto_shrink([false, true]).show(ui, |ui| {
                         for (i, row) in rows.iter().enumerate() {
-                            let r = palette_row(ui, &t, row, i == ap.sel);
-                            if r.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) {
+                            let r = if local { dir_row(ui, &t, row, i == ap.sel) } else { palette_row(ui, &t, row, i == ap.sel) };
+                            // Pointing or clicking only moves the highlight; Enter acts.
+                            if r.clicked() || (r.hovered() && ui.input(|i| i.pointer.delta() != Vec2::ZERO)) {
                                 ap.sel = i;
                             }
                             if i == ap.sel && (up || down) {
                                 r.scroll_to_me(None);
                             }
-                            if r.clicked() && ap.busy.is_none() {
-                                ap.sel = i;
-                                act = Some(match &row.act {
-                                    Act::Step(s) => Act::Step(*s),
-                                    Act::Add(p) => Act::Add(p.clone()),
-                                    Act::Browse => Act::Browse,
-                                    Act::Create(n) => Act::Create(n.clone()),
-                                    Act::Clone { url, name } => Act::Clone { url: url.clone(), name: name.clone() },
-                                });
-                            }
                         }
                     });
                 });
 
-                // ---- footer: keyboard hints
+                // ---- footer: keyboard hints, and "Open in Files" while browsing
                 let (fr, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::hover());
                 let p = ui.painter();
                 p.rect_filled(fr, CornerRadius { nw: 0, ne: 0, sw: crate::theme::RADIUS_XL, se: crate::theme::RADIUS_XL }, t.bg200);
@@ -440,11 +490,20 @@ impl App {
                 for (k, l) in [("↑ ↓", "Navigate"), ("Enter", "Select"), ("Backspace", "Back"), ("Esc", "Close")] {
                     let kg = p.layout_no_wrap(k.into(), FontId::new(11.5, egui::FontFamily::Monospace), t.subtle());
                     let kr = Rect::from_min_size(pos2(x, fr.center().y - 10.0), Vec2::new(kg.size().x + 10.0, 20.0));
-                    p.rect(kr, CornerRadius::same(4), t.gray(100), Stroke::new(1.0, t.border()), egui::StrokeKind::Inside);
+                    p.rect(kr, CornerRadius::same(4), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
                     p.galley(pos2(kr.left() + 5.0, kr.center().y - kg.size().y / 2.0), kg, t.subtle());
                     let lg = p.layout_no_wrap(l.into(), FontId::proportional(13.0), t.subtle());
                     p.galley(pos2(kr.right() + 6.0, fr.center().y - lg.size().y / 2.0), lg.clone(), t.subtle());
                     x = kr.right() + 6.0 + lg.size().x + 18.0;
+                }
+                if local {
+                    let g = p.layout_no_wrap("Open in Files".into(), FontId::proportional(13.0), t.subtle());
+                    let lr = Rect::from_min_size(pos2(fr.right() - 16.0 - g.size().x, fr.center().y - g.size().y / 2.0), g.size());
+                    let r = ui.interact(lr.expand2(Vec2::new(4.0, 6.0)), Id::NULL.with("add-project-open"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    ui.painter().galley(lr.min, g, if r.hovered() { t.fg() } else { t.subtle() });
+                    if r.clicked() {
+                        crate::git::open_url(&ap.dir.to_string_lossy());
+                    }
                 }
             });
         if modal.should_close() {
@@ -469,25 +528,73 @@ fn status_line(ui: &mut Ui, t: &crate::theme::Tokens, text: &str, color: Option<
     ui.add_space(6.0);
 }
 
+fn icon(ui: &Ui, t: &crate::theme::Tokens, icon: &Icon, c: egui::Pos2) {
+    match *icon {
+        Icon::Glyph(g) => ic::glyph(ui.painter(), c, g, 17.0, t.subtle()),
+        Icon::Logo(n) => {
+            crate::logos::paint(ui, ui.painter(), Rect::from_center_size(c, Vec2::splat(17.0)), n, t);
+        }
+    }
+}
+
+/// Two-line row: title over detail, with the icon on the left.
 fn palette_row(ui: &mut Ui, t: &crate::theme::Tokens, row: &Row, selected: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), Sense::click());
     let p = ui.painter();
     if selected {
         p.rect_filled(rect, CornerRadius::same(crate::theme::RADIUS_MD), t.accent());
     }
-    let ic_c = pos2(rect.left() + 20.0, rect.center().y);
-    match row.icon {
-        Icon::Glyph(g) => ic::glyph(p, ic_c, g, 17.0, t.subtle()),
-        Icon::GitHub => {
-            crate::logos::paint(ui, p, Rect::from_center_size(ic_c, Vec2::splat(17.0)), "github", t);
-        }
-    }
+    icon(ui, t, &row.icon, pos2(rect.left() + 20.0, rect.center().y));
     let x = rect.left() + 42.0;
-    let max = rect.right() - x - 10.0;
+    let mut max = rect.right() - x - 10.0;
+    if row.setup_required {
+        max -= badge(ui, t, "Setup Required", pos2(rect.right() - 10.0, rect.center().y)) + 10.0;
+    }
+    let p = ui.painter();
     let tg = w::truncated(ui, &row.title, FontId::new(14.0, crate::theme::medium()), t.fg(), max);
     let dg = w::truncated(ui, &row.detail, FontId::proportional(12.5), t.subtle(), max);
     p.galley(pos2(x, rect.top() + 8.0), tg, t.fg());
     p.galley(pos2(x, rect.top() + 28.0), dg, t.subtle());
+    resp
+}
+
+/// Single-line directory row: folder icon and name.
+fn dir_row(ui: &mut Ui, t: &crate::theme::Tokens, row: &Row, selected: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
+    if selected {
+        ui.painter().rect_filled(rect, CornerRadius::same(crate::theme::RADIUS_MD), t.accent());
+    }
+    icon(ui, t, &row.icon, pos2(rect.left() + 20.0, rect.center().y));
+    let x = rect.left() + 42.0;
+    let tg = w::truncated(ui, &row.title, FontId::new(14.0, crate::theme::medium()), t.fg(), rect.right() - x - 10.0);
+    let y = rect.center().y - tg.size().y / 2.0;
+    ui.painter().galley(pos2(x, y), tg, t.fg());
+    resp
+}
+
+/// Amber outlined pill, right-aligned at `right`; returns its width.
+fn badge(ui: &Ui, t: &crate::theme::Tokens, text: &str, right: egui::Pos2) -> f32 {
+    let p = ui.painter();
+    let g = p.layout_no_wrap(text.into(), FontId::new(11.5, crate::theme::medium()), t.amber(900));
+    let r = Rect::from_min_size(pos2(right.x - g.size().x - 16.0, right.y - 10.0), Vec2::new(g.size().x + 16.0, 20.0));
+    p.rect(r, CornerRadius::same(10), egui::Color32::TRANSPARENT, Stroke::new(1.0, t.amber(600)), StrokeKind::Inside);
+    p.galley(r.center() - g.size() / 2.0, g, t.amber(900));
+    r.width()
+}
+
+/// Outlined "Add" button with the Ctrl+Enter chip inside it.
+fn add_button(ui: &mut Ui, t: &crate::theme::Tokens) -> egui::Response {
+    let lg = ui.painter().layout_no_wrap("Add".into(), FontId::new(13.0, crate::theme::medium()), t.fg());
+    let kg = ui.painter().layout_no_wrap("Ctrl Enter".into(), FontId::new(11.0, egui::FontFamily::Monospace), t.subtle());
+    let kw = kg.size().x + 10.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(10.0 + lg.size().x + 8.0 + kw + 5.0, 28.0), Sense::click());
+    let p = ui.painter();
+    let fill = if resp.hovered() { t.accent() } else { t.bg100 };
+    p.rect(rect, CornerRadius::same(crate::theme::RADIUS_MD), fill, Stroke::new(1.0, t.border()), StrokeKind::Inside);
+    p.galley(pos2(rect.left() + 10.0, rect.center().y - lg.size().y / 2.0), lg, t.fg());
+    let kr = Rect::from_min_size(pos2(rect.right() - 5.0 - kw, rect.center().y - 9.0), Vec2::new(kw, 18.0));
+    p.rect(kr, CornerRadius::same(4), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
+    p.galley(kr.center() - kg.size() / 2.0, kg, t.subtle());
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
