@@ -1081,9 +1081,11 @@ impl App {
                 tr.pending_text = None;
                 tr.pending_thinking = None;
                 let visible = self.view == View::Chat(id) && ctx.input(|i| i.viewport().focused.unwrap_or(true));
-                // Subagents work behind the lead: only the lead's replies notify.
+                // Subagents work behind the lead: only the lead's replies notify, and only once
+                // its subagents finished too (the last one's report wakes the lead again).
                 let sub = self.chat(id).is_some_and(|c| c.role == store::Role::Sub);
-                if !visible && !sub && !resumes {
+                let team_busy = !failed && self.team_started(id).is_some();
+                if !visible && !sub && !resumes && !team_busy {
                     self.unread.insert(id);
                     if failed {
                         self.failed.insert(id);

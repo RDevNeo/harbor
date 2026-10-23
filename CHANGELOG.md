@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- A chat or project in the sidebar stays Working while its subagents still run, instead of showing
+  Done as soon as the lead's own turn ends; it only turns Done (and notifies) once everything finished.
+
 ## [0.8.5] - 2026-10-23
 
 ### Security
