@@ -435,6 +435,8 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
         .max_height(max)
         .min_scrolled_height(max)
         .auto_shrink([false, true])
+        // A paste at the end lands below the fold before egui scrolls to the cursor.
+        .stick_to_bottom(true)
         .show(ui, |ui| {
             TextEdit::multiline(text)
                 .id(id)
