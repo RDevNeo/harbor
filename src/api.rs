@@ -475,8 +475,8 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         Err((s, m)) => return send_json(&mut w, s, &json!({ "error": m })),
     };
     let segs = req.segments();
-    if req.method == "GET" && segs == ["app.apk"] {
-        return serve_apk(&mut w);
+    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] {
+        return serve_apk(&mut w, req.method == "HEAD");
     }
     let Some(token) = req.bearer().filter(|t| hub.known(t)).map(String::from) else {
         return send_json(&mut w, 401, &json!({ "error": "unknown token: pair this phone again in Harbor › Settings › Phones" }));
@@ -535,14 +535,14 @@ fn app_info() -> Value {
     json!({ "version_code": code, "url": "/app.apk" })
 }
 
-fn serve_apk(w: &mut impl Write) {
+fn serve_apk(w: &mut impl Write, head_only: bool) {
     let Some((path, _)) = crate::update::apk() else {
         return send_json(w, 404, &json!({ "error": "this Harbor has no phone app yet (Settings › Phones › Download)" }));
     };
     let Ok(mut f) = std::fs::File::open(&path) else { return send_json(w, 404, &json!({ "error": "the app file is unreadable" })) };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0) as usize;
     let head = response(200, "application/vnd.android.package-archive", len, "Content-Disposition: attachment; filename=\"harbor.apk\"\r\n");
-    if w.write_all(head.as_bytes()).is_ok() {
+    if w.write_all(head.as_bytes()).is_ok() && !head_only {
         let _ = std::io::copy(&mut f, w);
     }
 }
@@ -595,6 +595,13 @@ fn upload(r: &mut impl Read, req: &Request, base: &Path) -> Reply {
             err(400, format!("upload failed: {e}"))
         }
     }
+}
+
+/// The upload id of a file under uploads/ (None for other files).
+pub fn upload_id(f: &Path) -> Option<String> {
+    let rel = f.strip_prefix(uploads_dir()).ok()?;
+    let id = rel.to_str()?.to_string();
+    resolve_upload(&id).map(|_| id)
 }
 
 /// The file of an upload id ("<chat or pending>/<file>"); None for anything outside uploads/.
@@ -986,8 +993,10 @@ impl App {
                 match *action {
                     "send" => self.api_send(c, &call.body, ctx),
                     "stop" => {
+                        // What waited behind the turn goes back to the phone, not to the desktop's composer.
+                        let returned: Vec<Value> = self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect();
                         self.stop(c);
-                        ok(json!({ "ok": true }))
+                        ok(json!({ "ok": true, "returned": returned }))
                     }
                     "fork" => self.api_fork(c, &call.body),
                     _ => err(404, "unknown action"),
@@ -1365,6 +1374,12 @@ mod tests {
         assert_eq!(call(port, "POST /v1/chats HTTP/1.1\r\nAuthorization: Bearer tok\r\nContent-Length: 3\r\n\r\n{x}").0, 400);
         let (st, v) = call(port, "GET /v1/app HTTP/1.1\r\nAuthorization: Bearer tok\r\n\r\n");
         assert_eq!((st, v["url"].as_str()), (200, Some("/app.apk")));
+        // The APK needs no token, also for a HEAD first (404 here when this PC has none).
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.write_all(b"HEAD /app.apk HTTP/1.1\r\n\r\n").unwrap();
+        let mut out = String::new();
+        c.read_to_string(&mut out).unwrap();
+        assert!(out.starts_with("HTTP/1.1 200") || out.starts_with("HTTP/1.1 404"), "{out}");
         // The long-poll returns as soon as a chat changes.
         let since = hub.rev();
         let h = hub.clone();

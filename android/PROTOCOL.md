@@ -139,7 +139,9 @@ message waits in the queue, as on the desktop (`queued: true`).
 
 ### `POST /v1/chats/{id}/stop`
 
-→ `{"ok": true}`. Stops the running turn (if any).
+→ `{"ok": true, "returned": [{"text": "…", "files": [upload ids]}]}`. Stops the running turn
+(if any). Messages that were queued behind it are taken out of the queue and returned, oldest
+first, so the app can put them back in its composer (files that weren't phone uploads are left out).
 
 ### `PATCH /v1/chats/{id}`
 
@@ -164,7 +166,7 @@ Pass `id` in `files` of a send or a new chat. Images reach the agent as images.
 
 `{"version_code": 7000, "url": "/app.apk"}`; `version_code` 0: the hub has no app to offer.
 
-### `GET /app.apk`
+### `GET /app.apk` (and `HEAD`)
 
 No token needed. The APK the hub has (`404` when none), `application/vnd.android.package-archive`.
 
