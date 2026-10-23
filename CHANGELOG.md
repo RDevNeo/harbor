@@ -10,6 +10,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   It reaches the device on the connection's input, in a file only you can read, removed when the turn ends.
 - Keys and sign-in secrets (phone keys, webhook URLs, the MCP bridge's key, MCP sign-in state)
   come from the system's random source or not at all: a failure is an error, never a guessable key.
+- Phone access, webhooks and the MCP bridge: each serves a limited number of connections at once,
+  a request's head must arrive within 10 seconds, and answers time out when the other side stops
+  reading, so a peer can no longer pile up connections and threads. The bridge checks its key
+  before reading a request's body and caps it, so a crafted request can no longer make Harbor
+  run out of memory and quit.
+- Webhooks: each webhook takes up to 30 requests a minute (more get "429, retry later"), headers
+  are size-limited before the URL key is checked, and while automatic turns are paused, at most
+  100 automatic messages wait per chat.
 
 
 ## [0.8.3] - 2026-10-23

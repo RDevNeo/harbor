@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 /// Automatic (non-user) turns allowed per project per hour, against runaway loops.
 const AUTO_TURNS_PER_HOUR: usize = 60;
+/// Automatic messages kept for a chat while its automatic turns are paused.
+const MAX_PAUSED_PENDING: usize = 100;
 /// Subagents running at once per project; further spawns wait their turn.
 pub const MAX_RUNNING_SUBS: usize = 6;
 
@@ -215,7 +217,12 @@ impl App {
                         self.notice(lead, "alert", "Automatic turns paused: more than 60 in the last hour. Send a message to resume.", "");
                     }
                 }
-                self.pending.entry(chat_id).or_default().push(prompt);
+                // Held for when the user resumes, up to a point: a flood (a webhook gone wild)
+                // mustn't grow it without end.
+                let q = self.pending.entry(chat_id).or_default();
+                if q.len() < MAX_PAUSED_PENDING {
+                    q.push(prompt);
+                }
                 return;
             }
             q.push_back(Instant::now());

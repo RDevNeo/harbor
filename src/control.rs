@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
@@ -63,6 +63,7 @@ pub fn start_socket(tx: Sender<Incoming>, wake: impl Fn() + Send + Sync + Clone 
             let tx = tx.clone();
             let wake = wake.clone();
             std::thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
                 let mut line = String::new();
                 let mut reader = BufReader::new(&stream);
                 if reader.read_line(&mut line).is_err() {
@@ -97,6 +98,32 @@ pub fn start_socket(tx: Sender<Incoming>, wake: impl Fn() + Send + Sync + Clone 
     });
 }
 
+/// Webhook requests served at once.
+static HOOK_CONNS: crate::api::Conns = crate::api::Conns::new(32);
+/// Requests one webhook may make per minute; more get 429 (senders retry later).
+const HOOK_PER_MINUTE: usize = 30;
+static HOOK_RATE: std::sync::LazyLock<Mutex<Rate>> = std::sync::LazyLock::new(Default::default);
+
+/// Per webhook token: when its last requests came, for [`HOOK_PER_MINUTE`].
+#[derive(Default)]
+struct Rate(std::collections::HashMap<String, std::collections::VecDeque<std::time::Instant>>);
+
+impl Rate {
+    fn allow(&mut self, token: &str, now: std::time::Instant) -> bool {
+        let minute = Duration::from_secs(60);
+        self.0.retain(|_, q| q.back().is_some_and(|t| now.duration_since(*t) < minute));
+        let q = self.0.entry(token.to_string()).or_default();
+        while q.front().is_some_and(|t| now.duration_since(*t) >= minute) {
+            q.pop_front();
+        }
+        if q.len() >= HOOK_PER_MINUTE {
+            return false;
+        }
+        q.push_back(now);
+        true
+    }
+}
+
 /// Starts the webhook listener; `tokens` is the live set of valid tokens.
 /// Returns the bound port.
 pub fn start_hooks(tx: Sender<Incoming>, tokens: Arc<Mutex<HashSet<String>>>, wake: impl Fn() + Send + Sync + Clone + 'static) -> Option<u16> {
@@ -107,41 +134,34 @@ pub fn start_hooks(tx: Sender<Incoming>, tokens: Arc<Mutex<HashSet<String>>>, wa
             let tx = tx.clone();
             let tokens = tokens.clone();
             let wake = wake.clone();
+            let Some(slot) = HOOK_CONNS.take() else { continue };
             std::thread::spawn(move || {
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-                let mut reader = BufReader::new(&stream);
-                let mut request_line = String::new();
-                if reader.read_line(&mut request_line).is_err() {
-                    return;
-                }
-                let mut parts = request_line.split_whitespace();
-                let method = parts.next().unwrap_or("").to_string();
-                let path = parts.next().unwrap_or("").to_string();
-                let mut headers = vec![];
-                let mut len = 0usize;
-                loop {
-                    let mut l = String::new();
-                    if reader.read_line(&mut l).is_err() || l.trim().is_empty() {
-                        break;
-                    }
-                    if let Some((k, v)) = l.split_once(':') {
-                        let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().to_string());
-                        if k == "content-length" {
-                            len = v.parse().unwrap_or(0);
-                        }
-                        headers.push((k, v));
-                    }
-                }
-                let token = path.strip_prefix("/hooks/").unwrap_or("").trim_end_matches('/').split('?').next().unwrap_or("").to_string();
-                let known = !token.is_empty() && tokens.lock().unwrap().contains(&token);
+                let _slot = slot;
                 let mut w = &stream;
+                let mut reader = BufReader::new(crate::api::Timed::new(&stream, crate::api::HEAD_WAIT, Duration::from_secs(10)));
+                let Ok(head) = crate::api::read_head_chunked(&mut reader) else {
+                    let _ = w.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                };
+                reader.get_mut().until = None;
+                let token = head.path.strip_prefix("/hooks/").unwrap_or("").trim_end_matches('/').to_string();
+                let known = !token.is_empty() && tokens.lock().unwrap().contains(&token);
                 if !known {
                     let _ = w.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                     return;
                 }
-                let mut body = vec![0u8; len.min(1 << 20)];
-                let _ = reader.read_exact(&mut body);
+                if !HOOK_RATE.lock().unwrap().allow(&token, std::time::Instant::now()) {
+                    let _ = w.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                }
+                // Past 1 MB a body is cut (the agent sees 8000 characters of it anyway).
+                let body = if head.chunked { crate::api::read_chunked(&mut reader, 1 << 20) } else { crate::api::read_body(&mut reader, head.len.min(1 << 20), 1 << 20) };
+                let Ok(body) = body else {
+                    let _ = w.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                };
                 let _ = w.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
+                let (method, headers) = (head.method, head.headers);
                 // Only headers that say what the event is; never auth headers.
                 let keep = ["content-type", "user-agent", "x-github-event", "x-github-delivery", "x-gitlab-event", "x-vercel-event", "stripe-signature", "x-event-key", "x-request-id"];
                 let headers = headers.into_iter().filter(|(k, _)| keep.contains(&k.as_str())).collect();
@@ -173,4 +193,21 @@ pub fn funnel_enable_cmd(port: u16) -> String {
 
 pub fn funnel_disable_cmd() -> String {
     "tailscale funnel --set-path /hooks off".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhooks_are_rate_limited_per_token() {
+        let mut r = Rate::default();
+        let t = std::time::Instant::now();
+        for _ in 0..HOOK_PER_MINUTE {
+            assert!(r.allow("a", t));
+        }
+        assert!(!r.allow("a", t + Duration::from_secs(30)));
+        assert!(r.allow("b", t), "each webhook has its own budget");
+        assert!(r.allow("a", t + Duration::from_secs(61)), "the window moves on");
+    }
 }

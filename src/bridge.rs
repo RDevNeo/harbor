@@ -65,19 +65,31 @@ struct Live {
 
 static GRANTS: LazyLock<Mutex<HashMap<String, Live>>> = LazyLock::new(Default::default);
 
+/// Requests served at once (an agent's servers each hold one while they answer).
+static CONNS: crate::api::Conns = crate::api::Conns::new(128);
+/// The largest request body (a JSON-RPC message).
+const MAX_BODY: usize = 32 << 20;
+
 /// The bridge's port, started on first use.
 pub fn port() -> Option<u16> {
     static P: OnceLock<Option<u16>> = OnceLock::new();
-    *P.get_or_init(|| {
-        let listener = (PORT..PORT + 10).find_map(|p| TcpListener::bind(("127.0.0.1", p)).ok())?;
-        let port = listener.local_addr().ok()?.port();
-        std::thread::spawn(move || {
-            for s in listener.incoming().flatten() {
-                std::thread::spawn(move || handle(s));
-            }
-        });
-        Some(port)
-    })
+    *P.get_or_init(|| (PORT..PORT + 10).find_map(listen))
+}
+
+/// Serves the bridge on 127.0.0.1:`port` (0: any free port); the port bound.
+fn listen(port: u16) -> Option<u16> {
+    let listener = TcpListener::bind(("127.0.0.1", port)).ok()?;
+    let port = listener.local_addr().ok()?.port();
+    std::thread::spawn(move || {
+        for s in listener.incoming().flatten() {
+            let Some(slot) = CONNS.take() else { continue };
+            std::thread::spawn(move || {
+                handle(s);
+                drop(slot);
+            });
+        }
+    });
+    Some(port)
 }
 
 pub fn token() -> std::io::Result<String> {
@@ -141,28 +153,9 @@ fn enc(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
-fn dec(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = vec![];
-    let mut i = 0;
-    while i < b.len() {
-        match (b[i], s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())) {
-            (b'%', Some(x)) => {
-                out.push(x);
-                i += 3;
-            }
-            (c, _) => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
 
 struct Req {
     method: String,
-    path: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
@@ -173,52 +166,27 @@ impl Req {
     }
 }
 
-fn read_request(s: &TcpStream) -> Option<Req> {
-    let _ = s.set_read_timeout(Some(Duration::from_secs(30)));
-    let mut r = BufReader::new(s);
-    let mut line = String::new();
-    r.read_line(&mut line).ok()?;
-    let mut parts = line.split_whitespace();
-    let (method, path) = (parts.next()?.to_string(), parts.next()?.to_string());
-    let mut headers = vec![];
-    loop {
-        let mut l = String::new();
-        if r.read_line(&mut l).ok()? == 0 || l.trim().is_empty() {
-            break;
-        }
-        if let Some((k, v)) = l.split_once(':') {
-            headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
-        }
-    }
-    let mut body = vec![];
-    let find = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v): &(String, String)| v.clone());
-    if find("transfer-encoding").is_some_and(|v| v.eq_ignore_ascii_case("chunked")) {
-        loop {
-            let mut size = String::new();
-            r.read_line(&mut size).ok()?;
-            let n = usize::from_str_radix(size.trim().split(';').next()?, 16).ok()?;
-            if n == 0 {
-                break;
-            }
-            let mut chunk = vec![0u8; n];
-            r.read_exact(&mut chunk).ok()?;
-            body.extend(chunk);
-            let mut crlf = String::new();
-            r.read_line(&mut crlf).ok()?;
-        }
-    } else if let Some(n) = find("content-length").and_then(|v| v.parse::<usize>().ok()) {
-        body = vec![0u8; n.min(32 << 20)];
-        r.read_exact(&mut body).ok()?;
-    }
-    Some(Req { method, path, headers, body })
+/// The request's head, bounded in size and time; the body is read once its token is known.
+fn read_head(r: &mut BufReader<crate::api::Timed>) -> Result<crate::api::Request, u16> {
+    let head = crate::api::read_head_chunked(r).map_err(|(code, _)| code)?;
+    r.get_mut().until = None;
+    Ok(head)
+}
+
+fn read_body(r: &mut impl BufRead, head: &crate::api::Request) -> Result<Vec<u8>, u16> {
+    if head.chunked { crate::api::read_chunked(r, MAX_BODY) } else { crate::api::read_body(r, head.len, MAX_BODY) }
 }
 
 fn respond(mut s: &TcpStream, code: u16, ctype: &str, body: &[u8]) {
     let reason = match code {
         200 => "OK",
         202 => "Accepted",
+        400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        411 => "Length Required",
+        413 => "Payload Too Large",
+        431 => "Request Header Fields Too Large",
         _ => "Error",
     };
     let head = format!("HTTP/1.1 {code} {reason}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAllow: POST, DELETE\r\nConnection: close\r\n\r\n", body.len());
@@ -227,10 +195,14 @@ fn respond(mut s: &TcpStream, code: u16, ctype: &str, body: &[u8]) {
 }
 
 fn handle(s: TcpStream) {
-    let Some(req) = read_request(&s) else { return };
-    let path = req.path.split('?').next().unwrap_or("").trim_matches('/').to_string();
+    let mut r = BufReader::new(crate::api::Timed::new(&s, crate::api::HEAD_WAIT, Duration::from_secs(30)));
+    let head = match read_head(&mut r) {
+        Ok(h) => h,
+        Err(code) => return respond(&s, code, "text/plain", b"bad request"),
+    };
+    // The path comes decoded: "<token>/<server name>".
+    let path = head.path.trim_matches('/').to_string();
     let (token, server) = path.split_once('/').unwrap_or((&path, ""));
-    let server = &dec(server);
     let found = {
         let mut grants = GRANTS.lock().unwrap();
         grants.get_mut(token).and_then(|live| {
@@ -241,6 +213,11 @@ fn handle(s: TcpStream) {
     let Some((grant, def, slot)) = found else {
         return respond(&s, 404, "text/plain", b"not found");
     };
+    let body = match read_body(&mut r, &head) {
+        Ok(b) => b,
+        Err(code) => return respond(&s, code, "text/plain", b"bad body"),
+    };
+    let req = Req { method: head.method, headers: head.headers, body };
     let kind = def.as_ref().map(|d| d["type"].as_str().unwrap_or(if d.get("url").is_some() { "http" } else { "stdio" }).to_string());
     if kind.as_deref() == Some("http") {
         return forward(&s, &req, def.as_ref().unwrap());
@@ -687,8 +664,37 @@ mod tests {
         assert_eq!(post(port, &format!("/{}/echo", g.token), "{}").0, 404);
         let cfg = remote_config(&g, 50000);
         assert_eq!(cfg["mcpServers"]["origin"]["url"], format!("http://127.0.0.1:50000/{}/origin", g.token));
-        assert_eq!(dec(&enc("Roblox Studio/x")), "Roblox Studio/x");
+        assert_eq!(crate::api::url_decode(&enc("Roblox Studio/x+y")), "Roblox Studio/x+y");
         assert_eq!(enc("Roblox Studio"), "Roblox%20Studio");
+    }
+
+    fn raw(port: u16, req: &[u8]) -> String {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let _ = s.write_all(req);
+        let mut out = String::new();
+        let _ = s.read_to_string(&mut out);
+        out
+    }
+
+    #[test]
+    fn bounds_requests() {
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers: Map::new(), commands: false, workspace: vec![] };
+        let port = grant(g.clone()).unwrap();
+        // A chunk size alone allocates nothing: unknown token first, then too large.
+        let huge = b"POST /nope/origin HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n100000000000\r\n";
+        assert!(raw(port, huge).starts_with("HTTP/1.1 404"));
+        let huge = format!("POST /{}/origin HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n100000000000\r\n", g.token);
+        assert!(raw(port, huge.as_bytes()).starts_with("HTTP/1.1 413"));
+        let big = format!("POST /{}/origin HTTP/1.1\r\nContent-Length: {}\r\n\r\n", g.token, 64 << 20);
+        assert!(raw(port, big.as_bytes()).starts_with("HTTP/1.1 413"));
+        let long = format!("POST /{}/origin HTTP/1.1\r\nX: {}\r\n\r\n", g.token, "a".repeat(9000));
+        assert!(raw(port, long.as_bytes()).starts_with("HTTP/1.1 431"));
+        // Chunked still works.
+        let body = r#"{"jsonrpc":"2.0","id":4,"method":"ping"}"#;
+        let ok = format!("POST /{}/origin HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{body}\r\n0\r\n\r\n", g.token, body.len());
+        let out = raw(port, ok.as_bytes());
+        assert!(out.starts_with("HTTP/1.1 200") && out.contains("\"id\":4"), "{out}");
+        revoke(&g.token);
     }
 
     #[test]

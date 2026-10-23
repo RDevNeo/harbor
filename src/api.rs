@@ -41,6 +41,8 @@ const UI_WAIT: Duration = Duration::from_secs(30);
 /// How long a long-poll that saw a change waits for more before answering.
 const COALESCE: Duration = Duration::from_millis(150);
 const MAX_JSON: usize = 2 << 20;
+/// The most a request's line and headers may take to arrive.
+pub const HEAD_WAIT: Duration = Duration::from_secs(10);
 const MAX_UPLOAD: usize = 200 << 20;
 /// Tool inputs and results are cut to this on the wire (the desktop keeps them whole).
 const CLIP: usize = 16 << 10;
@@ -221,6 +223,8 @@ pub struct Request {
     pub query: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
     pub len: usize,
+    /// `Transfer-Encoding: chunked` (only [`read_head_chunked`] lets it through).
+    pub chunked: bool,
 }
 
 impl Request {
@@ -277,7 +281,7 @@ pub fn url_encode(s: &str) -> String {
         .collect()
 }
 
-fn line(r: &mut impl BufRead, max: usize) -> Result<String, (u16, &'static str)> {
+pub fn line(r: &mut impl BufRead, max: usize) -> Result<String, (u16, &'static str)> {
     let mut buf = vec![];
     let n = r.by_ref().take(max as u64 + 1).read_until(b'\n', &mut buf).map_err(|_| (400, "unreadable request"))?;
     if n > max {
@@ -291,6 +295,15 @@ fn line(r: &mut impl BufRead, max: usize) -> Result<String, (u16, &'static str)>
 
 /// Reads the request line and headers.
 pub fn read_head(r: &mut impl BufRead) -> Result<Request, (u16, &'static str)> {
+    let req = read_head_chunked(r)?;
+    if req.chunked {
+        return Err((411, "send a content-length"));
+    }
+    Ok(req)
+}
+
+/// [`read_head`] that also takes a chunked body (the caller reads it).
+pub fn read_head_chunked(r: &mut impl BufRead) -> Result<Request, (u16, &'static str)> {
     let first = line(r, 8192)?;
     let mut parts = first.split(' ');
     let (Some(method), Some(target), Some(version)) = (parts.next(), parts.next(), parts.next()) else {
@@ -321,11 +334,110 @@ pub fn read_head(r: &mut impl BufRead) -> Result<Request, (u16, &'static str)> {
             req.len = v.parse().map_err(|_| (400, "bad content-length"))?;
         }
         if k == "transfer-encoding" && !v.eq_ignore_ascii_case("identity") {
-            return Err((411, "send a content-length"));
+            if !v.eq_ignore_ascii_case("chunked") {
+                return Err((411, "send a content-length"));
+            }
+            req.chunked = true;
         }
         req.headers.push((k, v));
     }
     Err((431, "too many headers"))
+}
+
+/// A chunked body of at most `max` bytes; Err(413) past it, Err(400) when malformed.
+pub fn read_chunked(r: &mut impl BufRead, max: usize) -> Result<Vec<u8>, u16> {
+    let mut body = vec![];
+    loop {
+        let size = line(r, 1024).map_err(|_| 400u16)?;
+        let n = usize::from_str_radix(size.split(';').next().unwrap_or("").trim(), 16).map_err(|_| 400u16)?;
+        if n == 0 {
+            // Trailers, up to the blank line.
+            for _ in 0..100 {
+                if line(r, 8192).map_err(|_| 400u16)?.is_empty() {
+                    return Ok(body);
+                }
+            }
+            return Err(400);
+        }
+        if n > max - body.len() {
+            return Err(413);
+        }
+        // Read as it comes: a size alone never makes it allocate.
+        if r.by_ref().take(n as u64).read_to_end(&mut body).map_err(|_| 400u16)? != n || !line(r, 16).map_err(|_| 400u16)?.is_empty() {
+            return Err(400);
+        }
+    }
+}
+
+/// A body of `len` bytes (Content-Length) of at most `max`.
+pub fn read_body(r: &mut impl Read, len: usize, max: usize) -> Result<Vec<u8>, u16> {
+    if len > max {
+        return Err(413);
+    }
+    let mut body = Vec::with_capacity(len);
+    match r.take(len as u64).read_to_end(&mut body) {
+        Ok(n) if n == len => Ok(body),
+        _ => Err(400),
+    }
+}
+
+/// How many connections a listener serves at once; more are closed straight away, so a
+/// peer that opens many and sends nothing can't pile up threads.
+pub struct Conns(std::sync::atomic::AtomicUsize, usize);
+
+/// One connection's place in its [`Conns`], given back when dropped.
+pub struct Conn(&'static Conns);
+
+impl Conns {
+    pub const fn new(max: usize) -> Self {
+        Conns(std::sync::atomic::AtomicUsize::new(0), max)
+    }
+
+    pub fn take(&'static self) -> Option<Conn> {
+        if self.0.fetch_add(1, Ordering::SeqCst) >= self.1 {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Conn(self))
+    }
+}
+
+impl Drop for Conn {
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A socket read with a deadline for the whole request head (`until`), not just per read:
+/// a peer that sends a byte now and then can't keep a connection forever. With `until`
+/// cleared (the head is in, the caller knows who it is), only `idle` applies per read.
+pub struct Timed<'a> {
+    pub s: &'a TcpStream,
+    pub until: Option<Instant>,
+    pub idle: Duration,
+}
+
+impl<'a> Timed<'a> {
+    /// `head` for the head, `idle` per read after it; writes time out after `idle` too.
+    pub fn new(s: &'a TcpStream, head: Duration, idle: Duration) -> Self {
+        let _ = s.set_write_timeout(Some(idle));
+        Timed { s, until: Some(Instant::now() + head), idle }
+    }
+}
+
+impl Read for Timed<'_> {
+    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+        let wait = match self.until {
+            Some(u) => u.saturating_duration_since(Instant::now()).min(self.idle),
+            None => self.idle,
+        };
+        if wait.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.s.set_read_timeout(Some(wait))?;
+        let mut s = self.s;
+        s.read(b)
+    }
 }
 
 fn decode_path(p: &str) -> String {
@@ -449,24 +561,31 @@ pub fn parse_self(v: &Value) -> (String, Vec<String>) {
     (dns, ips)
 }
 
+/// Phones' connections at once (each long-polls on one).
+static CONNS: Conns = Conns::new(64);
+
 fn accept(l: TcpListener, hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn() + Send + Sync + Clone + 'static) {
     for stream in l.incoming().flatten() {
         if !hub.enabled.load(Ordering::SeqCst) {
             continue; // dropped: closed without a word
         }
+        let Some(slot) = CONNS.take() else { continue };
         let (hub, tx, wake) = (hub.clone(), tx.clone(), wake.clone());
-        std::thread::spawn(move || serve(stream, &hub, &tx, &wake));
+        std::thread::spawn(move || {
+            serve(stream, &hub, &tx, &wake);
+            drop(slot);
+        });
     }
 }
 
 fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync)) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let mut w = &stream;
-    let mut r = BufReader::new(&stream);
+    let mut r = BufReader::new(Timed::new(&stream, HEAD_WAIT, Duration::from_secs(30)));
     let req = match read_head(&mut r) {
         Ok(q) => q,
         Err((s, m)) => return send_json(&mut w, s, &json!({ "error": m })),
     };
+    r.get_mut().until = None;
     let segs = req.segments();
     if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] {
         return serve_apk(&mut w, req.method == "HEAD");
@@ -1257,6 +1376,51 @@ mod tests {
         assert_eq!(head(&many).unwrap_err().0, 431);
         // A head cut short (no blank line) is an error, not a hang.
         assert!(head("GET / HTTP/1.1\r\nHost: h\r\n").is_err());
+    }
+
+    #[test]
+    fn bounds_bodies_and_connections() {
+        let chunked = |s: &str, max| read_chunked(&mut std::io::Cursor::new(s.as_bytes().to_vec()), max);
+        assert_eq!(chunked("5\r\nhello\r\n6;x=y\r\n world\r\n0\r\nTrailer: t\r\n\r\n", 100).unwrap(), b"hello world");
+        // A size alone is refused before anything is allocated or read.
+        assert_eq!(chunked("100000000000\r\n", 1 << 20), Err(413));
+        assert_eq!(chunked("5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n", 8), Err(413));
+        assert_eq!(chunked("5\r\nhel", 100), Err(400));
+        assert_eq!(chunked("zz\r\n", 100), Err(400));
+        let body = |s: &str, len, max| read_body(&mut std::io::Cursor::new(s.as_bytes().to_vec()), len, max);
+        assert_eq!(body("hello", 5, 5).unwrap(), b"hello");
+        assert_eq!(body("hello", 6, 10), Err(400));
+        assert_eq!(body("hello", 1 << 40, 10), Err(413));
+        assert_eq!(head("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap_err().0, 411);
+        assert!(read_head_chunked(&mut std::io::Cursor::new(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec())).unwrap().chunked);
+        static TWO: Conns = Conns::new(2);
+        let (a, b) = (TWO.take(), TWO.take());
+        assert!(a.is_some() && b.is_some() && TWO.take().is_none());
+        drop(a);
+        assert!(TWO.take().is_some());
+    }
+
+    #[test]
+    fn head_has_a_deadline_however_slow_the_peer() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            // A byte every 100 ms: each read is quick, the head never ends.
+            for _ in 0..30 {
+                if s.write_all(b"G").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let (s, _) = l.accept().unwrap();
+        let t = Instant::now();
+        let mut r = BufReader::new(Timed::new(&s, Duration::from_millis(500), Duration::from_secs(5)));
+        assert!(read_head(&mut r).is_err());
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        drop(s);
+        peer.join().unwrap();
     }
 
     #[test]
