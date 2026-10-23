@@ -13,7 +13,7 @@ use openssl::x509::{X509, X509NameBuilder};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct Identity {
     pub cert: X509,
@@ -87,8 +87,14 @@ pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// Hex to bytes; empty for anything that isn't hex (odd length, other characters).
 pub fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len() / 2).filter_map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
+    let b = s.as_bytes();
+    let digit = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    if b.len() % 2 != 0 {
+        return Vec::new();
+    }
+    b.chunks(2).map(|p| Some(digit(p[0])? << 4 | digit(p[1])?)).collect::<Option<Vec<u8>>>().unwrap_or_default()
 }
 
 /// `<tag>value</tag>` from the host's XML replies (flat; good enough for GameStream).
@@ -127,9 +133,32 @@ fn query(id: &Identity, args: &str) -> String {
     format!("uniqueid={}&uuid={}{}{}", id.unique_id, hex(&uuid), if args.is_empty() { "" } else { "&" }, args)
 }
 
-fn read_response(mut s: impl Read) -> Result<String, String> {
+/// Largest reply taken from a host (GameStream's XML answers are a few KB).
+const MAX_REPLY: u64 = 1 << 20;
+
+/// Reads until a deadline: the socket's read timeout only bounds each read, so a host
+/// trickling bytes would otherwise keep a request open forever.
+struct Deadline<R> {
+    r: R,
+    until: Instant,
+}
+
+impl<R: Read> Read for Deadline<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if Instant::now() > self.until {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the host took too long to answer"));
+        }
+        self.r.read(buf)
+    }
+}
+
+fn read_response(s: impl Read, timeout: Duration) -> Result<String, String> {
     let mut buf = Vec::new();
+    let mut s = Deadline { r: s, until: Instant::now() + timeout + Duration::from_secs(5) }.take(MAX_REPLY + 1);
     s.read_to_end(&mut buf).or_else(|e| if buf.is_empty() { Err(e.to_string()) } else { Ok(0) })?;
+    if buf.len() as u64 > MAX_REPLY {
+        return Err("the host's reply is too large".into());
+    }
     let text = String::from_utf8_lossy(&buf).to_string();
     let (head, body) = text.split_once("\r\n\r\n").ok_or("bad HTTP reply")?;
     let status = head.split_whitespace().nth(1).unwrap_or("0");
@@ -171,7 +200,7 @@ impl Host {
         let mut s = connect(&self.ip, self.http_port, timeout)?;
         let req = format!("GET /{cmd}?{} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n", query(id, args), self.ip, self.http_port);
         s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-        read_response(s)
+        read_response(s, timeout)
     }
 
     /// HTTPS with our certificate; the host's must be the pinned one.
@@ -189,7 +218,7 @@ impl Host {
         let mut s = conn.connect(&self.ip, tcp).map_err(|e| format!("TLS: {e}"))?;
         let req = format!("GET /{cmd}?{} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n", query(id, args), self.ip, self.https_port);
         s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-        read_response(s)
+        read_response(s, timeout)
     }
 
     /// serverinfo over HTTPS when paired (it then reports PairStatus for real), else HTTP.
@@ -209,5 +238,29 @@ impl Host {
             return Ok(plain.replace("<PairStatus>1</PairStatus>", "<PairStatus>0</PairStatus>"));
         }
         Ok(plain)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unhex_rejects_bad_input() {
+        assert_eq!(unhex("00ff7A"), vec![0, 255, 0x7a]);
+        assert!(unhex("abc").is_empty());
+        assert!(unhex("zz").is_empty());
+        // non-ASCII used to panic (slicing inside a character)
+        assert!(unhex("aé").is_empty());
+        assert!(unhex("éé").is_empty());
+    }
+
+    #[test]
+    fn replies_are_capped() {
+        let ok = "HTTP/1.1 200 OK\r\n\r\n<root/>";
+        assert_eq!(read_response(ok.as_bytes(), Duration::from_secs(1)).unwrap(), "<root/>");
+        let mut big = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        big.resize(MAX_REPLY as usize + 10, b'x');
+        assert!(read_response(&big[..], Duration::from_secs(1)).is_err());
     }
 }

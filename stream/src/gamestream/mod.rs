@@ -361,14 +361,13 @@ fn connect(cfg: &Cfg, id: &Identity, sink: &Sink, control: bool) -> Result<Conn,
     check_status(&launch).map_err(|e| format!("{verb}: {e}"))?;
     let session_url = xml(&launch, "sessionUrl0").unwrap_or_default();
 
+    // the host's values may hold anything: a NUL is a bad reply, not a crash
+    let c = |s: String| CString::new(s).map_err(|_| "the host sent a malformed reply".to_string());
+    let (c_addr, c_app, c_gfe, c_url) = (c(cfg.ip.clone())?, c(app_version)?, c(gfe_version)?, c(session_url)?);
     *VIDEO.lock().unwrap() = Some(Video { sink: sink.clone(), dec: None, buf: Vec::new(), empty: 0 });
     TERMINATED.store(false, Ordering::Relaxed);
     *FAILED_STAGE.lock().unwrap() = None;
 
-    let c_addr = CString::new(cfg.ip.clone()).unwrap();
-    let c_app = CString::new(app_version).unwrap();
-    let c_gfe = CString::new(gfe_version).unwrap();
-    let c_url = CString::new(session_url).unwrap();
     let mut si: SERVER_INFORMATION = unsafe { std::mem::zeroed() };
     unsafe { LiInitializeServerInformation(&mut si) };
     si.address = c_addr.as_ptr();
