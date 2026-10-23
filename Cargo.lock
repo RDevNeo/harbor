@@ -1021,6 +1021,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "rusqlite",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "vt100",

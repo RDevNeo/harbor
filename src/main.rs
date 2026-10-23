@@ -58,6 +58,8 @@ mod yuv;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    // Before anything is started: children older than this are a previous image's.
+    let born = procs::uptime_ticks();
     let args: Vec<String> = std::env::args().collect();
     if matches!(args.get(1).map(String::as_str), Some("--version" | "-V")) {
         println!("harbor {}", update::version_label());
@@ -83,6 +85,9 @@ fn main() -> eframe::Result {
             eprintln!("harbor: already running, but it didn't answer on {}", control::socket_path().display());
         }
         return Ok(());
+    }
+    if let Some(born) = born {
+        procs::reap_inherited(born);
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

@@ -133,6 +133,59 @@ fn tail_file(path: &Path, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+/// Clock ticks since boot now (the unit of a process's start time in /proc).
+pub fn uptime_ticks() -> Option<i64> {
+    let up: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+    Some((up * 100.0) as i64)
+}
+
+/// Children of this process started before `born` (ticks since boot), with whether
+/// each has ended (a zombie).
+fn children_before(born: i64) -> Vec<(u32, bool)> {
+    let me = std::process::id();
+    let mut v = vec![];
+    for t in std::fs::read_dir("/proc/self/task").into_iter().flatten().flatten() {
+        let Ok(list) = std::fs::read_to_string(t.path().join("children")) else { continue };
+        for pid in list.split_whitespace().filter_map(|p| p.parse::<u32>().ok()) {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+            let Some((_, rest)) = stat.rsplit_once(')') else { continue };
+            let f: Vec<&str> = rest.split_whitespace().collect();
+            let (Some(state), Some(ppid), Some(start)) = (f.first(), f.get(1).and_then(|p| p.parse::<u32>().ok()), f.get(19).and_then(|s| s.parse::<i64>().ok())) else { continue };
+            if ppid == me && start < born && !v.iter().any(|(p, _)| *p == pid) {
+                v.push((pid, *state == "Z"));
+            }
+        }
+    }
+    v
+}
+
+/// Reaps `pid` if it has ended; never blocks.
+fn reap(pid: u32) {
+    if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
+        let _ = rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG);
+    }
+}
+
+/// A reload execs in place, so what the previous image started (start_process's
+/// processes, MCP servers, helpers) stays this process's children, but the threads that
+/// waited for them are gone: they'd stay zombies once they end. This reaps them as
+/// they do, until none are left. Children started since `born` (this image's start)
+/// have their own waiters and are never touched.
+pub fn reap_inherited(born: i64) {
+    std::thread::spawn(move || {
+        loop {
+            let kids = children_before(born);
+            if kids.is_empty() {
+                return;
+            }
+            for (pid, _) in kids.iter().filter(|k| k.1) {
+                reap(*pid);
+            }
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
+}
+
 /// Field 22 of /proc/<pid>/stat: start time in clock ticks since boot.
 fn start_ticks(pid: u32) -> Option<i64> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -339,6 +392,24 @@ mod tests {
         assert!(t.starts_with("[… earlier output cut by Harbor]\nline 9"), "{t}");
         assert!(t.ends_with("line 999\n") && t.len() < 150);
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn reaps_only_inherited_children() {
+        let before = uptime_ticks().unwrap();
+        let mut ended = Command::new("true").spawn().unwrap();
+        let pid = ended.id();
+        while std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| !s.rsplit_once(')').unwrap().1.trim_start().starts_with('Z')) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Born after `born`: this image's own child, left alone.
+        assert!(!children_before(before).iter().any(|k| k.0 == pid));
+        // Born before it: an inherited one, reaped once it has ended.
+        let born = uptime_ticks().unwrap() + 1;
+        assert!(children_before(born).contains(&(pid, true)));
+        reap(pid);
+        assert!(std::fs::metadata(format!("/proc/{pid}")).is_err(), "reaped");
+        assert!(ended.try_wait().is_err(), "nothing left to wait for");
     }
 
     #[test]

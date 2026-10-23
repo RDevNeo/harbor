@@ -32,6 +32,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   looked at for a while leave memory until they're opened again.
 - Stopping a process started with start_process kills whatever of it is still running 5 seconds
   after asking it to stop, and a process's log keeps only its last megabyte once it passes 8 MB.
+- Processes Harbor started before an update or reload (start_process's, MCP servers, helpers) are
+  cleaned up once they end, instead of staying behind as zombie processes until Harbor quits.
 
 ## [0.8.4] - 2026-10-23
 

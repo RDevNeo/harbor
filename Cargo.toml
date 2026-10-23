@@ -25,6 +25,8 @@ qrcode = { version = "0.14", default-features = false }
 vt100 = "0.18"
 # Checks the signature of self-updates (minisign, pure Rust, no dependencies).
 minisign-verify = "0.2"
+# Safe waitpid, to reap children a reload left behind (procs.rs); already in the tree.
+rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
 
 [profile.release]
 opt-level = 3
