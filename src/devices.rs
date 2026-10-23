@@ -1517,82 +1517,91 @@ impl Files {
                 ui.label(egui::RichText::new(e).text_style(crate::theme::ts("label-13")).color(t.red(900)));
             });
         }
-        let entries: Vec<Entry> = self.entries.iter().filter(|e| self.show_hidden || !e.name.starts_with('.')).cloned().collect();
+        // indexes of the entries shown (no copies: folders can hold tens of thousands)
+        let shown: Vec<usize> = (0..self.entries.len()).filter(|&i| self.show_hidden || !self.entries[i].name.starts_with('.')).collect();
         let mut open: Option<String> = None;
         let mut fetch: Option<(String, u64)> = None;
         let transfers_h = if self.transfers.lock().unwrap().is_empty() { 0.0 } else { 150.0 };
-        ScrollArea::vertical().auto_shrink([false, false]).max_height((ui.available_height() - transfers_h).max(80.0)).show(ui, |ui| {
-            if self.loading && entries.is_empty() {
-                ui.add_space(20.0);
-                ui.vertical_centered(|ui| {
-                    let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
-                    w::spinner(ui.painter(), r.center(), 7.0, t.subtle());
-                });
-                ui.ctx().request_repaint_after(Duration::from_millis(80));
-                return;
-            }
-            if entries.is_empty() && self.error.is_none() {
-                ui.add_space(20.0);
-                ui.vertical_centered(|ui| w::subtle(ui, "Empty folder", "label-13"));
-            }
-            egui::Frame::new().inner_margin(Margin::symmetric(6, 4)).show(ui, |ui| {
-                for e in &entries {
-                    let remote = self.join(&e.name);
-                    let image = !e.dir && crate::images::is_image(&e.name);
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
-                    if !ui.is_rect_visible(rect) {
-                        continue;
-                    }
-                    let p = ui.painter().clone();
-                    if resp.hovered() {
-                        p.rect_filled(rect, CornerRadius::same(RADIUS_MD), t.gray(100));
-                    }
-                    let lead = Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(26.0));
-                    let local = if image { self.preview(&remote, e.size, e.mtime) } else { None };
-                    match &local {
-                        Some(l) => {
-                            let key = l.to_string_lossy().into_owned();
-                            ui.scope_builder(egui::UiBuilder::new().max_rect(lead), |ui| {
-                                crate::images::thumbnail(ui, &key, lead.size());
-                            });
-                        }
-                        None => {
-                            let icon = if e.dir { ic::FOLDER } else if image { ic::FILE_IMAGE } else { ic::FILE };
-                            ic::glyph(&p, lead.center(), icon, 15.0, if e.dir { t.blue(900) } else { t.subtle() });
-                        }
-                    }
-                    let meta = if e.dir { String::new() } else { human(e.size) };
-                    let mg = p.layout_no_wrap(meta, FontId::proportional(12.0), t.subtle());
-                    let dl = Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(26.0));
-                    let name_w = rect.width() - 44.0 - mg.size().x - 44.0;
-                    let g = w::truncated(ui, &e.name, FontId::proportional(13.5), t.fg(), name_w.max(40.0));
-                    p.galley(pos2(rect.left() + 40.0, rect.center().y - g.size().y / 2.0), g, t.fg());
-                    p.galley(pos2(dl.left() - 8.0 - mg.size().x, rect.center().y - mg.size().y / 2.0), mg, t.subtle());
-                    let mut on_dl = false;
-                    if !e.dir && resp.hovered() || !e.dir && ui.rect_contains_pointer(dl) {
-                        let r = ui.interact(dl, Id::NULL.with(("files-dl", &remote)), Sense::click());
-                        on_dl = r.hovered();
-                        if r.hovered() {
-                            p.rect_filled(dl, CornerRadius::same(RADIUS_MD), t.gray(300));
-                        }
-                        ic::glyph(&p, dl.center(), ic::DOWNLOAD, 14.0, if r.hovered() { t.fg() } else { t.subtle() });
-                        if r.on_hover_text("Download to Downloads").clicked() {
-                            fetch = Some((remote.clone(), e.size));
-                        }
-                    }
-                    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
-                    if resp.clicked() && !on_dl {
-                        if e.dir {
-                            open = Some(remote.clone());
-                        } else if let Some(l) = &local {
-                            crate::images::open(ui.ctx(), &l.to_string_lossy());
-                        } else if !image {
-                            fetch = Some((remote.clone(), e.size));
-                        }
-                    }
+        let area = ScrollArea::vertical().auto_shrink([false, false]).max_height((ui.available_height() - transfers_h).max(80.0));
+        if shown.is_empty() {
+            area.show(ui, |ui| {
+                if self.loading {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                        w::spinner(ui.painter(), r.center(), 7.0, t.subtle());
+                    });
+                    ui.ctx().request_repaint_after(Duration::from_millis(80));
+                    return;
+                }
+                if self.error.is_none() {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| w::subtle(ui, "Empty folder", "label-13"));
                 }
             });
-        });
+        } else {
+            // only the rows in view are laid out
+            area.show_rows(ui, 34.0, shown.len(), |ui, rows| {
+                egui::Frame::new().inner_margin(Margin::symmetric(6, 0)).show(ui, |ui| {
+                    for &i in &shown[rows] {
+                        let e = &self.entries[i].clone();
+                        let remote = self.join(&e.name);
+                        let image = !e.dir && crate::images::is_image(&e.name);
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
+                        if !ui.is_rect_visible(rect) {
+                            continue;
+                        }
+                        let p = ui.painter().clone();
+                        if resp.hovered() {
+                            p.rect_filled(rect, CornerRadius::same(RADIUS_MD), t.gray(100));
+                        }
+                        let lead = Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(26.0));
+                        let local = if image { self.preview(&remote, e.size, e.mtime) } else { None };
+                        match &local {
+                            Some(l) => {
+                                let key = l.to_string_lossy().into_owned();
+                                ui.scope_builder(egui::UiBuilder::new().max_rect(lead), |ui| {
+                                    crate::images::thumbnail(ui, &key, lead.size());
+                                });
+                            }
+                            None => {
+                                let icon = if e.dir { ic::FOLDER } else if image { ic::FILE_IMAGE } else { ic::FILE };
+                                ic::glyph(&p, lead.center(), icon, 15.0, if e.dir { t.blue(900) } else { t.subtle() });
+                            }
+                        }
+                        let meta = if e.dir { String::new() } else { human(e.size) };
+                        let mg = p.layout_no_wrap(meta, FontId::proportional(12.0), t.subtle());
+                        let dl = Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(26.0));
+                        let name_w = rect.width() - 44.0 - mg.size().x - 44.0;
+                        let g = w::truncated(ui, &e.name, FontId::proportional(13.5), t.fg(), name_w.max(40.0));
+                        p.galley(pos2(rect.left() + 40.0, rect.center().y - g.size().y / 2.0), g, t.fg());
+                        p.galley(pos2(dl.left() - 8.0 - mg.size().x, rect.center().y - mg.size().y / 2.0), mg, t.subtle());
+                        let mut on_dl = false;
+                        if !e.dir && resp.hovered() || !e.dir && ui.rect_contains_pointer(dl) {
+                            let r = ui.interact(dl, Id::NULL.with(("files-dl", &remote)), Sense::click());
+                            on_dl = r.hovered();
+                            if r.hovered() {
+                                p.rect_filled(dl, CornerRadius::same(RADIUS_MD), t.gray(300));
+                            }
+                            ic::glyph(&p, dl.center(), ic::DOWNLOAD, 14.0, if r.hovered() { t.fg() } else { t.subtle() });
+                            if r.on_hover_text("Download to Downloads").clicked() {
+                                fetch = Some((remote.clone(), e.size));
+                            }
+                        }
+                        let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
+                        if resp.clicked() && !on_dl {
+                            if e.dir {
+                                open = Some(remote.clone());
+                            } else if let Some(l) = &local {
+                                crate::images::open(ui.ctx(), &l.to_string_lossy());
+                            } else if !image {
+                                fetch = Some((remote.clone(), e.size));
+                            }
+                        }
+                    }
+                });
+            });
+        }
         if let Some(p) = open {
             self.go(p);
         }
