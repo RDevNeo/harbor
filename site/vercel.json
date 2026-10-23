@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
+  "rewrites": [{ "source": "/download/harbor.apk", "destination": "/api/apk" }],
   "headers": [
     {
       "source": "/fonts/(.*)",
