@@ -94,8 +94,9 @@ public class Chats extends Base {
 
     @Override
     void onEvents(Set<String> changed, boolean stateChanged, boolean reconnect) {
-        // A streaming reply changes its chat's updated time; a cheap state refresh keeps the order.
-        load();
+        // Only the list's own data: a streaming reply's new text alone changes nothing here (its
+        // updated time comes as a state change).
+        if (stateChanged || reconnect) load();
     }
 
     @Override
