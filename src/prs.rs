@@ -735,7 +735,17 @@ impl App {
         self.open(v);
     }
 
+    /// Reads the git status (and so the GitHub remote) of projects not read yet,
+    /// so [`App::pr_projects`] knows every project, not only the ones opened.
+    pub fn ensure_git(&mut self) {
+        let missing: Vec<i64> = self.repos.iter().map(|r| r.id).filter(|id| !self.git.contains_key(id)).collect();
+        for id in missing {
+            self.refresh_git(id);
+        }
+    }
+
     pub fn load_prs(&mut self) {
+        self.ensure_git();
         let mut repos: Vec<String> = self.pr_projects().into_iter().map(|p| p.2).collect();
         repos.sort();
         repos.dedup();

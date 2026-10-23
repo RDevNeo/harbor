@@ -20,6 +20,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   per issue) and for your own ready PRs (not drafts, checks passing or none, no changes
   requested; once per head commit), only in your projects' repos and at most 2 at a time.
 
+### Fixed
+- The Pull requests and Issues pages know every project's GitHub repo, not only the ones opened
+  since Harbor started: the Project filter, Check out and the agent buttons work for all of them.
+
 ## [0.5.0] - 2026-10-23
 
 ### Added

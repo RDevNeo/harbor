@@ -510,6 +510,7 @@ impl App {
     }
 
     pub fn load_issues(&mut self) {
+        self.ensure_git();
         let mut repos: Vec<String> = self.pr_projects().into_iter().map(|p| p.2).collect();
         repos.sort();
         repos.dedup();
