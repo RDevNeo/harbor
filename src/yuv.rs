@@ -28,6 +28,10 @@ struct Gl {
     pending: Option<Planes>,
     /// what's in the textures: nv12, bt709, full range
     shown: Option<(bool, bool, bool)>,
+    /// each texture's allocated size and format: same again = updated in place
+    sizes: [(usize, usize, u32); 3],
+    /// the last uploaded frame's buffer, handed back for the next one (no allocation per frame)
+    spare: Vec<u8>,
 }
 
 /// One video's GPU state. Cheap to clone (shared with the paint callback).
@@ -51,6 +55,13 @@ impl Video {
         if let Ok(mut g) = self.0.lock() {
             g.pending = Some(p);
         }
+    }
+
+    /// An empty buffer for the next frame (the last uploaded one's, when there is one).
+    pub fn buffer(&self) -> Vec<u8> {
+        let mut b = self.0.lock().map(|mut g| std::mem::take(&mut g.spare)).unwrap_or_default();
+        b.clear();
+        b
     }
 
     /// The shader couldn't be built (old GL): use RGBA frames instead.
@@ -210,17 +221,22 @@ impl Gl {
             vec![(w, h, glow::R8, glow::RED, y), (cw, ch, glow::R8, glow::RED, u), (cw, ch, glow::R8, glow::RED, &v[..cw * ch])]
         };
         // SAFETY: see above. GL reads exactly pw*ph*(1 or 2) bytes per plane (unpack
-        // alignment 1, no row length), and each slice was cut to that size above.
+        // alignment 1, no row length), and each slice was cut to that size above; a
+        // sub-image update stays within the size the texture was allocated with.
         unsafe {
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
             gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
             for (i, (pw, ph, internal, format, data)) in planes.into_iter().enumerate() {
                 gl.active_texture(glow::TEXTURE0 + i as u32);
                 gl.bind_texture(glow::TEXTURE_2D, Some(self.tex[i]));
-                gl.tex_image_2d(
-                    glow::TEXTURE_2D, 0, internal as i32, pw as i32, ph as i32, 0, format, glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(Some(data)),
-                );
+                let pixels = glow::PixelUnpackData::Slice(Some(data));
+                // same size and format: update in place, no new storage every frame
+                if self.sizes[i] == (pw, ph, internal) {
+                    gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, pw as i32, ph as i32, format, glow::UNSIGNED_BYTE, pixels);
+                } else {
+                    gl.tex_image_2d(glow::TEXTURE_2D, 0, internal as i32, pw as i32, ph as i32, 0, format, glow::UNSIGNED_BYTE, pixels);
+                    self.sizes[i] = (pw, ph, internal);
+                }
             }
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
             gl.active_texture(glow::TEXTURE0);
@@ -238,6 +254,7 @@ impl Gl {
         }
         if let Some(p) = self.pending.take() {
             self.upload(gl, &p);
+            self.spare = p.bytes;
         }
         let (Some((nv12, bt709, full)), Some(prog)) = (self.shown, self.program) else { return };
         // SAFETY: see above. Draws 4 vertices generated in the shader (no buffers);

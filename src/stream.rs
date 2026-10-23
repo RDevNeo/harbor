@@ -49,6 +49,8 @@ pub struct Stream {
     rx: Receiver<Value>,
     frames: String,
     tex: Option<TextureHandle>,
+    /// RGBA frames are read into this (kept, so a frame costs no allocation)
+    rgba: Vec<u8>,
     /// YUV frames, drawn by a shader (when the GL here can; else RGBA in `tex`)
     yuv: crate::yuv::Video,
     yuv_on: bool,
@@ -143,6 +145,7 @@ impl Stream {
             rx,
             frames,
             tex: None,
+            rgba: Vec::new(),
             yuv: Default::default(),
             yuv_on: true,
             last_yuv: false,
@@ -243,7 +246,8 @@ impl Stream {
             let path = format!("{}.{}", self.frames, v["buf"].as_u64().unwrap_or(0));
             let fmt = v["fmt"].as_str().unwrap_or("rgba");
             if fmt != "rgba" {
-                if let Ok(bytes) = std::fs::read(&path)
+                let mut bytes = self.yuv.buffer();
+                if read_into(&path, &mut bytes)
                     && fw > 0
                 {
                     if self.video == (0, 0) {
@@ -259,8 +263,8 @@ impl Stream {
                     });
                     self.last_yuv = true;
                 }
-            } else if let Ok(bytes) = std::fs::read(&path)
-                && bytes.len() == fw * fh * 4
+            } else if read_into(&path, &mut self.rgba)
+                && self.rgba.len() == fw * fh * 4
                 && fw > 0
             {
                 self.last_yuv = false;
@@ -268,7 +272,7 @@ impl Stream {
                     self.video = (fw as u32, fh as u32);
                 }
                 // opaque video: premultiplied = straight, no per-pixel conversion
-                let img = ColorImage::from_rgba_premultiplied([fw, fh], &bytes);
+                let img = ColorImage::from_rgba_premultiplied([fw, fh], &self.rgba);
                 match &mut self.tex {
                     Some(t) => t.set(img, TextureOptions::LINEAR),
                     None => self.tex = Some(ctx.load_texture("device-screen", img, TextureOptions::LINEAR)),
@@ -463,6 +467,13 @@ impl Stream {
             }
         }
     }
+}
+
+/// A frame file into `buf` (cleared first; its capacity is reused).
+fn read_into(path: &str, buf: &mut Vec<u8>) -> bool {
+    use std::io::Read;
+    buf.clear();
+    std::fs::File::open(path).and_then(|mut f| f.read_to_end(buf)).is_ok()
 }
 
 /// Frame files left by a Harbor that didn't close its streams (crash, kill).

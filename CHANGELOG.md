@@ -20,6 +20,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   100 automatic messages wait per chat.
 
 ### Fixed
+- Device screens: each video frame reuses the previous frame's buffer and updates the GPU textures in place, instead of allocating a few MB on the UI thread and new texture storage per frame.
 - Remote devices: the MCP bridge has its own port (47940) and no longer takes the phone API's
   (47930) when it starts first; turns started before the update keep being served.
 - Remote devices working on this PC's files: a shell command keeps only the end of its output in
