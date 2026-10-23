@@ -38,6 +38,7 @@ h1 { margin: 0; font-size: clamp(48px, 9vw, 80px); line-height: 1; font-weight: 
 .install { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; max-width: 1000px; margin: 36px auto 0; text-align: left; }
 .card { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px; border: 1px solid var(--gray400); border-radius: var(--r-xl); background: var(--bg100); }
 .card.rec { border-color: var(--gray500); background: var(--bg200); }
+.card.wide { grid-column: 1 / -1; }
 .card .cmd { width: 100%; margin: 0; background: var(--bg100); }
 .card .cmd code { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
 .label { margin: 0; font-weight: 600; font-size: 15px; }
