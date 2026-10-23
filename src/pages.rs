@@ -1,7 +1,7 @@
 //! Full-page views: Settings (providers, integrations, appearance), Usage,
-//! Pull requests, plus the modal dialogs.
+//! plus the modal dialogs. Pull requests live in prs.rs.
 
-use crate::app::{App, CONTENT_W, Dialog, Tab, View, ago, tilde};
+use crate::app::{App, CONTENT_W, Dialog, Tab, View, ago};
 use crate::chat::centered;
 use crate::icons as ic;
 use crate::mcp;
@@ -11,15 +11,6 @@ use crate::theme::{self, Mode};
 use crate::widgets::{self as w, Tone};
 use eframe::egui::{self, Align, CornerRadius, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
 use std::collections::{BTreeMap, HashMap};
-
-/// `PageHeader`: heading-24 title and a subtle description.
-fn page_header(ui: &mut Ui, title: &str, desc: &str) {
-    ui.add_space(40.0);
-    w::text(ui, title, "heading-24");
-    ui.add_space(2.0);
-    w::subtle(ui, desc, "copy-14");
-    ui.add_space(20.0);
-}
 
 pub fn section(ui: &mut Ui, title: &str) {
     ui.add_space(8.0);
@@ -803,108 +794,6 @@ impl App {
                     });
                 });
             }
-        });
-    }
-
-    // ------------------------------------------------------------ pull requests
-
-    pub fn prs_view(&mut self, ui: &mut Ui) {
-        let t = self.theme.t;
-        let ctx = ui.ctx().clone();
-        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            centered(ui, CONTENT_W, |ui| {
-                page_header(ui, "Pull requests", "Open PRs of a project, from the GitHub CLI.");
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let repos = self.repos.clone();
-                    for r in &repos {
-                        if w::btn(&r.name).sm().outline().pressed(self.prs.repo == Some(r.id)).show(ui).clicked() {
-                            self.prs.repo = Some(r.id);
-                            self.load_prs();
-                        }
-                    }
-                    if w::btn(&format!("{}  Refresh", ic::REFRESH)).sm().ghost().show(ui).clicked() {
-                        self.load_prs();
-                    }
-                });
-                ui.add_space(12.0);
-                let Some(repo) = self.prs.repo.and_then(|r| self.repo(r)).cloned() else {
-                    w::subtle(ui, "Add a project to see its pull requests.", "label-14");
-                    return;
-                };
-                w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    match &self.prs.list {
-                        _ if self.prs.loading => {
-                            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    w::subtle(ui, "Loading…", "label-14");
-                                });
-                            });
-                        }
-                        Some(Err(e)) => {
-                            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| {
-                                ui.label(RichText::new(e).text_style(theme::ts("label-13-mono")).color(t.red(900)));
-                            });
-                        }
-                        Some(Ok(list)) if list.is_empty() => {
-                            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No open pull requests.", "label-14"));
-                        }
-                        Some(Ok(list)) => {
-                            let list = list.clone();
-                            for (i, pr) in list.iter().enumerate() {
-                                if i > 0 {
-                                    w::separator(ui);
-                                }
-                                let num = pr["number"].as_u64().unwrap_or(0);
-                                let title = pr["title"].as_str().unwrap_or("").to_string();
-                                let branch = pr["headRefName"].as_str().unwrap_or("").to_string();
-                                let author = pr["author"]["login"].as_str().unwrap_or("").to_string();
-                                let url = pr["url"].as_str().unwrap_or("").to_string();
-                                let draft = pr["isDraft"].as_bool().unwrap_or(false);
-                                Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(ic::PULL).size(16.0).color(if draft { t.gray(800) } else { t.green(900) }));
-                                        ui.vertical(|ui| {
-                                            ui.spacing_mut().item_spacing.y = 1.0;
-                                            w::text(ui, format!("{title}  #{num}"), "strong-14");
-                                            let mut meta = format!("{branch} · {author}");
-                                            if draft {
-                                                meta.push_str(" · draft");
-                                            }
-                                            if let (Some(a), Some(d)) = (pr["additions"].as_u64(), pr["deletions"].as_u64()) {
-                                                meta.push_str(&format!(" · +{a} −{d}"));
-                                            }
-                                            w::subtle(ui, meta, "label-12-mono");
-                                        });
-                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                            if w::btn(ic::EXTERNAL).muted().icon_sm().show(ui).on_hover_text("Open on GitHub").clicked() {
-                                                crate::git::open_url(&url);
-                                            }
-                                            if w::btn("Checkout").sm().variant(w::Variant::Ghost).show(ui).clicked() {
-                                                let argv = vec!["gh".into(), "pr".into(), "checkout".into(), num.to_string()];
-                                                self.open_terminal(&ctx, &format!("checkout #{num}"), repo.path.clone(), argv, vec![]);
-                                            }
-                                            if w::btn(&format!("{}  Review", ic::SPARKLES)).sm().show(ui).clicked() {
-                                                self.new_draft(Some(repo.id));
-                                                self.drafts.insert(
-                                                    crate::app::DRAFT,
-                                                    format!("Review PR #{num} ({title}). Read it with `gh pr view {num}` and `gh pr diff {num}`, then list concrete problems by severity."),
-                                                );
-                                            }
-                                        });
-                                    });
-                                });
-                            }
-                        }
-                        None => {}
-                    }
-                });
-                ui.add_space(6.0);
-                w::subtle(ui, format!("{} · {}", repo.name, tilde(&repo.path)), "label-12-mono");
-                let _ = ago(0);
-            });
         });
     }
 

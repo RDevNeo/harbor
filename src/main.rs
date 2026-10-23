@@ -25,6 +25,7 @@ mod mcpshim;
 mod oauth;
 mod pages;
 mod procs;
+mod prs;
 mod providers;
 mod queue;
 mod reload;

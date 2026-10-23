@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The Pull Requests page is rebuilt after T3 Code's: every PR you opened, were asked to review,
+  or that is in one of your projects' GitHub repos, grouped into Authored / Review requested /
+  Others. Search (with `label:`, `-label:`, `author:`, `draft:`, `review:`, `checks:`), Sort
+  (merge readiness, blocked on me, recently updated, newest, oldest, largest, smallest) and
+  Filters (state, involvement, author, labels, draft, review, checks, project). Clicking a PR
+  opens it in the side panel; right-click to open on GitHub, copy, check out or review it.
+
 ## [0.2.3] - 2026-10-22
 
 ### Fixed

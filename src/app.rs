@@ -79,7 +79,8 @@ pub enum Dialog {
 pub enum Bg {
     Files(i64, Vec<PathBuf>),
     CursorModels(Vec<Model>),
-    Prs(PathBuf, Result<Vec<serde_json::Value>, String>),
+    Prs(u64, crate::prs::StateF, Result<crate::prs::Fetched, String>),
+    PrAvatar(String, Option<egui::ColorImage>),
     Funnel(Option<String>),
     Avatar(i64, Option<egui::ColorImage>),
     GhRepos(Result<Vec<(String, String)>, String>),
@@ -112,12 +113,7 @@ pub struct Picker {
     pub just_opened: bool,
 }
 
-#[derive(Default)]
-pub struct Prs {
-    pub repo: Option<i64>,
-    pub loading: bool,
-    pub list: Option<Result<Vec<serde_json::Value>, String>>,
-}
+pub use crate::prs::Prs;
 
 pub struct App {
     pub store: Store,
@@ -569,12 +565,7 @@ impl App {
                 }
                 self.focus_composer = true;
             }
-            View::Prs => {
-                if self.prs.repo.is_none() {
-                    self.prs.repo = self.current_repo().or(self.repos.first().map(|r| r.id));
-                }
-                self.load_prs();
-            }
+            View::Prs => self.load_prs(),
             _ => {}
         }
     }
@@ -623,26 +614,6 @@ impl App {
         let tx = self.bg_tx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(Bg::CursorModels(providers::cursor_models(&bin)));
-        });
-    }
-
-    pub fn load_prs(&mut self) {
-        let Some(path) = self.prs.repo.and_then(|r| self.repo(r)).map(|r| r.path.clone()) else { return };
-        self.prs.loading = true;
-        self.prs.list = None;
-        let tx = self.bg_tx.clone();
-        std::thread::spawn(move || {
-            let out = std::process::Command::new("gh")
-                .args(["pr", "list", "--limit", "40", "--json", "number,title,headRefName,author,isDraft,reviewDecision,updatedAt,url,additions,deletions"])
-                .current_dir(&path)
-                .env("PATH", providers::child_path())
-                .output();
-            let r = match out {
-                Ok(o) if o.status.success() => serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout).map_err(|e| e.to_string()),
-                Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
-                Err(e) => Err(format!("gh: {e}")),
-            };
-            let _ = tx.send(Bg::Prs(path, r));
         });
     }
 
@@ -1168,12 +1139,8 @@ impl eframe::App for App {
                     self.models.insert(Kind::Cursor, m);
                 }
                 Bg::Funnel(f) => self.funnel = f,
-                Bg::Prs(path, r) => {
-                    if self.prs.repo.and_then(|r| self.repo(r)).is_some_and(|r| r.path == path) {
-                        self.prs.list = Some(r);
-                        self.prs.loading = false;
-                    }
-                }
+                Bg::Prs(generation, state, r) => self.prs_loaded(generation, state, r),
+                Bg::PrAvatar(login, img) => self.pr_avatar(ctx, login, img),
             }
         }
         while let Ok(e) = self.proc_rx.try_recv() {

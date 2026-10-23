@@ -86,6 +86,22 @@ pub const PALETTE: &str = "\u{e1dd}";
 pub const GAUGE: &str = "\u{e1bf}";
 pub const PLUG: &str = "\u{e37f}";
 pub const SLIDERS: &str = "\u{e29a}";
+pub const PR_OPEN: &str = "\u{e555}";
+pub const PR_DRAFT: &str = "\u{e35b}";
+pub const PR_CLOSED: &str = "\u{e35a}";
+pub const GIT_MERGE: &str = "\u{e0e4}";
+pub const PEN_LINE: &str = "\u{e130}";
+pub const LAYERS: &str = "\u{e529}";
+pub const USER_ROUND: &str = "\u{e468}";
+pub const TAG: &str = "\u{e17f}";
+pub const CIRCLE_DASHED: &str = "\u{e4b0}";
+pub const CIRCLE_SLASH: &str = "\u{e402}";
+pub const ARROW_DOWN_UP: &str = "\u{e046}";
+pub const LIST_CHECKS: &str = "\u{e1d0}";
+pub const USER_LOCK: &str = "\u{e660}";
+pub const CALENDAR_DOWN: &str = "\u{e5fe}";
+pub const CALENDAR_UP: &str = "\u{e5ff}";
+pub const FOLDER_GIT: &str = "\u{e40a}";
 
 pub fn glyph(p: &Painter, center: Pos2, icon: &str, size: f32, color: Color32) {
     p.text(center, Align2::CENTER_CENTER, icon, FontId::proportional(size), color);

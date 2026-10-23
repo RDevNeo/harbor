@@ -253,15 +253,6 @@ impl App {
         });
     }
 
-    /// Project of the current view, for highlighting.
-    pub fn view_project(&self) -> Option<i64> {
-        match self.view {
-            View::Chat(id) => self.chat(id).and_then(|c| c.repo_id),
-            View::Draft => self.draft.repo,
-            _ => None,
-        }
-    }
-
     pub fn sidebar(&mut self, ui: &mut Ui) {
         if let View::Settings(tab) = self.view {
             return self.settings_nav(ui, tab);
@@ -410,8 +401,7 @@ impl App {
                     self.open(View::Settings(Tab::General));
                 }
                 if w::btn(ic::PULL).muted().icon_sm().pressed(v == View::Prs).show(ui).on_hover_text("Pull requests").clicked() {
-                    self.prs.repo = self.view_project().or(self.prs.repo);
-                    self.open(View::Prs);
+                    self.open_prs(None);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if w::btn(ic::REFRESH).muted().icon_sm().show(ui).on_hover_text("Refresh providers, projects and git").clicked() {
@@ -565,8 +555,7 @@ impl App {
                 self.open_terminal(&ctx, &name, path.clone(), vec![], vec![]);
             }
             if ui.button(format!("{}  Pull requests", ic::PULL)).clicked() {
-                self.prs.repo = Some(id);
-                self.open(View::Prs);
+                self.open_prs(Some(id));
             }
             if let Some(Some(url)) = self.git.get(&id).map(|s| s.as_ref().and_then(|s| s.remote.clone())) {
                 if ui.button(format!("{}  Open remote", ic::EXTERNAL)).clicked() {
