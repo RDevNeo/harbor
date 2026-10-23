@@ -207,7 +207,7 @@ public class NewChat extends Base {
         start.setAlpha(0.4f);
         JSONObject body = new JSONObject();
         try {
-            body.put("project_id", project.isEmpty() ? JSONObject.NULL : project).put("device", device)
+            body.put("project_id", project.isEmpty() ? JSONObject.NULL : Hub.num(project)).put("device", device)
                     .put("account", account).put("model", model).put("effort", effort).put("access", access)
                     .put("fast", fast).put("text", text).put("files", attach.ids());
         } catch (Exception ignored) { }

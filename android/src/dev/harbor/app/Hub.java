@@ -225,6 +225,10 @@ final class Hub {
         if (e instanceof SocketTimeoutException) return "The PC took too long to answer.";
         if (e instanceof FileNotFoundException) return "Not found";
         String m = e.getMessage();
+        // The PC closed the connection mid-request (Harbor quit, phone access off, network change).
+        if (e instanceof java.net.SocketException || e instanceof java.io.EOFException
+                || e instanceof java.net.ProtocolException || (m != null && m.contains("unexpected end of stream")))
+            return "Lost the connection to the PC. Retrying…";
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
     }
 
@@ -237,6 +241,11 @@ final class Hub {
             if (c != null && id.equals(c.optString("id"))) return c;
         }
         return null;
+    }
+
+    /** Ids are numbers on the wire (projects, chats); the app keeps them as strings. */
+    static Object num(String id) {
+        try { return Long.parseLong(id); } catch (NumberFormatException e) { return id; }
     }
 
     /** queued may be a count or a flag. */

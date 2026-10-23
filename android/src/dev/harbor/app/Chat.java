@@ -329,7 +329,8 @@ public class Chat extends Base {
                 break;
             case "tool": {
                 boolean done = it.optBoolean("done", true);
-                fold(wrap, seq, Ui.I_HAMMER, it.optString("name"), it.optString("summary"), done ? Ui.G700 : Ui.AMBER, () -> {
+                int tint = it.optBoolean("is_error") ? Ui.RED : done ? Ui.G700 : Ui.AMBER;
+                fold(wrap, seq, Ui.I_HAMMER, it.optString("name"), it.optString("summary"), tint, () -> {
                     LinearLayout c = Ui.col(this);
                     String in = json(it.opt("input"));
                     if (!in.isEmpty()) {
@@ -431,7 +432,11 @@ public class Chat extends Base {
     private void itemMenu(JSONObject it, String text, boolean canFork) {
         List<String> opts = new ArrayList<>();
         opts.add("Copy");
-        if (canFork) opts.add("Fork from here");
+        // The hub forks only at the last reply of a finished turn: the item right before its
+        // "result" notice.
+        JSONObject next = items.get(it.optInt("seq") + 1);
+        if (canFork && next != null && "notice".equals(next.optString("kind")) && "result".equals(next.optString("icon")))
+            opts.add("Fork from here");
         Ui.dialog(this).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) Ui.copy(this, text);
             else fork(it.optInt("seq"));

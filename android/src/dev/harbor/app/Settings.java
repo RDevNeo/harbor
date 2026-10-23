@@ -134,7 +134,7 @@ public class Settings extends Base {
             Ui.main.post(() -> {
                 updateBtn.setEnabled(true);
                 updateBtn.setAlpha(1f);
-                updateNote.setText(fe == null ? "Installing " + name(available) + "… Harbor restarts by itself." : "Update failed: " + fe);
+                updateNote.setText(fe == null ? "Installing " + name(available) + "… Harbor closes when it's done: open it again." : "Update failed: " + fe);
             });
         });
     }
