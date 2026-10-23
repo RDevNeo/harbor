@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Fix / Merge with instructions: the ▾ next to "Fix with …" and "Merge with …" (and the issue
+  and PR right-click menus) opens a box for your own instructions or details; they go to the
+  agent after the usual prompt, marked as important and taking priority. Ctrl+Enter starts.
+- A "Copied to clipboard" notification (with a one-line preview, or "Image") when you copy a
+  link, number, checkout command, message, image or a text selection with Ctrl+C.
+
 ## [0.6.2] - 2026-10-23
 
 ### Fixed
