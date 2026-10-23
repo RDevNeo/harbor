@@ -452,6 +452,9 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
             .frame(Frame::NONE)
             .show(ui);
         let response = out.response.response;
+        if std::env::var_os("HARBOR_DBG_COMPOSER").is_some() && ui.input(|i| !i.events.is_empty()) {
+            eprintln!("DBG changed={} focus={} cur={:?} rect={:?}", response.changed(), response.has_focus(), out.cursor_range.map(|c| c.primary.index), response.rect);
+        }
         let cursor = out
             .cursor_range
             .filter(|_| response.changed())
@@ -459,6 +462,9 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
         (response, cursor)
     });
     let (response, cursor) = out.inner;
+    if std::env::var_os("HARBOR_DBG_COMPOSER").is_some() && ui.input(|i| !i.events.is_empty()) {
+        eprintln!("DBG area off={:?} inner={:?} cursor={:?} content={:?}", out.state.offset(), out.inner_rect, cursor, out.content_size);
+    }
     if let Some(r) = cursor {
         // The cursor in content coordinates, against the visible window.
         let top = out.inner_rect.top() - out.state.offset().y;
