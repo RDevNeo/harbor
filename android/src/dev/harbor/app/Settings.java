@@ -15,10 +15,11 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
-/** One hub's page: this app's version and its Update button (when the hub serves a newer
- *  APK), the hub's address and version, rename and unpair. */
+/** Settings, grouped in cards like the reference: this PC (switch PCs), the app and its
+ *  update, the PC's address and version, color mode, pairing another PC, unpair. */
 public class Settings extends Base {
-    private TextView updateBtn, updateNote, hubInfo;
+    private TextView updateNote, hubVersion, badge;
+    private View updateBtn;
     private long available;
 
     static long myCode(Context c) {
@@ -39,36 +40,89 @@ public class Settings extends Base {
         super.onCreate(b);
         if (noHub()) return;
         LinearLayout root = frame("Settings", true);
-        sub(hub.label(), Ui.G700);
         ScrollView sv = new ScrollView(this);
         LinearLayout col = Ui.col(this);
-        col.setPadding(Ui.dp(16), 0, Ui.dp(16), Ui.dp(24));
+        col.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(32));
         sv.addView(col);
         root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        col.addView(head("App"));
-        col.addView(Ui.text(this, "Harbor for Android " + myName(this) + " (" + myCode(this) + ")", 15, Ui.FG));
-        updateNote = Ui.text(this, "Checking for updates…", 13, Ui.G700);
-        col.addView(updateNote, Ui.margins(Ui.fill(), 0, 4, 0, 0));
+        // This PC, with its Harbor version as a badge; tap to switch PCs.
+        LinearLayout top = card(col);
+        LinearLayout pc = Ui.cardRow(this, null, hub.label(), hub.host + ":" + hub.port, Ui.FG, v -> pcs());
+        badge = Ui.bold(this, "", 13, Ui.ON_INK);
+        badge.setPadding(Ui.dp(12), Ui.dp(5), Ui.dp(12), Ui.dp(5));
+        badge.setBackground(Ui.round(Ui.INK, 0, 14));
+        badge.setVisibility(View.GONE);
+        pc.addView(badge, Ui.margins(Ui.wrap(), 8, 0, 4, 0));
+        pc.addView(Ui.icon(this, Ui.I_DOWN, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(28)));
+        top.addView(pc, Ui.fill());
+
+        LinearLayout app = card(col);
+        LinearLayout updateRow = Ui.cardRow(this, Ui.I_DOWNLOAD, "Update", "Checking…", Ui.FG, null);
+        updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
         updateBtn = Ui.button(this, "Update", true, v -> update());
         updateBtn.setVisibility(View.GONE);
-        col.addView(updateBtn, Ui.margins(Ui.fill(), 0, 12, 0, 0));
+        updateRow.addView(updateBtn);
+        app.addView(updateRow, Ui.fill());
+        app.addView(Ui.gap(this));
+        app.addView(Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this) + " (" + myCode(this) + ")", Ui.FG, null), Ui.fill());
 
-        col.addView(head("This PC"));
-        hubInfo = Ui.text(this, hub.host + ":" + hub.port, 15, Ui.FG);
-        col.addView(hubInfo);
-        col.addView(Ui.button(this, "Rename", false, v -> rename()), Ui.margins(Ui.fill(), 0, 12, 0, 0));
-        TextView unpair = Ui.button(this, "Unpair", false, v -> unpair());
-        unpair.setTextColor(Ui.RED);
-        col.addView(unpair, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-        col.addView(Ui.text(this, "Unpairing forgets the token here. Revoke it on the PC in Settings › Phones.", 12, Ui.G700),
-                Ui.margins(Ui.fill(), 0, 6, 0, 0));
+        LinearLayout here = card(col);
+        here.addView(Ui.cardRow(this, Ui.I_GLOBE, "Address", hub.host + ":" + hub.port, Ui.FG, null), Ui.fill());
+        here.addView(Ui.gap(this));
+        LinearLayout ver = Ui.cardRow(this, Ui.I_MONITOR, "Harbor on the PC", "…", Ui.FG, null);
+        hubVersion = (TextView) ((LinearLayout) ver.getChildAt(1)).getChildAt(1);
+        here.addView(ver, Ui.fill());
+        here.addView(Ui.gap(this));
+        LinearLayout rn = Ui.cardRow(this, Ui.I_PEN, "Rename", "on this phone only", Ui.FG, v -> rename());
+        rn.addView(Ui.chevron(this));
+        here.addView(rn, Ui.fill());
+
+        LinearLayout look = card(col);
+        LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
+        cm.addView(Ui.chevron(this));
+        look.addView(cm, Ui.fill());
+
+        LinearLayout more = card(col);
+        LinearLayout pair = Ui.cardRow(this, Ui.I_PLUS, "Pair another PC", "Settings › Phones › Pair a phone on that PC", Ui.FG,
+                v -> startActivity(new Intent(this, Hubs.class).putExtra("pair", true)));
+        pair.addView(Ui.chevron(this));
+        more.addView(pair, Ui.fill());
+
+        LinearLayout bye = card(col);
+        bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Unpair", null, Ui.RED, v -> unpair()), Ui.fill());
+        TextView note = Ui.text(this, "Unpairing forgets the token on this phone. Revoke it on the PC in Settings › Phones.", 13, Ui.G700);
+        note.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
+        col.addView(note);
     }
 
-    private TextView head(String s) {
-        TextView t = Ui.bold(this, s, 13, Ui.G700);
-        t.setPadding(0, Ui.dp(20), 0, Ui.dp(8));
-        return t;
+    private LinearLayout card(LinearLayout col) {
+        LinearLayout c = Ui.card(this);
+        col.addView(c, Ui.margins(Ui.fill(), 0, 0, 0, 14));
+        return c;
+    }
+
+    private void colorMode() {
+        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
+        for (int i = 0; i < Ui.MODES.length; i++)
+            o.add(new Sheet.Option(Ui.MODES[i], Ui.MODE_LABELS[i], i == 0 ? "follows the phone" : "", true));
+        Sheet.pick(this, "Color mode", null, o, Ui.mode(this), m -> {
+            Ui.prefs(this).edit().putString("color_mode", m).apply();
+            Ui.themeGen++;
+            recreate();
+        });
+    }
+
+    private void pcs() {
+        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
+        for (Hub h : Hub.all(this)) o.add(new Sheet.Option(h.id, h.label(), h.host + ":" + h.port, true));
+        Sheet.pick(this, "PCs", null, o, hub.id, id -> {
+            if (id.equals(hub.id)) return;
+            Hub.setLast(this, id);
+            startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            startActivity(new Intent(this, Chats.class).putExtra("hub", id));
+            finish();
+        });
     }
 
     @Override
@@ -76,27 +130,29 @@ public class Settings extends Base {
         super.onResume();
         if (hub == null) return;
         Ui.pool.execute(() -> {
-            String info, note; long code = 0;
+            String info, note, version = ""; long code = 0;
             try {
                 JSONObject st = hub.state();
-                info = hub.host + ":" + hub.port + "\nHarbor " + st.optString("version");
+                version = st.optString("version");
+                info = "Harbor " + version;
                 JSONObject app = hub.get("/v1/app");
                 code = app.optLong("version_code");
                 long mine = myCode(this);
-                note = code <= 0 ? "This PC has no app build to offer."
-                        : code > mine ? "Version " + name(code) + " is ready on this PC."
-                        : "Up to date.";
+                note = code <= 0 ? "This PC has no app build to offer"
+                        : code > mine ? "Version " + name(code) + " is ready on this PC"
+                        : "Up to date";
             } catch (Exception e) {
-                info = hub.host + ":" + hub.port + "\n" + Hub.why(e);
-                note = "Can't check for updates: " + Hub.why(e);
+                info = Hub.why(e);
+                note = "Can't check: " + Hub.why(e);
             }
-            final String fi = info, fn = note; final long fc = code;
+            final String fi = info, fn = note, fv = version; final long fc = code;
             Ui.main.post(() -> {
                 if (isFinishing()) return;
-                hubInfo.setText(fi);
+                hubVersion.setText(fi);
                 updateNote.setText(fn);
+                badge.setText(fv);
+                badge.setVisibility(fv.isEmpty() ? View.GONE : View.VISIBLE);
                 available = fc;
-                updateBtn.setText("Update to " + name(fc));
                 updateBtn.setVisibility(fc > myCode(this) ? View.VISIBLE : View.GONE);
             });
         });
@@ -151,7 +207,7 @@ public class Settings extends Base {
                     if (n.isEmpty()) return;
                     hub.name = n;
                     Hub.put(this, hub);
-                    sub(n, Ui.G700);
+                    recreate();
                 }).show();
     }
 

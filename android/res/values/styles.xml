@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="icon_bg">#111111</color>
-    <!-- Harbor's dark background from the first frame (also behind the launch splash) -->
-    <style name="Harbor" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+    <!-- Warm paper background from the first frame (also behind the launch splash); the dark
+         variant is in values-night. Ui.theme() repaints for a forced Color mode. -->
+    <style name="Harbor" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>
-        <item name="android:colorAccent">#ededed</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:colorAccent">#141413</item>
     </style>
-    <color name="bg">#0a0a0a</color>
+    <color name="bg">#faf9f5</color>
 </resources>

@@ -62,7 +62,7 @@ final class Render {
                 return links(t);
             }
             case "paragraph":
-                return links(Ui.text(c, spans(b.optJSONArray("spans")), 15, Ui.FG));
+                return links(Ui.text(c, spans(b.optJSONArray("spans")), 16, Ui.FG));
             case "code":
                 return code(b.optString("lang"), b.optString("text"));
             case "list":
@@ -94,7 +94,7 @@ final class Render {
     }
 
     TextView para(String s) {
-        TextView t = Ui.text(c, s, 15, Ui.FG);
+        TextView t = Ui.text(c, s, 16, Ui.FG);
         t.setOnLongClickListener(longPress);
         return t;
     }
@@ -146,7 +146,7 @@ final class Render {
     /** A monospace block that scrolls sideways instead of wrapping. */
     View code(String lang, String text) {
         LinearLayout box = Ui.col(c);
-        box.setBackground(Ui.round(Ui.G100, Ui.G300, 6));
+        box.setBackground(Ui.round(Ui.G100, 0, 12));
         if (lang != null && !lang.isEmpty() && !"null".equals(lang)) {
             TextView l = Ui.text(c, lang, 11, Ui.G700);
             l.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), 0);
@@ -191,14 +191,14 @@ final class Render {
     private View table(JSONArray rows) {
         HorizontalScrollView h = new HorizontalScrollView(c);
         TableLayout t = new TableLayout(c);
-        t.setBackground(Ui.round(0, Ui.G400, 6));
+        t.setBackground(Ui.round(0, Ui.LINE, 12));
         t.setPadding(Ui.dp(1), Ui.dp(1), Ui.dp(1), Ui.dp(1));
         if (rows != null) for (int i = 0; i < rows.length(); i++) {
             JSONArray cells = rows.optJSONArray(i);
             if (cells == null) continue;
             TableRow tr = new TableRow(c);
             if (i == 0) tr.setBackgroundColor(Ui.G100);
-            else if (i % 2 == 0) tr.setBackgroundColor(0xff0e0e0e);
+            else if (i % 2 == 0) tr.setBackgroundColor(Ui.BG2);
             for (int j = 0; j < cells.length(); j++) {
                 Object cell = cells.opt(j);
                 CharSequence s = cell instanceof JSONArray ? spans((JSONArray) cell) : String.valueOf(cell);

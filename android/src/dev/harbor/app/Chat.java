@@ -28,9 +28,15 @@ public class Chat extends Base {
     private String chatId;
     private ScrollView scroll;
     private LinearLayout content, status;
-    private TextView statusText, stopBtn, sendBtn;
+    private Composer comp;
     private EditText composer;
     private Attach attach;
+    private Run run;
+    private long typedAt;           // last typing ping
+    private String typingLine;      // "Desk is typing…" from the hub, or null
+    private JSONObject bars;        // the items reply's "status": queue, working, waiting, limit
+    private TextView workingText;   // "Working… · 12s", ticking
+    private boolean running;
     private Render render;
 
     /** Items drawn at first; "Show earlier" adds this many more (a long chat would otherwise
@@ -52,7 +58,7 @@ public class Chat extends Base {
         if (noHub()) return;
         chatId = getIntent().getStringExtra("chat");
         render = new Render(this, null);
-        LinearLayout root = frame("Chat", true);
+        LinearLayout root = frame("Chat", menuButton(), false);
         action(Ui.I_MENU, v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
             if (c != null) Chats.menu(this, hub, c, this::refreshState, this::deleted);
@@ -65,42 +71,32 @@ public class Chat extends Base {
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         content = Ui.col(this);
-        content.setPadding(0, Ui.dp(8), 0, Ui.dp(12));
+        content.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
         scroll.addView(content);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        // Working / waiting line with Stop.
-        status = Ui.row(this);
-        status.setPadding(Ui.dp(16), Ui.dp(4), Ui.dp(8), Ui.dp(4));
-        status.setBackgroundColor(Ui.BG2);
-        statusText = Ui.text(this, "", 13, Ui.G900);
-        status.addView(statusText, Ui.weight());
-        stopBtn = Ui.bold(this, "Stop", 13, Ui.FG);
-        stopBtn.setPadding(Ui.dp(14), Ui.dp(6), Ui.dp(14), Ui.dp(6));
-        stopBtn.setBackground(Ui.press(Ui.G200, Ui.G400, 14));
-        stopBtn.setOnClickListener(v -> stop());
-        status.addView(stopBtn);
-        status.setVisibility(View.GONE);
+        // The desktop's bars under the transcript: queued messages, working, waiting for
+        // sub-agents, usage limit; and who else is typing.
+        status = Ui.col(this);
+        status.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(6));
         root.addView(status, Ui.fill());
 
         attach = new Attach(this, hub, chatId);
-        root.addView(attach.view, Ui.fill());
-
-        LinearLayout comp = Ui.row(this);
-        comp.setGravity(Gravity.BOTTOM);
-        comp.setPadding(Ui.dp(4), Ui.dp(6), Ui.dp(6), Ui.dp(8));
-        comp.addView(Ui.iconButton(this, Ui.I_CLIP, Ui.G900, v -> attach.choose()));
-        composer = Ui.input(this, "Message", true);
-        composer.setMaxLines(6);
-        composer.setBackground(Ui.round(Ui.G100, Ui.G400, 20));
-        composer.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));
+        comp = new Composer(this, attach, "Chat with Claude…");
+        composer = comp.edit;
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
-        comp.addView(composer, Ui.margins(Ui.weight(), 2, 0, 6, 0));
-        sendBtn = Ui.icon(this, Ui.I_SEND, 18, Ui.BG);
-        sendBtn.setBackground(Ui.press(Ui.FG, 0, 22));
-        sendBtn.setOnClickListener(v -> send());
-        comp.addView(sendBtn, new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)));
-        root.addView(comp, Ui.fill());
+        comp.onSend = this::send;
+        comp.onStop = this::stop;
+        comp.onType = this::typed;
+        comp.onPill = () -> {
+            if (run == null) return;
+            Sheet sh = new Sheet(this, "Run settings");
+            run.rows(this, sh, (f, v) -> { sh.dismiss(); change(f, v); });
+            sh.show();
+        };
+        comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
+        root.addView(comp.view, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        installDrawer(chatId);
 
         showChat(Hub.chat(Hub.states.get(hub.id), chatId));
     }
@@ -117,6 +113,7 @@ public class Chat extends Base {
     protected void onPause() {
         super.onPause();
         if (composer == null || gone) return;
+        typing(false);
         String d = composer.getText().toString();
         if (d.trim().isEmpty()) drafts(this).edit().remove(draftKey(hub, chatId)).apply();
         else drafts(this).edit().putString(draftKey(hub, chatId), d).apply();
@@ -132,6 +129,9 @@ public class Chat extends Base {
     void onOffline(boolean off, String why) {
         if (off) sub(why, Ui.RED); else { showChat(Hub.chat(Hub.states.get(hub.id), chatId)); load(true); }
     }
+
+    @Override
+    void refresh() { refreshState(); }
 
     private void deleted() {
         gone = true;
@@ -150,6 +150,7 @@ public class Chat extends Base {
                     JSONObject c = Hub.chat(st, chatId);
                     if (c == null) { Ui.toast(this, "This chat was deleted"); deleted(); return; }
                     showChat(c);
+                    if (side != null && drawerOpen()) side.render(st);
                 });
             } catch (Exception ignored) { }
         });
@@ -161,7 +162,14 @@ public class Chat extends Base {
         String t = c.optString("title");
         barTitle.setText(t.isEmpty() ? "New chat" : t);
         JSONObject st = Hub.states.get(hub.id);
-        sub(info(st, c), Ui.G700);
+        run = new Run(st, c);
+        comp.pill.setText(run.pill());
+        String k = run.kind();
+        composer.setHint("Chat with " + (k.isEmpty() ? "Claude" : Character.toUpperCase(k.charAt(0)) + k.substring(1)) + "…");
+        String dev = run.deviceLabel(), acc = run.accountLabel();
+        sub(dev.isEmpty() ? acc : dev + " · " + acc, Ui.G700);
+        typingLine = Sidebar.typing(c, st == null ? "" : st.optString("you", ""));
+        drawBars();
     }
 
     static String info(JSONObject st, JSONObject c) {
@@ -259,7 +267,10 @@ public class Chat extends Base {
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
         earlierButton();
         if (items.isEmpty()) { hintView = hint("No messages yet."); content.addView(hintView); }
-        if (r.has("running") || r.has("queued")) showStatus(r.optBoolean("running"), Hub.queued(r));
+        if (r.has("typing")) typingLine = Sidebar.typing(r, you());
+        if (r.has("running")) running = r.optBoolean("running");
+        bars = r.optJSONObject("status");
+        drawBars();
         if (atBottom) toEnd();
     }
 
@@ -323,29 +334,178 @@ public class Chat extends Base {
         content.requestLayout();
     }
 
-    private void showStatus(boolean running, int queued) {
-        String s = running ? "Working…" : "";
-        if (queued > 0) s += (s.isEmpty() ? "" : "  ·  ") + queued + (queued == 1 ? " message waiting" : " messages waiting");
-        statusText.setText(s);
-        statusText.setTextColor(running ? Ui.GREEN : Ui.AMBER);
-        stopBtn.setVisibility(running ? View.VISIBLE : View.GONE);
-        status.setVisibility(s.isEmpty() ? View.GONE : View.VISIBLE);
+    /** The desktop's bars (PROTOCOL.md "status"), then who else is typing. */
+    private void drawBars() {
+        status.removeAllViews();
+        workingText = null;
+        JSONObject b = bars == null ? new JSONObject() : bars;
+        JSONArray queue = b.optJSONArray("queue");
+        if (queue != null) for (int i = 0; i < queue.length(); i++) {
+            JSONObject q = queue.optJSONObject(i);
+            if (q == null) continue;
+            LinearLayout w = Ui.col(this);
+            w.setGravity(Gravity.END);
+            TextView tag = Ui.text(this, q.optBoolean("sending") ? "Sending" : "Queued", 12, Ui.G700);
+            w.addView(tag);
+            TextView t = Ui.text(this, q.optString("text"), 15, Ui.G900);
+            t.setBackground(Ui.round(Ui.G100, Ui.LINE, 18));
+            t.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
+            t.setMaxWidth(maxBubble());
+            w.addView(t);
+            JSONArray f = q.optJSONArray("files");
+            if (f != null) for (int j = 0; j < f.length(); j++) w.addView(Ui.text(this, "📎 " + f.optString(j), 12, Ui.G700));
+            status.addView(w, Ui.margins(Ui.fill(), 36, 4, 0, 4));
+        }
+        JSONObject waiting = b.optJSONObject("waiting"), working = b.optJSONObject("working"), limit = b.optJSONObject("limit");
+        if (waiting != null) {
+            LinearLayout r = Ui.row(this);
+            JSONArray ag = waiting.optJSONArray("agents");
+            int n = ag == null ? 0 : ag.length();
+            LinearLayout dots = Ui.row(this);
+            for (int i = 0; i < Math.min(n, 3); i++) {
+                String name = ag.optJSONObject(i) == null ? "?" : ag.optJSONObject(i).optString("name", "?");
+                TextView d = Ui.bold(this, name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase(), 11, 0xffffffff);
+                d.setGravity(Gravity.CENTER);
+                d.setBackground(Ui.round(new int[]{0xff7a6ad8, 0xff3f7fd6, 0xffb07a2a}[i % 3], 0, 11));
+                LinearLayout.LayoutParams dp = new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22));
+                if (i > 0) dp.leftMargin = -Ui.dp(6);
+                dots.addView(d, dp);
+            }
+            r.addView(dots);
+            int q = waiting.optInt("queued");
+            String text = "Waiting for " + n + (n == 1 ? " sub-agent" : " sub-agents") + " to finish" + (q > 0 ? " · " + q + " queued" : "");
+            r.addView(Ui.subtitle(Ui.text(this, text, 14, Ui.G700)), Ui.margins(Ui.weight(), 10, 0, 8, 0));
+            r.addView(small("Stop all", () -> post("stop_all")));
+            status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        } else if (working != null) {
+            LinearLayout r = Ui.row(this);
+            r.addView(Ui.icon(this, Ui.I_LOADER, 15, Ui.G700));
+            workingText = Ui.subtitle(Ui.text(this, "", 14, Ui.G700));
+            workingText.setTag(working);
+            r.addView(workingText, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+            status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+            tick();
+        }
+        if (limit != null) {
+            LinearLayout r = Ui.row(this);
+            r.addView(Ui.icon(this, Ui.I_CLOCK, 15, Ui.AMBER));
+            r.addView(Ui.text(this, limit.optString("text"), 14, Ui.G900), Ui.margins(Ui.weight(), 8, 0, 8, 0));
+            r.addView(small("Continue now", () -> post("continue")));
+            if (limit.optBoolean("can_cancel")) r.addView(small("Cancel", () -> post("cancel_limit")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+            status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        }
+        if (typingLine != null) {
+            TextView t = Ui.subtitle(Ui.text(this, typingLine, 14, Ui.BLUE));
+            status.addView(t, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        }
+        status.setVisibility(status.getChildCount() == 0 ? View.GONE : View.VISIBLE);
+        comp.running(running);
     }
 
+    private TextView small(String label, Runnable on) {
+        TextView t = Ui.bold(this, label, 13, Ui.FG);
+        t.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+        t.setBackground(Ui.press(Ui.CARD, Ui.LINE, 14));
+        t.setOnClickListener(v -> on.run());
+        return t;
+    }
+
+    /** "Working… · 1 sub-agent running · 12s": the elapsed part counts here, once a second. */
+    private final Runnable ticker = this::tick;
+
+    private void tick() {
+        Ui.main.removeCallbacks(ticker);
+        if (workingText == null || isFinishing()) return;
+        JSONObject w = (JSONObject) workingText.getTag();
+        long s = Math.max(0, (System.currentTimeMillis() - w.optLong("since_ms")) / 1000);
+        String el = s < 60 ? s + "s" : s / 60 + "m " + s % 60 + "s";
+        String text = w.optString("text", "Working…");
+        workingText.setText(text + " · " + el);
+        Ui.main.postDelayed(ticker, 1000);
+    }
+
+    private void post(String action) {
+        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/" + action, null), r -> load(false));
+    }
+
+    private String you() {
+        JSONObject st = Hub.states.get(hub.id);
+        return st == null ? "" : st.optString("you", "");
+    }
+
+    // ---- run settings and typing ----
+
+    /** A run-settings pick: PATCH the chat; the hub answers with the chat as it is now. */
+    private void change(String field, Object value) {
+        JSONObject body = new JSONObject();
+        try { body.put(field, value); } catch (Exception ignored) { }
+        Ui.bg(this, () -> hub.call("PATCH", "/v1/chats/" + chatId, body), r -> {
+            JSONObject c = r.optJSONObject("chat");
+            if (c != null) {
+                JSONObject st = Hub.states.get(hub.id);
+                if (st != null) replaceChat(st, c);
+                showChat(c);
+            } else refreshState();
+        });
+    }
+
+    private static void replaceChat(JSONObject st, JSONObject c) {
+        JSONArray a = st.optJSONArray("chats");
+        if (a == null) return;
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o != null && o.optString("id").equals(c.optString("id"))) { try { a.put(i, c); } catch (Exception ignored) { } return; }
+        }
+    }
+
+    /** At most one "typing" ping every 3 s while the user types; the hub expires it after 6 s. */
+    private void typed() {
+        long now = System.currentTimeMillis();
+        if (now - typedAt < 3000) return;
+        typedAt = now;
+        typing(true);
+    }
+
+    private void typing(boolean on) {
+        if (!on && typedAt == 0) return;
+        if (!on) typedAt = 0;
+        Hub h = hub;
+        String id = chatId;
+        Ui.pool.execute(() -> {
+            try { h.call("POST", "/v1/chats/" + id + "/typing", new JSONObject().put("typing", on).put("kind", "phone")); } catch (Exception ignored) { }
+        });
+    }
+
+    /** One card of the hub's projection, drawn as the desktop draws it (PROTOCOL.md): no
+     *  filtering or grouping of our own; "hidden" cards draw nothing (but their fork dividers). */
     private View itemView(JSONObject it) {
         String kind = it.optString("kind");
         LinearLayout wrap = Ui.col(this);
-        wrap.setPadding(Ui.dp(16), Ui.dp(6), Ui.dp(16), Ui.dp(6));
+        wrap.setPadding(Ui.dp(20), Ui.dp(6), Ui.dp(20), Ui.dp(6));
         int seq = it.optInt("seq");
         switch (kind) {
+            case "hidden":
+                break;
             case "user": {
                 wrap.setGravity(Gravity.END);
                 LinearLayout bubble = Ui.col(this);
-                bubble.setBackground(Ui.round(Ui.G300, 0, 14));
-                bubble.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));
+                bubble.setBackground(Ui.round(Ui.G100, 0, 20));
+                bubble.setPadding(Ui.dp(16), Ui.dp(11), Ui.dp(16), Ui.dp(11));
+                JSONArray mentions = it.optJSONArray("mentions");
+                if (mentions != null) for (int i = 0; i < mentions.length(); i++) {
+                    JSONObject m = mentions.optJSONObject(i);
+                    if (m == null) continue;
+                    TextView chip = Ui.subtitle(Ui.text(this, m.optString("from") + ": " + m.optString("text"), 13, Ui.G900));
+                    chip.setBackground(Ui.round(Ui.CARD, Ui.LINE, 12));
+                    chip.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(10), Ui.dp(4));
+                    chip.setMaxWidth(maxBubble());
+                    bubble.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
+                }
+                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96);
+                if (imgs != null) bubble.addView(imgs, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
                 String text = it.optString("text");
                 if (!text.isEmpty()) {
-                    TextView t = Ui.text(this, text, 15, Ui.FG);
+                    TextView t = Ui.text(this, text, 16, Ui.FG);
                     t.setMaxWidth(maxBubble());
                     bubble.addView(t);
                 }
@@ -353,115 +513,220 @@ public class Chat extends Base {
                 if (files != null) for (int i = 0; i < files.length(); i++) {
                     String n = files.optString(i);
                     n = n.substring(n.lastIndexOf('/') + 1);
-                    TextView f = Ui.text(this, (Attach.isImage(n) ? "▣ " : "▤ ") + n, 13, Ui.G900);
+                    TextView f = Ui.text(this, "📎 " + n, 13, Ui.G700);
                     f.setMaxWidth(maxBubble());
                     bubble.addView(f);
                 }
                 bubble.setOnLongClickListener(v -> { itemMenu(it, text, false); return true; });
                 wrap.addView(bubble, Ui.wrap());
-                wrap.setPadding(Ui.dp(48), Ui.dp(8), Ui.dp(16), Ui.dp(8));
+                wrap.setPadding(Ui.dp(56), Ui.dp(10), Ui.dp(20), Ui.dp(10));
                 break;
             }
             case "text": {
                 String md = it.optString("markdown");
-                View.OnLongClickListener lp = v -> { itemMenu(it, md, true); return true; };
+                boolean forkable = it.optBoolean("forkable");
+                View.OnLongClickListener lp = v -> { itemMenu(it, md, forkable); return true; };
                 Render r = new Render(this, lp);
                 View body = r.text(it);
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
                 wrap.addView(body, Ui.fill());
+                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 120);
+                if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 break;
             }
             case "thinking":
-                fold(wrap, seq, Ui.I_BRAIN, "Thinking", "", Ui.G700, () -> {
-                    TextView t = Ui.text(this, it.optString("text"), 14, Ui.G700);
+                fold(wrap, seq, Ui.I_BRAIN, Ui.G700, "Thinking", "", () -> {
+                    TextView t = Ui.text(this, it.optString("text"), 15, Ui.G700);
+                    t.setTypeface(Ui.sans, android.graphics.Typeface.ITALIC);
                     t.setOnLongClickListener(v -> { Ui.copy(this, it.optString("text")); return true; });
                     return t;
                 });
                 break;
             case "tool": {
-                boolean done = it.optBoolean("done", true);
-                int tint = it.optBoolean("is_error") ? Ui.RED : done ? Ui.G700 : Ui.AMBER;
-                fold(wrap, seq, Ui.I_HAMMER, it.optString("name"), it.optString("summary"), tint, () -> {
+                boolean done = it.optBoolean("done", !it.isNull("result"));
+                boolean err = it.optBoolean("is_error");
+                String glyph = !done ? Ui.I_LOADER : err ? Ui.I_CIRCLE_X : Ui.I_CIRCLE_CHECK;
+                int tint = !done ? Ui.G900 : err ? Ui.RED : Ui.GREEN;
+                fold(wrap, seq, glyph, tint, it.optString("label", it.optString("name")), it.optString("summary"), () -> {
                     LinearLayout c = Ui.col(this);
                     String in = json(it.opt("input"));
-                    if (!in.isEmpty()) {
-                        c.addView(Ui.text(this, "Input", 12, Ui.G700));
-                        c.addView(render.code(null, clip(in)), Ui.margins(Ui.fill(), 0, 4, 0, 8));
-                    }
+                    if (!in.isEmpty()) c.addView(render.code(null, clip(in)), Ui.margins(Ui.fill(), 0, 0, 0, 6));
                     String res = json(it.opt("result"));
                     if (!res.isEmpty()) {
-                        c.addView(Ui.text(this, "Result", 12, Ui.G700));
-                        c.addView(render.code(null, clip(res)), Ui.margins(Ui.fill(), 0, 4, 0, 0));
-                    } else if (!done) c.addView(Ui.text(this, "Running…", 13, Ui.AMBER));
+                        View box = render.code(null, clip(res));
+                        if (err) tint(box, Ui.RED);
+                        c.addView(box, Ui.fill());
+                    }
                     return c;
                 });
+                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96);
+                if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 30, 6, 0, 0));
+                break;
+            }
+            case "footer": {
+                TextView t = Ui.text(this, it.optString("text"), 12, Ui.G700);
+                t.setTypeface(Ui.mono);
+                wrap.addView(t, Ui.fill());
+                break;
+            }
+            case "forked_from":
+                wrap.addView(divider("Forked from conversation", "Open source conversation",
+                        () -> open(this, hub, it.optString("chat"))), Ui.fill());
+                break;
+            case "notice":
+                notice(wrap, it, seq);
+                break;
+            case "message": {
+                LinearLayout card = Ui.col(this);
+                card.setBackground(Ui.round(Ui.dark ? 0xff1d2a3a : 0xffeaf2fd, Ui.dark ? 0xff2c4766 : 0xffc4dafa, 16));
+                card.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(12));
+                LinearLayout head = Ui.row(this);
+                head.addView(Ui.icon(this, Ui.I_CHAT, 15, Ui.BLUE));
+                head.addView(Ui.bold(this, it.optString("from") + " → " + it.optString("to"), 15, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+                card.addView(head);
+                String text = it.optString("text");
+                card.addView(Ui.text(this, clip(text), 15, Ui.FG), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+                card.setOnLongClickListener(v -> { Ui.copy(this, text); return true; });
+                wrap.addView(card, Ui.fill());
                 break;
             }
             case "error": {
-                TextView t = Ui.text(this, it.optString("text", it.optString("message")), 14, Ui.RED);
-                t.setBackground(Ui.round(Ui.RED_BG, 0xff561a1e, 6));
-                t.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(8));
+                TextView t = Ui.text(this, clip(it.optString("text")), 13, Ui.RED);
+                t.setTypeface(Ui.mono);
+                t.setBackground(Ui.round(Ui.RED_BG, 0, 14));
+                t.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));
                 t.setOnLongClickListener(v -> { Ui.copy(this, t.getText().toString()); return true; });
                 wrap.addView(t, Ui.fill());
                 break;
             }
-            case "notice": {
-                TextView t = Ui.text(this, it.optString("text", it.optString("message")), 12, Ui.G700);
-                t.setGravity(Gravity.CENTER);
-                wrap.addView(t, Ui.fill());
-                String detail = it.optString("detail", "");
-                if (!detail.isEmpty()) {
-                    // e.g. an agent-to-agent message: the line, and its body on tap
-                    TextView d = Ui.text(this, detail, 13, Ui.G900);
-                    d.setVisibility(expanded.contains(seq) ? View.VISIBLE : View.GONE);
-                    d.setOnLongClickListener(v -> { Ui.copy(this, detail); return true; });
-                    wrap.addView(d, Ui.margins(Ui.fill(), 0, 4, 0, 0));
-                    t.setText(t.getText() + "  ›");
-                    wrap.setOnClickListener(v -> {
-                        boolean open = !expanded.remove(seq);
-                        if (open) expanded.add(seq);
-                        d.setVisibility(open ? View.VISIBLE : View.GONE);
-                    });
-                }
-                break;
-            }
             default:
-                wrap.setVisibility(View.GONE); // a kind this version doesn't know
+                break; // a card this version doesn't know
         }
+        // "Conversation fork · Open fork" right after this card, once per fork.
+        JSONArray forks = it.optJSONArray("forks_after");
+        if (forks != null) for (int i = 0; i < forks.length(); i++) {
+            String f = forks.optString(i);
+            wrap.addView(divider("Conversation fork", "Open fork", () -> open(this, hub, f)), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+        }
+        if (wrap.getChildCount() == 0) wrap.setVisibility(View.GONE);
         return wrap;
+    }
+
+    /** The desktop's centred notice pill; expands to its detail, or opens its link. */
+    private void notice(LinearLayout wrap, JSONObject it, int seq) {
+        String icon = it.optString("icon"), detail = it.optString("detail", "");
+        String url = it.isNull("url") ? "" : it.optString("url", "");
+        String glyph;
+        switch (icon) {
+            case "bot": glyph = Ui.I_BOT; break;
+            case "wake": case "clock": glyph = Ui.I_CLOCK; break;
+            case "webhook": glyph = Ui.I_WEBHOOK; break;
+            case "alert": glyph = Ui.I_ALERT; break;
+            case "fork": glyph = Ui.I_FORK; break;
+            case "process": glyph = Ui.I_ACTIVITY; break;
+            case "restart": glyph = Ui.I_ROTATE; break;
+            default: glyph = Ui.I_CIRCLE_CHECK;
+        }
+        boolean expandable = !detail.isEmpty() && url.isEmpty();
+        LinearLayout pill = Ui.row(this);
+        pill.setBackground(Ui.press(Ui.G100, Ui.LINE, 16));
+        pill.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+        pill.addView(Ui.icon(this, glyph, 14, Ui.G700));
+        pill.addView(Ui.text(this, it.optString("text"), 14, Ui.FG), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        TextView chev = Ui.icon(this, expanded.contains(seq) ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700);
+        if (expandable) pill.addView(chev, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        LinearLayout.LayoutParams pp = Ui.wrap();
+        pp.gravity = Gravity.CENTER_HORIZONTAL;
+        wrap.addView(pill, pp);
+        if (!url.isEmpty()) {
+            pill.setOnClickListener(v -> {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (Exception e) { Ui.copy(this, url); }
+            });
+        } else if (expandable) {
+            final View[] body = {null};
+            Runnable show = () -> {
+                LinearLayout well = Ui.col(this);
+                well.setBackground(Ui.round(Ui.G100, 0, 12));
+                well.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(10));
+                if (it.optBoolean("detail_markdown")) well.addView(new Render(this, null).para(detail), Ui.fill());
+                else {
+                    TextView d = Ui.text(this, clip(detail), 13, Ui.FG);
+                    d.setTypeface(Ui.mono);
+                    well.addView(d, Ui.fill());
+                }
+                body[0] = well;
+                wrap.addView(well, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+            };
+            if (expanded.contains(seq)) show.run();
+            pill.setOnClickListener(v -> {
+                if (expanded.remove(seq)) {
+                    if (body[0] != null) wrap.removeView(body[0]);
+                    chev.setText(Ui.I_DOWN);
+                } else {
+                    expanded.add(seq);
+                    show.run();
+                    chev.setText(Ui.I_UP_CHEVRON);
+                }
+            });
+            pill.setOnLongClickListener(v -> { Ui.copy(this, detail); return true; });
+        }
+    }
+
+    /** A thin line with a label and a link in the middle (fork dividers). */
+    private View divider(String label, String link, Runnable on) {
+        LinearLayout r = Ui.row(this);
+        r.setPadding(0, Ui.dp(6), 0, Ui.dp(6));
+        View l = new View(this);
+        l.setBackgroundColor(Ui.LINE);
+        r.addView(l, new LinearLayout.LayoutParams(0, Ui.dp(1), 1));
+        r.addView(Ui.text(this, label + " · ", 13, Ui.G700), Ui.margins(Ui.wrap(), 10, 0, 0, 0));
+        TextView a = Ui.bold(this, link, 13, Ui.BLUE);
+        a.setBackground(Ui.press(0, 0, 8));
+        a.setOnClickListener(v -> on.run());
+        r.addView(a, Ui.margins(Ui.wrap(), 0, 0, 10, 0));
+        View l2 = new View(this);
+        l2.setBackgroundColor(Ui.LINE);
+        r.addView(l2, new LinearLayout.LayoutParams(0, Ui.dp(1), 1));
+        return r;
+    }
+
+    private static void tint(View box, int color) {
+        if (box instanceof android.view.ViewGroup) {
+            android.view.ViewGroup g = (android.view.ViewGroup) box;
+            for (int i = 0; i < g.getChildCount(); i++) tint(g.getChildAt(i), color);
+        } else if (box instanceof TextView) ((TextView) box).setTextColor(color);
     }
 
     interface Body { View make(); }
 
-    /** A one-line row (icon, name, summary) that expands to body on tap, like the desktop. */
-    private void fold(LinearLayout wrap, int seq, String glyph, String name, String summary, int tint, Body body) {
+    /** A one-line row (status icon, label, summary) that expands to body on tap, like the desktop. */
+    private void fold(LinearLayout wrap, int seq, String glyph, int tint, String name, String summary, Body body) {
         LinearLayout head = Ui.row(this);
-        head.setPadding(Ui.dp(8), Ui.dp(6), Ui.dp(8), Ui.dp(6));
-        head.setBackground(Ui.press(0, Ui.G300, 6));
-        head.addView(Ui.icon(this, glyph, 14, tint));
-        TextView n = Ui.bold(this, name, 13, Ui.G900);
+        head.setPadding(Ui.dp(10), Ui.dp(7), Ui.dp(10), Ui.dp(7));
+        head.setBackground(Ui.press(expanded.contains(seq) ? Ui.BG2 : 0, 0, 12));
+        head.addView(Ui.icon(this, glyph, 15, tint));
+        TextView n = Ui.bold(this, name, 15, Ui.FG);
         n.setSingleLine(true);
-        head.addView(n, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        head.addView(n, Ui.margins(Ui.wrap(), 10, 0, 0, 0));
         TextView s = Ui.subtitle(Ui.text(this, summary, 13, Ui.G700));
-        head.addView(s, Ui.margins(Ui.weight(), 8, 0, 4, 0));
-        TextView chev = Ui.icon(this, expanded.contains(seq) ? Ui.I_DOWN : Ui.I_RIGHT, 14, Ui.G600);
-        head.addView(chev);
+        s.setTypeface(Ui.mono);
+        head.addView(s, Ui.margins(Ui.weight(), 10, 0, 0, 0));
         wrap.addView(head, Ui.fill());
         final View[] open = {null};
         Runnable show = () -> {
             open[0] = body.make();
-            wrap.addView(open[0], Ui.margins(Ui.fill(), 8, 6, 0, 0));
+            wrap.addView(open[0], Ui.margins(Ui.fill(), 10, 6, 0, 0));
         };
         if (expanded.contains(seq)) show.run();
         head.setOnClickListener(v -> {
             if (expanded.remove(seq)) {
                 if (open[0] != null) wrap.removeView(open[0]);
-                chev.setText(Ui.I_RIGHT);
+                head.setBackground(Ui.press(0, 0, 12));
             } else {
                 expanded.add(seq);
                 show.run();
-                chev.setText(Ui.I_DOWN);
+                head.setBackground(Ui.press(Ui.BG2, 0, 12));
             }
         });
     }
@@ -484,11 +749,7 @@ public class Chat extends Base {
     private void itemMenu(JSONObject it, String text, boolean canFork) {
         List<String> opts = new ArrayList<>();
         opts.add("Copy");
-        // The hub forks only at the last reply of a finished turn: the item right before its
-        // "result" notice.
-        JSONObject next = items.get(it.optInt("seq") + 1);
-        if (canFork && next != null && "notice".equals(next.optString("kind")) && "result".equals(next.optString("icon")))
-            opts.add("Fork from here");
+        if (canFork) opts.add("Fork from here"); // the hub's "forkable", the desktop's fork button
         Ui.dialog(this).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) Ui.copy(this, text);
             else fork(it.optInt("seq"));
@@ -570,7 +831,8 @@ public class Chat extends Base {
         if (text.isEmpty() && !attach.any()) return;
         if (attach.busy()) { Ui.toast(this, "Still uploading…"); return; }
         sending = true;
-        sendBtn.setAlpha(0.4f);
+        comp.busy(true);
+        typing(false);
         JSONArray files = attach.ids();
         Ui.pool.execute(() -> {
             String err = null;
@@ -582,7 +844,7 @@ public class Chat extends Base {
             final String fe = err;
             Ui.main.post(() -> {
                 sending = false;
-                sendBtn.setAlpha(1f);
+                comp.busy(false);
                 if (isFinishing()) return;
                 if (fe != null) { Ui.toast(this, fe); return; }
                 composer.setText("");
@@ -597,6 +859,6 @@ public class Chat extends Base {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        attach.result(req, res, data);
+        if (!comp.result(req, res, data)) attach.result(req, res, data);
     }
 }

@@ -26,7 +26,7 @@ import java.util.List;
 /** The composer's attachments: pick a photo (system photo picker) or any file
  *  (ACTION_OPEN_DOCUMENT), upload it to the hub at once, show it as a removable chip. */
 final class Attach {
-    static final int PICK = 41;
+    static final int PICK = 41, SHOT = 42;
 
     private final Activity a;
     private final Hub hub;
@@ -54,23 +54,48 @@ final class Attach {
     }
 
     void choose() {
-        Ui.dialog(a).setItems(new String[]{"Photo", "File"}, (d, w) -> {
-            Intent i;
-            if (w == 0 && Build.VERSION.SDK_INT >= 33) {
-                i = new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 10);
-            } else if (w == 0) {
-                i = new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
+        Ui.dialog(a).setItems(new String[]{"Photo", "File"}, (d, w) -> { if (w == 0) photos(); else files(); }).show();
+    }
+
+    /** The system photo picker (Android 13+), else any image picker. */
+    void photos() {
+        Intent i = Build.VERSION.SDK_INT >= 33
+                ? new Intent(MediaStore.ACTION_PICK_IMAGES).putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 10)
+                : new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
                         .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            } else {
-                i = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE)
-                        .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            }
-            try { a.startActivityForResult(i, PICK); } catch (Exception e) { Ui.toast(a, "No app to pick files with"); }
-        }).show();
+        launch(i);
+    }
+
+    void files() {
+        launch(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE)
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true));
+    }
+
+    private Uri shot; // where the camera app writes the photo (CamProvider)
+
+    /** The camera app takes a full-size photo into a file of ours (CamProvider). */
+    void camera() {
+        try {
+            shot = CamProvider.newShot(a);
+            Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, shot)
+                    .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            a.startActivityForResult(i, SHOT);
+        } catch (Exception e) {
+            Ui.toast(a, "No camera app");
+        }
+    }
+
+    private void launch(Intent i) {
+        try { a.startActivityForResult(i, PICK); } catch (Exception e) { Ui.toast(a, "No app to pick files with"); }
     }
 
     /** Call from onActivityResult; true when it was ours. */
     boolean result(int req, int res, Intent data) {
+        if (req == SHOT) {
+            if (res == Activity.RESULT_OK && shot != null) add(shot);
+            shot = null;
+            return true;
+        }
         if (req != PICK) return false;
         if (res != Activity.RESULT_OK || data == null) return true;
         if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) add(data.getClipData().getItemAt(i).getUri());
@@ -90,7 +115,7 @@ final class Attach {
     private void chip(Up u) {
         u.chip = Ui.text(a, "", 13, Ui.FG);
         u.chip.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
-        u.chip.setBackground(Ui.round(Ui.G200, Ui.G400, 14));
+        u.chip.setBackground(Ui.round(Ui.G100, 0, 14));
         u.chip.setOnClickListener(v -> { ups.remove(u); chips.removeView(u.chip); show(); });
         ups.add(u);
         chips.addView(u.chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));

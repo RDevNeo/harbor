@@ -1,6 +1,5 @@
 package dev.harbor.app;
 
-import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -17,25 +16,29 @@ import org.json.JSONObject;
 import java.util.List;
 import java.util.UUID;
 
-/** The paired PCs, and pairing a new one: a QR code (through a scanner app, or the camera app
- *  opening the harbor://pair link straight into here), a pasted link, or host/port/token typed. */
+/** The paired PCs, and pairing a new one: Harbor's own camera scanner (QrScan), the phone's
+ *  camera app opening the harbor://pair link straight into here, a pasted link, or
+ *  host/port/token typed. */
 public class Hubs extends Base {
     private static final int SCAN = 1;
     private LinearLayout list;
-    private android.app.AlertDialog pairDialog;
+    private Sheet pairSheet;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        LinearLayout root = frame("Harbor", false);
-        action(Ui.I_PLUS, v -> pair());
+        page = Ui.col(this);
+        page.setBackgroundColor(Ui.BG);
         ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
         list = Ui.col(this);
-        list.setPadding(0, Ui.dp(8), 0, Ui.dp(24));
+        list.setPadding(Ui.dp(20), Ui.dp(24), Ui.dp(20), Ui.dp(24));
         sv.addView(list);
-        root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
+        page.addView(sv, new LinearLayout.LayoutParams(-1, -1));
+        setContentView(page);
 
         if (b == null && !handleLink(getIntent())) {
+            if (getIntent().getBooleanExtra("pair", false)) { pair(); return; }
             // A cold start goes straight back to the PC used last.
             String last = Hub.last(this);
             List<Hub> all = Hub.all(this);
@@ -47,7 +50,7 @@ public class Hubs extends Base {
     @Override
     protected void onNewIntent(Intent i) {
         super.onNewIntent(i);
-        handleLink(i);
+        if (!handleLink(i) && i.getBooleanExtra("pair", false)) pair();
     }
 
     @Override
@@ -71,31 +74,34 @@ public class Hubs extends Base {
 
     private void render() {
         list.removeAllViews();
+        list.addView(Ui.title(this, "Harbor", 44), Ui.margins(Ui.fill(), 4, 24, 4, 8));
         List<Hub> hubs = Hub.all(this);
         if (hubs.isEmpty()) {
-            list.addView(hint("Pair a PC running Harbor.\n\nOn the PC: Settings › Phones, turn on Phone access and click Pair a phone. "
-                    + "Scan the QR code with the camera, or tap + here to scan, paste the link or type the address."));
-            TextView p = Ui.button(this, "Pair a PC", true, v -> pair());
-            list.addView(p, Ui.margins(Ui.fill(), 24, 0, 24, 0));
+            TextView t = Ui.text(this, "Your Harbor chats on your phone. Pair it with a PC running Harbor: on the PC, open "
+                    + "Settings › Phones, turn on Phone access and click Pair a phone.", 17, Ui.G700);
+            list.addView(t, Ui.margins(Ui.fill(), 4, 8, 4, 28));
+            list.addView(Ui.button(this, "Scan pairing code", true, v -> scan()), Ui.fill());
+            list.addView(Ui.button(this, "Paste or type it", false, v -> pair()), Ui.margins(Ui.fill(), 0, 10, 0, 0));
             return;
         }
-        list.addView(Ui.section(this, "PCs"));
-        for (Hub h : hubs) list.addView(hubRow(h));
+        list.addView(Ui.text(this, "Your PCs", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
+        LinearLayout c = Ui.card(this);
+        boolean first = true;
+        for (Hub h : hubs) {
+            if (!first) c.addView(Ui.gap(this));
+            first = false;
+            c.addView(hubRow(h), Ui.fill());
+        }
+        list.addView(c, Ui.fill());
+        list.addView(Ui.button(this, "Pair another PC", false, v -> pair()), Ui.margins(Ui.fill(), 0, 16, 0, 0));
     }
 
     private View hubRow(Hub h) {
-        LinearLayout r = Ui.row(this);
-        r.setPadding(Ui.dp(16), Ui.dp(12), Ui.dp(12), Ui.dp(12));
-        r.setBackground(Ui.press(0, 0, 0));
-        View dot = Ui.dot(this, Ui.G500, 8);
-        r.addView(dot);
-        LinearLayout t = Ui.col(this);
-        t.addView(Ui.subtitle(Ui.bold(this, h.label(), 16, Ui.FG)));
-        TextView sub = Ui.subtitle(Ui.text(this, h.host + ":" + h.port, 13, Ui.G700));
-        t.addView(sub);
-        r.addView(t, Ui.margins(Ui.weight(), 12, 0, 8, 0));
-        r.addView(Ui.icon(this, Ui.I_RIGHT, 18, Ui.G600));
-        r.setOnClickListener(v -> open(h.id));
+        View dot = Ui.dot(this, Ui.G500, 10);
+        LinearLayout r = Ui.cardRow(this, Ui.I_MONITOR, h.label(), h.host + ":" + h.port, Ui.FG, v -> open(h.id));
+        r.addView(dot, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(10), Ui.dp(10)), 8, 0, 8, 0));
+        r.addView(Ui.chevron(this));
+        TextView sub = (TextView) ((LinearLayout) r.getChildAt(1)).getChildAt(1);
         r.setOnLongClickListener(v -> {
             startActivity(new Intent(this, Settings.class).putExtra("hub", h.id));
             return true;
@@ -113,7 +119,7 @@ public class Hubs extends Base {
             final String fs = s; final int fc = color;
             Ui.main.post(() -> {
                 sub.setText(fs);
-                dot.setBackground(Ui.round(fc, 0, 4));
+                dot.setBackground(Ui.round(fc, 0, 5));
             });
         });
         return r;
@@ -121,69 +127,66 @@ public class Hubs extends Base {
 
     // ---- pairing ----
 
+    /** Scan with Harbor's camera, else paste the link or type the address. */
     private void pair() {
-        LinearLayout f = Ui.col(this);
-        f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
-        f.addView(Ui.text(this, "On the PC: Harbor › Settings › Phones › Pair a phone.", 14, Ui.G900));
-        TextView scan = Ui.button(this, "Scan QR code", true, v -> scan());
-        f.addView(scan, Ui.margins(Ui.fill(), 0, 14, 0, 0));
+        Sheet s = new Sheet(this, "Pair a PC");
+        TextView how = Ui.text(this, "On the PC: Harbor › Settings › Phones › Pair a phone.", 15, Ui.G700);
+        how.setPadding(Ui.dp(6), 0, Ui.dp(6), Ui.dp(12));
+        s.body.addView(how);
+        LinearLayout c = s.card();
+        LinearLayout sc = Ui.cardRow(this, Ui.disc(this, new Ui.Draw(Ui.Draw.CAMERA, Ui.FG), 44), "Scan pairing code", "with this phone's camera", Ui.FG,
+                v -> { s.dismiss(); scan(); });
+        sc.addView(Ui.chevron(this));
+        c.addView(sc, Ui.fill());
 
-        f.addView(Ui.text(this, "or paste the pairing link", 13, Ui.G700), Ui.margins(Ui.fill(), 0, 18, 0, 6));
+        LinearLayout c2 = s.card();
         EditText link = Ui.input(this, "harbor://pair?…", false);
         ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         ClipData clip = cm.getPrimaryClip();
         if (clip != null && clip.getItemCount() > 0 && clip.getItemAt(0).getText() != null
                 && Hub.parse(clip.getItemAt(0).getText().toString()) != null)
             link.setText(clip.getItemAt(0).getText());
-        f.addView(link, Ui.fill());
-
-        f.addView(Ui.text(this, "or type it", 13, Ui.G700), Ui.margins(Ui.fill(), 0, 18, 0, 6));
+        LinearLayout pad = Ui.col(this);
+        pad.setPadding(Ui.dp(16), Ui.dp(14), Ui.dp(16), Ui.dp(16));
+        pad.addView(Ui.text(this, "Or paste the pairing link", 15, Ui.G700), Ui.margins(Ui.fill(), 2, 0, 0, 8));
+        pad.addView(link, Ui.fill());
+        pad.addView(Ui.text(this, "or type it", 15, Ui.G700), Ui.margins(Ui.fill(), 2, 16, 0, 8));
         EditText host = Ui.input(this, "Host (e.g. desk.example.ts.net)", false);
         LinearLayout hp = Ui.row(this);
         hp.addView(host, Ui.weight());
         EditText port = Ui.input(this, "Port", false);
         port.setInputType(InputType.TYPE_CLASS_NUMBER);
-        hp.addView(port, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(90), -2), 8, 0, 0, 0));
-        f.addView(hp, Ui.fill());
+        hp.addView(port, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(96), -2), 8, 0, 0, 0));
+        pad.addView(hp, Ui.fill());
         EditText token = Ui.input(this, "Token", false);
-        f.addView(token, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-
-        ScrollView sv = new ScrollView(this);
-        sv.addView(f);
-        pairDialog = Ui.dialog(this).setTitle("Pair a PC").setView(sv)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Pair", (d, w) -> {
-                    Hub h = Hub.parse(link.getText().toString());
-                    if (h == null && host.length() > 0 && token.length() > 0) {
-                        int p;
-                        try { p = Integer.parseInt(port.getText().toString().trim()); } catch (Exception e) { p = 0; }
-                        if (p > 0) h = new Hub(UUID.randomUUID().toString(), host.getText().toString().trim(),
-                                host.getText().toString().trim(), p, token.getText().toString().trim());
-                    }
-                    if (h == null) Ui.toast(this, "Paste the harbor://pair link, or fill host, port and token");
-                    else tryPair(h);
-                }).show();
+        pad.addView(token, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        pad.addView(Ui.button(this, "Pair", true, v -> {
+            Hub h = Hub.parse(link.getText().toString());
+            if (h == null && host.length() > 0 && token.length() > 0) {
+                int p;
+                try { p = Integer.parseInt(port.getText().toString().trim()); } catch (Exception e) { p = 0; }
+                if (p > 0) h = new Hub(UUID.randomUUID().toString(), host.getText().toString().trim(),
+                        host.getText().toString().trim(), p, token.getText().toString().trim());
+            }
+            if (h == null) { Ui.toast(this, "Paste the harbor://pair link, or fill host, port and token"); return; }
+            s.dismiss();
+            tryPair(h);
+        }), Ui.margins(Ui.fill(), 0, 16, 0, 0));
+        c2.addView(pad, Ui.fill());
+        if (s.dialog.getWindow() != null)
+            s.dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        pairSheet = s.show();
     }
 
-    private void scan() {
-        try {
-            startActivityForResult(new Intent("com.google.zxing.client.android.SCAN")
-                    .putExtra("SCAN_MODE", "QR_CODE_MODE").putExtra("PROMPT_MESSAGE", "Scan Harbor's pairing code"), SCAN);
-        } catch (ActivityNotFoundException e) {
-            Ui.dialog(this).setTitle("No QR scanner app")
-                    .setMessage("Point the phone's camera app (or Google Lens) at the QR code on the PC: "
-                            + "it opens the harbor://pair link straight in Harbor.\n\nOr copy the link and paste it here.")
-                    .setPositiveButton("OK", null).show();
-        }
-    }
+    private void scan() { startActivityForResult(new Intent(this, QrScan.class), SCAN); }
 
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req != SCAN || res != RESULT_OK || data == null) return;
-        Hub h = Hub.parse(data.getStringExtra("SCAN_RESULT"));
+        Hub h = Hub.parse(data.getDataString());
         if (h == null) { Ui.toast(this, "That QR code isn't a Harbor pairing code"); return; }
-        if (pairDialog != null) pairDialog.dismiss();
+        if (pairSheet != null) pairSheet.dismiss();
         tryPair(h);
     }
 

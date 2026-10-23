@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -23,19 +24,20 @@ abstract class Base extends Activity {
     LinearLayout bar;
     TextView barTitle, barSub;
     LinearLayout barActions;
+    LinearLayout page; // the frame's column (top bar + content)
 
     private int gen;                 // bumped to stop the current poll loop
     private volatile Tailnet.Http polling;
     private long rev = -1;
     boolean offline;
+    private int myTheme;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         Ui.init(this);
-        getWindow().setStatusBarColor(Ui.BG);
-        getWindow().setNavigationBarColor(Ui.BG);
-        getWindow().getDecorView().setBackgroundColor(Ui.BG);
+        Ui.bars(this);
+        myTheme = Ui.themeGen;
         String id = getIntent().getStringExtra("hub");
         if (id != null) hub = Hub.get(this, id);
     }
@@ -47,30 +49,38 @@ abstract class Base extends Activity {
         return true;
     }
 
-    /** A column with the top bar, then content filling the rest. */
+    /** A column with the top bar, then content filling the rest. back: an arrow that closes
+     *  the screen; else nothing on the left (drawer screens put the menu button there). */
     LinearLayout frame(String title, boolean back) {
-        LinearLayout root = Ui.col(this);
-        root.setBackgroundColor(Ui.BG);
+        return frame(title, back ? Ui.iconButton(this, Ui.I_LEFT, Ui.FG, v -> finish()) : null, true);
+    }
+
+    /** serifTitle: a page title like "Settings"; else a chat's title in the body font. */
+    LinearLayout frame(String title, View leading, boolean serifTitle) {
+        page = Ui.col(this);
+        page.setBackgroundColor(Ui.BG);
         bar = Ui.row(this);
-        bar.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
-        bar.setMinimumHeight(Ui.dp(56));
-        if (back) bar.addView(Ui.iconButton(this, Ui.I_LEFT, Ui.FG, v -> finish()));
-        else bar.addView(new View(this), new LinearLayout.LayoutParams(Ui.dp(12), 1));
+        bar.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(6), Ui.dp(6));
+        bar.setMinimumHeight(Ui.dp(60));
+        FrameLayout lead = new FrameLayout(this);
+        if (leading != null) lead.addView(leading, new FrameLayout.LayoutParams(Ui.dp(44), Ui.dp(44), Gravity.CENTER_VERTICAL | Gravity.START));
+        bar.addView(lead, new LinearLayout.LayoutParams(Ui.dp(88), Ui.dp(44)));
         LinearLayout t = Ui.col(this);
-        barTitle = Ui.subtitle(Ui.bold(this, title, 17, Ui.FG));
-        barSub = Ui.subtitle(Ui.text(this, "", 12, Ui.G700));
+        t.setGravity(Gravity.CENTER_HORIZONTAL);
+        barTitle = Ui.subtitle(serifTitle ? Ui.title(this, title, 24) : Ui.bold(this, title, 17, Ui.FG));
+        barTitle.setGravity(Gravity.CENTER);
+        barSub = Ui.subtitle(Ui.text(this, "", 13, Ui.G700));
+        barSub.setGravity(Gravity.CENTER);
         barSub.setVisibility(View.GONE);
-        t.addView(barTitle);
-        t.addView(barSub);
-        bar.addView(t, Ui.margins(Ui.weight(), 4, 0, 4, 0));
+        t.addView(barTitle, Ui.fill());
+        t.addView(barSub, Ui.fill());
+        bar.addView(t, Ui.weight());
         barActions = Ui.row(this);
-        bar.addView(barActions);
-        root.addView(bar, Ui.fill());
-        View line = new View(this);
-        line.setBackgroundColor(Ui.G300);
-        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(1)));
-        setContentView(root);
-        return root;
+        barActions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        bar.addView(barActions, new LinearLayout.LayoutParams(Ui.dp(88), Ui.dp(44)));
+        page.addView(bar, Ui.fill());
+        setContentView(page);
+        return page;
     }
 
     void sub(String s, int color) {
@@ -87,14 +97,161 @@ abstract class Base extends Activity {
 
     /** A centred grey line for empty and error states. */
     TextView hint(String s) {
-        TextView t = Ui.text(this, s, 14, Ui.G700);
+        TextView t = Ui.text(this, s, 15, Ui.G700);
         t.setGravity(Gravity.CENTER);
-        t.setPadding(Ui.dp(24), Ui.dp(32), Ui.dp(24), Ui.dp(32));
+        t.setPadding(Ui.dp(28), Ui.dp(32), Ui.dp(28), Ui.dp(32));
         return t;
     }
 
+    void hintInto(LinearLayout l, String s) { l.addView(hint(s), Ui.fill()); }
+
     FrameLayout.LayoutParams frameFill() {
         return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+    }
+
+    /** Fetch /v1/state again and redraw (after a rename, settle, delete from a menu). */
+    void refresh() { }
+
+    // ---- the drawer (Chat, NewChat): the chat list slides in from the left ----
+
+    Sidebar side;
+    private FrameLayout shell;
+    private View scrim;
+    private int panelW;
+    private boolean open;
+
+    /** The menu button for the top bar's left. */
+    View menuButton() {
+        FrameLayout b = Ui.roundButton(this, new Ui.Draw(Ui.Draw.MENU, Ui.FG), 0, Ui.FG, 44, v -> openDrawer());
+        b.setBackground(Ui.press(0, 0, 22));
+        b.setContentDescription("Chats");
+        return b;
+    }
+
+    /** Puts the page (frame()) under a drawer holding the chat list. Call after frame(). */
+    void installDrawer(String currentChat) {
+        side = new Sidebar(this, currentChat);
+        shell = new FrameLayout(this);
+        ((ViewGroup) page.getParent()).removeView(page);
+        shell.addView(page, frameFill());
+        scrim = new View(this);
+        scrim.setBackgroundColor(0x66000000);
+        scrim.setAlpha(0);
+        scrim.setVisibility(View.GONE);
+        scrim.setOnClickListener(v -> closeDrawer());
+        shell.addView(scrim, frameFill());
+        panelW = Math.min(getResources().getDisplayMetrics().widthPixels * 86 / 100, Ui.dp(400));
+        side.view.setElevation(Ui.dp(8));
+        shell.addView(side.view, new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.MATCH_PARENT));
+        side.view.setTranslationX(-panelW);
+        side.view.setVisibility(View.INVISIBLE);
+        setContentView(shell);
+        JSONObject st = Hub.states.get(hub.id);
+        if (st != null) side.render(st);
+    }
+
+    void openDrawer() { slide(1f, true); }
+    void closeDrawer() { slide(0f, true); }
+    boolean drawerOpen() { return open; }
+
+    /** f: 0 closed .. 1 open. */
+    private void slide(float f, boolean animate) {
+        if (side == null) return;
+        side.view.setVisibility(View.VISIBLE);
+        scrim.setVisibility(View.VISIBLE);
+        float x = -panelW * (1 - f);
+        if (animate) {
+            open = f > 0.5f;
+            if (open) {
+                hideKeyboard();
+                JSONObject st = Hub.states.get(hub.id);
+                if (st != null) side.render(st);
+            }
+            side.view.animate().translationX(x).setDuration(200).withEndAction(() -> {
+                if (!open) { side.view.setVisibility(View.INVISIBLE); scrim.setVisibility(View.GONE); }
+            }).start();
+            scrim.animate().alpha(f).setDuration(200).start();
+        } else {
+            side.view.setTranslationX(x);
+            scrim.setAlpha(f);
+        }
+    }
+
+    private void hideKeyboard() {
+        View f = getCurrentFocus();
+        if (f != null) ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
+                .hideSoftInputFromWindow(f.getWindowToken(), 0);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (open) { closeDrawer(); return; }
+        super.onBackPressed();
+    }
+
+    // A rightward swipe anywhere opens the drawer (a leftward one closes it), unless it starts
+    // on something that scrolls sideways itself (code blocks, tables, chips), which keeps it.
+    private float downX, downY;
+    private boolean dragging, undecided, startOpen;
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent e) {
+        if (side == null) return super.dispatchTouchEvent(e);
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                downX = e.getRawX();
+                downY = e.getRawY();
+                dragging = false;
+                startOpen = open;
+                undecided = open || !hScrolls(shell, e.getRawX(), e.getRawY());
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
+                if (undecided && !dragging) {
+                    float slop = Ui.dp(14);
+                    if (Math.abs(dy) > slop && Math.abs(dy) > Math.abs(dx)) undecided = false;
+                    else if (Math.abs(dx) > slop && Math.abs(dx) > 1.6f * Math.abs(dy) && (startOpen ? dx < 0 : dx > 0)) {
+                        dragging = true;
+                        MotionEvent cancel = MotionEvent.obtain(e);
+                        cancel.setAction(MotionEvent.ACTION_CANCEL);
+                        super.dispatchTouchEvent(cancel);
+                        cancel.recycle();
+                        hideKeyboard();
+                    }
+                }
+                if (dragging) {
+                    float f = startOpen ? 1 + dx / panelW : dx / panelW;
+                    slide(Math.max(0, Math.min(1, f)), false);
+                    return true;
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (dragging) {
+                    dragging = false;
+                    float dx = e.getRawX() - downX;
+                    float f = startOpen ? 1 + dx / panelW : dx / panelW;
+                    slide(f > (startOpen ? 0.7f : 0.3f) ? 1f : 0f, true);
+                    return true;
+                }
+                break;
+        }
+        return super.dispatchTouchEvent(e);
+    }
+
+    /** Whether a view under (x, y) can scroll sideways. */
+    private static boolean hScrolls(View v, float x, float y) {
+        if (v.getVisibility() != View.VISIBLE) return false;
+        int[] at = new int[2];
+        v.getLocationOnScreen(at);
+        if (x < at[0] || y < at[1] || x >= at[0] + v.getWidth() || y >= at[1] + v.getHeight()) return false;
+        if (v.canScrollHorizontally(1) || v.canScrollHorizontally(-1)) return true;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = g.getChildCount() - 1; i >= 0; i--) if (hScrolls(g.getChildAt(i), x, y)) return true;
+        }
+        return false;
     }
 
     // ---- events ----
@@ -109,6 +266,7 @@ abstract class Base extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
     }
 

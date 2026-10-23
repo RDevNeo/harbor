@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Harbor for Android: a chat-only client of a desktop Harbor (the hub) on the tailnet.
      Hubs pairs and lists PCs (also from harbor://pair links and QR codes), Chats lists one hub's
-     chats, Chat shows and drives one, NewChat starts one, Settings updates the app. -->
+     chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
+     one, NewChat starts one, Settings updates the app and sets the color mode. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.app">
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Tailnet: finds Tailscale's VPN network, the only way to a hub -->
@@ -37,5 +38,8 @@
         <activity android:name=".QrScan" android:exported="false" android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
         <receiver android:name=".Update" android:exported="false" />
+        <!-- Attach › Camera: the camera app writes its photo into a file of ours -->
+        <provider android:name=".CamProvider" android:authorities="dev.harbor.app.cam"
+            android:exported="false" android:grantUriPermissions="true" />
     </application>
 </manifest>
