@@ -805,6 +805,7 @@ impl App {
     pub fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.dialog.take() else { return };
         let mut close = false;
+        let mut start = false;
         let t = self.theme.t;
         let modal = egui::Modal::new(Id::NULL.with("dialog"))
             .frame(
@@ -864,6 +865,7 @@ impl App {
                         });
                     }
                     Dialog::StopAll(id) => self.stop_all_dialog(ui, *id, &mut close),
+                    Dialog::Instructions { job, text, .. } => start = self.instructions_dialog(ui, job, text, &mut close),
                     Dialog::RemoveRepo(id) => {
                         w::text(ui, "Remove project?", "heading-20");
                         ui.add_space(4.0);
@@ -898,7 +900,11 @@ impl App {
         if modal.should_close() {
             close = true;
         }
-        if !close {
+        if start {
+            if let Dialog::Instructions { project, job, text } = &dialog {
+                self.start_job(ctx, *project, job, text);
+            }
+        } else if !close {
             self.dialog = Some(dialog);
         } else {
             self.focus_composer = true;

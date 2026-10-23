@@ -5,6 +5,7 @@
 //! ⋯ menu (refresh, open, copy link / number).
 
 use crate::app::App;
+use crate::autowork::{Go, Job};
 use crate::icons as ic;
 use crate::issues::{Issue, IssueState, state_icon, state_of};
 use crate::prdetail::{Note, chip, clean_md, ctx_repaint, field, gh, section_toggle};
@@ -139,7 +140,8 @@ enum Act {
     Refresh,
     Close,
     Reopen,
-    Work,
+    /// True: ask for instructions first.
+    Work(bool),
 }
 
 /// owner/name from an issue URL.
@@ -228,8 +230,10 @@ impl App {
                     }
                     if state == IssueState::Open {
                         let tip = if project.is_some() { "Start a thread where an agent fixes it on a branch and opens a PR" } else { crate::issues::NOT_PROJECT };
-                        if self.agent_button(ui, "Fix", project.is_some(), tip) {
-                            act = Some(Act::Work);
+                        match self.agent_button(ui, "Fix", project.is_some(), tip) {
+                            Some(Go::Now) => act = Some(Act::Work(false)),
+                            Some(Go::Ask) => act = Some(Act::Work(true)),
+                            None => {}
                         }
                     }
                 });
@@ -291,7 +295,7 @@ impl App {
                         d.set_open(&ctx, url, a == Act::Reopen);
                     }
                 }
-                Act::Work => {
+                Act::Work(ask) => {
                     let item = list.clone().or_else(|| {
                         full.as_ref().map(|f| Issue {
                             number: f.number,
@@ -312,7 +316,11 @@ impl App {
                         })
                     });
                     if let (Some(id), Some(i)) = (project, item) {
-                        self.fix_issue(&ctx, id, &i);
+                        if ask {
+                            self.ask_instructions(id, Job::Fix(i));
+                        } else {
+                            self.fix_issue(&ctx, id, &i, "");
+                        }
                     }
                 }
             }
