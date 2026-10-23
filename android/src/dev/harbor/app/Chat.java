@@ -459,7 +459,28 @@ public class Chat extends Base {
     }
 
     private void stop() {
-        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/stop", null), r -> load(false));
+        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/stop", null), r -> {
+            // Messages that waited behind the stopped turn come back: into the composer, as on
+            // the desktop, ahead of whatever is being typed.
+            JSONArray back = r.optJSONArray("returned");
+            if (back != null && back.length() > 0) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < back.length(); i++) {
+                    JSONObject m = back.optJSONObject(i);
+                    if (m == null) continue;
+                    String t = m.optString("text").trim();
+                    if (!t.isEmpty()) sb.append(sb.length() > 0 ? "\n\n" : "").append(t);
+                    JSONArray f = m.optJSONArray("files");
+                    if (f != null) for (int j = 0; j < f.length(); j++) attach.addUploaded(f.optString(j));
+                }
+                String now = composer.getText().toString().trim();
+                if (!now.isEmpty()) sb.append(sb.length() > 0 ? "\n\n" : "").append(now);
+                composer.setText(sb);
+                composer.setSelection(composer.length());
+                Ui.toast(this, back.length() == 1 ? "The waiting message is back in the composer" : back.length() + " waiting messages are back in the composer");
+            }
+            load(false);
+        });
     }
 
     private void send() {

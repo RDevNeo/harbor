@@ -78,9 +78,16 @@ final class Attach {
         return true;
     }
 
-    private void add(Uri uri) {
+    /** A file already on the hub (an upload id), e.g. from a stopped turn's queue. */
+    void addUploaded(String id) {
+        if (id == null || id.isEmpty()) return;
         Up u = new Up();
-        u.name = name(uri);
+        u.id = id;
+        u.name = id.substring(id.lastIndexOf('/') + 1);
+        chip(u);
+    }
+
+    private void chip(Up u) {
         u.chip = Ui.text(a, "", 13, Ui.FG);
         u.chip.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
         u.chip.setBackground(Ui.round(Ui.G200, Ui.G400, 14));
@@ -89,6 +96,12 @@ final class Attach {
         chips.addView(u.chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
         label(u);
         show();
+    }
+
+    private void add(Uri uri) {
+        Up u = new Up();
+        u.name = name(uri);
+        chip(u);
         Ui.pool.execute(() -> {
             try {
                 long size = size(uri);
