@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Pull Requests navigation after T3 Code's: clicking a PR opens it in a panel beside the list,
+  as a tab (open several; close with ×, a middle click, Ctrl+W or the tab's menu). The panel
+  shows the repo and number, title, author, base ← head, the checkout command and the diff
+  size, with Summary (reviewers, labels, description, checks, comments), Timeline and Code
+  (the diff) tabs, and Ready for review, Check out and a ⋯ menu (refresh, review with an agent,
+  open, copy link / number). Maximize it over the list, hide and show it with the top-right
+  button or Ctrl+Alt+B, and drag the divider to resize. Esc or the sidebar's Back leaves the
+  page; Ctrl+F searches; the Sort, Filters and provider menus work with the arrow keys
+  (→ opens a filter's submenu, ← comes back, Enter picks, Esc closes). The keys are in
+  Settings → Keybindings.
+
 ## [0.3.0] - 2026-10-23
 
 ### Changed

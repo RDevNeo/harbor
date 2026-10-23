@@ -26,7 +26,7 @@ const fn fixed(id: &'static str, label: &'static str, group: &'static str, defau
     Action { id, label, group, default, when, fixed: true }
 }
 
-pub const GROUPS: &[&str] = &["Navigation", "Composer", "Thread", "Panels", "Editing", "Image viewer"];
+pub const GROUPS: &[&str] = &["Navigation", "Composer", "Thread", "Panels", "Lists", "Editing", "Image viewer"];
 
 pub const ACTIONS: &[Action] = &[
     a("new_thread", "New thread", "Navigation", "Ctrl+N", ""),
@@ -40,6 +40,12 @@ pub const ACTIONS: &[Action] = &[
     fixed("close_drawer", "Close the sidebar or team drawer", "Thread", "Escape", "drawerOpen"),
     a("toggle_terminal", "Open or close the terminal", "Panels", "Ctrl+Backtick", ""),
     a("toggle_browser", "Open or close the browser", "Panels", "Ctrl+B", "!browserFocus"),
+    a("list_search", "Search the list", "Lists", "Ctrl+F", "listOpen"),
+    a("list_toggle_panel", "Show or hide the side panel", "Lists", "Ctrl+Alt+B", "listOpen"),
+    a("list_close_tab", "Close the panel's tab", "Lists", "Ctrl+W", "listPanelOpen"),
+    a("pr_copy_link", "Copy the pull request's link", "Lists", "Ctrl+Shift+C", "pullRequestOpen && !terminalFocus"),
+    a("pr_copy_number", "Copy the pull request's number", "Lists", "Ctrl+Shift+K", "pullRequestOpen"),
+    fixed("list_back", "Leave the page", "Lists", "Escape", "listOpen && !menuOpen"),
     fixed("copy", "Copy (Ctrl+Shift+C in a terminal)", "Editing", "Ctrl+C", ""),
     fixed("cut", "Cut", "Editing", "Ctrl+X", ""),
     fixed("paste", "Paste text, images or files (also Shift+Insert)", "Editing", "Ctrl+V", ""),
@@ -252,10 +258,11 @@ fn is_char(k: Key) -> bool {
         )
 }
 
-/// Esc both stops a turn and closes a drawer: Harbor picks by context.
+/// Esc stops a turn, closes a drawer or the image viewer, or leaves a list page:
+/// Harbor picks by context.
 fn same_on_purpose(a: &str, b: &str) -> bool {
-    let pair = |x: &str, y: &str| (a == x && b == y) || (a == y && b == x);
-    pair("stop_turn", "close_drawer") || pair("stop_turn", "lightbox_close") || pair("close_drawer", "lightbox_close")
+    let esc = ["stop_turn", "close_drawer", "lightbox_close", "list_back"];
+    a != b && esc.contains(&a) && esc.contains(&b)
 }
 
 #[cfg(test)]

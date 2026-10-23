@@ -203,7 +203,12 @@ pub struct Prs {
     menu_anchor: Option<Rect>,
     sub: Option<Sub>,
     sub_anchor: Option<Rect>,
-    selected: Option<String>,
+    /// Keyboard highlight in the open menu and in its submenu.
+    keys: crate::listdetail::MenuKeys,
+    sub_keys: Option<crate::listdetail::MenuKeys>,
+    /// The PRs open as tabs in the side panel (keyed by URL).
+    pub split: crate::listdetail::Split,
+    pub details: HashMap<String, crate::prdetail::Detail>,
     pub avatars: HashMap<String, Option<egui::TextureHandle>>,
     /// Lets fetch threads wake the UI.
     ctx: Option<egui::Context>,
@@ -690,7 +695,7 @@ pub fn github_repo(remote: &str) -> Option<String> {
 
 impl App {
     /// Harbor projects with a GitHub remote: (id, name, owner/name).
-    fn pr_projects(&self) -> Vec<(i64, String, String)> {
+    pub fn pr_projects(&self) -> Vec<(i64, String, String)> {
         self.repos
             .iter()
             .filter_map(|r| {
@@ -710,7 +715,7 @@ impl App {
         self.open(View::Prs);
     }
 
-    fn close_prs(&mut self) {
+    pub fn close_prs(&mut self) {
         let v = match self.prs.back.take() {
             Some(View::Chat(id)) if self.chat(id).is_none() => View::Draft,
             Some(View::Prs) | None => View::Draft,
@@ -873,9 +878,10 @@ fn sub_pos(ctx: &egui::Context, a: Rect, width: f32) -> egui::Pos2 {
 /// A menu row: icon, label, then a muted value and a chevron (submenus) or a check.
 pub fn menu_row(ui: &mut Ui, icon: &str, label: &str, value: Option<&str>, chevron: bool, checked: bool, active: bool) -> egui::Response {
     let t = w::tokens(ui);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+    let kb = crate::listdetail::row_key(ui, &mut resp);
     let p = ui.painter();
-    if resp.hovered() || active {
+    if resp.hovered() || active || kb {
         p.rect_filled(rect, CornerRadius::same(RADIUS_MD), t.accent());
     }
     let mut x = rect.left() + 8.0;
@@ -932,7 +938,49 @@ fn name_of<T: PartialEq + Copy>(opts: &[(T, &'static str, &'static str)], v: T) 
 }
 
 impl App {
+    /// The page: the list, and beside it the side panel with the PRs opened as
+    /// tabs (see listdetail.rs). Esc leaves the page.
     pub fn prs_view(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let typing = ctx.text_edit_focused();
+        let had_menu = self.prs.menu.is_some();
+        if let Some(crate::listdetail::Shortcut::Tab(a)) = crate::listdetail::shortcuts(&ctx, &self.keys, &self.prs.split, Id::NULL.with("pr-search")) {
+            self.prs.split.apply(a);
+        }
+        let rect = ui.available_rect_before_wrap();
+        let (list, panel) = crate::listdetail::areas(ui, Id::NULL.with("pr-split"), &mut self.prs.split, rect);
+        match list {
+            Some(r) => crate::listdetail::region(ui, r, |ui| self.prs_list(ui, panel.is_some())),
+            None => self.prs.menu = None,
+        }
+        if let Some(r) = panel {
+            crate::listdetail::region(ui, r, |ui| self.pr_panel(ui));
+        }
+        ui.allocate_rect(rect, Sense::hover());
+        let split = &self.prs.split;
+        self.prs.details.retain(|k, _| split.tabs.contains(k));
+        if !had_menu && self.prs.menu.is_none() && self.dialog.is_none() && self.popup.is_none() && crate::listdetail::esc_leaves(&ctx, typing) {
+            self.close_prs();
+        }
+    }
+
+    /// The side panel: a tab per opened PR, its controls, and the PR on show.
+    fn pr_panel(&mut self, ui: &mut Ui) {
+        ui.add_space(10.0);
+        let (act, close) = crate::listdetail::header(ui, &self.prs.split, |url| (ic::PR_OPEN, format!("#{}", url.rsplit('/').next().unwrap_or(""))), Some("Close"));
+        if let Some(a) = act {
+            self.prs.split.apply(a);
+        }
+        if close {
+            self.close_prs();
+            return;
+        }
+        if let Some(url) = self.prs.split.current().map(String::from) {
+            self.pr_detail(ui, &url);
+        }
+    }
+
+    fn prs_list(&mut self, ui: &mut Ui, panel: bool) {
         let t = self.theme.t;
         let ctx = ui.ctx().clone();
         self.prs.ctx = Some(ctx.clone());
@@ -952,12 +1000,14 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(12.0);
                 ui.spacing_mut().item_spacing.x = 6.0;
-                if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Close").clicked() {
-                    self.close_prs();
-                }
-                let open = self.pane(crate::surface::Dock::Right).open;
-                if w::btn(ic::PANEL_RIGHT).muted().icon_sm().pressed(open).show(ui).on_hover_text("Toggle side panel").clicked() {
-                    self.toggle_dock(crate::surface::Dock::Right);
+                // With the panel open, its header has these.
+                if !panel {
+                    if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Close").clicked() {
+                        self.close_prs();
+                    }
+                    if let Some(a) = crate::listdetail::toggle_btn(ui, &self.prs.split) {
+                        self.prs.split.apply(a);
+                    }
                 }
             });
         });
@@ -967,12 +1017,14 @@ impl App {
         let data = self.prs.data.clone();
         let fetched = data.as_ref().and_then(|d| d.as_ref().ok()).cloned().unwrap_or_default();
         centered(ui, 1180.0, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
+            // Beside the side panel the buttons wrap under the search, as in T3 Code.
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
                 let active = self.prs.filters.active(self.prs.filters.project.is_some());
                 let sort_w = 12.0 + 16.0 + 8.0 + 34.0 + 14.0;
                 let filt_w = 12.0 + 16.0 + 8.0 + 46.0 + if active > 0 { 30.0 } else { 0.0 } + 14.0;
-                let search_w = (ui.available_width() - sort_w - filt_w - 36.0 * 2.0 - 8.0 * 4.0 - 2.0).max(160.0);
+                let rest = sort_w + filt_w + 36.0 * 2.0 + 8.0 * 4.0 + 2.0;
+                let search_w = if ui.available_width() - rest < 240.0 { ui.available_width() - 2.0 } else { ui.available_width() - rest };
                 let focused = ui.memory(|m| m.has_focus(Id::NULL.with("pr-search")));
                 Frame::new()
                     .fill(t.bg100)
@@ -1015,6 +1067,7 @@ impl App {
         // ---- list
         let groups = groups(&fetched, &self.prs.filters, &self.prs.search, self.prs.sort);
         let mut open_url = None;
+        let mut browse = None;
         let mut action = None;
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             centered(ui, 1180.0, |ui| {
@@ -1046,7 +1099,7 @@ impl App {
                             }
                             for p in &g.items {
                                 let avatar = self.prs.avatars.get(&p.author).and_then(|a| a.clone());
-                                let selected = self.prs.selected.as_deref() == Some(p.url.as_str());
+                                let selected = self.prs.split.current() == Some(p.url.as_str());
                                 let resp = row(ui, p, avatar.as_ref(), selected);
                                 if resp.clicked() {
                                     open_url = Some(p.url.clone());
@@ -1055,6 +1108,10 @@ impl App {
                                 resp.context_menu(|ui| {
                                     if ui.button(format!("{}  Open in side panel", ic::PANEL_RIGHT)).clicked() {
                                         open_url = Some(p.url.clone());
+                                        ui.close();
+                                    }
+                                    if ui.button(format!("{}  Open in Harbor's browser", ic::GLOBE)).clicked() {
+                                        browse = Some(p.url.clone());
                                         ui.close();
                                     }
                                     if ui.button(format!("{}  Open on GitHub", ic::EXTERNAL)).clicked() {
@@ -1086,7 +1143,9 @@ impl App {
             });
         });
         if let Some(url) = open_url {
-            self.prs.selected = Some(url.clone());
+            self.prs.split.select(&url);
+        }
+        if let Some(url) = browse {
             self.open_browser(Some(url));
         }
         if let Some((id, p, review)) = action {
@@ -1108,6 +1167,8 @@ impl App {
 
     fn toggle_pr_menu(&mut self, m: Menu, anchor: Rect) {
         self.prs.sub = None;
+        self.prs.keys = Default::default();
+        self.prs.sub_keys = None;
         if self.prs.menu == Some(m) {
             self.prs.menu = None;
         } else {
@@ -1117,12 +1178,58 @@ impl App {
     }
 
     fn pr_menus(&mut self, ctx: &egui::Context, data: &Fetched, projects: &[(i64, String, String)]) {
+        use crate::listdetail::{self as ld, MenuKey};
         let Some(menu) = self.prs.menu else { return };
         let t = self.theme.t;
         let anchor = self.prs.menu_anchor.unwrap_or(Rect::NOTHING);
         let pos = anchor.left_bottom() + Vec2::new(0.0, 6.0);
         let mut close = false;
         let mut sub_rect = Rect::NOTHING;
+        // Keys: ↑↓ Home End move, Enter/Space pick, → opens a filter's submenu
+        // and moves into it, ← comes back, Esc closes.
+        let main_id = match menu {
+            Menu::Sort => "pr-sort",
+            Menu::Provider => "pr-provider",
+            Menu::Filters => "pr-filters",
+        };
+        let (mut main_pick, mut main_moved, mut sub_pick, mut sub_moved, mut enter_sub) = (None, false, None, false, false);
+        match self.prs.sub_keys.filter(|_| self.prs.sub.is_some()) {
+            Some(mut k) => {
+                let before = k.hl;
+                match k.input(ctx, ld::rows_count(ctx, "pr-sub")) {
+                    Some(MenuKey::Pick(i)) => sub_pick = Some(i),
+                    Some(MenuKey::Leave) => {
+                        self.prs.sub = None;
+                        self.prs.sub_keys = None;
+                    }
+                    Some(MenuKey::Close) => close = true,
+                    _ => {}
+                }
+                sub_moved = k.hl != before;
+                if self.prs.sub_keys.is_some() {
+                    self.prs.sub_keys = Some(k);
+                }
+            }
+            None => {
+                let mut k = self.prs.keys;
+                let before = k.hl;
+                match k.input(ctx, ld::rows_count(ctx, main_id)) {
+                    Some(MenuKey::Pick(i)) => {
+                        main_pick = Some(i);
+                        enter_sub = menu == Menu::Filters;
+                    }
+                    Some(MenuKey::Enter(i)) if menu == Menu::Filters => {
+                        main_pick = Some(i);
+                        enter_sub = true;
+                    }
+                    Some(MenuKey::Close) => close = true,
+                    _ => {}
+                }
+                main_moved = k.hl != before;
+                self.prs.keys = k;
+            }
+        }
+        ld::rows_begin(ctx, self.prs.keys.hl, main_pick, main_moved);
         let main_rect = match menu {
             Menu::Sort => {
                 let cur = self.prs.sort;
@@ -1188,12 +1295,22 @@ impl App {
                     item(ui, Sub::Project, ic::LAYERS, "Project", project_name.as_deref().unwrap_or("All projects"));
                     hover
                 });
+                ld::rows_end(ctx, main_id);
                 if let Some((s, r)) = hover {
+                    if self.prs.sub != Some(s) {
+                        self.prs.sub_keys = None;
+                    }
                     self.prs.sub = Some(s);
                     self.prs.sub_anchor = Some(r);
                 }
+                if enter_sub && self.prs.sub.is_some() {
+                    self.prs.sub_keys = Some(ld::MenuKeys { hl: Some(0) });
+                    sub_moved = true;
+                }
                 if let Some(s) = self.prs.sub {
+                    ld::rows_begin(ctx, self.prs.sub_keys.and_then(|k| k.hl), sub_pick, sub_moved);
                     let (done, r) = self.pr_submenu(ctx, s, data, projects);
+                    ld::rows_end(ctx, "pr-sub");
                     sub_rect = r;
                     close |= done;
                 }
@@ -1203,9 +1320,14 @@ impl App {
         let outside = ctx.input(|i| {
             i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !main_rect.contains(p) && !sub_rect.contains(p) && !anchor.contains(p))
         });
-        if close || outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if menu != Menu::Filters {
+            ld::rows_end(ctx, main_id);
+        }
+        if close || outside {
             self.prs.menu = None;
             self.prs.sub = None;
+            self.prs.keys = Default::default();
+            self.prs.sub_keys = None;
         }
     }
 

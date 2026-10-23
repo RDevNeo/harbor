@@ -397,11 +397,18 @@ impl App {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let v = self.view;
-                if w::btn(ic::SETTINGS).muted().icon_sm().pressed(matches!(v, View::Settings(_))).show(ui).on_hover_text(self.key_hint("Settings", "settings")).clicked() {
-                    self.open(View::Settings(Tab::General));
-                }
-                if w::btn(ic::PULL).muted().icon_sm().pressed(v == View::Prs).show(ui).on_hover_text("Pull requests").clicked() {
-                    self.open_prs(None);
+                // A list page (T3 Code style): Back takes its place, like Esc.
+                if v == View::Prs {
+                    if w::btn(&format!("{}  Back", ic::ARROW_LEFT)).muted().sm().show(ui).on_hover_text("Back (Esc)").clicked() {
+                        self.close_prs();
+                    }
+                } else {
+                    if w::btn(ic::SETTINGS).muted().icon_sm().pressed(matches!(v, View::Settings(_))).show(ui).on_hover_text(self.key_hint("Settings", "settings")).clicked() {
+                        self.open(View::Settings(Tab::General));
+                    }
+                    if w::btn(ic::PULL).muted().icon_sm().show(ui).on_hover_text("Pull requests").clicked() {
+                        self.open_prs(None);
+                    }
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if w::btn(ic::REFRESH).muted().icon_sm().show(ui).on_hover_text("Refresh providers, projects and git").clicked() {
