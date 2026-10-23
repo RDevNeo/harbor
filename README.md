@@ -35,6 +35,8 @@ curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh
 - Offline: download `harbor-x86_64-linux.tar.gz` (and optionally `harbor-browser-x86_64-linux.tar.gz`
   beside it), extract it and run `./install.sh` in that folder; it installs those files after checking them
   against the signed `SHA256SUMS` inside.
+- install.sh checks every download against the release's minisign signature, fetching a pinned static
+  minisign when none is installed; `HARBOR_INSECURE=1` installs without that check.
 - Files: `~/.local/lib/harbor/` (`harbor`, `harbor-stream`, `harbor-browser`), `~/.local/bin/harbor`, a
   desktop entry and icons. Remote screens use the system's OpenSSL 3, Opus, ALSA and VA-API libraries.
 

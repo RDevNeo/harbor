@@ -14,6 +14,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   Auto-Fix only picks issues they opened, and unattended runs read only their comments and reviews
   (anyone can comment on a public repo). Issue and PR titles and webhook requests reach the agent
   fenced as untrusted data, not instructions. Fix / Merge started by you still read every comment.
+- install.sh always checks the minisign signature of what it installs: without minisign installed it
+  fetches the static minisign the release workflow uses (pinned by its SHA-256). Without either, or
+  for an offline folder without a signed SHA256SUMS, it refuses unless `HARBOR_INSECURE=1`.
 
 ### Fixed
 - Long sessions stay fast: saving a chat writes only its new or changed items instead of rewriting

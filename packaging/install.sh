@@ -7,9 +7,13 @@
 #   curl -fsSL …/install.sh | sh -s -- --uninstall --purge  # …and its data
 #
 # Offline: run ./install.sh from an extracted harbor-x86_64-linux.tar.gz. It installs the files
-# next to it, checked against the SHA256SUMS (and its signature, with minisign) in that folder.
+# next to it, checked against the SHA256SUMS and its signature in that folder.
 # --with-browser then uses an extracted harbor-browser-x86_64-linux folder (or its .tar.gz)
 # beside it, and downloads only if there is neither.
+#
+# Every download is checked against the release's minisign signature. Without minisign installed,
+# the static minisign pinned below is fetched (and checked against its SHA-256) for that. To install
+# without a signature check anyway: HARBOR_INSECURE=1.
 #
 # Layout: ~/.local/lib/harbor/{harbor,harbor-stream,harbor-browser,harbor-android.apk}, ~/.local/bin/harbor (link),
 # ~/.local/share/applications/harbor.desktop, ~/.local/share/icons/hicolor/…/harbor.{svg,png}.
@@ -18,6 +22,10 @@ set -eu
 
 REPO="RDevNeo/harbor"
 PUBKEY="RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh"
+# The same minisign the release workflow signs with.
+MINISIGN_URL="https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz"
+MINISIGN_SHA256="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
+INSECURE="${HARBOR_INSECURE:-0}"
 VERSION="${HARBOR_VERSION:-latest}"
 BROWSER=0
 UNINSTALL=0
@@ -31,7 +39,7 @@ for a in "$@"; do
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
     --version=*) VERSION="${a#--version=}" ;;
-    -h|--help) sed -n '2,12p' "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "harbor install: unknown option $a" >&2; exit 2 ;;
   esac
 done
@@ -95,30 +103,60 @@ fetch() {
   fi
 }
 
-# Checks a downloaded asset against SHA256SUMS, and its minisign signature when minisign is installed
-# (Harbor's own updater always checks signatures).
+# minisign for the signature checks: the system's, else the static one pinned above, checked
+# against its SHA-256. Fails (returns 1) when neither is to be had.
+MINISIGN=""
+get_minisign() {
+  [ -n "$MINISIGN" ] && return 0
+  if command -v minisign >/dev/null 2>&1; then
+    MINISIGN=minisign
+    return 0
+  fi
+  command -v curl >/dev/null 2>&1 || return 1
+  say "minisign isn't installed; fetching it to check the signatures…"
+  curl -fsSL --retry 3 -o "$TMP/minisign.tgz" "$MINISIGN_URL" 2>/dev/null || return 1
+  printf '%s  %s\n' "$MINISIGN_SHA256" "$TMP/minisign.tgz" | sha256sum -c --quiet - >/dev/null 2>&1 \
+    || die "the minisign download doesn't match its pinned checksum."
+  mkdir -p "$TMP/minisign"
+  tar -xzf "$TMP/minisign.tgz" -C "$TMP/minisign" 2>/dev/null || return 1
+  [ -x "$TMP/minisign/minisign-linux/x86_64/minisign" ] || return 1
+  MINISIGN="$TMP/minisign/minisign-linux/x86_64/minisign"
+}
+
+# Something can't be checked: refused, unless HARBOR_INSECURE=1 asks to install it anyway.
+unchecked() { # what
+  if [ "$INSECURE" = 1 ]; then
+    printf 'harbor install: WARNING: %s. Installing it anyway (HARBOR_INSECURE=1).\n' "$1" >&2
+  else
+    die "$1. Run with HARBOR_INSECURE=1 to install without the check."
+  fi
+}
+
+# Checks a downloaded asset against SHA256SUMS and its minisign signature (Harbor's own updater
+# checks signatures too).
 verify() {
   line="$(grep "  $1\$" "$TMP/SHA256SUMS" || true)"
   [ -n "$line" ] || die "$1 is not listed in SHA256SUMS."
   (cd "$TMP" && printf '%s\n' "$line" | sha256sum -c --quiet -) || die "$1: checksum mismatch."
-  if command -v minisign >/dev/null 2>&1; then
+  if get_minisign; then
     fetch "$1.minisig" || die "could not download $1.minisig"
-    minisign -Vqm "$TMP/$1" -P "$PUBKEY" || die "$1: bad signature."
+    "$MINISIGN" -Vqm "$TMP/$1" -P "$PUBKEY" || die "$1: bad signature."
+  else
+    unchecked "$1: its signature can't be checked (no minisign, and it couldn't be downloaded: install minisign)"
   fi
 }
 
-# Checks a release folder against its own SHA256SUMS (and signature, when minisign is installed).
+# Checks a release folder against its own SHA256SUMS and that file's signature.
 check_folder() { # dir name
-  if [ -f "$1/SHA256SUMS" ]; then
-    (cd "$1" && sha256sum -c --quiet SHA256SUMS) || die "$2: files don't match its SHA256SUMS."
-    if [ -f "$1/SHA256SUMS.minisig" ] && command -v minisign >/dev/null 2>&1; then
-      minisign -Vqm "$1/SHA256SUMS" -P "$PUBKEY" || die "$2: bad signature on SHA256SUMS."
-      say "$2: checksums and signature verified."
-    else
-      say "$2: checksums verified."
-    fi
+  [ -f "$1/SHA256SUMS" ] || { unchecked "$2 has no SHA256SUMS to check its files against"; return 0; }
+  (cd "$1" && sha256sum -c --quiet SHA256SUMS) || die "$2: files don't match its SHA256SUMS."
+  if [ ! -f "$1/SHA256SUMS.minisig" ]; then
+    unchecked "$2 has no signature (SHA256SUMS.minisig)"
+  elif get_minisign; then
+    "$MINISIGN" -Vqm "$1/SHA256SUMS" -P "$PUBKEY" || die "$2: bad signature on SHA256SUMS."
+    say "$2: checksums and signature verified."
   else
-    say "Note: $2 has no SHA256SUMS; installing its files unchecked."
+    unchecked "$2: the signature can't be checked (no minisign, and it couldn't be downloaded: install minisign)"
   fi
 }
 
