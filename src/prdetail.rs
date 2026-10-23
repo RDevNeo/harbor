@@ -165,7 +165,7 @@ fn parse(v: &serde_json::Value) -> Full {
             Check { name, state, url }
         })
         .collect();
-    let comments: Vec<Note> = arr("comments").iter().map(|c| Note { author: login(&c["author"]), at: ts(c, "createdAt"), body: c["body"].as_str().unwrap_or("").to_string() }).collect();
+    let comments: Vec<Note> = arr("comments").iter().map(|c| Note { author: login(&c["author"]), at: ts(c, "createdAt"), body: clean_md(c["body"].as_str().unwrap_or("")) }).collect();
     let mut timeline = vec![(ts(v, "createdAt"), login(&v["author"]), Event::Opened)];
     for c in arr("commits") {
         let who = c["authors"][0]["login"].as_str().or(c["authors"][0]["name"].as_str()).unwrap_or("").to_string();
@@ -176,7 +176,7 @@ fn parse(v: &serde_json::Value) -> Full {
         timeline.push((
             ts(&r, "submittedAt"),
             login(&r["author"]),
-            Event::Review { state: r["state"].as_str().unwrap_or("").to_string(), body: r["body"].as_str().unwrap_or("").to_string() },
+            Event::Review { state: r["state"].as_str().unwrap_or("").to_string(), body: clean_md(r["body"].as_str().unwrap_or("")) },
         ));
     }
     for c in &comments {
@@ -199,12 +199,65 @@ fn parse(v: &serde_json::Value) -> Full {
         files: v["changedFiles"].as_u64().unwrap_or(0),
         labels: arr("labels").iter().filter_map(|l| Some((l["name"].as_str()?.to_string(), color(l["color"].as_str().unwrap_or(""))))).collect(),
         reviewers,
-        body: s("body"),
+        body: clean_md(&s("body")),
         checks,
         comments,
         timeline,
         conflicting: v["mergeable"].as_str() == Some("CONFLICTING"),
     }
+}
+
+/// GitHub renders HTML in descriptions and comments; the markdown viewer
+/// doesn't. Drops `<!-- comments -->` and common tags (keeping their text),
+/// outside code.
+pub fn clean_md(s: &str) -> String {
+    const TAGS: [&str; 18] = ["div", "a", "img", "picture", "source", "br", "p", "span", "details", "summary", "sub", "sup", "b", "i", "em", "strong", "hr", "center"];
+    let mut out = String::with_capacity(s.len());
+    let mut fenced = false;
+    let mut in_comment = false;
+    for line in s.split_inclusive('\n') {
+        if !in_comment && line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            out.push_str(line);
+            continue;
+        }
+        if fenced {
+            out.push_str(line);
+            continue;
+        }
+        let mut rest = line;
+        let mut code = false;
+        while !rest.is_empty() {
+            if in_comment {
+                match rest.find("-->") {
+                    Some(i) => {
+                        rest = &rest[i + 3..];
+                        in_comment = false;
+                    }
+                    None => rest = "",
+                }
+                continue;
+            }
+            let c = rest.chars().next().unwrap_or(' ');
+            if c == '`' {
+                code = !code;
+            } else if !code && rest.starts_with("<!--") {
+                in_comment = true;
+                rest = &rest[4..];
+                continue;
+            } else if !code && c == '<' {
+                let body = rest[1..].trim_start_matches('/');
+                let name: String = body.chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+                if let (true, Some(end)) = (TAGS.contains(&name.as_str()), rest.find('>')) {
+                    rest = &rest[end + 1..];
+                    continue;
+                }
+            }
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
 }
 
 /// A diff line, ready to paint.
@@ -908,6 +961,13 @@ pub fn repo_of(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn html_in_markdown() {
+        let s = "<!-- BEGIN -->\nText <b>bold</b> and `<div>` kept\n<!-- a\nb -->\n```\n<div>x</div>\n```\n<div><a href=\"u\"><img src=\"x\"></a></div>\n";
+        assert_eq!(clean_md(s), "\nText bold and `<div>` kept\n\n```\n<div>x</div>\n```\n\n");
+        assert_eq!(clean_md("a < b > c, Vec<T>"), "a < b > c, Vec<T>");
+    }
 
     #[test]
     fn diff_lines() {
