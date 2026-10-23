@@ -435,19 +435,31 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
         .max_height(max)
         .min_scrolled_height(max)
         .auto_shrink([false, true])
-        // A paste at the end lands below the fold before egui scrolls to the cursor.
-        .stick_to_bottom(true)
         .show(ui, |ui| {
-            TextEdit::multiline(text)
+            let out = TextEdit::multiline(text)
                 .id(id)
                 .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
                 .font(theme::ts("copy-14"))
                 .desired_rows(rows)
                 .desired_width(f32::INFINITY)
                 .frame(Frame::NONE)
-                .show(ui)
-                .response
-                .response
+                .show(ui);
+            // egui scrolls to the cursor in the frame the text changes, against the
+            // old content height, so a long paste stays at the top: scroll once more
+            // on the next frame, when the new height is known.
+            let again = id.with("rescroll");
+            let response = out.response.response;
+            if ui.data_mut(|d| d.remove_temp::<bool>(again)).is_some() {
+                if let Some(c) = out.cursor_range.filter(|_| response.has_focus()) {
+                    let r = out.galley.pos_from_cursor(c.primary).translate(out.galley_pos.to_vec2());
+                    ui.scroll_to_rect(r.expand2(Vec2::new(0.0, 4.0)), None);
+                }
+            }
+            if response.changed() {
+                ui.data_mut(|d| d.insert_temp(again, true));
+                ui.ctx().request_repaint();
+            }
+            response
         });
     let grown = (out.inner_rect.height() - min).max(0.0);
     ui.data_mut(|d| d.insert_temp(id.with("grown"), grown));
