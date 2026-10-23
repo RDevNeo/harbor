@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Processes Harbor started before an update no longer linger as zombies after they end: the
+  updated Harbor collects them.
+
 ## [0.8.6] - 2026-10-23
 
 ### Fixed
