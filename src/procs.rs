@@ -42,10 +42,80 @@ impl Proc {
         tail_file(&self.log, n)
     }
 
-    /// Stops the whole process group (npm → node → vite…).
+    /// Stops the whole process group (npm → node → vite…): TERM, and KILL for whatever
+    /// is still in it a few seconds later.
     pub fn stop(&self) {
-        let _ = Command::new("kill").args(["-TERM", "--", &format!("-{}", self.pid)]).status();
+        let pid = self.pid;
+        signal_group("-TERM", pid);
+        std::thread::spawn(move || {
+            let t = Instant::now();
+            while !group(pid).is_empty() {
+                if t.elapsed() > STOP_GRACE {
+                    signal_group("-KILL", pid);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
     }
+}
+
+/// How long a stopped process group gets to exit after TERM before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+/// A log beyond this keeps only its last [`LOG_KEEP`] bytes (only its end is read).
+const LOG_MAX: u64 = 8 * 1024 * 1024;
+const LOG_KEEP: u64 = 1024 * 1024;
+
+fn signal_group(sig: &str, pgid: u32) {
+    let _ = Command::new("kill").args([sig, "--", &format!("-{pgid}")]).stderr(Stdio::null()).status();
+}
+
+/// The live processes of process group `pgid` (field 5 of /proc/<pid>/stat).
+fn group(pgid: u32) -> Vec<u32> {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|p| {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{p}/stat")) else { return false };
+            let Some((_, rest)) = stat.rsplit_once(')') else { return false };
+            let mut f = rest.split_whitespace();
+            let state = f.next().unwrap_or("Z");
+            // After the state: ppid, then pgrp.
+            state != "Z" && f.nth(1).and_then(|g| g.parse::<u32>().ok()) == Some(pgid)
+        })
+        .collect()
+}
+
+/// Keeps a process's log small while it runs: past [`LOG_MAX`] only its last
+/// [`LOG_KEEP`] bytes stay. Ends once the log is gone (the process ended).
+fn cap_log(log: PathBuf) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            let Ok(len) = std::fs::metadata(&log).map(|m| m.len()) else { return };
+            if len > LOG_MAX {
+                let _ = trim(&log, LOG_KEEP);
+            }
+        }
+    });
+}
+
+/// Cuts `path` down to its last `keep` bytes, in place: the process writes with
+/// O_APPEND, so its next output lands after them.
+fn trim(path: &Path, keep: u64) -> std::io::Result<()> {
+    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let len = f.metadata()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(keep)))?;
+    let mut tail = Vec::new();
+    f.read_to_end(&mut tail)?;
+    // From the first whole line on.
+    let start = tail.iter().position(|b| *b == b'\n').map_or(0, |i| i + 1);
+    f.set_len(0)?;
+    f.seek(SeekFrom::Start(0))?;
+    std::io::Write::write_all(&mut f, "[… earlier output cut by Harbor]\n".as_bytes())?;
+    std::io::Write::write_all(&mut f, &tail[start..])
 }
 
 pub fn log_dir() -> PathBuf {
@@ -123,6 +193,10 @@ fn watch_url(id: i64, log: PathBuf, tx: Sender<ProcEvent>, wake: impl Fn() + Sen
         let mut offset = 0u64;
         for _ in 0..1500 {
             let Ok(mut f) = File::open(&log) else { return };
+            // Cut down meanwhile (cap_log): read it again from the start.
+            if f.metadata().is_ok_and(|m| m.len() < offset) {
+                offset = 0;
+            }
             let _ = f.seek(SeekFrom::Start(offset));
             let mut buf = Vec::new();
             if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
@@ -167,7 +241,7 @@ pub fn spawn(
     // Owner-only: dev servers print secrets (database URLs, tokens) too.
     let out = {
         use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&log).map_err(|e| e.to_string())?
+        std::fs::OpenOptions::new().append(true).create(true).mode(0o600).open(&log).map_err(|e| e.to_string())?
     };
     let err = out.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new("bash");
@@ -216,6 +290,7 @@ pub fn spawn(
         });
     }
     watch_url(id, log.clone(), tx, wake);
+    cap_log(log.clone());
     Ok(Proc { id, name: name.into(), lead, owner, cmd: cmd.into(), pid, started: Instant::now(), log, url: None })
 }
 
@@ -231,6 +306,7 @@ pub fn adopt(store: &crate::store::Store, tx: Sender<ProcEvent>, wake: impl Fn()
         }
         let log = PathBuf::from(&r.log);
         watch_exit(r.id, pid, r.start_ticks, tx.clone(), wake.clone());
+        cap_log(log.clone());
         if r.url.is_none() {
             watch_url(r.id, log.clone(), tx.clone(), wake.clone());
         }
@@ -247,4 +323,30 @@ pub fn adopt(store: &crate::store::Store, tx: Sender<ProcEvent>, wake: impl Fn()
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trims_a_log_to_its_end() {
+        let p = std::env::temp_dir().join(format!("harbor-proc-trim-{}.log", std::process::id()));
+        let lines: String = (0..1000).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(&p, &lines).unwrap();
+        trim(&p, 100).unwrap();
+        let t = std::fs::read_to_string(&p).unwrap();
+        assert!(t.starts_with("[… earlier output cut by Harbor]\nline 9"), "{t}");
+        assert!(t.ends_with("line 999\n") && t.len() < 150);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn finds_a_process_group() {
+        let mut c = Command::new("sleep").arg("30").process_group(0).spawn().unwrap();
+        assert_eq!(group(c.id()), vec![c.id()]);
+        let _ = c.kill();
+        let _ = c.wait();
+        assert!(group(c.id()).is_empty());
+    }
 }

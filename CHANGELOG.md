@@ -19,6 +19,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Long sessions stay fast: saving a chat writes only its new or changed items instead of rewriting
   the whole transcript, huge tool inputs and outputs keep their start and end (64 KB), and chats not
   looked at for a while leave memory until they're opened again.
+- Stopping a process started with start_process kills whatever of it is still running 5 seconds
+  after asking it to stop, and a process's log keeps only its last megabyte once it passes 8 MB.
 
 ## [0.8.4] - 2026-10-23
 
