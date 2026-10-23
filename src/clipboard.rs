@@ -10,12 +10,14 @@
 //! eframe's own clipboard shortcuts are off (main.rs): `App::raw_input_hook` turns
 //! Ctrl+C/X/V into egui's Copy/Cut/Paste events via `shortcuts`, and the `Plugin`
 //! here takes egui's copy commands (`ctx.copy_text`, text selections) to the system.
+//! Those copies, and the image viewer's, show a "Copied to clipboard" notification;
+//! a device pane forwarding its PC's clipboard calls [`copy_text`] and stays quiet.
 
 use eframe::egui::{self, Event, Key};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Text MIME types, best first.
 const TEXT: [&str; 5] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT"];
@@ -138,6 +140,45 @@ pub fn copy_image(bytes: Vec<u8>) {
     });
 }
 
+/// The same notice again within this long is skipped (a held Ctrl+C, a double click).
+const SAME_NOTICE: Duration = Duration::from_secs(1);
+/// Characters of copied text shown in the notice.
+const PREVIEW: usize = 60;
+
+/// One line of `text` for the notice: its first non-blank line, trimmed and cut to
+/// [`PREVIEW`] characters, "…" when anything was left out. None for blank text.
+fn preview(text: &str) -> Option<String> {
+    let first = text.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let mut s: String = first.chars().take(PREVIEW).collect();
+    if first.chars().count() > PREVIEW || text.trim() != first {
+        s.push('…');
+    }
+    Some(s)
+}
+
+/// Whether a notice with `body` should show at `now`, remembering it in `last`.
+fn fresh(last: &mut Option<(String, Instant)>, body: &str, now: Instant) -> bool {
+    if last.as_ref().is_some_and(|(b, at)| b == body && now.duration_since(*at) < SAME_NOTICE) {
+        return false;
+    }
+    *last = Some((body.to_string(), now));
+    true
+}
+
+/// Tells the user something reached the clipboard ("Copied to clipboard" + `body`).
+fn notice(body: &str) {
+    static LAST: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+    if fresh(&mut LAST.lock().unwrap_or_else(|e| e.into_inner()), body, Instant::now()) {
+        crate::limits::notify("Copied to clipboard", body);
+    }
+}
+
+/// An image copied by the user (the image viewer): [`copy_image`] with the notice.
+pub fn copy_image_noticed(bytes: Vec<u8>) {
+    copy_image(bytes);
+    notice("Image");
+}
+
 fn copy_color_image(img: &egui::ColorImage) {
     let [w, h] = img.size;
     let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
@@ -199,14 +240,41 @@ impl egui::plugin::Plugin for Plugin {
     fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
         output.platform_output.commands.retain(|c| match c {
             egui::OutputCommand::CopyText(t) => {
+                if let Some(p) = preview(t) {
+                    notice(&p);
+                }
                 copy_text(t.clone());
                 false
             }
             egui::OutputCommand::CopyImage(img) => {
                 copy_color_image(img);
+                notice("Image");
                 false
             }
             _ => true,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_is_one_short_line() {
+        assert_eq!(preview("  https://example.com/x \n"), Some("https://example.com/x".into()));
+        assert_eq!(preview("\n  first\nsecond"), Some("first…".into()));
+        assert_eq!(preview(&"a".repeat(80)), Some(format!("{}…", "a".repeat(60))));
+        assert_eq!(preview(" \n\t"), None);
+    }
+
+    #[test]
+    fn same_notice_within_a_second_is_skipped() {
+        let mut last = None;
+        let t = Instant::now();
+        assert!(fresh(&mut last, "a", t));
+        assert!(!fresh(&mut last, "a", t + Duration::from_millis(500)));
+        assert!(fresh(&mut last, "b", t + Duration::from_millis(600)));
+        assert!(fresh(&mut last, "b", t + Duration::from_millis(1700)));
     }
 }

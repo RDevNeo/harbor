@@ -411,7 +411,7 @@ pub fn lightbox(ctx: &egui::Context) {
         if copy {
             let bytes = lock(&s).bytes.get(&key).map(|b| b.to_vec()).or_else(|| std::fs::read(&key).ok());
             if let Some(b) = bytes {
-                crate::clipboard::copy_image(b);
+                crate::clipboard::copy_image_noticed(b);
             }
         }
         if n > 1 {
