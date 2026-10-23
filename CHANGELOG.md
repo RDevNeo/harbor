@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-10-23
+
 ### Security
 - Harbor's files are private to your account: its data folder (harbor.db with the phone API's and
   webhooks' tokens, transcripts, uploads and pastes), its turn files (commands, output) and process
@@ -291,7 +293,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/RDevNeo/harbor/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/RDevNeo/harbor/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/RDevNeo/harbor/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/RDevNeo/harbor/compare/v0.8.1...v0.8.2
