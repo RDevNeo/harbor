@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-23
+
 ### Added
 - Fix / Merge with instructions: the ▾ next to "Fix with …" and "Merge with …" (and the issue
   and PR right-click menus) opens a box for your own instructions or details; they go to the
@@ -199,7 +201,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/RDevNeo/harbor/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/RDevNeo/harbor/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/RDevNeo/harbor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/RDevNeo/harbor/compare/v0.5.0...v0.6.0
