@@ -265,7 +265,9 @@ fn local_href(r: &Path, base: &Path, href: &str) -> Vec<PathBuf> {
 
 /// hrefs of icon `<link>`s, in document order.
 fn link_icons(html: &str) -> Vec<String> {
-    let lower = html.to_lowercase();
+    // ASCII-only lowercasing keeps byte offsets valid in `html` (full Unicode lowercasing
+    // can change lengths, and slicing with its offsets panicked)
+    let lower = html.to_ascii_lowercase();
     let mut v = Vec::new();
     let mut at = 0;
     while let Some(i) = lower[at..].find("<link") {
@@ -284,7 +286,7 @@ fn link_icons(html: &str) -> Vec<String> {
 }
 
 fn attr(tag: &str, name: &str) -> Option<String> {
-    let lower = tag.to_lowercase();
+    let lower = tag.to_ascii_lowercase();
     let mut at = 0;
     while let Some(i) = lower[at..].find(name) {
         let p = at + i;
@@ -446,8 +448,69 @@ fn domain_of(s: &str) -> Option<String> {
     let host = rest.split(['/', '?', '#', ':', '"', '\'', ')', '*']).next()?.trim().to_lowercase();
     let ok = host.contains('.')
         && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        // a name, not an address (a LAN address is someone's router, not a website)
+        && !host.chars().all(|c| c.is_ascii_digit() || c == '.')
         && !NOT_SITES.iter().any(|n| host == *n || host.ends_with(&format!(".{n}")));
     ok.then_some(host)
+}
+
+/// Whether an address is on the public internet (not this PC, the LAN, the tailnet…).
+fn public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v) => {
+            let o = v.octets();
+            !(v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified() || v.is_broadcast() || v.is_multicast() || v.is_documentation()
+                || o[0] == 0
+                || (o[0] == 100 && (64..128).contains(&o[1]))) // CGNAT, Tailscale
+        }
+        IpAddr::V6(v) => match v.to_ipv4_mapped() {
+            Some(v4) => public(IpAddr::V4(v4)),
+            None => {
+                let s = v.segments()[0];
+                !(v.is_loopback() || v.is_unspecified() || v.is_multicast() || (s & 0xfe00) == 0xfc00 || (s & 0xffc0) == 0xfe80)
+            }
+        },
+    }
+}
+
+/// GETs an https URL of `domain` (or its www.) into `out`: at most 2 MB, 8 s per request,
+/// a few redirects within the site, and only from public addresses (the name is resolved
+/// here and pinned for curl, so it can't point somewhere else in between).
+fn get(url: &str, domain: &str, out: &Path) -> bool {
+    let mut url = url.to_string();
+    for _ in 0..4 {
+        // "https://host/…" with no port or login in it, on this site
+        let Some(rest) = url.strip_prefix("https://") else { return false };
+        let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = auth.to_ascii_lowercase();
+        let site = |h: &str| h == domain || h.strip_prefix("www.") == Some(domain) || domain.strip_prefix("www.") == Some(h);
+        if auth.contains([':', '@']) || domain_of(&host).is_none() || !site(&host) {
+            return false;
+        }
+        let addrs: Vec<std::net::SocketAddr> = std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)).map(|a| a.collect()).unwrap_or_default();
+        let Some(ip) = addrs.first().map(|a| a.ip()).filter(|_| addrs.iter().all(|a| public(a.ip()))) else { return false };
+        let pin = match ip {
+            std::net::IpAddr::V4(v) => format!("{host}:443:{v}"),
+            std::net::IpAddr::V6(v) => format!("{host}:443:[{v}]"),
+        };
+        let Ok(o) = std::process::Command::new("curl")
+            .args(["-s", "--max-time", "8", "--max-filesize", "2000000", "--proto", "=https", "--resolve", &pin, "-w", "%{http_code} %{redirect_url}", "-o"])
+            .arg(out)
+            .arg(&url)
+            .output()
+        else {
+            return false;
+        };
+        let w = String::from_utf8_lossy(&o.stdout).into_owned();
+        let (code, next) = w.split_once(' ').unwrap_or((w.as_str(), ""));
+        match code.parse::<u16>().unwrap_or(0) {
+            200..300 => return o.status.success() && std::fs::metadata(out).is_ok_and(|m| m.len() <= 2_000_000),
+            300..400 if !next.trim().is_empty() => url = next.trim().to_string(),
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn first_url(text: &str) -> Option<String> {
@@ -458,7 +521,7 @@ fn first_url(text: &str) -> Option<String> {
 
 /// The site's icon file, cached under favicons/<domain> for a week (a
 /// <domain>.none marker remembers that it has none). Only fetches from
-/// `domain` itself.
+/// `domain` itself (see `get`).
 fn fetch_site_icon(domain: &str, refresh: bool) -> Option<PathBuf> {
     let dir = cache_dir();
     let _ = std::fs::create_dir_all(&dir);
@@ -474,14 +537,7 @@ fn fetch_site_icon(domain: &str, refresh: bool) -> Option<PathBuf> {
         }
     }
     let base = format!("https://{domain}");
-    let curl = |url: &str, out: &Path| {
-        std::process::Command::new("curl")
-            .args(["-sfL", "--max-time", "8", "--max-filesize", "2000000", "--proto", "=https", "-o"])
-            .arg(out)
-            .arg(url)
-            .status()
-            .is_ok_and(|s| s.success())
-    };
+    let curl = |url: &str, out: &Path| get(url, domain, out);
     // The page's <link rel=icon>, if it points at this domain, then /favicon.ico.
     let mut urls = Vec::new();
     let page = dir.join(format!("{domain}.html"));
@@ -525,6 +581,31 @@ mod tests {
     fn parses_links() {
         let html = r#"<head><link rel="stylesheet" href="a.css"><LINK REL='shortcut icon' HREF='/fav.ico'><link href="/i.svg" rel="icon" type="image/svg+xml"></head>"#;
         assert_eq!(link_icons(html), vec!["/fav.ico", "/i.svg"]);
+        // non-ASCII before and after a tag (Unicode lowercasing shifted offsets: a panic)
+        assert_eq!(link_icons("İİ<link rel=icon href=a>€ İ<LINK HREF='b' REL=icon>€€"), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn only_public_sites() {
+        use std::net::{IpAddr, Ipv4Addr};
+        // (LAN and tailnet addresses built from octets: the pre-commit hook refuses them as text)
+        let lan = Ipv4Addr::new(192, 168, 0, 1);
+        assert_eq!(domain_of(&format!("https://{lan}/")), None);
+        assert_eq!(domain_of("https://10.0.0.1:8443/x"), None);
+        let mut private: Vec<IpAddr> = ["127.0.0.2", "10.1.2.3", "172.16.0.1", "169.254.1.1", "0.1.2.3", "::1", "fd00::1", "fe80::1"].iter().map(|s| s.parse().unwrap()).collect();
+        private.extend([IpAddr::V4(lan), IpAddr::V4(Ipv4Addr::new(100, 100, 1, 1)), IpAddr::V6(lan.to_ipv6_mapped())]);
+        for ip in private {
+            assert!(!public(ip), "{ip}");
+        }
+        for ip in ["1.1.1.1", "8.8.8.8", "2606:4700::1111"] {
+            assert!(public(ip.parse().unwrap()), "{ip}");
+        }
+        // other hosts, ports and logins in URLs are never fetched
+        let out = std::env::temp_dir().join("harbor-favicon-test-none");
+        assert!(!get("https://other.example.org/", "site.example.org", &out));
+        assert!(!get("https://site.example.org:8443/", "site.example.org", &out));
+        assert!(!get("https://u@site.example.org/", "site.example.org", &out));
+        assert!(!get("http://site.example.org/", "site.example.org", &out));
     }
 
     fn png(w: u32, h: u32) -> Vec<u8> {

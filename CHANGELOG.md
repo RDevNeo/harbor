@@ -20,6 +20,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   100 automatic messages wait per chat.
 
 ### Fixed
+- Project icons: website icons are only fetched from public addresses of the project's own site (no IP addresses, LAN, loopback or tailnet hosts; redirects only within the site; 2 MB and 8 s per request), and pages with non-ASCII text before an icon link no longer stop the lookup.
 - Device files: big folders scroll smoothly; only the rows in view are laid out, and the listing is no longer copied every frame.
 - PC screens (harbor-stream): replies from the PC's screen sharing are capped at 1 MB and a deadline, and malformed ones end the connection with an error instead of crashing the viewer.
 - Device and browser screens: frame files (a live picture of the screen) and clipboard images being sent go to a private folder only you can open (`$XDG_RUNTIME_DIR/harbor`, mode 0700; files 0600), instead of world-readable files at guessable names in /dev/shm and /tmp.
