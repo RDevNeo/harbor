@@ -268,8 +268,9 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
     let a = &spec.account;
     let mut cmd = Command::new(a.bin_str());
     cmd.current_dir(&spec.cwd);
-    // Credentials only from Harbor's own sign-ins (Settings > Integrations > Apps).
-    for (k, v) in a.env().into_iter().chain(crate::mcp::agent_env()) {
+    // Credentials only from Harbor's own sign-ins (Settings > Integrations > Apps): the
+    // turn's runner adds them (detach.rs), so they stay out of its files.
+    for (k, v) in a.env() {
         match v {
             Some(v) => cmd.env(k, v),
             None => cmd.env_remove(k),
@@ -535,7 +536,8 @@ pub fn start(spec: TurnSpec, tx: Sender<(i64, Event)>, wake: impl Fn(bool) + Sen
         pid_start: 0,
     };
     // Claude's input stays open for messages sent mid-turn (closed after its result).
-    let (dir, meta) = match crate::detach::spawn(&cmd, input.as_deref(), spec.account.kind == Kind::Claude, meta) {
+    let env = spec.remote.is_none();
+    let (dir, meta) = match crate::detach::spawn(&cmd, input.as_deref(), spec.account.kind == Kind::Claude, env, meta) {
         Ok(x) => x,
         Err(e) => {
             if let Some(g) = &grant {

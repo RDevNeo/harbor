@@ -92,7 +92,8 @@ fn local_for(name: &str) -> Option<&'static Local> {
 
 // ------------------------------------------------------------------ store
 
-fn private_dir(p: PathBuf) -> PathBuf {
+/// `p`, created if missing and made owner-only (0700).
+pub fn private_dir(p: PathBuf) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::create_dir_all(&p);
     let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700));
@@ -732,6 +733,12 @@ pub fn locals() -> Defs {
 /// Convex and Supabase CLIs and their MCP servers no longer find the user's sign-ins.
 pub fn agent_env() -> Vec<(String, Option<String>)> {
     keep_fresh();
+    agent_env_now()
+}
+
+/// [`agent_env`] without starting the token refresher: for a turn's runner, which sets
+/// it itself so the tokens never land in the turn's `cmd.json`.
+pub fn agent_env_now() -> Vec<(String, Option<String>)> {
     let mut v: Vec<(String, Option<String>)> = vec![];
     for k in ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "CONVEX_DEPLOY_KEY", "VERCEL_TOKEN"] {
         v.push((k.into(), None));

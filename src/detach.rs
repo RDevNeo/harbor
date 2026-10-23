@@ -37,14 +37,14 @@ pub struct Meta {
 /// The turns of this Harbor. A Harbor on another data folder (a test instance) gets
 /// its own, so instances never see, pick up or sweep each other's turns.
 pub fn root() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::store::home().join(".local/state"));
+    let base = crate::store::state_dir();
     let data = crate::store::data_dir();
     if data == crate::store::home().join(".local/share/harbor") {
-        return base.join("harbor/turns");
+        return base.join("turns");
     }
     // FNV-1a of the data folder: stable across runs and builds.
     let h = data.to_string_lossy().bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
-    base.join(format!("harbor/turns-{:012x}", h & 0xffff_ffff_ffff))
+    base.join(format!("turns-{:012x}", h & 0xffff_ffff_ffff))
 }
 
 /// The chat a process runs a turn for, if it is a `harbor turn <root>/<chat>-…` runner.
@@ -93,8 +93,9 @@ pub fn alive(pid: u32, start: u64) -> bool {
 }
 
 /// Starts `cmd` under a detached runner in a new turn folder. `input` is written to
-/// the agent first; with `keep_input` the input stays open for more until closed.
-pub fn spawn(cmd: &Command, input: Option<&str>, keep_input: bool, mut meta: Meta) -> std::io::Result<(PathBuf, Meta)> {
+/// the agent first; with `keep_input` the input stays open for more until closed. With
+/// `agent_env` the runner adds Harbor's app credentials (`mcp::agent_env`) itself.
+pub fn spawn(cmd: &Command, input: Option<&str>, keep_input: bool, agent_env: bool, mut meta: Meta) -> std::io::Result<(PathBuf, Meta)> {
     let dir = root().join(format!("{}-{}", meta.chat_id, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
     std::fs::create_dir_all(&dir)?;
     let env: Vec<(String, Option<String>)> =
@@ -105,8 +106,9 @@ pub fn spawn(cmd: &Command, input: Option<&str>, keep_input: bool, mut meta: Met
         "cwd": cmd.get_current_dir().map(|d| d.to_string_lossy().into_owned()),
         "env": env,
         "input": input.is_some(),
+        "agent_env": agent_env,
     });
-    std::fs::write(dir.join("cmd.json"), spec.to_string())?;
+    crate::mcp::write_private(&dir.join("cmd.json"), &spec.to_string())?;
     if let Some(text) = input {
         // Owner-only: a remote turn's input starts with the account's login (agent.rs).
         crate::mcp::write_private(&dir.join("in"), text)?;
@@ -300,7 +302,19 @@ pub fn run(args: &[String]) {
             _ => continue,
         };
     }
-    let open = |name: &str| std::fs::OpenOptions::new().create(true).append(true).open(dir.join(name));
+    if spec["agent_env"].as_bool() == Some(true) {
+        for (k, v) in crate::mcp::agent_env_now() {
+            match v {
+                Some(v) => cmd.env(k, v),
+                None => cmd.env_remove(k),
+            };
+        }
+    }
+    // Owner-only: the agent's whole stream (prompts, files it read, command output).
+    let open = |name: &str| {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(dir.join(name))
+    };
     let (Ok(out), Ok(err)) = (open("out"), open("err")) else { return };
     let input = spec["input"].as_bool() == Some(true);
     cmd.stdin(if input { Stdio::piped() } else { Stdio::null() }).stdout(out).stderr(err);

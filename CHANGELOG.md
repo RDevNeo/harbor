@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Security
+- Harbor's files are private to your account: its data folder (harbor.db with the phone API's and
+  webhooks' tokens, transcripts, uploads and pastes), its turn files (commands, output) and process
+  logs are owner-only now, also on existing installs. App sign-in tokens no longer go into a turn's
+  files: the turn's runner adds them itself.
+
 ### Fixed
 - Long sessions stay fast: saving a chat writes only its new or changed items instead of rewriting
   the whole transcript, huge tool inputs and outputs keep their start and end (64 KB), and chats not

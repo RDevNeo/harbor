@@ -49,8 +49,7 @@ impl Proc {
 }
 
 pub fn log_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::store::home().join(".local/state"));
-    base.join("harbor/procs")
+    crate::store::state_dir().join("procs")
 }
 
 fn tail_file(path: &Path, n: usize) -> String {
@@ -165,7 +164,11 @@ pub fn spawn(
     let dir = log_dir();
     let _ = std::fs::create_dir_all(&dir);
     let log = dir.join(format!("{}.log", crate::store::new_uuid()));
-    let out = File::create(&log).map_err(|e| e.to_string())?;
+    // Owner-only: dev servers print secrets (database URLs, tokens) too.
+    let out = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&log).map_err(|e| e.to_string())?
+    };
     let err = out.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new("bash");
     // Agents start these: same credentials as the agent itself.

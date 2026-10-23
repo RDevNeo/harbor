@@ -213,6 +213,12 @@ pub fn data_dir() -> PathBuf {
     base.join("harbor")
 }
 
+/// Harbor's state on this computer (running turns, process logs), owner-only.
+pub fn state_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/state"));
+    crate::mcp::private_dir(base.join("harbor"))
+}
+
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
 }
@@ -321,9 +327,24 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
 
 impl Store {
     pub fn open() -> rusqlite::Result<Self> {
-        let dir = data_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        Self::open_at(&dir.join("harbor.db"))
+        // Owner-only: the database holds the phone API's and webhooks' tokens and every
+        // transcript, and uploads and pastes are beside it (earlier versions left all of
+        // it readable by every account here).
+        let dir = crate::mcp::private_dir(data_dir());
+        let path = dir.join("harbor.db");
+        if !path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path);
+        }
+        let store = Self::open_at(&path)?;
+        // SQLite gives its -wal and -shm files the database's mode; backups too.
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().starts_with("harbor.db") {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(e.path(), std::fs::Permissions::from_mode(0o600));
+            }
+        }
+        Ok(store)
     }
 
     fn open_at(path: &std::path::Path) -> rusqlite::Result<Self> {
