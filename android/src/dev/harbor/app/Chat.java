@@ -2,6 +2,7 @@ package dev.harbor.app;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -17,6 +18,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -42,7 +44,7 @@ public class Chat extends Base {
     private TextView earlier; // "Show earlier" on top
     private int from = -1;          // first seq drawn (-1: not known yet)
     private long rev;
-    private boolean loading, again, loaded, sending;
+    private boolean loading, again, loaded, sending, gone; // gone: deleted, keep no draft
 
     @Override
     protected void onCreate(Bundle b) {
@@ -53,7 +55,7 @@ public class Chat extends Base {
         LinearLayout root = frame("Chat", true);
         action(Ui.I_MENU, v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
-            if (c != null) Chats.menu(this, hub, c, this::refreshState, this::finish);
+            if (c != null) Chats.menu(this, hub, c, this::refreshState, this::deleted);
         });
         barTitle.setOnClickListener(v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
@@ -92,7 +94,7 @@ public class Chat extends Base {
         composer.setMaxLines(6);
         composer.setBackground(Ui.round(Ui.G100, Ui.G400, 20));
         composer.setPadding(Ui.dp(14), Ui.dp(10), Ui.dp(14), Ui.dp(10));
-        composer.setText(getSharedPreferences("drafts", MODE_PRIVATE).getString(chatId, ""));
+        composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         comp.addView(composer, Ui.margins(Ui.weight(), 2, 0, 6, 0));
         sendBtn = Ui.icon(this, Ui.I_SEND, 18, Ui.BG);
         sendBtn.setBackground(Ui.press(Ui.FG, 0, 22));
@@ -114,8 +116,10 @@ public class Chat extends Base {
     @Override
     protected void onPause() {
         super.onPause();
-        if (composer != null)
-            getSharedPreferences("drafts", MODE_PRIVATE).edit().putString(chatId, composer.getText().toString()).apply();
+        if (composer == null || gone) return;
+        String d = composer.getText().toString();
+        if (d.trim().isEmpty()) drafts(this).edit().remove(draftKey(hub, chatId)).apply();
+        else drafts(this).edit().putString(draftKey(hub, chatId), d).apply();
     }
 
     @Override
@@ -129,6 +133,12 @@ public class Chat extends Base {
         if (off) sub(why, Ui.RED); else { showChat(Hub.chat(Hub.states.get(hub.id), chatId)); load(true); }
     }
 
+    private void deleted() {
+        gone = true;
+        forget(this, hub.id, chatId);
+        finish();
+    }
+
     // ---- header ----
 
     private void refreshState() {
@@ -138,7 +148,7 @@ public class Chat extends Base {
                 Ui.main.post(() -> {
                     if (isFinishing()) return;
                     JSONObject c = Hub.chat(st, chatId);
-                    if (c == null) { Ui.toast(this, "This chat was deleted"); finish(); return; }
+                    if (c == null) { Ui.toast(this, "This chat was deleted"); deleted(); return; }
                     showChat(c);
                 });
             } catch (Exception ignored) { }
@@ -210,7 +220,7 @@ public class Chat extends Base {
                 loading = false;
                 if (isFinishing()) return;
                 if (fr != null) apply(fr, full);
-                else if (fcode == 404) { Ui.toast(this, "This chat was deleted"); finish(); return; }
+                else if (fcode == 404) { Ui.toast(this, "This chat was deleted"); deleted(); return; }
                 else if (!loaded) { clear(); hintView = hint(ferr); content.addView(hintView); }
                 if (again) { again = false; load(false); }
             });
@@ -496,6 +506,35 @@ public class Chat extends Base {
         });
     }
 
+    // ---- drafts ----
+
+    /** Unsent composer text, per hub and chat: "<hub id>/<chat id>" (chat ids repeat across PCs). */
+    static SharedPreferences drafts(Context c) {
+        SharedPreferences p = c.getSharedPreferences("drafts", MODE_PRIVATE);
+        // Older versions keyed by chat id alone: keep them only when that can't mix up PCs.
+        List<Hub> hubs = null;
+        SharedPreferences.Editor e = null;
+        for (Map.Entry<String, ?> d : p.getAll().entrySet()) {
+            if (d.getKey().contains("/")) continue;
+            if (hubs == null) { hubs = Hub.all(c); e = p.edit(); }
+            if (hubs.size() == 1 && d.getValue() instanceof String) e.putString(draftKey(hubs.get(0), d.getKey()), (String) d.getValue());
+            e.remove(d.getKey());
+        }
+        if (e != null) e.apply();
+        return p;
+    }
+
+    static String draftKey(Hub hub, String chat) { return hub.id + "/" + chat; }
+
+    /** Drops a hub's drafts (unpaired), or one chat's (deleted) when chat isn't null. */
+    static void forget(Context c, String hubId, String chat) {
+        SharedPreferences p = c.getSharedPreferences("drafts", MODE_PRIVATE);
+        SharedPreferences.Editor e = p.edit();
+        for (String k : p.getAll().keySet())
+            if (chat == null ? k.startsWith(hubId + "/") : k.equals(hubId + "/" + chat)) e.remove(k);
+        e.apply();
+    }
+
     static void open(Context c, Hub hub, String id) {
         c.startActivity(new Intent(c, Chat.class).putExtra("hub", hub.id).putExtra("chat", id));
     }
@@ -548,7 +587,7 @@ public class Chat extends Base {
                 if (fe != null) { Ui.toast(this, fe); return; }
                 composer.setText("");
                 attach.clear();
-                getSharedPreferences("drafts", MODE_PRIVATE).edit().remove(chatId).apply();
+                drafts(this).edit().remove(draftKey(hub, chatId)).apply();
                 toEnd();
                 load(false);
             });

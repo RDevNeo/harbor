@@ -193,8 +193,10 @@ public class Chats extends Base {
             else Ui.dialog(a).setTitle("Delete this chat?")
                     .setMessage("“" + c.optString("title") + "” and its transcript are removed on the PC. A running turn is stopped first.")
                     .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Delete", (d2, w2) -> Ui.bg(a, () -> hub.call("DELETE", "/v1/chats/" + id, null),
-                            r -> (deleted != null ? deleted : after).run()))
+                    .setPositiveButton("Delete", (d2, w2) -> Ui.bg(a, () -> hub.call("DELETE", "/v1/chats/" + id, null), r -> {
+                        Chat.forget(a, hub.id, id);
+                        (deleted != null ? deleted : after).run();
+                    }))
                     .show();
         }).show();
     }

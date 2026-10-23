@@ -179,6 +179,8 @@ final class Hub {
         save(c, hubs);
         states.remove(id);
         if (id.equals(last(c))) prefs(c).edit().remove("last").apply();
+        Chat.forget(c, id, null);
+        c.deleteSharedPreferences("newchat-" + id);
     }
 
     static void setLast(Context c, String id) { prefs(c).edit().putString("last", id).apply(); }
