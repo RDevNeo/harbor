@@ -293,6 +293,7 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
     let mut stdin = None;
     // A remote turn's servers go through the bridge, at a port forwarded to the device.
     let mut grant = None;
+    let mut remote_mcp: Option<String> = None;
     let remote_port = 20000 + u16::from_str_radix(&crate::bridge::token()[..4], 16).unwrap_or(0) % 40000;
 
     match a.kind {
@@ -344,7 +345,9 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                     Some(r) => {
                         let servers = if r.bridge { crate::mcp::claude_servers(harbor) } else { harbor.map(|(k, v)| (k.to_string(), v)).into_iter().collect() };
                         let g = crate::bridge::Grant { token: crate::bridge::token(), chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers, commands: r.commands && spec.access != "plan", workspace: workspace.clone() };
-                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::bridge::remote_config(&g, remote_port).to_string());
+                        // The config holds the grant's token: it goes on stdin, not on a command line.
+                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::remote::MCP_CONFIG_ARG);
+                        remote_mcp = Some(crate::bridge::remote_config(&g, remote_port).to_string());
                         grant = Some(g);
                     }
                 }
@@ -468,11 +471,20 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
         let port = crate::bridge::grant(g.clone()).ok_or_else(|| std::io::Error::other("Harbor's MCP bridge couldn't open a port on 127.0.0.1"))?;
         // The device's own `claude` (from its login shell's PATH), with the same arguments.
         let argv: Vec<String> = std::iter::once("claude".to_string()).chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned())).collect();
-        // The login first (it's the first stdin line), then the profile, then the session.
+        // The login first (it's the first stdin line), the MCP config next, then the profile
+        // and the session.
         let mut setup = vec![];
+        let mut lines = String::new();
         if let Some(t) = &r.token {
             setup.push(crate::remote::token_setup());
-            stdin = Some(format!("{t}\n{}", stdin.unwrap_or_default()));
+            lines.push_str(&format!("{t}\n"));
+        }
+        if let Some(c) = &remote_mcp {
+            setup.push(crate::remote::mcp_setup());
+            lines.push_str(&format!("{c}\n"));
+        }
+        if !lines.is_empty() {
+            stdin = Some(format!("{lines}{}", stdin.unwrap_or_default()));
         }
         setup.extend(r.setup.iter().cloned());
         if spec.resume {

@@ -485,7 +485,7 @@ pub fn remote_command(dir: &str, setup: &[String], argv: &[String]) -> String {
         s.push('\n');
     }
     s.push_str(&path_require(argv.first().map(String::as_str).unwrap_or("claude")));
-    s.push_str(&argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" "));
+    s.push_str(&argv.iter().map(|a| if a == MCP_CONFIG_ARG { "\"$HARBOR_MCP_CONFIG\"".to_string() } else { quote(a) }).collect::<Vec<_>>().join(" "));
     s.push_str(
         " <&0 &\nc=$!\n( while kill -0 $PPID 2>/dev/null; do sleep 2; done; pkill -TERM -P $c; kill -TERM $c ) >/dev/null 2>&1 &\nw=$!\nwait $c; s=$?\nkill $w 2>/dev/null\nexit $s\n",
     );
@@ -525,6 +525,16 @@ fn path_require(bin: &str) -> String {
 /// line shows in `ps` on both PCs.
 pub fn token_setup() -> String {
     "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN".into()
+}
+
+/// The argument [`remote_command`] turns into the path of the file [`mcp_setup`] wrote.
+pub const MCP_CONFIG_ARG: &str = "@harbor-mcp-config";
+
+/// A shell line for the device: takes the next stdin line (the `--mcp-config` JSON, whose
+/// URLs hold the bridge's token) into an owner-only temp file, removed when the turn ends.
+/// Never an argument: anyone on either PC could read it in `ps` and use the bridge.
+pub fn mcp_setup() -> String {
+    r#"IFS= read -r HARBOR_MCP; HARBOR_MCP_CONFIG=$(umask 077; mktemp) && printf '%s\n' "$HARBOR_MCP" > "$HARBOR_MCP_CONFIG" && trap 'rm -f "$HARBOR_MCP_CONFIG"' EXIT; unset HARBOR_MCP"#.into()
 }
 
 /// A Claude profile (~/.claude2…) used on the device too when it has one there, so its
@@ -716,6 +726,28 @@ mod tests {
             c.wait_with_output()
         });
         assert_eq!(String::from_utf8_lossy(&out.unwrap().stdout), "|1|{\"n\":1}\n");
+    }
+
+    /// The MCP config (it holds the bridge's token) comes after the login on stdin, reaches
+    /// the agent as an owner-only file named by `--mcp-config`, and is gone after the turn.
+    #[test]
+    fn mcp_config_travels_on_stdin() {
+        let setup = [token_setup(), mcp_setup()];
+        let argv: Vec<String> = ["sh", "-c", "printf '%s|%s|%s|%s|' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$1\" \"$(cat \"$1\")\" \"$(stat -c %a \"$1\")\"; cat", "sh", MCP_CONFIG_ARG].iter().map(|s| s.to_string()).collect();
+        let script = remote_command("/", &setup, &argv);
+        assert!(!script.contains("secret-grant"));
+        let out = Command::new("sh").arg("-c").arg(&script).stdin(Stdio::piped()).stdout(Stdio::piped()).env_remove("CLAUDE_CODE_OAUTH_TOKEN").spawn().and_then(|mut c| {
+            use std::io::Write;
+            c.stdin.take().unwrap().write_all(b"sk-ant-oat01-abc\n{\"url\":\"http://127.0.0.1:1/secret-grant/origin\"}\n{\"type\":\"user\"}\n")?;
+            c.wait_with_output()
+        });
+        let out = String::from_utf8_lossy(&out.unwrap().stdout).into_owned();
+        let parts: Vec<&str> = out.split('|').collect();
+        assert_eq!(parts[0], "sk-ant-oat01-abc");
+        assert_eq!(parts[2], "{\"url\":\"http://127.0.0.1:1/secret-grant/origin\"}");
+        assert_eq!(parts[3], "600");
+        assert_eq!(parts[4], "{\"type\":\"user\"}\n");
+        assert!(!parts[1].is_empty() && !std::path::Path::new(parts[1]).exists(), "the config file outlived the turn: {}", parts[1]);
     }
 
     /// A CLI that a bash login shell doesn't see (a Mac's PATH lives in zsh files) is

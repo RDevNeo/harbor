@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Security
+- Remote devices: the MCP bridge's key no longer appears on command lines (`ps`) on either PC.
+  It reaches the device on the connection's input, in a file only you can read, removed when the turn ends.
+
+
 ## [0.8.3] - 2026-10-23
 
 ### Fixed
