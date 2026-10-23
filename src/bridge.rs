@@ -524,7 +524,8 @@ fn run_command(g: &Grant, a: &Value) -> (bool, String) {
 
 /// Runs `script` in a login bash in `cwd`, with an agent's environment, for at most
 /// `limit`: its exit code and output (the end, past [`OUTPUT_MAX`]); Err("") when it
-/// was stopped, Err(why) when it didn't start.
+/// was stopped, Err(why) when it didn't start. Background processes it leaves holding
+/// the output are stopped with it (they'd keep the call from ever returning).
 pub fn shell(script: &str, cwd: &Path, limit: Duration) -> (Result<i32, String>, String) {
     let mut cmd = shell_command(script, cwd);
     let mut child = match cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
@@ -532,25 +533,73 @@ pub fn shell(script: &str, cwd: &Path, limit: Duration) -> (Result<i32, String>,
         Err(e) => return (Err(format!("cannot run it in {}: {e}", cwd.display())), String::new()),
     };
     let mut out = child.stdout.take().unwrap();
-    let reader = std::thread::spawn(move || {
-        let mut b = vec![];
-        let _ = out.read_to_end(&mut b);
-        b
+    // Only the end is kept, however much it prints.
+    let kept = Arc::new(Mutex::new(Tail::default()));
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let k = kept.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        while let Ok(n) = out.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            k.lock().unwrap().push(&buf[..n]);
+        }
+        let _ = done_tx.send(());
     });
+    let pid = child.id();
+    let group = || {
+        let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
+    };
     let t = Instant::now();
     let status = loop {
         if let Ok(Some(st)) = child.try_wait() {
             break Ok(st.code().unwrap_or(-1));
         }
         if t.elapsed() > limit {
-            let _ = Command::new("kill").args(["-KILL", &format!("-{}", child.id())]).status();
+            group();
             let _ = child.wait();
             break Err(String::new());
         }
         std::thread::sleep(Duration::from_millis(30));
     };
-    let bytes = reader.join().unwrap_or_default();
-    (status, tail(String::from_utf8_lossy(&bytes).into_owned(), OUTPUT_MAX))
+    // The output ends when everything holding it is gone: a moment for that, then the group goes.
+    let mut note = "";
+    if done.recv_timeout(Duration::from_millis(500)).is_err() {
+        group();
+        note = "\n[stopped the background processes still holding the output; redirect the output of ones that should keep running]";
+        let _ = done.recv_timeout(Duration::from_secs(2));
+    }
+    let text = kept.lock().unwrap().text(OUTPUT_MAX);
+    (status, text + note)
+}
+
+/// The last bytes of an output and how many were dropped before them.
+#[derive(Default)]
+struct Tail {
+    bytes: Vec<u8>,
+    cut: usize,
+}
+
+impl Tail {
+    fn push(&mut self, b: &[u8]) {
+        self.bytes.extend_from_slice(b);
+        // Trimmed now and then, not on every read.
+        if self.bytes.len() > 2 * OUTPUT_MAX {
+            let drop = self.bytes.len() - OUTPUT_MAX;
+            self.bytes.drain(..drop);
+            self.cut += drop;
+        }
+    }
+
+    fn text(&self, max: usize) -> String {
+        let start = self.bytes.len().saturating_sub(max);
+        // Not from the middle of a character.
+        let start = (start..self.bytes.len()).find(|i| self.bytes[*i] & 0xC0 != 0x80).unwrap_or(self.bytes.len());
+        let cut = self.cut + start;
+        let text = String::from_utf8_lossy(&self.bytes[start..]).into_owned();
+        if cut == 0 { text } else { format!("[… {cut} bytes cut]\n{text}") }
+    }
 }
 
 /// `bash -lc script` in `cwd` in its own process group (stopped as a whole).
@@ -568,16 +617,6 @@ pub fn shell_command(script: &str, cwd: &Path) -> Command {
         cmd.process_group(0);
     }
     cmd
-}
-
-/// The last `max` bytes of `text`, saying how much was cut.
-pub fn tail(text: String, max: usize) -> String {
-    if text.len() <= max {
-        return text;
-    }
-    let cut = text.len() - max;
-    let cut = (cut..text.len()).find(|i| text.is_char_boundary(*i)).unwrap_or(cut);
-    format!("[… {cut} bytes cut]\n{}", &text[cut..])
 }
 
 /// A user command or skill offered as an MCP prompt.
@@ -724,6 +763,22 @@ mod tests {
         assert_eq!(forwarded_port(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
         assert_ne!(PORT, crate::api::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn shell_keeps_the_end_and_returns_despite_background_children() {
+        let dir = std::env::temp_dir();
+        let (st, text) = shell("head -c 3000000 /dev/zero | tr '\\0' a; echo; echo last", &dir, Duration::from_secs(20));
+        assert_eq!(st, Ok(0));
+        assert!(text.starts_with("[… ") && text.ends_with("\nlast\n") && text.len() < OUTPUT_MAX + 100, "{}", &text[..80]);
+        let t = Instant::now();
+        let (st, text) = shell("sleep 300 & echo started", &dir, Duration::from_secs(20));
+        assert_eq!(st, Ok(0));
+        assert!(text.starts_with("started\n") && text.contains("stopped the background processes"), "{text}");
+        assert!(t.elapsed() < Duration::from_secs(5));
+        let (st, _) = shell("sleep 300", &dir, Duration::from_secs(1));
+        assert_eq!(st, Err(String::new()));
+        assert!(t.elapsed() < Duration::from_secs(9));
     }
 
     #[test]

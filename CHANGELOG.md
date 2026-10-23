@@ -22,6 +22,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ### Fixed
 - Remote devices: the MCP bridge has its own port (47940) and no longer takes the phone API's
   (47930) when it starts first; turns started before the update keep being served.
+- Remote devices working on this PC's files: a shell command keeps only the end of its output in
+  memory, and returns when it ends even if it left a background process holding its output
+  (that process is stopped, and the agent is told).
 
 
 ## [0.8.3] - 2026-10-23
