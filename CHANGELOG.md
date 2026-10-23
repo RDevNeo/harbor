@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Settings › Phones: Harbor for Android, a chat client for your phone. Turn on phone access, pair
+  a phone with a QR code (each phone gets its own key, revocable), and install the app from a
+  second QR code. The phone lists, opens and starts this PC's chats over Tailscale (device,
+  account, model, effort and access), sends messages and files, stops, renames, settles, forks
+  and deletes them. Harbor listens on its tailnet address only, port 47930. Updates and
+  install.sh fetch the app with each release.
+
 ## [0.7.0] - 2026-10-23
 
 ### Added

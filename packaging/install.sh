@@ -11,7 +11,7 @@
 # --with-browser then uses an extracted harbor-browser-x86_64-linux folder (or its .tar.gz)
 # beside it, and downloads only if there is neither.
 #
-# Layout: ~/.local/lib/harbor/{harbor,harbor-stream,harbor-browser}, ~/.local/bin/harbor (link),
+# Layout: ~/.local/lib/harbor/{harbor,harbor-stream,harbor-browser,harbor-android.apk}, ~/.local/bin/harbor (link),
 # ~/.local/share/applications/harbor.desktop, ~/.local/share/icons/hicolor/…/harbor.{svg,png}.
 # Harbor updates itself afterwards (Settings › General).
 set -eu
@@ -171,6 +171,15 @@ if [ -z "$HERE" ]; then
 fi
 [ -x "$SRC/harbor" ] || die "no harbor binary in $SRC."
 
+# The phone app (Settings › Phones serves it to Harbor for Android), when the release has one.
+APK=""
+if [ -z "$HERE" ] && grep -q "  harbor-android.apk\$" "$TMP/SHA256SUMS" 2>/dev/null; then
+  if fetch harbor-android.apk; then
+    verify harbor-android.apk
+    APK="$TMP/harbor-android.apk"
+  fi
+fi
+
 if [ "$BROWSER" = 1 ] && [ -z "$BSRC" ]; then
   BR="harbor-browser-$ARCH-linux.tar.gz"
   say "Downloading the browser engine…"
@@ -193,13 +202,18 @@ cp -p "$SRC/harbor" "$SRC/harbor-stream" "$STAGE/"
 cp -p "$SRC/VERSION" "$STAGE/VERSION"
 [ -f "$SRC/browser.id" ] && cp -p "$SRC/browser.id" "$STAGE/browser.id"
 cp -rp "$SRC/licenses" "$STAGE/licenses"
+if [ -n "$APK" ]; then
+  cp -p "$APK" "$STAGE/harbor-android.apk"
+  # Its Android versionCode: 0.7.0 -> 7000 (the release workflow builds it so).
+  sed 's/^v//; s/-.*//' "$SRC/VERSION" | awk -F. '{ print $1 * 1000000 + $2 * 1000 + ($3 + 0) }' > "$STAGE/harbor-android.version"
+fi
 if [ "$BROWSER" = 1 ]; then
   cp -p "$BSRC/harbor-browser" "$STAGE/"
   cp -p "$BSRC/browser.id" "$STAGE/browser.installed"
 fi
 # Helpers first, harbor last: a running Harbor sees its file change and reloads into the new
 # version (rename is atomic; running processes keep the old file).
-for f in harbor-stream harbor-browser VERSION browser.id browser.installed; do
+for f in harbor-stream harbor-browser harbor-android.apk harbor-android.version VERSION browser.id browser.installed; do
   [ -e "$STAGE/$f" ] && mv -f "$STAGE/$f" "$LIB/$f"
 done
 rm -rf "$LIB/licenses"

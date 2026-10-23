@@ -211,6 +211,10 @@ fn install(version: &str) -> Result<(), String> {
             let _ = std::fs::remove_dir_all(dir.join("licenses"));
             let _ = std::fs::rename(core.join("licenses"), dir.join("licenses"));
         }
+        // The phone app (Settings › Phones serves it); releases before it have none.
+        if let Err(e) = fetch_apk(version, &stage, &dir) {
+            eprintln!("harbor: phone app not updated: {e}");
+        }
         let _ = std::fs::remove_file(dir.join(".skip"));
         // Last: the reload watcher sees this one change.
         replace(&core.join("harbor"), &dir.join("harbor"), Some(&prev))
@@ -246,6 +250,71 @@ fn rollback() -> Result<String, String> {
     replace(&prev.join("harbor"), &dir.join("harbor"), None)?;
     let _ = std::fs::remove_dir_all(&prev);
     Ok(version)
+}
+
+// ------------------------------------------------------------------ the phone app
+
+/// The release asset with Harbor for Android, and the file it's kept as.
+pub const APK: &str = "harbor-android.apk";
+/// Beside the APK: its versionCode (one integer), written when Harbor fetches it.
+const APK_VERSION: &str = "harbor-android.version";
+
+/// The Android versionCode of a Harbor version: 0.7.0 → 7000, 1.2.3 → 1002003.
+pub fn version_code(v: &str) -> i64 {
+    parse(v).map_or(0, |(a, b, c, _)| (a * 1_000_000 + b * 1000 + c) as i64)
+}
+
+/// Where this Harbor keeps the phone app: its install folder, or its data folder for builds
+/// from source.
+pub fn apk_dir() -> PathBuf {
+    install_dir().unwrap_or_else(crate::store::data_dir)
+}
+
+/// The phone app this Harbor serves, with its versionCode (0 when unknown).
+pub fn apk() -> Option<(PathBuf, i64)> {
+    let dir = apk_dir();
+    let f = dir.join(APK);
+    f.is_file().then(|| (f, read(&dir.join(APK_VERSION)).parse().unwrap_or(0)))
+}
+
+/// Downloads and checks the release's APK into `stage`, then moves it into `dir`.
+fn fetch_apk(version: &str, stage: &Path, dir: &Path) -> Result<i64, String> {
+    let (file, sig) = (stage.join(APK), stage.join(format!("{APK}.minisig")));
+    download(version, APK, &file)?;
+    download(version, &format!("{APK}.minisig"), &sig)?;
+    verify(&file, &std::fs::read_to_string(&sig).map_err(|e| e.to_string())?, version, APK)?;
+    let code = version_code(version);
+    let v = stage.join(APK_VERSION);
+    std::fs::write(&v, code.to_string()).map_err(|e| e.to_string())?;
+    replace(&file, &dir.join(APK), None)?;
+    replace(&v, &dir.join(APK_VERSION), None)?;
+    Ok(code)
+}
+
+static APK_JOB: Mutex<Option<Result<i64, String>>> = Mutex::new(None);
+
+/// Settings › Phones › Download: the latest release's APK, for copies that don't update
+/// themselves (an installed copy gets it with every update).
+pub fn download_apk(ctx: &eframe::egui::Context) {
+    *APK_JOB.lock().unwrap() = None;
+    spawn(ctx, || {
+        let r = (|| {
+            let v = latest()?;
+            let dir = apk_dir();
+            let stage = dir.join(".staging-apk");
+            let _ = std::fs::remove_dir_all(&stage);
+            std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
+            let r = fetch_apk(&v, &stage, &dir);
+            let _ = std::fs::remove_dir_all(&stage);
+            r
+        })();
+        *APK_JOB.lock().unwrap() = Some(r);
+    });
+}
+
+/// None: not started or running (see `busy`); Some: finished.
+pub fn apk_result() -> Option<Result<i64, String>> {
+    APK_JOB.lock().unwrap().clone()
 }
 
 // ------------------------------------------------------------------ command line
@@ -400,6 +469,16 @@ mod tests {
         assert!(!newer("0.1.0", "0.1.0"));
         assert!(!newer("garbage", "0.1.0"));
         assert!(newer("0.10.0", "0.9.0"));
+    }
+
+    #[test]
+    fn apk_version_codes() {
+        assert_eq!(version_code("0.7.0"), 7000);
+        assert_eq!(version_code("v1.2.3"), 1_002_003);
+        assert_eq!(version_code("0.10.12"), 10_012);
+        assert!(version_code("0.7.1") > version_code("0.7.0"));
+        assert!(version_code("0.8.0") > version_code("0.7.999"));
+        assert_eq!(version_code("junk"), 0);
     }
 
     /// Signed with the release key: `minisign -S -t "harbor v0.0.1 harbor-x86_64-linux.tar.gz"`.

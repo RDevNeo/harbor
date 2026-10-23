@@ -1018,6 +1018,7 @@ dependencies = [
  "image",
  "minisign-verify",
  "portable-pty",
+ "pulldown-cmark",
  "qrcode",
  "rusqlite",
  "serde",

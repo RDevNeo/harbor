@@ -3,6 +3,7 @@
 
 mod addproject;
 mod agent;
+mod api;
 mod browser;
 mod app;
 mod autowork;
@@ -28,6 +29,7 @@ mod mcp;
 mod mcpshim;
 mod oauth;
 mod pages;
+mod phonesui;
 mod prdetail;
 mod procs;
 mod prs;

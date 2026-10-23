@@ -33,6 +33,8 @@ pub struct Hook {
 pub enum Incoming {
     Tool(ToolCall),
     Hook(Hook),
+    /// A call from the phone API (api.rs), answered through its `reply`.
+    Api(crate::api::Call),
     /// A second launch wants this window in front; `raised` when the compositor did it.
     Focus { raised: bool },
 }
