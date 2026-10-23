@@ -23,6 +23,7 @@ use servo::{
 };
 use std::cell::Cell;
 use std::io::{BufRead, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -226,7 +227,9 @@ fn main() {
             let size = ctx.size2d().to_i32();
             if let Some(img) = ctx.read_to_image(euclid::Box2D::from_size(size)) {
                 let path = format!("{frames}.{buf}");
-                if std::fs::write(&path, img.as_raw()).is_ok() {
+                // owner-only: the file shows the page
+                let file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path);
+                if file.and_then(|mut f| f.write_all(img.as_raw())).is_ok() {
                     emit(json!({ "t": "frame", "w": img.width(), "h": img.height(), "buf": buf }));
                     buf ^= 1;
                     waiting = acks;

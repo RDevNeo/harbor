@@ -1,6 +1,6 @@
 //! Built-in browser panel. The engine (Servo) runs in the separate `harbor-browser`
 //! process, started when the panel opens and killed when it closes, so Harbor
-//! itself stays small. Frames arrive through /dev/shm; input goes back as JSON.
+//! itself stays small. Frames arrive through a private folder in RAM (`stream::run_dir`); input goes back as JSON.
 
 use crate::icons as ic;
 use crate::theme::Tokens;
@@ -66,7 +66,7 @@ pub enum Action {
 impl Browser {
     pub fn spawn(url: &str, wake: impl Fn() + Send + 'static) -> Result<Self, String> {
         let bin = helper_path().ok_or("engine not built")?;
-        let frames = format!("/dev/shm/harbor-browser-{}", std::process::id());
+        let frames = crate::stream::run_dir().join(format!("browser-{}", std::process::id())).to_string_lossy().into_owned();
         let mut child = Command::new(bin)
             .args([&frames, url, "1024", "768", "1"])
             .stdin(Stdio::piped())

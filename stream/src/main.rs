@@ -26,7 +26,7 @@
 //!           {"t":"mute","on"}  PCs: silence the stream's sound here (the host keeps its own)
 //!           {"t":"button","name"}  back | home | recents | notifications | power | volume_up | volume_down
 //!           {"t":"quit"}
-//! Frames are raw RGBA written to `<prefix>.0` / `<prefix>.1` (alternating). A frame is
+//! Frames are raw RGBA written to `<prefix>.0` / `<prefix>.1` (alternating), mode 0600. A frame is
 //! only written once Harbor said "got" for the previous one: the newest decoded frame
 //! wins, nothing is converted for nobody, and the reader never sees a half-written file.
 
@@ -129,7 +129,7 @@ fn present(prefix: String, rx: Receiver<Present>, bytes: Arc<AtomicU64>, dump: O
                 let t = Instant::now();
                 if let Some(p) = conv.planes(&f, &mut buf) {
                     let b = n % 2;
-                    if std::fs::write(format!("{prefix}.{b}"), &buf).is_ok() {
+                    if write_private(&format!("{prefix}.{b}"), &buf) {
                         conv_ms += t.elapsed().as_secs_f32() * 1000.0;
                         emit(json!({
                             "t": "frame", "w": p.w, "h": p.h, "buf": b, "fmt": p.fmt, "cs": p.cs,
@@ -156,7 +156,7 @@ fn present(prefix: String, rx: Receiver<Present>, bytes: Arc<AtomicU64>, dump: O
                     // keep decoding (stats) but never write again
                 } else {
                     let b = n % 2;
-                    if std::fs::write(format!("{prefix}.{b}"), &buf).is_ok() {
+                    if write_private(&format!("{prefix}.{b}"), &buf) {
                         emit(json!({ "t": "frame", "w": w, "h": h, "buf": b }));
                         n += 1;
                         can_write = false;
@@ -180,6 +180,12 @@ fn present(prefix: String, rx: Receiver<Present>, bytes: Arc<AtomicU64>, dump: O
             since = Instant::now();
         }
     }
+}
+
+/// A frame file, owner-only (0600): it shows the device's screen.
+fn write_private(path: &str, data: &[u8]) -> bool {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path).and_then(|mut f| f.write_all(data)).is_ok()
 }
 
 fn round1(x: f32) -> f64 {

@@ -311,7 +311,10 @@ fn to_png(path: &Path) -> Result<PathBuf, String> {
         return Ok(path.to_path_buf());
     }
     let img = image::load_from_memory(&bytes).map_err(|_| "only PNG and JPEG images can go on the clipboard".to_string())?;
-    let out = std::env::temp_dir().join(format!("harbor-clip-{}.png", std::process::id()));
+    // private folder, one name per send (two sends at once mustn't share a file)
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out = crate::stream::run_dir().join(format!("clip-{}-{n}.png", std::process::id()));
     img.save_with_format(&out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
     Ok(out)
 }

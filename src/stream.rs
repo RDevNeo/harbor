@@ -1,6 +1,6 @@
 //! Remote screens (phones, PCs) inside a pane. The stream runs in the separate
 //! `harbor-stream` process (crate stream/), which connects, decodes the video and
-//! writes RGBA frames to /dev/shm; input goes back as JSON on its stdin. Starting
+//! writes RGBA frames to a private folder in RAM (`run_dir`); input goes back as JSON on its stdin. Starting
 //! and ending sessions is Remote Devices' job (`remote-pcs.py --prepare-view`):
 //! what it prints is handed to the helper as is.
 //!
@@ -113,7 +113,7 @@ impl Stream {
         if N.load(Ordering::Relaxed) == 0 {
             sweep_stale_frames();
         }
-        let frames = format!("/dev/shm/harbor-stream-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+        let frames = run_dir().join(format!("stream-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed))).to_string_lossy().into_owned();
         let mut child = Command::new(bin)
             .args([&frames, &info.to_string()])
             .stdin(Stdio::piped())
@@ -476,16 +476,48 @@ fn read_into(path: &str, buf: &mut Vec<u8>) -> bool {
     std::fs::File::open(path).and_then(|mut f| f.read_to_end(buf)).is_ok()
 }
 
-/// Frame files left by a Harbor that didn't close its streams (crash, kill).
+/// Frame files left by a Harbor that didn't close its streams (crash, kill): in
+/// `run_dir` ("<kind>-<pid>…"), and in /dev/shm from versions that wrote there.
 fn sweep_stale_frames() {
-    let Ok(dir) = std::fs::read_dir("/dev/shm") else { return };
-    for e in dir.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        let Some(pid) = name.strip_prefix("harbor-stream-").and_then(|r| r.split('-').next()) else { continue };
-        if !std::path::Path::new("/proc").join(pid).exists() {
-            let _ = std::fs::remove_file(e.path());
+    let mine = std::fs::read_dir(run_dir()).into_iter().flatten().flatten().map(|e| (e.path(), e.file_name().to_string_lossy().split(['-', '.']).nth(1).map(String::from)));
+    let old = std::fs::read_dir("/dev/shm").into_iter().flatten().flatten().map(|e| {
+        let pid = e.file_name().to_string_lossy().strip_prefix("harbor-stream-").and_then(|r| r.split('-').next()).map(String::from);
+        (e.path(), pid)
+    });
+    for (path, pid) in mine.chain(old) {
+        if let Some(pid) = pid.filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            && !std::path::Path::new("/proc").join(pid).exists()
+        {
+            let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// A folder only this user can open, in RAM, for frames and other short-lived files:
+/// `$XDG_RUNTIME_DIR/harbor` (else /dev/shm/harbor-<uid>), mode 0700. Frame files in a
+/// shared /dev/shm would be readable by other accounts (a live view of the device).
+pub fn run_dir() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        let uid = std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(u32::MAX);
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir());
+        let base = runtime.clone().unwrap_or_else(|| PathBuf::from("/dev/shm"));
+        let ours = |p: &std::path::Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && m.uid() == uid);
+        let mut dir = base.join(if runtime.is_some() { "harbor".to_string() } else { format!("harbor-{uid}") });
+        let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+        // Someone else's (made first, in a shared folder): a fresh one with an unguessable name.
+        let mut n = 0u64;
+        while !ours(&dir) && n < 100 {
+            let r = std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), (std::time::SystemTime::now(), n));
+            dir = base.join(format!("harbor-{uid}-{r:016x}"));
+            let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+            n += 1;
+        }
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        dir
+    })
+    .clone()
 }
 
 /// The largest rect of the video's aspect ratio inside `area`, centred.
@@ -513,5 +545,18 @@ fn nav_glyph(ui: &Ui, r: Rect, name: &str, color: Color32) {
         _ => {
             p.rect_stroke(Rect::from_center_size(c, Vec2::splat(10.0)), 2.0, s, egui::StrokeKind::Middle);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn run_dir_is_private() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let d = super::run_dir();
+        let m = std::fs::symlink_metadata(&d).unwrap();
+        assert!(m.is_dir());
+        assert_eq!(m.permissions().mode() & 0o777, 0o700);
+        assert_eq!(m.uid(), std::fs::metadata("/proc/self").unwrap().uid());
     }
 }
