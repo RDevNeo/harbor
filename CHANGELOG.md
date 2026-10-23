@@ -5,6 +5,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Project and device icons: images with huge or extreme dimensions (say a 65535×1 PNG in a repo or on its website) are refused or shrunk before use instead of exhausting memory; device icons load off the UI thread.
+
 ## [0.8.2] - 2026-10-23
 
 ### Fixed

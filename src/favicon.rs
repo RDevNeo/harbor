@@ -353,12 +353,34 @@ fn desktop_icons(r: &Path) -> Vec<PathBuf> {
 
 // ------------------------------------------------------------ decoding
 
+/// Icon files above this are not read.
+const MAX_FILE: u64 = 8 << 20;
+/// Longest side an icon may declare; anything larger is refused before decoding.
+const MAX_SIDE: u32 = 4096;
+
 /// Decodes a PNG/ICO/JPEG/WebP/GIF or SVG file into a SIZE x SIZE square.
 pub fn decode(p: &Path) -> Option<egui::ColorImage> {
+    if std::fs::metadata(p).ok()?.len() > MAX_FILE {
+        return None;
+    }
     let bytes = std::fs::read(p).ok()?;
     let head = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).to_lowercase();
     let is_svg = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) || head.contains("<svg") || head.starts_with("<?xml");
-    let img = if is_svg { image::load_from_memory(&rasterize_svg(p)?).ok()? } else { image::load_from_memory(&bytes).ok()? };
+    if is_svg { decode_bytes(&rasterize_svg(p)?) } else { decode_bytes(&bytes) }
+}
+
+/// Encoded image bytes into a SIZE x SIZE square. Icons come from repos and websites:
+/// huge or extreme sizes are refused, and the image is shrunk before it is squared
+/// (a 65535x1 strip would otherwise become a 17 GB square).
+fn decode_bytes(bytes: &[u8]) -> Option<egui::ColorImage> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(128 << 20);
+    reader.limits(limits);
+    let img = reader.decode().ok()?;
+    let img = if img.width().max(img.height()) > SIZE * 4 { img.thumbnail(SIZE * 4, SIZE * 4) } else { img };
     let img = img.to_rgba8();
     if img.width() == 0 || img.height() == 0 {
         return None;
@@ -503,6 +525,21 @@ mod tests {
     fn parses_links() {
         let html = r#"<head><link rel="stylesheet" href="a.css"><LINK REL='shortcut icon' HREF='/fav.ico'><link href="/i.svg" rel="icon" type="image/svg+xml"></head>"#;
         assert_eq!(link_icons(html), vec!["/fav.ico", "/i.svg"]);
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::new(w, h).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn icon_sizes_are_capped() {
+        assert!(decode_bytes(&png(64, 64)).is_some_and(|i| i.size == [SIZE as usize; 2]));
+        // a long strip is shrunk before squaring, not padded to 3000x3000
+        assert!(decode_bytes(&png(3000, 1)).is_some_and(|i| i.size == [SIZE as usize; 2]));
+        // a 65535x1 strip is refused outright
+        assert!(decode_bytes(&png(65535, 1)).is_none());
     }
 
     #[test]

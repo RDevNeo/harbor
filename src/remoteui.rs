@@ -22,8 +22,8 @@ pub struct State {
     add_user: String,
     /// Devices whose picked image was just copied in (by the file chooser's thread).
     picked: Arc<Mutex<Vec<String>>>,
-    /// Their images, by device id (None: the file didn't decode).
-    icons: HashMap<String, Option<egui::TextureHandle>>,
+    /// Their images, by device id, decoded on a thread (set None: the file didn't decode).
+    icons: HashMap<String, Arc<std::sync::OnceLock<Option<egui::TextureHandle>>>>,
 }
 
 /// A device's mark: its image or glyph, with a dot when its online state is known.
@@ -72,16 +72,22 @@ fn where_(h: &Host, online: Option<bool>) -> String {
 }
 
 impl App {
-    /// The image of a device with a custom icon (loaded once).
+    /// The image of a device with a custom icon (loaded once, off the UI thread).
     fn device_tex(&mut self, ctx: &egui::Context, h: &Host) -> Option<TextureId> {
         if h.icon != "file" {
             return None;
         }
         let e = self.devices_ui.icons.entry(h.id.clone()).or_insert_with(|| {
-            let img = crate::favicon::decode(&remote::icon_path(&h.id))?;
-            Some(ctx.load_texture(format!("device-{}", h.id), img, egui::TextureOptions::LINEAR))
+            let slot = Arc::new(std::sync::OnceLock::new());
+            let (slot2, ctx, id) = (slot.clone(), ctx.clone(), h.id.clone());
+            std::thread::spawn(move || {
+                let tex = crate::favicon::decode(&remote::icon_path(&id)).map(|img| ctx.load_texture(format!("device-{id}"), img, egui::TextureOptions::LINEAR));
+                let _ = slot2.set(tex);
+                ctx.request_repaint();
+            });
+            slot
         });
-        e.as_ref().map(|t| t.id())
+        e.get().and_then(|t| t.as_ref()).map(|t| t.id())
     }
 
     /// The composer's device control: "This PC" or the chat's device, with its dot.
