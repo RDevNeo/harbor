@@ -69,6 +69,8 @@ refetch everything.
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown).
+- `usage[].percent`: 0–100 with one decimal (100.0 = that window is used up); `label` names the
+  window ("5h", "Weekly", …).
 - `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
 - `queued`: messages waiting for the running turn.
 
