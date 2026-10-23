@@ -16,6 +16,8 @@ mod git;
 mod icons;
 mod fork;
 mod images;
+mod issuedetail;
+mod issues;
 mod keys;
 mod limits;
 mod listdetail;

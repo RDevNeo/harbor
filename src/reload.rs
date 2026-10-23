@@ -50,6 +50,7 @@ impl App {
                 _ => None,
             } }),
             View::Prs => json!({ "t": "prs" }),
+            View::Issues => json!({ "t": "issues" }),
         };
         let panes: Vec<Value> = [Dock::Right, Dock::Bottom]
             .iter()
@@ -111,6 +112,7 @@ impl App {
             // The Usage page lives in Settings now.
             Some("usage") => self.open(View::Settings(Tab::Limits)),
             Some("prs") => self.open(View::Prs),
+            Some("issues") => self.open(View::Issues),
             _ => self.open(View::Draft),
         }
         for (i, d) in [Dock::Right, Dock::Bottom].into_iter().enumerate() {

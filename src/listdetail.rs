@@ -356,6 +356,58 @@ impl MenuKeys {
     }
 }
 
+/// What the keyboard did to a dropdown (and its submenu) this frame.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct MenuFrame {
+    /// A main-menu row picked (Enter/Space, or → on a submenu row).
+    pub main_pick: Option<usize>,
+    pub main_moved: bool,
+    pub sub_pick: Option<usize>,
+    pub sub_moved: bool,
+    /// The pick opens its submenu with the keyboard in it.
+    pub enter_sub: bool,
+    /// ← left the submenu: the caller closes it.
+    pub leave: bool,
+    pub close: bool,
+}
+
+/// Runs a menu's keys: `sub_keys` (while a submenu is open) or else `keys`
+/// over the rows drawn last frame under `main_id` / `sub_id`. With
+/// `has_subs`, Enter and → on a row open its submenu.
+pub fn menu_keys(ctx: &egui::Context, keys: &mut MenuKeys, sub_keys: &mut Option<MenuKeys>, sub_open: bool, main_id: &str, sub_id: &str, has_subs: bool) -> MenuFrame {
+    let mut f = MenuFrame::default();
+    match sub_keys.filter(|_| sub_open) {
+        Some(mut k) => {
+            let before = k.hl;
+            match k.input(ctx, rows_count(ctx, sub_id)) {
+                Some(MenuKey::Pick(i)) => f.sub_pick = Some(i),
+                Some(MenuKey::Leave) => f.leave = true,
+                Some(MenuKey::Close) => f.close = true,
+                _ => {}
+            }
+            f.sub_moved = k.hl != before;
+            *sub_keys = (!f.leave).then_some(k);
+        }
+        None => {
+            let before = keys.hl;
+            match keys.input(ctx, rows_count(ctx, main_id)) {
+                Some(MenuKey::Pick(i)) => {
+                    f.main_pick = Some(i);
+                    f.enter_sub = has_subs;
+                }
+                Some(MenuKey::Enter(i)) if has_subs => {
+                    f.main_pick = Some(i);
+                    f.enter_sub = true;
+                }
+                Some(MenuKey::Close) => f.close = true,
+                _ => {}
+            }
+            f.main_moved = keys.hl != before;
+        }
+    }
+    f
+}
+
 /// The rows of the menu being drawn, for [`row_key`].
 #[derive(Clone, Copy, Default)]
 struct Rows {

@@ -398,9 +398,13 @@ impl App {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let v = self.view;
                 // A list page (T3 Code style): Back takes its place, like Esc.
-                if v == View::Prs {
+                if matches!(v, View::Prs | View::Issues) {
                     if w::btn(&format!("{}  Back", ic::ARROW_LEFT)).muted().sm().show(ui).on_hover_text("Back (Esc)").clicked() {
-                        self.close_prs();
+                        if v == View::Prs {
+                            self.close_prs();
+                        } else {
+                            self.close_issues();
+                        }
                     }
                 } else {
                     if w::btn(ic::SETTINGS).muted().icon_sm().pressed(matches!(v, View::Settings(_))).show(ui).on_hover_text(self.key_hint("Settings", "settings")).clicked() {
@@ -408,6 +412,9 @@ impl App {
                     }
                     if w::btn(ic::PULL).muted().icon_sm().show(ui).on_hover_text("Pull requests").clicked() {
                         self.open_prs(None);
+                    }
+                    if w::btn(ic::CIRCLE_DOT).muted().icon_sm().show(ui).on_hover_text("Issues").clicked() {
+                        self.open_issues(None);
                     }
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -563,6 +570,9 @@ impl App {
             }
             if ui.button(format!("{}  Pull requests", ic::PULL)).clicked() {
                 self.open_prs(Some(id));
+            }
+            if ui.button(format!("{}  Issues", ic::CIRCLE_DOT)).clicked() {
+                self.open_issues(Some(id));
             }
             if let Some(Some(url)) = self.git.get(&id).map(|s| s.as_ref().and_then(|s| s.remote.clone())) {
                 if ui.button(format!("{}  Open remote", ic::EXTERNAL)).clicked() {

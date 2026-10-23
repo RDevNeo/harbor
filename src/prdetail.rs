@@ -109,7 +109,7 @@ impl Default for Detail {
     }
 }
 
-fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
+pub fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
     let out = std::process::Command::new("gh").args(args).env("PATH", crate::providers::child_path()).output().map_err(|e| format!("gh: {e}"))?;
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -302,7 +302,7 @@ pub fn parse_diff(d: &str) -> Vec<Line> {
     out
 }
 
-fn ctx_repaint(ctx: &egui::Context) -> impl Fn() + Send + 'static {
+pub fn ctx_repaint(ctx: &egui::Context) -> impl Fn() + Send + 'static {
     let c = ctx.clone();
     move || c.request_repaint()
 }
@@ -399,7 +399,7 @@ fn checks_summary(c: &[Check], t: &theme::Tokens) -> (&'static str, Color32, Str
 }
 
 /// A row of the summary's key/value block (Reviewers, Labels).
-fn field(ui: &mut Ui, icon: &str, name: &str, add: impl FnOnce(&mut Ui)) {
+pub fn field(ui: &mut Ui, icon: &str, name: &str, add: impl FnOnce(&mut Ui)) {
     let t = w::tokens(ui);
     ui.horizontal(|ui| {
         ui.set_min_height(28.0);
@@ -410,7 +410,7 @@ fn field(ui: &mut Ui, icon: &str, name: &str, add: impl FnOnce(&mut Ui)) {
     });
 }
 
-fn section_toggle(ui: &mut Ui, label: &str, open: bool) -> bool {
+pub fn section_toggle(ui: &mut Ui, label: &str, open: bool) -> bool {
     let t = w::tokens(ui);
     let r = ui
         .horizontal(|ui| {
@@ -422,7 +422,7 @@ fn section_toggle(ui: &mut Ui, label: &str, open: bool) -> bool {
     r.on_hover_cursor(CursorIcon::PointingHand).clicked()
 }
 
-fn chip(ui: &mut Ui, text: &str, rgb: Option<[u8; 3]>) {
+pub fn chip(ui: &mut Ui, text: &str, rgb: Option<[u8; 3]>) {
     let t = w::tokens(ui);
     let g = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(12.5), t.fg());
     let dot = if rgb.is_some() { 12.0 } else { 0.0 };
@@ -789,7 +789,7 @@ impl App {
     }
 
     /// A comment card: avatar, who, what and when, then the markdown body.
-    fn note(&mut self, ui: &mut Ui, id: Id, who: &str, at: i64, what: &str, body: &str) {
+    pub fn note(&mut self, ui: &mut Ui, id: Id, who: &str, at: i64, what: &str, body: &str) {
         let t = self.theme.t;
         w::card(ui).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -939,7 +939,7 @@ enum Act {
 }
 
 /// A segmented-control button.
-fn seg(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
+pub fn seg(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
     let t = w::tokens(ui);
     let g = ui.painter().layout_no_wrap(label.into(), FontId::new(14.0, theme::medium()), if on { t.fg() } else { t.subtle() });
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 24.0, 28.0), Sense::click());

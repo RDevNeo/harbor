@@ -41,6 +41,7 @@ pub enum View {
     Chat(i64),
     Settings(Tab),
     Prs,
+    Issues,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -81,6 +82,7 @@ pub enum Bg {
     CursorModels(Vec<Model>),
     Prs(u64, crate::prs::StateF, Result<crate::prs::Fetched, String>),
     PrAvatar(String, Option<egui::ColorImage>),
+    Issues(u64, crate::issues::StateF, Result<crate::issues::Fetched, String>),
     Funnel(Option<String>),
     Avatar(i64, Option<egui::ColorImage>),
     GhRepos(Result<Vec<(String, String)>, String>),
@@ -152,6 +154,7 @@ pub struct App {
     pub popup_anchor: egui::Rect,
     pub picker: Picker,
     pub prs: Prs,
+    pub issues: crate::issues::Issues,
     pub search: String,
     pub settled_open: bool,
     pub favorites: Vec<(String, String)>,
@@ -279,6 +282,7 @@ impl App {
             popup_anchor: egui::Rect::NOTHING,
             picker: Picker::default(),
             prs: Prs::default(),
+            issues: Default::default(),
             search: String::new(),
             settled_open: false,
             favorites,
@@ -355,7 +359,7 @@ impl App {
         app
     }
 
-    /// Development aid for screenshots: HARBOR_VIEW=draft|picker|settings|usage|prs|terminal,
+    /// Development aid for screenshots: HARBOR_VIEW=draft|picker|settings|usage|prs|issues|terminal,
     /// or a settings page (general, appearance, keybindings, providers, limits, …).
     fn debug_view(&mut self, ctx: &egui::Context, v: &str) {
         match v {
@@ -392,6 +396,7 @@ impl App {
             "settings" => self.open(View::Settings(Tab::General)),
             "usage" | "limits" => self.open(View::Settings(Tab::Limits)),
             "prs" => self.open(View::Prs),
+            "issues" => self.open(View::Issues),
             "terminal" => self.toggle_terminal(ctx),
             "browser" => {
                 if let Some(r) = self.repos.first().map(|r| r.id) {
@@ -566,6 +571,7 @@ impl App {
                 self.focus_composer = true;
             }
             View::Prs => self.load_prs(),
+            View::Issues => self.load_issues(),
             _ => {}
         }
     }
@@ -598,6 +604,9 @@ impl App {
         }
         if self.view == View::Prs {
             self.load_prs();
+        }
+        if self.view == View::Issues {
+            self.load_issues();
         }
     }
 
@@ -1141,6 +1150,7 @@ impl eframe::App for App {
                 Bg::Funnel(f) => self.funnel = f,
                 Bg::Prs(generation, state, r) => self.prs_loaded(generation, state, r),
                 Bg::PrAvatar(login, img) => self.pr_avatar(ctx, login, img),
+                Bg::Issues(generation, state, r) => self.issues_loaded(generation, state, r),
             }
         }
         while let Ok(e) = self.proc_rx.try_recv() {
@@ -1253,6 +1263,7 @@ impl eframe::App for App {
             View::Chat(id) => self.chat_view(ui, id),
             View::Settings(tab) => self.settings(ui, tab),
             View::Prs => self.prs_view(ui),
+            View::Issues => self.issues_view(ui),
         });
 
         if self.sidebar_drawer {

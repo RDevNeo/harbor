@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- An Issues page beside Pull Requests (the issue icon in the sidebar footer, or a project's
+  menu): every issue assigned to you, that you opened or that mentions you, and those in your
+  projects' GitHub repos, grouped Assigned / Authored / Mentioned / Others. Search them (with
+  `label:`, `-label:`, `author:`, `assignee:`, `no:assignee`, `milestone:`, `no:milestone`),
+  sort by update, age or comments, and filter by state, involvement, author, assignee, labels,
+  milestone and project. Rows show the open / completed / not planned mark, labels, author,
+  repo, comment count and age; clicking one opens it in the side panel, as PRs do, with its
+  assignees, labels, milestone, description and comments, Close / Reopen, and Work on it
+  (a thread asking an agent to resolve it).
+
 ## [0.4.2] - 2026-10-23
 
 ### Removed

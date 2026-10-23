@@ -102,6 +102,10 @@ pub const USER_LOCK: &str = "\u{e660}";
 pub const CALENDAR_DOWN: &str = "\u{e5fe}";
 pub const CALENDAR_UP: &str = "\u{e5ff}";
 pub const FOLDER_GIT: &str = "\u{e40a}";
+pub const CIRCLE_DOT: &str = "\u{e345}";
+pub const MILESTONE: &str = "\u{e298}";
+pub const AT_SIGN: &str = "\u{e04e}";
+pub const USER_CHECK: &str = "\u{e1a0}";
 
 pub fn glyph(p: &Painter, center: Pos2, icon: &str, size: f32, color: Color32) {
     p.text(center, Align2::CENTER_CENTER, icon, FontId::proportional(size), color);

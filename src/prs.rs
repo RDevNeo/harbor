@@ -211,7 +211,7 @@ pub struct Prs {
     pub details: HashMap<String, crate::prdetail::Detail>,
     pub avatars: HashMap<String, Option<egui::TextureHandle>>,
     /// Lets fetch threads wake the UI.
-    ctx: Option<egui::Context>,
+    pub ctx: Option<egui::Context>,
 }
 
 // ------------------------------------------------------------------ fetching
@@ -249,15 +249,21 @@ fn query(state: StateF, repos: &[String]) -> String {
 }
 
 pub fn fetch(state: StateF, repos: &[String]) -> Result<Fetched, String> {
+    graphql(&query(state, repos), "pull requests").map(|v| parse(&v))
+}
+
+/// Runs a GraphQL query with `gh api graphql`; `what` names the list in the
+/// "install gh" hint. Partial answers (some searches failed) still count.
+pub fn graphql(query: &str, what: &str) -> Result<serde_json::Value, String> {
     let out = std::process::Command::new("gh")
         .args(["api", "graphql", "-f"])
-        .arg(format!("query={}", query(state, repos)))
+        .arg(format!("query={query}"))
         .env("PATH", providers::child_path())
         .output();
     let out = match out {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err("The GitHub CLI (gh) isn't installed. Install it and run `gh auth login` to see your pull requests.".into());
+            return Err(format!("The GitHub CLI (gh) isn't installed. Install it and run `gh auth login` to see your {what}."));
         }
         Err(e) => return Err(format!("gh: {e}")),
     };
@@ -266,7 +272,13 @@ pub fn fetch(state: StateF, repos: &[String]) -> Result<Fetched, String> {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.contains("auth login") || err.contains("not logged") { "Not signed in to GitHub. Run `gh auth login`.".into() } else { err });
     }
-    Ok(parse(&v))
+    Ok(v)
+}
+
+/// A GitHub label colour ("a2eeef") as RGB.
+pub fn hex_rgb(c: &str) -> [u8; 3] {
+    let h = |i: usize| c.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).unwrap_or(128);
+    [h(0), h(2), h(4)]
 }
 
 fn parse(v: &serde_json::Value) -> Fetched {
@@ -293,10 +305,6 @@ fn parse(v: &serde_json::Value) -> Fetched {
 fn node(n: &serde_json::Value) -> Option<Pr> {
     let s = |k: &str| n[k].as_str().unwrap_or("").to_string();
     let url = n["url"].as_str()?.to_string();
-    let color = |c: &str| {
-        let h = |i: usize| c.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).unwrap_or(128);
-        [h(0), h(2), h(4)]
-    };
     Some(Pr {
         number: n["number"].as_u64()?,
         title: s("title"),
@@ -332,7 +340,7 @@ fn node(n: &serde_json::Value) -> Option<Pr> {
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|l| Some((l["name"].as_str()?.to_string(), color(l["color"].as_str().unwrap_or("")))))
+            .filter_map(|l| Some((l["name"].as_str()?.to_string(), hex_rgb(l["color"].as_str().unwrap_or("")))))
             .collect(),
         review_requested: false,
     })
@@ -753,32 +761,31 @@ impl App {
             return;
         }
         if let Ok(f) = &r {
-            let want: Vec<(String, String)> = f
-                .items
-                .iter()
-                .filter(|p| !p.avatar.is_empty() && !self.prs.avatars.contains_key(&p.author))
-                .map(|p| (p.author.clone(), p.avatar.clone()))
-                .collect::<HashMap<_, _>>()
-                .into_iter()
-                .take(40)
-                .collect();
-            for (login, _) in &want {
-                self.prs.avatars.insert(login.clone(), None);
-            }
-            if !want.is_empty() {
-                let tx = self.bg_tx.clone();
-                let ctx = self.prs.ctx.clone();
-                std::thread::spawn(move || {
-                    for (login, url) in want {
-                        let _ = tx.send(Bg::PrAvatar(login, avatar(&url)));
-                        if let Some(c) = &ctx {
-                            c.request_repaint();
-                        }
-                    }
-                });
-            }
+            self.fetch_avatars(f.items.iter().map(|p| (p.author.clone(), p.avatar.clone())));
         }
         self.prs.data = Some(r);
+    }
+
+    /// Loads GitHub avatars (login, URL) not cached yet into `prs.avatars`, off the UI thread.
+    pub fn fetch_avatars(&mut self, people: impl Iterator<Item = (String, String)>) {
+        let want: Vec<(String, String)> =
+            people.filter(|(login, url)| !url.is_empty() && !self.prs.avatars.contains_key(login)).collect::<HashMap<_, _>>().into_iter().take(40).collect();
+        for (login, _) in &want {
+            self.prs.avatars.insert(login.clone(), None);
+        }
+        if want.is_empty() {
+            return;
+        }
+        let tx = self.bg_tx.clone();
+        let ctx = self.prs.ctx.clone();
+        std::thread::spawn(move || {
+            for (login, url) in want {
+                let _ = tx.send(Bg::PrAvatar(login, avatar(&url)));
+                if let Some(c) = &ctx {
+                    c.request_repaint();
+                }
+            }
+        });
     }
 
     pub fn pr_avatar(&mut self, ctx: &egui::Context, login: String, img: Option<egui::ColorImage>) {
@@ -811,6 +818,89 @@ fn state_icon(p: &Pr, t: &theme::Tokens) -> (&'static str, Color32, &'static str
         PrState::Open if p.draft => (ic::PR_DRAFT, t.gray(800), "Draft"),
         PrState::Open => (ic::PR_OPEN, t.subtle(), "Open"),
     }
+}
+
+/// The list page's title bar: the title, and (without the side panel, whose
+/// header has them) the panel toggle and the close button. Returns (close
+/// clicked, panel action).
+pub fn list_title(ui: &mut Ui, title: &str, docked: bool, panel: bool, split: &crate::listdetail::Split) -> (bool, Option<crate::listdetail::TabAct>) {
+    let t = w::tokens(ui);
+    let (mut close, mut act) = (false, None);
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.set_height(32.0);
+        ui.add_space(if docked { 20.0 } else { 52.0 });
+        ui.label(egui::RichText::new(title).font(FontId::new(15.0, theme::medium())).color(t.fg()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(12.0);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if !panel {
+                close = w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Close").clicked();
+                act = crate::listdetail::toggle_btn(ui, split);
+            }
+        });
+    });
+    ui.add_space(12.0);
+    (close, act)
+}
+
+/// A toolbar button of the list pages.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Tool {
+    Sort,
+    Filters,
+    Provider,
+    Refresh,
+}
+
+/// The list page's toolbar: search, Sort, Filters (with the `active` count),
+/// the provider picker and refresh (a spinner while `loading`). `open` is the
+/// menu showing. Returns the button clicked and its rect (the menu's anchor).
+pub fn toolbar(ui: &mut Ui, search: &mut String, hint: &str, id: Id, active: usize, open: Option<Tool>, loading: bool) -> Option<(Tool, Rect)> {
+    let t = w::tokens(ui);
+    let mut hit = None;
+    centered(ui, 1180.0, |ui| {
+        // Beside the side panel the buttons wrap under the search, as in T3 Code.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+            let sort_w = 12.0 + 16.0 + 8.0 + 34.0 + 14.0;
+            let filt_w = 12.0 + 16.0 + 8.0 + 46.0 + if active > 0 { 30.0 } else { 0.0 } + 14.0;
+            let rest = sort_w + filt_w + 36.0 * 2.0 + 8.0 * 4.0 + 2.0;
+            let search_w = if ui.available_width() - rest < 240.0 { ui.available_width() - 2.0 } else { ui.available_width() - rest };
+            let focused = ui.memory(|m| m.has_focus(id));
+            Frame::new()
+                .fill(t.bg100)
+                .stroke(Stroke::new(1.0, if focused { t.gray(700) } else { t.border() }))
+                .corner_radius(CornerRadius::same(RADIUS_MD))
+                .inner_margin(Margin { left: 4, right: 4, top: 2, bottom: 2 })
+                .show(ui, |ui| {
+                    ui.set_width(search_w - 10.0);
+                    w::search_field(ui, search, hint, Some(id), search_w - 18.0);
+                });
+            let r = tool_btn(ui, ic::ARROW_DOWN_UP, "Sort", None, open == Some(Tool::Sort)).on_hover_text("Sort the list");
+            if r.clicked() {
+                hit = Some((Tool::Sort, r.rect));
+            }
+            let r = tool_btn(ui, ic::FILTER, "Filters", Some(active), open == Some(Tool::Filters));
+            if r.clicked() {
+                hit = Some((Tool::Filters, r.rect));
+            }
+            let r = tool_btn(ui, "github", "", None, open == Some(Tool::Provider)).on_hover_text("Filter by provider");
+            if r.clicked() {
+                hit = Some((Tool::Provider, r.rect));
+            }
+            let r = tool_btn(ui, if loading { "" } else { ic::REFRESH }, "", None, false).on_hover_text("Refresh");
+            if loading {
+                w::spinner(ui.painter(), r.rect.center(), 6.5, t.subtle());
+                ui.ctx().request_repaint();
+            }
+            if r.clicked() && !loading {
+                hit = Some((Tool::Refresh, r.rect));
+            }
+        });
+    });
+    ui.add_space(10.0);
+    hit
 }
 
 /// Outline toolbar button: icon, optional label, optional count badge.
@@ -869,7 +959,7 @@ pub fn float<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, width: f32, t: &
 
 /// Where a submenu of the row `a` opens: to its right, or to its left when the
 /// window has no room there.
-fn sub_pos(ctx: &egui::Context, a: Rect, width: f32) -> egui::Pos2 {
+pub fn sub_pos(ctx: &egui::Context, a: Rect, width: f32) -> egui::Pos2 {
     let outer = width + 14.0;
     let x = if a.right() + 10.0 + outer > ctx.content_rect().right() { a.left() - 10.0 - outer } else { a.right() + 10.0 };
     pos2(x, a.top() - 6.0)
@@ -908,6 +998,34 @@ pub fn menu_row(ui: &mut Ui, icon: &str, label: &str, value: Option<&str>, chevr
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
+/// The provider picker: All, or GitHub only (`gh`); returns the pick and the menu's rect.
+pub fn provider_menu(ctx: &egui::Context, id: &str, pos: egui::Pos2, t: &theme::Tokens, gh: bool) -> (Option<bool>, Rect) {
+    float(ctx, id, pos, 180.0, t, |ui| {
+        let mut pick = None;
+        if menu_row(ui, ic::LAYERS, "All", None, false, !gh, false).clicked() {
+            pick = Some(false);
+        }
+        let r = menu_row(ui, " ", "GitHub", None, false, gh, false);
+        let mark = Rect::from_center_size(pos2(r.rect.left() + 16.0, r.rect.center().y), Vec2::splat(15.0));
+        crate::logos::paint(ui, ui.painter(), mark, "github", t);
+        if r.clicked() {
+            pick = Some(true);
+        }
+        pick
+    })
+}
+
+/// A submenu of choices (value, label, icon), `cur` checked; returns the one clicked.
+pub fn radio<T: PartialEq + Copy>(ui: &mut Ui, opts: &[(T, &str, &str)], cur: T) -> Option<T> {
+    let mut pick = None;
+    for (v, label, icon) in opts {
+        if menu_row(ui, icon, label, None, false, *v == cur, false).clicked() {
+            pick = Some(*v);
+        }
+    }
+    pick
+}
+
 pub fn menu_sep(ui: &mut Ui) {
     let t = w::tokens(ui);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 9.0), Sense::hover());
@@ -933,7 +1051,7 @@ const REVIEWS: [(Option<Review>, &str, &str); 5] = [
 const CHECKS: [(Option<Checks>, &str, &str); 3] =
     [(None, "All", ic::LAYERS), (Some(Checks::Passing), "Passing", ic::CIRCLE_CHECK), (Some(Checks::Failing), "Failing", ic::CIRCLE_X)];
 
-fn name_of<T: PartialEq + Copy>(opts: &[(T, &'static str, &'static str)], v: T) -> &'static str {
+pub fn name_of<T: PartialEq + Copy>(opts: &[(T, &'static str, &'static str)], v: T) -> &'static str {
     opts.iter().find(|o| o.0 == v).map_or("All", |o| o.1)
 }
 
@@ -981,7 +1099,6 @@ impl App {
     }
 
     fn prs_list(&mut self, ui: &mut Ui, panel: bool) {
-        let t = self.theme.t;
         let ctx = ui.ctx().clone();
         self.prs.ctx = Some(ctx.clone());
         // Picking another State refetches: GitHub applies that filter.
@@ -992,77 +1109,30 @@ impl App {
         self.prs.filters.project = self.prs.project.and_then(|id| projects.iter().find(|p| p.0 == id).map(|p| p.2.clone()));
 
         // ---- title bar
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            ui.set_height(32.0);
-            ui.add_space(if self.sidebar_docked(&ctx) { 20.0 } else { 52.0 });
-            ui.label(egui::RichText::new("Pull Requests").font(FontId::new(15.0, theme::medium())).color(t.fg()));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(12.0);
-                ui.spacing_mut().item_spacing.x = 6.0;
-                // With the panel open, its header has these.
-                if !panel {
-                    if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Close").clicked() {
-                        self.close_prs();
-                    }
-                    if let Some(a) = crate::listdetail::toggle_btn(ui, &self.prs.split) {
-                        self.prs.split.apply(a);
-                    }
-                }
-            });
-        });
+        let (close, tab) = list_title(ui, "Pull Requests", self.sidebar_docked(&ctx), panel, &self.prs.split);
+        if close {
+            self.close_prs();
+        }
+        if let Some(a) = tab {
+            self.prs.split.apply(a);
+        }
 
         // ---- toolbar
-        ui.add_space(12.0);
         let data = self.prs.data.clone();
         let fetched = data.as_ref().and_then(|d| d.as_ref().ok()).cloned().unwrap_or_default();
-        centered(ui, 1180.0, |ui| {
-            // Beside the side panel the buttons wrap under the search, as in T3 Code.
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-                let active = self.prs.filters.active(self.prs.filters.project.is_some());
-                let sort_w = 12.0 + 16.0 + 8.0 + 34.0 + 14.0;
-                let filt_w = 12.0 + 16.0 + 8.0 + 46.0 + if active > 0 { 30.0 } else { 0.0 } + 14.0;
-                let rest = sort_w + filt_w + 36.0 * 2.0 + 8.0 * 4.0 + 2.0;
-                let search_w = if ui.available_width() - rest < 240.0 { ui.available_width() - 2.0 } else { ui.available_width() - rest };
-                let focused = ui.memory(|m| m.has_focus(Id::NULL.with("pr-search")));
-                Frame::new()
-                    .fill(t.bg100)
-                    .stroke(Stroke::new(1.0, if focused { t.gray(700) } else { t.border() }))
-                    .corner_radius(CornerRadius::same(RADIUS_MD))
-                    .inner_margin(Margin { left: 4, right: 4, top: 2, bottom: 2 })
-                    .show(ui, |ui| {
-                        ui.set_width(search_w - 10.0);
-                        w::search_field(ui, &mut self.prs.search, "Search pull requests, or label:bug", Some(Id::NULL.with("pr-search")), search_w - 18.0);
-                    });
-                let menu = self.prs.menu;
-                let r = tool_btn(ui, ic::ARROW_DOWN_UP, "Sort", None, menu == Some(Menu::Sort)).on_hover_text("Sort pull requests");
-                if r.clicked() {
-                    self.toggle_pr_menu(Menu::Sort, r.rect);
-                }
-                let r = tool_btn(ui, ic::FILTER, "Filters", Some(active), menu == Some(Menu::Filters));
-                if r.clicked() {
-                    self.toggle_pr_menu(Menu::Filters, r.rect);
-                }
-                let r = tool_btn(ui, "github", "", None, menu == Some(Menu::Provider)).on_hover_text("Filter by provider");
-                if r.clicked() {
-                    self.toggle_pr_menu(Menu::Provider, r.rect);
-                }
-                let (rr, rect) = {
-                    let r = tool_btn(ui, if self.prs.loading { "" } else { ic::REFRESH }, "", None, false).on_hover_text("Refresh");
-                    let rect = r.rect;
-                    (r, rect)
-                };
-                if self.prs.loading {
-                    w::spinner(ui.painter(), rect.center(), 6.5, t.subtle());
-                    ctx.request_repaint();
-                }
-                if rr.clicked() && !self.prs.loading {
-                    self.load_prs();
-                }
-            });
+        let active = self.prs.filters.active(self.prs.filters.project.is_some());
+        let open = self.prs.menu.map(|m| match m {
+            Menu::Sort => Tool::Sort,
+            Menu::Filters => Tool::Filters,
+            Menu::Provider => Tool::Provider,
         });
-        ui.add_space(10.0);
+        match toolbar(ui, &mut self.prs.search, "Search pull requests, or label:bug", Id::NULL.with("pr-search"), active, open, self.prs.loading) {
+            Some((Tool::Sort, r)) => self.toggle_pr_menu(Menu::Sort, r),
+            Some((Tool::Filters, r)) => self.toggle_pr_menu(Menu::Filters, r),
+            Some((Tool::Provider, r)) => self.toggle_pr_menu(Menu::Provider, r),
+            Some((Tool::Refresh, _)) => self.load_prs(),
+            None => {}
+        }
 
         // ---- list
         let groups = groups(&fetched, &self.prs.filters, &self.prs.search, self.prs.sort);
@@ -1178,7 +1248,7 @@ impl App {
     }
 
     fn pr_menus(&mut self, ctx: &egui::Context, data: &Fetched, projects: &[(i64, String, String)]) {
-        use crate::listdetail::{self as ld, MenuKey};
+        use crate::listdetail as ld;
         let Some(menu) = self.prs.menu else { return };
         let t = self.theme.t;
         let anchor = self.prs.menu_anchor.unwrap_or(Rect::NOTHING);
@@ -1192,43 +1262,12 @@ impl App {
             Menu::Provider => "pr-provider",
             Menu::Filters => "pr-filters",
         };
-        let (mut main_pick, mut main_moved, mut sub_pick, mut sub_moved, mut enter_sub) = (None, false, None, false, false);
-        match self.prs.sub_keys.filter(|_| self.prs.sub.is_some()) {
-            Some(mut k) => {
-                let before = k.hl;
-                match k.input(ctx, ld::rows_count(ctx, "pr-sub")) {
-                    Some(MenuKey::Pick(i)) => sub_pick = Some(i),
-                    Some(MenuKey::Leave) => {
-                        self.prs.sub = None;
-                        self.prs.sub_keys = None;
-                    }
-                    Some(MenuKey::Close) => close = true,
-                    _ => {}
-                }
-                sub_moved = k.hl != before;
-                if self.prs.sub_keys.is_some() {
-                    self.prs.sub_keys = Some(k);
-                }
-            }
-            None => {
-                let mut k = self.prs.keys;
-                let before = k.hl;
-                match k.input(ctx, ld::rows_count(ctx, main_id)) {
-                    Some(MenuKey::Pick(i)) => {
-                        main_pick = Some(i);
-                        enter_sub = menu == Menu::Filters;
-                    }
-                    Some(MenuKey::Enter(i)) if menu == Menu::Filters => {
-                        main_pick = Some(i);
-                        enter_sub = true;
-                    }
-                    Some(MenuKey::Close) => close = true,
-                    _ => {}
-                }
-                main_moved = k.hl != before;
-                self.prs.keys = k;
-            }
+        let k = ld::menu_keys(ctx, &mut self.prs.keys, &mut self.prs.sub_keys, self.prs.sub.is_some(), main_id, "pr-sub", menu == Menu::Filters);
+        if k.leave {
+            self.prs.sub = None;
         }
+        let (main_pick, main_moved, sub_pick, mut sub_moved, enter_sub) = (k.main_pick, k.main_moved, k.sub_pick, k.sub_moved, k.enter_sub);
+        close |= k.close;
         ld::rows_begin(ctx, self.prs.keys.hl, main_pick, main_moved);
         let main_rect = match menu {
             Menu::Sort => {
@@ -1250,19 +1289,7 @@ impl App {
             }
             Menu::Provider => {
                 let gh = self.prs.github_only;
-                let (pick, rect) = float(ctx, "pr-provider", pos, 180.0, &t, |ui| {
-                    let mut pick = None;
-                    if menu_row(ui, ic::LAYERS, "All", None, false, !gh, false).clicked() {
-                        pick = Some(false);
-                    }
-                    let r = menu_row(ui, " ", "GitHub", None, false, gh, false);
-                    let mark = Rect::from_center_size(pos2(r.rect.left() + 16.0, r.rect.center().y), Vec2::splat(15.0));
-                    crate::logos::paint(ui, ui.painter(), mark, "github", &t);
-                    if r.clicked() {
-                        pick = Some(true);
-                    }
-                    pick
-                });
+                let (pick, rect) = provider_menu(ctx, "pr-provider", pos, &t, gh);
                 if let Some(g) = pick {
                     self.prs.github_only = g;
                     close = true;
@@ -1336,15 +1363,6 @@ impl App {
         let t = self.theme.t;
         let a = self.prs.sub_anchor.unwrap_or(Rect::NOTHING);
         let f = &mut self.prs.filters;
-        fn radio<T: PartialEq + Copy>(ui: &mut Ui, opts: &[(T, &str, &str)], cur: T) -> Option<T> {
-            let mut pick = None;
-            for (v, label, icon) in opts {
-                if menu_row(ui, icon, label, None, false, *v == cur, false).clicked() {
-                    pick = Some(*v);
-                }
-            }
-            pick
-        }
         match s {
             Sub::State => {
                 let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 190.0), 190.0, &t, |ui| radio(ui, &STATES, f.state));
@@ -1589,33 +1607,38 @@ fn row(ui: &mut Ui, p: &Pr, avatar: Option<&egui::TextureHandle>, selected: bool
         ix += 20.0;
     }
 
-    // author, repo, labels
-    paint_avatar(&painter, pos2(x0 + 7.0, line2), 7.0, avatar, &p.author, &t);
-    let a = painter.layout_no_wrap(p.author.clone(), FontId::proportional(13.0), t.subtle());
+    row_meta(&painter, pos2(x0, line2), right - 90.0, avatar, &p.author, &p.repo, &p.labels, &t);
+    resp.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// A list row's second line from `at` (left, vertical centre): avatar and
+/// author, the repo, then label chips up to `limit` (then "+N").
+pub fn row_meta(painter: &egui::Painter, at: egui::Pos2, limit: f32, avatar: Option<&egui::TextureHandle>, author: &str, repo: &str, labels: &[(String, [u8; 3])], t: &theme::Tokens) {
+    let (x0, line2) = (at.x, at.y);
+    paint_avatar(painter, pos2(x0 + 7.0, line2), 7.0, avatar, author, t);
+    let a = painter.layout_no_wrap(author.to_string(), FontId::proportional(13.0), t.subtle());
     let mut x = x0 + 19.0;
     let aw = a.size().x;
     painter.galley(pos2(x, line2 - a.size().y / 2.0), a, t.subtle());
     x += aw + 8.0;
-    let repo = painter.layout_no_wrap(p.repo.to_lowercase(), FontId::proportional(13.0), t.gray(800));
+    let repo = painter.layout_no_wrap(repo.to_lowercase(), FontId::proportional(13.0), t.gray(800));
     let rw = repo.size().x;
     painter.galley(pos2(x, line2 - repo.size().y / 2.0), repo, t.gray(800));
     x += rw + 10.0;
-    let limit = right - 90.0;
-    for (i, (name, rgb)) in p.labels.iter().enumerate() {
+    for (i, (name, rgb)) in labels.iter().enumerate() {
         let g = painter.layout_no_wrap(name.clone(), FontId::proportional(11.5), t.fg());
         let w_ = g.size().x + 22.0;
         if x + w_ > limit {
-            let more = painter.layout_no_wrap(format!("+{}", p.labels.len() - i), FontId::proportional(11.5), t.subtle());
+            let more = painter.layout_no_wrap(format!("+{}", labels.len() - i), FontId::proportional(11.5), t.subtle());
             painter.galley(pos2(x, line2 - more.size().y / 2.0), more, t.subtle());
             break;
         }
         let r = Rect::from_min_size(pos2(x, line2 - 9.0), Vec2::new(w_, 18.0));
         painter.rect(r, CornerRadius::same(9), Color32::TRANSPARENT, Stroke::new(1.0, t.border()), StrokeKind::Inside);
-        label_dot(&painter, pos2(r.left() + 9.0, r.center().y), *rgb);
+        label_dot(painter, pos2(r.left() + 9.0, r.center().y), *rgb);
         painter.galley(pos2(r.left() + 16.0, r.center().y - g.size().y / 2.0), g, t.fg());
         x += w_ + 4.0;
     }
-    resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 #[cfg(test)]
