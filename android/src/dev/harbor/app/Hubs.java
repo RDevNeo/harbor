@@ -73,8 +73,8 @@ public class Hubs extends Base {
         list.removeAllViews();
         List<Hub> hubs = Hub.all(this);
         if (hubs.isEmpty()) {
-            list.addView(hint("Pair a PC running Harbor.\n\nOn the PC: Settings › Phones shows a QR code. "
-                    + "Scan it with the camera, or tap + here to scan, paste the link or type the address."));
+            list.addView(hint("Pair a PC running Harbor.\n\nOn the PC: Settings › Phones, turn on Phone access and click Pair a phone. "
+                    + "Scan the QR code with the camera, or tap + here to scan, paste the link or type the address."));
             TextView p = Ui.button(this, "Pair a PC", true, v -> pair());
             list.addView(p, Ui.margins(Ui.fill(), 24, 0, 24, 0));
             return;
@@ -124,7 +124,7 @@ public class Hubs extends Base {
     private void pair() {
         LinearLayout f = Ui.col(this);
         f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
-        f.addView(Ui.text(this, "On the PC: Harbor › Settings › Phones.", 14, Ui.G900));
+        f.addView(Ui.text(this, "On the PC: Harbor › Settings › Phones › Pair a phone.", 14, Ui.G900));
         TextView scan = Ui.button(this, "Scan QR code", true, v -> scan());
         f.addView(scan, Ui.margins(Ui.fill(), 0, 14, 0, 0));
 

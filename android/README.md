@@ -7,11 +7,14 @@ access, fast), and can rename, settle, fork and delete them. The API is in
 
 ## Install and pair
 
-1. On the PC: Harbor › Settings › Phones. Scan the install QR code with the phone (or download
-   `harbor-android.apk` from the GitHub release) and allow the browser to install it.
-2. Pair: scan the pairing QR code with the phone's camera app (it opens the `harbor://pair`
-   link in Harbor), or tap **+** in the app to scan it with a QR app, paste the link, or type
-   host, port and token. Several PCs can be paired.
+1. On the PC: Harbor › Settings › Phones, turn on **Phone access**. While it's on and the PC has
+   the app, the page shows an install QR code: scan it with the phone and let the browser
+   install the APK. Otherwise use **Download the app** there, or get `harbor-android.apk` from
+   the GitHub release.
+2. Pair: click **Pair a phone** on the PC (each phone gets its own key) and scan the pairing QR
+   code with the phone's camera app (it opens the `harbor://pair` link in Harbor), or tap **+**
+   in the app to scan it with a QR app, paste the link, or type host, port and token. Several
+   PCs can be paired.
 3. Updates: when the PC has a newer app, the chat list shows **Update**; Settings › Update
    installs it (Android asks once to allow "Install unknown apps" for Harbor; Android 12+
    updates silently after that).
