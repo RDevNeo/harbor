@@ -15,32 +15,26 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 /** The only way the app reaches a hub. The API is plain HTTP/1.1 (android/PROTOCOL.md), so it
  *  must only travel inside Tailscale's WireGuard tunnel: each request resolves the host on
  *  Tailscale's VPN network, needs a tailnet address (100.64/10, fd7a:115c:a1e0::/48) and
- *  connects a socket bound to that network. With Tailscale off, or any other address, the
- *  token never leaves the phone. Loopback is allowed too (adb reverse, for testing). The
- *  platform HTTP stack gets no cleartext at all (res/xml/network.xml). */
+ *  connects a socket bound to that network. Should a phone not show Tailscale as a VPN (or the
+ *  binding fail), the default network may carry it, still only to a tailnet address and only
+ *  while a local interface has one (Addr.way), so updates keep working. With Tailscale off, or
+ *  any other address, the token never leaves the phone. Loopback is allowed too (adb reverse,
+ *  for testing). The platform HTTP stack gets no cleartext at all (res/xml/network.xml). */
 final class Tailnet {
     /** Not sent: the hub isn't reachable through Tailscale right now. */
     static final class Refused extends IOException {
         Refused(String msg) { super(msg); }
-    }
-
-    static boolean tailnet(InetAddress a) {
-        byte[] b = a.getAddress();
-        if (b.length == 4) return (b[0] & 0xff) == 100 && (b[1] & 0xc0) == 64;
-        return b.length == 16 && (b[0] & 0xff) == 0xfd && (b[1] & 0xff) == 0x7a && (b[2] & 0xff) == 0x11
-                && (b[3] & 0xff) == 0x5c && (b[4] & 0xff) == 0xa1 && (b[5] & 0xff) == 0xe0;
-    }
-
-    /** An IP literal (no DNS lookup needed to parse it). */
-    static boolean literal(String host) {
-        return host.contains(":") || host.matches("[0-9.]+");
     }
 
     /** Tailscale's VPN network: a VPN with an address of its own in the tailnet. Null when off. */
@@ -51,15 +45,39 @@ final class Tailnet {
             NetworkCapabilities nc = cm.getNetworkCapabilities(n);
             if (nc == null || !nc.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
             LinkProperties lp = cm.getLinkProperties(n);
-            if (lp != null) for (LinkAddress la : lp.getLinkAddresses()) if (tailnet(la.getAddress())) return n;
+            if (lp != null) for (LinkAddress la : lp.getLinkAddresses()) if (Addr.tailnet(la.getAddress())) return n;
         }
         return null;
+    }
+
+    /** A socket bound to network n, or null when Android won't bind it. */
+    private static Socket bound(Network n) {
+        Socket s = new Socket();
+        try {
+            n.bindSocket(s);
+            return s;
+        } catch (IOException | RuntimeException e) {
+            try { s.close(); } catch (IOException ignored) { }
+            return null;
+        }
+    }
+
+    /** True when an interface of this phone is up with a tailnet address (Tailscale's tun). */
+    static boolean localUp() {
+        List<InetAddress> own = new ArrayList<>();
+        try {
+            for (NetworkInterface i : Collections.list(NetworkInterface.getNetworkInterfaces()))
+                if (i.isUp()) own.addAll(Collections.list(i.getInetAddresses()));
+        } catch (Exception e) {
+            return false;
+        }
+        return Addr.up(own);
     }
 
     /** A socket to host:port through Tailscale (or loopback), or Refused. */
     static Socket connect(String host, int port, int timeout) throws IOException {
         String h = host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
-        if (literal(h)) {
+        if (Addr.literal(h)) {
             InetAddress a = InetAddress.getByName(h);
             if (a.isLoopbackAddress()) {
                 Socket s = new Socket();
@@ -68,19 +86,20 @@ final class Tailnet {
             }
         }
         Network n = Ui.app == null ? null : vpn(Ui.app);
-        if (n == null) throw new Refused("Tailscale is off on this phone. Turn it on to reach the PC.");
-        InetAddress to = null;
-        for (InetAddress a : n.getAllByName(h)) if (tailnet(a)) { to = a; break; }
-        if (to == null) throw new Refused(host + " isn't a Tailscale address. Pair with the PC's Tailscale name or IP.");
-        Socket s = new Socket();
+        Socket s = n == null ? null : bound(n);
+        Addr.Way way = Addr.way(s != null, s == null && localUp());
+        if (way == Addr.Way.OFF) throw new Refused("Tailscale is off on this phone. Turn it on to reach the PC.");
+        if (s == null) s = new Socket();
         try {
-            n.bindSocket(s);
+            // On the VPN network its own DNS (MagicDNS) answers; on the default one, the phone's.
+            InetAddress to = Addr.pick(way == Addr.Way.VPN ? n.getAllByName(h) : InetAddress.getAllByName(h));
+            if (to == null) throw new Refused(host + " isn't a Tailscale address. Pair with the PC's Tailscale name or IP.");
             s.connect(new InetSocketAddress(to, port), timeout);
+            return s;
         } catch (IOException e) {
             s.close();
             throw e;
         }
-        return s;
     }
 
     /** One request: head, optional body, then the answer. The hub always answers with

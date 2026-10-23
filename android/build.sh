@@ -53,6 +53,9 @@ cp "$ROOT/assets/fonts/"{Geist-Regular,Geist-SemiBold,GeistMono-Regular,lucide}.
   --version-code "$CODE" --version-name "$VER"
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR" -d "$W/classes" \
   $(find "$HERE/src" "$W/gen" -name '*.java')
+# Tailnet's address rules are plain Java: check them on this JVM before packaging.
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.AddrTest
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class')
 (cd "$W" && zip -qj base.apk classes.dex)
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
