@@ -2,10 +2,12 @@
 #
 # Assets: harbor-x86_64-linux.tar.gz (harbor + harbor-stream + desktop entry, icons, licences,
 # install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
-# SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with
-# the public key in src/update.rs.
+# harbor-android.apk (the phone app), SHA256SUMS, and a minisign .minisig for each. Harbor's
+# updater checks those signatures with the public key in src/update.rs.
 #
-# Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents).
+# Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents);
+# ANDROID_KEYSTORE (base64 of the app's signing keystore), ANDROID_KEYSTORE_PASS,
+# ANDROID_KEY_ALIAS. Every APK must be signed with that same key, or phones can't update.
 name: release
 
 # Pushes to main (each publish.sh) build everything except Servo (see browser.yml) but sign or
@@ -111,6 +113,63 @@ jobs:
           name: harbor-stream
           path: out/
 
+  # The phone app (android/build.sh: aapt2 + javac + d8 + apksigner, no Gradle). Main pushes
+  # without the signing secrets sign with a throwaway key, only to prove it builds.
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK (platform 34, build-tools 34)
+        run: |
+          set -eu
+          sdk="${ANDROID_HOME:-$HOME/android-sdk}"
+          sm="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sm" ]; then
+            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/clt.zip
+            mkdir -p "$sdk/cmdline-tools" && unzip -q /tmp/clt.zip -d /tmp/clt && mv /tmp/clt/cmdline-tools "$sdk/cmdline-tools/latest"
+          fi
+          yes | "$sm" --sdk_root="$sdk" --licenses >/dev/null || true
+          "$sm" --sdk_root="$sdk" --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          set -eu
+          umask 077
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/android.jks"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::ANDROID_KEYSTORE is not set"; exit 1
+          else
+            keytool -genkeypair -keystore "$RUNNER_TEMP/android.jks" -storepass throwaway -alias harbor \
+              -keyalg RSA -keysize 2048 -validity 1 -dname "CN=throwaway" >/dev/null 2>&1
+            echo "ANDROID_KEYSTORE_PASS=throwaway" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=harbor" >> "$GITHUB_ENV"
+          fi
+      - name: Build the APK
+        env:
+          ANDROID_BUILD: /nonexistent
+          ANDROID_KEYSTORE: ${{ runner.temp }}/android.jks
+          SECRET_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          SECRET_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          OUT: ${{ github.workspace }}/out/harbor-android.apk
+        run: |
+          set -eu
+          [ -z "$SECRET_PASS" ] || export ANDROID_KEYSTORE_PASS="$SECRET_PASS"
+          [ -z "$SECRET_ALIAS" ] || export ANDROID_KEY_ALIAS="$SECRET_ALIAS"
+          android/build.sh
+          rm -f "$ANDROID_KEYSTORE"
+          "$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging out/harbor-android.apk | head -3
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-android
+          path: out/harbor-android.apk
+
   # Never compiles Servo on a main push (no engine found = no browser in that run's package).
   # A tag compiles it only when browser/ changed and nobody ran the browser workflow on main.
   browser:
@@ -119,7 +178,7 @@ jobs:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
   package:
-    needs: [core, stream, browser]
+    needs: [core, stream, browser, android]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -220,7 +279,8 @@ jobs:
           tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
           [ ! -d pkg/harbor-browser-x86_64-linux ] || tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
           cp packaging/install.sh dist/install.sh
-          (cd dist && sha256sum *.tar.gz install.sh > SHA256SUMS)
+          cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
+          (cd dist && sha256sum *.tar.gz install.sh harbor-android.apk > SHA256SUMS)
           ls -la dist
           tar -tzf dist/harbor-x86_64-linux.tar.gz | grep SHA256SUMS
       - name: Sign
@@ -231,7 +291,7 @@ jobs:
           set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for f in dist/harbor-x86_64-linux.tar.gz dist/harbor-browser-x86_64-linux.tar.gz dist/install.sh dist/SHA256SUMS; do
+          for f in dist/harbor-x86_64-linux.tar.gz dist/harbor-browser-x86_64-linux.tar.gz dist/install.sh dist/harbor-android.apk dist/SHA256SUMS; do
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
           done
           rm -f /tmp/minisign.key
@@ -243,6 +303,7 @@ jobs:
             dist/harbor-x86_64-linux.tar.gz
             dist/harbor-browser-x86_64-linux.tar.gz
             dist/install.sh
+            dist/harbor-android.apk
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -257,6 +318,7 @@ jobs:
           # This version's CHANGELOG section, then GitHub's generated notes.
           awk -v v="$ver" '$0 ~ "^## \\[?"v"\\]?" {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
           printf '\n**Install:** `curl -fsSL https://github.com/%s/releases/latest/download/install.sh | sh`\n' "$GITHUB_REPOSITORY" >> notes.md
+          printf '\n**Android:** download `harbor-android.apk` below, or scan the install QR code in Harbor › Settings › Phones.\n' >> notes.md
           pre=""
           case "$ver" in *-*) pre="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* --title "Harbor $ver" --notes-file notes.md --generate-notes $pre

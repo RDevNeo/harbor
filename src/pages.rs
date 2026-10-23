@@ -28,7 +28,7 @@ pub fn rows(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Webhooks];
+    pub const ALL: [Tab; 9] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -40,6 +40,7 @@ impl Tab {
             Tab::Integrations => "Integrations",
             Tab::Webhooks => "Webhooks",
             Tab::Devices => "Devices",
+            Tab::Phones => "Phones",
         }
     }
 
@@ -53,6 +54,7 @@ impl Tab {
             Tab::Integrations => ic::PLUG,
             Tab::Webhooks => ic::WEBHOOK,
             Tab::Devices => ic::MONITOR,
+            Tab::Phones => ic::SMARTPHONE,
         }
     }
 
@@ -67,6 +69,7 @@ impl Tab {
             Tab::Integrations => "integrations",
             Tab::Webhooks => "webhooks",
             Tab::Devices => "devices",
+            Tab::Phones => "phones",
         }
     }
 
@@ -86,6 +89,7 @@ impl Tab {
             Tab::Integrations => "apps mcp servers sign in tools",
             Tab::Webhooks => "hooks tailscale funnel public url",
             Tab::Devices => "remote machines pcs tailscale ssh run agents elsewhere mcp bridge",
+            Tab::Phones => "android phone mobile app pair qr code token api",
         }
     }
 
@@ -99,6 +103,7 @@ impl Tab {
             Tab::Integrations => "",
             Tab::Webhooks => "",
             Tab::Devices => "Run agents on your other PCs. They work in that PC's folders, with this PC's MCP servers and apps.",
+            Tab::Phones => "Your chats on your phone: Harbor for Android talks to this PC over Tailscale.",
         }
     }
 }
@@ -148,6 +153,7 @@ impl App {
                     Tab::Integrations => self.integrations_tab(ui),
                     Tab::Webhooks => self.webhooks_tab(ui),
                     Tab::Devices => self.devices_tab(ui),
+                    Tab::Phones => self.phones_tab(ui),
                 }
                 ui.add_space(40.0);
             });

@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "harbor"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "arboard",
  "eframe",
@@ -1018,6 +1018,7 @@ dependencies = [
  "image",
  "minisign-verify",
  "portable-pty",
+ "pulldown-cmark",
  "qrcode",
  "rusqlite",
  "serde",

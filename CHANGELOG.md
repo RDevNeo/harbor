@@ -8,6 +8,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ### Fixed
 - Sidebar: a project's row shows only its main thread's own status. While the main thread is idle it shows nothing, even when its sub-agents or other chats are working; those show on their own rows.
 
+## [0.8.0] - 2026-10-23
+
+### Added
+- Settings › Phones: Harbor for Android, a chat client for your phone. Turn on phone access, pair
+  a phone with a QR code (each phone gets its own key, revocable), and install the app from a
+  second QR code. The phone lists, opens and starts this PC's chats over Tailscale (device,
+  account, model, effort and access), sends messages and files, stops, renames, settles, forks
+  and deletes them. Harbor listens on its tailnet address only, port 47930. Updates and
+  install.sh fetch the app with each release.
+
 ## [0.7.0] - 2026-10-23
 
 ### Added
@@ -204,7 +214,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/RDevNeo/harbor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/RDevNeo/harbor/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/RDevNeo/harbor/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/RDevNeo/harbor/compare/v0.6.0...v0.6.1

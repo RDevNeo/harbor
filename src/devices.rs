@@ -952,9 +952,14 @@ fn app_version(ip: &str) -> Option<i64> {
     serde_json::from_str::<Value>(&line).ok()?["app"].as_i64()
 }
 
-/// The QR code for `text`, black on white, a 4-module quiet zone, sharp when scaled.
 fn qr_texture(ctx: &egui::Context, text: &str) -> egui::TextureHandle {
-    let img = match qrcode::QrCode::new(text.as_bytes()) {
+    ctx.load_texture("device-app-qr", qr_image(text), egui::TextureOptions::NEAREST)
+}
+
+/// The QR code for `text`, black on white, a 4-module quiet zone; load it with
+/// `TextureOptions::NEAREST` so it stays sharp when scaled.
+pub fn qr_image(text: &str) -> egui::ColorImage {
+    match qrcode::QrCode::new(text.as_bytes()) {
         Ok(code) => {
             let n = code.width();
             let colors = code.to_colors();
@@ -972,8 +977,7 @@ fn qr_texture(ctx: &egui::Context, text: &str) -> egui::TextureHandle {
             egui::ColorImage::new([side, side], px)
         }
         Err(_) => egui::ColorImage::filled([1, 1], egui::Color32::WHITE),
-    };
-    ctx.load_texture("device-app-qr", img, egui::TextureOptions::NEAREST)
+    }
 }
 
 fn transfers_ui(ui: &mut Ui, t: &Tokens, transfers: &Arc<Mutex<Vec<Transfer>>>) {

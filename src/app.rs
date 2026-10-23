@@ -54,6 +54,7 @@ pub enum Tab {
     Integrations,
     Webhooks,
     Devices,
+    Phones,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -181,6 +182,10 @@ pub struct App {
     /// Public base of /hooks when Tailscale Funnel serves it.
     pub funnel: Option<String>,
     inc_rx: Receiver<control::Incoming>,
+    /// Where listeners hand work to the UI thread (the phone API starts later, from Settings).
+    pub(crate) inc_tx: Sender<control::Incoming>,
+    /// Settings › Phones: the API Harbor for Android talks to (api.rs).
+    pub api: crate::api::Local,
     pub order_by_activity: bool,
     /// Fast mode for Claude and Codex turns.
     pub fast: bool,
@@ -251,6 +256,11 @@ impl App {
             .collect();
         let collapsed = get("collapsed", "").split(',').filter_map(|x| x.parse().ok()).collect();
         let draft = Draft { repo: get("draft_repo", "").parse().ok(), sel };
+        let store_ref = &store;
+        let api = crate::api::Local::new(Arc::new(crate::api::Hub::new(
+            crate::api::load_tokens(store_ref),
+            store_ref.get("api_port").and_then(|p| p.parse().ok()).unwrap_or(crate::api::DEFAULT_PORT),
+        )));
         let mut app = Self {
             repos: store.repos(),
             chats: store.chats(),
@@ -306,6 +316,8 @@ impl App {
             hook_port: None,
             funnel: None,
             inc_rx,
+            inc_tx: inc_tx.clone(),
+            api,
             order_by_activity: false,
             fast: false,
             show_team: true,
@@ -348,6 +360,9 @@ impl App {
         control::start_socket(inc_tx.clone(), wake.clone());
         app.hook_port = control::start_hooks(inc_tx, app.hook_tokens.clone(), wake);
         app.check_funnel();
+        if app.store.get("api_enabled").as_deref() == Some("1") {
+            app.api_set_enabled(true, ctx);
+        }
         app.restore_after_reload(ctx);
         // Agent turns run detached: the ones still going (or done meanwhile) come back.
         app.reattach_turns(ctx);
@@ -752,13 +767,19 @@ impl App {
         self.drafts.remove(&key);
         self.files.remove(&key);
         self.mentions.drafts.remove(&key);
+        self.send_to(chat_id, text, files, mentions, ctx);
+        self.focus_composer = true;
+    }
+
+    /// A user message for an existing chat (the composer's, or the phone's): a new turn,
+    /// or queued while one runs.
+    pub fn send_to(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<crate::mentions::Mention>, ctx: &egui::Context) {
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
             self.paused.remove(&p);
         }
         if self.turns.contains_key(&chat_id) {
             // Busy: it waits in the queue and joins the transcript once delivered.
             self.enqueue(chat_id, text, files, mentions);
-            self.focus_composer = true;
             return;
         }
         let tr = self.transcripts.entry(chat_id).or_default();
@@ -784,7 +805,6 @@ impl App {
         };
         self.start_turn(chat_id, prompt, files, ctx);
         self.undo_started(chat_id, snap);
-        self.focus_composer = true;
     }
 
     /// Starts one agent turn for a chat (user message, report, wake-up, webhook…).
@@ -862,6 +882,7 @@ impl App {
     }
 
     pub fn persist(&mut self, chat_id: i64) {
+        self.api_touch(chat_id);
         if let Some(c) = self.chat(chat_id).cloned() {
             self.store.save_chat(&c);
         }
@@ -882,6 +903,7 @@ impl App {
     }
 
     fn apply_event(&mut self, id: i64, ev: Event, ctx: &egui::Context) {
+        self.api_touch(id);
         if !self.transcripts.contains_key(&id) {
             let items = self.store.items(id);
             self.transcripts.insert(id, Transcript { items, ..Default::default() });
@@ -1165,6 +1187,7 @@ impl eframe::App for App {
             match m {
                 control::Incoming::Tool(call) => self.handle_tool(call, ctx),
                 control::Incoming::Hook(h) => self.handle_hook(h, ctx),
+                control::Incoming::Api(call) => self.handle_api(call, ctx),
                 control::Incoming::Focus { raised } => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -1197,6 +1220,7 @@ impl eframe::App for App {
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
+        self.api_tick();
         self.maybe_reload(ctx);
     }
 
