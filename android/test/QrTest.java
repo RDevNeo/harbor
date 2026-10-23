@@ -18,7 +18,8 @@ public class QrTest {
     }
 
     /** A W×H frame (rows `stride` apart) with the code scaled by `scale`, centred, optionally
-     *  rotated a quarter turn (a portrait phone over a landscape sensor) and inverted. */
+     *  rotated a quarter turn (a portrait phone over a landscape sensor) and inverted (light on
+     *  dark, which Harbor never shows, so it isn't read). */
     private static byte[] frame(BufferedImage qr, int w, int h, int stride, int scale, boolean rotate, boolean invert) {
         Random rnd = new Random(7);
         byte[] y = new byte[stride * h];
@@ -39,12 +40,12 @@ public class QrTest {
         BufferedImage qr = ImageIO.read(new File(a[0]));
         QrDecode d = new QrDecode();
         int w = 1280, h = 720, stride = 1344;
-        check(LINK.equals(d.decode(frame(qr, w, h, stride, 2, false, false), stride, w, h, 500, false)), "upright");
-        check(LINK.equals(d.decode(frame(qr, w, h, stride, 2, true, false), stride, w, h, 500, false)), "rotated");
-        check(LINK.equals(d.decode(frame(qr, w, h, stride, 3, false, false), stride, w, h, 9999, false)), "crop clamped");
-        check(LINK.equals(d.decode(frame(qr, w, h, stride, 2, false, true), stride, w, h, 500, true)), "inverted");
-        check(d.decode(frame(qr, w, h, stride, 2, false, true), stride, w, h, 500, false) == null, "inverted, read as is");
-        check(d.decode(new byte[stride * h], stride, w, h, 500, false) == null, "blank");
+        check(LINK.equals(d.decode(frame(qr, w, h, stride, 2, false, false), stride, w, h, 500, 500)), "upright");
+        check(LINK.equals(d.decode(frame(qr, w, h, stride, 2, true, false), stride, w, h, 500, 500)), "rotated");
+        check(LINK.equals(d.decode(frame(qr, w, h, stride, 3, false, false), stride, w, h, 9999, 9999)), "whole frame");
+        check(d.decode(frame(qr, w, h, stride, 4, false, false), stride, w, h, 200, 200) == null, "cropped too tight");
+        check(d.decode(frame(qr, w, h, stride, 2, false, true), stride, w, h, 500, 500) == null, "inverted");
+        check(d.decode(new byte[stride * h], stride, w, h, 9999, 9999) == null, "blank");
         if (failed > 0) { System.err.println(failed + " QR check(s) failed"); System.exit(1); }
         System.out.println("QrTest ok");
     }

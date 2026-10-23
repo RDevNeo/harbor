@@ -18,14 +18,12 @@ final class QrDecode {
 
     QrDecode() { hints.put(DecodeHintType.CHARACTER_SET, "UTF-8"); }
 
-    /** The text of a QR code in the centre square of side `side` (clamped to the frame) of a
-     *  `w`×`h` luminance plane whose rows are `stride` bytes apart, or null. `inverted` reads
-     *  light-on-dark codes. */
-    String decode(byte[] y, int stride, int w, int h, int side, boolean inverted) {
-        side = Math.max(1, Math.min(side, Math.min(w, h)));
-        LuminanceSource src = new PlanarYUVLuminanceSource(y, stride, h, (w - side) / 2, (h - side) / 2,
-                side, side, false);
-        if (inverted) src = src.invert();
+    /** The text of a QR code in the centred `cw`×`ch` part (clamped to the frame) of a `w`×`h`
+     *  luminance plane whose rows are `stride` bytes apart, or null. */
+    String decode(byte[] y, int stride, int w, int h, int cw, int ch) {
+        cw = Math.max(1, Math.min(cw, w));
+        ch = Math.max(1, Math.min(ch, h));
+        LuminanceSource src = new PlanarYUVLuminanceSource(y, stride, h, (w - cw) / 2, (h - ch) / 2, cw, ch, false);
         try {
             return reader.decode(new BinaryBitmap(new HybridBinarizer(src)), hints).getText();
         } catch (ReaderException e) {

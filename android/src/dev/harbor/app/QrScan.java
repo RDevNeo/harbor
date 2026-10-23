@@ -331,10 +331,11 @@ public class QrScan extends Activity {
             lastDecode = now;
             busy = true;
             final byte[] y = luma;
-            final boolean inv = (frames++ & 1) == 1;
-            final int side = squareInFrame(w, h);
+            // Alternate the framing square (less clutter, so faster and surer) with the whole
+            // frame (a code held off-centre or too close).
+            final int side = (frames++ & 1) == 0 ? squareInFrame(w, h) : Integer.MAX_VALUE;
             dec.post(() -> {
-                String text = decoder.decode(y, stride, w, h, side, inv);
+                String text = decoder.decode(y, stride, w, h, side, side);
                 busy = false;
                 if (text != null) runOnUiThread(() -> found(text.trim()));
             });
@@ -410,8 +411,8 @@ public class QrScan extends Activity {
         a.setBackground(bg);
         a.setOnClickListener(go);
         p.addView(a, new LinearLayout.LayoutParams(-2, -2));
-        // Below the close button, so Close keeps working.
-        root.addView(p, 1, new FrameLayout.LayoutParams(-1, -1));
+        // Over the preview, square and hint; under Close, so that keeps working.
+        root.addView(p, root.indexOfChild(hint) + 1, new FrameLayout.LayoutParams(-1, -1));
         denied = p;
     }
 
