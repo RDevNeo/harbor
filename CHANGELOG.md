@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-23
+
 ### Fixed
 - Android: unsent drafts belong to one PC's chat. With several PCs paired, a draft no longer shows up in another PC's chat that has the same number, and drafts are removed when their chat is deleted or the PC is unpaired.
 - Android: only web links (http, https) in chat replies can be tapped; other link types, such as harbor://pair, show as plain text. The pairing prompt warns when a link uses the name of an already paired PC with a different address.
@@ -220,7 +222,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/RDevNeo/harbor/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/RDevNeo/harbor/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/RDevNeo/harbor/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/RDevNeo/harbor/compare/v0.6.1...v0.6.2
