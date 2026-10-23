@@ -192,8 +192,11 @@ pub fn save_tokens(s: &store::Store, t: &[Token]) {
 /// What the UI thread keeps for the API: the hub and each transcript's item revisions.
 pub struct Local {
     pub hub: Arc<Hub>,
-    /// Chat → per item (hash of its JSON, revision it last changed at).
+    /// Chat → per item (its [`fingerprint`], revision it last changed at).
     items: HashMap<i64, Vec<(u64, u64)>>,
+    /// Chat → its hub revision when `items` was last brought up to date: until the chat
+    /// changes again, a call needn't look at its items at all.
+    looked: HashMap<i64, u64>,
     /// Chat → hash of what `/v1/state` says about it; plus the projects/accounts part.
     chats: HashMap<i64, u64>,
     rest: u64,
@@ -209,7 +212,7 @@ pub struct PhonesUi {
 
 impl Local {
     pub fn new(hub: Arc<Hub>) -> Self {
-        Local { hub, items: HashMap::new(), chats: HashMap::new(), rest: 0, ui: Default::default() }
+        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, ui: Default::default() }
     }
 }
 
@@ -997,6 +1000,18 @@ fn hash_of(v: &impl Hash) -> u64 {
     h.finish()
 }
 
+/// What tells an item's versions apart, without serializing it: a tool's input and result
+/// are set once (a result arrives, it doesn't grow), so their lengths stand in for them;
+/// replies and thinking grow while they stream; the rest are small.
+fn fingerprint(it: &Item) -> u64 {
+    match it {
+        Item::Tool { id, name, summary, input, result, is_error } => hash_of(&(id, name, summary, input.len(), result.as_ref().map(String::len), is_error)),
+        Item::Text { text, at } => hash_of(&(1u8, text, at)),
+        Item::Thinking { text } => hash_of(&(2u8, text)),
+        other => hash_of(&serde_json::to_string(other).unwrap_or_default()),
+    }
+}
+
 fn kind_slug(k: Kind) -> String {
     k.label().to_ascii_lowercase()
 }
@@ -1070,6 +1085,8 @@ impl App {
                 move || ctx.request_repaint()
             };
             start(self.api.hub.clone(), self.inc_tx.clone(), wake);
+            // Chats changed while it was off without a word to the hub: look at them again.
+            self.api.looked.clear();
             self.api_tick();
             self.api.hub.touch(None, true);
         }
@@ -1138,6 +1155,7 @@ impl App {
                 self.chats.retain(|x| x.id != c);
                 self.transcripts.remove(&c);
                 self.api.items.remove(&c);
+                self.api.looked.remove(&c);
                 if self.view == crate::app::View::Chat(c) {
                     self.view = crate::app::View::Draft;
                 }
@@ -1220,9 +1238,16 @@ impl App {
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
         }
         let items = &self.transcripts[&chat].items;
-        let hashes: Vec<u64> = items.iter().map(|it| hash_of(&serde_json::to_string(it).unwrap_or_default())).collect();
+        // Every change to a chat goes through `api_touch`: nothing new since the last look,
+        // nothing to hash (a phone asks again after each event, many times a second).
+        let now = self.api.hub.chat_rev(chat);
         let revs = self.api.items.entry(chat).or_default();
-        revs.truncate(hashes.len());
+        let fresh = self.api.looked.get(&chat) == Some(&now) && revs.len() == items.len();
+        let hashes: Vec<u64> = if fresh { vec![] } else { items.iter().map(fingerprint).collect() };
+        if !fresh {
+            self.api.looked.insert(chat, now);
+        }
+        revs.truncate(if fresh { revs.len() } else { hashes.len() });
         let stale = hashes.iter().enumerate().any(|(i, h)| revs.get(i).is_none_or(|(old, _)| old != h));
         if stale {
             let rev = self.api.hub.bump();
@@ -1421,6 +1446,17 @@ mod tests {
         assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
         drop(s);
         peer.join().unwrap();
+    }
+
+    #[test]
+    fn fingerprints_see_what_changes() {
+        let tool = |result: Option<&str>| Item::Tool { id: "t1".into(), name: "Bash".into(), summary: "ls".into(), input: "{}".into(), result: result.map(String::from), is_error: false };
+        assert_ne!(fingerprint(&tool(None)), fingerprint(&tool(Some("a\nb"))));
+        assert_eq!(fingerprint(&tool(Some("a\nb"))), fingerprint(&tool(Some("a\nb"))));
+        let text = |t: &str| Item::Text { text: t.into(), at: 1 };
+        assert_ne!(fingerprint(&text("Hel")), fingerprint(&text("Hello")));
+        assert_ne!(fingerprint(&text("x")), fingerprint(&Item::Thinking { text: "x".into() }));
+        assert_ne!(fingerprint(&Item::Error { text: "a".into() }), fingerprint(&Item::Error { text: "b".into() }));
     }
 
     #[test]

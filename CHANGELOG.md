@@ -25,7 +25,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Remote devices working on this PC's files: a shell command keeps only the end of its output in
   memory, and returns when it ends even if it left a background process holding its output
   (that process is stopped, and the agent is told).
-
+- Phone access: a phone following a long chat no longer makes Harbor re-encode the whole
+  transcript several times a second; only what changed is looked at.
 
 ## [0.8.3] - 2026-10-23
 
