@@ -5,9 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-23
+
 ### Fixed
 - The chat composer with a long paste now grows to 14 lines (or 45% of the window) before it
-  scrolls, instead of stopping at about four; the new-thread screen moves up to keep it in view.
+  scrolls, instead of stopping at about four, and shows the end of the paste where the cursor
+  is; the new-thread screen moves up to keep it in view.
 
 ## [0.6.1] - 2026-10-23
 
@@ -189,7 +192,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/RDevNeo/harbor/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/RDevNeo/harbor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/RDevNeo/harbor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/RDevNeo/harbor/compare/v0.4.2...v0.5.0
