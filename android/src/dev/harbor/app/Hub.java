@@ -3,6 +3,9 @@ package dev.harbor.app;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -18,11 +21,17 @@ import java.net.SocketTimeoutException;
 import java.net.URLEncoder;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 /** One paired desktop Harbor (the hub) and its HTTP API (android/PROTOCOL.md). Every call
  *  carries the pairing token; none runs on the UI thread. */
@@ -65,10 +74,66 @@ final class Hub {
 
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("hubs", Context.MODE_PRIVATE); }
 
+    // The list (tokens included) is kept encrypted with a key that never leaves the Android
+    // Keystore: "hubs.enc" = base64(IV + AES-GCM ciphertext). Older versions kept it in plain
+    // text under "hubs"; the first read moves it over.
+    private static final String KEY = "harbor-hubs";
+    private static String plain; // decrypted list, so screens don't call the Keystore on every read
+
+    private static SecretKey key() throws Exception {
+        KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+        ks.load(null);
+        if (ks.containsAlias(KEY)) return (SecretKey) ks.getKey(KEY, null);
+        KeyGenerator g = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        g.init(new KeyGenParameterSpec.Builder(KEY, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256).build());
+        return g.generateKey();
+    }
+
+    private static synchronized String load(Context c) {
+        if (plain != null) return plain;
+        SharedPreferences p = prefs(c);
+        String enc = p.getString("hubs.enc", null), old = p.getString("hubs", null);
+        if (enc != null) {
+            try {
+                byte[] b = Base64.decode(enc, Base64.NO_WRAP);
+                Cipher ci = Cipher.getInstance("AES/GCM/NoPadding");
+                ci.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, b, 0, 12));
+                plain = new String(ci.doFinal(b, 12, b.length - 12), StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                plain = "[]"; // the key is gone (e.g. a restored phone): pair again
+            }
+        } else if (old != null) {
+            plain = old;
+            store(c, old);
+        } else {
+            plain = "[]";
+        }
+        return plain;
+    }
+
+    private static synchronized void store(Context c, String json) {
+        plain = json;
+        SharedPreferences.Editor e = prefs(c).edit();
+        try {
+            Cipher ci = Cipher.getInstance("AES/GCM/NoPadding");
+            ci.init(Cipher.ENCRYPT_MODE, key());
+            byte[] iv = ci.getIV(), ct = ci.doFinal(json.getBytes(StandardCharsets.UTF_8));
+            byte[] b = new byte[iv.length + ct.length];
+            System.arraycopy(iv, 0, b, 0, iv.length);
+            System.arraycopy(ct, 0, b, iv.length, ct.length);
+            e.putString("hubs.enc", Base64.encodeToString(b, Base64.NO_WRAP)).remove("hubs");
+        } catch (Exception ex) {
+            e.putString("hubs", json).remove("hubs.enc"); // no working Keystore: keep the pairings as before
+        }
+        e.apply();
+    }
+
     static List<Hub> all(Context c) {
         List<Hub> out = new ArrayList<>();
         try {
-            JSONArray a = new JSONArray(prefs(c).getString("hubs", "[]"));
+            JSONArray a = new JSONArray(load(c));
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.getJSONObject(i);
                 out.add(new Hub(o.getString("id"), o.optString("name"), o.getString("host"), o.getInt("port"), o.getString("token")));
@@ -88,7 +153,7 @@ final class Hub {
             for (Hub h : hubs)
                 a.put(new JSONObject().put("id", h.id).put("name", h.name).put("host", h.host).put("port", h.port).put("token", h.token));
         } catch (JSONException ignored) { }
-        prefs(c).edit().putString("hubs", a.toString()).apply();
+        store(c, a.toString());
     }
 
     /** Adds h, or replaces the hub at the same address (pairing again renews its token). */
