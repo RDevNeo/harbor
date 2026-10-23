@@ -188,8 +188,13 @@ public class Hubs extends Base {
     }
 
     private void confirmPair(Hub h) {
+        // A link can name itself after a PC that is already paired: say when the address differs.
+        String warn = "";
+        for (Hub o : Hub.all(this))
+            if (o.label().equalsIgnoreCase(h.label()) && !(o.host.equalsIgnoreCase(h.host) && o.port == h.port))
+                warn = "\n\nCareful: your paired " + o.label() + " is at " + o.host + ":" + o.port + ", not here. Only pair if you just clicked Pair a phone on that PC.";
         Ui.dialog(this).setTitle("Pair with " + h.label() + "?")
-                .setMessage(h.host + ":" + h.port + "\n\nThis phone will be able to read and drive this PC's chats.")
+                .setMessage(h.host + ":" + h.port + "\n\nThis phone will be able to read and drive this PC's chats." + warn)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Pair", (d, w) -> tryPair(h)).show();
     }

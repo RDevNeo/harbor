@@ -6,6 +6,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ## [Unreleased]
 
 ### Fixed
+- Android: only web links (http, https) in chat replies can be tapped; other link types, such as harbor://pair, show as plain text. The pairing prompt warns when a link uses the name of an already paired PC with a different address.
 - Android: paired PCs and their tokens are stored encrypted with a key kept in the Android Keystore (existing pairings move over on first start).
 - Android: long chats stay fast. A chat shows its last 120 messages ("Show earlier" loads more), each update only redraws what changed, and an oversized answer from the PC is refused instead of filling the phone's memory.
 - Android: the chat list no longer downloads and redraws everything several times a second while a chat streams; it refreshes when the list itself changes.

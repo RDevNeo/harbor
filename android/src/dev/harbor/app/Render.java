@@ -128,12 +128,19 @@ final class Render {
                 sb.setSpan(new android.text.style.RelativeSizeSpan(0.9f), a, z, f);
             }
             String link = s.optString("link", "");
-            if (!link.isEmpty() && !"null".equals(link)) {
+            if (web(link)) {
                 sb.setSpan(new URLSpan(link), a, z, f);
                 sb.setSpan(new ForegroundColorSpan(Ui.BLUE), a, z, f);
             }
         }
         return sb;
+    }
+
+    /** Only web links are tappable: a reply is agent output, which can be steered by what the
+     *  agent read, so harbor://pair, intent:, tel: and the like stay plain text. */
+    static boolean web(String link) {
+        String l = link.trim().toLowerCase(java.util.Locale.ROOT);
+        return l.startsWith("https://") || l.startsWith("http://");
     }
 
     /** A monospace block that scrolls sideways instead of wrapping. */
