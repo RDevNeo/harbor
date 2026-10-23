@@ -735,27 +735,37 @@ impl App {
         self.open(v);
     }
 
-    /// Reads the git status (and so the GitHub remote) of projects not read yet,
-    /// so [`App::pr_projects`] knows every project, not only the ones opened.
-    pub fn ensure_git(&mut self) {
-        let missing: Vec<i64> = self.repos.iter().map(|r| r.id).filter(|id| !self.git.contains_key(id)).collect();
-        for id in missing {
-            self.refresh_git(id);
+    /// The GitHub repos (owner/name) of every project, for a fetch thread to call.
+    /// Projects whose git status (and so remote) isn't known yet are read there, not
+    /// on the UI thread, and their status is kept too.
+    pub fn gh_repos(&mut self) -> impl FnOnce() -> Vec<String> + Send + 'static {
+        let known: Vec<String> = self.pr_projects().into_iter().map(|p| p.2).collect();
+        let missing: Vec<(i64, std::path::PathBuf)> =
+            self.repos.iter().filter(|r| !self.git.contains_key(&r.id) && !self.git_running.contains(&r.id)).map(|r| (r.id, r.path.clone())).collect();
+        self.git_running.extend(missing.iter().map(|m| m.0));
+        let tx = self.bg_tx.clone();
+        move || {
+            let mut repos = known;
+            for (id, path) in missing {
+                let s = crate::git::status(&path);
+                repos.extend(s.as_ref().and_then(|s| s.remote.as_deref()).and_then(github_repo));
+                let _ = tx.send(Bg::Git(id, s));
+            }
+            repos.sort();
+            repos.dedup();
+            repos
         }
     }
 
     pub fn load_prs(&mut self) {
-        self.ensure_git();
-        let mut repos: Vec<String> = self.pr_projects().into_iter().map(|p| p.2).collect();
-        repos.sort();
-        repos.dedup();
+        let repos = self.gh_repos();
         self.prs.generation += 1;
         self.prs.loading = true;
         let (generation, state) = (self.prs.generation, self.prs.filters.state);
         let tx = self.bg_tx.clone();
         let ctx = self.prs.ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Bg::Prs(generation, state, fetch(state, &repos)));
+            let _ = tx.send(Bg::Prs(generation, state, fetch(state, &repos())));
             if let Some(c) = ctx {
                 c.request_repaint();
             }

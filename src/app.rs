@@ -90,6 +90,7 @@ pub enum Bg {
     Avatar(i64, Option<egui::ColorImage>),
     GhRepos(Result<Vec<(String, String)>, String>),
     Cloned(Result<PathBuf, String>),
+    Git(i64, Option<git::Status>),
 }
 
 /// Account, model, effort and access of a chat or of the draft.
@@ -149,6 +150,11 @@ pub struct App {
     pub bg_tx: Sender<Bg>,
     bg_rx: Receiver<Bg>,
     pub git: HashMap<i64, Option<git::Status>>,
+    /// Projects whose git status is being read now, and those to read again after it.
+    pub(crate) git_running: HashSet<i64>,
+    git_again: HashSet<i64>,
+    /// Wakes the UI from background threads (git status).
+    ctx: egui::Context,
     pub collapsed: HashSet<i64>,
     pub expanded_tools: HashSet<(i64, usize)>,
     pub md: CommonMarkCache,
@@ -289,6 +295,9 @@ impl App {
             bg_tx,
             bg_rx,
             git: HashMap::new(),
+            git_running: HashSet::new(),
+            git_again: HashSet::new(),
+            ctx: ctx.clone(),
             collapsed,
             expanded_tools: HashSet::new(),
             md: CommonMarkCache::default(),
@@ -608,10 +617,27 @@ impl App {
         self.open(View::Draft);
     }
 
+    /// Reads a project's git status on a thread (it can take seconds in a big tree);
+    /// the last one known shows meanwhile. A refresh asked during one runs once after it.
     pub fn refresh_git(&mut self, repo_id: i64) {
-        if let Some(r) = self.repo(repo_id) {
-            let s = git::status(&r.path);
-            self.git.insert(repo_id, s);
+        let Some(path) = self.repo(repo_id).map(|r| r.path.clone()) else { return };
+        if !self.git_running.insert(repo_id) {
+            self.git_again.insert(repo_id);
+            return;
+        }
+        let (tx, ctx) = (self.bg_tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Bg::Git(repo_id, git::status(&path)));
+            ctx.request_repaint();
+        });
+    }
+
+    /// A git status read on a thread: kept, and read again if asked meanwhile.
+    fn git_loaded(&mut self, repo_id: i64, s: Option<git::Status>) {
+        self.git.insert(repo_id, s);
+        self.git_running.remove(&repo_id);
+        if self.git_again.remove(&repo_id) {
+            self.refresh_git(repo_id);
         }
     }
 
@@ -1178,6 +1204,7 @@ impl eframe::App for App {
                     self.models.insert(Kind::Cursor, m);
                 }
                 Bg::Funnel(f) => self.funnel = f,
+                Bg::Git(repo, s) => self.git_loaded(repo, s),
                 Bg::Prs(generation, state, r) => self.prs_loaded(generation, state, r),
                 Bg::PrAvatar(login, img) => self.pr_avatar(ctx, login, img),
                 Bg::Issues(generation, state, r) => self.issues_loaded(generation, state, r),

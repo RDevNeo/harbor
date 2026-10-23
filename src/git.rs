@@ -1,7 +1,8 @@
 //! Small, on-demand git queries. Nothing polls in the background.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Default)]
 pub struct Status {
@@ -12,8 +13,43 @@ pub struct Status {
     pub remote: Option<String>,
 }
 
+/// How long a git query may take before it's killed (a hung mount, a held lock).
+const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `cmd.output()`, but the child is killed once `limit` has passed (ErrorKind::TimedOut).
+pub fn output_within(cmd: &mut Command, limit: Duration) -> std::io::Result<Output> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    // Read both pipes on threads, so a chatty child never blocks on a full pipe.
+    fn drain<R: std::io::Read + Send + 'static>(p: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut v = vec![];
+            if let Some(mut p) = p {
+                let _ = p.read_to_end(&mut v);
+            }
+            v
+        })
+    }
+    let (out, err) = (drain(child.stdout.take()), drain(child.stderr.take()));
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if let Some(st) = child.try_wait()? {
+            break st;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("timed out after {}s", limit.as_secs())));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    Ok(Output { status, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
+}
+
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    // No optional locks: a status never holds (or waits on) index.lock.
+    let mut cmd = Command::new("git");
+    cmd.env("GIT_OPTIONAL_LOCKS", "0").arg("-C").arg(dir).args(args);
+    let out = output_within(&mut cmd, GIT_TIMEOUT).ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 

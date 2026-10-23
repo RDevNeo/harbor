@@ -510,17 +510,14 @@ impl App {
     }
 
     pub fn load_issues(&mut self) {
-        self.ensure_git();
-        let mut repos: Vec<String> = self.pr_projects().into_iter().map(|p| p.2).collect();
-        repos.sort();
-        repos.dedup();
+        let repos = self.gh_repos();
         self.issues.generation += 1;
         self.issues.loading = true;
         let (generation, state) = (self.issues.generation, self.issues.filters.state);
         let tx = self.bg_tx.clone();
         let ctx = self.prs.ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Bg::Issues(generation, state, fetch(state, &repos)));
+            let _ = tx.send(Bg::Issues(generation, state, fetch(state, &repos())));
             if let Some(c) = ctx {
                 c.request_repaint();
             }
