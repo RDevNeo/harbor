@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-23
+
 ### Security
 - Remote devices: the MCP bridge's key no longer appears on command lines (`ps`) on either PC.
   It reaches the device on the connection's input, in a file only you can read, removed when the turn ends.
@@ -269,7 +271,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/RDevNeo/harbor/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/RDevNeo/harbor/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/RDevNeo/harbor/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/RDevNeo/harbor/compare/v0.8.0...v0.8.1
