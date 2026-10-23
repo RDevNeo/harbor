@@ -180,6 +180,7 @@ impl Terminal {
             match e {
                 egui::Event::Text(s) => out.extend_from_slice(s.as_bytes()),
                 egui::Event::Paste(s) => {
+                    let s = paste_text(&s);
                     if bracketed {
                         out.extend_from_slice(b"\x1b[200~");
                         out.extend_from_slice(s.as_bytes());
@@ -311,6 +312,13 @@ impl Terminal {
     }
 }
 
+/// Pasted text as the shell may see it: no ESC or other control characters but tab
+/// and line breaks (as xterm does), so a hidden `ESC[201~` can't end a bracketed
+/// paste early and run what follows as typed.
+fn paste_text(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r')).collect()
+}
+
 /// ANSI 16 from the rengaf scales, so terminal output matches the app.
 fn ansi_palette(t: &Tokens) -> [Color32; 16] {
     let (magenta, cyan) = if t.dark {
@@ -336,5 +344,17 @@ fn idx_color(i: u8, ansi: &[Color32; 16]) -> Color32 {
             let g = 8 + (i - 232) * 10;
             Color32::from_rgb(g, g, g)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pastes_lose_escapes() {
+        assert_eq!(paste_text("ls\x1b[201~\nrm -rf x\n"), "ls[201~\nrm -rf x\n");
+        assert_eq!(paste_text("a\tb\r\nc\x07\x1b[200~"), "a\tb\r\nc[200~");
+        assert_eq!(paste_text("héllo ✓"), "héllo ✓");
     }
 }

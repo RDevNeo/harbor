@@ -14,6 +14,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Pull Requests and Issues no longer redraw the whole window at the monitor's refresh rate while a list or a pull request loads; loading spinners step at 2 fps. The filtered and sorted list is kept until the list, filters, search or sort change, instead of being copied and sorted again on every frame. `gh` calls give up after 90 s with an error instead of loading forever.
 - Pull request and issue panels stay smooth on big pull requests and long threads: the diff and the pull request are no longer copied on every frame, and comments far outside the view are not laid out.
 
+### Security
+- Terminal: pasted text loses ESC and other control characters (tab and line breaks stay), so a hidden `ESC[201~` in copied text can no longer end a bracketed paste early and run a command as soon as it's pasted.
+
 ## [0.8.2] - 2026-10-23
 
 ### Fixed
