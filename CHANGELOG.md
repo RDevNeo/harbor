@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-22
+
 ### Added
 - Devices: run a chat's Claude Code agent on another PC over ssh. Settings › Devices finds your
   Tailscale PCs, adds others by SSH, and sets each one's name, icon, folder and access; the
@@ -15,6 +17,25 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Devices: agents on another PC work on this PC's files by default: their shell, git and file
   tools run here, in the chat's project (and its access mode), so edits and commits stay
   together. Turn off "Work on this PC's files" in the device's settings to use the device's copy.
+- Usage Controller: the Usage page caps how much of each account's quota Harbor may use, per
+  usage window, with a draggable marker and 50% / 80% / Unlimited presets.
+- Add project: a palette with a built-in folder browser and sources that need setup.
+- Updates wait for the Update button unless Harbor is set to update automatically.
+
+### Changed
+- Long chats only lay out the messages near the screen, so streaming in a long chat stays cheap.
+- Terminal output and a streaming chat repaint at a capped rate, lower while the window is
+  unfocused.
+
+### Fixed
+- A chat on another PC runs with the Claude account picked in Harbor, not the login of whoever
+  is signed in on that PC. The account's login reaches the device on the agent's input, never
+  on its command line, and is refreshed first when it is about to expire.
+- Agents on another PC find Claude Code when it is only on the login shell's PATH of zsh or a
+  user install folder (macOS), and say so clearly when it isn't installed. Settings › Devices
+  › Test checks the same way.
+- A focused text field no longer repaints at the refresh rate with an input method (fcitx5, ibus).
+- Live turns whose folder vanished are picked up again at startup.
 
 ## [0.1.3] - 2026-10-21
 
@@ -71,7 +92,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/RDevNeo/harbor/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/RDevNeo/harbor/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/RDevNeo/harbor/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/RDevNeo/harbor/compare/v0.1.0...v0.1.1
