@@ -75,6 +75,8 @@ pub enum Dialog {
     RemoveRepo(i64),
     /// Confirms stopping a lead and its running subagents.
     StopAll(i64),
+    /// Instructions the user adds before a Fix / Merge agent starts.
+    Instructions { project: i64, job: crate::autowork::Job, text: String },
 }
 
 pub enum Bg {

@@ -1224,7 +1224,12 @@ impl App {
                                         }
                                         let b = ui.add_enabled(proj.is_some(), egui::Button::new(format!("{}  {merge_label}", ic::SPARKLES)));
                                         if b.on_disabled_hover_text(crate::issues::NOT_PROJECT).clicked() {
-                                            merge = proj.map(|id| (id, p.clone()));
+                                            merge = proj.map(|id| (id, p.clone(), false));
+                                            ui.close();
+                                        }
+                                        let b = ui.add_enabled(proj.is_some(), egui::Button::new(format!("{}  Merge with instructions…", ic::PEN_LINE)));
+                                        if b.on_disabled_hover_text(crate::issues::NOT_PROJECT).clicked() {
+                                            merge = proj.map(|id| (id, p.clone(), true));
                                             ui.close();
                                         }
                                     }
@@ -1243,8 +1248,12 @@ impl App {
         if let Some(url) = browse {
             self.open_browser(Some(url));
         }
-        if let Some((id, p)) = merge {
-            self.merge_pr(&ctx, id, &p);
+        if let Some((id, p, ask)) = merge {
+            if ask {
+                self.ask_instructions(id, crate::autowork::Job::Merge(p));
+            } else {
+                self.merge_pr(&ctx, id, &p, "");
+            }
         }
         if let Some((id, p, review)) = action {
             let Some(repo) = self.repo(id).cloned() else { return };

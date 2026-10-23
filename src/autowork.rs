@@ -83,22 +83,49 @@ pub fn prs_to_merge(data: &prs::Fetched, projects: &[(i64, String, String)], han
     v
 }
 
-pub fn fix_prompt(i: &Issue, auto: bool) -> String {
-    let n = i.number;
-    let pre = if auto { "(Started by Harbor's Auto-Fix.)\n\n" } else { "" };
-    format!(
-        "{pre}Fix GitHub issue #{n} in {}: {}\n{}\n\nRead it with `gh issue view {n} --comments` and find the cause. On a new branch `fix/issue-{n}` from the default branch, make the fix (with a test where it fits), commit, push the branch and open a pull request with `gh pr create` whose body says `Fixes #{n}`. Reply with the PR link and a short summary. If the issue is unclear or can't be fixed safely, don't guess: comment on it with what you found instead.",
-        i.repo, i.title, i.url
-    )
+/// What a "… with instructions" dialog starts once the user wrote them.
+#[derive(Clone)]
+pub enum Job {
+    Fix(Issue),
+    Merge(Pr),
 }
 
-pub fn merge_prompt(p: &Pr, auto: bool) -> String {
+/// Which part of an [`App::agent_button`] was clicked.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Go {
+    Now,
+    /// "… with instructions…" in the ▾ menu: ask for them first.
+    Ask,
+}
+
+/// `prompt` with the user's own instructions appended, marked as the ones that
+/// win. Nothing is added when `extra` is blank.
+fn with_extra(prompt: String, extra: &str) -> String {
+    let extra = extra.trim();
+    if extra.is_empty() {
+        return prompt;
+    }
+    format!("{prompt}\n\nIMPORTANT: instructions from the user (follow these; they take priority over the defaults above):\n{extra}")
+}
+
+pub fn fix_prompt(i: &Issue, auto: bool, extra: &str) -> String {
+    let n = i.number;
+    let pre = if auto { "(Started by Harbor's Auto-Fix.)\n\n" } else { "" };
+    let prompt = format!(
+        "{pre}Fix GitHub issue #{n} in {}: {}\n{}\n\nRead it with `gh issue view {n} --comments` and find the cause. On a new branch `fix/issue-{n}` from the default branch, make the fix (with a test where it fits), commit, push the branch and open a pull request with `gh pr create` whose body says `Fixes #{n}`. Reply with the PR link and a short summary. If the issue is unclear or can't be fixed safely, don't guess: comment on it with what you found instead.",
+        i.repo, i.title, i.url
+    );
+    with_extra(prompt, extra)
+}
+
+pub fn merge_prompt(p: &Pr, auto: bool, extra: &str) -> String {
     let n = p.number;
     let pre = if auto { "(Started by Harbor's Auto-Merge.)\n\n" } else { "" };
-    format!(
+    let prompt = format!(
         "{pre}Get pull request #{n} in {} merged: {}\n{}\n\nCheck it out with `gh pr checkout {n}`, rebase it on its base branch and resolve any conflicts, make the checks pass (`gh pr checks {n}`), and address the review comments (`gh pr view {n} --comments`). Push, and once it is mergeable merge it with `gh pr merge {n}`. If something can't be resolved safely, stop and explain why instead of merging.",
         p.repo, p.title, p.url
-    )
+    );
+    with_extra(prompt, extra)
 }
 
 impl App {
@@ -172,29 +199,84 @@ impl App {
         Some(id)
     }
 
-    pub fn fix_issue(&mut self, ctx: &egui::Context, project: i64, i: &Issue) {
-        if self.launch(ctx, project, fix_prompt(i, false), false).is_some() {
+    pub fn fix_issue(&mut self, ctx: &egui::Context, project: i64, i: &Issue, extra: &str) {
+        if self.launch(ctx, project, fix_prompt(i, false, extra), false).is_some() {
             self.mark_handled(issue_key(i));
         }
     }
 
-    pub fn merge_pr(&mut self, ctx: &egui::Context, project: i64, p: &Pr) {
-        if self.launch(ctx, project, merge_prompt(p, false), false).is_some() {
+    pub fn merge_pr(&mut self, ctx: &egui::Context, project: i64, p: &Pr, extra: &str) {
+        if self.launch(ctx, project, merge_prompt(p, false, extra), false).is_some() {
             if !p.head.is_empty() {
                 self.mark_handled(pr_key(p));
             }
         }
     }
 
-    /// A primary "<verb> with <provider>" button and a ▾ to pick the provider.
-    /// Disabled with `tip` when `enabled` is false. True when clicked.
-    pub fn agent_button(&mut self, ui: &mut Ui, verb: &str, enabled: bool, tip: &str) -> bool {
+    /// Opens the dialog where the user writes instructions for `job` before it starts.
+    pub fn ask_instructions(&mut self, project: i64, job: Job) {
+        self.dialog = Some(crate::app::Dialog::Instructions { project, job, text: String::new() });
+    }
+
+    /// Starts `job` with the user's `extra` instructions.
+    pub fn start_job(&mut self, ctx: &egui::Context, project: i64, job: &Job, extra: &str) {
+        match job {
+            Job::Fix(i) => self.fix_issue(ctx, project, i, extra),
+            Job::Merge(p) => self.merge_pr(ctx, project, p, extra),
+        }
+    }
+
+    /// The body of the instructions dialog. True when Start (or Ctrl+Enter) was hit.
+    pub fn instructions_dialog(&mut self, ui: &mut Ui, job: &Job, text: &mut String, close: &mut bool) -> bool {
+        let (title, what) = match job {
+            Job::Fix(i) => (format!("Fix with {}", self.agent_label()), format!("#{} {}", i.number, i.title)),
+            Job::Merge(p) => (format!("Merge with {}", self.agent_label()), format!("#{} {}", p.number, p.title)),
+        };
+        w::text(ui, title, "heading-20");
+        ui.add_space(4.0);
+        w::subtle(ui, what, "copy-14");
+        ui.add_space(12.0);
+        let id = egui::Id::NULL.with("agent-instructions");
+        let r = egui::TextEdit::multiline(text)
+            .id(id)
+            .hint_text("Your instructions or details. The agent treats them as very important.")
+            .font(crate::theme::ts("copy-14"))
+            .desired_rows(6)
+            .desired_width(f32::INFINITY)
+            .show(ui)
+            .response
+            .response;
+        if !r.has_focus() && text.is_empty() {
+            r.request_focus();
+        }
+        let enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && (i.modifiers.ctrl || i.modifiers.command));
+        let mut go = false;
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            w::subtle(ui, "Ctrl+Enter", "label-12");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let ready = !text.trim().is_empty();
+                if w::btn("Start").primary().enabled(ready).show(ui).clicked() || (enter && ready) {
+                    go = true;
+                    *close = true;
+                }
+                if w::btn("Cancel").outline().show(ui).clicked() {
+                    *close = true;
+                }
+            });
+        });
+        go
+    }
+
+    /// A primary "<verb> with <provider>" button and a ▾ to pick the provider
+    /// or to add instructions first. Disabled with `tip` when `enabled` is false.
+    pub fn agent_button(&mut self, ui: &mut Ui, verb: &str, enabled: bool, tip: &str) -> Option<Go> {
         let label = format!("{}  {verb} with {}", ic::SPARKLES, self.agent_label());
-        let mut clicked = false;
+        let mut go = None;
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             // Right-to-left layouts: the ▾ goes first so it lands on the right.
-            let more = w::btn(ic::DOWN).sm().primary().show(ui).on_hover_text("Pick the provider");
+            let more = w::btn(ic::DOWN).sm().primary().show(ui).on_hover_text("Pick the provider, or add instructions");
             let cur = self.agent_account().map(|a| a.id);
             let accounts: Vec<_> = self.accounts.iter().filter(|a| a.installed()).cloned().collect();
             let mut pick = None;
@@ -206,13 +288,20 @@ impl App {
                         pick = Some(a.id.clone());
                     }
                 }
+                ui.separator();
+                let b = ui.add_enabled(enabled, egui::Button::new(format!("{}  {verb} with instructions…", ic::PEN_LINE)));
+                if b.on_disabled_hover_text(tip).clicked() {
+                    go = Some(Go::Ask);
+                }
             });
             if let Some(id) = pick {
                 self.store.set("gh_agent_account", &id);
             }
-            clicked = w::btn(&label).sm().primary().enabled(enabled).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked();
+            if w::btn(&label).sm().primary().enabled(enabled).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                go = Some(Go::Now);
+            }
         });
-        clicked
+        go
     }
 
     // ------------------------------------------------------------ auto
@@ -260,7 +349,7 @@ impl App {
             let data = self.issues.data.as_ref().and_then(|d| d.as_ref().ok()).cloned();
             for (project, i) in data.map(|d| issues_to_fix(&d, &projects, &handled)).unwrap_or_default().into_iter().take(room) {
                 self.mark_handled(issue_key(&i));
-                if let Some(id) = self.launch(ctx, project, fix_prompt(&i, true), true) {
+                if let Some(id) = self.launch(ctx, project, fix_prompt(&i, true, ""), true) {
                     self.auto.auto_chats.push(id);
                     room -= 1;
                 }
@@ -270,7 +359,7 @@ impl App {
             let data = self.prs.data.as_ref().and_then(|d| d.as_ref().ok()).cloned();
             for (project, p) in data.map(|d| prs_to_merge(&d, &projects, &handled)).unwrap_or_default().into_iter().take(room) {
                 self.mark_handled(pr_key(&p));
-                if let Some(id) = self.launch(ctx, project, merge_prompt(&p, true), true) {
+                if let Some(id) = self.launch(ctx, project, merge_prompt(&p, true, ""), true) {
                     self.auto.auto_chats.push(id);
                 }
             }
@@ -404,8 +493,22 @@ mod tests {
 
     #[test]
     fn prompts_name_the_item() {
-        assert!(fix_prompt(&issue(9), false).contains("Fixes #9"));
-        assert!(fix_prompt(&issue(9), true).starts_with("(Started by Harbor's Auto-Fix.)"));
-        assert!(merge_prompt(&pr(4), false).contains("gh pr merge 4"));
+        assert!(fix_prompt(&issue(9), false, "").contains("Fixes #9"));
+        assert!(fix_prompt(&issue(9), true, "").starts_with("(Started by Harbor's Auto-Fix.)"));
+        assert!(merge_prompt(&pr(4), false, "").contains("gh pr merge 4"));
+    }
+
+    #[test]
+    fn user_instructions_are_marked_important() {
+        let plain = fix_prompt(&issue(9), false, "");
+        assert!(!plain.contains("IMPORTANT"));
+        assert_eq!(fix_prompt(&issue(9), false, "  \n "), plain);
+        let fix = fix_prompt(&issue(9), false, "  Keep the public API.\n");
+        assert!(fix.starts_with(&plain));
+        assert!(fix.ends_with("take priority over the defaults above):\nKeep the public API."));
+        let merge = merge_prompt(&pr(4), true, "Squash it.");
+        assert!(merge.starts_with("(Started by Harbor's Auto-Merge.)"));
+        assert!(merge.contains("gh pr merge 4"));
+        assert!(merge.ends_with("IMPORTANT: instructions from the user (follow these; they take priority over the defaults above):\nSquash it."));
     }
 }

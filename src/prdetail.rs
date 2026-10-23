@@ -6,6 +6,7 @@
 //! agent, open, copy link / number / checkout command).
 
 use crate::app::App;
+use crate::autowork::{Go, Job};
 use crate::icons as ic;
 use crate::prs::{Pr, ago, iso_secs, paint_avatar, thousands};
 use crate::theme::{self, RADIUS_MD};
@@ -525,8 +526,10 @@ impl App {
                         } else {
                             "Start a thread where an agent rebases it, fixes checks and reviews, then merges it (gh pr merge)"
                         };
-                        if self.agent_button(ui, "Merge", project.is_some() && list.is_some(), tip) {
-                            act = Some(Act::Merge);
+                        match self.agent_button(ui, "Merge", project.is_some() && list.is_some(), tip) {
+                            Some(Go::Now) => act = Some(Act::Merge(false)),
+                            Some(Go::Ask) => act = Some(Act::Merge(true)),
+                            None => {}
                         }
                         let tip = if project.is_some() { "Check out this branch in a terminal (gh pr checkout)" } else { "Add this repo as a project to check it out here" };
                         if w::btn(&format!("{}  Check out", ic::BRANCH)).sm().outline().enabled(project.is_some()).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
@@ -676,9 +679,13 @@ impl App {
                         self.open_terminal(&ctx, &format!("checkout #{number}"), r.path.clone(), argv, vec![]);
                     }
                 }
-                Act::Merge => {
+                Act::Merge(ask) => {
                     if let (Some(id), Some(p)) = (project, &list) {
-                        self.merge_pr(&ctx, id, p);
+                        if ask {
+                            self.ask_instructions(id, Job::Merge(p.clone()));
+                        } else {
+                            self.merge_pr(&ctx, id, p, "");
+                        }
                     }
                 }
                 Act::Review => {
@@ -951,7 +958,8 @@ enum Act {
     Ready,
     Checkout,
     Review,
-    Merge,
+    /// True: ask for instructions first.
+    Merge(bool),
 }
 
 /// A segmented-control button.

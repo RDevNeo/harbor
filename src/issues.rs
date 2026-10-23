@@ -708,7 +708,12 @@ impl App {
                                     ui.separator();
                                     let b = ui.add_enabled(proj.is_some() && i.state == IssueState::Open, egui::Button::new(format!("{}  {fix_label}", ic::SPARKLES)));
                                     if b.on_disabled_hover_text(NOT_PROJECT).clicked() {
-                                        work = proj.map(|id| (id, i.clone()));
+                                        work = proj.map(|id| (id, i.clone(), false));
+                                        ui.close();
+                                    }
+                                    let b = ui.add_enabled(proj.is_some() && i.state == IssueState::Open, egui::Button::new(format!("{}  Fix with instructions…", ic::PEN_LINE)));
+                                    if b.on_disabled_hover_text(NOT_PROJECT).clicked() {
+                                        work = proj.map(|id| (id, i.clone(), true));
                                         ui.close();
                                     }
                                 });
@@ -726,8 +731,12 @@ impl App {
         if let Some(url) = browse {
             self.open_browser(Some(url));
         }
-        if let Some((id, i)) = work {
-            self.fix_issue(&ctx, id, &i);
+        if let Some((id, i, ask)) = work {
+            if ask {
+                self.ask_instructions(id, crate::autowork::Job::Fix(i));
+            } else {
+                self.fix_issue(&ctx, id, &i, "");
+            }
         }
 
         self.issue_menus(&ctx, &fetched, &projects);
