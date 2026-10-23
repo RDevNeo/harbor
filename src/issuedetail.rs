@@ -313,6 +313,8 @@ impl App {
                             milestone: f.milestone.clone(),
                             mentioned: false,
                             linked_pr: false,
+                            // Started by the user here, not unattended.
+                            author_trusted: false,
                         })
                     });
                     if let (Some(id), Some(i)) = (project, item) {

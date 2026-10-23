@@ -47,6 +47,9 @@ pub struct Issue {
     pub mentioned: bool,
     /// An open pull request says it fixes it.
     pub linked_pr: bool,
+    /// Its author is the repo's owner, a member of its organisation or a collaborator
+    /// (GitHub's authorAssociation): only such issues are fixed unattended.
+    pub author_trusted: bool,
 }
 
 #[derive(Clone, Default)]
@@ -196,7 +199,7 @@ pub struct Issues {
 // ------------------------------------------------------------------ fetching
 
 const FIELDS: &str = "... on Issue { number title url state stateReason createdAt updatedAt repository { nameWithOwner } \
-author { login avatarUrl(size: 40) } labels(first: 10) { nodes { name color } } assignees(first: 10) { nodes { login } } \
+author { login avatarUrl(size: 40) } authorAssociation labels(first: 10) { nodes { name color } } assignees(first: 10) { nodes { login } } \
 milestone { title } comments { totalCount } closedByPullRequestsReferences(first: 5, includeClosedPrs: false) { nodes { state } } }";
 
 fn state_qualifier(s: StateF) -> &'static str {
@@ -276,6 +279,7 @@ fn node(n: &serde_json::Value) -> Option<Issue> {
         milestone: n["milestone"]["title"].as_str().map(String::from),
         mentioned: false,
         linked_pr: n["closedByPullRequestsReferences"]["nodes"].as_array().into_iter().flatten().any(|p| p["state"].as_str() == Some("OPEN")),
+        author_trusted: crate::autowork::trusted(n["authorAssociation"].as_str().unwrap_or("")),
     })
 }
 
@@ -1113,6 +1117,7 @@ mod tests {
             milestone: None,
             mentioned: false,
             linked_pr: false,
+            author_trusted: true,
         }
     }
 

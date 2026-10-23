@@ -10,6 +10,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   webhooks' tokens, transcripts, uploads and pastes), its turn files (commands, output) and process
   logs are owner-only now, also on existing installs. App sign-in tokens no longer go into a turn's
   files: the turn's runner adds them itself.
+- Auto-Fix and Auto-Merge only act on text from the repo's owner, members and collaborators:
+  Auto-Fix only picks issues they opened, and unattended runs read only their comments and reviews
+  (anyone can comment on a public repo). Issue and PR titles and webhook requests reach the agent
+  fenced as untrusted data, not instructions. Fix / Merge started by you still read every comment.
 
 ### Fixed
 - Long sessions stay fast: saving a chat writes only its new or changed items instead of rewriting
