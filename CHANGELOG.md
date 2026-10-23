@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-23
+
 ### Fixed
 - Browser panel: the engine paints a new frame only after Harbor took the previous one, and Harbor reads only the newest, so an animated page in a hidden tab no longer repaints Harbor at 60 fps or piles up frames.
 - Device screens: a phone or PC view that stays out of sight for 15 s (another tab, a closed panel) ends its stream, so the device stops encoding and this PC stops decoding; it reconnects when shown again.
@@ -239,7 +241,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/RDevNeo/harbor/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/RDevNeo/harbor/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/RDevNeo/harbor/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/RDevNeo/harbor/compare/v0.7.0...v0.8.0

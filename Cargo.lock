@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "harbor"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "arboard",
  "eframe",
