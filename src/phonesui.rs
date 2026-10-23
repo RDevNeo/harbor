@@ -137,10 +137,17 @@ impl App {
                             let label = if t.name.is_empty() { "Not connected yet".to_string() } else { t.name.clone() };
                             w::text(ui, format!("{}  {label}", ic::SMARTPHONE), "strong-14");
                             let last = match seen.get(&t.token) {
-                                Some((_, at)) => format!(" · last seen {}", crate::app::ago(*at)),
+                                Some((_, at)) => match crate::app::ago(*at).as_str() {
+                                    "now" => " · seen just now".to_string(),
+                                    a => format!(" · last seen {a} ago"),
+                                },
                                 None => String::new(),
                             };
-                            w::subtle(ui, format!("Paired {} ago · key …{}{last}", crate::app::ago(t.created), &t.token[t.token.len().saturating_sub(6)..]), "label-12");
+                            let when = match crate::app::ago(t.created).as_str() {
+                                "now" => "just now".to_string(),
+                                a => format!("{a} ago"),
+                            };
+                            w::subtle(ui, format!("Paired {when} · key …{}{last}", &t.token[t.token.len().saturating_sub(6)..]), "label-12");
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if w::btn("Revoke").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {

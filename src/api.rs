@@ -921,7 +921,7 @@ impl App {
         let gone = self.api.chats.keys().any(|k| !seen.contains_key(k));
         let rest = hash_of(&(
             self.repos.iter().map(|r| (r.id, &r.name)).collect::<Vec<_>>(),
-            self.accounts.iter().map(|a| (&a.id, a.logged_in, a.usage.iter().map(|u| (&u.label, u.percent as i32)).collect::<Vec<_>>())).collect::<Vec<_>>(),
+            self.accounts.iter().map(|a| (&a.id, a.logged_in, a.usage.iter().map(|u| (&u.label, (u.percent * 100.0) as i32)).collect::<Vec<_>>())).collect::<Vec<_>>(),
             self.fast,
             self.models.values().map(|m| m.len()).sum::<usize>(),
         ));
@@ -1053,7 +1053,8 @@ impl App {
                     "id": a.id, "label": a.short(), "name": a.name, "kind": kind_slug(a.kind),
                     "signed_in": a.logged_in.unwrap_or(true),
                     "can_start": a.kind == Kind::Claude,
-                    "usage": a.usage.iter().map(|u| json!({ "label": u.label, "percent": u.percent })).collect::<Vec<_>>(),
+                    // Window.percent is a 0–1 fraction; the phone gets 0–100 like the desktop shows.
+                    "usage": a.usage.iter().map(|u| json!({ "label": u.label, "percent": (u.percent * 1000.0).round() / 10.0 })).collect::<Vec<_>>(),
                 })
             })
             .collect();
