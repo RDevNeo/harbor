@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-10-23
+
 ### Fixed
 - Processes Harbor started before an update no longer linger as zombies after they end: the
   updated Harbor collects them.
@@ -305,7 +307,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/RDevNeo/harbor/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/RDevNeo/harbor/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/RDevNeo/harbor/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/RDevNeo/harbor/compare/v0.8.3...v0.8.4
