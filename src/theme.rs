@@ -91,6 +91,11 @@ const GEIST_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Geist-SemiBold.ttf
 const GEIST_MONO: &[u8] = include_bytes!("../assets/fonts/GeistMono-Regular.ttf");
 /// Lucide icons (the set shadcn/rengaf use), subset to the glyphs Harbor draws.
 const LUCIDE: &[u8] = include_bytes!("../assets/fonts/lucide.ttf");
+/// Lucide "copy" and "check" remapped to U+1F5D0 and U+2714, the two characters
+/// egui_commonmark's code-block copy button draws (no font here has them, so egui showed
+/// a missing-glyph box). Made with fontTools: subset lucide.ttf to those two glyphs and
+/// rewrite the cmap; the FontTweak in `install_fonts` centres them on the block's text.
+const LUCIDE_MD: &[u8] = include_bytes!("../assets/fonts/lucide-md.ttf");
 /// Glyph fallback (icons, symbols Geist lacks) if the system has it.
 const NERD_FALLBACK: &str = "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf";
 
@@ -111,10 +116,16 @@ pub fn install_fonts(ctx: &egui::Context) {
     if let Some(b) = nerd.clone() {
         add("nerd", b);
     }
+    fonts.font_data.insert(
+        "lucide-md".into(),
+        egui::FontData::from_static(LUCIDE_MD)
+            .tweak(egui::FontTweak { y_offset_factor: -0.14, ..Default::default() })
+            .into(),
+    );
     // egui's bundled fonts stay as the last fallback for emoji etc.
     let defaults: Vec<String> = fonts.families[&FontFamily::Proportional].clone();
     let chain = |first: &str| {
-        let mut v = vec![first.to_string(), "lucide".to_string()];
+        let mut v = vec![first.to_string(), "lucide".to_string(), "lucide-md".to_string()];
         if nerd.is_some() {
             v.push("nerd".into());
         }
