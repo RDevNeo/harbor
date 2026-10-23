@@ -74,7 +74,10 @@ impl Browser {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| e.to_string())?;
-        let stdin = child.stdin.take().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        // One frame at a time: the engine paints the next only after our "got", so a
+        // hidden tab (not polled) costs no painting, copies or repaints here.
+        let _ = writeln!(stdin, "{}", json!({ "t": "acks", "on": true }));
         let stdout = child.stdout.take().unwrap();
         let (tx, rx) = channel();
         std::thread::spawn(move || {
@@ -120,27 +123,11 @@ impl Browser {
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        let mut newest = None;
         while let Ok(v) = self.rx.try_recv() {
             match v["t"].as_str().unwrap_or("") {
-                "frame" => {
-                    let (fw, fh) = (v["w"].as_u64().unwrap_or(0) as usize, v["h"].as_u64().unwrap_or(0) as usize);
-                    let path = format!("{}.{}", self.frames, v["buf"].as_u64().unwrap_or(0));
-                    if let Ok(bytes) = std::fs::read(&path) {
-                        // A frame at the wrong size means a resize was lost (sent before the
-                        // page existed): ask again.
-                        if (fw as u32, fh as u32) != self.size {
-                            let (w, h) = self.size;
-                            self.send(json!({ "t": "resize", "w": w, "h": h }));
-                        }
-                        if bytes.len() == fw * fh * 4 && fw > 0 {
-                            let img = ColorImage::from_rgba_unmultiplied([fw, fh], &bytes);
-                            match &mut self.tex {
-                                Some(t) => t.set(img, TextureOptions::LINEAR),
-                                None => self.tex = Some(ctx.load_texture("browser-page", img, TextureOptions::LINEAR)),
-                            }
-                        }
-                    }
-                }
+                // only the newest frame is worth reading (an engine without acks may queue several)
+                "frame" => newest = Some(v),
                 "url" => {
                     self.url = v["url"].as_str().unwrap_or("").into();
                     if !self.editing {
@@ -172,6 +159,26 @@ impl Browser {
                 }
                 _ => {}
             }
+        }
+        if let Some(v) = newest {
+            let (fw, fh) = (v["w"].as_u64().unwrap_or(0) as usize, v["h"].as_u64().unwrap_or(0) as usize);
+            let path = format!("{}.{}", self.frames, v["buf"].as_u64().unwrap_or(0));
+            if let Ok(bytes) = std::fs::read(&path) {
+                // A frame at the wrong size means a resize was lost (sent before the
+                // page existed): ask again.
+                if (fw as u32, fh as u32) != self.size {
+                    let (w, h) = self.size;
+                    self.send(json!({ "t": "resize", "w": w, "h": h }));
+                }
+                if bytes.len() == fw * fh * 4 && fw > 0 {
+                    let img = ColorImage::from_rgba_unmultiplied([fw, fh], &bytes);
+                    match &mut self.tex {
+                        Some(t) => t.set(img, TextureOptions::LINEAR),
+                        None => self.tex = Some(ctx.load_texture("browser-page", img, TextureOptions::LINEAR)),
+                    }
+                }
+            }
+            self.send(json!({ "t": "got" }));
         }
     }
 

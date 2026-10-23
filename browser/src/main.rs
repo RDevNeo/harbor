@@ -7,10 +7,11 @@
 //! - stdin:  {"t":"load","url"} {"t":"back"} {"t":"forward"} {"t":"reload"}
 //!           {"t":"resize","w","h"} {"t":"move","x","y"} {"t":"button","x","y","button","down"}
 //!           {"t":"wheel","x","y","dx","dy"} {"t":"key","key","code","down","ctrl","shift","alt","meta"}
-//!           {"t":"focus","on"}
+//!           {"t":"focus","on"} {"t":"acks","on"} {"t":"got"}
 //! - stdout: {"t":"frame","w","h","buf"} {"t":"url"} {"t":"title"} {"t":"loading"} {"t":"nav","back","forward"} {"t":"cursor"}
 //! Frames are raw RGBA written to `<frames>.0` / `<frames>.1` (alternating, so the
-//! reader never sees a half-written one); "buf" says which.
+//! reader never sees a half-written one); "buf" says which. After {"t":"acks","on":true}
+//! the next frame is painted only once Harbor answered "got" for the previous one.
 
 use dpi::PhysicalSize;
 use euclid::Scale;
@@ -136,10 +137,13 @@ fn main() {
     webview.set_focused(true);
 
     let mut buf = 0u8;
+    // With acks (Harbor's {"t":"acks"}), a frame is painted only after the previous one was
+    // taken ({"t":"got"}): a hidden or busy panel costs no painting, copies or animation ticks.
+    let (mut acks, mut waiting) = (false, false);
     let point = |v: &Value| WebViewPoint::Device(DevicePoint::new(f(v, "x"), f(v, "y")));
     'run: loop {
         // Sleep until Servo or Harbor has something; animations get a frame tick.
-        let first = if webview.animating() { rx.recv_timeout(Duration::from_millis(16)).ok() } else { rx.recv().ok() };
+        let first = if webview.animating() && !(acks && waiting) { rx.recv_timeout(Duration::from_millis(16)).ok() } else { rx.recv().ok() };
         let mut msgs: Vec<Wake> = first.into_iter().collect();
         msgs.extend(rx.try_iter());
         for m in msgs {
@@ -159,6 +163,8 @@ fn main() {
                         webview.go_forward(1);
                     }
                     "reload" => webview.reload(),
+                    "acks" => acks = c["on"].as_bool().unwrap_or(true),
+                    "got" => waiting = false,
                     "resize" => {
                         let size = PhysicalSize::new(c["w"].as_u64().unwrap_or(w as u64).max(1) as u32, c["h"].as_u64().unwrap_or(h as u64).max(1) as u32);
                         // resize() resizes the rendering context too; doing that first
@@ -215,7 +221,7 @@ fn main() {
             }
         }
         servo.spin_event_loop();
-        if delegate.dirty.take() {
+        if !(acks && waiting) && delegate.dirty.take() {
             webview.paint();
             let size = ctx.size2d().to_i32();
             if let Some(img) = ctx.read_to_image(euclid::Box2D::from_size(size)) {
@@ -223,6 +229,7 @@ fn main() {
                 if std::fs::write(&path, img.as_raw()).is_ok() {
                     emit(json!({ "t": "frame", "w": img.width(), "h": img.height(), "buf": buf }));
                     buf ^= 1;
+                    waiting = acks;
                 }
             }
         }
