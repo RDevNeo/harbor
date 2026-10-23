@@ -131,6 +131,10 @@ pub struct App {
     pub view: View,
     pub draft: Draft,
     pub transcripts: HashMap<i64, Transcript>,
+    /// When each loaded transcript was last shown or changed: idle ones are dropped
+    /// from memory and loaded again from the store when needed.
+    pub transcript_used: HashMap<i64, Instant>,
+    last_sweep: Instant,
     pub drafts: HashMap<i64, String>,
     pub files: HashMap<i64, Vec<PathBuf>>,
     pub mentions: crate::mentions::State,
@@ -279,6 +283,8 @@ impl App {
             models,
             view: View::Draft,
             transcripts: HashMap::new(),
+            transcript_used: HashMap::new(),
+            last_sweep: Instant::now(),
             drafts: HashMap::new(),
             files: HashMap::new(),
             mentions: Default::default(),
@@ -916,8 +922,38 @@ impl App {
             self.store.save_chat(&c);
         }
         if let Some(t) = self.transcripts.get(&chat_id) {
-            let items = t.items.clone();
-            self.store.save_items(chat_id, &items);
+            self.store.save_items(chat_id, &t.items);
+            self.transcript_used.insert(chat_id, Instant::now());
+        }
+    }
+
+    /// Now and then: transcripts not shown, not running and untouched for a while leave
+    /// memory (saved first); every reader loads a missing one from the store again.
+    fn drop_idle_transcripts(&mut self) {
+        if self.last_sweep.elapsed() < TRANSCRIPT_SWEEP {
+            return;
+        }
+        self.last_sweep = Instant::now();
+        let shown = match self.view {
+            View::Chat(id) => Some(id),
+            _ => None,
+        };
+        let idle: Vec<i64> = self
+            .transcripts
+            .keys()
+            .copied()
+            .filter(|id| Some(*id) != shown && !self.turns.contains_key(id) && self.queued(*id).is_empty())
+            .filter(|id| self.pending.get(id).is_none_or(|p| p.is_empty()))
+            .filter(|id| self.transcript_used.get(id).is_none_or(|t| t.elapsed() > TRANSCRIPT_IDLE))
+            .collect();
+        for id in idle {
+            if let Some(t) = self.transcripts.remove(&id) {
+                self.store.save_items(id, &t.items);
+            }
+            self.transcript_used.remove(&id);
+        }
+        if let Some(id) = shown {
+            self.transcript_used.insert(id, Instant::now());
         }
     }
 
@@ -978,6 +1014,8 @@ impl App {
                 _ => {}
             },
             Event::Tool { id: tid, name, summary, input, result, is_error } => {
+                let input = clip_middle(input, TOOL_TEXT_MAX);
+                let result = result.map(|r| clip_middle(r, TOOL_TEXT_MAX));
                 let existing = tr.items.iter_mut().rev().find(|it| matches!(it, Item::Tool { id, .. } if *id == tid));
                 match existing {
                     Some(Item::Tool { name: n, summary: s, input: i, result: r, is_error: e, .. }) => {
@@ -1130,6 +1168,30 @@ pub fn tilde(p: &std::path::Path) -> String {
     }
 }
 
+/// Tool inputs and outputs beyond this keep their start and end (the transcript is
+/// kept in memory and saved, and nobody reads megabytes of output in it).
+pub const TOOL_TEXT_MAX: usize = 64 * 1024;
+/// How often idle transcripts are looked for, and how long one stays loaded unused.
+const TRANSCRIPT_SWEEP: Duration = Duration::from_secs(60);
+const TRANSCRIPT_IDLE: Duration = Duration::from_secs(15 * 60);
+
+/// `s` cut to about `n` bytes: its first two thirds and its last third, with a marker
+/// saying how much was left out in between.
+pub fn clip_middle(s: String, n: usize) -> String {
+    if s.len() <= n {
+        return s;
+    }
+    let floor = |mut i: usize| {
+        while !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    };
+    let head = floor(n * 2 / 3);
+    let tail = floor(s.len() - n / 3);
+    format!("{}\n\n… ({} bytes cut) …\n\n{}", &s[..head], tail - head, &s[tail..])
+}
+
 pub fn clip(s: &str, n: usize) -> String {
     if s.len() <= n {
         return s.to_string();
@@ -1179,6 +1241,7 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.auto_tick(ctx);
+        self.drop_idle_transcripts();
         while let Ok((id, ev)) = self.rx.try_recv() {
             if self.undo_swallows(id, &ev) || self.queue_event(id, &ev) || self.limit_event(id, &ev) {
                 continue;
@@ -1539,3 +1602,20 @@ pub fn live_step(focused: Duration) -> Duration {
 }
 
 const UNFOCUSED_WAKE: Duration = Duration::from_millis(250);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clips_the_middle_of_long_text() {
+        assert_eq!(clip_middle("short".into(), 10), "short");
+        let s = format!("{}{}", "a".repeat(600), "b".repeat(600));
+        let c = clip_middle(s, 300);
+        assert!(c.starts_with(&"a".repeat(200)) && c.ends_with(&"b".repeat(100)));
+        assert!(c.contains("(900 bytes cut)"));
+        // Never cuts inside a character.
+        let c = clip_middle("é".repeat(1000), 101);
+        assert!(c.starts_with('é') && c.ends_with('é'));
+    }
+}

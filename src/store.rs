@@ -2,6 +2,9 @@
 
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io::Write as _;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -161,6 +164,36 @@ pub enum Item {
 
 pub struct Store {
     db: Connection,
+    /// Per chat, a hash of each item as it is saved (by seq): a save writes only the
+    /// items that changed, not the whole transcript.
+    saved: RefCell<HashMap<i64, Vec<u64>>>,
+}
+
+/// FNV-1a of what is written into it: an item's JSON, hashed without building the string.
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf29ce484222325)
+    }
+}
+
+impl std::io::Write for Fnv {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        for x in b {
+            self.0 = (self.0 ^ *x as u64).wrapping_mul(0x100000001b3);
+        }
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn item_hash(it: &Item) -> u64 {
+    let mut h = Fnv::new();
+    let _ = serde_json::to_writer(&mut h, it);
+    h.0
 }
 
 pub fn now() -> i64 {
@@ -290,7 +323,11 @@ impl Store {
     pub fn open() -> rusqlite::Result<Self> {
         let dir = data_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let db = Connection::open(dir.join("harbor.db"))?;
+        Self::open_at(&dir.join("harbor.db"))
+    }
+
+    fn open_at(path: &std::path::Path) -> rusqlite::Result<Self> {
+        let db = Connection::open(path)?;
         db.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
@@ -307,7 +344,7 @@ impl Store {
              CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT NOT NULL);",
         )?;
         migrate(&db)?;
-        Ok(Self { db })
+        Ok(Self { db, saved: RefCell::default() })
     }
 
     pub fn repos(&self) -> Vec<Repo> {
@@ -337,6 +374,8 @@ impl Store {
 
     pub fn remove_repo(&self, id: i64) {
         let _ = self.db.execute("DELETE FROM repos WHERE id=?1", [id]);
+        // Its chats went with it.
+        self.saved.borrow_mut().clear();
     }
 
     pub fn save_repo_meta(&self, r: &Repo) {
@@ -511,6 +550,8 @@ impl Store {
 
     pub fn delete_chat(&self, id: i64) {
         let _ = self.db.execute("DELETE FROM chats WHERE id=?1", [id]);
+        // Ids can be reused: a new chat with this one must not look saved.
+        self.saved.borrow_mut().remove(&id);
     }
 
     pub fn items(&self, chat_id: i64) -> Vec<Item> {
@@ -522,16 +563,49 @@ impl Store {
             .collect()
     }
 
+    /// Saves a chat's transcript: only items that are new or changed since the last
+    /// save are written, and items past its end are deleted.
     pub fn save_items(&mut self, chat_id: i64, items: &[Item]) {
+        let hashes: Vec<u64> = items.iter().map(item_hash).collect();
+        let saved = self.saved.get_mut().remove(&chat_id).unwrap_or_else(|| self.saved_hashes(chat_id));
+        if saved == hashes {
+            self.saved.get_mut().insert(chat_id, saved);
+            return;
+        }
+        // On any failure the cache stays empty for the chat, so the next save compares
+        // with what the database really has.
         let Ok(tx) = self.db.transaction() else { return };
-        let _ = tx.execute("DELETE FROM items WHERE chat_id=?1", [chat_id]);
+        let mut ok = true;
         {
-            let mut st = tx.prepare("INSERT INTO items(chat_id, seq, body) VALUES(?1, ?2, ?3)").unwrap();
-            for (i, it) in items.iter().enumerate() {
-                let _ = st.execute(params![chat_id, i as i64, serde_json::to_string(it).unwrap()]);
+            let mut st = tx.prepare_cached("INSERT OR REPLACE INTO items(chat_id, seq, body) VALUES(?1, ?2, ?3)").unwrap();
+            for (i, (it, h)) in items.iter().zip(&hashes).enumerate() {
+                if saved.get(i) != Some(h) {
+                    ok &= st.execute(params![chat_id, i as i64, serde_json::to_string(it).unwrap()]).is_ok();
+                }
             }
         }
-        let _ = tx.commit();
+        if saved.len() > items.len() {
+            ok &= tx.execute("DELETE FROM items WHERE chat_id=?1 AND seq>=?2", params![chat_id, items.len() as i64]).is_ok();
+        }
+        if ok && tx.commit().is_ok() {
+            self.saved.get_mut().insert(chat_id, hashes);
+        }
+    }
+
+    /// The hashes of a chat's items as the database has them, by seq.
+    fn saved_hashes(&self, chat_id: i64) -> Vec<u64> {
+        let mut v = vec![];
+        let Ok(mut st) = self.db.prepare("SELECT seq, body FROM items WHERE chat_id=?1 ORDER BY seq") else { return v };
+        let rows = st.query_map([chat_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)));
+        for (seq, body) in rows.into_iter().flatten().flatten() {
+            let Ok(seq) = usize::try_from(seq) else { continue };
+            // A gap never matches an item, so the item there gets written.
+            v.resize(seq, 0);
+            let mut h = Fnv::new();
+            let _ = h.write_all(body.as_bytes());
+            v.push(h.0);
+        }
+        v
     }
 
     pub fn get(&self, k: &str) -> Option<String> {
@@ -551,4 +625,54 @@ pub fn results() -> Vec<(i64, Item)> {
     st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
         .map(|rows| rows.flatten().filter_map(|(c, b)| Some((c, serde_json::from_str(&b).ok()?))).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(s: &str) -> Item {
+        Item::Text { text: s.into(), at: 1 }
+    }
+
+    fn texts(store: &Store, chat: i64) -> Vec<String> {
+        store.items(chat).into_iter().map(|it| if let Item::Text { text, .. } = it { text } else { String::new() }).collect()
+    }
+
+    #[test]
+    fn saves_only_what_changed() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harbor.db");
+        let mut s = Store::open_at(&path).unwrap();
+        let repo = s.add_repo(&dir).unwrap();
+        let chat = |s: &Store| {
+            s.create_chat(Chat {
+                id: 0, repo_id: Some(repo), title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
+                model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Chat,
+                parent: None, name: String::new(), device: String::new(),
+            })
+            .id
+        };
+        let a = chat(&s);
+        let mut items: Vec<Item> = ["one", "two", "three"].map(text).to_vec();
+        s.save_items(a, &items);
+        assert_eq!(texts(&s, a), ["one", "two", "three"]);
+        // A changed item in the middle, one appended.
+        items[1] = text("TWO");
+        items.push(text("four"));
+        s.save_items(a, &items);
+        assert_eq!(texts(&s, a), ["one", "TWO", "three", "four"]);
+        // Shorter (undo): the rest goes, also for a store that hasn't saved this chat yet.
+        let mut fresh = Store::open_at(&path).unwrap();
+        fresh.save_items(a, &items[..2]);
+        assert_eq!(texts(&fresh, a), ["one", "TWO"]);
+        // A deleted chat's id, reused, doesn't count as saved.
+        fresh.delete_chat(a);
+        let b = chat(&fresh);
+        fresh.save_items(b, &items[..1]);
+        assert_eq!(texts(&fresh, b), ["one"]);
+        drop((s, fresh));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

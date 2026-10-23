@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Long sessions stay fast: saving a chat writes only its new or changed items instead of rewriting
+  the whole transcript, huge tool inputs and outputs keep their start and end (64 KB), and chats not
+  looked at for a while leave memory until they're opened again.
+
 ## [0.8.4] - 2026-10-23
 
 ### Security
