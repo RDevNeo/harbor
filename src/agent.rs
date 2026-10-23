@@ -146,6 +146,11 @@ pub struct Remote {
     pub commands: bool,
     /// Shell, git and files on this PC (workspace.rs) instead of the device's.
     pub workspace: bool,
+    /// The account's Claude login on this PC (an OAuth access token, oauth.rs): the
+    /// first line of the turn's stdin, which the device's shell exports before Claude
+    /// starts, so the turn runs as the account picked here. None: the account isn't
+    /// signed in on this PC, and the turn runs under the device's own login.
+    pub token: Option<String>,
     /// Told to the agent: where it runs and what that means for its tools.
     pub note: String,
 }
@@ -463,7 +468,13 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
         let port = crate::bridge::grant(g.clone()).ok_or_else(|| std::io::Error::other("Harbor's MCP bridge couldn't open a port on 127.0.0.1"))?;
         // The device's own `claude` (from its login shell's PATH), with the same arguments.
         let argv: Vec<String> = std::iter::once("claude".to_string()).chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned())).collect();
-        let mut setup = r.setup.clone();
+        // The login first (it's the first stdin line), then the profile, then the session.
+        let mut setup = vec![];
+        if let Some(t) = &r.token {
+            setup.push(crate::remote::token_setup());
+            stdin = Some(format!("{t}\n{}", stdin.unwrap_or_default()));
+        }
+        setup.extend(r.setup.iter().cloned());
         if spec.resume {
             setup.push(session_here(&spec.session_id));
         }
@@ -481,11 +492,12 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
 
 /// A shell line for the device: Claude Code resumes only sessions of the folder it runs
 /// in, so one started in another folder there (the chat moved between this PC's files
-/// and the device's) is copied to this one's first.
+/// and the device's) is copied to this one's first. The same for one in another Claude
+/// profile there (~/.claude2…): the chat switched account, and the profile with it.
 fn session_here(id: &str) -> String {
     let f = crate::remote::quote(&format!("{id}.jsonl"));
     format!(
-        "c=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects\"; d=\"$c/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')\"; [ -e \"$d\"/{f} ] || {{ s=$(ls \"$c\"/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] && mkdir -p \"$d\" && cp \"$s\" \"$d\"/; }}"
+        "c=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects\"; d=\"$c/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')\"; [ -e \"$d\"/{f} ] || {{ s=$(ls \"$c\"/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] || s=$(ls \"$HOME\"/.claude*/projects/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] && mkdir -p \"$d\" && cp \"$s\" \"$d\"/; }}"
     )
 }
 
@@ -1030,6 +1042,68 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A remote turn carries the account's login: first on stdin, exported by the first
+    /// setup line, before the profile and the session lines; never in ssh's arguments.
+    #[test]
+    fn remote_turn_sends_the_login_on_stdin() {
+        let account = crate::providers::Account {
+            id: "claude2".into(),
+            kind: Kind::Claude,
+            name: "Claude 2".into(),
+            email: String::new(),
+            badge: "C2".into(),
+            plan: String::new(),
+            config_dir: Some(crate::store::home().join(".claude2")),
+            bin: None,
+            logged_in: Some(true),
+            usage: vec![],
+        };
+        let remote = |token: Option<&str>| Remote {
+            ssh: vec!["-o".into(), "BatchMode=yes".into()],
+            host: "box".into(),
+            dir: "~".into(),
+            setup: crate::remote::profile_setup(account.config_dir.as_deref()),
+            bridge: false,
+            commands: false,
+            workspace: false,
+            token: token.map(String::from),
+            note: String::new(),
+        };
+        let spec = |token: Option<&str>| TurnSpec {
+            chat_id: 999_996,
+            cwd: std::env::temp_dir(),
+            prompt: "hi".into(),
+            files: vec![],
+            session_id: "abc".into(),
+            resume: true,
+            account: account.clone(),
+            model: String::new(),
+            effort: String::new(),
+            access: "full".into(),
+            team: None,
+            fast: false,
+            base: 0,
+            remote: Some(remote(token)),
+        };
+        let (cmd, input, grant) = build(&spec(Some("sk-ant-oat01-secret"))).unwrap();
+        crate::bridge::revoke(&grant.unwrap().token);
+        let input = input.unwrap();
+        let (first, rest) = input.split_once('\n').unwrap();
+        assert_eq!(first, "sk-ant-oat01-secret");
+        assert!(rest.starts_with('{') && rest.contains("\"type\":\"user\"") && rest.ends_with('\n'), "{rest}");
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let script = args.last().unwrap();
+        assert!(!args.iter().any(|a| a.contains("sk-ant-oat01")));
+        let at = |needle: &str| script.find(needle).unwrap_or_else(|| panic!("{needle:?} not in {script}"));
+        let (login, profile, session, claude) = (at("read -r CLAUDE_CODE_OAUTH_TOKEN"), at("export CLAUDE_CONFIG_DIR="), at("/projects"), at("--input-format"));
+        assert!(login < profile && profile < session && session < claude);
+        // Not signed in here: no line reads stdin, the message comes first.
+        let (cmd, input, grant) = build(&spec(None)).unwrap();
+        crate::bridge::revoke(&grant.unwrap().token);
+        assert!(input.unwrap().starts_with('{'));
+        assert!(!cmd.get_args().any(|a| a.to_string_lossy().contains("CLAUDE_CODE_OAUTH_TOKEN")));
+    }
+
     /// A real Claude turn on "another device" (ssh to this PC), with the bridge:
     /// `cargo test -- --ignored remote_turn_over_ssh --nocapture`. Needs key-based ssh
     /// to 127.0.0.1 and a signed-in Claude Code.
@@ -1056,7 +1130,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: host.host.clone(), dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: host.host.clone(), dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();
@@ -1121,7 +1195,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: host.host.clone(), dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: host.host.clone(), dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();
@@ -1193,7 +1267,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: dest, dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: dest, dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();

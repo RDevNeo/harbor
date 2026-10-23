@@ -1,8 +1,10 @@
 //! Remote devices that run agents: the user's PCs on Tailscale (`tailscale status`)
 //! and SSH hosts added by hand. A chat pinned to one runs its Claude Code turns there,
-//! over the system `ssh`, in that PC's folder and under that PC's Claude login. The
-//! detached runner (detach.rs) runs `ssh` instead of `claude`, so the turn streams back,
-//! takes mid-turn messages and survives a Harbor reload exactly like a local one.
+//! over the system `ssh`, in that PC's folder and as the account picked in Harbor (its
+//! login travels on stdin, see oauth.rs; the device's own login only when the account
+//! isn't signed in on this PC). The detached runner (detach.rs) runs `ssh` instead of
+//! `claude`, so the turn streams back, takes mid-turn messages and survives a Harbor
+//! reload exactly like a local one.
 //!
 //! The bridge (bridge.rs) hands the remote agent this PC's MCP servers, Harbor's team
 //! tools and, if allowed, commands on this PC, through an `ssh -R` port forward.
@@ -472,15 +474,17 @@ pub fn remote_dir(h: &Host, project: Option<&std::path::Path>) -> String {
 }
 
 /// The command ssh runs on the device: a login shell (so PATH has the CLI, as in a
-/// terminal there) that enters `dir`, runs the `setup` lines and starts `argv` on the
-/// connection's stdin. A watchdog stops the agent when the connection goes away (ssh
-/// gives a command without a terminal no SIGHUP), so stopping a turn here stops it there.
+/// terminal there) that enters `dir`, runs the `setup` lines, finds the CLI (see
+/// [`path_lookup`]) and starts `argv` on the connection's stdin. A watchdog stops the
+/// agent when the connection goes away (ssh gives a command without a terminal no
+/// SIGHUP), so stopping a turn here stops it there.
 pub fn remote_command(dir: &str, setup: &[String], argv: &[String]) -> String {
     let mut s = format!("cd {} 2>/dev/null || {{ echo \"harbor: the folder {} doesn't exist on $(hostname)\" >&2; exit 97; }}\n", shell_path(dir), dir.replace(['"', '$', '`', '\\'], ""));
     for l in setup {
         s.push_str(l);
         s.push('\n');
     }
+    s.push_str(&path_require(argv.first().map(String::as_str).unwrap_or("claude")));
     s.push_str(&argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" "));
     s.push_str(
         " <&0 &\nc=$!\n( while kill -0 $PPID 2>/dev/null; do sleep 2; done; pkill -TERM -P $c; kill -TERM $c ) >/dev/null 2>&1 &\nw=$!\nwait $c; s=$?\nkill $w 2>/dev/null\nexit $s\n",
@@ -488,7 +492,44 @@ pub fn remote_command(dir: &str, setup: &[String], argv: &[String]) -> String {
     format!("if command -v bash >/dev/null 2>&1; then exec bash -lc {0}; else exec sh -lc {0}; fi", quote(&s))
 }
 
-/// A Claude profile (~/.claude2…) used on the device too when it has one there.
+/// Where the CLI's installers put it, for a device whose login shell isn't bash (a Mac:
+/// zsh, so `bash -l` sees none of ~/.zprofile's PATH): the native installer, the CLI's
+/// own local install, Homebrew, bun, npm, mise and volta.
+const CLI_DIRS: [&str; 8] = ["$HOME/.local/bin", "$HOME/.claude/local", "/opt/homebrew/bin", "/usr/local/bin", "$HOME/.bun/bin", "$HOME/.npm-global/bin", "$HOME/.local/share/mise/shims", "$HOME/.volta/bin"];
+
+/// Shell lines for the device: when `bin` isn't on the PATH, the first of [`CLI_DIRS`]
+/// holding it is put in front; failing that, where a zsh login shell finds it (its
+/// stdin is /dev/null, so it can't eat the connection's input). PATH stays exported.
+pub fn path_lookup(bin: &str) -> String {
+    let b = quote(bin);
+    let dirs = CLI_DIRS.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(" ");
+    format!(
+        "command -v {b} >/dev/null 2>&1 || for d in {dirs}; do [ -x \"$d\"/{b} ] && {{ PATH=\"$d:$PATH\"; break; }}; done\n\
+         command -v {b} >/dev/null 2>&1 || ! command -v zsh >/dev/null 2>&1 || {{ p=$(zsh -lic 'command -v '{b} </dev/null 2>/dev/null | tail -n1); [ -n \"$p\" ] && [ -x \"$p\" ] && PATH=\"$(dirname \"$p\"):$PATH\"; }}\n\
+         export PATH\n"
+    )
+}
+
+/// [`path_lookup`], then a clear word and exit 98 when `bin` still isn't there (the
+/// agent's own "command not found" names no machine and no fix).
+fn path_require(bin: &str) -> String {
+    let shown = bin.replace(['"', '$', '`', '\\'], "");
+    let name = if bin == "claude" { "Claude Code".to_string() } else { shown };
+    format!("{}command -v {} >/dev/null 2>&1 || {{ echo \"harbor: {name} isn't on the PATH of a login shell on $(hostname); install it or add it to ~/.bash_profile\" >&2; exit 98; }}\n", path_lookup(bin), quote(bin))
+}
+
+/// A shell line for the device: takes the account's Claude login (an OAuth access token,
+/// the first line on stdin; see oauth.rs) into `CLAUDE_CODE_OAUTH_TOKEN`, which Claude
+/// Code uses over the login saved on the device. The shell reads a pipe byte by byte, so
+/// the agent's `<&0` gets the rest of the input intact. Never an argument: ssh's command
+/// line shows in `ps` on both PCs.
+pub fn token_setup() -> String {
+    "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN".into()
+}
+
+/// A Claude profile (~/.claude2…) used on the device too when it has one there, so its
+/// settings and sessions there stay with the account (the login itself comes from
+/// [`token_setup`]).
 pub fn profile_setup(config_dir: Option<&std::path::Path>) -> Vec<String> {
     let Some(rel) = config_dir.and_then(|d| d.strip_prefix(store::home()).ok()).filter(|r| !r.as_os_str().is_empty()) else { return vec![] };
     let p = format!("\"$HOME\"/{}", quote(&rel.to_string_lossy()));
@@ -526,7 +567,9 @@ pub fn test(cfg: &Config, h: &Host, ctx: &eframe::egui::Context) {
 fn test_command(cfg: &Config, h: &Host) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.args(ssh_opts(cfg, h)).arg(&h.host);
-    cmd.arg(r#"if command -v bash >/dev/null 2>&1; then exec bash -lc 'echo HARBOR_OK; uname -sm; v=$(claude --version 2>/dev/null) && echo "claude $v" || echo "no claude"'; else echo HARBOR_OK; uname -sm; echo "no bash"; fi"#);
+    // The same lookup as a turn's (`remote_command`), so the test tells the same truth.
+    let script = format!("echo HARBOR_OK; uname -sm\n{}v=$(claude --version 2>/dev/null) && echo \"claude $v\" || echo \"no claude\"", path_lookup("claude"));
+    cmd.arg(format!("if command -v bash >/dev/null 2>&1; then exec bash -lc {}; else echo HARBOR_OK; uname -sm; echo \"no bash\"; fi", quote(&script)));
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd
 }
@@ -647,6 +690,68 @@ mod tests {
             c.wait_with_output()
         });
         assert_eq!(String::from_utf8_lossy(&out.unwrap().stdout).trim(), "1 in");
+    }
+
+    /// The account's login goes first on stdin and comes out as an environment variable
+    /// of the agent; what follows it (the stream-json messages) reaches the agent intact.
+    #[test]
+    fn token_setup_takes_the_first_stdin_line() {
+        let setup = [token_setup(), "export X=1".to_string()];
+        let script = remote_command("/", &setup, &["sh".into(), "-c".into(), "printf '%s|%s|' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$X\"; cat".into()]);
+        assert!(!script.contains("sk-ant-oat01"));
+        let run = |input: &str| {
+            let out = Command::new("sh").arg("-c").arg(&script).stdin(Stdio::piped()).stdout(Stdio::piped()).env_remove("CLAUDE_CODE_OAUTH_TOKEN").spawn().and_then(|mut c| {
+                use std::io::Write;
+                c.stdin.take().unwrap().write_all(input.as_bytes())?;
+                c.wait_with_output()
+            });
+            String::from_utf8_lossy(&out.unwrap().stdout).into_owned()
+        };
+        assert_eq!(run("sk-ant-oat01-abc\n{\"type\":\"user\"}\n{\"n\":2}\n"), "sk-ant-oat01-abc|1|{\"type\":\"user\"}\n{\"n\":2}\n");
+        // Without a login line (the account isn't signed in here) nothing is read.
+        let plain = remote_command("/", &["export X=1".into()], &["sh".into(), "-c".into(), "printf '%s|%s|' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"$X\"; cat".into()]);
+        let out = Command::new("sh").arg("-c").arg(&plain).stdin(Stdio::piped()).stdout(Stdio::piped()).env_remove("CLAUDE_CODE_OAUTH_TOKEN").spawn().and_then(|mut c| {
+            use std::io::Write;
+            c.stdin.take().unwrap().write_all(b"{\"n\":1}\n")?;
+            c.wait_with_output()
+        });
+        assert_eq!(String::from_utf8_lossy(&out.unwrap().stdout), "|1|{\"n\":1}\n");
+    }
+
+    /// A CLI that a bash login shell doesn't see (a Mac's PATH lives in zsh files) is
+    /// found where its installers put it; one that isn't anywhere ends the turn with a
+    /// line that names the machine, not bash's "command not found".
+    #[test]
+    fn remote_command_finds_the_cli_off_the_login_path() {
+        let home = std::env::temp_dir().join(format!("harbor-home-{}", crate::bridge::token()));
+        std::fs::create_dir_all(home.join(".local/bin")).unwrap();
+        let cli = home.join(".local/bin/harbor-fake-cli");
+        std::fs::write(&cli, "#!/bin/sh\necho \"fake $1 $(cat)\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |argv: &[&str]| {
+            let script = remote_command("/", &[], &argv.iter().map(|a| a.to_string()).collect::<Vec<_>>());
+            let out = Command::new("sh").arg("-c").arg(&script).env("HOME", &home).env("PATH", "/usr/bin:/bin").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().and_then(|mut c| {
+                use std::io::Write;
+                c.stdin.take().unwrap().write_all(b"in")?;
+                c.wait_with_output()
+            });
+            let out = out.unwrap();
+            (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string(), String::from_utf8_lossy(&out.stderr).trim().to_string())
+        };
+        assert_eq!(run(&["harbor-fake-cli", "--version"]), (Some(0), "fake --version in".into(), String::new()));
+        let (code, out, err) = run(&["harbor-missing-cli"]);
+        assert_eq!((code, out.as_str()), (Some(98), ""));
+        assert!(err.ends_with("install it or add it to ~/.bash_profile"), "{err}");
+        assert!(err.starts_with("harbor: harbor-missing-cli isn't on the PATH of a login shell on "), "{err}");
+        // Claude by its product name, and the Test button's script with the same lookup.
+        assert!(path_require("claude").contains("harbor: Claude Code isn't on the PATH"));
+        let probe = test_command(&Config::default(), &Host::default());
+        let arg = probe.get_args().last().unwrap().to_string_lossy().into_owned();
+        assert!(arg.contains("HARBOR_OK") && arg.contains("/opt/homebrew/bin") && arg.contains("zsh -lic"));
+        // A zsh login shell is asked last, with no stdin to swallow.
+        assert!(path_lookup("claude").contains("</dev/null"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// Stopping a turn kills its local ssh; the agent on the device must go too.

@@ -22,6 +22,7 @@ mod mentions;
 mod logos;
 mod mcp;
 mod mcpshim;
+mod oauth;
 mod pages;
 mod procs;
 mod providers;

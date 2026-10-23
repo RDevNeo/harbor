@@ -835,6 +835,15 @@ impl App {
                 return;
             }
         };
+        // Without the account's login here the device runs the turn as whoever signed in
+        // there: said once per chat, not on every turn.
+        if remote.as_ref().is_some_and(|r| r.token.is_none()) {
+            let text = format!("{} isn't signed in on this PC, so the device runs this chat under its own Claude login.", account.short());
+            let said = self.transcripts.get(&chat_id).is_some_and(|t| t.items.iter().any(|i| matches!(i, Item::Notice { text: t, .. } if *t == text)));
+            if !said {
+                self.notice(chat_id, "alert", &text, "Sign in to that account here (claude /login, or the account's profile) for the chat to run as it there.");
+            }
+        }
         let spec = agent::TurnSpec {
             chat_id,
             cwd: self.cwd_of(chat.repo_id),

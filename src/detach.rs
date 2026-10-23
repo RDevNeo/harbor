@@ -108,7 +108,8 @@ pub fn spawn(cmd: &Command, input: Option<&str>, keep_input: bool, mut meta: Met
     });
     std::fs::write(dir.join("cmd.json"), spec.to_string())?;
     if let Some(text) = input {
-        std::fs::write(dir.join("in"), text)?;
+        // Owner-only: a remote turn's input starts with the account's login (agent.rs).
+        crate::mcp::write_private(&dir.join("in"), text)?;
         if !keep_input {
             std::fs::write(dir.join("in.closed"), "")?;
         }

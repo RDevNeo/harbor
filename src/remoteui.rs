@@ -206,6 +206,8 @@ impl App {
             bridge: h.bridge,
             commands,
             workspace: !h.device_files,
+            // The account's login as of now (refreshed if it's about to expire).
+            token: crate::oauth::token(account.config_dir.as_deref()),
             note: note.trim_end().to_string(),
         }))
     }
@@ -331,7 +333,7 @@ impl App {
         ui.add_space(12.0);
         w::subtle(
             ui,
-            "A chat picks its device in the composer and stays on it. The agent works in that PC's folder (a project's path is mirrored there unless the device sets a folder) under that PC's Claude login, and pushes through its own git. The device needs Claude Code and key-based ssh; nothing else is installed on it.",
+            "A chat picks its device in the composer and stays on it. The agent works in that PC's folder (a project's path is mirrored there unless the device sets a folder) as the chat's Claude account (its login is sent along; the device's own login is used only when the account isn't signed in on this PC), and pushes through its own git. The device needs Claude Code and key-based ssh; nothing else is installed on it.",
             "label-12",
         );
         ui.add_space(4.0);
