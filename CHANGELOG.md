@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- The chat composer with a long paste now grows to 14 lines (or 45% of the window) before it
+  scrolls, instead of stopping at about four; the new-thread screen moves up to keep it in view.
+
 ## [0.6.1] - 2026-10-23
 
 ### Fixed

@@ -67,7 +67,9 @@ impl App {
         let t = self.theme.t;
         self.top_bar(ui, None);
         let h = ui.available_height();
-        ui.add_space((h * 0.5 - 170.0).max(24.0));
+        // A long draft grows the composer; the screen moves up to keep it in view.
+        let grown = w::composer_growth(ui.ctx(), Id::NULL.with(("composer", self.key())));
+        ui.add_space((h * 0.5 - 170.0 - grown).max(24.0));
         centered(ui, CONTENT_W, |ui| {
             ui.vertical_centered(|ui| {
                 w::text(ui, "What should we work on?", "heading-32");
@@ -312,7 +314,8 @@ impl App {
         let empty = self.transcripts.get(&id).is_none_or(|t| t.items.is_empty());
         if empty && chat.role == Role::Lead {
             let h = ui.available_height();
-            ui.add_space((h * 0.5 - 170.0).max(24.0));
+            let grown = w::composer_growth(ui.ctx(), Id::NULL.with(("composer", self.key())));
+            ui.add_space((h * 0.5 - 170.0 - grown).max(24.0));
             centered(ui, CONTENT_W, |ui| {
                 ui.vertical_centered(|ui| {
                     w::text(ui, "What should we work on?", "heading-32");

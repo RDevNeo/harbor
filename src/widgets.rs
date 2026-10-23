@@ -422,14 +422,18 @@ pub fn input(ui: &mut Ui, text: &mut String, hint: &str, mono: bool, width: f32)
 }
 
 /// The chat composer: a `Textarea` whose own frame is drawn by the caller.
-/// It grows with its text up to 14 lines or 40% of the window, whichever is
+/// It grows with its text up to 14 lines or 45% of the window, whichever is
 /// smaller, then scrolls inside (the cursor stays in view while typing).
 pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: usize) -> Response {
     let line = ui.text_style_height(&theme::ts("copy-14"));
-    let max = (line * 14.0).min(ui.ctx().content_rect().height() * 0.4).max(line * rows as f32);
-    egui::ScrollArea::vertical()
+    let min = line * rows as f32;
+    let max = (line * 14.0).min(ui.ctx().content_rect().height() * 0.45).max(min);
+    // The caller's layout may offer little height (a horizontal row); the
+    // scrolled height must come from the cap, not from what is left.
+    let out = egui::ScrollArea::vertical()
         .id_salt(id.with("scroll"))
         .max_height(max)
+        .min_scrolled_height(max)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             TextEdit::multiline(text)
@@ -442,8 +446,16 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
                 .show(ui)
                 .response
                 .response
-        })
-        .inner
+        });
+    let grown = (out.inner_rect.height() - min).max(0.0);
+    ui.data_mut(|d| d.insert_temp(id.with("grown"), grown));
+    out.inner
+}
+
+/// How much taller than its base rows the composer `id` drew last frame, so a
+/// vertically centred screen can move up to keep it in the window.
+pub fn composer_growth(ctx: &egui::Context, id: egui::Id) -> f32 {
+    ctx.data(|d| d.get_temp(id.with("grown")).unwrap_or(0.0))
 }
 
 
