@@ -6,6 +6,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ## [Unreleased]
 
 ### Fixed
+- Android: long chats stay fast. A chat shows its last 120 messages ("Show earlier" loads more), each update only redraws what changed, and an oversized answer from the PC is refused instead of filling the phone's memory.
 - Android: the chat list no longer downloads and redraws everything several times a second while a chat streams; it refreshes when the list itself changes.
 - Android: the app only talks to a PC through Tailscale. Requests go over Tailscale's VPN to a tailnet address, so with Tailscale off (or a non-Tailscale address) the pairing token is never sent in the clear. The app download no longer carries the token.
 - Sidebar: a project's row shows only its main thread's own status. While the main thread is idle it shows nothing, even when its sub-agents or other chats are working; those show on their own rows.

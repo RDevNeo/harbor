@@ -15,10 +15,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -33,9 +31,16 @@ public class Chat extends Base {
     private Attach attach;
     private Render render;
 
+    /** Items drawn at first; "Show earlier" adds this many more (a long chat would otherwise
+     *  keep thousands of views alive and slow down every update). */
+    static final int WINDOW = 120;
+
     private final TreeMap<Integer, JSONObject> items = new TreeMap<>();
-    private final Map<Integer, View> views = new HashMap<>();
+    private final TreeMap<Integer, View> views = new TreeMap<>(); // seq >= from only
     private final Set<Integer> expanded = new HashSet<>();
+    private View hintView;   // the empty / error line
+    private TextView earlier; // "Show earlier" on top
+    private int from = -1;          // first seq drawn (-1: not known yet)
     private long rev;
     private boolean loading, again, loaded, sending;
 
@@ -206,7 +211,7 @@ public class Chat extends Base {
                 if (isFinishing()) return;
                 if (fr != null) apply(fr, full);
                 else if (fcode == 404) { Ui.toast(this, "This chat was deleted"); finish(); return; }
-                else if (!loaded) { content.removeAllViews(); content.addView(hint(ferr)); }
+                else if (!loaded) { clear(); hintView = hint(ferr); content.addView(hintView); }
                 if (again) { again = false; load(false); }
             });
         });
@@ -214,11 +219,11 @@ public class Chat extends Base {
 
     private void apply(JSONObject r, boolean full) {
         boolean atBottom = !loaded || scroll.getScrollY() + scroll.getHeight() >= content.getHeight() - Ui.dp(120);
-        if (!loaded) content.removeAllViews();
+        if (!loaded || full) clear();
         loaded = true;
         rev = Math.max(full ? 0 : rev, r.optLong("rev"));
         Set<Integer> touched = new java.util.TreeSet<>(); // in order, so each lands after its predecessors
-        if (full) { items.clear(); for (View v : views.values()) content.removeView(v); views.clear(); }
+        if (full) items.clear();
         JSONArray a = r.optJSONArray("items");
         if (a != null) for (int i = 0; i < a.length(); i++) {
             JSONObject it = a.optJSONObject(i);
@@ -239,24 +244,61 @@ public class Chat extends Base {
             }
         }
         // Drop the "No messages" / error hint before placing items by position.
-        for (int i = content.getChildCount() - 1; i >= 0; i--)
-            if (!views.containsValue(content.getChildAt(i))) content.removeViewAt(i);
-        for (int seq : touched) {
-            if (!items.containsKey(seq)) continue;
-            View nv = itemView(items.get(seq));
-            View ov = views.put(seq, nv);
-            int idx;
-            if (ov != null) {
-                idx = content.indexOfChild(ov);
-                content.removeView(ov);
-            } else {
-                idx = items.headMap(seq).size();
-            }
-            content.addView(nv, Math.max(0, Math.min(idx, content.getChildCount())), Ui.fill());
-        }
-        if (items.isEmpty()) content.addView(hint("No messages yet."));
+        if (hintView != null) { content.removeView(hintView); hintView = null; }
+        if (!items.isEmpty() && (from < 0 || from > items.lastKey())) from = Math.max(0, items.lastKey() + 1 - WINDOW);
+        for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
+        earlierButton();
+        if (items.isEmpty()) { hintView = hint("No messages yet."); content.addView(hintView); }
         if (r.has("running") || r.has("queued")) showStatus(r.optBoolean("running"), Hub.queued(r));
         if (atBottom) toEnd();
+    }
+
+    private void clear() {
+        content.removeAllViews();
+        views.clear();
+        hintView = earlier = null;
+    }
+
+    /** (Re)draws item seq in its place among the drawn ones. */
+    private void place(int seq) {
+        View nv = itemView(items.get(seq));
+        View ov = views.put(seq, nv);
+        int idx;
+        if (ov != null) {
+            idx = content.indexOfChild(ov);
+            content.removeView(ov);
+        } else {
+            Integer next = views.higherKey(seq);
+            idx = next == null ? content.getChildCount() : content.indexOfChild(views.get(next));
+        }
+        content.addView(nv, Math.max(0, Math.min(idx, content.getChildCount())), Ui.fill());
+    }
+
+    private void earlierButton() {
+        boolean want = from > 0 && !items.isEmpty();
+        if (want && earlier == null) {
+            earlier = Ui.button(this, "", false, v -> showEarlier());
+            content.addView(earlier, 0, Ui.margins(Ui.fill(), 16, 4, 16, 8));
+        } else if (!want && earlier != null) {
+            content.removeView(earlier);
+            earlier = null;
+        }
+        if (earlier != null) earlier.setText("Show " + Math.min(from, WINDOW) + " earlier");
+    }
+
+    private void showEarlier() {
+        int old = from;
+        from = Math.max(0, from - WINDOW);
+        int before = content.getHeight(), y = scroll.getScrollY();
+        for (int seq = from; seq < old; seq++) if (items.containsKey(seq)) place(seq);
+        earlierButton();
+        // Keep what was on screen where it was.
+        content.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override public void onGlobalLayout() {
+                content.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                scroll.scrollTo(0, y + content.getHeight() - before);
+            }
+        });
     }
 
     /** Scrolls to the end once the new items are laid out. */

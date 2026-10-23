@@ -28,6 +28,7 @@ import java.util.UUID;
  *  carries the pairing token; none runs on the UI thread. */
 final class Hub {
     static final int TIMEOUT = 25_000; // whole-request ceiling, events long-poll included
+    static final int MAX_REPLY = 16 << 20; // biggest answer read into memory (a long transcript is far below)
 
     final String id;
     String name, host, token;
@@ -182,6 +183,7 @@ final class Hub {
 
     private static JSONObject reply(Tailnet.Http c) throws IOException {
         int code = c.code();
+        if (c.length() > MAX_REPLY) throw new IOException(TOO_BIG);
         String body = read(c.in());
         if (code >= 400) {
             String msg = null;
@@ -197,11 +199,16 @@ final class Hub {
         }
     }
 
+    private static final String TOO_BIG = "The PC's answer is too big for the phone.";
+
     static String read(InputStream in) throws IOException {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         byte[] buf = new byte[1 << 14];
         try (InputStream i = in) {
-            for (int n; (n = i.read(buf)) > 0; ) b.write(buf, 0, n);
+            for (int n; (n = i.read(buf)) > 0; ) {
+                if (b.size() + n > MAX_REPLY) throw new IOException(TOO_BIG);
+                b.write(buf, 0, n);
+            }
         }
         return b.toString("UTF-8");
     }
