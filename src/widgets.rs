@@ -428,57 +428,41 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
     let line = ui.text_style_height(&theme::ts("copy-14"));
     let min = line * rows as f32;
     let max = (line * 14.0).min(ui.ctx().content_rect().height() * 0.45).max(min);
-    // An edit that moved the cursor out of view (a long paste) scrolls to it on
-    // the next frame: egui's own scroll-to-cursor runs before the new height is
-    // known and stays at the top.
-    let follow = id.with("follow");
-    let mut area = egui::ScrollArea::vertical()
+    let out = egui::ScrollArea::vertical()
         .id_salt(id.with("scroll"))
         .max_height(max)
         // The caller's layout may offer little height (a horizontal row); the
         // scrolled height must come from the cap, not from what is left.
         .min_scrolled_height(max)
-        .auto_shrink([false, true]);
-    if let Some(y) = ui.data_mut(|d| d.remove_temp::<f32>(follow)) {
-        area = area.vertical_scroll_offset(y);
-    }
-    let out = area.show(ui, |ui| {
-        let out = TextEdit::multiline(text)
-            .id(id)
-            .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
-            .font(theme::ts("copy-14"))
-            .desired_rows(rows)
-            .desired_width(f32::INFINITY)
-            .frame(Frame::NONE)
-            .show(ui);
-        let response = out.response.response;
-        if std::env::var_os("HARBOR_DBG_COMPOSER").is_some() && ui.input(|i| !i.events.is_empty()) {
-            eprintln!("DBG changed={} focus={} cur={:?} rect={:?}", response.changed(), response.has_focus(), out.cursor_range.map(|c| c.primary.index), response.rect);
-        }
-        let cursor = out
-            .cursor_range
-            .filter(|_| response.changed())
-            .map(|c| out.galley.pos_from_cursor(c.primary).translate(out.galley_pos.to_vec2()));
-        (response, cursor)
-    });
-    let (response, cursor) = out.inner;
-    if std::env::var_os("HARBOR_DBG_COMPOSER").is_some() && ui.input(|i| !i.events.is_empty()) {
-        eprintln!("DBG area off={:?} inner={:?} cursor={:?} content={:?}", out.state.offset(), out.inner_rect, cursor, out.content_size);
-    }
-    if let Some(r) = cursor {
-        // The cursor in content coordinates, against the visible window.
-        let top = out.inner_rect.top() - out.state.offset().y;
-        let (y0, y1) = (r.top() - top - 4.0, r.bottom() - top + 4.0);
-        let (off, view) = (out.state.offset().y, out.inner_rect.height().max(max));
-        let to = if y1 > off + view { Some(y1 - view) } else if y0 < off { Some(y0.max(0.0)) } else { None };
-        if let Some(y) = to {
-            ui.data_mut(|d| d.insert_temp(follow, y));
-            ui.ctx().request_repaint();
-        }
-    }
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            let out = TextEdit::multiline(text)
+                .id(id)
+                .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
+                .font(theme::ts("copy-14"))
+                .desired_rows(rows)
+                .desired_width(f32::INFINITY)
+                .frame(Frame::NONE)
+                .show(ui);
+            // In the frame the text changes, egui scrolls to the cursor in the old
+            // layout, so a long paste stays at the top: scroll to it again next frame.
+            let follow = id.with("follow");
+            let response = out.response.response;
+            if ui.data_mut(|d| d.remove_temp::<bool>(follow)).is_some() {
+                if let Some(c) = out.cursor_range {
+                    let r = out.galley.pos_from_cursor(c.primary).translate(out.galley_pos.to_vec2());
+                    ui.scroll_to_rect(r.expand2(Vec2::new(0.0, 4.0)), None);
+                }
+            }
+            if response.changed() {
+                ui.data_mut(|d| d.insert_temp(follow, true));
+                ui.ctx().request_repaint();
+            }
+            response
+        });
     let grown = (out.inner_rect.height() - min).max(0.0);
     ui.data_mut(|d| d.insert_temp(id.with("grown"), grown));
-    response
+    out.inner
 }
 
 /// How much taller than its base rows the composer `id` drew last frame, so a
