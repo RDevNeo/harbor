@@ -271,7 +271,7 @@ impl App {
                 if loading {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
-                        ui.spinner();
+                        w::busy(ui);
                         w::subtle(ui, "Loading issue…", "label-14");
                     });
                 }

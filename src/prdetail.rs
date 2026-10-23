@@ -111,7 +111,9 @@ impl Default for Detail {
 }
 
 pub fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = std::process::Command::new("gh").args(args).env("PATH", crate::providers::child_path()).output().map_err(|e| format!("gh: {e}"))?;
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(args).env("PATH", crate::providers::child_path());
+    let out = crate::git::output_within(&mut cmd, crate::prs::GH_TIMEOUT).map_err(|e| format!("gh: {e}"))?;
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if e.is_empty() { "gh failed".into() } else { e });
@@ -613,7 +615,7 @@ impl App {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if loading {
-                        ui.spinner();
+                        w::busy(ui);
                     } else if let Some(f) = &full {
                         let (icon, col, text) = checks_summary(&f.checks, &t);
                         w::subtle(ui, text, "label-13");
@@ -636,7 +638,7 @@ impl App {
                 if loading {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
-                        ui.spinner();
+                        w::busy(ui);
                         w::subtle(ui, "Loading pull request…", "label-14");
                     });
                 }
@@ -886,7 +888,7 @@ impl App {
                 ui.add_space(24.0);
                 ui.horizontal(|ui| {
                     ui.add_space(20.0);
-                    ui.spinner();
+                    w::busy(ui);
                     w::subtle(ui, "Loading the diff…", "label-14");
                 });
                 return;

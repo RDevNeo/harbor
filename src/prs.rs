@@ -133,7 +133,7 @@ pub enum Involvement {
     Authored,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Filters {
     pub state: StateF,
     pub involvement: Involvement,
@@ -192,7 +192,9 @@ pub struct Prs {
     pub back: Option<View>,
     pub loading: bool,
     generation: u64,
-    pub data: Option<Result<Fetched, String>>,
+    pub data: Option<Result<std::sync::Arc<Fetched>, String>>,
+    /// The page's sections for (list, filters, search, sort).
+    groups: crate::listdetail::Memo<(crate::listdetail::Same<Fetched>, Filters, String, Sort), Vec<Group>>,
     fetched: Option<StateF>,
     pub search: String,
     pub sort: Sort,
@@ -254,14 +256,15 @@ pub fn fetch(state: StateF, repos: &[String]) -> Result<Fetched, String> {
     graphql(&query(state, repos), "pull requests").map(|v| parse(&v))
 }
 
+/// How long a `gh` call may take before it's killed and shown as an error.
+pub const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// Runs a GraphQL query with `gh api graphql`; `what` names the list in the
 /// "install gh" hint. Partial answers (some searches failed) still count.
 pub fn graphql(query: &str, what: &str) -> Result<serde_json::Value, String> {
-    let out = std::process::Command::new("gh")
-        .args(["api", "graphql", "-f"])
-        .arg(format!("query={query}"))
-        .env("PATH", providers::child_path())
-        .output();
+    let mut cmd = std::process::Command::new("gh");
+    cmd.args(["api", "graphql", "-f"]).arg(format!("query={query}")).env("PATH", providers::child_path());
+    let out = crate::git::output_within(&mut cmd, GH_TIMEOUT);
     let out = match out {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -786,7 +789,7 @@ impl App {
         if let Ok(f) = &r {
             self.fetch_avatars(f.items.iter().map(|p| (p.author.clone(), p.avatar.clone())));
         }
-        self.prs.data = Some(r);
+        self.prs.data = Some(r.map(std::sync::Arc::new));
     }
 
     /// Loads GitHub avatars (login, URL) not cached yet into `prs.avatars`, off the UI thread.
@@ -914,8 +917,8 @@ pub fn toolbar(ui: &mut Ui, search: &mut String, hint: &str, id: Id, active: usi
             }
             let r = tool_btn(ui, if loading { "" } else { ic::REFRESH }, "", None, false).on_hover_text("Refresh");
             if loading {
+                // Steps (and repaints) at the spinner's own pace; the fetch wakes the UI when done.
                 w::spinner(ui.painter(), r.rect.center(), 6.5, t.subtle());
-                ui.ctx().request_repaint();
             }
             if r.clicked() && !loading {
                 hit = Some((Tool::Refresh, r.rect));
@@ -1158,7 +1161,8 @@ impl App {
         }
 
         // ---- list
-        let groups = groups(&fetched, &self.prs.filters, &self.prs.search, self.prs.sort);
+        let key = (crate::listdetail::Same(fetched.clone()), self.prs.filters.clone(), self.prs.search.clone(), self.prs.sort);
+        let groups = self.prs.groups.get(key, || groups(&fetched, &self.prs.filters, &self.prs.search, self.prs.sort));
         let mut open_url = None;
         let mut browse = None;
         let mut action = None;
@@ -1172,7 +1176,7 @@ impl App {
                         ui.add_space(24.0);
                         ui.horizontal(|ui| {
                             ui.add_space(16.0);
-                            ui.spinner();
+                            w::busy(ui);
                             w::subtle(ui, "Loading pull requests…", "label-14");
                         });
                     }
@@ -1186,7 +1190,7 @@ impl App {
                         }
                     }
                     Some(Ok(_)) => {
-                        for g in &groups {
+                        for g in groups.iter() {
                             if !g.label.is_empty() {
                                 section(ui, g.icon, g.label, g.items.len());
                             } else {

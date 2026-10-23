@@ -679,7 +679,7 @@ impl App {
                     if w::btn("Cancel").sm().ghost().show(ui).clicked() {
                         mcp::cancel(a.id);
                     }
-                    ui.spinner();
+                    w::busy(ui);
                 } else if key.is_some() {
                     if w::btn("Cancel").sm().ghost().show(ui).clicked() {
                         key = None;

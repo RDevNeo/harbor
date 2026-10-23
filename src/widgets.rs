@@ -331,6 +331,15 @@ pub fn spinner(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32) {
     }
 }
 
+/// A loading spinner in the layout, like `ui.spinner()` but at [`spinner`]'s pace
+/// (egui's asks for a frame every frame, at the monitor's refresh rate).
+pub fn busy(ui: &mut Ui) -> egui::Response {
+    let size = ui.spacing().interact_size.y;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
+    spinner(ui.painter(), rect.center(), size / 2.0 - 2.0, tokens(ui).subtle());
+    resp
+}
+
 pub fn truncated(ui: &Ui, text: &str, font: FontId, color: Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
     let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_w);

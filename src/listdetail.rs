@@ -13,6 +13,39 @@ use crate::theme::{self, RADIUS_MD};
 use crate::widgets::{self as w, alpha};
 use eframe::egui::{self, CornerRadius, CursorIcon, FontId, Id, Key, Modifiers, Rect, Sense, Stroke, Ui, Vec2, pos2};
 
+/// A value computed from `K`, kept until `K` changes: a page's filtered and sorted
+/// list, so frames that only hover or scroll don't filter and sort it again.
+pub struct Memo<K, V> {
+    key: Option<K>,
+    val: std::sync::Arc<V>,
+}
+
+impl<K, V: Default> Default for Memo<K, V> {
+    fn default() -> Self {
+        Memo { key: None, val: Default::default() }
+    }
+}
+
+impl<K: PartialEq, V> Memo<K, V> {
+    pub fn get(&mut self, key: K, make: impl FnOnce() -> V) -> std::sync::Arc<V> {
+        if self.key.as_ref() != Some(&key) {
+            self.val = std::sync::Arc::new(make());
+            self.key = Some(key);
+        }
+        self.val.clone()
+    }
+}
+
+/// An `Arc` compared by identity: a fetched list counts as changed when it is replaced.
+#[derive(Clone)]
+pub struct Same<T>(pub std::sync::Arc<T>);
+
+impl<T> PartialEq for Same<T> {
+    fn eq(&self, o: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &o.0)
+    }
+}
+
 /// Below this, list and panel can't share the page: the panel covers the list.
 const MIN_SIDE: f32 = 340.0;
 
@@ -497,5 +530,18 @@ mod tests {
         assert_eq!(s.active, 1);
         s.apply(TabAct::CloseOthers(0));
         assert_eq!((s.tabs.clone(), s.active), (vec!["a".to_string()], 0));
+    }
+
+    #[test]
+    fn memo_recomputes_only_when_its_key_changes() {
+        let mut m: Memo<(Same<u8>, String), usize> = Memo::default();
+        let (a, b) = (std::sync::Arc::new(1u8), std::sync::Arc::new(1u8));
+        let mut runs = 0;
+        let mut get = |m: &mut Memo<_, _>, k| *m.get(k, || { runs += 1; runs });
+        assert_eq!(get(&mut m, (Same(a.clone()), "x".to_string())), 1);
+        assert_eq!(get(&mut m, (Same(a.clone()), "x".to_string())), 1);
+        // Equal contents, but another list: computed again.
+        assert_eq!(get(&mut m, (Same(b.clone()), "x".to_string())), 2);
+        assert_eq!(get(&mut m, (Same(b), "y".to_string())), 3);
     }
 }

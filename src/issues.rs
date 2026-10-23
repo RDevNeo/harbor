@@ -115,7 +115,7 @@ pub enum Assignee {
     Login(String),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Filters {
     pub state: StateF,
     pub involvement: Involvement,
@@ -171,7 +171,9 @@ pub struct Issues {
     pub back: Option<View>,
     pub loading: bool,
     generation: u64,
-    pub data: Option<Result<Fetched, String>>,
+    pub data: Option<Result<std::sync::Arc<Fetched>, String>>,
+    /// The page's sections for (list, filters, search, sort).
+    groups: crate::listdetail::Memo<(crate::listdetail::Same<Fetched>, Filters, String, Sort), Vec<Group>>,
     fetched: Option<StateF>,
     pub search: String,
     pub sort: Sort,
@@ -538,7 +540,7 @@ impl App {
         if let Ok(f) = &r {
             self.fetch_avatars(f.items.iter().map(|i| (i.author.clone(), i.avatar.clone())));
         }
-        self.issues.data = Some(r);
+        self.issues.data = Some(r.map(std::sync::Arc::new));
     }
 }
 
@@ -645,7 +647,8 @@ impl App {
             None => {}
         }
 
-        let groups = groups(&fetched, &self.issues.filters, &self.issues.search, self.issues.sort);
+        let key = (crate::listdetail::Same(fetched.clone()), self.issues.filters.clone(), self.issues.search.clone(), self.issues.sort);
+        let groups = self.issues.groups.get(key, || groups(&fetched, &self.issues.filters, &self.issues.search, self.issues.sort));
         let mut open_url = None;
         let mut browse = None;
         let mut work = None;
@@ -658,7 +661,7 @@ impl App {
                         ui.add_space(24.0);
                         ui.horizontal(|ui| {
                             ui.add_space(16.0);
-                            ui.spinner();
+                            w::busy(ui);
                             w::subtle(ui, "Loading issues…", "label-14");
                         });
                     }
@@ -671,7 +674,7 @@ impl App {
                         }
                     }
                     Some(Ok(_)) => {
-                        for g in &groups {
+                        for g in groups.iter() {
                             if !g.label.is_empty() {
                                 prs::section(ui, g.icon, g.label, g.items.len());
                             } else {
