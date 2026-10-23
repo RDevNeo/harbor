@@ -119,7 +119,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     fonts.font_data.insert(
         "lucide-md".into(),
         egui::FontData::from_static(LUCIDE_MD)
-            .tweak(egui::FontTweak { y_offset_factor: -0.14, ..Default::default() })
+            .tweak(egui::FontTweak { scale: 0.8, y_offset: -5.5, ..Default::default() })
             .into(),
     );
     // egui's bundled fonts stay as the last fallback for emoji etc.

@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-22
+
+### Fixed
+- The code-block copy icon is smaller and centred on one-line code blocks.
+
 ## [0.2.2] - 2026-10-22
 
 ### Fixed
@@ -104,7 +109,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/RDevNeo/harbor/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/RDevNeo/harbor/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/RDevNeo/harbor/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/RDevNeo/harbor/compare/v0.1.3...v0.2.0
