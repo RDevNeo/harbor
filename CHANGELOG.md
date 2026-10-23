@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-10-23
+
 ### Fixed
 - A chat or project in the sidebar stays Working while its subagents still run, instead of showing
   Done as soon as the lead's own turn ends; it only turns Done (and notifies) once everything finished.
@@ -297,7 +299,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/RDevNeo/harbor/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/RDevNeo/harbor/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/RDevNeo/harbor/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/RDevNeo/harbor/compare/v0.8.2...v0.8.3
