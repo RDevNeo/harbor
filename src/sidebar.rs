@@ -28,28 +28,27 @@ impl App {
         }
     }
 
-    /// Seconds the oldest running turn among `ids` has been working, if any runs.
-    fn working_for(&self, ids: impl Iterator<Item = i64>) -> Option<u64> {
-        ids.filter_map(|id| self.turns.get(&id).map(|(_, at)| at.elapsed().as_secs())).max()
-    }
-
-    /// A chat's sidebar status: Working (it or its subagents), Done / Failed until
-    /// opened, else when it was last active.
-    fn chat_status(&self, c: &crate::store::Chat) -> w::Status {
-        let ids = std::iter::once(c.id).chain(self.subs_of(c.id).iter().map(|s| s.id).collect::<Vec<_>>());
-        if let Some(secs) = self.working_for(ids) {
-            w::Status::Working(secs)
-        } else if let Some(p) = std::iter::once(c.id).chain(self.subs_of(c.id).iter().map(|s| s.id)).find_map(|id| self.paused(id)) {
-            // Waiting out a usage limit (it or a sub-agent): when it continues.
+    /// A chat's sidebar status, its own only (not its subagents' or other chats'):
+    /// Working, waiting out a usage limit, Done / Failed until opened, else `idle`.
+    fn own_status(&self, id: i64, idle: w::Status) -> w::Status {
+        if let Some((_, at)) = self.turns.get(&id) {
+            w::Status::Working(at.elapsed().as_secs())
+        } else if let Some(p) = self.paused(id) {
+            // Waiting out a usage limit: when it continues.
             let at = p.at.map(crate::limits::when).unwrap_or_else(|| "limit".into());
             w::Status::Text(format!("{} {at}", crate::icons::CLOCK), self.theme.t.amber(900))
-        } else if self.failed.contains(&c.id) {
+        } else if self.failed.contains(&id) {
             w::Status::Failed
-        } else if self.unread.contains(&c.id) {
+        } else if self.unread.contains(&id) {
             w::Status::Done
         } else {
-            w::Status::Text(ago(c.updated), self.theme.t.gray(800))
+            idle
         }
+    }
+
+    /// A chat row's status: its own, else when it was last active.
+    fn chat_status(&self, c: &crate::store::Chat) -> w::Status {
+        self.own_status(c.id, w::Status::Text(ago(c.updated), self.theme.t.gray(800)))
     }
 
     /// One chat in the sidebar: title and its status; on hover, snooze and Settle
@@ -521,19 +520,12 @@ impl App {
                 p.text(ir.center(), egui::Align2::CENTER_CENTER, letter, FontId::new(10.5, crate::theme::semibold()), t.fg());
             }
         }
-        // Right side: working, done / failed (unread), snoozed, or last activity.
-        let ids: Vec<i64> = self.chats.iter().filter(|c| c.repo_id == Some(r.id)).map(|c| c.id).collect();
-        let status = if let Some(secs) = self.working_for(ids.iter().copied()) {
-            w::Status::Working(secs)
-        } else if threads.iter().any(|c| self.failed.contains(&c.id)) {
-            w::Status::Failed
-        } else if threads.iter().any(|c| self.unread.contains(&c.id)) {
-            w::Status::Done
-        } else if snoozed {
-            w::Status::Text(ic::ALARM.to_string(), t.subtle())
-        } else {
-            let a = self.activity(r.id);
-            w::Status::Text(if a > 0 { ago(a) } else { String::new() }, t.gray(800))
+        // Right side: the main thread's own status (working, waiting on a limit, done /
+        // failed), else snoozed, else nothing. Other chats and subagents show on their own rows.
+        let idle = if snoozed { w::Status::Text(ic::ALARM.to_string(), t.subtle()) } else { w::Status::Text(String::new(), t.gray(800)) };
+        let status = match self.main_thread(r.id) {
+            Some(id) => self.own_status(id, idle),
+            None => idle,
         };
         let rx = if hovering {
             rect.right() - 28.0
