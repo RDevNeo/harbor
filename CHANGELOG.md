@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Pasting a long text into the chat composer no longer pushes it and its controls off-screen:
+  it grows up to 14 lines (or 40% of the window) and then scrolls inside.
+
 ## [0.6.0] - 2026-10-23
 
 ### Added

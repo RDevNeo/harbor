@@ -422,17 +422,28 @@ pub fn input(ui: &mut Ui, text: &mut String, hint: &str, mono: bool, width: f32)
 }
 
 /// The chat composer: a `Textarea` whose own frame is drawn by the caller.
+/// It grows with its text up to 14 lines or 40% of the window, whichever is
+/// smaller, then scrolls inside (the cursor stays in view while typing).
 pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: usize) -> Response {
-    TextEdit::multiline(text)
-        .id(id)
-        .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
-        .font(theme::ts("copy-14"))
-        .desired_rows(rows)
-        .desired_width(f32::INFINITY)
-        .frame(Frame::NONE)
-        .show(ui)
-        .response
-        .response
+    let line = ui.text_style_height(&theme::ts("copy-14"));
+    let max = (line * 14.0).min(ui.ctx().content_rect().height() * 0.4).max(line * rows as f32);
+    egui::ScrollArea::vertical()
+        .id_salt(id.with("scroll"))
+        .max_height(max)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            TextEdit::multiline(text)
+                .id(id)
+                .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
+                .font(theme::ts("copy-14"))
+                .desired_rows(rows)
+                .desired_width(f32::INFINITY)
+                .frame(Frame::NONE)
+                .show(ui)
+                .response
+                .response
+        })
+        .inner
 }
 
 
