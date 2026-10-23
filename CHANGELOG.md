@@ -12,6 +12,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Settings › Usage no longer re-reads every chat's transcript from the database on every frame: the totals are summed on a background thread and only again when a chat changes (or after a minute), so the page stays smooth with many or long chats.
 - Opening a chat, a turn ending and opening Pull Requests or Issues no longer freeze Harbor while `git status` runs: project git status is read in the background (one at a time per project, killed after 10 s), and the last known branch shows meanwhile.
 - Pull Requests and Issues no longer redraw the whole window at the monitor's refresh rate while a list or a pull request loads; loading spinners step at 2 fps. The filtered and sorted list is kept until the list, filters, search or sort change, instead of being copied and sorted again on every frame. `gh` calls give up after 90 s with an error instead of loading forever.
+- Pull request and issue panels stay smooth on big pull requests and long threads: the diff and the pull request are no longer copied on every frame, and comments far outside the view are not laid out.
 
 ## [0.8.2] - 2026-10-23
 

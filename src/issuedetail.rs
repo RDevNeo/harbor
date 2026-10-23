@@ -42,7 +42,7 @@ enum Msg {
 
 /// One open tab's state.
 pub struct Detail {
-    pub full: Option<Result<Full, String>>,
+    pub full: Option<Result<std::sync::Arc<Full>, String>>,
     pub loading: bool,
     pub busy: bool,
     pub error: Option<String>,
@@ -116,7 +116,7 @@ impl Detail {
                     self.loading = false;
                     // A failed refresh keeps what it had.
                     if r.is_ok() || !matches!(self.full, Some(Ok(_))) {
-                        self.full = Some(r);
+                        self.full = Some(r.map(std::sync::Arc::new));
                     }
                 }
                 Msg::Done(r) => {

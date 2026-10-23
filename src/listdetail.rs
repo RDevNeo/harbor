@@ -46,6 +46,25 @@ impl<T> PartialEq for Same<T> {
     }
 }
 
+/// How far beyond the visible part of a scroll area [`culled`] content is still drawn.
+const CULL_MARGIN: f32 = 800.0;
+
+/// Draws `add`, or only takes its height when it was drawn before at this width and
+/// is far outside the visible part of the scroll area. `id` must change with the content.
+pub fn culled(ui: &mut Ui, id: egui::Id, add: impl FnOnce(&mut Ui)) {
+    let key = id.with("culled-height");
+    let (top, width) = (ui.cursor().top(), ui.available_width());
+    if let Some((w, h)) = ui.data(|d| d.get_temp::<(f32, f32)>(key)) {
+        let view = ui.clip_rect();
+        if w == width && (top > view.bottom() + CULL_MARGIN || top + h < view.top() - CULL_MARGIN) {
+            ui.add_space(h);
+            return;
+        }
+    }
+    add(ui);
+    ui.data_mut(|d| d.insert_temp(key, (width, ui.cursor().top() - top)));
+}
+
 /// Below this, list and panel can't share the page: the panel covers the list.
 const MIN_SIDE: f32 = 340.0;
 

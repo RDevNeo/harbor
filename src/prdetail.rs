@@ -92,9 +92,9 @@ enum Msg {
 /// One open tab's state.
 pub struct Detail {
     pub tab: Tab,
-    pub full: Option<Result<Full, String>>,
+    pub full: Option<Result<std::sync::Arc<Full>, String>>,
     pub loading: bool,
-    pub diff: Option<Result<Vec<Line>, String>>,
+    pub diff: Option<Result<std::sync::Arc<Vec<Line>>, String>>,
     pub diff_loading: bool,
     pub busy: bool,
     pub error: Option<String>,
@@ -348,12 +348,12 @@ impl Detail {
                     self.loading = false;
                     // A failed refresh keeps what it had.
                     if r.is_ok() || !matches!(self.full, Some(Ok(_))) {
-                        self.full = Some(r);
+                        self.full = Some(r.map(std::sync::Arc::new));
                     }
                 }
                 Msg::Diff(r) => {
                     self.diff_loading = false;
-                    self.diff = Some(r.map(|d| parse_diff(&d)));
+                    self.diff = Some(r.map(|d| std::sync::Arc::new(parse_diff(&d))));
                 }
                 Msg::Done(r) => {
                     self.busy = false;
@@ -812,8 +812,13 @@ impl App {
         }
     }
 
-    /// A comment card: avatar, who, what and when, then the markdown body.
+    /// A comment card: avatar, who, what and when, then the markdown body. Far off
+    /// screen it's only its height: long threads would parse every comment each frame.
     pub fn note(&mut self, ui: &mut Ui, id: Id, who: &str, at: i64, what: &str, body: &str) {
+        crate::listdetail::culled(ui, id.with(body.len()), |ui| self.note_card(ui, id, who, at, what, body));
+    }
+
+    fn note_card(&mut self, ui: &mut Ui, id: Id, who: &str, at: i64, what: &str, body: &str) {
         let t = self.theme.t;
         w::card(ui).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
