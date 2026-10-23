@@ -741,10 +741,10 @@ impl App {
             return;
         }
         self.prs.loading = false;
+        let same = self.prs.fetched == Some(state);
         self.prs.fetched = Some(state);
         // A failed refresh keeps the list it had.
-        if r.is_err() && matches!(self.prs.data, Some(Ok(_))) && self.prs.fetched == Some(state) {
-            self.prs.data = Some(r);
+        if r.is_err() && same && matches!(self.prs.data, Some(Ok(_))) {
             return;
         }
         if let Ok(f) = &r {
@@ -862,6 +862,14 @@ pub fn float<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, width: f32, t: &
     (area.inner, area.response.rect)
 }
 
+/// Where a submenu of the row `a` opens: to its right, or to its left when the
+/// window has no room there.
+fn sub_pos(ctx: &egui::Context, a: Rect, width: f32) -> egui::Pos2 {
+    let outer = width + 14.0;
+    let x = if a.right() + 10.0 + outer > ctx.content_rect().right() { a.left() - 10.0 - outer } else { a.right() + 10.0 };
+    pos2(x, a.top() - 6.0)
+}
+
 /// A menu row: icon, label, then a muted value and a chevron (submenus) or a check.
 pub fn menu_row(ui: &mut Ui, icon: &str, label: &str, value: Option<&str>, chevron: bool, checked: bool, active: bool) -> egui::Response {
     let t = w::tokens(ui);
@@ -928,7 +936,7 @@ impl App {
         let t = self.theme.t;
         let ctx = ui.ctx().clone();
         self.prs.ctx = Some(ctx.clone());
-        // Typing over the list (or picking another State) refetches when GitHub filters differently.
+        // Picking another State refetches: GitHub applies that filter.
         if !self.prs.loading && self.prs.fetched.is_some_and(|s| s != self.prs.filters.state) {
             self.load_prs();
         }
@@ -1140,10 +1148,9 @@ impl App {
                     if menu_row(ui, ic::LAYERS, "All", None, false, !gh, false).clicked() {
                         pick = Some(false);
                     }
-                    let r = menu_row(ui, "", "GitHub", None, false, gh, false);
+                    let r = menu_row(ui, " ", "GitHub", None, false, gh, false);
                     let mark = Rect::from_center_size(pos2(r.rect.left() + 16.0, r.rect.center().y), Vec2::splat(15.0));
                     crate::logos::paint(ui, ui.painter(), mark, "github", &t);
-                    // The label sits where an icon would leave it.
                     if r.clicked() {
                         pick = Some(true);
                     }
@@ -1206,7 +1213,6 @@ impl App {
     fn pr_submenu(&mut self, ctx: &egui::Context, s: Sub, data: &Fetched, projects: &[(i64, String, String)]) -> (bool, Rect) {
         let t = self.theme.t;
         let a = self.prs.sub_anchor.unwrap_or(Rect::NOTHING);
-        let pos = a.right_top() + Vec2::new(10.0, -6.0);
         let f = &mut self.prs.filters;
         fn radio<T: PartialEq + Copy>(ui: &mut Ui, opts: &[(T, &str, &str)], cur: T) -> Option<T> {
             let mut pick = None;
@@ -1219,35 +1225,35 @@ impl App {
         }
         match s {
             Sub::State => {
-                let (p, r) = float(ctx, "pr-sub", pos, 190.0, &t, |ui| radio(ui, &STATES, f.state));
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 190.0), 190.0, &t, |ui| radio(ui, &STATES, f.state));
                 if let Some(v) = p {
                     f.state = v;
                 }
                 (p.is_some(), r)
             }
             Sub::Involvement => {
-                let (p, r) = float(ctx, "pr-sub", pos, 190.0, &t, |ui| radio(ui, &INVOLVEMENTS, f.involvement));
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 190.0), 190.0, &t, |ui| radio(ui, &INVOLVEMENTS, f.involvement));
                 if let Some(v) = p {
                     f.involvement = v;
                 }
                 (p.is_some(), r)
             }
             Sub::Draft => {
-                let (p, r) = float(ctx, "pr-sub", pos, 190.0, &t, |ui| radio(ui, &DRAFTS, f.draft));
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 190.0), 190.0, &t, |ui| radio(ui, &DRAFTS, f.draft));
                 if let Some(v) = p {
                     f.draft = v;
                 }
                 (p.is_some(), r)
             }
             Sub::Review => {
-                let (p, r) = float(ctx, "pr-sub", pos, 210.0, &t, |ui| radio(ui, &REVIEWS, f.review));
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 210.0), 210.0, &t, |ui| radio(ui, &REVIEWS, f.review));
                 if let Some(v) = p {
                     f.review = v;
                 }
                 (p.is_some(), r)
             }
             Sub::Checks => {
-                let (p, r) = float(ctx, "pr-sub", pos, 190.0, &t, |ui| radio(ui, &CHECKS, f.checks));
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 190.0), 190.0, &t, |ui| radio(ui, &CHECKS, f.checks));
                 if let Some(v) = p {
                     f.checks = v;
                 }
@@ -1257,7 +1263,7 @@ impl App {
                 let list = authors(data);
                 let cur = f.author.clone();
                 let avatars = &self.prs.avatars;
-                let (p, r) = float(ctx, "pr-sub", pos, 220.0, &t, |ui| {
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 220.0), 220.0, &t, |ui| {
                     let mut pick = None;
                     if menu_row(ui, ic::USERS, "Anyone", None, false, cur.is_none(), false).clicked() {
                         pick = Some(None);
@@ -1268,7 +1274,7 @@ impl App {
                     ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (login, n) in &list {
                             let checked = cur.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(login));
-                            let r = menu_row(ui, "", login, Some(&n.to_string()), false, checked, false);
+                            let r = menu_row(ui, " ", login, Some(&n.to_string()), false, checked, false);
                             let c = pos2(r.rect.left() + 16.0, r.rect.center().y);
                             paint_avatar(ui.painter(), c, 8.0, avatars.get(login).and_then(|a| a.as_ref()), login, &t);
                             if r.clicked() {
@@ -1286,7 +1292,7 @@ impl App {
             }
             Sub::Labels => {
                 let list = labels(data);
-                let (p, r) = float(ctx, "pr-sub", pos, 230.0, &t, |ui| {
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 230.0), 230.0, &t, |ui| {
                     let mut toggle = None;
                     if menu_row(ui, ic::TAG, "Any", None, false, f.labels.is_empty(), false).clicked() {
                         f.labels.clear();
@@ -1305,7 +1311,7 @@ impl App {
                     ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (name, rgb, n) in &list {
                             let checked = f.labels.iter().any(|l| l.eq_ignore_ascii_case(name));
-                            let r = menu_row(ui, "", name, Some(&n.to_string()), false, checked, false);
+                            let r = menu_row(ui, " ", name, Some(&n.to_string()), false, checked, false);
                             label_dot(ui.painter(), pos2(r.rect.left() + 16.0, r.rect.center().y), *rgb);
                             if r.clicked() {
                                 toggle = Some(name.clone());
@@ -1326,7 +1332,7 @@ impl App {
             }
             Sub::Project => {
                 let cur = self.prs.project;
-                let (p, r) = float(ctx, "pr-sub", pos, 230.0, &t, |ui| {
+                let (p, r) = float(ctx, "pr-sub", sub_pos(ctx, a, 230.0), 230.0, &t, |ui| {
                     let mut pick = None;
                     if menu_row(ui, ic::LAYERS, "All projects", None, false, cur.is_none(), false).clicked() {
                         pick = Some(None);
