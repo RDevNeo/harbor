@@ -10,7 +10,6 @@ pub const FOLDER_PLUS: &str = "\u{e0d9}";
 pub const COMPOSE: &str = "\u{e172}";
 pub const SETTINGS: &str = "\u{e154}";
 pub const PULL: &str = "\u{e0e5}";
-pub const CHART: &str = "\u{e068}";
 pub const REFRESH: &str = "\u{e145}";
 pub const CLIP: &str = "\u{e12d}";
 pub const BRAIN: &str = "\u{e3c6}";

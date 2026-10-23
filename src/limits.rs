@@ -731,7 +731,6 @@ impl App {
     pub fn switch_settings_ui(&mut self, ui: &mut Ui) {
         let (mut on, ids) = self.switch_settings();
         let before = (on, ids.clone());
-        let mut open_usage = false;
         ui.add_space(16.0);
         crate::pages::section(ui, "Switching accounts");
         crate::pages::rows(ui, |ui| {
@@ -739,17 +738,10 @@ impl App {
                 w::toggle(ui, &mut on)
             });
             w::separator(ui);
-            w::setting_row(ui, "Accounts to switch to", &format!("{} chosen. Pick them on the Usage page, next to each account's caps.", ids.len()), |ui| {
-                if w::btn("Open Usage").sm().show(ui).clicked() {
-                    open_usage = true;
-                }
-            });
+            w::setting_row(ui, "Accounts to switch to", &format!("{} chosen, with \"Use for auto-switch\" on the account cards above.", ids.len()), |_| {});
         });
         if (on, ids.clone()) != before {
             self.store.set("limit_switch", if on { "1" } else { "0" });
-        }
-        if open_usage {
-            self.open(crate::app::View::Usage);
         }
     }
 }

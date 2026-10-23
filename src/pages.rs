@@ -45,7 +45,7 @@ impl Tab {
             Tab::Appearance => "Appearance",
             Tab::Keybindings => "Keybindings",
             Tab::Providers => "Providers",
-            Tab::Limits => "Usage limits",
+            Tab::Limits => "Usage",
             Tab::Integrations => "Integrations",
             Tab::Webhooks => "Webhooks",
             Tab::Devices => "Devices",
@@ -72,7 +72,7 @@ impl Tab {
             Tab::Appearance => "appearance",
             Tab::Keybindings => "keybindings",
             Tab::Providers => "providers",
-            Tab::Limits => "limits",
+            Tab::Limits => "usage",
             Tab::Integrations => "integrations",
             Tab::Webhooks => "webhooks",
             Tab::Devices => "devices",
@@ -80,7 +80,8 @@ impl Tab {
     }
 
     pub fn from_slug(s: &str) -> Option<Tab> {
-        Tab::ALL.into_iter().find(|t| t.slug() == s)
+        // "limits": the Usage page's old name.
+        Tab::ALL.into_iter().find(|t| t.slug() == s || (s == "limits" && *t == Tab::Limits))
     }
 
     /// What the settings search matches besides the name.
@@ -90,7 +91,7 @@ impl Tab {
             Tab::Appearance => "theme dark light omarchy colours colors",
             Tab::Keybindings => "shortcuts keyboard keys hotkeys",
             Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
-            Tab::Limits => "usage limit quota wait weekly switch accounts notify",
+            Tab::Limits => "usage limits quota caps cap percent warn tokens cost weekly wait switch accounts notify history",
             Tab::Integrations => "apps mcp servers sign in tools",
             Tab::Webhooks => "hooks tailscale funnel public url",
             Tab::Devices => "remote machines pcs tailscale ssh run agents elsewhere mcp bridge",
@@ -103,7 +104,7 @@ impl Tab {
             Tab::Appearance => "How Harbor looks.",
             Tab::Keybindings => "Harbor's keyboard shortcuts. Changes apply at once.",
             Tab::Providers => "",
-            Tab::Limits => "What a thread does when its account hits a usage limit.",
+            Tab::Limits => "What each account has used, how much of it Harbor may use, and what threads do at a limit.",
             Tab::Integrations => "",
             Tab::Webhooks => "",
             Tab::Devices => "Run agents on your other PCs. They work in that PC's folders, with this PC's MCP servers and apps.",
@@ -152,7 +153,7 @@ impl App {
                     Tab::Appearance => self.appearance_tab(ui),
                     Tab::Keybindings => self.keybindings_tab(ui),
                     Tab::Providers => self.providers_tab(ui),
-                    Tab::Limits => self.limits_settings(ui),
+                    Tab::Limits => self.usage_tab(ui),
                     Tab::Integrations => self.integrations_tab(ui),
                     Tab::Webhooks => self.webhooks_tab(ui),
                     Tab::Devices => self.devices_tab(ui),
@@ -717,7 +718,9 @@ impl App {
 
     // ------------------------------------------------------------ usage
 
-    pub fn usage(&mut self, ui: &mut Ui) {
+    /// Settings › Usage: the accounts with their caps, what threads do at a limit,
+    /// and what Harbor's chats used.
+    pub fn usage_tab(&mut self, ui: &mut Ui) {
         let t = self.theme.t;
         // Totals from every chat's result records (local, cheap).
         let mut by_account: BTreeMap<String, (u64, u64, u64, f64)> = BTreeMap::new();
@@ -744,65 +747,62 @@ impl App {
                 }
             }
         }
-        ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            centered(ui, CONTENT_W, |ui| {
-                page_header(ui, "Usage", "What each account has used, and how much of it Harbor may use.");
-                section(ui, "Accounts");
-                w::subtle(ui, "Drag the marker on a bar to cap how much of that limit Harbor uses. At the cap, Harbor treats the account as limited: threads wait for the reset or move to another account.", "label-13");
-                ui.add_space(4.0);
-                self.usage_controller(ui);
-                section(ui, "Last 14 days");
-                w::card(ui).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let h = 120.0;
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h + 18.0), Sense::hover());
-                    let max = by_day.values().copied().max().unwrap_or(1).max(1) as f32;
-                    let bw = rect.width() / 14.0;
-                    for i in 0..14 {
-                        let day = today - 13 + i;
-                        let v = by_day.get(&day).copied().unwrap_or(0) as f32;
-                        let bh = (v / max) * h;
-                        let x = rect.left() + i as f32 * bw;
-                        let bar = Rect::from_min_max(pos2(x + bw * 0.2, rect.top() + h - bh), pos2(x + bw * 0.8, rect.top() + h));
-                        ui.painter().rect_filled(bar, CornerRadius::same(3), if i == 13 { t.gray(1000) } else { t.gray(700) });
-                        if i % 2 == 1 || i == 13 {
-                            let label = if i == 13 { "today".to_string() } else { format!("-{}d", 13 - i) };
-                            ui.painter().text(pos2(x + bw / 2.0, rect.bottom()), egui::Align2::CENTER_BOTTOM, label, egui::FontId::proportional(11.0), t.subtle());
-                        }
-                    }
-                    w::subtle(ui, "Tokens (in + out) per day across all providers.", "label-12");
-                });
-                section(ui, "By provider");
-                w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    if by_account.is_empty() {
-                        Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No turns yet.", "label-13"));
-                    }
-                    for (i, (aid, (turns, tin, tout, cost))) in by_account.iter().enumerate() {
-                        if i > 0 {
-                            w::separator(ui);
-                        }
-                        Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let (name, kind, badge) = self
-                                    .account(aid)
-                                    .map(|a| (a.short(), a.kind, a.badge.clone()))
-                                    .unwrap_or((aid.clone(), Kind::Claude, String::new()));
-                                let (r, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
-                                ic::account_mark(ui.painter(), r, kind, &badge, &t);
-                                w::text(ui, name, "strong-14");
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if *cost > 0.0 {
-                                        w::subtle(ui, format!("${cost:.2}"), "label-13-mono");
-                                    }
-                                    w::subtle(ui, format!("{}k in · {}k out · {turns} turns", tin / 1000, tout / 1000), "label-13-mono");
-                                });
-                            });
+        section(ui, "Accounts");
+        w::subtle(ui, "Drag the marker on a bar to cap how much of that limit Harbor uses. At the cap, Harbor treats the account as limited: threads wait for the reset or move to another account.", "label-13");
+        ui.add_space(4.0);
+        self.usage_controller(ui);
+        ui.add_space(16.0);
+        self.limits_settings(ui);
+        ui.add_space(16.0);
+        section(ui, "Last 14 days");
+        w::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let h = 120.0;
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h + 18.0), Sense::hover());
+            let max = by_day.values().copied().max().unwrap_or(1).max(1) as f32;
+            let bw = rect.width() / 14.0;
+            for i in 0..14 {
+                let day = today - 13 + i;
+                let v = by_day.get(&day).copied().unwrap_or(0) as f32;
+                let bh = (v / max) * h;
+                let x = rect.left() + i as f32 * bw;
+                let bar = Rect::from_min_max(pos2(x + bw * 0.2, rect.top() + h - bh), pos2(x + bw * 0.8, rect.top() + h));
+                ui.painter().rect_filled(bar, CornerRadius::same(3), if i == 13 { t.gray(1000) } else { t.gray(700) });
+                if i % 2 == 1 || i == 13 {
+                    let label = if i == 13 { "today".to_string() } else { format!("-{}d", 13 - i) };
+                    ui.painter().text(pos2(x + bw / 2.0, rect.bottom()), egui::Align2::CENTER_BOTTOM, label, egui::FontId::proportional(11.0), t.subtle());
+                }
+            }
+            w::subtle(ui, "Tokens (in + out) per day across all providers.", "label-12");
+        });
+        section(ui, "By account");
+        w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if by_account.is_empty() {
+                Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No turns yet.", "label-13"));
+            }
+            for (i, (aid, (turns, tin, tout, cost))) in by_account.iter().enumerate() {
+                if i > 0 {
+                    w::separator(ui);
+                }
+                Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (name, kind, badge) = self
+                            .account(aid)
+                            .map(|a| (crate::limits::account_name(a), a.kind, a.badge.clone()))
+                            .unwrap_or((aid.clone(), Kind::Claude, String::new()));
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                        ic::account_mark(ui.painter(), r, kind, &badge, &t);
+                        w::text(ui, name, "strong-14");
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if *cost > 0.0 {
+                                w::subtle(ui, format!("${cost:.2}"), "label-13-mono");
+                            }
+                            w::subtle(ui, format!("{}k in · {}k out · {turns} turns", tin / 1000, tout / 1000), "label-13-mono");
                         });
-                    }
+                    });
                 });
-                ui.add_space(40.0);
-            });
+            }
         });
     }
 

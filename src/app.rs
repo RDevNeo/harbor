@@ -40,7 +40,6 @@ pub enum View {
     Draft,
     Chat(i64),
     Settings(Tab),
-    Usage,
     Prs,
 }
 
@@ -395,7 +394,7 @@ impl App {
                 self.sidebar_drawer = v == "sidebar";
             }
             "settings" => self.open(View::Settings(Tab::General)),
-            "usage" => self.open(View::Usage),
+            "usage" | "limits" => self.open(View::Settings(Tab::Limits)),
             "prs" => self.open(View::Prs),
             "terminal" => self.toggle_terminal(ctx),
             "browser" => {
@@ -1286,7 +1285,6 @@ impl eframe::App for App {
             View::Draft => self.draft_view(ui),
             View::Chat(id) => self.chat_view(ui, id),
             View::Settings(tab) => self.settings(ui, tab),
-            View::Usage => self.usage(ui),
             View::Prs => self.prs_view(ui),
         });
 

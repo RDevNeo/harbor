@@ -49,7 +49,6 @@ impl App {
                 View::Chat(id) => Some(id),
                 _ => None,
             } }),
-            View::Usage => json!({ "t": "usage" }),
             View::Prs => json!({ "t": "prs" }),
         };
         let panes: Vec<Value> = [Dock::Right, Dock::Bottom]
@@ -109,7 +108,8 @@ impl App {
                 }
                 self.open(View::Settings(view["tab"].as_str().and_then(Tab::from_slug).unwrap_or(Tab::General)));
             }
-            Some("usage") => self.open(View::Usage),
+            // The Usage page lives in Settings now.
+            Some("usage") => self.open(View::Settings(Tab::Limits)),
             Some("prs") => self.open(View::Prs),
             _ => self.open(View::Draft),
         }

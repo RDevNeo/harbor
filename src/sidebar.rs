@@ -413,9 +413,6 @@ impl App {
                     self.prs.repo = self.view_project().or(self.prs.repo);
                     self.open(View::Prs);
                 }
-                if w::btn(ic::CHART).muted().icon_sm().pressed(v == View::Usage).show(ui).on_hover_text("Usage").clicked() {
-                    self.open(View::Usage);
-                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if w::btn(ic::REFRESH).muted().icon_sm().show(ui).on_hover_text("Refresh providers, projects and git").clicked() {
                         self.refresh_all();

@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-22
+
+### Changed
+- Usage moved into Settings › Usage: the account caps, what threads do at a limit, account
+  switching and the token history are on one page. The sidebar's Usage button is gone.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
@@ -92,7 +98,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/RDevNeo/harbor/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/RDevNeo/harbor/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/RDevNeo/harbor/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/RDevNeo/harbor/compare/v0.1.1...v0.1.2
