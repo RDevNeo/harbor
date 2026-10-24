@@ -57,6 +57,9 @@ final class Composer {
         row.setPadding(Ui.dp(4), Ui.dp(4), 0, 0);
         row.addView(Ui.roundButton(a, Ui.I_PLUS, Ui.G100, Ui.FG, 44, v -> { if (onPlus != null) onPlus.run(); }));
         pill = Ui.pill(a, "", v -> { if (onPill != null) onPill.run(); });
+        // Large font sizes must not push the send button out of the card: the pill ellipsizes
+        // (screen - composer margins and padding - three 44 dp buttons and their gaps).
+        pill.setMaxWidth(a.getResources().getDisplayMetrics().widthPixels - Ui.dp(24 + 16 + 4 + 3 * 44 + 3 * 8 + 4));
         LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, Ui.dp(44));
         pp.leftMargin = Ui.dp(8);
         row.addView(pill, pp);
