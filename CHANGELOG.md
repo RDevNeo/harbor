@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-23
+
 ### Added
 - Typing presence: a chat shows who is writing in it and on which device. Phones (Harbor for
   Android) and this PC's own composer report it; the desktop shows "✎ <phone> is typing…" above
@@ -331,7 +333,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.7...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/RDevNeo/harbor/compare/v0.8.7...v0.9.0
 [0.8.7]: https://github.com/RDevNeo/harbor/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/RDevNeo/harbor/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/RDevNeo/harbor/compare/v0.8.4...v0.8.5
