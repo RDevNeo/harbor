@@ -200,10 +200,19 @@ final class Hub {
         Tailnet.Http c = new Tailnet.Http(host, port, method, path, readTimeout);
         if (auth) {
             c.header("Authorization", "Bearer " + token);
-            c.header("X-Harbor-Device", android.os.Build.MODEL);
+            c.header("X-Harbor-Device", deviceName());
         }
         c.header("Accept", "application/json");
         return c;
+    }
+
+    /** What the PC calls this phone (typing lines, Settings › Phones): the name the user gave
+     *  it ("Galaxy A13"), else the model ("SM-A135M"). */
+    static String deviceName() {
+        String n = null;
+        try { n = android.provider.Settings.Global.getString(Ui.app.getContentResolver(), "device_name"); } catch (Exception ignored) { }
+        if (n == null || n.trim().isEmpty()) n = android.os.Build.MODEL;
+        return n.replaceAll("[\\r\\n]", " ").trim();
     }
 
     JSONObject get(String path) throws IOException { return call("GET", path, null, TIMEOUT); }

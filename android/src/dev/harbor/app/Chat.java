@@ -351,7 +351,7 @@ public class Chat extends Base {
             t.setBackground(Ui.round(Ui.G100, Ui.LINE, 18));
             t.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
             t.setMaxWidth(maxBubble());
-            w.addView(t);
+            w.addView(t, Ui.wrap());
             JSONArray f = q.optJSONArray("files");
             if (f != null) for (int j = 0; j < f.length(); j++) w.addView(Ui.text(this, "📎 " + f.optString(j), 12, Ui.G700));
             status.addView(w, Ui.margins(Ui.fill(), 36, 4, 0, 4));
@@ -866,6 +866,12 @@ public class Chat extends Base {
                 load(false);
             });
         });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] granted) {
+        super.onRequestPermissionsResult(req, perms, granted);
+        attach.permission(req, granted);
     }
 
     @Override

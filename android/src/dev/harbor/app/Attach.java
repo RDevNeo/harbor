@@ -73,8 +73,14 @@ final class Attach {
 
     private Uri shot; // where the camera app writes the photo (CamProvider)
 
-    /** The camera app takes a full-size photo into a file of ours (CamProvider). */
+    /** The camera app takes a full-size photo into a file of ours (CamProvider). The app
+     *  declares CAMERA (for the pairing scanner), and then Android refuses IMAGE_CAPTURE until
+     *  it is granted: ask first. */
     void camera() {
+        if (a.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            a.requestPermissions(new String[]{android.Manifest.permission.CAMERA}, SHOT);
+            return;
+        }
         try {
             shot = CamProvider.newShot(a);
             Intent i = new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, shot)
@@ -83,6 +89,13 @@ final class Attach {
         } catch (Exception e) {
             Ui.toast(a, "No camera app");
         }
+    }
+
+    /** Call from onRequestPermissionsResult. */
+    void permission(int req, int[] granted) {
+        if (req != SHOT) return;
+        if (granted.length > 0 && granted[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) camera();
+        else Ui.toast(a, "Harbor needs the camera permission to take a photo");
     }
 
     private void launch(Intent i) {

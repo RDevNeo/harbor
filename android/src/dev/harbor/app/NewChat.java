@@ -181,6 +181,12 @@ public class NewChat extends Base {
     }
 
     @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] granted) {
+        super.onRequestPermissionsResult(req, perms, granted);
+        attach.permission(req, granted);
+    }
+
+    @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (!comp.result(req, res, data)) attach.result(req, res, data);
