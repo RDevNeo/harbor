@@ -328,9 +328,13 @@ may have reached a PC isn't sent twice.
 
 ### Hub to hub (`/mesh/v1/…`)
 
-PCs talk on the same listener (port 47930, Tailscale addresses only). A caller is accepted when
-`tailscale whois` puts its address under the same Tailscale user as this PC; no token. Errors as
-above (`403`: sharing is off here, or not one of the user's devices).
+PCs talk on the same listener (port 47930, Tailscale addresses only). `tailscale whois` names
+the calling node by its stable node ID; it is accepted when the user allowed that node on this PC
+(Settings › Devices, or `harbor mesh allow <PC>`; kv `mesh_allowed` = `[{node, name}]`), or when
+both are untagged nodes of the same Tailscale user. No token. A PC only follows peers it allows,
+so two PCs share once each allows the other. A caller that isn't allowed gets
+`403 {"error", "harbor": true, "name"}` and shows up in Settings › Devices to allow. Sharing is
+kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s.
 
 - `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups]}`.
   `epoch` is the hub's start revision: revisions compare only within one epoch.

@@ -75,6 +75,9 @@ fn main() -> eframe::Result {
         mcpshim::run(&args[2..]);
         return Ok(());
     }
+    if args.get(1).map(String::as_str) == Some("mesh") {
+        std::process::exit(mesh::cli(&args[2..]));
+    }
     if args.get(1).map(String::as_str) == Some("turn") {
         detach::run(&args[2..]);
         return Ok(());

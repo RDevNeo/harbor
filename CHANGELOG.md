@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Sharing chats between PCs works across Tailscale accounts and with tagged nodes: each PC lists
+  the Harbors it sees on the tailnet in Settings › Devices with an Allow button, and two PCs share
+  once each allows the other (by Tailscale node ID). Your own untagged devices on the same account
+  still allow each other by themselves. Phone keys follow the same list. `harbor mesh status | on |
+  off | allow <PC> | remove <PC>` does the same from a terminal, and a running Harbor picks it up.
+
 ## [0.12.0] - 2026-10-24
 
 ### Added
