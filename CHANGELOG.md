@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Harbor for Android pairs once with all your PCs: with chats shared between them, the PC you
+  pair with hands the phone a key for each of the others. The app talks to the PC it used last
+  and moves to another one by itself when that PC stops answering (the drawer shows "via <PC>"),
+  so the phone keeps working while a PC is off. Removing the phone on one PC removes it on all.
+- On the phone, a chat whose PC is off is read-only with "<PC> is off", the device picker for a
+  new chat offers your other PCs that are on, and messages show where they were written.
+
 ## [0.10.0] - 2026-10-24
 
 ### Added

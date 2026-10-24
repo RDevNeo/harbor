@@ -20,6 +20,9 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
 
 ## Pairing
 
+One pairing reaches every PC of the mesh: `GET /v1/hubs` hands the phone a token for each other
+PC (see [Every PC is a hub](#every-pc-is-a-hub)).
+
 The QR code in Settings › Phones encodes
 
 ```
@@ -44,6 +47,8 @@ refetch everything.
 ```json
 {
   "version": "0.9.0", "hub_name": "desk", "you": "tok:1a2b3c4d", "rev": 1761200000123,
+  "hub_id": "ts:desk", "mesh": true,
+  "hubs": [{"id": "ts:desk", "name": "desk", "online": true}, {"id": "ts:laptop", "name": "laptop", "online": false}],
   "projects": [{"id": 1, "name": "harbor", "path": "/home/user/Projects/harbor"}],
   "chats": [{
     "id": 12, "project_id": 1, "title": "Fix the build", "device": "", "account": "claude",
@@ -74,7 +79,10 @@ refetch everything.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
-  globe, bot, hammer, gauge. `online` may be null (unknown).
+  globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
+  running Harbor; a new chat with that device starts there, so it can only be picked while `online`.
+- `hub_id`: this hub's id in the mesh; `mesh`: chats are shared with the user's other PCs; `hubs`:
+  every PC of the mesh (this one first). A hub the phone has no token for yet: ask `GET /v1/hubs`.
 - `usage[].percent`: 0–100 with one decimal (100.0 = that window is used up); `label` names the
   window ("5h", "Weekly", …).
 - `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
@@ -285,7 +293,32 @@ same chats, rendered the same way.
 - `POST /v1/chats` with a `device` that is another hub's id starts the chat on that PC (`409` when
   it's off); the answer's `id` is the copy's id on this hub (null if it hasn't arrived yet: find
   it by `gid` in the next state).
-- Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't.
+- Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't. A client that moves
+  between hubs sends `X-Harbor-Ids: global` with every call: answers then name chats by `gid`
+  (`id`, `parent`, `forks_after`, `forked_from.chat`, `status.waiting.agents[].id`, the `id` of a
+  new chat or fork, `changed_chats`) and projects by their path (`projects[].id`, `project_id`,
+  `defaults.project_id`); `project_id` in `POST /v1/chats` may be a path too.
+
+### `GET /v1/hubs`
+
+```json
+{"hubs": [{"id": "ts:desk", "name": "desk", "host": "desk.example.ts.net", "ip": "<tailnet IPv4>", "port": 47930,
+           "online": true, "token": "<the caller's>", "self": true},
+          {"id": "ts:laptop", "name": "laptop", "host": "laptop.example.ts.net", "ip": "<tailnet IPv4>", "port": 47930,
+           "online": true, "token": "<a token for this phone on that PC>"}]}
+```
+
+Each other PC that answers mints a token for the caller's pairing (the same one each time), so a
+phone paired once can talk to any of them; `token` is null for a PC that is off (ask again later).
+Removing the phone in Settings › Phones on any PC removes its tokens on all of them.
+
+### Failover
+
+The app keeps the hubs' addresses and tokens (encrypted, like the pairing) and sends every call to
+the PC used last. When that PC can't be reached, or a call to it fails mid-way, the next one is
+tried; the one that answers is used from then on (shown as "via <name>"). Revisions are per hub:
+after a switch, start the long-poll over and reload. Only reads are retried at once; a write that
+may have reached a PC isn't sent twice.
 
 ### Hub to hub (`/mesh/v1/…`)
 
