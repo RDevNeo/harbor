@@ -48,6 +48,7 @@ mod team;
 mod teamui;
 mod terminal;
 mod theme;
+mod tls;
 mod undo;
 mod usage_ctl;
 mod update;

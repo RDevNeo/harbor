@@ -1,7 +1,7 @@
 # Harbor for Android
 
 A chat-only phone client of a desktop Harbor (the "hub"). The phone runs no agent: it lists,
-opens, starts and drives the hub's chats over the tailnet (device, account, model, effort,
+opens, starts and drives the hub's chats over your network (device, account, model, effort,
 access, fast), and can rename, settle, fork and delete them. The API is in
 [PROTOCOL.md](PROTOCOL.md).
 
@@ -19,7 +19,9 @@ access, fast), and can rename, settle, fork and delete them. The API is in
    installs it (Android asks once to allow "Install unknown apps" for Harbor; Android 12+
    updates silently after that).
 
-The phone and the PC must be on the same tailnet (Tailscale), with Harbor open on the PC.
+The phone reaches the PC on any network the two share (the same Wi-Fi, or a VPN of yours), with
+Harbor open on the PC. Every connection is mutual TLS pinned to the PC's key and the phone's own
+Keystore key ([PROTOCOL.md](PROTOCOL.md#transport)); no other software is needed.
 
 ## Build
 

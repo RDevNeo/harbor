@@ -37,7 +37,7 @@ impl App {
             w::setting_row(
                 ui,
                 "Phone access",
-                "Harbor for Android lists, opens and starts this PC's chats over Tailscale. Harbor listens on this PC's tailnet address only, and answers paired phones only.",
+                "Harbor for Android lists, opens and starts this PC's chats over your network. Every connection is encrypted with this PC's key and the phone's own, paired by the QR code below: Harbor answers paired phones only.",
                 |ui| w::toggle(ui, &mut on),
             );
         });
@@ -46,21 +46,23 @@ impl App {
         }
         let net = hub.net.lock().unwrap().clone();
         let port = *hub.port.lock().unwrap();
-        // The phone reaches this PC by its MagicDNS name, or its tailnet IP without MagicDNS.
-        let ip = net.ips.iter().find(|i| !i.contains(':')).cloned().unwrap_or_default();
-        let host = if !net.dns.is_empty() { net.dns.clone() } else { ip.clone() };
+        let fp = crate::tls::my_fp();
+        // The phone tries each of this PC's addresses; an app before 0.13 only the first
+        // (`host`, `ip`), which must be a Tailscale one for it.
+        let host = net.legacy_ip();
+        let shown: Vec<String> = net.addrs.iter().take(6).cloned().collect();
         if on {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if host.is_empty() {
-                    w::badge(ui, "No tailnet", Tone::Amber);
-                    w::subtle(ui, "Tailscale isn't running here, so phones can't reach this PC yet (it's checked again every 20 s).", "label-13");
-                } else if net.bound.iter().any(|b| *b == ip || net.ips.contains(b)) {
+                if net.addrs.is_empty() {
+                    w::badge(ui, "No network", Tone::Amber);
+                    w::subtle(ui, "This PC has no network address right now (it's checked again every 20 s).", "label-13");
+                } else if !net.bound.is_empty() {
                     w::badge(ui, "Listening", Tone::Green);
-                    w::text(ui, format!("{host}:{port}"), "label-13-mono");
+                    w::text(ui, format!("{} · port {port}", shown.join("  ")), "label-13-mono");
                 } else {
                     w::badge(ui, "Starting", Tone::Gray);
-                    w::text(ui, format!("{host}:{port}"), "label-13-mono");
+                    w::text(ui, format!("port {port}"), "label-13-mono");
                 }
             });
             if !net.error.is_empty() {
@@ -75,7 +77,7 @@ impl App {
             let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).primary().show(ui);
             if let Some(token) = b.clicked().then(api::new_token).and_then(|t| t.map_err(|e| eprintln!("harbor: no key for a phone: {e}")).ok()) {
                 let mut tokens = hub.tokens.lock().unwrap();
-                tokens.push(Token { token: token.clone(), name: String::new(), created: crate::store::now(), group: crate::store::random_hex(16).unwrap_or_else(|_| token.clone()) });
+                tokens.push(Token { token: token.clone(), name: String::new(), created: crate::store::now(), group: crate::store::random_hex(16).unwrap_or_else(|_| token.clone()), fp: String::new() });
                 api::save_tokens(&self.store, &tokens);
                 drop(tokens);
                 self.api.ui.pairing = Some((token, None, None));
@@ -87,9 +89,9 @@ impl App {
         let name = crate::remote::hostname();
         let mut done = false;
         if let Some((token, tex, _)) = &mut self.api.ui.pairing {
-            let uri = format!("harbor://pair?host={}&port={port}&token={token}&name={}&ip={}", url_encode(&host), url_encode(&name), url_encode(&ip));
-            if host.is_empty() {
-                w::subtle(ui, "Waiting for this PC's tailnet address…", "label-13");
+            let uri = format!("harbor://pair?host={}&port={port}&token={token}&name={}&ip={}&fp={fp}&addrs={}", url_encode(&host), url_encode(&name), url_encode(&host), url_encode(&shown.join(",")));
+            if host.is_empty() || fp.is_empty() {
+                w::subtle(ui, if fp.is_empty() { "This PC has no key (see the log): phones can't pair." } else { "Waiting for this PC's network address…" }, "label-13");
             } else {
                 let tex = tex.get_or_insert_with(|| ctx.load_texture(format!("phone-pair-{host}"), crate::devices::qr_image(&uri), egui::TextureOptions::NEAREST)).clone();
                 w::card(ui).show(ui, |ui| {
@@ -99,7 +101,8 @@ impl App {
                         ui.add_space(12.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 4.0;
-                            for (k, v) in [("PC", name.as_str()), ("Address", host.as_str()), ("Port", &port.to_string()), ("Key", token.as_str())] {
+                            let addrs = shown.join(" ");
+                            for (k, v) in [("PC", name.as_str()), ("Addresses", addrs.as_str()), ("Port", &port.to_string()), ("Token", token.as_str()), ("PC key", fp.as_str())] {
                                 w::subtle(ui, k, "label-12");
                                 copy_line(ui, v);
                             }
@@ -146,7 +149,8 @@ impl App {
                                 "now" => "just now".to_string(),
                                 a => format!("{a} ago"),
                             };
-                            w::subtle(ui, format!("Paired {when} · key …{}{last}", &t.token[t.token.len().saturating_sub(6)..]), "label-12");
+                            let key = if t.fp.is_empty() { "no key yet".to_string() } else { format!("key {}", crate::tls::short(&t.fp)) };
+                            w::subtle(ui, format!("Paired {when} · {key}{last}"), "label-12");
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if w::btn("Revoke").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
@@ -177,15 +181,17 @@ impl App {
         match &apk {
             Some((_, code)) => {
                 let v = if *code > 0 { format!("Harbor for Android (build {code})") } else { "Harbor for Android".into() };
-                w::subtle(ui, format!("{v} is on this PC. Open the link on the phone, or scan the code with its camera, to install it. The app updates itself from here afterwards."), "copy-14");
+                w::subtle(ui, format!("{v} is on this PC. To install it, scan the code with the phone's camera (it downloads the latest release); the app updates itself from this PC afterwards."), "copy-14");
             }
             None => {
                 w::subtle(ui, "This PC doesn't have the app yet. Installed copies of Harbor get it with every update; this one can download it from the latest release.", "copy-14");
             }
         }
         ui.add_space(8.0);
-        if apk.is_some() && !host.is_empty() && on {
-            let url = format!("http://{host}:{port}/app.apk");
+        if on {
+            // Not from this PC: a phone's browser can't check this PC's key, and nothing here is
+            // served in plain HTTP to the network.
+            let url = "https://github.com/RDevNeo/harbor/releases/latest/download/harbor-android.apk".to_string();
             if self.api.ui.install_qr.as_ref().is_none_or(|(u, _)| *u != url) {
                 let tex = ctx.load_texture("phone-app-qr", crate::devices::qr_image(&url), egui::TextureOptions::NEAREST);
                 self.api.ui.install_qr = Some((url.clone(), tex));

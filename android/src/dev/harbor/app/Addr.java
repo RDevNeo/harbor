@@ -2,11 +2,39 @@ package dev.harbor.app;
 
 import java.net.InetAddress;
 
-/** Tailnet's address rules, plain Java so android/test/AddrTest.java checks them on the JVM
- *  (build.sh runs it). */
+/** Net's rules for where a request may go, plain Java so android/test/AddrTest.java checks them
+ *  on the JVM (build.sh runs it). */
 final class Addr {
-    /** How a request may reach the hub. */
-    enum Way { VPN, DEFAULT, OFF }
+    /** How a connection to a hub is made. */
+    enum How {
+        /** TLS, and the hub must show the pinned key: the normal case, to any address. */
+        TLS_PINNED,
+        /** TLS, learning the hub's key: a pairing from before 0.13, over Tailscale only. */
+        TLS_FIRST_USE,
+        /** Plain HTTP to 127.0.0.1 (adb reverse, test rigs) for a pairing without a key. */
+        PLAIN_LOOPBACK,
+        /** Nothing is sent. */
+        REFUSE
+    }
+
+    /** hasPin: the pairing has the hub's key. loopback: the address is this phone. tailnetDest: a
+     *  Tailscale address (a pairing from before 0.13 names one), vpnUp: Tailscale is up here. A
+     *  pinned key goes anywhere; without one only loopback (plain), or the one-time upgrade of an
+     *  old pairing inside Tailscale's tunnel, where WireGuard vouches for the hub. */
+    static How how(boolean hasPin, boolean loopback, boolean tailnetDest, boolean vpnUp) {
+        if (hasPin) return How.TLS_PINNED;
+        if (loopback) return How.PLAIN_LOOPBACK;
+        if (tailnetDest && vpnUp) return How.TLS_FIRST_USE;
+        return How.REFUSE;
+    }
+
+    /** A fingerprint as the pairing link or a person gives it: 64 hex characters (spaces, colons
+     *  and dashes dropped), lowercase; null otherwise. */
+    static String fp(String s) {
+        if (s == null) return null;
+        String f = s.replaceAll("[\\s:-]", "").toLowerCase(java.util.Locale.ROOT);
+        return f.matches("[0-9a-f]{64}") ? f : null;
+    }
 
     /** Tailscale's ranges: 100.64/10 and fd7a:115c:a1e0::/48. */
     static boolean tailnet(InetAddress a) {
@@ -31,13 +59,5 @@ final class Addr {
     static boolean up(Iterable<InetAddress> local) {
         for (InetAddress a : local) if (tailnet(a)) return true;
         return false;
-    }
-
-    /** vpnBound: a socket is bound to Tailscale's VPN network. Without one (some phone doesn't
-     *  show it as a VPN, or binding fails) the default network may carry the request, but only
-     *  while Tailscale is up here (localUp), and only to a tailnet address (pick), so it still
-     *  goes through the tunnel. Otherwise nothing is sent. */
-    static Way way(boolean vpnBound, boolean localUp) {
-        return vpnBound ? Way.VPN : localUp ? Way.DEFAULT : Way.OFF;
     }
 }

@@ -54,7 +54,7 @@ cp "$ROOT/assets/fonts/"{Geist-Regular,Geist-SemiBold,GeistMono-Regular,lucide}.
   --version-code "$CODE" --version-name "$VER"
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR" -d "$W/classes" \
   $(find "$HERE/src" "$HERE/third_party/zxing/src" "$W/gen" -name '*.java')
-# Tailnet's address rules are plain Java: check them on this JVM before packaging.
+# Net's connection rules are plain Java: check them on this JVM before packaging.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.AddrTest
 # So is the QR scanner's decoding of a camera frame.

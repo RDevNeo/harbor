@@ -24,7 +24,7 @@ public class Update extends BroadcastReceiver {
     /** Blocking: downloads and commits the session. Run off the UI thread. */
     static void install(Context c, Hub hub, Progress progress) throws Exception {
         if (busy) throw new IOException("already updating");
-        Tailnet.Http http = hub.open("GET", "/app.apk", 60_000, false);
+        Net.Http http = hub.open("GET", "/app.apk", 60_000, false);
         try {
             int code = http.code();
             if (code != 200) throw new IOException("the PC has no app to send (HTTP " + code + ")");

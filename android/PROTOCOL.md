@@ -5,32 +5,62 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
 
 ## Transport
 
-- HTTP/1.1, JSON bodies (UTF-8), `Connection: close` on every response.
-- The hub listens on its Tailscale addresses and 127.0.0.1 only, port **47930** by default
-  (kv `api_port`, applies after a restart). Turned on in Settings › Phones.
-- Every request except `GET /app.apk` carries `Authorization: Bearer <token>`.
+- HTTP/1.1 inside TLS, JSON bodies (UTF-8), `Connection: close` on every response.
+- The hub listens on every interface, port **47930** by default (kv `api_port`, applies after a
+  restart; `HARBOR_LISTEN=addr,…` picks addresses). Turned on in Settings › Phones.
+- **Keys.** The hub and each phone have a long-term key of their own: the hub an ECDSA P-256 key
+  and self-signed certificate in `identity.pem` in its state dir (owner-only), the phone an EC
+  P-256 key in the Android Keystore (non-exportable) with the certificate the Keystore makes. A
+  key's *fingerprint* is the SHA-256 of its certificate's SubjectPublicKeyInfo, 64 lowercase hex
+  characters.
+- **Mutual TLS, pinned.** TLS 1.3 (the hub also takes 1.2 from phones whose Android has no 1.3).
+  The phone checks that the hub's certificate has the fingerprint from the pairing, and nothing
+  else (no CA, no names); it shows its own certificate. The handshake signatures are checked
+  against that same key. The hub binds a pairing's token to the first phone key it's used with
+  (`api_tokens[].fp`); from then on the token is refused with any other key (`401`).
+- Every request except `GET /app.apk` carries `Authorization: Bearer <token>` as well.
   Optional `X-Harbor-Device: <phone name>` (shown next to the token in Settings › Phones).
+- **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
+  `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
+  answers plain HTTP on its Tailscale interface, from Tailscale addresses, for tokens no key is
+  bound to yet (apps before 0.13; they update themselves from there).
+- A TLS client without a known key gets nothing but `GET /app.apk` and PC pairing
+  (`POST /mesh/v1/pair`). From outside private networks (a public IPv6, a forwarded port) only a
+  key the hub knows gets any answer. Failed authentications are counted per address (IPv6 per
+  /64): past 30 a minute, connections are closed without an answer. At most 12 connections per
+  address at once.
 - Request bodies need `Content-Length` (no chunked encoding). JSON bodies ≤ 2 MB, uploads ≤ 200 MB.
 - Errors: a status code and `{"error": "<message for the user>"}`.
-  `401` unknown token (pair again), `400` bad input, `404` no such chat/route,
-  `409` not possible now (e.g. fork of a running turn), `413` too large, `503` Harbor busy/closing.
+  `401` unknown token or another phone's key (pair again), `400` bad input, `404` no such
+  chat/route, `409` not possible now (e.g. fork of a running turn), `413` too large,
+  `503` Harbor busy/closing.
 - When phone access is turned off, connections are closed without an answer.
-- The app only connects through Tailscale: a socket bound to Tailscale's VPN network, to a tailnet
-  address (100.64/10, fd7a:115c:a1e0::/48) or loopback. Otherwise it sends nothing.
+- The app sends nothing but pinned TLS, except plain HTTP to loopback for a pairing without a
+  key, and the one-time upgrade below.
 
 ## Pairing
 
 One pairing reaches every PC of the mesh: `GET /v1/hubs` hands the phone a token for each other
-PC (see [Every PC is a hub](#every-pc-is-a-hub)).
+PC, with that PC's key and addresses (see [Every PC is a hub](#every-pc-is-a-hub)).
 
 The QR code in Settings › Phones encodes
 
 ```
-harbor://pair?host=<MagicDNS name>&port=<port>&token=<token>&name=<hub name>&ip=<tailnet IPv4>
+harbor://pair?host=<address>&port=<port>&token=<token>&name=<hub name>&ip=<address>&fp=<hub fingerprint>&addrs=<address>,<address>,…
 ```
 
-all values percent-encoded. Use `host`, fall back to `ip` when MagicDNS doesn't resolve.
-The same values are shown as text under the code.
+all values percent-encoded. `addrs` are the hub's network addresses (IPv4 first, at most 6);
+the app tries the one that answered last, then each of them, then `host` and `ip` (which apps
+before 0.13 use: a Tailscale address while the PC has one). Every try is pinned to `fp`; a hub
+that answers with another key is never sent the token. The same values are shown as text under
+the code. `/v1/state` gives the hub's current `hub_addrs`, so the app's list follows address
+changes.
+
+**Upgrading a pairing from before 0.13** (no `fp`): the app makes one TLS connection to the
+pairing's Tailscale address, only through Tailscale's VPN (as before 0.13, WireGuard vouches for
+the hub there), takes the hub's fingerprint from that handshake and pins it from then on; the hub
+binds the token to the phone's key on that same call. Without Tailscale such a pairing can't
+upgrade: the app asks to pair again.
 
 ## Revisions
 
@@ -47,7 +77,8 @@ refetch everything.
 ```json
 {
   "version": "0.9.0", "hub_name": "desk", "you": "tok:1a2b3c4d", "rev": 1761200000123,
-  "hub_id": "ts:desk", "mesh": true,
+  "hub_id": "ts:desk", "hub_fp": "<64 hex>", "hub_addrs": ["10.0.0.12", "fd00::12"], "hub_port": 47930,
+  "mesh": true,
   "hubs": [{"id": "ts:desk", "name": "desk", "online": true}, {"id": "ts:laptop", "name": "laptop", "online": false}],
   "projects": [{"id": 1, "name": "harbor", "path": "/home/user/Projects/harbor"}],
   "chats": [{
@@ -81,6 +112,8 @@ refetch everything.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
   running Harbor; a new chat with that device starts there, so it can only be picked while `online`.
+- `hub_fp`, `hub_addrs`, `hub_port`: this hub's key and where it answers (keep the pairing's
+  address list up to date with them).
 - `hub_id`: this hub's id in the mesh; `mesh`: chats are shared with the user's other PCs; `hubs`:
   every PC of the mesh (this one first). A hub the phone has no token for yet: ask `GET /v1/hubs`.
 - `usage[].percent`: 0–100 with one decimal (100.0 = that window is used up); `label` names the
@@ -308,11 +341,17 @@ same chats, rendered the same way.
 ### `GET /v1/hubs`
 
 ```json
-{"hubs": [{"id": "ts:desk", "name": "desk", "host": "desk.example.ts.net", "ip": "<tailnet IPv4>", "port": 47930,
+{"hubs": [{"id": "ts:desk", "name": "desk", "host": "10.0.0.12", "ip": "10.0.0.12", "port": 47930,
+           "fp": "<64 hex>", "addrs": ["10.0.0.12", "fd00::12"],
            "online": true, "token": "<the caller's>", "self": true},
-          {"id": "ts:laptop", "name": "laptop", "host": "laptop.example.ts.net", "ip": "<tailnet IPv4>", "port": 47930,
-           "online": true, "token": "<a token for this phone on that PC>"}]}
+          {"id": "ts:laptop", "name": "laptop", "host": "10.0.0.20", "ip": "10.0.0.20", "port": 47930,
+           "fp": "<64 hex>", "addrs": ["10.0.0.20"],
+           "online": true, "token": "<a token for this phone on that PC, bound to its key>"}]}
 ```
+
+`fp` and `addrs` as in the pairing link: each PC is only reached pinned to its own `fp`. A PC
+without an `fp` runs Harbor before 0.13 and can't be reached safely: skip it. `host`/`ip` are for
+apps before 0.13.
 
 Each other PC that answers mints a token for the caller's pairing (the same one each time), so a
 phone paired once can talk to any of them; `token` is null for a PC that is off (ask again later)
@@ -329,16 +368,37 @@ may have reached a PC isn't sent twice.
 
 ### Hub to hub (`/mesh/v1/…`)
 
-PCs talk on the same listener (port 47930, Tailscale addresses only). `tailscale whois` names
-the calling node by its stable node ID; it is accepted when the user allowed that node on this PC
-(Settings › Devices, or `harbor mesh allow <PC>`; kv `mesh_allowed` = `[{node, name}]`), or when
-both are untagged nodes of the same Tailscale user. No token. A PC only follows peers it allows,
-so two PCs share once each allows the other. A caller that isn't allowed gets
-`403 {"error", "harbor": true, "name"}` and shows up in Settings › Devices to allow. Sharing is
-kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s.
+PCs talk on the same listener (port 47930) over the same mutual TLS, each showing its own key.
+A caller is accepted when its key's fingerprint is on this PC's allowed list (kv `mesh_allowed`
+= `[{fp, name, id, addrs, node}]`: Settings › Devices, `harbor mesh allow <fingerprint>`, or
+pairing below). No token. A PC only follows peers it allows, so two PCs share once each allows
+the other. A caller that isn't allowed gets `403 {"error", "harbor": true, "name"}`. Sharing is
+kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s. Requests say who sends
+them in `X-Harbor-Id` and `X-Harbor-Name` (for the other side's Settings, never for access).
 
-- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones}`
-  (`phones`: its phone access is on; also in each chats answer).
+A peer is found by its key, not its address: its `hello` lists its addresses (`addrs`,
+"host:port"), a PC that calls in leaves its address, and while Tailscale is installed its peer
+list adds the tailnet addresses. Each is tried, pinned to the peer's key, until one answers.
+
+- `POST /mesh/v1/pair` `{proof, id, name, addrs, port}` (any TLS client with a key): the caller
+  typed the one-time code this PC shows (kv `mesh_pair` = `{code, expires, tries, paired}`;
+  Settings › Devices › Show a code, or `harbor mesh pair`). `K = PBKDF2-HMAC-SHA256(code
+  without dashes, uppercase, O→0 I/L→1; salt "harbor-pair-v1"; 100 000 rounds)`; the caller
+  sends `proof = HMAC-SHA256(K, "harbor-pair-v1\njoin\n<host fp>\n<caller fp>")` with the
+  fingerprints it saw in this very TLS connection, and checks the answer's
+  `proof = HMAC-SHA256(K, "harbor-pair-v1\nhost\n<host fp>\n<caller fp>")`. A man in the middle
+  shows another key, so neither proof fits. On success both add each other to `mesh_allowed`;
+  the answer is `{proof, fp, id, name, addrs, port}`. The code is good for 10 minutes, once;
+  `403` wrong code (5 of those void it), `404` no code shown, `429` more than 10 tries a minute
+  from one address.
+- `POST /mesh/v1/enroll` `{fp, id, name, addrs, port}` → `{fp, id, name, addrs, port}`: only in
+  plain HTTP over Tailscale, from a PC allowed by Tailscale node before 0.13 (`tailscale whois`
+  names it): the two swap keys, which go into their allowed entries. From then on that PC gets
+  only `hello` and `enroll` in plain HTTP; everything else needs TLS with its key. `409` when
+  another key is already on file for it (pair again).
+- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port}`
+  (`phones`: its phone access is on; also in each chats answer; `fp`, `addrs`, `port`: its key
+  and addresses).
   `epoch` is the hub's start revision: revisions compare only within one epoch.
 - `GET /mesh/v1/events?since=<rev>&epoch=<epoch>` → `{epoch, rev}` as soon as one of this PC's
   own chats changed after `since` (or one was deleted), or after 20 s. Another `epoch`: start over.
@@ -359,8 +419,9 @@ kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s.
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
   `typing` and `viewing`.
-- `POST /mesh/v1/mint` `{group, name}` → `{token}`: this PC's token for a phone paired on another
-  PC (`group`: the pairing's id; the same group always gets the same token). `410` once removed.
+- `POST /mesh/v1/mint` `{group, name, fp}` → `{token}`: this PC's token for a phone paired on
+  another PC (`group`: the pairing's id; the same group always gets the same token), bound to the
+  phone's key `fp` at once. `410` once removed, `409` when the group's token has another key.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
 - `POST /mesh/v1/phones` `{}`: turn this PC's phone access on (Settings › Devices' "Enable phone
   access" on another PC).

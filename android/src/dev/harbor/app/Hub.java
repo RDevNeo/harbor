@@ -46,14 +46,17 @@ final class Hub {
 
     final String id;
     String name, host, token;
-    String ip; // the tailnet IP from the pairing link, tried when the name doesn't resolve
+    String ip; // a second address from a pairing link before 0.13 (its tailnet IP)
     int port;
     String pid = ""; // the paired PC's id in the mesh ("ts:desk"), once known
+    String fp = ""; // the PC's key (fingerprint): only it may answer ("" for a pairing before 0.13, until it upgrades)
+    final List<String> addrs = new ArrayList<>(); // every address the PC has said it has
 
     /** Another PC of the mesh, reachable with a token of its own. */
     static final class Ep {
-        String pid, name, host, ip, token;
+        String pid, name, host, ip, token, fp = "";
         int port;
+        final List<String> addrs = new ArrayList<>();
         Ep(String pid, String name, String host, String ip, int port, String token) {
             this.pid = pid; this.name = name; this.host = host; this.ip = ip; this.port = port; this.token = token;
         }
@@ -144,7 +147,7 @@ final class Hub {
 
     // ---- pairing ----
 
-    /** harbor://pair?host=&port=&token=&name=  (null if it isn't one). */
+    /** harbor://pair?host=&port=&token=&name=&fp=&addrs=a,b  (null if it isn't one). */
     static Hub parse(String link) {
         if (link == null) return null;
         Uri u = Uri.parse(link.trim());
@@ -156,6 +159,10 @@ final class Hub {
         String name = u.getQueryParameter("name");
         Hub h = new Hub(UUID.randomUUID().toString(), name == null ? host : name, host, port, token);
         h.ip = u.getQueryParameter("ip");
+        String fp = Addr.fp(u.getQueryParameter("fp"));
+        if (fp != null) h.fp = fp;
+        String a = u.getQueryParameter("addrs");
+        if (a != null) for (String x : a.split(",")) if (!x.trim().isEmpty() && !h.addrs.contains(x.trim())) h.addrs.add(x.trim());
         return h;
     }
 
@@ -229,15 +236,27 @@ final class Hub {
                 Hub h = new Hub(o.getString("id"), o.optString("name"), o.getString("host"), o.getInt("port"), o.getString("token"));
                 h.ip = o.optString("ip", null);
                 h.pid = o.optString("pid", "");
+                h.fp = o.optString("fp", "");
+                strings(o.optJSONArray("addrs"), h.addrs);
                 JSONArray e = o.optJSONArray("eps");
                 if (e != null) for (int j = 0; j < e.length(); j++) {
                     JSONObject x = e.getJSONObject(j);
-                    h.eps.add(new Ep(x.getString("pid"), x.optString("name"), x.optString("host"), x.optString("ip"), x.getInt("port"), x.getString("token")));
+                    Ep ep = new Ep(x.getString("pid"), x.optString("name"), x.optString("host"), x.optString("ip"), x.getInt("port"), x.getString("token"));
+                    ep.fp = x.optString("fp", "");
+                    strings(x.optJSONArray("addrs"), ep.addrs);
+                    h.eps.add(ep);
                 }
                 out.add(h);
             }
         } catch (JSONException ignored) { }
         return out;
+    }
+
+    private static void strings(JSONArray a, List<String> into) {
+        if (a != null) for (int i = 0; i < a.length(); i++) {
+            String x = a.optString(i, "");
+            if (!x.isEmpty() && !into.contains(x)) into.add(x);
+        }
     }
 
     static Hub get(Context c, String id) {
@@ -251,22 +270,25 @@ final class Hub {
             for (Hub h : hubs) {
                 JSONArray e = new JSONArray();
                 for (Ep x : h.eps)
-                    e.put(new JSONObject().put("pid", x.pid).put("name", x.name).put("host", x.host).put("ip", x.ip).put("port", x.port).put("token", x.token));
+                    e.put(new JSONObject().put("pid", x.pid).put("name", x.name).put("host", x.host).put("ip", x.ip).put("port", x.port).put("token", x.token)
+                            .put("fp", x.fp).put("addrs", new JSONArray(x.addrs)));
                 a.put(new JSONObject().put("id", h.id).put("name", h.name).put("host", h.host).put("port", h.port).put("token", h.token)
-                        .put("ip", h.ip).put("pid", h.pid).put("eps", e));
+                        .put("ip", h.ip).put("pid", h.pid).put("fp", h.fp).put("addrs", new JSONArray(h.addrs)).put("eps", e));
             }
         } catch (JSONException ignored) { }
         store(c, a.toString());
     }
 
-    /** Adds h, or replaces the hub at the same address (pairing again renews its token). */
+    /** Adds h, or replaces the same PC (same key, or same address): pairing again renews its token. */
     static Hub put(Context c, Hub h) {
         List<Hub> hubs = all(c);
         for (int i = 0; i < hubs.size(); i++) {
             Hub o = hubs.get(i);
-            if (o.id.equals(h.id) || (o.host.equalsIgnoreCase(h.host) && o.port == h.port)) {
+            if (o.id.equals(h.id) || (!h.fp.isEmpty() && h.fp.equals(o.fp)) || (o.host.equalsIgnoreCase(h.host) && o.port == h.port)) {
                 Hub n = new Hub(o.id, h.name, h.host, h.port, h.token);
                 n.ip = h.ip;
+                n.fp = h.fp;
+                n.addrs.addAll(h.addrs);
                 n.pid = h.pid.isEmpty() ? o.pid : h.pid;
                 n.eps.addAll(h.eps.isEmpty() ? o.eps : h.eps);
                 h = n;
@@ -300,13 +322,31 @@ final class Hub {
         ApiError(int code, String msg) { super(msg); this.code = code; }
     }
 
-    Tailnet.Http open(String method, String path, int readTimeout) throws IOException { return open(method, path, readTimeout, true); }
+    Net.Http open(String method, String path, int readTimeout) throws IOException { return open(method, path, readTimeout, true); }
 
-    /** auth false: no token (GET /app.apk needs none). Only ever through Tailscale (Tailnet).
-     *  The PC used last first; when it can't be reached the others are tried, and the first
-     *  that answers is used from then on. Nothing was sent to a PC that couldn't be reached, so
-     *  this is safe for every call. */
-    Tailnet.Http open(String method, String path, int readTimeout, boolean auth) throws IOException {
+    /** Per PC: the address that answered last, tried first. */
+    private static final Map<String, String> goodAddr = new HashMap<>();
+
+    /** Where a PC may answer: the address that did last, then the ones it says it has (its
+     *  network's first), then the pairing link's own (a link from before 0.13 has only those). */
+    private List<String> candidates(String v, Ep e) {
+        List<String> out = new ArrayList<>();
+        String last;
+        synchronized (goodAddr) { last = goodAddr.get(id + "/" + v); }
+        List<String> all = new ArrayList<>();
+        all.add(last);
+        all.addAll(e == null ? addrs : e.addrs);
+        all.add(e == null ? host : e.host);
+        all.add(e == null ? ip : e.ip);
+        for (String a : all) if (a != null && !a.isEmpty() && !"null".equals(a) && !out.contains(a)) out.add(a);
+        return out;
+    }
+
+    /** auth false: no token (GET /app.apk needs none). Only ever through Net: TLS to the PC's
+     *  pinned key. The PC used last first; when it can't be reached the others are tried, and the
+     *  first that answers is used from then on. Nothing was sent to a PC that couldn't be reached
+     *  (or answered with another key), so this is safe for every call. */
+    Net.Http open(String method, String path, int readTimeout, boolean auth) throws IOException {
         sync();
         String cur = via();
         List<String> order = new ArrayList<>();
@@ -318,17 +358,22 @@ final class Hub {
         for (String v : order) (isBad(v) ? later : ok).add(v);
         order = ok;
         order.addAll(later);
-        int connect = order.size() > 1 ? 3_000 : 8_000;
         IOException last = null;
         for (String v : order) {
             Ep e = ep(v);
-            String h = e == null ? host : e.host, alt = e == null ? ip : e.ip, tok = e == null ? token : e.token;
+            String tok = e == null ? token : e.token, pin = e == null ? fp : e.fp;
             int p = e == null ? port : e.port;
-            String[] addrs = alt == null || alt.isEmpty() || alt.equals(h) ? new String[] { h } : new String[] { h, alt };
-            for (String addr : addrs) {
-                if (addr == null || addr.isEmpty()) continue;
+            List<String> where = candidates(v, e);
+            int connect = order.size() > 1 || where.size() > 1 ? 3_000 : 8_000;
+            for (String addr : where) {
                 try {
-                    Tailnet.Http c = new Tailnet.Http(addr, p, method, path, readTimeout, connect);
+                    Net.Http c = Net.open(addr, p, pin == null || pin.isEmpty() ? null : pin, method, path, readTimeout, connect);
+                    // A pairing from before 0.13 learned the PC's key (over Tailscale): pinned from now on.
+                    if ((pin == null || pin.isEmpty()) && c.seen != null) {
+                        if (e == null) fp = c.seen; else e.fp = c.seen;
+                        persist();
+                    }
+                    synchronized (goodAddr) { goodAddr.put(id + "/" + v, addr); }
                     if (auth) {
                         c.header("Authorization", "Bearer " + tok);
                         c.header("X-Harbor-Device", deviceName());
@@ -337,6 +382,9 @@ final class Hub {
                     c.header("Accept", "application/json");
                     setVia(v);
                     return c;
+                } catch (Net.WrongKey | Net.Refused x) {
+                    last = x; // another address of the same PC can't change this
+                    break;
                 } catch (IOException x) {
                     last = x;
                 }
@@ -347,7 +395,14 @@ final class Hub {
 
     /** After a state: the mesh's other PCs and this phone's token on each, when some are new. */
     void learn(JSONObject st) {
-        if (st == null || !st.optBoolean("mesh")) return;
+        if (st == null) return;
+        // The paired PC's addresses as it says them now (it answered with its pinned key).
+        if (via().isEmpty() && !fp.isEmpty() && fp.equals(Addr.fp(st.optString("hub_fp")))) {
+            List<String> now = new ArrayList<>();
+            strings(st.optJSONArray("hub_addrs"), now);
+            if (!now.isEmpty() && !now.equals(addrs)) { addrs.clear(); addrs.addAll(now); persist(); }
+        }
+        if (!st.optBoolean("mesh")) return;
         String here = st.optString("hub_id", "");
         if (via().isEmpty() && pid.isEmpty() && !here.isEmpty()) { pid = here; persist(); }
         JSONArray hs = st.optJSONArray("hubs");
@@ -373,11 +428,17 @@ final class Hub {
                 String p = o.optString("id"), tok = o.optString("token", "");
                 // A PC whose phone access is off would drop the phone: never fail over to it.
                 if (!o.optBoolean("phones", true)) { if (eps.removeIf(e -> e.pid.equals(p))) changed = true; continue; }
+                // A PC without a key runs Harbor before 0.13: the phone can't reach it safely.
+                String key = Addr.fp(o.optString("fp"));
+                if (key == null) { if (eps.removeIf(e -> e.pid.equals(p))) changed = true; continue; }
                 if (p.isEmpty() || tok.isEmpty() || "null".equals(tok) || p.equals(pid)) continue;
+                List<String> where = new ArrayList<>();
+                strings(o.optJSONArray("addrs"), where);
                 Ep e = ep(p);
-                if (e == null) { eps.add(new Ep(p, o.optString("name"), o.optString("host"), o.optString("ip"), o.optInt("port"), tok)); changed = true; }
-                else if (!tok.equals(e.token) || !o.optString("ip").equals(e.ip) || o.optInt("port") != e.port || !o.optString("host").equals(e.host)) {
-                    e.token = tok; e.ip = o.optString("ip"); e.port = o.optInt("port"); e.host = o.optString("host"); e.name = o.optString("name"); changed = true;
+                if (e == null) { e = new Ep(p, o.optString("name"), o.optString("host"), o.optString("ip"), o.optInt("port"), tok); eps.add(e); e.fp = key; e.addrs.addAll(where); changed = true; }
+                else if (!tok.equals(e.token) || !o.optString("ip").equals(e.ip) || o.optInt("port") != e.port || !o.optString("host").equals(e.host) || !key.equals(e.fp) || !where.equals(e.addrs)) {
+                    e.token = tok; e.ip = o.optString("ip"); e.port = o.optInt("port"); e.host = o.optString("host"); e.name = o.optString("name");
+                    e.fp = key; e.addrs.clear(); e.addrs.addAll(where); changed = true;
                 }
             }
             if (changed) persist();
@@ -421,7 +482,7 @@ final class Hub {
     }
 
     private JSONObject call1(String method, String path, JSONObject body, int readTimeout) throws IOException {
-        Tailnet.Http c = open(method, path, readTimeout);
+        Net.Http c = open(method, path, readTimeout);
         String v = via();
         try {
             if (body != null) {
@@ -440,7 +501,7 @@ final class Hub {
     /** Streams a file to POST /v1/upload; returns {id, path}. */
     JSONObject upload(String name, String chat, InputStream in, long len) throws IOException {
         String q = "/v1/upload?name=" + URLEncoder.encode(name, "UTF-8") + (chat == null ? "" : "&chat=" + URLEncoder.encode(chat, "UTF-8"));
-        Tailnet.Http c = open("POST", q, 120_000);
+        Net.Http c = open("POST", q, 120_000);
         try {
             c.header("Content-Type", "application/octet-stream");
             try (OutputStream o = c.body(len)) {
@@ -462,7 +523,7 @@ final class Hub {
         return s;
     }
 
-    private static JSONObject reply(Tailnet.Http c) throws IOException {
+    private static JSONObject reply(Net.Http c) throws IOException {
         int code = c.code();
         if (c.length() > MAX_REPLY) throw new IOException(TOO_BIG);
         String body = read(c.in());
@@ -496,9 +557,11 @@ final class Hub {
 
     /** A short human message for any failure. */
     static String why(Throwable e) {
-        if (e instanceof ApiError || e instanceof Tailnet.Refused) return e.getMessage();
-        if (e instanceof UnknownHostException) return "Can't find the PC. Is Tailscale on?";
-        if (e instanceof ConnectException) return "The PC isn't answering. Is Harbor open there?";
+        if (e instanceof ApiError || e instanceof Net.Refused || e instanceof Net.WrongKey) return e.getMessage();
+        if (e instanceof UnknownHostException) return "Can't find the PC on this network.";
+        if (e instanceof ConnectException || e instanceof java.net.NoRouteToHostException)
+            return "The PC isn't answering. Is Harbor open there, and this phone on the same network?";
+        if (e instanceof javax.net.ssl.SSLException) return "Couldn't set up the encrypted connection to the PC: " + e.getMessage();
         if (e instanceof SocketTimeoutException) return "The PC took too long to answer.";
         if (e instanceof FileNotFoundException) return "Not found";
         String m = e.getMessage();

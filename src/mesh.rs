@@ -13,13 +13,21 @@
 //!   for the full list, and only chats whose digest differs are fetched again.
 //! - **Off means read-only.** A copy whose home PC doesn't answer can be read but not
 //!   written; it catches up when the PC is back.
-//! - **Transport.** The phone API's listener (port 47930, Tailscale addresses only) serves
-//!   `/mesh/v1/…` too. `tailscale whois` names the calling node (its stable node ID); it is let
-//!   in when the user allowed that node in Settings › Devices (kv `mesh_allowed`), or when both
-//!   are untagged nodes of the same Tailscale user. A link needs both sides to allow each other:
-//!   each PC also only follows peers it allows. No tokens are involved.
-//!   (For tests with several instances on one PC: `HARBOR_MESH_LOOPBACK=1` also accepts
-//!   127.0.0.1, `HARBOR_MESH_PEERS=host:port,…` names the peers instead of Tailscale, and
+//! - **Transport.** The phone API's listener (port 47930) serves `/mesh/v1/…` too, over mutual
+//!   TLS with pinned keys (tls.rs). A PC is let in when the fingerprint of its key is on the
+//!   allowed list (kv `mesh_allowed`, Settings › Devices or `harbor mesh allow`), and each PC
+//!   only follows peers on its own list: a link needs both sides to allow each other. Two PCs
+//!   get onto each other's lists with a one-time pairing code (shown on one, typed on the
+//!   other: `/mesh/v1/pair`). No tokens are involved.
+//! - **Addresses.** A peer is known by its key, not where it is: it says its addresses in
+//!   `hello`, PCs that call in leave theirs, and Tailscale's peer list is one more source while
+//!   it's installed. Each is tried until one answers with the right key.
+//! - **Upgrading from Tailscale (before 0.13).** PCs allowed by Tailscale node ID still get in
+//!   over plain HTTP on the tailnet (WireGuard vouches for them, `tailscale whois` names them)
+//!   until they swap keys: `POST /mesh/v1/enroll` sends this PC's fingerprint and answers with
+//!   the peer's, both are written into the allowed entries, and from then on it's TLS only.
+//!   (For tests with several instances on one PC: `HARBOR_MESH_LOOPBACK=1` also accepts plain
+//!   127.0.0.1, `HARBOR_MESH_PEERS=host:port,…` adds addresses to try, and
 //!   `HARBOR_MESH_ID`/`HARBOR_MESH_NAME` set this instance's identity.)
 //!
 //! Settings stay local to each PC and never travel. The wire format is in android/PROTOCOL.md.
@@ -42,6 +50,10 @@ const POLL: Duration = Duration::from_secs(20);
 const CONNECT: Duration = Duration::from_secs(3);
 /// A forwarded call (a send with its files) may take this long.
 const CALL_WAIT: Duration = Duration::from_secs(60);
+/// How long a pairing code is good for.
+pub const CODE_TTL: i64 = 600;
+/// Wrong guesses a pairing code takes before it's void.
+const CODE_TRIES: i64 = 5;
 /// How long a `tailscale whois` answer is trusted.
 const WHOIS_TTL: Duration = Duration::from_secs(120);
 /// Copies of a streaming reply are written to disk at most this often.
@@ -84,6 +96,26 @@ pub struct Peer {
     /// Its phone access is on (Settings › Phones there): phones can fail over to it.
     #[serde(default)]
     pub phones: bool,
+    /// The fingerprint of its key ("" for a peer still on plain HTTP over Tailscale, or a test's).
+    #[serde(default)]
+    pub fp: String,
+    /// Every address it says it has ("host:port").
+    #[serde(default)]
+    pub addrs: Vec<String>,
+}
+
+impl Peer {
+    pub fn dest(&self) -> Dest {
+        Dest { addr: self.addr.clone(), fp: self.fp.clone() }
+    }
+}
+
+/// Where a request goes: an address, and the key that must answer there ("" = plain HTTP,
+/// only to 127.0.0.1 or a Tailscale address).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Dest {
+    pub addr: String,
+    pub fp: String,
 }
 
 /// What the listener threads, the peer workers and the UI thread share (in `api::Hub`).
@@ -109,8 +141,10 @@ pub struct Shared {
     pub node: Mutex<Option<Node>>,
     /// Nodes the user allowed (Settings › Devices, kv `mesh_allowed`).
     pub allowed: Mutex<Vec<Allowed>>,
-    /// Harbors met on the tailnet that aren't linked (yet), by node: for Settings › Devices.
+    /// Harbors met that aren't linked (yet), by fingerprint or node: for Settings › Devices.
     pub seen: Mutex<HashMap<String, Seen>>,
+    /// Addresses learned for allowed keys (calls from them, `HARBOR_MESH_PEERS`, Tailscale).
+    pub hints: Mutex<HashMap<String, Vec<String>>>,
 }
 
 /// A Tailscale node: its stable ID (`nXXXX…CNTRL`), MagicDNS label, user and whether it's tagged.
@@ -122,18 +156,46 @@ pub struct Node {
     pub tagged: bool,
 }
 
-/// A node the user allowed to share chats with this PC.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+/// A PC the user allowed to share chats with this PC: by the fingerprint of its key, or (allowed
+/// before 0.13, until it upgrades) by its Tailscale node ID.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Allowed {
+    #[serde(default)]
     pub node: String,
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub fp: String,
+    /// Its peer id (as its `hello` says), once known.
+    #[serde(default)]
+    pub id: String,
+    /// Where it was last reachable ("host:port"), so it's found again after a restart.
+    #[serde(default)]
+    pub addrs: Vec<String>,
 }
 
-/// A Harbor met on the tailnet: it asked to link, or answered that it doesn't allow this PC (yet).
+impl Allowed {
+    /// The key Settings and the CLI know it by.
+    pub fn key(&self) -> &str {
+        if !self.fp.is_empty() { &self.fp } else { &self.node }
+    }
+}
+
+/// The id a peer allowed by key goes by here: its own when known.
+pub fn peer_id(a: &Allowed) -> String {
+    if !a.id.is_empty() {
+        a.id.clone()
+    } else {
+        format!("fp:{}", &a.fp[..a.fp.len().min(16)])
+    }
+}
+
+/// A Harbor met that isn't linked: it asked to link, or answered that it doesn't allow this PC (yet).
 #[derive(Clone, Default, Debug)]
 pub struct Seen {
     pub node: String,
+    /// The fingerprint of its key, when it came over TLS.
+    pub fp: String,
     pub name: String,
     /// Unix time it last asked this PC (and was refused: not allowed here).
     pub asked: i64,
@@ -154,9 +216,88 @@ pub fn load_allowed(s: &store::Store) -> Vec<Allowed> {
     s.get("mesh_allowed").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
+/// Changes the allowed list: kv `mesh_allowed` is the truth (`harbor mesh` on a terminal writes
+/// it too), so it's read, changed and written back, and the copy in memory follows.
+pub fn update_allowed(shared: &Shared, f: impl FnOnce(&mut Vec<Allowed>)) {
+    let mut mem = shared.allowed.lock().unwrap();
+    // (Unit tests keep it in memory: never the real database.)
+    let store = if cfg!(test) { None } else { store::Store::open().ok() };
+    let mut list = store.as_ref().map(load_allowed).unwrap_or_else(|| mem.clone());
+    f(&mut list);
+    if let Some(s) = &store {
+        s.set("mesh_allowed", &serde_json::to_string(&list).unwrap_or_default());
+    }
+    *mem = list;
+}
+
+/// Addresses as given by a peer: valid "host:port"s only, at most 12.
+fn clean_addrs<'a>(v: impl IntoIterator<Item = &'a Value>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for a in v.into_iter().filter_map(|a| a.as_str()) {
+        if let Ok(sa) = a.parse::<std::net::SocketAddr>() {
+            let sa = std::net::SocketAddr::new(crate::tls::canonical(sa.ip()), sa.port());
+            if !sa.ip().is_unspecified() && !sa.ip().is_multicast() && !out.contains(&sa.to_string()) {
+                out.push(sa.to_string());
+            }
+        }
+        if out.len() >= 12 {
+            break;
+        }
+    }
+    out
+}
+
+/// This PC's addresses as peers should try them ("host:port").
+pub fn my_addrs(port: u16) -> Vec<String> {
+    crate::tls::lan_addrs().into_iter().map(|ip| crate::tls::host_port(ip, port)).collect()
+}
+
 impl Shared {
     pub fn admits(&self, n: &Node) -> bool {
         admit(self.node.lock().unwrap().as_ref(), n, &self.allowed.lock().unwrap())
+    }
+
+    /// The allowed entry of a key.
+    pub fn allowed_fp(&self, fp: &str) -> Option<Allowed> {
+        if fp.is_empty() {
+            return None;
+        }
+        self.allowed.lock().unwrap().iter().find(|a| a.fp == fp).cloned()
+    }
+
+    /// The allowed entry of a Tailscale node that already has a key on file (then plain is over).
+    fn upgraded(&self, node: &str) -> Option<Allowed> {
+        self.allowed.lock().unwrap().iter().find(|a| a.node == node && !a.fp.is_empty()).cloned()
+    }
+
+    /// One more address to try for a key.
+    pub fn hint(&self, fp: &str, addr: String) {
+        let mut h = self.hints.lock().unwrap();
+        let v = h.entry(fp.to_string()).or_default();
+        if !v.contains(&addr) {
+            v.insert(0, addr);
+            v.truncate(8);
+        }
+    }
+
+    /// Where a key may answer: where it last did, what it said, what was learned. Deduplicated.
+    fn addrs_of(&self, fp: &str) -> Vec<String> {
+        let mut v: Vec<String> = vec![];
+        if let Some(p) = self.peers.lock().unwrap().values().find(|p| p.fp == fp) {
+            v.push(p.addr.clone());
+            v.extend(p.addrs.iter().cloned());
+        }
+        if let Some(a) = self.allowed_fp(fp) {
+            v.extend(a.addrs);
+        }
+        v.extend(self.hints.lock().unwrap().get(fp).cloned().unwrap_or_default());
+        let mut out: Vec<String> = vec![];
+        for a in v {
+            if !a.is_empty() && !out.contains(&a) {
+                out.push(a);
+            }
+        }
+        out
     }
 
     pub fn me(&self) -> Me {
@@ -217,6 +358,20 @@ pub struct Local {
     viewing: Option<(i64, bool, Instant)>,
     /// When kv `mesh_allowed`/`mesh_enabled` were last read (they may change from a terminal).
     reread: Option<Instant>,
+    /// Settings › Devices' pairing.
+    pub pair: PairUi,
+}
+
+/// Pairing in Settings › Devices: the code shown here, or a code typed for another PC.
+#[derive(Default)]
+pub struct PairUi {
+    pub shown: Option<PairCode>,
+    polled: Option<Instant>,
+    pub addr: String,
+    pub code: String,
+    /// The typed code's outcome, from its thread.
+    pub result: Arc<Mutex<Option<Result<String, String>>>>,
+    pub busy: Arc<AtomicBool>,
 }
 
 /// A copy's live state as its home PC says it.
@@ -248,25 +403,42 @@ pub enum Msg {
 
 // ================================================================== identity
 
-/// This PC's peer id and name from `tailscale status --json` (env overrides for tests).
-pub fn read_me() -> (Me, Option<Node>) {
-    let out = std::process::Command::new("tailscale").args(["status", "--json"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
-    let v = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).unwrap_or_default();
-    let (mut me, user) = parse_me(&v);
-    if let Ok(id) = std::env::var("HARBOR_MESH_ID") {
-        me.id = id;
-    }
-    if let Ok(n) = std::env::var("HARBOR_MESH_NAME") {
-        me.name = n;
-    }
-    if me.id.is_empty() {
-        me.id = format!("pc:{}", crate::remote::hostname());
-    }
-    if me.name.is_empty() {
-        me.name = label(&me.id);
-    }
-    (me, user)
+/// The output of `tailscale status --json`, when Tailscale is installed (it's optional: an
+/// extra source of addresses, and how PCs allowed before 0.13 are recognised until they upgrade).
+pub fn tailscale_status() -> Option<Value> {
+    crate::providers::which("tailscale")?;
+    let out = std::process::Command::new("tailscale").args(["status", "--json"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
+    serde_json::from_slice::<Value>(&out.stdout).ok()
 }
+
+/// This PC's peer id and name (env overrides for tests). The id is kept in kv `mesh_id` the first
+/// time: chats copied to other PCs name their home by it, so it never changes, with or without
+/// Tailscale (PCs that had it keep "ts:<name>").
+pub fn read_me() -> (Me, Option<Node>) {
+    let v = tailscale_status().unwrap_or_default();
+    let (mut me, node) = parse_me(&v);
+    let store = store::Store::open().ok();
+    match std::env::var("HARBOR_MESH_ID") {
+        Ok(id) => me.id = id,
+        Err(_) => match store.as_ref().and_then(|s| s.get("mesh_id")).filter(|i| !i.is_empty()) {
+            Some(id) => me.id = id,
+            None => {
+                if me.id.is_empty() {
+                    me.id = format!("pc:{}", crate::remote::hostname());
+                }
+                if let Some(s) = &store {
+                    s.set("mesh_id", &me.id);
+                }
+            }
+        },
+    }
+    me.name = std::env::var("HARBOR_MESH_NAME").unwrap_or_else(|_| label(&me.id));
+    *HELLO.lock().unwrap() = (me.id.clone(), me.name.clone());
+    (me, node)
+}
+
+/// Who this PC says it is on its requests to peers (for their Settings when they don't know it).
+static HELLO: std::sync::LazyLock<Mutex<(String, String)>> = std::sync::LazyLock::new(Default::default);
 
 pub fn parse_me(v: &Value) -> (Me, Option<Node>) {
     let s = &v["Self"];
@@ -298,47 +470,94 @@ pub fn status_node(p: &Value) -> Option<Node> {
     Some(Node { id: id.to_string(), label, user: p["UserID"].as_i64(), tagged: p["Tags"].as_array().is_some_and(|t| !t.is_empty()) })
 }
 
-/// Which peer is calling from `ip`: Ok(its peer id) when it may share chats with this PC,
-/// Err(its node, if Tailscale knows it) when not (it's remembered as asking, for Settings).
-fn who(shared: &Shared, ip: IpAddr) -> Result<String, Option<Node>> {
-    if ip.is_loopback() {
-        return if std::env::var("HARBOR_MESH_LOOPBACK").as_deref() == Ok("1") { Ok("loopback".to_string()) } else { Err(None) };
-    }
-    let cached = shared.whois.lock().unwrap().get(&ip).filter(|(at, _)| at.elapsed() < WHOIS_TTL).map(|(_, n)| n.clone());
-    let node = match cached {
-        Some(n) => n,
-        None => {
-            let out = std::process::Command::new("tailscale").args(["whois", "--json", &ip.to_string()]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
-            let n = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).and_then(|v| parse_whois(&v));
-            shared.whois.lock().unwrap().insert(ip, (Instant::now(), n.clone()));
-            n
+/// Who is calling: Ok((its peer id, its Tailscale node on the legacy path)) when it may share
+/// chats with this PC; Err when not (it's remembered as asking, for Settings).
+fn who(shared: &Shared, p: &api::Peer, req: &api::Request) -> Result<(String, Option<Node>), ()> {
+    let says = |k: &str| req.header(k).unwrap_or("").chars().take(60).collect::<String>();
+    match &p.via {
+        api::Via::Loopback => {
+            if std::env::var("HARBOR_MESH_LOOPBACK").as_deref() == Ok("1") {
+                Ok(("loopback".to_string(), None))
+            } else {
+                Err(())
+            }
         }
-    };
-    let Some(n) = node else { return Err(None) };
-    if shared.admits(&n) {
-        return Ok(format!("ts:{}", n.label));
+        api::Via::Tls(Some(fp)) => {
+            if let Some(a) = shared.allowed_fp(fp) {
+                // It's here: one more place to find it (at the port it's known to listen on).
+                let port = a.addrs.iter().chain(shared.addrs_of(fp).iter()).filter_map(|x| x.parse::<std::net::SocketAddr>().ok()).map(|x| x.port()).next().unwrap_or(api::DEFAULT_PORT);
+                shared.hint(fp, crate::tls::host_port(p.ip, port));
+                return Ok((peer_id(&a), None));
+            }
+            let mut seen = shared.seen.lock().unwrap();
+            if seen.len() < 64 || seen.contains_key(fp) {
+                let s = seen.entry(fp.clone()).or_default();
+                s.fp = fp.clone();
+                let name = says("x-harbor-name");
+                if !name.is_empty() {
+                    s.name = name;
+                }
+                s.asked = store::now();
+            }
+            Err(())
+        }
+        api::Via::Legacy => {
+            let ip = p.ip;
+            let cached = shared.whois.lock().unwrap().get(&ip).filter(|(at, _)| at.elapsed() < WHOIS_TTL).map(|(_, n)| n.clone());
+            let node = match cached {
+                Some(n) => n,
+                None => {
+                    let out = std::process::Command::new("tailscale").args(["whois", "--json", &ip.to_string()]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
+                    let n = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).and_then(|v| parse_whois(&v));
+                    shared.whois.lock().unwrap().insert(ip, (Instant::now(), n.clone()));
+                    n
+                }
+            };
+            let Some(n) = node else { return Err(()) };
+            if shared.admits(&n) {
+                let id = shared.upgraded(&n.id).map(|a| peer_id(&a)).unwrap_or_else(|| format!("ts:{}", n.label));
+                return Ok((id, Some(n)));
+            }
+            let mut seen = shared.seen.lock().unwrap();
+            let s = seen.entry(n.id.clone()).or_default();
+            s.node = n.id.clone();
+            s.name = n.label.clone();
+            s.asked = store::now();
+            Err(())
+        }
+        _ => Err(()),
     }
-    let mut seen = shared.seen.lock().unwrap();
-    let s = seen.entry(n.id.clone()).or_default();
-    s.node = n.id.clone();
-    s.name = n.label.clone();
-    s.asked = store::now();
-    Err(Some(n))
 }
 
 // ================================================================== HTTP client
 
 /// One request to a peer: (status, JSON body). Errors are for the user ("… didn't answer").
-pub fn http(addr: &str, method: &str, path: &str, body: Option<(&str, &[u8])>, wait: Duration) -> Result<(u16, Value), String> {
-    let sock = addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
-    let s = TcpStream::connect_timeout(&sock, CONNECT).map_err(|e| e.to_string())?;
-    let _ = s.set_read_timeout(Some(wait));
-    let _ = s.set_write_timeout(Some(wait));
+/// With a fingerprint it's TLS, and only that key may answer; without one it's plain HTTP,
+/// which is only ever sent to 127.0.0.1 (tests) or a Tailscale address (PCs not upgraded yet).
+pub fn http(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, wait: Duration) -> Result<(u16, Value), String> {
+    let sock = dest.addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
+    if dest.fp.is_empty() {
+        let ip = crate::tls::canonical(sock.ip());
+        if !ip.is_loopback() && !crate::tls::tailnet_ip(ip) {
+            return Err("not sent: no key on file for this PC (pair it again)".into());
+        }
+        let s = TcpStream::connect_timeout(&sock, CONNECT).map_err(|e| e.to_string())?;
+        let _ = s.set_read_timeout(Some(wait));
+        let _ = s.set_write_timeout(Some(wait));
+        return exchange(s, &dest.addr, method, path, body);
+    }
+    let (s, _) = crate::tls::connect(&sock, Some(&dest.fp), CONNECT, wait)?;
+    exchange(s, &dest.addr, method, path, body)
+}
+
+/// Writes a request and reads its answer on an open connection.
+fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>) -> Result<(u16, Value), String> {
     let (ctype, data) = body.unwrap_or(("application/json", b""));
-    let head = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", data.len());
-    let mut w = &s;
-    w.write_all(head.as_bytes()).and_then(|_| w.write_all(data)).map_err(|e| e.to_string())?;
-    let mut r = BufReader::new(&s);
+    let (id, name) = HELLO.lock().unwrap().clone();
+    let me = format!("X-Harbor-Id: {}\r\nX-Harbor-Name: {}\r\n", id.replace(['\r', '\n'], ""), name.replace(['\r', '\n'], ""));
+    let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n{me}Content-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", data.len());
+    s.write_all(head.as_bytes()).and_then(|_| s.write_all(data)).and_then(|_| s.flush()).map_err(|e| e.to_string())?;
+    let mut r = BufReader::new(s);
     let mut line = String::new();
     r.read_line(&mut line).map_err(|e| e.to_string())?;
     let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or("not Harbor")?;
@@ -369,8 +588,8 @@ pub fn http(addr: &str, method: &str, path: &str, body: Option<(&str, &[u8])>, w
     Ok((status, v))
 }
 
-fn get(addr: &str, path: &str, wait: Duration) -> Result<Value, String> {
-    match http(addr, "GET", path, None, wait)? {
+fn get(dest: &Dest, path: &str, wait: Duration) -> Result<Value, String> {
+    match http(dest, "GET", path, None, wait)? {
         (200, v) => Ok(v),
         (s, v) => Err(format!("{s}: {}", v["error"].as_str().unwrap_or(""))),
     }
@@ -379,21 +598,35 @@ fn get(addr: &str, path: &str, wait: Duration) -> Result<Value, String> {
 // ================================================================== server (a peer asks)
 
 /// A `/mesh/…` request on the API listener (api.rs `serve`). Answers here or on the UI thread.
-pub fn serve(stream: &TcpStream, req: &api::Request, r: &mut impl Read, hub: &api::Hub, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync)) -> Reply {
+pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api::Hub, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync)) -> Reply {
     let shared = &hub.mesh;
     if !shared.on.load(Ordering::SeqCst) {
         return err(403, "this PC doesn't share its chats (Settings › Devices)");
     }
-    let Some(ip) = stream.peer_addr().ok().map(|a| a.ip()) else { return err(403, "unknown peer") };
-    let peer = match who(shared, ip) {
+    let segs = req.segments();
+    // Pairing with a code: any PC that shows a key may try (a few times).
+    if segs == ["mesh", "v1", "pair"] && req.method == "POST" {
+        return pair_serve(from, req, r, hub);
+    }
+    let (peer, node) = match who(shared, from, req) {
         Ok(p) => p,
         // A Harbor that isn't allowed here (yet): it may show this PC in its Settings as waiting.
         Err(_) => {
             let me = shared.me().name;
-            return Reply { status: 403, body: json!({ "error": format!("{me} doesn't share chats with this PC yet: allow it in Settings › Devices on {me}"), "harbor": true, "name": me }) };
+            return Reply { status: 403, body: json!({ "error": format!("{me} doesn't share chats with this PC yet: pair them in Settings › Devices"), "harbor": true, "name": me }) };
         }
     };
-    let segs = req.segments();
+    // A PC on the legacy tailnet path whose key is on file here: it may say hello and swap
+    // keys again (its answer may have been lost), nothing more in plain HTTP.
+    if let Some(n) = &node {
+        let up = shared.upgraded(&n.id);
+        match (req.method.as_str(), segs.as_slice()) {
+            ("POST", ["mesh", "v1", "enroll"]) => return enroll(hub, n, &read_json(r, req.len)),
+            ("GET", ["mesh", "v1", "hello"]) => {}
+            _ if up.is_some() => return err(403, "this PC has your key on file: connect over TLS"),
+            _ => {}
+        }
+    }
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["mesh", "v1", "events"]) => {
             let since: u64 = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -472,6 +705,157 @@ fn read_json(r: &mut impl Read, len: usize) -> Value {
     api::read_body(r, len, 4 << 20).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
 }
 
+/// What this PC tells a peer about itself when keys are swapped.
+fn about_me(hub: &api::Hub) -> Value {
+    let me = hub.mesh.me();
+    let port = *hub.port.lock().unwrap();
+    json!({ "fp": crate::tls::my_fp(), "id": me.id, "name": me.name, "addrs": my_addrs(port), "port": port })
+}
+
+/// `POST /mesh/v1/enroll` from a PC allowed by Tailscale node (over the tailnet, so WireGuard
+/// vouches for it): its key goes into its allowed entry (made if it was allowed as the same
+/// Tailscale user), and this PC's key goes back. A different key than one already on file is
+/// refused: that takes pairing again.
+fn enroll(hub: &api::Hub, n: &Node, body: &Value) -> Reply {
+    let Some(fp) = body["fp"].as_str().and_then(crate::tls::normalize_fp) else { return err(400, "no key") };
+    if fp == crate::tls::my_fp() {
+        return err(400, "that's this PC's own key");
+    }
+    if let Some(a) = hub.mesh.upgraded(&n.id).filter(|a| a.fp != fp) {
+        return err(409, format!("another key is on file for {}: pair the PCs again", a.name));
+    }
+    let id: String = body["id"].as_str().unwrap_or("").chars().take(80).collect();
+    let addrs = clean_addrs(body["addrs"].as_array().into_iter().flatten());
+    update_allowed(&hub.mesh, |list| {
+        // A key can't belong to two entries.
+        list.retain(|a| a.fp != fp || a.node == n.id);
+        match list.iter_mut().find(|a| a.node == n.id) {
+            Some(a) => {
+                a.fp = fp.clone();
+                // (Asked again with less: what's known stays.)
+                if !id.is_empty() {
+                    a.id = id.clone();
+                }
+                if !addrs.is_empty() {
+                    a.addrs = addrs.clone();
+                }
+            }
+            None => list.push(Allowed { node: n.id.clone(), name: n.label.clone(), fp: fp.clone(), id: id.clone(), addrs: addrs.clone() }),
+        }
+    });
+    ok(about_me(hub))
+}
+
+/// Pairing attempts per address (on top of the code's own limit).
+static PAIR_TRIES: std::sync::LazyLock<crate::tls::Throttle> = std::sync::LazyLock::new(|| crate::tls::Throttle::new(10, Duration::from_secs(60)));
+
+/// The pairing code this PC shows (kv `mesh_pair`, written by Settings › Devices or
+/// `harbor mesh pair`): the code, when it runs out (unix s), wrong guesses so far.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PairCode {
+    pub code: String,
+    pub expires: i64,
+    #[serde(default)]
+    pub tries: i64,
+    /// Set when a PC paired with it: its name (the code is used up).
+    #[serde(default)]
+    pub paired: String,
+}
+
+pub fn load_code(s: &store::Store) -> Option<PairCode> {
+    s.get("mesh_pair").and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// A new pairing code, saved for the listener; sharing turns on.
+pub fn new_code(s: &store::Store) -> std::io::Result<PairCode> {
+    let c = PairCode { code: crate::tls::new_code()?, expires: store::now() + CODE_TTL, tries: 0, paired: String::new() };
+    s.set("mesh_pair", &serde_json::to_string(&c).unwrap_or_default());
+    s.set("mesh_enabled", "1");
+    Ok(c)
+}
+
+/// `POST /mesh/v1/pair`: a PC typed this PC's code. It proves it knows the code for the two keys
+/// of this very connection (`tls::proof`); this PC answers with its own proof, and each adds
+/// the other to its allowed list. The code is good once, for 10 minutes, and 5 wrong guesses.
+fn pair_serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api::Hub) -> Reply {
+    let api::Via::Tls(Some(theirs)) = &from.via else { return err(403, "pairing needs TLS and a key") };
+    if !PAIR_TRIES.hit(from.ip) {
+        return err(429, "too many tries: wait a minute");
+    }
+    let body = read_json(r, req.len);
+    let Ok(store) = store::Store::open() else { return err(503, "Harbor's database is busy") };
+    let Some(mut code) = load_code(&store).filter(|c| c.paired.is_empty() && c.expires > store::now() && c.tries < CODE_TRIES) else {
+        return err(404, "no pairing code is shown on this PC (or it ran out): show a new one");
+    };
+    let mine = crate::tls::my_fp();
+    let key = crate::tls::code_key(&code.code);
+    if theirs == &mine || !crate::tls::proof_ok(&key, "join", &mine, theirs, body["proof"].as_str().unwrap_or("")) {
+        code.tries += 1;
+        store.set("mesh_pair", &serde_json::to_string(&code).unwrap_or_default());
+        return err(403, "wrong code");
+    }
+    let name: String = body["name"].as_str().unwrap_or("").chars().take(60).collect();
+    let id: String = body["id"].as_str().unwrap_or("").chars().take(80).collect();
+    let mut addrs = clean_addrs(body["addrs"].as_array().into_iter().flatten());
+    // Where it called from, at its port, goes first.
+    let port = body["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(api::DEFAULT_PORT);
+    let here = crate::tls::host_port(from.ip, port);
+    addrs.retain(|a| *a != here);
+    addrs.insert(0, here);
+    let fp = theirs.clone();
+    update_allowed(&hub.mesh, |list| {
+        // Paired again (a new key, the same PC): the old entry goes.
+        list.retain(|a| a.fp != fp && (id.is_empty() || a.id != id));
+        list.push(Allowed { node: String::new(), name: name.clone(), fp: fp.clone(), id: id.clone(), addrs: addrs.clone() });
+    });
+    code.paired = if name.is_empty() { "a PC".into() } else { name };
+    store.set("mesh_pair", &serde_json::to_string(&code).unwrap_or_default());
+    let mut me = about_me(hub);
+    me["proof"] = json!(crate::tls::proof(&key, "host", &mine, theirs));
+    ok(me)
+}
+
+/// The other side of pairing: this PC typed `code` shown on the PC at `addr` ("host[:port]").
+/// On success both PCs have each other on their allowed lists; returns the entry made here.
+pub fn pair_join(shared: &Shared, addr: &str, code: &str, port: u16) -> Result<Allowed, String> {
+    let code = crate::tls::normalize_code(code);
+    if code.len() != 10 {
+        return Err("a pairing code has 10 letters and digits".into());
+    }
+    let addr = addr.trim();
+    let target = match (addr.parse::<std::net::SocketAddr>(), addr.parse::<std::net::IpAddr>()) {
+        (Ok(sa), _) => sa.to_string(),
+        (_, Ok(ip)) => crate::tls::host_port(ip, api::DEFAULT_PORT),
+        _ if addr.contains(':') => addr.to_string(),
+        _ => format!("{addr}:{}", api::DEFAULT_PORT),
+    };
+    let sock = target.to_socket_addrs().map_err(|e| format!("{target}: {e}"))?.next().ok_or("no address")?;
+    let (s, host) = crate::tls::connect(&sock, None, CONNECT, Duration::from_secs(20)).map_err(|e| format!("{target} didn't answer: {e}"))?;
+    let mine = crate::tls::my_fp();
+    let key = crate::tls::code_key(&code);
+    let (id, name) = HELLO.lock().unwrap().clone();
+    let body = json!({ "proof": crate::tls::proof(&key, "join", &host, &mine), "id": id, "name": name, "addrs": my_addrs(port), "port": port });
+    let data = serde_json::to_vec(&body).unwrap_or_default();
+    let (status, v) = exchange(s, &target, "POST", "/mesh/v1/pair", Some(("application/json", &data)))?;
+    if status != 200 {
+        return Err(v["error"].as_str().map(String::from).unwrap_or_else(|| format!("{target} answered {status}")));
+    }
+    if !crate::tls::proof_ok(&key, "host", &host, &mine, v["proof"].as_str().unwrap_or("")) {
+        return Err("the PC that answered doesn't know the code: not paired".into());
+    }
+    let mut addrs = clean_addrs(v["addrs"].as_array().into_iter().flatten());
+    let used = sock.to_string();
+    addrs.retain(|a| *a != used);
+    addrs.insert(0, used);
+    let a = Allowed { node: String::new(), name: v["name"].as_str().unwrap_or("").chars().take(60).collect(), fp: host.clone(), id: v["id"].as_str().unwrap_or("").chars().take(80).collect(), addrs };
+    let entry = a.clone();
+    update_allowed(shared, |list| {
+        list.retain(|x| x.fp != entry.fp && (entry.id.is_empty() || x.id != entry.id));
+        list.push(entry);
+    });
+    Ok(a)
+}
+
 /// A peer asks for a token for a phone paired with it (`group`: the pairing both share).
 /// The same group always gets the same token here, so asking again changes nothing.
 fn mint(hub: &api::Hub, body: &Value) -> Reply {
@@ -483,12 +867,20 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
         return err(410, "this phone was removed");
     }
     let name: String = body["name"].as_str().unwrap_or("").chars().take(60).collect();
+    // The phone's key, as the PC it paired with has it: the token here is bound to it at once.
+    let fp = body["fp"].as_str().and_then(crate::tls::normalize_fp).unwrap_or_default();
     let mut tokens = hub.tokens.lock().unwrap();
-    if let Some(t) = tokens.iter().find(|t| t.group == group) {
+    if let Some(t) = tokens.iter_mut().find(|t| t.group == group) {
+        if t.fp.is_empty() && !fp.is_empty() {
+            t.fp = fp;
+            hub.tokens_dirty.store(true, Ordering::SeqCst);
+        } else if !fp.is_empty() && t.fp != fp {
+            return err(409, "this pairing belongs to another phone");
+        }
         return ok(json!({ "token": t.token }));
     }
     let Ok(token) = api::new_token() else { return err(500, "no randomness") };
-    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string() });
+    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string(), fp });
     hub.tokens_dirty.store(true, Ordering::SeqCst);
     ok(json!({ "token": token }))
 }
@@ -500,7 +892,7 @@ pub fn forward_lease(hub: &api::Hub, chat: i64, view: bool, device: &str, kind: 
     let Some(p) = hub.mesh.peer(&home).filter(|p| p.online) else { return true };
     let body = serde_json::to_vec(&json!({ "chat": hid, "view": view, "device": device, "kind": kind, "label": label, "on": on })).unwrap_or_default();
     std::thread::spawn(move || {
-        let _ = http(&p.addr, "POST", "/mesh/v1/lease", Some(("application/json", &body)), Duration::from_secs(5));
+        let _ = http(&p.dest(), "POST", "/mesh/v1/lease", Some(("application/json", &body)), Duration::from_secs(5));
     });
     true
 }
@@ -517,18 +909,32 @@ pub fn merge_revoked(hub: &api::Hub, groups: &[String]) {
     hub.tokens_dirty.store(true, Ordering::SeqCst);
 }
 
+/// The IPs (no ports) of "host:port" addresses, and the port of the first.
+fn ips_and_port(addrs: &[String]) -> (Vec<String>, u16) {
+    let sa: Vec<std::net::SocketAddr> = addrs.iter().filter_map(|a| a.parse().ok()).collect();
+    let mut ips: Vec<String> = vec![];
+    for a in &sa {
+        let ip = a.ip().to_string();
+        if !ips.contains(&ip) {
+            ips.push(ip);
+        }
+    }
+    (ips, sa.first().map(|a| a.port()).unwrap_or(0))
+}
+
 /// `GET /v1/hubs` for a phone: this PC and the mesh's others, with a token for the phone on
-/// each one that answers (minted there for the phone's pairing group).
+/// each one that answers (minted there for the phone's pairing group, bound to the phone's
+/// key), and each PC's key and addresses.
 pub fn hubs(hub: &api::Hub, token: &str) -> Value {
-    let (group, name) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.group.clone(), t.name.clone())).unwrap_or_default();
+    let (group, name, fp) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.group.clone(), t.name.clone(), t.fp.clone())).unwrap_or_default();
     let me = hub.mesh.me();
     let net = hub.net.lock().unwrap().clone();
     let port = *hub.port.lock().unwrap();
-    let ip = net.ips.iter().find(|i| !i.contains(':')).cloned().unwrap_or_default();
-    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": net.dns, "ip": ip, "port": port, "online": true, "phones": true, "token": token, "self": true })];
+    let ip = net.legacy_ip();
+    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": ip, "ip": ip, "port": port, "fp": crate::tls::my_fp(), "addrs": net.addrs, "online": true, "phones": true, "token": token, "self": true })];
     if hub.mesh.on.load(Ordering::Relaxed) && !group.is_empty() {
         let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().cloned().collect();
-        let body = serde_json::to_vec(&json!({ "group": group, "name": name })).unwrap_or_default();
+        let body = serde_json::to_vec(&json!({ "group": group, "name": name, "fp": fp })).unwrap_or_default();
         // Asked all at once: a PC that's off costs one timeout, not one each.
         let asks: Vec<_> = peers
             .into_iter()
@@ -537,7 +943,7 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
                 std::thread::spawn(move || {
                     // A PC with phone access off would drop the phone: no token for it.
                     let tok = if p.online && p.phones {
-                        http(&p.addr, "POST", "/mesh/v1/mint", Some(("application/json", &body)), Duration::from_secs(6)).ok().filter(|(s, _)| *s == 200).and_then(|(_, v)| v["token"].as_str().map(String::from))
+                        http(&p.dest(), "POST", "/mesh/v1/mint", Some(("application/json", &body)), Duration::from_secs(6)).ok().filter(|(s, _)| *s == 200).and_then(|(_, v)| v["token"].as_str().map(String::from))
                     } else {
                         None
                     };
@@ -547,8 +953,11 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
             .collect();
         for a in asks {
             let Ok((p, tok)) = a.join() else { continue };
-            let (ip, port) = p.addr.rsplit_once(':').map(|(i, po)| (i.to_string(), po.parse::<u16>().unwrap_or(0))).unwrap_or_default();
-            out.push(json!({ "id": p.id, "name": p.name, "host": p.dns, "ip": ip, "port": port, "online": p.online, "phones": p.phones, "token": tok }));
+            let mut all = vec![p.addr.clone()];
+            all.extend(p.addrs.iter().filter(|a| **a != p.addr).cloned());
+            let (ips, port) = ips_and_port(&all);
+            let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.first()).cloned().unwrap_or_default();
+            out.push(json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok }));
         }
     }
     json!({ "hubs": out })
@@ -556,7 +965,27 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
 
 // ================================================================== client (workers)
 
-/// Starts discovery and the peer workers once (sharing turned on); later calls do nothing.
+/// A peer to follow: by key (TLS to whichever of its addresses answers), a Tailscale node not
+/// upgraded yet (plain HTTP to its tailnet address, until keys are swapped), or an address
+/// given by hand for a test on 127.0.0.1.
+#[derive(Clone, Debug)]
+enum Target {
+    Key(String),
+    Legacy { addr: String, node: Node, ts_id: String, dns: String },
+    Plain(String),
+}
+
+impl Target {
+    fn key(&self) -> String {
+        match self {
+            Target::Key(fp) => format!("fp:{fp}"),
+            Target::Legacy { node, .. } => format!("node:{}", node.id),
+            Target::Plain(a) => format!("addr:{a}"),
+        }
+    }
+}
+
+/// Starts the peer workers once (sharing turned on); later calls do nothing.
 pub fn start(hub: Arc<api::Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn() + Send + Sync + Clone + 'static) {
     if hub.mesh.started.swap(true, Ordering::SeqCst) {
         return;
@@ -567,52 +996,75 @@ pub fn start(hub: Arc<api::Hub>, tx: Sender<crate::control::Incoming>, wake: imp
             *hub.mesh.me.lock().unwrap() = me;
             *hub.mesh.node.lock().unwrap() = node;
         }
-        let mut running: HashSet<String> = HashSet::new();
+        let running: Arc<Mutex<HashSet<String>>> = Default::default();
+        let mut ts: (Option<Instant>, Option<Value>) = (None, None);
+        let mut probed: HashMap<String, Instant> = HashMap::new();
         loop {
             if hub.mesh.on.load(Ordering::SeqCst) {
                 let port = *hub.port.lock().unwrap();
-                for (addr, id, dns, node) in candidates(port) {
-                    if running.insert(addr.clone()) {
-                        let (hub, tx, wake) = (hub.clone(), tx.clone(), wake.clone());
-                        std::thread::spawn(move || worker(hub, addr, id, dns, node, tx, wake));
+                // Tailscale's peer list (optional), at most every 30 s.
+                if ts.0.is_none_or(|t| t.elapsed() > Duration::from_secs(30)) {
+                    ts = (Some(Instant::now()), if std::env::var("HARBOR_MESH_PEERS").is_ok() { None } else { tailscale_status() });
+                }
+                for t in targets(&hub.mesh, port, ts.1.as_ref(), &mut probed) {
+                    let k = t.key();
+                    if running.lock().unwrap().insert(k.clone()) {
+                        let (hub, tx, wake, running) = (hub.clone(), tx.clone(), wake.clone(), running.clone());
+                        std::thread::spawn(move || {
+                            worker(hub, t, tx, wake);
+                            running.lock().unwrap().remove(&k);
+                        });
                     }
                 }
             }
-            std::thread::sleep(Duration::from_secs(20));
+            std::thread::sleep(Duration::from_secs(5));
         }
     });
 }
 
-/// Where peers may be: (address, peer id from Tailscale, MagicDNS name, its node).
-fn candidates(port: u16) -> Vec<(String, Option<String>, String, Option<Node>)> {
-    let mut v: Vec<(String, Option<String>, String, Option<Node>)> = std::env::var("HARBOR_MESH_PEERS")
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|a| !a.is_empty())
-        .map(|a| (a.to_string(), None, String::new(), None))
-        .collect();
-    // Peers given by hand (tests): only those.
-    if !v.is_empty() {
-        return v;
+/// The peers to follow now. Also turns `HARBOR_MESH_PEERS` addresses that aren't loopback into
+/// hints: each is asked for its key once in a while, and kept for that key if it's allowed.
+fn targets(shared: &Shared, port: u16, ts: Option<&Value>, probed: &mut HashMap<String, Instant>) -> Vec<Target> {
+    let allowed = shared.allowed.lock().unwrap().clone();
+    let mine = crate::tls::my_fp();
+    let mut v: Vec<Target> = allowed.iter().filter(|a| !a.fp.is_empty() && a.fp != mine).map(|a| Target::Key(a.fp.clone())).collect();
+    for a in std::env::var("HARBOR_MESH_PEERS").unwrap_or_default().split(',').map(str::trim).filter(|a| !a.is_empty()) {
+        let Some(sa) = a.to_socket_addrs().ok().and_then(|mut x| x.next()) else { continue };
+        if sa.ip().is_loopback() && std::env::var("HARBOR_MESH_LOOPBACK").as_deref() == Ok("1") {
+            v.push(Target::Plain(a.to_string()));
+        } else if probed.get(a).is_none_or(|t| t.elapsed() > Duration::from_secs(30)) {
+            probed.insert(a.to_string(), Instant::now());
+            if let Ok((_, fp)) = crate::tls::connect(&sa, None, CONNECT, Duration::from_secs(3)) {
+                if allowed.iter().any(|x| x.fp == fp) {
+                    shared.hint(&fp, sa.to_string());
+                }
+            }
+        }
     }
-    let out = std::process::Command::new("tailscale").args(["status", "--json"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
-    if let Some(s) = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()) {
+    if let Some(s) = ts {
         let nodes: HashMap<String, Node> = s["Peer"].as_object().into_iter().flatten().filter_map(|(_, p)| status_node(p)).map(|n| (n.label.clone(), n)).collect();
-        for p in crate::remote::parse_status(&s).peers.iter().filter(|p| p.os == "linux") {
-            if let Some(ip) = p.ips.iter().find(|i| !i.contains(':')) {
-                v.push((format!("{ip}:{port}"), Some(p.id.clone()), p.dns.clone(), nodes.get(&p.name).cloned()));
+        for p in crate::remote::parse_status(s).peers.iter().filter(|p| p.os == "linux") {
+            let (Some(ip), Some(n)) = (p.ips.iter().find(|i| !i.contains(':')), nodes.get(&p.name)) else { continue };
+            let addr = format!("{ip}:{port}");
+            match allowed.iter().find(|a| a.node == n.id && !a.fp.is_empty()) {
+                // Upgraded: its tailnet address is one more to try, over TLS.
+                Some(a) => shared.hint(&a.fp, addr),
+                None => v.push(Target::Legacy { addr, node: n.clone(), ts_id: p.id.clone(), dns: p.dns.clone() }),
             }
         }
     }
     v
 }
 
-/// Keeps this PC's copies of one peer's chats up to date, for as long as Harbor runs.
-fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, node: Option<Node>, tx: Sender<crate::control::Incoming>, wake: impl Fn() + Send + Sync + Clone + 'static) {
+/// Keeps this PC's copies of one peer's chats up to date, for as long as it's a peer.
+fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incoming>, wake: impl Fn() + Send + Sync + Clone + 'static) {
     let shared = &hub.mesh;
     let mut backoff = Duration::from_secs(2);
-    let mut known: Option<String> = ts_id.clone();
+    let mut known: Option<String> = match &target {
+        Target::Legacy { ts_id, .. } => Some(ts_id.clone()),
+        Target::Key(fp) => shared.allowed_fp(fp).map(|a| peer_id(&a)),
+        Target::Plain(_) => None,
+    };
     let offline = |id: &Option<String>| {
         if let Some(id) = id {
             let mut peers = shared.peers.lock().unwrap();
@@ -630,9 +1082,33 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
             std::thread::sleep(Duration::from_secs(3));
             continue;
         }
-        // Only peers the user allowed here are followed (a link needs both sides to allow).
-        let mine = node.as_ref().is_none_or(|n| shared.admits(n));
-        let hello = match http(&addr, "GET", "/mesh/v1/hello", None, Duration::from_secs(8)) {
+        // Where to find it, and whether to follow it (a link needs both sides to allow).
+        let (dests, mine, node) = match &target {
+            Target::Key(fp) => {
+                if shared.allowed_fp(fp).is_none() {
+                    offline(&known);
+                    return; // taken off the list
+                }
+                (shared.addrs_of(fp).into_iter().map(|addr| Dest { addr, fp: fp.clone() }).collect::<Vec<_>>(), true, None)
+            }
+            Target::Legacy { addr, node, .. } => {
+                if shared.upgraded(&node.id).is_some() {
+                    return; // keys swapped: its Key worker takes over
+                }
+                (vec![Dest { addr: addr.clone(), fp: String::new() }], shared.admits(node), Some(node.clone()))
+            }
+            Target::Plain(addr) => (vec![Dest { addr: addr.clone(), fp: String::new() }], true, None),
+        };
+        let mut answer: Result<(u16, Value), String> = Err("no address known for it yet".into());
+        let mut dest = Dest::default();
+        for d in dests {
+            answer = http(&d, "GET", "/mesh/v1/hello", None, Duration::from_secs(8));
+            if answer.is_ok() {
+                dest = d;
+                break;
+            }
+        }
+        let hello = match answer {
             Ok((200, h)) if mine => h,
             answer => {
                 // A Harbor answers either way: remember it for Settings › Devices.
@@ -645,6 +1121,13 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
                         s.refuses = *status != 200;
                     }
                 }
+                if let (Target::Key(fp), Ok((403, _))) = (&target, &answer) {
+                    let mut seen = shared.seen.lock().unwrap();
+                    let s = seen.entry(fp.clone()).or_default();
+                    s.fp = fp.clone();
+                    s.name = shared.allowed_fp(fp).map(|a| a.name).unwrap_or_default();
+                    s.refuses = true;
+                }
                 offline(&known);
                 std::thread::sleep(if mine { backoff } else { Duration::from_secs(15) });
                 backoff = (backoff * 2).min(Duration::from_secs(10));
@@ -655,8 +1138,20 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
             if let Some(s) = shared.seen.lock().unwrap().get_mut(&n.id) {
                 s.refuses = false;
             }
+            // Before 0.13 on the other side there's no key to swap: it stays on plain HTTP.
+            if hello["fp"].as_str().is_some_and(|f| !f.is_empty()) && upgrade(&hub, &dest, n, &hello) {
+                return;
+            }
         }
-        let id = ts_id.clone().unwrap_or_else(|| hello["id"].as_str().unwrap_or("").to_string());
+        if let Target::Key(fp) = &target {
+            if let Some(s) = shared.seen.lock().unwrap().get_mut(fp) {
+                s.refuses = false;
+            }
+        }
+        let id = match &target {
+            Target::Legacy { ts_id, .. } => ts_id.clone(),
+            _ => hello["id"].as_str().unwrap_or("").to_string(),
+        };
         if id.is_empty() || id == shared.me().id {
             return; // this PC itself
         }
@@ -665,14 +1160,43 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
         let epoch = hello["epoch"].as_u64().unwrap_or(0);
         let groups: Vec<String> = hello["revoked"].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(String::from)).collect();
         merge_revoked(&hub, &groups);
+        let addrs = {
+            let port = hello["port"].as_u64().and_then(|p| u16::try_from(p).ok());
+            let mut a = clean_addrs(hello["addrs"].as_array().into_iter().flatten());
+            // Peers before 0.13 say only where they were reached.
+            if a.is_empty() || port.is_none() {
+                a.insert(0, dest.addr.clone());
+            }
+            a
+        };
+        if let Target::Key(fp) = &target {
+            // What it says now goes on file, so it's found after a restart (written when changed).
+            let name: String = hello["name"].as_str().unwrap_or("").chars().take(60).collect();
+            let a = shared.allowed_fp(fp).unwrap_or_default();
+            let mut keep = vec![dest.addr.clone()];
+            keep.extend(addrs.iter().filter(|x| **x != dest.addr).cloned());
+            if a.id != id || a.name != name || a.addrs != keep {
+                update_allowed(shared, |list| {
+                    if let Some(e) = list.iter_mut().find(|e| e.fp == *fp) {
+                        e.id = id.clone();
+                        e.name = name.clone();
+                        e.addrs = keep.clone();
+                    }
+                });
+            }
+        }
         {
             let mut peers = shared.peers.lock().unwrap();
             let p = peers.entry(id.clone()).or_default();
             p.id = id.clone();
             p.name = hello["name"].as_str().unwrap_or("").to_string();
-            p.addr = addr.clone();
-            if !dns.is_empty() {
-                p.dns = dns.clone();
+            p.addr = dest.addr.clone();
+            p.fp = dest.fp.clone();
+            p.addrs = addrs;
+            if let Target::Legacy { dns, .. } = &target {
+                if !dns.is_empty() {
+                    p.dns = dns.clone();
+                }
             }
             p.online = true;
             p.seen = store::now();
@@ -689,21 +1213,51 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
         }
         let _ = tx.send(crate::control::Incoming::Mesh(Msg::Peer));
         wake();
-        let _ = sync(&hub, &addr, &id, epoch, node.as_ref(), &tx, &wake);
+        let still = || match &target {
+            Target::Key(fp) => shared.allowed_fp(fp).is_some(),
+            Target::Legacy { node, .. } => shared.admits(node) && shared.upgraded(&node.id).is_none(),
+            Target::Plain(_) => true,
+        };
+        let _ = sync(&hub, &dest, &id, epoch, &still, &tx, &wake);
         offline(&known);
         std::thread::sleep(Duration::from_secs(1));
     }
 }
 
+/// Swaps keys with a PC allowed by Tailscale node that has 0.13 (its hello has a key): its key
+/// goes into its allowed entry here once it has taken this PC's. True when done.
+fn upgrade(hub: &api::Hub, dest: &Dest, n: &Node, hello: &Value) -> bool {
+    let body = serde_json::to_vec(&about_me(hub)).unwrap_or_default();
+    let Ok((200, v)) = http(dest, "POST", "/mesh/v1/enroll", Some(("application/json", &body)), Duration::from_secs(10)) else { return false };
+    let Some(fp) = v["fp"].as_str().and_then(crate::tls::normalize_fp).filter(|f| Some(f.as_str()) == hello["fp"].as_str()) else { return false };
+    let id: String = v["id"].as_str().unwrap_or("").chars().take(80).collect();
+    let mut addrs = clean_addrs(v["addrs"].as_array().into_iter().flatten());
+    if !addrs.contains(&dest.addr) {
+        addrs.push(dest.addr.clone());
+    }
+    update_allowed(&hub.mesh, |list| {
+        list.retain(|a| a.fp != fp || a.node == n.id);
+        match list.iter_mut().find(|a| a.node == n.id) {
+            Some(a) => {
+                a.fp = fp.clone();
+                a.id = id.clone();
+                a.addrs = addrs.clone();
+            }
+            None => list.push(Allowed { node: n.id.clone(), name: n.label.clone(), fp: fp.clone(), id: id.clone(), addrs: addrs.clone() }),
+        }
+    });
+    true
+}
+
 /// Follows a peer until it stops answering or restarts (its epoch changes).
-fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, node: Option<&Node>, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync)) -> Result<(), String> {
+fn sync(hub: &api::Hub, dest: &Dest, id: &str, epoch: u64, still: &dyn Fn() -> bool, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync)) -> Result<(), String> {
     let mut since = 0u64;
     loop {
         // The user took the peer off the allowed list: stop following it.
-        if node.is_some_and(|n| !hub.mesh.admits(n)) {
+        if !still() {
             return Ok(());
         }
-        let chats = get(addr, &format!("/mesh/v1/chats?since={since}&epoch={epoch}"), Duration::from_secs(30))?;
+        let chats = get(dest, &format!("/mesh/v1/chats?since={since}&epoch={epoch}"), Duration::from_secs(30))?;
         if chats["epoch"].as_u64() != Some(epoch) {
             return Ok(());
         }
@@ -723,7 +1277,7 @@ fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, node: Option<&Node>, t
         wake();
         let wants = rrx.recv_timeout(Duration::from_secs(60)).map_err(|e| e.to_string())?;
         for (hid, isince) in wants {
-            let body = get(addr, &format!("/mesh/v1/chats/{hid}/items?since={isince}&epoch={epoch}"), Duration::from_secs(60))?;
+            let body = get(dest, &format!("/mesh/v1/chats/{hid}/items?since={isince}&epoch={epoch}"), Duration::from_secs(60))?;
             if body["epoch"].as_u64() != Some(epoch) {
                 return Ok(());
             }
@@ -731,7 +1285,7 @@ fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, node: Option<&Node>, t
             wake();
         }
         since = rev;
-        let ev = get(addr, &format!("/mesh/v1/events?since={since}&epoch={epoch}"), POLL + Duration::from_secs(10))?;
+        let ev = get(dest, &format!("/mesh/v1/events?since={since}&epoch={epoch}"), POLL + Duration::from_secs(10))?;
         if ev["epoch"].as_u64() != Some(epoch) {
             return Ok(());
         }
@@ -740,7 +1294,7 @@ fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, node: Option<&Node>, t
 
 /// A call forwarded to a chat's home PC, on a thread of its own: its files go first (as
 /// uploads there), then the call. `done` gets the answer, or a 503 when the PC is off.
-pub fn forward(addr: String, name: String, method: &str, path: Vec<String>, mut body: Value, files: Vec<PathBuf>, sender: (String, String), done: impl FnOnce(Reply) + Send + 'static) {
+pub fn forward(dest: Dest, name: String, method: &str, path: Vec<String>, mut body: Value, files: Vec<PathBuf>, sender: (String, String), done: impl FnOnce(Reply) + Send + 'static) {
     let method = method.to_string();
     let (sender, device) = sender;
     std::thread::spawn(move || {
@@ -749,7 +1303,7 @@ pub fn forward(addr: String, name: String, method: &str, path: Vec<String>, mut 
         for f in &files {
             let Ok(data) = std::fs::read(f) else { return done(err(400, format!("can't read {}", f.display()))) };
             let fname = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
-            match http(&addr, "POST", &format!("/mesh/v1/upload?name={}", api::url_encode(&fname)), Some(("application/octet-stream", &data)), CALL_WAIT) {
+            match http(&dest, "POST", &format!("/mesh/v1/upload?name={}", api::url_encode(&fname)), Some(("application/octet-stream", &data)), CALL_WAIT) {
                 Ok((201, v)) => ids.push(v["id"].clone()),
                 Ok((s, v)) => return done(Reply { status: s, body: v }),
                 Err(_) => return done(off()),
@@ -760,67 +1314,147 @@ pub fn forward(addr: String, name: String, method: &str, path: Vec<String>, mut 
         }
         let call = json!({ "method": method, "path": path, "body": body, "sender": sender, "device": device });
         let data = serde_json::to_vec(&call).unwrap_or_default();
-        match http(&addr, "POST", "/mesh/v1/call", Some(("application/json", &data)), CALL_WAIT) {
+        match http(&dest, "POST", "/mesh/v1/call", Some(("application/json", &data)), CALL_WAIT) {
             Ok((status, body)) => done(Reply { status, body }),
             Err(_) => done(off()),
         }
     });
 }
 
-/// `harbor mesh …` on a terminal (or over SSH): sharing on/off and which PCs are allowed. The
-/// running Harbor picks changes up within seconds. Returns the exit code.
+/// `harbor mesh …` on a terminal (or over SSH): sharing on/off, pairing and which PCs are
+/// allowed. The running Harbor picks changes up within seconds. Returns the exit code.
 pub fn cli(args: &[String]) -> i32 {
-    const USAGE: &str = "usage: harbor mesh status | on | off | allow <PC>… | remove <PC>…
-  <PC>: its Tailscale name (as `tailscale status` shows it) or its node ID";
+    const USAGE: &str = "usage: harbor mesh status | on | off | pair | join <address> <code> | allow <PC>… | remove <PC>…
+  pair             show a one-time code; type it on the other PC (Settings › Devices, or harbor mesh join)
+  join <addr> <code>  pair with the PC at <addr> (its IP, as `harbor mesh pair` there shows) that shows <code>
+  <PC>: the fingerprint of its key (`harbor mesh status` on it), its name if it's listed here,
+        or its Tailscale name / node ID (PCs from before 0.13)";
     let Ok(store) = store::Store::open() else {
         eprintln!("harbor: can't open the database");
         return 1;
     };
-    let out = std::process::Command::new("tailscale").args(["status", "--json"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
-    let status = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).unwrap_or_default();
-    let nodes: Vec<(Node, String)> = status["Peer"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(_, p)| Some((status_node(p)?, p["OS"].as_str().unwrap_or("").to_string())))
-        .collect();
-    let find = |q: &str| nodes.iter().find(|(n, _)| n.id == q || n.label.eq_ignore_ascii_case(q)).map(|(n, _)| n.clone());
+    let me = match crate::tls::me() {
+        Ok(i) => i.fp.clone(),
+        Err(e) => {
+            eprintln!("harbor: no key for this PC: {e}");
+            return 1;
+        }
+    };
+    let (who, _) = read_me();
+    let port: u16 = store.get("api_port").and_then(|p| p.parse().ok()).unwrap_or(api::DEFAULT_PORT);
     let mut list = load_allowed(&store);
+    let save = |list: &Vec<Allowed>| store.set("mesh_allowed", &serde_json::to_string(list).unwrap_or_default());
+    // Tailscale's nodes, for PCs allowed by node before 0.13 (only when it's installed).
+    let nodes = || -> Vec<(Node, String)> {
+        let st = tailscale_status().unwrap_or_default();
+        st["Peer"].as_object().into_iter().flatten().filter_map(|(_, p)| Some((status_node(p)?, p["OS"].as_str().unwrap_or("").to_string()))).collect()
+    };
     match args.first().map(String::as_str) {
         Some("on") | Some("off") => {
             store.set("mesh_enabled", if args[0] == "on" { "1" } else { "0" });
             println!("sharing chats with your other PCs: {}", args[0]);
         }
+        Some("pair") => {
+            let Ok(code) = new_code(&store) else {
+                eprintln!("harbor: no randomness for a code");
+                return 1;
+            };
+            println!("Pairing code: {}   (good for 10 minutes, once)", code.code);
+            println!("On the other PC, in Harbor › Settings › Devices › Pair with a code, or:");
+            for a in crate::tls::lan_addrs() {
+                println!("  harbor mesh join {} {}", crate::tls::host_port(a, port), code.code);
+            }
+            println!("This PC's key: {}", crate::tls::short(&me));
+            println!("Waiting (Harbor must be running here with sharing on; Ctrl+C to stop waiting)…");
+            while store::now() < code.expires {
+                std::thread::sleep(Duration::from_secs(1));
+                match load_code(&store) {
+                    Some(c) if c.code == code.code && !c.paired.is_empty() => {
+                        println!("paired with {}", c.paired);
+                        return 0;
+                    }
+                    Some(c) if c.code == code.code && c.tries >= CODE_TRIES => {
+                        eprintln!("harbor: too many wrong tries: the code is void");
+                        return 1;
+                    }
+                    Some(c) if c.code == code.code => {}
+                    _ => {
+                        eprintln!("harbor: another code replaced this one");
+                        return 1;
+                    }
+                }
+            }
+            eprintln!("harbor: the code ran out");
+            return 1;
+        }
+        Some("join") if args.len() == 3 => {
+            let shared = Shared::default();
+            *shared.allowed.lock().unwrap() = list;
+            match pair_join(&shared, &args[1], &args[2], port) {
+                Ok(a) => {
+                    store.set("mesh_enabled", "1");
+                    println!("paired with {} (key {}); sharing is on", if a.name.is_empty() { &args[1] } else { &a.name }, crate::tls::short(&a.fp));
+                }
+                Err(e) => {
+                    eprintln!("harbor: {e}");
+                    return 1;
+                }
+            }
+        }
         Some("allow") | Some("remove") if args.len() > 1 => {
             let allow = args[0] == "allow";
+            let ts = nodes();
             for q in &args[1..] {
-                let Some(n) = find(q) else {
-                    eprintln!("harbor: no PC {q} on the tailnet (see `tailscale status`)");
+                if let Some(fp) = crate::tls::normalize_fp(q) {
+                    if fp == me {
+                        eprintln!("harbor: that's this PC's own key");
+                        return 1;
+                    }
+                    let had = list.iter().any(|a| a.fp == fp);
+                    list.retain(|a| a.fp != fp);
+                    if allow {
+                        list.push(Allowed { fp: fp.clone(), ..Default::default() });
+                    }
+                    println!("{} {}", if allow { "allowed" } else if had { "removed" } else { "not listed:" }, crate::tls::short(&fp));
+                    continue;
+                }
+                // Listed already: by name or id.
+                if let Some(i) = list.iter().position(|a| a.name.eq_ignore_ascii_case(q) || a.id == *q || label(&a.id).eq_ignore_ascii_case(q) || (!a.node.is_empty() && a.node == *q)) {
+                    if allow {
+                        println!("{} is allowed already", q);
+                    } else {
+                        let a = list.remove(i);
+                        println!("removed {} {}", a.name, crate::tls::short(a.key()));
+                    }
+                    continue;
+                }
+                let Some(n) = ts.iter().map(|(n, _)| n).find(|n| n.id == *q || n.label.eq_ignore_ascii_case(q)).cloned() else {
+                    eprintln!("harbor: no PC {q}: give the fingerprint of its key (`harbor mesh status` on it), or pair with `harbor mesh pair`");
                     return 1;
                 };
                 list.retain(|a| a.node != n.id);
                 if allow {
-                    list.push(Allowed { node: n.id.clone(), name: n.label.clone() });
+                    list.push(Allowed { node: n.id.clone(), name: n.label.clone(), ..Default::default() });
                 }
                 println!("{} {} ({})", if allow { "allowed" } else { "removed" }, n.label, n.id);
             }
-            store.set("mesh_allowed", &serde_json::to_string(&list).unwrap_or_default());
+            save(&list);
         }
         Some("status") | None => {
-            let (me, node) = parse_me(&status);
             let on = store.get("mesh_enabled").as_deref() == Some("1");
-            println!("this PC: {} ({}){}", me.name, node.as_ref().map(|n| n.id.as_str()).unwrap_or("?"), if node.as_ref().is_some_and(|n| n.tagged) { ", tagged" } else { "" });
+            println!("this PC: {} ({})", who.name, who.id);
+            println!("key:     {me}");
             println!("sharing: {}", if on { "on" } else { "off" });
-            println!("PCs on the tailnet (linux):");
-            for (n, _) in nodes.iter().filter(|(_, os)| os == "linux") {
-                let how = if list.iter().any(|a| a.node == n.id) {
-                    "allowed"
-                } else if admit(node.as_ref(), n, &[]) {
-                    "allowed (same Tailscale account)"
-                } else {
-                    "not allowed"
-                };
-                println!("  {:<24} {}  {how}", n.label, n.id);
+            let addrs: Vec<String> = crate::tls::lan_addrs().into_iter().map(|a| crate::tls::host_port(a, port)).collect();
+            println!("listens: {}", if addrs.is_empty() { "(no network)".to_string() } else { addrs.join("  ") });
+            println!("allowed PCs:");
+            if list.is_empty() {
+                println!("  none (pair one: harbor mesh pair)");
+            }
+            for a in &list {
+                let name = if a.name.is_empty() { label(&a.id) } else { a.name.clone() };
+                let how = if a.fp.is_empty() { format!("Tailscale node {} (until it upgrades to 0.13)", a.node) } else { format!("key {}", crate::tls::short(&a.fp)) };
+                println!("  {:<20} {how}  {}", name, a.addrs.join(" "));
             }
         }
         _ => {
@@ -865,7 +1499,7 @@ impl App {
         for p in self.mesh_hosts().into_iter().filter(|p| p.online) {
             let body = body.clone();
             std::thread::spawn(move || {
-                let _ = http(&p.addr, "POST", "/mesh/v1/revoke", Some(("application/json", &body)), Duration::from_secs(10));
+                let _ = http(&p.dest(), "POST", "/mesh/v1/revoke", Some(("application/json", &body)), Duration::from_secs(10));
             });
         }
     }
@@ -1286,7 +1920,8 @@ impl App {
                 let accounts: Vec<Value> = self.accounts.iter().filter(|a| a.installed()).map(|a| json!({ "id": a.id, "short": a.short(), "kind": a.kind.label().to_ascii_lowercase() })).collect();
                 let revoked = self.api.hub.revoked.lock().unwrap().clone();
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones }))
+                let port = *self.api.hub.port.lock().unwrap();
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");
@@ -1434,7 +2069,7 @@ impl App {
         let mut path = vec!["v1".to_string(), "chats".to_string(), c.home_id.to_string()];
         path.extend(tail.iter().map(|s| s.to_string()));
         let tx = self.inc_tx.clone();
-        forward(peer.addr, name, method, path, body, files, (self.shared().me().name, api::local_device()), move |reply| {
+        forward(peer.dest(), name, method, path, body, files, (self.shared().me().name, api::local_device()), move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat, what, reply, restore }));
         });
         true
@@ -1486,7 +2121,7 @@ impl App {
             "device": "", "text": text,
         });
         let tx = self.inc_tx.clone();
-        forward(peer.addr, peer.name, "POST", vec!["v1".into(), "chats".into()], body, files.to_vec(), (self.shared().me().name, api::local_device()), move |reply| {
+        forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], body, files.to_vec(), (self.shared().me().name, api::local_device()), move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat: crate::app::DRAFT, what: "start the chat", reply, restore }));
         });
         true
@@ -1526,7 +2161,7 @@ impl App {
             let shared = self.api.hub.clone();
             let reply = call.reply.clone();
             let home = peer.id.clone();
-            forward(peer.addr, peer.name, "POST", vec!["v1".into(), "chats".into()], strip_files(body), files, sender, move |r| {
+            forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], strip_files(body), files, sender, move |r| {
                 let _ = reply.send(map_new(&shared, &home, r, global));
             });
             return None;
@@ -1555,7 +2190,7 @@ impl App {
         let repo_path = repo.and_then(|r| self.repo(r)).map(|r| r.path.to_string_lossy().into_owned());
         let parent_gid = parent.and_then(|p| self.chat(p)).map(|p| p.gid.clone());
         let fork = p.get(3) == Some(&"fork");
-        forward(peer.addr, name, &call.method, path, strip_files(call.body.clone()), files, sender, move |mut r| {
+        forward(peer.dest(), name, &call.method, path, strip_files(call.body.clone()), files, sender, move |mut r| {
             if fork {
                 r = map_new(&shared, &home, r, global);
             }
@@ -1644,15 +2279,20 @@ impl App {
         true
     }
 
-    /// Allows a node to share chats with this PC, or takes it off the list.
-    pub fn mesh_allow(&mut self, node: &str, name: &str, allow: bool) {
-        let mut list = load_allowed(&self.store);
-        list.retain(|a| a.node != node);
-        if allow {
-            list.push(Allowed { node: node.to_string(), name: name.to_string() });
-        }
-        self.store.set("mesh_allowed", &serde_json::to_string(&list).unwrap_or_default());
-        *self.shared().allowed.lock().unwrap() = list;
+    /// Allows a PC (by key, or a Tailscale node from before 0.13) to share chats with this PC,
+    /// or takes it off the list.
+    pub fn mesh_allow(&mut self, key: &str, name: &str, allow: bool) {
+        let key = key.to_string();
+        let name = name.to_string();
+        update_allowed(self.shared(), |list| {
+            list.retain(|a| a.key() != key && a.node != key);
+            if allow {
+                match crate::tls::normalize_fp(&key) {
+                    Some(fp) => list.push(Allowed { fp, name, ..Default::default() }),
+                    None => list.push(Allowed { node: key.clone(), name, ..Default::default() }),
+                }
+            }
+        });
         self.shared().whois.lock().unwrap().clear();
     }
 
@@ -1681,19 +2321,20 @@ impl App {
         let mut on = self.api.hub.mesh.on.load(Ordering::Relaxed);
         let was = on;
         let me = self.shared().me();
+        let my_fp = crate::tls::my_fp();
         let peers = self.mesh_hosts();
         let allowed = self.shared().allowed.lock().unwrap().clone();
         let seen = self.shared().seen.lock().unwrap().clone();
-        let node = self.shared().node.lock().unwrap().clone();
-        // Every PC worth a row: allowed ones, Harbors met on the tailnet, and linked peers.
-        let mut keys: Vec<(String, String)> = allowed.iter().map(|a| (a.node.clone(), a.name.clone())).collect();
+        // Every PC worth a row: allowed ones, Harbors met, and linked peers (by key, else node or id).
+        let mut keys: Vec<(String, String)> = allowed.iter().map(|a| (a.key().to_string(), if a.name.is_empty() { label(&a.id) } else { a.name.clone() })).collect();
         for s in seen.values() {
-            if !keys.iter().any(|(n, _)| *n == s.node) {
-                keys.push((s.node.clone(), s.name.clone()));
+            let k = if s.fp.is_empty() { s.node.clone() } else { s.fp.clone() };
+            if !keys.iter().any(|(n, _)| *n == k) {
+                keys.push((k, s.name.clone()));
             }
         }
         for p in &peers {
-            let key = if p.node.is_empty() { p.id.clone() } else { p.node.clone() };
+            let key = if !p.fp.is_empty() { p.fp.clone() } else if !p.node.is_empty() { p.node.clone() } else { p.id.clone() };
             if !keys.iter().any(|(n, _)| *n == key) {
                 keys.push((key, p.name.clone()));
             }
@@ -1706,43 +2347,48 @@ impl App {
             w::setting_row(
                 ui,
                 "Share chats with my other PCs",
-                "Every PC with Harbor and this on keeps a copy of every chat and can write in any of them; the agent runs on the PC the chat was started on. Your phone keeps working through any PC that's on. Two PCs share once each allows the other below (your own untagged devices on the same Tailscale account allow each other by themselves).",
+                "Every PC with Harbor and this on keeps a copy of every chat and can write in any of them; the agent runs on the PC the chat was started on. Your phone keeps working through any PC that's on. Pair two PCs once with a code (below); they talk over your network, encrypted, and only with each other's keys.",
                 |ui| w::toggle(ui, &mut on),
             );
-            if on && !phones_here {
-                w::separator(ui);
-                w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), "Phone access off: your phone can't use this PC when another one is off", |ui| {
-                    if w::btn("Enable phone access").sm().outline().show(ui).clicked() {
-                        enable_here = true;
-                    }
-                });
-            }
+            w::separator(ui);
+            w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), &format!("Key {}", crate::tls::short(&my_fp)), |ui| {
+                if w::btn(crate::icons::COPY).muted().icon_sm().show(ui).on_hover_text("Copy this PC's full key").clicked() {
+                    ui.ctx().copy_text(my_fp.clone());
+                }
+                if on && !phones_here && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
+                    enable_here = true;
+                }
+            });
             if on {
                 for (key, name) in &keys {
                     w::separator(ui);
-                    let peer = peers.iter().find(|p| (!p.node.is_empty() && p.node == *key) || p.id == *key);
+                    let by_fp = crate::tls::normalize_fp(key).is_some();
+                    let peer = peers.iter().find(|p| (!p.fp.is_empty() && p.fp == *key) || (!p.node.is_empty() && p.node == *key) || p.id == *key);
                     let s = seen.get(key);
-                    let listed = allowed.iter().any(|a| a.node == *key);
+                    let entry = allowed.iter().find(|a| a.key() == key.as_str());
+                    let listed = entry.is_some();
                     let auto = !listed && peer.is_some();
                     let (badge, tone) = match (peer, listed || auto) {
                         (Some(p), _) if p.online => ("Sharing", Tone::Green),
                         (_, true) if s.is_some_and(|s| s.refuses) => ("Waiting", Tone::Amber),
                         (_, true) => ("Off", Tone::Gray),
-                        _ => ("Not allowed", Tone::Gray),
+                        _ => ("Not paired", Tone::Gray),
                     };
                     let mut desc = match (peer, listed || auto) {
                         (Some(p), _) if p.online => format!("Harbor {}", p.version),
-                        (_, true) if s.is_some_and(|s| s.refuses) => format!("Allowed here; allow {} on {name} too (Settings › Devices there)", me.name),
+                        (_, true) if s.is_some_and(|s| s.refuses) => format!("Allowed here, but {name} doesn't allow {} (pair them again)", me.name),
                         (Some(p), true) if p.seen > 0 => match crate::app::ago(p.seen).as_str() {
                             "now" => "Last seen just now".into(),
                             a => format!("Last seen {a} ago"),
                         },
                         (_, true) => "Allowed · not answering (off, or Harbor isn't sharing there)".into(),
-                        _ if s.is_some_and(|s| s.asked > 0) => "Asks to share chats with this PC".into(),
+                        _ if s.is_some_and(|s| s.asked > 0) => "Asks to share chats with this PC: pair it with a code to allow it".into(),
                         _ => "Runs Harbor with sharing on".into(),
                     };
-                    if auto {
-                        desc.push_str(" · same Tailscale account");
+                    if by_fp {
+                        desc.push_str(&format!(" · key {}", crate::tls::short(key)));
+                    } else if entry.is_some_and(|e| !e.node.is_empty()) || s.is_some_and(|s| !s.node.is_empty()) {
+                        desc.push_str(" · on Tailscale, switches to its own key once both PCs have Harbor 0.13");
                     }
                     let phones_off = peer.is_some_and(|p| p.online && !p.phones);
                     if phones_off {
@@ -1756,12 +2402,14 @@ impl App {
                         }
                     }
                     w::setting_row(ui, &format!("{}  {name}", crate::icons::MONITOR), &desc, |ui| {
-                        // Peers given by hand (tests) have no node to allow.
+                        // Peers given by hand (tests) have nothing to allow.
                         let real = !key.contains(':');
                         if real && listed && w::btn("Remove").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
                             change = Some((key.clone(), name.clone(), false));
                         }
-                        if real && !listed && !auto && w::btn("Allow").sm().primary().show(ui).clicked() {
+                        // Only a Tailscale node can be allowed by a click (Tailscale vouched for
+                        // it); anything else met on the network pairs with a code.
+                        if real && !by_fp && !listed && !auto && w::btn("Allow").sm().primary().show(ui).clicked() {
                             change = Some((key.clone(), name.clone(), true));
                         }
                         if phones_off && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
@@ -1774,11 +2422,7 @@ impl App {
                 }
                 if keys.is_empty() {
                     w::separator(ui);
-                    w::setting_row(ui, "No other PCs yet", &format!("Turn this on in Harbor on your other PCs; they show up here to allow. This PC is {}.", me.name), |_| {});
-                }
-                if node.as_ref().is_some_and(|n| n.tagged) {
-                    w::separator(ui);
-                    w::subtle(ui, "This PC is a tagged Tailscale node: it shares only with the PCs allowed here.", "label-12");
+                    w::setting_row(ui, "No other PCs yet", "Turn this on in Harbor on your other PC too, then pair them with a code below.", |_| {});
                 }
             }
         });
@@ -1792,13 +2436,133 @@ impl App {
             // Asks that PC to turn its phone access on; its next hello says so.
             std::thread::spawn(move || {
                 let call = serde_json::to_vec(&json!({})).unwrap_or_default();
-                let _ = http(&p.addr, "POST", "/mesh/v1/phones", Some(("application/json", &call)), Duration::from_secs(10));
+                let _ = http(&p.dest(), "POST", "/mesh/v1/phones", Some(("application/json", &call)), Duration::from_secs(10));
             });
         }
         if on != was {
             self.mesh_set_enabled(on, &ctx);
         }
+        self.mesh_pair_ui(ui);
         ui.add_space(12.0);
+    }
+
+    /// Settings › Devices › Pair a PC: show a code here, or type one shown on another PC.
+    fn mesh_pair_ui(&mut self, ui: &mut eframe::egui::Ui) {
+        use crate::pages::{rows, section};
+        use crate::widgets::{self as w, Tone};
+        let ctx = ui.ctx().clone();
+        section(ui, "Pair a PC");
+        let port = *self.api.hub.port.lock().unwrap();
+        // The shown code as the listener left it (used, or wrongly guessed too often).
+        if self.mesh.pair.shown.is_some() && self.mesh.pair.polled.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+            self.mesh.pair.polled = Some(Instant::now());
+            self.mesh.pair.shown = load_code(&self.store).filter(|c| self.mesh.pair.shown.as_ref().is_some_and(|s| s.code == c.code));
+        }
+        if self.mesh.pair.shown.is_some() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
+        let mut show = false;
+        let mut cancel = false;
+        let mut join = false;
+        rows(ui, |ui| match self.mesh.pair.shown.clone() {
+            Some(c) if !c.paired.is_empty() => {
+                w::setting_row(ui, &format!("Paired with {}", c.paired), "Both PCs allow each other now: their chats show up here in a moment.", |ui| {
+                    if w::btn("Done").sm().outline().show(ui).clicked() {
+                        cancel = true;
+                    }
+                });
+            }
+            Some(c) if c.tries >= CODE_TRIES || c.expires <= store::now() => {
+                let why = if c.tries >= CODE_TRIES { "Too many wrong tries: the code is void." } else { "The code ran out." };
+                w::setting_row(ui, why, "Show a new one to pair.", |ui| {
+                    if w::btn("New code").sm().primary().show(ui).clicked() {
+                        show = true;
+                    }
+                });
+            }
+            Some(c) => {
+                let left = (c.expires - store::now()).max(0);
+                let addrs: Vec<String> = crate::tls::lan_addrs().into_iter().map(|a| crate::tls::host_port(a, port)).collect();
+                w::setting_row(
+                    ui,
+                    &format!("Code  {}", c.code),
+                    &format!("On the other PC: Settings › Devices › Enter a code, with this PC's address {} · good for {}:{:02} more, once", addrs.first().cloned().unwrap_or_else(|| "(no network)".into()), left / 60, left % 60),
+                    |ui| {
+                        if w::btn("Cancel").sm().outline().show(ui).clicked() {
+                            cancel = true;
+                        }
+                        w::badge(ui, "Waiting", Tone::Amber);
+                    },
+                );
+                if addrs.len() > 1 {
+                    w::separator(ui);
+                    w::subtle(ui, format!("This PC's other addresses: {}", addrs[1..].join("  ")), "label-12");
+                }
+            }
+            None => {
+                w::setting_row(ui, "Show a code", "Shows a one-time code here to type on your other PC.", |ui| {
+                    if w::btn("Show a code").sm().primary().show(ui).clicked() {
+                        show = true;
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
+        let busy = self.mesh.pair.busy.load(Ordering::Relaxed);
+        let result = self.mesh.pair.result.lock().unwrap().clone();
+        rows(ui, |ui| {
+            w::setting_row(ui, "Enter a code", "The address and code another PC shows under Show a code.", |_| {});
+            w::separator(ui);
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                w::input(ui, &mut self.mesh.pair.addr, "Its address (e.g. 10.0.0.12)", true, 200.0);
+                w::input(ui, &mut self.mesh.pair.code, "Code", true, 140.0);
+                let ready = !busy && !self.mesh.pair.addr.trim().is_empty() && crate::tls::normalize_code(&self.mesh.pair.code).len() == 10;
+                if w::btn(if busy { "Pairing…" } else { "Pair" }).sm().primary().enabled(ready).show(ui).clicked() {
+                    join = true;
+                }
+            });
+            match &result {
+                Some(Ok(m)) => {
+                    w::separator(ui);
+                    w::subtle(ui, format!("  {m}"), "label-13");
+                }
+                Some(Err(e)) => {
+                    w::separator(ui);
+                    w::subtle(ui, format!("  Not paired: {e}"), "label-13");
+                }
+                None => {}
+            }
+        });
+        if show {
+            match new_code(&self.store) {
+                Ok(c) => {
+                    self.mesh.pair.shown = Some(c);
+                    self.mesh_set_enabled(true, &ctx);
+                }
+                Err(e) => *self.mesh.pair.result.lock().unwrap() = Some(Err(format!("no code: {e}"))),
+            }
+        }
+        if cancel {
+            if self.mesh.pair.shown.as_ref().is_some_and(|c| c.paired.is_empty()) {
+                self.store.set("mesh_pair", "");
+            }
+            self.mesh.pair.shown = None;
+        }
+        if join {
+            let (addr, code) = (self.mesh.pair.addr.trim().to_string(), self.mesh.pair.code.clone());
+            let (result, busy, hub) = (self.mesh.pair.result.clone(), self.mesh.pair.busy.clone(), self.api.hub.clone());
+            busy.store(true, Ordering::SeqCst);
+            *result.lock().unwrap() = None;
+            self.mesh_set_enabled(true, &ctx);
+            std::thread::spawn(move || {
+                let r = pair_join(&hub.mesh, &addr, &code, port).map(|a| format!("Paired with {}: its chats show up here in a moment.", if a.name.is_empty() { addr.clone() } else { a.name }));
+                *result.lock().unwrap() = Some(r);
+                busy.store(false, Ordering::SeqCst);
+                ctx.request_repaint();
+            });
+            self.mesh.pair.code.clear();
+        }
     }
 }
 
@@ -1861,14 +2625,94 @@ mod tests {
         assert!(admit(Some(&me), &same, &[]), "an untagged node of the same user gets in by itself");
         assert!(!admit(Some(&me), &other, &[]), "another user's node needs the user's Allow");
         assert!(!admit(Some(&me), &tagged, &[]), "a tagged node too");
-        let allowed = vec![Allowed { node: "nB".into(), name: "b".into() }, Allowed { node: "nC".into(), name: "c".into() }];
+        let allowed = vec![Allowed { node: "nB".into(), name: "b".into(), ..Default::default() }, Allowed { node: "nC".into(), name: "c".into(), ..Default::default() }];
         assert!(admit(Some(&me), &other, &allowed) && admit(Some(&me), &tagged, &allowed));
         // A tagged PC (no user of its own) lets in only what it allowed.
         let tagged_me = Node { tagged: true, ..me.clone() };
         assert!(!admit(Some(&tagged_me), &same, &[]));
-        assert!(admit(Some(&tagged_me), &same, &[Allowed { node: "nA".into(), name: String::new() }]));
+        assert!(admit(Some(&tagged_me), &same, &[Allowed { node: "nA".into(), name: String::new(), ..Default::default() }]));
         assert!(!admit(None, &Node::default(), &allowed), "no node id: never");
         assert_eq!(parse_whois(&json!({})), None);
+    }
+
+    #[test]
+    fn allowed_list_reads_entries_from_before_keys() {
+        // 0.12's kv mesh_allowed: node and name only.
+        let old: Vec<Allowed> = serde_json::from_str(r#"[{"node":"nB","name":"laptop"}]"#).unwrap();
+        assert_eq!(old[0], Allowed { node: "nB".into(), name: "laptop".into(), ..Default::default() });
+        assert_eq!(old[0].key(), "nB");
+        let fp = "c".repeat(64);
+        let a = Allowed { fp: fp.clone(), ..Default::default() };
+        assert_eq!(a.key(), fp);
+        assert_eq!(peer_id(&a), format!("fp:{}", "c".repeat(16)));
+        assert_eq!(peer_id(&Allowed { id: "ts:laptop".into(), ..a }), "ts:laptop");
+    }
+
+    #[test]
+    fn peers_addresses_are_checked() {
+        let v = json!(["10.0.0.5:47930", "[fd00::5]:47930", "nonsense", "0.0.0.0:1", "10.0.0.5:47930", "[::ffff:10.0.0.6]:47931", "224.0.0.1:5"]);
+        assert_eq!(clean_addrs(v.as_array().unwrap()), ["10.0.0.5:47930", "[fd00::5]:47930", "10.0.0.6:47931"]);
+        let (ips, port) = ips_and_port(&["10.0.0.5:47931".into(), "[fd00::5]:47931".into(), "10.0.0.5:47931".into()]);
+        assert_eq!((ips, port), (vec!["10.0.0.5".to_string(), "fd00::5".to_string()], 47931));
+    }
+
+    #[test]
+    fn who_by_key() {
+        let shared = Shared::default();
+        let fp = "d".repeat(64);
+        *shared.allowed.lock().unwrap() = vec![Allowed { fp: fp.clone(), id: "pc:laptop".into(), name: "laptop".into(), addrs: vec!["10.0.0.7:47931".into()], ..Default::default() }];
+        let req = api::Request::default();
+        let ip: std::net::IpAddr = "10.0.0.8".parse().unwrap();
+        let at = |via| api::Peer { ip, via };
+        assert_eq!(who(&shared, &at(api::Via::Tls(Some(fp.clone()))), &req), Ok(("pc:laptop".to_string(), None)));
+        // It called from a new address: kept as a hint, at the port it listens on.
+        assert_eq!(shared.hints.lock().unwrap()[&fp], ["10.0.0.8:47931"]);
+        assert!(who(&shared, &at(api::Via::Tls(Some("e".repeat(64)))), &req).is_err(), "a key not on the list");
+        assert!(shared.seen.lock().unwrap().contains_key(&"e".repeat(64)), "remembered for Settings");
+        assert!(who(&shared, &at(api::Via::Tls(None)), &req).is_err());
+        assert!(who(&shared, &at(api::Via::Refused), &req).is_err());
+        // A Dest without a key is never sent anywhere but loopback or Tailscale.
+        let e = http(&Dest { addr: "10.0.0.9:47930".into(), fp: String::new() }, "GET", "/mesh/v1/hello", None, Duration::from_secs(1)).unwrap_err();
+        assert!(e.contains("not sent"), "{e}");
+    }
+
+    /// A PC allowed by Tailscale node before 0.13 swaps keys over the tailnet, and from then on
+    /// only TLS with that key gets in.
+    #[test]
+    fn upgrade_from_tailscale() {
+        let hub = api::Hub::new(vec![], api::DEFAULT_PORT);
+        hub.mesh.on.store(true, Ordering::SeqCst);
+        let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(100, 90, 1, 2));
+        let node = Node { id: "nB".into(), label: "laptop".into(), user: None, tagged: true };
+        hub.mesh.whois.lock().unwrap().insert(ip, (Instant::now(), Some(node.clone())));
+        *hub.mesh.allowed.lock().unwrap() = vec![Allowed { node: "nB".into(), name: "laptop".into(), ..Default::default() }];
+        let (tx, _rx) = channel();
+        let ask = |via: api::Via, method: &str, path: &str, body: Value| {
+            let data = serde_json::to_vec(&body).unwrap();
+            let req = api::Request { method: method.into(), path: path.into(), len: data.len(), ..Default::default() };
+            serve(&api::Peer { ip, via }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {})
+        };
+        let fp = "b".repeat(64);
+        let r = ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": fp, "id": "ts:laptop", "addrs": ["10.0.0.5:47930", "junk"] }));
+        assert_eq!(r.status, 200, "{:?}", r.body);
+        let a = hub.mesh.allowed.lock().unwrap()[0].clone();
+        assert_eq!((a.node.as_str(), a.fp.as_str(), a.id.as_str(), a.addrs.clone()), ("nB", fp.as_str(), "ts:laptop", vec!["10.0.0.5:47930".to_string()]));
+        // Plain is over for it: only hello and the swap again (idempotent), the rest needs TLS.
+        assert_eq!(ask(api::Via::Legacy, "GET", "/mesh/v1/events", Value::Null).status, 403);
+        assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": fp })).status, 200);
+        assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": "c".repeat(64) })).status, 409, "another key takes pairing again");
+        assert_eq!(hub.mesh.allowed.lock().unwrap()[0].fp, fp);
+        // Over TLS its key is who it is (same peer id as before, so its chats stay its chats).
+        assert_eq!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some(fp.clone())) }, &api::Request::default()), Ok(("ts:laptop".to_string(), None)));
+        assert!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some("c".repeat(64))) }, &api::Request::default()).is_err());
+        // A node nobody allowed can't swap keys.
+        let other = std::net::IpAddr::V4(std::net::Ipv4Addr::new(100, 90, 1, 3));
+        hub.mesh.whois.lock().unwrap().insert(other, (Instant::now(), Some(Node { id: "nX".into(), label: "x".into(), user: None, tagged: true })));
+        let data = serde_json::to_vec(&json!({ "fp": "e".repeat(64) })).unwrap();
+        let req = api::Request { method: "POST".into(), path: "/mesh/v1/enroll".into(), len: data.len(), ..Default::default() };
+        assert_eq!(serve(&api::Peer { ip: other, via: api::Via::Legacy }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {}).status, 403);
+        // Pairing needs TLS and a key.
+        assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/pair", json!({})).status, 403);
     }
 
     #[test]

@@ -68,7 +68,7 @@ final class Images {
     }
 
     private static Bitmap fetch(Hub hub, String url) {
-        Tailnet.Http c = null;
+        Net.Http c = null;
         try {
             c = hub.open("GET", url, 20_000);
             if (c.code() != 200) return null;

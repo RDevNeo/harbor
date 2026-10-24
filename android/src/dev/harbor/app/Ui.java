@@ -68,7 +68,7 @@ final class Ui {
     static final Handler main = new Handler(Looper.getMainLooper());
     static final ExecutorService pool = Executors.newCachedThreadPool();
     static float density = 1;
-    static Context app; // for Tailnet, which runs without an activity at hand
+    static Context app; // for Net, which runs without an activity at hand
 
     static void init(Context c) {
         app = c.getApplicationContext();

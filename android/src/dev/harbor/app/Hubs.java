@@ -18,7 +18,7 @@ import java.util.UUID;
 
 /** The paired PCs, and pairing a new one: Harbor's own camera scanner (QrScan), the phone's
  *  camera app opening the harbor://pair link straight into here, a pasted link, or
- *  host/port/token typed. */
+ *  address/port/token/PC key typed. */
 public class Hubs extends Base {
     private static final int SCAN = 1;
     private LinearLayout list;
@@ -152,7 +152,7 @@ public class Hubs extends Base {
         pad.addView(Ui.text(this, "Or paste the pairing link", 15, Ui.G700), Ui.margins(Ui.fill(), 2, 0, 0, 8));
         pad.addView(link, Ui.fill());
         pad.addView(Ui.text(this, "or type it", 15, Ui.G700), Ui.margins(Ui.fill(), 2, 16, 0, 8));
-        EditText host = Ui.input(this, "Host (e.g. desk.example.ts.net)", false);
+        EditText host = Ui.input(this, "Address (e.g. 10.0.0.12)", false);
         LinearLayout hp = Ui.row(this);
         hp.addView(host, Ui.weight());
         EditText port = Ui.input(this, "Port", false);
@@ -161,15 +161,21 @@ public class Hubs extends Base {
         pad.addView(hp, Ui.fill());
         EditText token = Ui.input(this, "Token", false);
         pad.addView(token, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        EditText key = Ui.input(this, "PC key", false);
+        pad.addView(key, Ui.margins(Ui.fill(), 0, 8, 0, 0));
         pad.addView(Ui.button(this, "Pair", true, v -> {
             Hub h = Hub.parse(link.getText().toString());
-            if (h == null && host.length() > 0 && token.length() > 0) {
+            String fp = Addr.fp(key.getText().toString());
+            if (h == null && host.length() > 0 && token.length() > 0 && fp != null) {
                 int p;
                 try { p = Integer.parseInt(port.getText().toString().trim()); } catch (Exception e) { p = 0; }
-                if (p > 0) h = new Hub(UUID.randomUUID().toString(), host.getText().toString().trim(),
-                        host.getText().toString().trim(), p, token.getText().toString().trim());
+                if (p > 0) {
+                    h = new Hub(UUID.randomUUID().toString(), host.getText().toString().trim(),
+                            host.getText().toString().trim(), p, token.getText().toString().trim());
+                    h.fp = fp;
+                }
             }
-            if (h == null) { Ui.toast(this, "Paste the harbor://pair link, or fill host, port and token"); return; }
+            if (h == null) { Ui.toast(this, "Paste the harbor://pair link, or fill address, port, token and the PC key (64 characters)"); return; }
             s.dismiss();
             tryPair(h);
         }), Ui.margins(Ui.fill(), 0, 16, 0, 0));
@@ -207,15 +213,8 @@ public class Hubs extends Base {
     private void tryPair(Hub h) {
         Ui.toast(this, "Connecting to " + h.host + "…");
         Ui.bg(this, () -> {
-            JSONObject st;
-            try {
-                st = h.state();
-            } catch (java.io.IOException e) {
-                // MagicDNS off on the phone: the link's tailnet IP still reaches the PC.
-                if (e instanceof Hub.ApiError || h.ip == null || h.ip.isEmpty() || h.ip.equals(h.host)) throw e;
-                h.host = h.ip;
-                st = h.state();
-            }
+            // Every address of the link is tried, each only with the PC's key.
+            JSONObject st = h.state();
             String n = st.optString("hub_name", "");
             if (!n.isEmpty()) h.name = n;
             return st;

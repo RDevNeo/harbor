@@ -4,7 +4,7 @@ import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Collections;
 
-/** Tailnet's address rules (Addr). Plain JVM, no Android: build.sh runs it before packaging. */
+/** Net's rules (Addr). Plain JVM, no Android: build.sh runs it before packaging. */
 public class AddrTest {
     private static int failed;
 
@@ -50,11 +50,18 @@ public class AddrTest {
         check(Addr.up(Collections.singletonList(ip("fd7a:115c:a1e0::3"))), "up with a tailnet IPv6");
         check(!Addr.up(Arrays.asList(ip("127.0.0.1"), ip("192.0.2.7"), ip("fe80::1"))), "down without one");
 
-        // way: the VPN network when bound; the default network only while Tailscale is up here.
-        check(Addr.way(true, false) == Addr.Way.VPN, "bound: VPN");
-        check(Addr.way(true, true) == Addr.Way.VPN, "bound wins");
-        check(Addr.way(false, true) == Addr.Way.DEFAULT, "no VPN network but Tailscale up: default");
-        check(Addr.way(false, false) == Addr.Way.OFF, "no VPN, no tailnet interface: refused");
+        // how: a pinned key goes anywhere over TLS; without one only loopback, or the one-time
+        // upgrade of an old pairing inside Tailscale.
+        check(Addr.how(true, false, false, false) == Addr.How.TLS_PINNED, "pinned: TLS to a LAN address");
+        check(Addr.how(true, true, false, false) == Addr.How.TLS_PINNED, "pinned: TLS even to loopback");
+        check(Addr.how(false, true, false, false) == Addr.How.PLAIN_LOOPBACK, "no key, loopback: plain");
+        check(Addr.how(false, false, true, true) == Addr.How.TLS_FIRST_USE, "no key, tailnet address with Tailscale up: learn it once");
+        check(Addr.how(false, false, true, false) == Addr.How.REFUSE, "no key, Tailscale off: refused");
+        check(Addr.how(false, false, false, true) == Addr.How.REFUSE, "no key, a LAN address: refused (pair again)");
+        check(Addr.how(false, false, false, false) == Addr.How.REFUSE, "no key, nothing: refused");
+        String f = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        check(f.equals(Addr.fp(f.toUpperCase())) && f.equals(Addr.fp("01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef")), "fingerprints normalised");
+        check(Addr.fp("abc") == null && Addr.fp(null) == null && Addr.fp(f + "0") == null && Addr.fp(f.replace('a', 'g')) == null, "bad fingerprints");
 
         if (failed > 0) { System.err.println(failed + " AddrTest check(s) failed"); System.exit(1); }
         System.out.println("AddrTest ok");

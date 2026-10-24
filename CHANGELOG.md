@@ -5,6 +5,26 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Harbor no longer needs Tailscale for your phone or your other PCs. Each Harbor and each phone
+  makes its own key the first time it runs, and every connection that leaves the PC is mutual TLS
+  pinned to those keys: a phone or PC answers only with the key it was paired with, and shows its
+  own. Harbor listens on your network (port 47930) and answers nobody else: plain HTTP only on
+  127.0.0.1.
+- Pair two PCs with a one-time code: Settings › Devices › Show a code on one, Enter a code (with
+  its address) on the other, or `harbor mesh pair` / `harbor mesh join <address> <code>` in a
+  terminal. Both then allow each other. `harbor mesh allow <key>` takes a PC's key fingerprint
+  (`harbor mesh status` shows it).
+- The phone pairing QR carries the PC's key and its network addresses; the phone tries each and
+  keeps its list up to date. Settings in the app show which keys the connection uses.
+
+### Changed
+- PCs and phones paired before upgrade switch to keys by themselves while Tailscale is still up:
+  over the tailnet, PCs allowed by Tailscale node swap keys, and a phone learns its PC's key once
+  and from then on only talks TLS with it. After that nothing needs the tailscale binary (it stays
+  an extra address source while installed). A pairing that can't upgrade asks to pair again.
+- The install QR in Settings › Phones links to the latest release instead of this PC.
+
 ## [0.12.2] - 2026-10-24
 
 ### Fixed

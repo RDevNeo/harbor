@@ -27,7 +27,7 @@ abstract class Base extends Activity {
     LinearLayout page; // the frame's column (top bar + content)
 
     private int gen;                 // bumped to stop the current poll loop
-    private volatile Tailnet.Http polling;
+    private volatile Net.Http polling;
     private long rev = -1;
     private String lastVia; // the PC the last answer came from
     boolean offline;
@@ -281,7 +281,7 @@ abstract class Base extends Activity {
     protected void onPause() {
         super.onPause();
         gen++;
-        Tailnet.Http c = polling;
+        Net.Http c = polling;
         if (c != null) Ui.pool.execute(c::close);
     }
 
@@ -295,7 +295,7 @@ abstract class Base extends Activity {
                 boolean connected = false;
                 try {
                     // since=-1 (first call) answers at once with the current revision.
-                    Tailnet.Http c = h.open("GET", "/v1/events?since=" + Math.max(rev, 0), Hub.TIMEOUT);
+                    Net.Http c = h.open("GET", "/v1/events?since=" + Math.max(rev, 0), Hub.TIMEOUT);
                     connected = true;
                     polling = c;
                     JSONObject r;

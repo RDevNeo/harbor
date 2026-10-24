@@ -159,7 +159,7 @@ impl Tab {
             Tab::Integrations => "",
             Tab::Webhooks => "",
             Tab::Devices => "Run agents on your other PCs. They work in that PC's folders, with this PC's MCP servers and apps.",
-            Tab::Phones => "Your chats on your phone: Harbor for Android talks to this PC over Tailscale.",
+            Tab::Phones => "Your chats on your phone: Harbor for Android talks to this PC over your network, encrypted with both keys.",
         }
     }
 }

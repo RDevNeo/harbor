@@ -70,6 +70,10 @@ public class Settings extends Base {
         LinearLayout here = card(col);
         here.addView(Ui.cardRow(this, Ui.I_GLOBE, "Address", hub.host + ":" + hub.port, Ui.FG, null), Ui.fill());
         here.addView(Ui.gap(this));
+        // The keys this connection is encrypted with (compare the PC's with Settings › Devices there).
+        String keys = (hub.fp.isEmpty() ? "PC key not known yet" : "PC " + shortFp(hub.fp)) + " · this phone " + shortFp(Net.myFp());
+        here.addView(Ui.cardRow(this, Ui.I_LOCK, "Encrypted with", keys, Ui.FG, null), Ui.fill());
+        here.addView(Ui.gap(this));
         LinearLayout ver = Ui.cardRow(this, Ui.I_MONITOR, "Harbor on the PC", "…", Ui.FG, null);
         hubVersion = (TextView) ((LinearLayout) ver.getChildAt(1)).getChildAt(1);
         here.addView(ver, Ui.fill());
@@ -94,6 +98,12 @@ public class Settings extends Base {
         TextView note = Ui.text(this, "Unpairing forgets the token on this phone. Revoke it on the PC in Settings › Phones.", 13, Ui.G700);
         note.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
         col.addView(note);
+    }
+
+    /** "ab12 cd34 ef56 7890": the first 64 bits, as the PC shows a key. */
+    static String shortFp(String fp) {
+        if (fp == null || fp.length() < 16) return "?";
+        return fp.substring(0, 4) + " " + fp.substring(4, 8) + " " + fp.substring(8, 12) + " " + fp.substring(12, 16);
     }
 
     private LinearLayout card(LinearLayout col) {

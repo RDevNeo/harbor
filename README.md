@@ -11,6 +11,9 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
   (button, paste or drag and drop).
 - **Remote devices**: a chat can run its Claude Code agent on another PC (Tailscale peers are found by
   themselves, others are added by SSH). See below.
+- **Your phone and other PCs**: Harbor for Android (`android/`) and Harbor on your other PCs share
+  chats over your own network, every connection mutual TLS pinned to each device's own key; pair a
+  phone with a QR code and a PC with a one-time code (`harbor mesh pair`). No VPN or other software.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks.
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.

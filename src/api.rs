@@ -1,10 +1,15 @@
-//! The phone API: Harbor for Android drives this Harbor's chats over the tailnet.
+//! The phone API: Harbor for Android drives this Harbor's chats over the network.
 //!
 //! A fourth listener like control.rs and bridge.rs: hand-written HTTP/1.1 on `std::net`, a
-//! thread per connection, no async runtime. It binds to this PC's Tailscale addresses (from
-//! `tailscale status --json`) and 127.0.0.1, never to 0.0.0.0, on port 47930 (kv `api_port`).
-//! Every request but `GET /app.apk` carries `Authorization: Bearer <token>`; tokens are made
-//! and revoked in Settings › Phones and kept in kv (`api_tokens`). WireGuard encrypts the hop.
+//! thread per connection, no async runtime. It listens on every interface on port 47930 (kv
+//! `api_port`; `HARBOR_LISTEN=addr,…` picks addresses instead) and speaks mutual TLS with
+//! pinned certificates (tls.rs) to everything but 127.0.0.1: a phone pins this PC's key from
+//! the pairing QR and shows its own, which the hub binds to the pairing's token on first use.
+//! Every request but `GET /app.apk` also carries `Authorization: Bearer <token>`; tokens are
+//! made and revoked in Settings › Phones and kept in kv (`api_tokens`). A TLS client without a
+//! known key gets nothing but the APK and PC pairing (mesh.rs). Plain HTTP is answered on
+//! 127.0.0.1 only, and on this PC's Tailscale interface for clients that haven't upgraded yet
+//! (`tls::legacy`).
 //!
 //! Calls that read or change chats go to the UI thread as `Incoming::Api` and are answered in
 //! its update loop, so `App` keeps a single owner. `GET /v1/events` (the long-poll), uploads and
@@ -61,6 +66,10 @@ pub struct Token {
     /// (mesh.rs), all with the same group, so removing the phone on one PC removes it on all.
     #[serde(default)]
     pub group: String,
+    /// The fingerprint of the phone's key (tls.rs): bound on its first TLS call, and from then
+    /// on the token only works with that key.
+    #[serde(default)]
+    pub fp: String,
 }
 
 #[derive(Default)]
@@ -137,15 +146,21 @@ pub fn local_device() -> String {
     }
 }
 
-/// Where the listener is reachable, for Settings › Phones.
+/// Where the listener is reachable, for Settings › Phones and the pairing QR.
 #[derive(Clone, Default)]
 pub struct Net {
-    /// MagicDNS name, without the trailing dot ("desk.example.ts.net").
-    pub dns: String,
-    pub ips: Vec<String>,
+    /// This PC's addresses other devices may use (tls::lan_addrs), IPv4 first.
+    pub addrs: Vec<String>,
     /// Addresses the listener holds.
     pub bound: Vec<String>,
     pub error: String,
+}
+
+impl Net {
+    /// The address an app before 0.13 can use: it only reaches Tailscale's addresses.
+    pub fn legacy_ip(&self) -> String {
+        self.addrs.iter().find(|a| a.parse().is_ok_and(crate::tls::tailnet_ip)).or(self.addrs.first()).cloned().unwrap_or_default()
+    }
 }
 
 /// What the listener threads and the UI thread share.
@@ -332,9 +347,34 @@ impl Hub {
         (r.rev, chats, r.state > since)
     }
 
+    #[cfg(test)]
     fn known(&self, token: &str) -> bool {
+        self.auth(token, &Via::Loopback).is_ok()
+    }
+
+    /// Whether `token` may be used over this connection. Over TLS the phone's key must be the
+    /// one bound to the token, and a token not bound yet (just paired, or a phone upgrading from
+    /// before 0.13) is bound to the key it's first used with. Plain: loopback always (test
+    /// rigs, `adb reverse`); the legacy tailnet path only for tokens no key is bound to yet.
+    pub fn auth(&self, token: &str, via: &Via) -> Result<(), &'static str> {
+        let mut tokens = self.tokens.lock().unwrap();
         // Every stored token is compared in full, so the time taken says nothing about it.
-        self.tokens.lock().unwrap().iter().fold(false, |ok, t| ok | same(t.token.as_bytes(), token.as_bytes()))
+        let at = tokens.iter().enumerate().fold(None, |hit, (i, t)| if same(t.token.as_bytes(), token.as_bytes()) { Some(i) } else { hit });
+        let Some(t) = at.map(|i| &mut tokens[i]) else { return Err("unknown token: pair this phone again in Harbor › Settings › Phones") };
+        match via {
+            Via::Loopback => Ok(()),
+            Via::Tls(Some(fp)) if t.fp.is_empty() => {
+                t.fp = fp.clone();
+                self.tokens_dirty.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            Via::Tls(Some(fp)) if t.fp == *fp => Ok(()),
+            Via::Tls(Some(_)) => Err("this pairing belongs to another phone: pair this one in Harbor › Settings › Phones"),
+            Via::Tls(None) => Err("this app has no key of its own: update it"),
+            Via::Legacy if t.fp.is_empty() => Ok(()),
+            Via::Legacy => Err("this phone now connects with its own key: update the app"),
+            Via::Refused => Err("plain HTTP isn't answered here: use TLS"),
+        }
     }
 }
 
@@ -707,15 +747,19 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
     if hub.started.swap(true, Ordering::SeqCst) {
         return;
     }
+    // The key is made now (not on the first phone), so the pairing QR can show it.
+    if let Err(e) = crate::tls::my_server() {
+        eprintln!("harbor: no TLS identity, only 127.0.0.1 will work: {e}");
+    }
     std::thread::spawn(move || {
         let port = *hub.port.lock().unwrap();
         let mut bound: Vec<String> = vec![];
         loop {
-            // HARBOR_LISTEN=127.0.0.1: only there (test instances stay off the tailnet).
-            let only: Option<Vec<String>> = std::env::var("HARBOR_LISTEN").ok().map(|l| l.split(',').map(|s| s.trim().to_string()).collect());
-            let (dns, ips) = if only.is_some() { Default::default() } else { tailnet_self() };
-            let mut want = only.clone().unwrap_or_else(|| vec!["127.0.0.1".to_string()]);
-            want.extend(ips.iter().cloned());
+            // HARBOR_LISTEN=127.0.0.1 (test instances) or chosen addresses; else every interface.
+            let want: Vec<String> = match std::env::var("HARBOR_LISTEN") {
+                Ok(l) => l.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+                Err(_) => vec!["::".into(), "0.0.0.0".into()],
+            };
             let mut error = String::new();
             let todo: Vec<String> = want.into_iter().filter(|ip| !bound.contains(ip)).collect();
             for ip in &todo {
@@ -725,79 +769,161 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
                         let (hub, tx, wake) = (hub.clone(), tx.clone(), wake.clone());
                         std::thread::spawn(move || accept(l, hub, tx, wake));
                     }
+                    // "::" is dual-stack on most systems: then 0.0.0.0 is already ours.
+                    Err(_) if ip == "0.0.0.0" && bound.iter().any(|b| b == "::") => bound.push(ip.clone()),
                     Err(e) => error = format!("{ip}:{port}: {e}"),
                 }
             }
-            *hub.net.lock().unwrap() = Net { dns, ips: ips.clone(), bound: bound.clone(), error };
+            let addrs = crate::tls::lan_addrs().iter().map(|a| a.to_string()).collect();
+            *hub.net.lock().unwrap() = Net { addrs, bound: bound.clone(), error };
             wake();
-            // Tailscale may come up (or change address) after Harbor: look again now and then.
-            let all = ips.iter().all(|ip| bound.contains(ip)) && !ips.is_empty();
-            std::thread::sleep(Duration::from_secs(if all { 120 } else { 20 }));
+            // Addresses change (Wi-Fi, DHCP): look again now and then.
+            std::thread::sleep(Duration::from_secs(20));
         }
     });
 }
 
-/// This PC's MagicDNS name and Tailscale IPs.
-fn tailnet_self() -> (String, Vec<String>) {
-    let out = std::process::Command::new("tailscale").args(["status", "--json"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
-    let Some(v) = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()) else { return Default::default() };
-    parse_self(&v)
+/// How a connection reached the listener.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Via {
+    /// TLS, with the fingerprint of the client's key if it showed one.
+    Tls(Option<String>),
+    /// Plain HTTP from 127.0.0.1.
+    Loopback,
+    /// Plain HTTP over Tailscale from a client that hasn't upgraded (tls::legacy).
+    Legacy,
+    /// Plain HTTP from anywhere else: answered with an error only.
+    Refused,
 }
 
-pub fn parse_self(v: &Value) -> (String, Vec<String>) {
-    if v["BackendState"].as_str().is_some_and(|s| s != "Running") {
-        return Default::default();
-    }
-    let dns = v["Self"]["DNSName"].as_str().unwrap_or("").trim_end_matches('.').to_string();
-    let ips = v["Self"]["TailscaleIPs"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).map(String::from).collect();
-    (dns, ips)
+/// Who is on the other end of a connection.
+#[derive(Clone, Debug)]
+pub struct Peer {
+    pub ip: std::net::IpAddr,
+    pub via: Via,
 }
 
 /// Phones' connections at once (each long-polls on one).
 static CONNS: Conns = Conns::new(64);
+/// Failed authentications per address: past it, connections are closed without a word.
+static FAILS: std::sync::LazyLock<crate::tls::Throttle> = std::sync::LazyLock::new(|| crate::tls::Throttle::new(30, Duration::from_secs(60)));
+
+/// Connections at once per address (IPv6: per /64), so one device can't take every slot.
+const PER_HOST: usize = 12;
+static HOSTS: std::sync::LazyLock<Mutex<HashMap<std::net::IpAddr, usize>>> = std::sync::LazyLock::new(Default::default);
+
+/// A connection's place among its host's, given back when dropped.
+struct HostSlot(std::net::IpAddr);
+
+impl HostSlot {
+    fn take(ip: std::net::IpAddr) -> Option<HostSlot> {
+        let k = crate::tls::scope_key(ip);
+        let mut h = HOSTS.lock().unwrap();
+        let n = h.entry(k).or_insert(0);
+        if *n >= PER_HOST {
+            return None;
+        }
+        *n += 1;
+        Some(HostSlot(k))
+    }
+}
+
+impl Drop for HostSlot {
+    fn drop(&mut self) {
+        let mut h = HOSTS.lock().unwrap();
+        if let Some(n) = h.get_mut(&self.0) {
+            *n -= 1;
+            if *n == 0 {
+                h.remove(&self.0);
+            }
+        }
+    }
+}
 
 fn accept(l: TcpListener, hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn() + Send + Sync + Clone + 'static) {
     for stream in l.incoming().flatten() {
         if !hub.active() {
             continue; // dropped: closed without a word
         }
+        let Some(host) = stream.peer_addr().ok().and_then(|a| HostSlot::take(a.ip())) else { continue };
         let Some(slot) = CONNS.take() else { continue };
         let (hub, tx, wake) = (hub.clone(), tx.clone(), wake.clone());
         std::thread::spawn(move || {
             serve(stream, &hub, &tx, &wake);
-            drop(slot);
+            drop((slot, host));
         });
     }
 }
 
 fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync)) {
-    let mut w = &stream;
-    let mut r = BufReader::new(Timed::new(&stream, HEAD_WAIT, Duration::from_secs(30)));
+    let Ok(ip) = stream.peer_addr().map(|a| crate::tls::canonical(a.ip())) else { return };
+    let local = stream.local_addr().map(|a| crate::tls::canonical(a.ip())).unwrap_or(ip);
+    if FAILS.over(ip) {
+        return;
+    }
+    let Ok(conn) = crate::tls::accept(stream, || crate::tls::my_server().ok(), HEAD_WAIT, Duration::from_secs(30)) else { return };
+    let via = if conn.is_tls() {
+        Via::Tls(conn.peer_fp())
+    } else if ip.is_loopback() {
+        Via::Loopback
+    } else if crate::tls::legacy(local, ip) {
+        Via::Legacy
+    } else {
+        Via::Refused
+    };
+    // From the open internet (a public IPv6, a forwarded port) only a key already known here
+    // gets an answer: pairing and the APK are for the local network.
+    if !crate::tls::private_ip(ip) {
+        let known = match &via {
+            Via::Tls(Some(fp)) => hub.tokens.lock().unwrap().iter().any(|t| t.fp == *fp) || hub.mesh.allowed_fp(fp).is_some(),
+            _ => false,
+        };
+        if !known {
+            return;
+        }
+    }
+    let peer = Peer { ip, via };
+    let mut r = BufReader::new(conn);
     let req = match read_head(&mut r) {
         Ok(q) => q,
-        Err((s, m)) => return send_json(&mut w, s, &json!({ "error": m })),
+        Err((s, m)) => return send_json(r.get_mut(), s, &json!({ "error": m })),
     };
-    r.get_mut().until = None;
+    r.get_ref().clear_deadline();
+    if peer.via == Via::Refused {
+        return send_json(r.get_mut(), 426, &json!({ "error": "Harbor answers other devices over TLS only" }));
+    }
     let segs = req.segments();
-    // Another PC's Harbor (mesh.rs): known by its Tailscale identity, not a token.
+    // Another PC's Harbor (mesh.rs): known by its key, not a token.
     if segs.first() == Some(&"mesh") {
-        let reply = crate::mesh::serve(&stream, &req, &mut r, hub, tx, wake);
-        return send_json(&mut w, reply.status, &reply.body);
+        let reply = crate::mesh::serve(&peer, &req, &mut r, hub, tx, wake);
+        if reply.status == 401 || reply.status == 403 {
+            FAILS.hit(ip);
+        }
+        return send_json(r.get_mut(), reply.status, &reply.body);
     }
     if !hub.enabled.load(Ordering::SeqCst) {
         return; // phones are off: closed without a word
     }
     if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] {
-        return serve_apk(&mut w, req.method == "HEAD");
+        return serve_apk(r.get_mut(), req.method == "HEAD");
     }
-    let Some(token) = req.bearer().filter(|t| hub.known(t)).map(String::from) else {
-        return send_json(&mut w, 401, &json!({ "error": "unknown token: pair this phone again in Harbor › Settings › Phones" }));
+    let token = match req.bearer().map(|t| (t, hub.auth(t, &peer.via))) {
+        Some((t, Ok(()))) => t.to_string(),
+        Some((_, Err(e))) => {
+            FAILS.hit(ip);
+            return send_json(r.get_mut(), 401, &json!({ "error": e }));
+        }
+        None => {
+            FAILS.hit(ip);
+            return send_json(r.get_mut(), 401, &json!({ "error": "unknown token: pair this phone again in Harbor › Settings › Phones" }));
+        }
     };
     let device: String = req.header("x-harbor-device").unwrap_or("").chars().take(60).collect();
     let global = req.header("x-harbor-ids") == Some("global");
     hub.seen.lock().unwrap().insert(token.clone(), (device.clone(), store::now()));
+    let w = r.get_mut();
     match (req.method.as_str(), segs.as_slice()) {
-        ("GET", ["v1", "app"]) => send_json(&mut w, 200, &app_info()),
+        ("GET", ["v1", "app"]) => send_json(w, 200, &app_info()),
         ("GET", ["v1", "events"]) => {
             let since = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
             let (rev, chats, mut state) = hub.wait(since, POLL);
@@ -809,13 +935,14 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             } else {
                 chats.iter().map(|c| json!(c)).collect()
             };
-            send_json(&mut w, 200, &json!({ "rev": rev, "changed_chats": chats, "state_changed": state }));
+            send_json(w, 200, &json!({ "rev": rev, "changed_chats": chats, "state_changed": state }));
         }
         // The PCs of the mesh, with this phone's token on each (mesh.rs).
-        ("GET", ["v1", "hubs"]) => send_json(&mut w, 200, &crate::mesh::hubs(hub, &token)),
+        ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub, &token)),
         ("POST", ["v1", "chats", c, "typing"]) => {
-            let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(&mut w, 404, &json!({ "error": "no such chat" })) };
+            let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(w, 404, &json!({ "error": "no such chat" })) };
             let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let w = r.get_mut();
             let on = body["typing"].as_bool().unwrap_or(true);
             let kind = if body["kind"].as_str() == Some("pc") { "pc" } else { "phone" };
             let label = if !device.is_empty() {
@@ -825,32 +952,33 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             };
             // Another PC's chat: its PC keeps who types in it (mesh.rs).
             if crate::mesh::forward_lease(hub, chat, false, &device_id(&token), kind, &label, on) {
-                return send_json(&mut w, 200, &json!({ "ok": true }));
+                return send_json(w, 200, &json!({ "ok": true }));
             }
             if hub.set_typing(chat, &device_id(&token), kind, &label, on) {
                 wake(); // this PC's window shows it
             }
-            send_json(&mut w, 200, &json!({ "ok": true }));
+            send_json(w, 200, &json!({ "ok": true }));
         }
-        ("GET", ["v1", "image"]) => serve_image(&mut w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
+        ("GET", ["v1", "image"]) => serve_image(w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
         ("POST", ["v1", "upload"]) => {
-            let r = upload_to(&mut r, &req, &uploads_dir());
-            send_json(&mut w, r.status, &r.body);
+            let up = upload_to(&mut r, &req, &uploads_dir());
+            send_json(r.get_mut(), up.status, &up.body);
         }
         _ => {
             if req.len > MAX_JSON {
-                return send_json(&mut w, 413, &json!({ "error": "body too large" }));
+                return send_json(w, 413, &json!({ "error": "body too large" }));
             }
             let mut body = vec![0u8; req.len];
             if r.read_exact(&mut body).is_err() {
-                return send_json(&mut w, 400, &json!({ "error": "short body" }));
+                return send_json(r.get_mut(), 400, &json!({ "error": "short body" }));
             }
+            let w = r.get_mut();
             let body = if body.iter().all(u8::is_ascii_whitespace) {
                 Value::Null
             } else {
                 match serde_json::from_slice(&body) {
                     Ok(v) => v,
-                    Err(e) => return send_json(&mut w, 400, &json!({ "error": format!("bad JSON: {e}") })),
+                    Err(e) => return send_json(w, 400, &json!({ "error": format!("bad JSON: {e}") })),
                 }
             };
             let (rtx, rrx) = channel();
@@ -865,11 +993,11 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 global,
             };
             if tx.send(crate::control::Incoming::Api(call)).is_err() {
-                return send_json(&mut w, 503, &json!({ "error": "Harbor is closing" }));
+                return send_json(w, 503, &json!({ "error": "Harbor is closing" }));
             }
             wake();
-            let r = rrx.recv_timeout(UI_WAIT).unwrap_or_else(|_| err(503, "Harbor did not answer in time"));
-            send_json(&mut w, r.status, &r.body);
+            let reply = rrx.recv_timeout(UI_WAIT).unwrap_or_else(|_| err(503, "Harbor did not answer in time"));
+            send_json(w, reply.status, &reply.body);
         }
     }
 }
@@ -1815,6 +1943,10 @@ impl App {
         json!({
             "version": crate::update::VERSION,
             "hub_id": me.id,
+            // This PC's key and where it answers: a phone keeps its pairing up to date with these.
+            "hub_fp": crate::tls::my_fp(),
+            "hub_addrs": hub.net.lock().unwrap().addrs.clone(),
+            "hub_port": *hub.port.lock().unwrap(),
             "mesh": mesh_on,
             "hubs": hubs,
             "hub_name": if me.name.is_empty() { crate::remote::hostname() } else { me.name.clone() },
@@ -2128,7 +2260,7 @@ mod tests {
 
     #[test]
     fn auth() {
-        let hub = Hub::new(vec![Token { token: "s3cret".into(), name: String::new(), created: 0, group: String::new() }], DEFAULT_PORT);
+        let hub = Hub::new(vec![Token { token: "s3cret".into(), name: String::new(), created: 0, group: String::new(), fp: String::new() }], DEFAULT_PORT);
         assert!(hub.known("s3cret"));
         assert!(!hub.known("s3cre"));
         assert!(!hub.known("s3cretx"));
@@ -2137,10 +2269,30 @@ mod tests {
         assert_eq!(r.bearer(), Some("s3cret"));
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Basic s3cret\r\n\r\n").unwrap().bearer(), None);
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Bearer\r\n\r\n").unwrap().bearer(), None);
-        let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0, group: String::new() }], DEFAULT_PORT);
+        let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0, group: String::new(), fp: String::new() }], DEFAULT_PORT);
         assert!(!empty.known(""));
         assert_eq!(new_token().unwrap().len(), 48);
         assert_ne!(new_token().unwrap(), new_token().unwrap());
+    }
+
+    #[test]
+    fn tokens_bind_to_the_phone_key() {
+        let hub = Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: "g".repeat(16), fp: String::new() }], DEFAULT_PORT);
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        // Not bound yet: plain over the tailnet still works (a phone before 0.13).
+        assert!(hub.auth("tok", &Via::Legacy).is_ok());
+        assert!(hub.auth("tok", &Via::Tls(None)).is_err(), "TLS needs the phone's key");
+        assert!(hub.auth("tok", &Via::Refused).is_err());
+        // The first key it's used with is its key from then on.
+        assert!(hub.auth("tok", &Via::Tls(Some(a.clone()))).is_ok());
+        assert_eq!(hub.tokens.lock().unwrap()[0].fp, a);
+        assert!(hub.tokens_dirty.load(Ordering::SeqCst), "the binding is saved");
+        assert!(hub.auth("tok", &Via::Tls(Some(a.clone()))).is_ok());
+        assert!(hub.auth("tok", &Via::Tls(Some(b.clone()))).is_err(), "another phone with the same token");
+        assert!(hub.auth("tok", &Via::Legacy).is_err(), "no going back to plain once it has a key");
+        assert!(hub.auth("tok", &Via::Loopback).is_ok(), "127.0.0.1 is this PC");
+        assert!(hub.auth("nope", &Via::Tls(Some(a))).is_err());
+        assert!(hub.auth("", &Via::Loopback).is_err());
     }
 
     #[test]
@@ -2283,13 +2435,6 @@ mod tests {
         assert!(resolve_upload("a/b/c").is_none());
     }
 
-    #[test]
-    fn tailnet_self() {
-        let v = json!({ "BackendState": "Running", "Self": { "DNSName": "desk.example.ts.net.", "TailscaleIPs": ["203.0.113.7", "fd7a::1"] } });
-        assert_eq!(parse_self(&v), ("desk.example.ts.net".to_string(), vec!["203.0.113.7".to_string(), "fd7a::1".to_string()]));
-        assert_eq!(parse_self(&json!({ "BackendState": "Stopped", "Self": { "DNSName": "x." } })).1.len(), 0);
-    }
-
     /// One request over a real socket: (status, JSON body).
     fn call(port: u16, raw: &str) -> (u16, Value) {
         let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -2304,7 +2449,7 @@ mod tests {
 
     #[test]
     fn http_end_to_end() {
-        let hub = Arc::new(Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: String::new() }], 0));
+        let hub = Arc::new(Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: String::new(), fp: String::new() }], 0));
         hub.enabled.store(true, Ordering::SeqCst);
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();

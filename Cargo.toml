@@ -27,6 +27,13 @@ vt100 = "0.18"
 minisign-verify = "0.2"
 # Safe waitpid, to reap children a reload left behind (procs.rs); already in the tree.
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
+# Harbor's own transport between PCs and phones (tls.rs): mutual TLS with pinned self-signed
+# certificates, no Tailscale. ring is the one crypto backend (no aws-lc, no async runtime).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
+ring = "0.17"
+# getifaddrs: this PC's LAN addresses for pairing (already in the tree).
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
