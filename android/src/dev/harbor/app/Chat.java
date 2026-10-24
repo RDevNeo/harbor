@@ -518,7 +518,19 @@ public class Chat extends Base {
                     bubble.addView(f);
                 }
                 bubble.setOnLongClickListener(v -> { itemMenu(it, text, false); return true; });
-                wrap.addView(bubble, Ui.wrap());
+                // Hug the content like the desktop: as wide as the longest line (or the image
+                // strip), at most maxBubble(); a wrap_content bubble cut lines short next to images.
+                android.text.TextPaint tp = new android.text.TextPaint();
+                tp.setTextSize(android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 16, getResources().getDisplayMetrics()));
+                tp.setTypeface(Ui.sans);
+                float need = 0;
+                for (String line : text.split("\n")) need = Math.max(need, tp.measureText(line));
+                JSONArray ims = it.optJSONArray("images");
+                if (ims != null && ims.length() > 0) need = Math.max(need, Math.min(ims.length(), 3) * Ui.dp(104));
+                if (files != null && files.length() > 0) need = Math.max(need, Ui.dp(160));
+                int avail = getResources().getDisplayMetrics().widthPixels - Ui.dp(76); // the row's padding
+                int w = (int) Math.min(need + Ui.dp(34), Math.min(avail, maxBubble() + Ui.dp(32)));
+                wrap.addView(bubble, new LinearLayout.LayoutParams(w, -2));
                 wrap.setPadding(Ui.dp(56), Ui.dp(10), Ui.dp(20), Ui.dp(10));
                 break;
             }
