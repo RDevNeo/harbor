@@ -156,6 +156,12 @@ final class Run {
         effort = efforts().length() == 0 ? "" : valid(efforts(), effort);
         access = valid(accesses(), access);
         device = "claude".equals(kind()) ? valid(devices(), device) : "";
+        // A PC of the mesh that's off can't take a new chat: back to this one.
+        JSONArray ds = devices();
+        if (chat == null) for (int i = 0; i < ds.length(); i++) {
+            JSONObject d = ds.optJSONObject(i);
+            if (d != null && device.equals(d.optString("id")) && d.optBoolean("hub") && !d.optBoolean("online", true)) device = "";
+        }
         if (!project.isEmpty()) {
             JSONArray p = st.optJSONArray("projects");
             boolean found = false;

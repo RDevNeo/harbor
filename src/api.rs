@@ -1752,7 +1752,8 @@ impl App {
             efforts.insert(kind_slug(k), json!(providers::efforts(k).iter().map(|e| json!({ "id": e.0, "label": e.1, "desc": e.2 })).collect::<Vec<_>>()));
             access.insert(kind_slug(k), json!(providers::access(k).iter().map(|e| json!({ "id": e.0, "label": e.1, "desc": e.2 })).collect::<Vec<_>>()));
         }
-        let mut devices = vec![json!({ "id": "", "label": crate::remote::hostname(), "icon": "monitor", "online": true })];
+        let here = self.api.hub.mesh.me().name;
+        let mut devices = vec![json!({ "id": "", "label": if here.is_empty() { crate::remote::hostname() } else { here }, "icon": "monitor", "online": true })];
         let net = crate::remote::tailnet(ctx);
         for (h, online) in crate::remote::devices(&self.remote, &net) {
             if !h.hidden {

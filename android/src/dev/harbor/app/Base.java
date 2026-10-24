@@ -336,8 +336,10 @@ abstract class Base extends Activity {
                     }
                 } catch (Exception e) {
                     if (my != gen) return;
-                    if (connected && e instanceof java.net.SocketTimeoutException && fails == 0) continue; // an idle long-poll
-                    if (!(e instanceof Hub.ApiError)) h.failed(); // the next try goes to another PC of the mesh first
+                    // The hub answers a long-poll within 20 s: no answer in 25 means it's gone (or the
+                    // way to it). The next try goes to another PC of the mesh first.
+                    if (!(e instanceof Hub.ApiError)) h.failed();
+                    if (connected && e instanceof java.net.SocketTimeoutException && fails == 0) { fails = 0; continue; }
                     fails++;
                     final String why = Hub.why(e);
                     if (fails == 1) Ui.main.post(() -> { if (my == gen) { offline = true; onOffline(true, why); } });

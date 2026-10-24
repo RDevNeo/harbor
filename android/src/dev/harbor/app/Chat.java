@@ -545,6 +545,9 @@ public class Chat extends Base {
                 int avail = getResources().getDisplayMetrics().widthPixels - Ui.dp(76); // the row's padding
                 int w = (int) Math.min(need + Ui.dp(34), Math.min(avail, maxBubble() + Ui.dp(32)));
                 wrap.addView(bubble, new LinearLayout.LayoutParams(w, -2));
+                // Written on another PC or a phone: where, under the bubble (as the desktop shows it).
+                String from = it.optString("sender", "");
+                if (!from.isEmpty()) wrap.addView(Ui.text(this, "from " + from, 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 4, 2, 0));
                 wrap.setPadding(Ui.dp(56), Ui.dp(10), Ui.dp(20), Ui.dp(10));
                 break;
             }
