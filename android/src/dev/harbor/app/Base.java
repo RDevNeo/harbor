@@ -29,6 +29,7 @@ abstract class Base extends Activity {
     private int gen;                 // bumped to stop the current poll loop
     private volatile Tailnet.Http polling;
     private long rev = -1;
+    private String lastVia; // the PC the last answer came from
     boolean offline;
     private int myTheme;
 
@@ -263,6 +264,12 @@ abstract class Base extends Activity {
     /** The hub stopped answering (true) or answers again (false). */
     void onOffline(boolean off, String why) { }
 
+    /** Calls now go to another PC of the mesh (the one before stopped answering). */
+    void onMoved() {
+        String n = hub.viaName();
+        Ui.toast(this, "Connected through " + (n.isEmpty() ? hub.label() : n));
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -303,7 +310,11 @@ abstract class Base extends Activity {
                     }
                     if (my != gen) return;
                     long nrev = r.optLong("rev", 0);
-                    boolean reconnect = fails > 0 || (rev >= 0 && nrev < rev);
+                    // Another PC answered (the one used before stopped): its revisions are its own.
+                    String now = h.via();
+                    boolean moved = lastVia != null && !now.equals(lastVia);
+                    lastVia = now;
+                    boolean reconnect = fails > 0 || moved || (rev >= 0 && nrev < rev);
                     boolean wasFirst = first;
                     first = false;
                     long old = rev;
@@ -316,6 +327,7 @@ abstract class Base extends Activity {
                     fails = 0;
                     // The first answer only tells the revision; the screen loaded on resume already,
                     // unless it missed something while paused (rev moved on).
+                    if (moved) Ui.main.post(() -> { if (my == gen) onMoved(); });
                     boolean news = !changed.isEmpty() || sc || reconnect;
                     if (wasFirst) news = old >= 0 && nrev != old;
                     if (news) {

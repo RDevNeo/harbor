@@ -110,7 +110,8 @@ public class Hubs extends Base {
             String s; int color;
             try {
                 JSONObject st = h.state();
-                s = "Harbor " + st.optString("version") + " · " + h.host;
+                String via = h.viaName();
+                s = "Harbor " + st.optString("version") + " · " + (via.isEmpty() ? h.host : "via " + via);
                 color = Ui.GREEN;
             } catch (Exception e) {
                 s = Hub.why(e);

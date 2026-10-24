@@ -51,6 +51,7 @@ public class Chat extends Base {
     private int from = -1;          // first seq drawn (-1: not known yet)
     private long rev;
     private boolean loading, again, loaded, sending, gone; // gone: deleted, keep no draft
+    private TextView offNote;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -96,6 +97,12 @@ public class Chat extends Base {
         };
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
         root.addView(comp.view, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        // Another PC's chat while that PC is off: read-only, this note instead of the composer.
+        offNote = Ui.text(this, "", 15, Ui.G700);
+        offNote.setBackground(Ui.round(Ui.CARD, Ui.LINE, 20));
+        offNote.setPadding(Ui.dp(18), Ui.dp(14), Ui.dp(18), Ui.dp(14));
+        offNote.setVisibility(View.GONE);
+        root.addView(offNote, Ui.margins(Ui.fill(), 12, 0, 12, 12));
         installDrawer(chatId);
 
         showChat(Hub.chat(Hub.states.get(hub.id), chatId));
@@ -167,7 +174,14 @@ public class Chat extends Base {
         String k = run.kind();
         composer.setHint("Chat with " + (k.isEmpty() ? "Claude" : Character.toUpperCase(k.charAt(0)) + k.substring(1)) + "…");
         String dev = run.deviceLabel(), acc = run.accountLabel();
+        // A chat that runs on another PC of the mesh: that PC's name.
+        String home = c.optString("home_name", "");
+        if (st != null && !c.optString("home", "").isEmpty() && !c.optString("home").equals(st.optString("hub_id"))) dev = home;
         sub(dev.isEmpty() ? acc : dev + " · " + acc, Ui.G700);
+        boolean ro = c.has("writable") && !c.optBoolean("writable", true);
+        offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
+        offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
+        comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         typingLine = Sidebar.typing(c, st == null ? "" : st.optString("you", ""));
         drawBars();
     }

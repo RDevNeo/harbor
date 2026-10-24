@@ -213,12 +213,16 @@ final class Run {
         for (int i = 0; i < list.length(); i++) {
             Object e = list.opt(i);
             String sub = "";
+            boolean ok = true;
             if (e instanceof JSONObject) {
                 JSONObject j = (JSONObject) e;
                 sub = j.optString("desc", "");
-                if (j.has("online") && !j.isNull("online") && !j.optBoolean("online")) sub = sub.isEmpty() ? "offline" : sub + " · offline";
+                boolean off = j.has("online") && !j.isNull("online") && !j.optBoolean("online");
+                // Another PC running Harbor: the chat starts there, so it has to be on.
+                if (j.optBoolean("hub")) { sub = off ? "Harbor · off" : "Harbor · the chat runs there"; ok = !off; }
+                else if (off) sub = sub.isEmpty() ? "offline" : sub + " · offline";
             }
-            o.add(new Sheet.Option(Hub.optId(e), Hub.optLabel(e), sub, true));
+            o.add(new Sheet.Option(Hub.optId(e), Hub.optLabel(e), sub, ok));
         }
         Sheet.pick(a, title, null, o, cur, id -> ch.apply(field, id));
     }

@@ -114,8 +114,12 @@ final class Tailnet {
         private long length = -1;
 
         Http(String host, int port, String method, String path, int readTimeout) throws IOException {
+            this(host, port, method, path, readTimeout, 8_000);
+        }
+
+        Http(String host, int port, String method, String path, int readTimeout, int connectTimeout) throws IOException {
             this.method = method;
-            s = connect(host, port, 8_000);
+            s = connect(host, port, connectTimeout);
             s.setSoTimeout(readTimeout);
             String hp = host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
             head = new StringBuilder(method).append(' ').append(path).append(" HTTP/1.1\r\n");

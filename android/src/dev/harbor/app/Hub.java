@@ -34,7 +34,12 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 /** One paired desktop Harbor (the hub) and its HTTP API (android/PROTOCOL.md). Every call
- *  carries the pairing token; none runs on the UI thread. */
+ *  carries the pairing token; none runs on the UI thread.
+ *
+ *  With the PCs sharing their chats (the mesh), one pairing reaches all of them: the hub tells
+ *  the phone the other PCs and a token for each (GET /v1/hubs), kept here as endpoints. Every
+ *  call goes to the PC used last; when it doesn't answer, the next one that does takes over.
+ *  Chats are then named by their gid, the same on every PC (X-Harbor-Ids: global). */
 final class Hub {
     static final int TIMEOUT = 25_000; // whole-request ceiling, events long-poll included
     static final int MAX_REPLY = 16 << 20; // biggest answer read into memory (a long transcript is far below)
@@ -43,6 +48,38 @@ final class Hub {
     String name, host, token;
     String ip; // the tailnet IP from the pairing link, tried when the name doesn't resolve
     int port;
+    String pid = ""; // the paired PC's id in the mesh ("ts:desk"), once known
+
+    /** Another PC of the mesh, reachable with a token of its own. */
+    static final class Ep {
+        String pid, name, host, ip, token;
+        int port;
+        Ep(String pid, String name, String host, String ip, int port, String token) {
+            this.pid = pid; this.name = name; this.host = host; this.ip = ip; this.port = port; this.token = token;
+        }
+        String label() { return name == null || name.isEmpty() ? (host == null || host.isEmpty() ? ip : host) : name; }
+    }
+
+    final List<Ep> eps = new ArrayList<>();
+    private int seen = -1; // the saved list's generation these endpoints come from
+    private static int generation;
+
+    /** Endpoints learned by another screen's copy of this hub since this one was read. */
+    private void sync() {
+        if (seen == generation || Ui.app == null) return;
+        Hub fresh = get(Ui.app, id);
+        seen = generation;
+        if (fresh == null) return;
+        synchronized (eps) {
+            eps.clear();
+            eps.addAll(fresh.eps);
+        }
+        if (!fresh.pid.isEmpty()) pid = fresh.pid;
+    }
+
+    /** Per hub: the endpoint calls go to now ("" = the paired PC). Shared by every screen. */
+    private static final Map<String, String> via = new HashMap<>();
+    private static final Map<String, Long> askedHubs = new HashMap<>();
 
     /** Last /v1/state per hub id, so screens open with something while they refresh. */
     static final Map<String, JSONObject> states = new HashMap<>();
@@ -52,6 +89,37 @@ final class Hub {
     }
 
     String label() { return name == null || name.isEmpty() ? host : name; }
+
+    /** The PC calls go to now: "" for the paired one, else its mesh id. */
+    String via() {
+        synchronized (via) {
+            String v = via.get(id);
+            if (v == null) v = Ui.app == null ? "" : prefs(Ui.app).getString("via-" + id, "");
+            if (!v.isEmpty() && ep(v) == null) v = "";
+            via.put(id, v);
+            return v;
+        }
+    }
+
+    /** The name of the PC calls go to now, when it isn't the paired one ("" otherwise). */
+    String viaName() {
+        Ep e = ep(via());
+        return e == null ? "" : e.label();
+    }
+
+    Ep ep(String pid) {
+        if (pid == null || pid.isEmpty()) return null;
+        for (Ep e : eps) if (pid.equals(e.pid)) return e;
+        return null;
+    }
+
+    private void setVia(String v) {
+        synchronized (via) {
+            if (v.equals(via.get(id))) return;
+            via.put(id, v);
+        }
+        if (Ui.app != null) prefs(Ui.app).edit().putString("via-" + id, v).apply();
+    }
 
     // ---- pairing ----
 
@@ -115,6 +183,7 @@ final class Hub {
 
     private static synchronized void store(Context c, String json) {
         plain = json;
+        generation++;
         SharedPreferences.Editor e = prefs(c).edit();
         try {
             Cipher ci = Cipher.getInstance("AES/GCM/NoPadding");
@@ -136,7 +205,15 @@ final class Hub {
             JSONArray a = new JSONArray(load(c));
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.getJSONObject(i);
-                out.add(new Hub(o.getString("id"), o.optString("name"), o.getString("host"), o.getInt("port"), o.getString("token")));
+                Hub h = new Hub(o.getString("id"), o.optString("name"), o.getString("host"), o.getInt("port"), o.getString("token"));
+                h.ip = o.optString("ip", null);
+                h.pid = o.optString("pid", "");
+                JSONArray e = o.optJSONArray("eps");
+                if (e != null) for (int j = 0; j < e.length(); j++) {
+                    JSONObject x = e.getJSONObject(j);
+                    h.eps.add(new Ep(x.getString("pid"), x.optString("name"), x.optString("host"), x.optString("ip"), x.getInt("port"), x.getString("token")));
+                }
+                out.add(h);
             }
         } catch (JSONException ignored) { }
         return out;
@@ -150,8 +227,13 @@ final class Hub {
     static void save(Context c, List<Hub> hubs) {
         JSONArray a = new JSONArray();
         try {
-            for (Hub h : hubs)
-                a.put(new JSONObject().put("id", h.id).put("name", h.name).put("host", h.host).put("port", h.port).put("token", h.token));
+            for (Hub h : hubs) {
+                JSONArray e = new JSONArray();
+                for (Ep x : h.eps)
+                    e.put(new JSONObject().put("pid", x.pid).put("name", x.name).put("host", x.host).put("ip", x.ip).put("port", x.port).put("token", x.token));
+                a.put(new JSONObject().put("id", h.id).put("name", h.name).put("host", h.host).put("port", h.port).put("token", h.token)
+                        .put("ip", h.ip).put("pid", h.pid).put("eps", e));
+            }
         } catch (JSONException ignored) { }
         store(c, a.toString());
     }
@@ -162,7 +244,11 @@ final class Hub {
         for (int i = 0; i < hubs.size(); i++) {
             Hub o = hubs.get(i);
             if (o.id.equals(h.id) || (o.host.equalsIgnoreCase(h.host) && o.port == h.port)) {
-                h = new Hub(o.id, h.name, h.host, h.port, h.token);
+                Hub n = new Hub(o.id, h.name, h.host, h.port, h.token);
+                n.ip = h.ip;
+                n.pid = h.pid.isEmpty() ? o.pid : h.pid;
+                n.eps.addAll(h.eps.isEmpty() ? o.eps : h.eps);
+                h = n;
                 hubs.set(i, h);
                 save(c, hubs);
                 return h;
@@ -195,15 +281,89 @@ final class Hub {
 
     Tailnet.Http open(String method, String path, int readTimeout) throws IOException { return open(method, path, readTimeout, true); }
 
-    /** auth false: no token (GET /app.apk needs none). Only ever through Tailscale (Tailnet). */
+    /** auth false: no token (GET /app.apk needs none). Only ever through Tailscale (Tailnet).
+     *  The PC used last first; when it can't be reached the others are tried, and the first
+     *  that answers is used from then on. Nothing was sent to a PC that couldn't be reached, so
+     *  this is safe for every call. */
     Tailnet.Http open(String method, String path, int readTimeout, boolean auth) throws IOException {
-        Tailnet.Http c = new Tailnet.Http(host, port, method, path, readTimeout);
-        if (auth) {
-            c.header("Authorization", "Bearer " + token);
-            c.header("X-Harbor-Device", deviceName());
+        sync();
+        String cur = via();
+        List<String> order = new ArrayList<>();
+        order.add(cur);
+        if (!cur.isEmpty()) order.add("");
+        for (Ep e : eps) if (!e.pid.equals(cur) && !e.pid.equals(pid)) order.add(e.pid);
+        int connect = order.size() > 1 ? 3_000 : 8_000;
+        IOException last = null;
+        for (String v : order) {
+            Ep e = ep(v);
+            String h = e == null ? host : e.host, alt = e == null ? ip : e.ip, tok = e == null ? token : e.token;
+            int p = e == null ? port : e.port;
+            String[] addrs = alt == null || alt.isEmpty() || alt.equals(h) ? new String[] { h } : new String[] { h, alt };
+            for (String addr : addrs) {
+                if (addr == null || addr.isEmpty()) continue;
+                try {
+                    Tailnet.Http c = new Tailnet.Http(addr, p, method, path, readTimeout, connect);
+                    if (auth) {
+                        c.header("Authorization", "Bearer " + tok);
+                        c.header("X-Harbor-Device", deviceName());
+                        c.header("X-Harbor-Ids", "global");
+                    }
+                    c.header("Accept", "application/json");
+                    setVia(v);
+                    return c;
+                } catch (IOException x) {
+                    last = x;
+                }
+            }
         }
-        c.header("Accept", "application/json");
-        return c;
+        throw last != null ? last : new IOException("no address");
+    }
+
+    /** After a state: the mesh's other PCs and this phone's token on each, when some are new. */
+    void learn(JSONObject st) {
+        if (st == null || !st.optBoolean("mesh")) return;
+        String here = st.optString("hub_id", "");
+        if (via().isEmpty() && pid.isEmpty() && !here.isEmpty()) { pid = here; persist(); }
+        JSONArray hs = st.optJSONArray("hubs");
+        boolean missing = false;
+        if (hs != null) for (int i = 0; i < hs.length(); i++) {
+            JSONObject o = hs.optJSONObject(i);
+            String p = o == null ? "" : o.optString("id");
+            if (o != null && o.optBoolean("online") && !p.equals(pid) && ep(p) == null) missing = true;
+        }
+        long now = System.currentTimeMillis();
+        synchronized (askedHubs) {
+            Long t = askedHubs.get(id);
+            // New PCs at once (at most every 30 s), the rest every 10 minutes.
+            if (t != null && now - t < (missing ? 30_000 : 600_000)) return;
+            askedHubs.put(id, now);
+        }
+        try {
+            JSONArray a = get("/v1/hubs").optJSONArray("hubs");
+            if (a == null) return;
+            boolean changed = false;
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.getJSONObject(i);
+                String p = o.optString("id"), tok = o.optString("token", "");
+                if (p.isEmpty() || tok.isEmpty() || "null".equals(tok) || p.equals(pid)) continue;
+                Ep e = ep(p);
+                if (e == null) { eps.add(new Ep(p, o.optString("name"), o.optString("host"), o.optString("ip"), o.optInt("port"), tok)); changed = true; }
+                else if (!tok.equals(e.token) || !o.optString("ip").equals(e.ip) || o.optInt("port") != e.port || !o.optString("host").equals(e.host)) {
+                    e.token = tok; e.ip = o.optString("ip"); e.port = o.optInt("port"); e.host = o.optString("host"); e.name = o.optString("name"); changed = true;
+                }
+            }
+            if (changed) persist();
+        } catch (Exception ignored) { }
+    }
+
+    /** Saves this hub's endpoints (kept encrypted with the pairing). */
+    private void persist() {
+        if (Ui.app == null) return;
+        synchronized (Hub.class) {
+            List<Hub> hubs = all(Ui.app);
+            for (int i = 0; i < hubs.size(); i++) if (hubs.get(i).id.equals(id)) hubs.set(i, this);
+            save(Ui.app, hubs);
+        }
     }
 
     /** What the PC calls this phone (typing lines, Settings › Phones): the name the user gave
@@ -254,6 +414,7 @@ final class Hub {
     JSONObject state() throws IOException {
         JSONObject s = get("/v1/state");
         states.put(id, s);
+        learn(s);
         return s;
     }
 

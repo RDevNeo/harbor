@@ -132,7 +132,9 @@ final class Sidebar {
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
 
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? "All projects" : projects.get(filter), v -> pickProject(projects)));
-        list.addView(nav(Ui.I_MONITOR, "PCs", a.hub.label(), v -> pcs()));
+        // Which PC of the mesh answers now, when it isn't the paired one.
+        String via = a.hub.viaName();
+        list.addView(nav(Ui.I_MONITOR, "PCs", via.isEmpty() ? a.hub.label() : a.hub.label() + " · via " + via, v -> pcs()));
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, v -> settings()));
         View line = new View(a);
         line.setBackgroundColor(Ui.LINE);
@@ -245,7 +247,10 @@ final class Sidebar {
     /** Paired PCs: switch to another, or pair one more. */
     private void pcs() {
         List<Sheet.Option> o = new ArrayList<>();
-        for (Hub h : Hub.all(a)) o.add(new Sheet.Option(h.id, h.label(), h.host + ":" + h.port, true));
+        for (Hub h : Hub.all(a)) {
+            String more = h.eps.isEmpty() ? "" : " · and " + h.eps.size() + (h.eps.size() == 1 ? " more PC" : " more PCs");
+            o.add(new Sheet.Option(h.id, h.label(), h.host + ":" + h.port + more, true));
+        }
         o.add(new Sheet.Option("+", "Pair another PC", "scan its code in Settings › Phones", true));
         Sheet.pick(a, "PCs", null, o, a.hub.id, id -> {
             if ("+".equals(id)) { a.startActivity(new Intent(a, Hubs.class).putExtra("pair", true)); return; }
