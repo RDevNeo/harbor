@@ -371,6 +371,8 @@ final class Hub {
             for (int i = 0; i < a.length(); i++) {
                 JSONObject o = a.getJSONObject(i);
                 String p = o.optString("id"), tok = o.optString("token", "");
+                // A PC whose phone access is off would drop the phone: never fail over to it.
+                if (!o.optBoolean("phones", true)) { if (eps.removeIf(e -> e.pid.equals(p))) changed = true; continue; }
                 if (p.isEmpty() || tok.isEmpty() || "null".equals(tok) || p.equals(pid)) continue;
                 Ep e = ep(p);
                 if (e == null) { eps.add(new Ep(p, o.optString("name"), o.optString("host"), o.optString("ip"), o.optInt("port"), tok)); changed = true; }

@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- The phone no longer moves to a PC whose phone access is off (it would drop the phone): such PCs
+  get no phone key, and Settings › Devices shows "phone access off" next to them, and next to this
+  PC, with an Enable phone access button.
+
 ## [0.12.1] - 2026-10-24
 
 ### Fixed

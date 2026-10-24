@@ -81,6 +81,9 @@ pub struct Peer {
     /// Its Tailscale node ID ("" for peers given by hand).
     #[serde(default)]
     pub node: String,
+    /// Its phone access is on (Settings › Phones there): phones can fail over to it.
+    #[serde(default)]
+    pub phones: bool,
 }
 
 /// What the listener threads, the peer workers and the UI thread share (in `api::Hub`).
@@ -522,7 +525,7 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
     let net = hub.net.lock().unwrap().clone();
     let port = *hub.port.lock().unwrap();
     let ip = net.ips.iter().find(|i| !i.contains(':')).cloned().unwrap_or_default();
-    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": net.dns, "ip": ip, "port": port, "online": true, "token": token, "self": true })];
+    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": net.dns, "ip": ip, "port": port, "online": true, "phones": true, "token": token, "self": true })];
     if hub.mesh.on.load(Ordering::Relaxed) && !group.is_empty() {
         let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().cloned().collect();
         let body = serde_json::to_vec(&json!({ "group": group, "name": name })).unwrap_or_default();
@@ -532,7 +535,8 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
             .map(|p| {
                 let body = body.clone();
                 std::thread::spawn(move || {
-                    let tok = if p.online {
+                    // A PC with phone access off would drop the phone: no token for it.
+                    let tok = if p.online && p.phones {
                         http(&p.addr, "POST", "/mesh/v1/mint", Some(("application/json", &body)), Duration::from_secs(6)).ok().filter(|(s, _)| *s == 200).and_then(|(_, v)| v["token"].as_str().map(String::from))
                     } else {
                         None
@@ -544,7 +548,7 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
         for a in asks {
             let Ok((p, tok)) = a.join() else { continue };
             let (ip, port) = p.addr.rsplit_once(':').map(|(i, po)| (i.to_string(), po.parse::<u16>().unwrap_or(0))).unwrap_or_default();
-            out.push(json!({ "id": p.id, "name": p.name, "host": p.dns, "ip": ip, "port": port, "online": p.online, "token": tok }));
+            out.push(json!({ "id": p.id, "name": p.name, "host": p.dns, "ip": ip, "port": port, "online": p.online, "phones": p.phones, "token": tok }));
         }
     }
     json!({ "hubs": out })
@@ -673,6 +677,8 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
             p.online = true;
             p.seen = store::now();
             p.node = node.as_ref().map(|n| n.id.clone()).unwrap_or_default();
+            // Peers from before 0.12.2 don't say: as before, taken as on.
+            p.phones = hello["phones"].as_bool().unwrap_or(true);
             p.version = hello["version"].as_str().unwrap_or("").to_string();
             p.accounts = hello["accounts"]
                 .as_array()
@@ -702,6 +708,16 @@ fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, node: Option<&Node>, t
             return Ok(());
         }
         let rev = chats["rev"].as_u64().unwrap_or(0);
+        // Its phone access, as it is now (it can be turned on from here, see mesh_settings).
+        if let Some(on) = chats["phones"].as_bool() {
+            let mut peers = hub.mesh.peers.lock().unwrap();
+            if let Some(p) = peers.get_mut(id).filter(|p| p.phones != on) {
+                p.phones = on;
+                drop(peers);
+                let _ = tx.send(crate::control::Incoming::Mesh(Msg::Peer));
+                wake();
+            }
+        }
         let (rtx, rrx) = channel();
         tx.send(crate::control::Incoming::Mesh(Msg::Chats { peer: id.to_string(), epoch, body: chats, reply: rtx })).map_err(|e| e.to_string())?;
         wake();
@@ -719,7 +735,6 @@ fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, node: Option<&Node>, t
         if ev["epoch"].as_u64() != Some(epoch) {
             return Ok(());
         }
-        let _ = hub;
     }
 }
 
@@ -1270,7 +1285,8 @@ impl App {
                 let me = self.shared().me();
                 let accounts: Vec<Value> = self.accounts.iter().filter(|a| a.installed()).map(|a| json!({ "id": a.id, "short": a.short(), "kind": a.kind.label().to_ascii_lowercase() })).collect();
                 let revoked = self.api.hub.revoked.lock().unwrap().clone();
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked }))
+                let phones = self.api.hub.enabled.load(Ordering::Relaxed);
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");
@@ -1281,7 +1297,8 @@ impl App {
                 own.sort_by_key(|c| (c.role == Role::Sub, c.id));
                 let chats: Vec<Value> = own.iter().map(|c| self.mesh_chat_json(c, full)).collect();
                 let gone: Vec<i64> = if full { vec![] } else { self.shared().gone.lock().unwrap().iter().filter(|(r, _)| *r > since).map(|(_, id)| *id).collect() };
-                ok(json!({ "epoch": epoch, "rev": rev, "full": full, "chats": chats, "gone": gone }))
+                let phones = self.api.hub.enabled.load(Ordering::Relaxed);
+                ok(json!({ "epoch": epoch, "rev": rev, "full": full, "chats": chats, "gone": gone, "phones": phones }))
             }
             ("GET", ["mesh", "v1", "chats", c, "items"]) => {
                 let Some(c) = c.parse::<i64>().ok().filter(|c| self.chat(*c).is_some_and(|x| !x.foreign())) else { return err(404, "no such chat") };
@@ -1315,6 +1332,11 @@ impl App {
                     r.body["home"] = json!(self.shared().me().id);
                 }
                 r
+            }
+            // Settings › Devices on another PC: "Enable" next to this PC's "phone access off".
+            ("POST", ["mesh", "v1", "phones"]) => {
+                self.api_set_enabled(true, ctx);
+                ok(json!({ "ok": true }))
             }
             _ => err(404, "unknown mesh call"),
         }
@@ -1677,6 +1699,9 @@ impl App {
             }
         }
         let mut change: Option<(String, String, bool)> = None;
+        let mut enable: Option<Peer> = None;
+        let mut enable_here = false;
+        let phones_here = self.api.hub.enabled.load(Ordering::Relaxed);
         rows(ui, |ui| {
             w::setting_row(
                 ui,
@@ -1684,6 +1709,14 @@ impl App {
                 "Every PC with Harbor and this on keeps a copy of every chat and can write in any of them; the agent runs on the PC the chat was started on. Your phone keeps working through any PC that's on. Two PCs share once each allows the other below (your own untagged devices on the same Tailscale account allow each other by themselves).",
                 |ui| w::toggle(ui, &mut on),
             );
+            if on && !phones_here {
+                w::separator(ui);
+                w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), "Phone access off: your phone can't use this PC when another one is off", |ui| {
+                    if w::btn("Enable phone access").sm().outline().show(ui).clicked() {
+                        enable_here = true;
+                    }
+                });
+            }
             if on {
                 for (key, name) in &keys {
                     w::separator(ui);
@@ -1711,6 +1744,10 @@ impl App {
                     if auto {
                         desc.push_str(" · same Tailscale account");
                     }
+                    let phones_off = peer.is_some_and(|p| p.online && !p.phones);
+                    if phones_off {
+                        desc.push_str(" · phone access off: your phone can't use it when this PC is off");
+                    }
                     if let Some(p) = peer {
                         match self.chats.iter().filter(|c| c.home == p.id).count() {
                             0 => {}
@@ -1727,6 +1764,11 @@ impl App {
                         if real && !listed && !auto && w::btn("Allow").sm().primary().show(ui).clicked() {
                             change = Some((key.clone(), name.clone(), true));
                         }
+                        if phones_off && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
+                            if let Some(p) = peer {
+                                enable = Some(p.clone());
+                            }
+                        }
                         w::badge(ui, badge, tone);
                     });
                 }
@@ -1742,6 +1784,16 @@ impl App {
         });
         if let Some((key, name, allow)) = change {
             self.mesh_allow(&key, &name, allow);
+        }
+        if enable_here {
+            self.api_set_enabled(true, &ctx);
+        }
+        if let Some(p) = enable {
+            // Asks that PC to turn its phone access on; its next hello says so.
+            std::thread::spawn(move || {
+                let call = serde_json::to_vec(&json!({})).unwrap_or_default();
+                let _ = http(&p.addr, "POST", "/mesh/v1/phones", Some(("application/json", &call)), Duration::from_secs(10));
+            });
         }
         if on != was {
             self.mesh_set_enabled(on, &ctx);

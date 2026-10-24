@@ -315,7 +315,8 @@ same chats, rendered the same way.
 ```
 
 Each other PC that answers mints a token for the caller's pairing (the same one each time), so a
-phone paired once can talk to any of them; `token` is null for a PC that is off (ask again later).
+phone paired once can talk to any of them; `token` is null for a PC that is off (ask again later)
+or whose phone access is off (`phones: false`: it would drop the phone; forget it until it's on).
 Removing the phone in Settings › Phones on any PC removes its tokens on all of them.
 
 ### Failover
@@ -336,7 +337,8 @@ so two PCs share once each allows the other. A caller that isn't allowed gets
 `403 {"error", "harbor": true, "name"}` and shows up in Settings › Devices to allow. Sharing is
 kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s.
 
-- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups]}`.
+- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones}`
+  (`phones`: its phone access is on; also in each chats answer).
   `epoch` is the hub's start revision: revisions compare only within one epoch.
 - `GET /mesh/v1/events?since=<rev>&epoch=<epoch>` → `{epoch, rev}` as soon as one of this PC's
   own chats changed after `since` (or one was deleted), or after 20 s. Another `epoch`: start over.
@@ -360,6 +362,8 @@ kv `mesh_enabled` = `1` (`harbor mesh on`); both are re-read every 10 s.
 - `POST /mesh/v1/mint` `{group, name}` → `{token}`: this PC's token for a phone paired on another
   PC (`group`: the pairing's id; the same group always gets the same token). `410` once removed.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
+- `POST /mesh/v1/phones` `{}`: turn this PC's phone access on (Settings › Devices' "Enable phone
+  access" on another PC).
 
 ## The APK in releases
 
