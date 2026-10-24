@@ -88,7 +88,10 @@ refetch everything.
 - `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
 - `queued`: messages waiting for the running turn.
 - `you`: this client's own device id, as it appears in `typing` (hide yourself with it).
-- `typing`: who is writing in the chat now (see [Typing](#typing)).
+- `typing`: who is writing in the chat now (see [Typing](#typing)); for another PC's chat, as
+  that PC keeps it (typing in a copy is passed on to its PC).
+- `viewing`: the other PCs of the mesh that have the chat open: `[{device, kind, label}]`, `kind`
+  `focused` or `away` (their window isn't in front).
 - `switchable` / `allowed_accounts`: which run settings `PATCH /v1/chats/{id}` may change now,
   and the accounts it may switch to (see [Run settings](#run-settings)).
 - `gid`: the chat's global id, the same on every PC of the mesh (see [Every PC is a hub](#every-pc-is-a-hub)).
@@ -293,6 +296,9 @@ same chats, rendered the same way.
 - `POST /v1/chats` with a `device` that is another hub's id starts the chat on that PC (`409` when
   it's off); the answer's `id` is the copy's id on this hub (null if it hasn't arrived yet: find
   it by `gid` in the next state).
+- One sender at a time: a message sent while another device is typing in the chat waits in the
+  chat's queue (`send` answers `queued: true`) and goes out when they stop typing or send; the
+  queue is the chat PC's and shows in `status.queue` on every hub.
 - Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't. A client that moves
   between hubs sends `X-Harbor-Ids: global` with every call: answers then name chats by `gid`
   (`id`, `parent`, `forks_after`, `forked_from.chat`, `status.waiting.agents[].id`, the `id` of a
@@ -343,6 +349,10 @@ above (`403`: sharing is off here, or not one of the user's devices).
   `["v1","chats","12","send"]`, ids of the home PC) run as if made there; `sender` is stored on
   a message it sends. A new chat's answer carries `home` (the PC's id).
 - `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
+- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on}`: someone types in (`view: false`)
+  or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
+  Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
+  `typing` and `viewing`.
 - `POST /mesh/v1/mint` `{group, name}` → `{token}`: this PC's token for a phone paired on another
   PC (`group`: the pairing's id; the same group always gets the same token). `410` once removed.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.

@@ -2144,6 +2144,18 @@ mod tests {
     }
 
     #[test]
+    fn viewing_leases_are_apart_from_typing() {
+        let hub = Hub::new(vec![], DEFAULT_PORT);
+        assert!(hub.set_viewing(3, "pc:laptop", "laptop", true, true), "opening is a change");
+        assert!(!hub.set_viewing(3, "pc:laptop", "laptop", true, true), "a renewal isn't");
+        assert!(hub.set_viewing(3, "pc:laptop", "laptop", false, true), "the window going to the back is");
+        assert_eq!(hub.viewing(3).iter().map(|t| t.kind.as_str()).collect::<Vec<_>>(), ["away"]);
+        assert!(hub.typing(3).is_empty(), "viewing isn't typing");
+        assert!(hub.set_viewing(3, "pc:laptop", "", false, false));
+        assert!(hub.viewing(3).is_empty());
+    }
+
+    #[test]
     fn typing_leases() {
         let hub = Arc::new(Hub::new(vec![], DEFAULT_PORT));
         let r0 = hub.rev();

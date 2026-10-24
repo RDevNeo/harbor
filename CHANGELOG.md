@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- One sender at a time across your PCs and phones: while someone types in a chat on another
+  device, "<device> is typing…" shows everywhere and a message sent meanwhile waits in the chat's
+  queue (Send says Queue) until they send or stop typing. The queue is shared: every PC and phone
+  shows the same queued messages.
+- Presence: the chat's top bar names the other PCs that have it open (dimmed when that PC's
+  window isn't in front), and the sidebar marks chats another PC has open.
+
 ## [0.11.0] - 2026-10-24
 
 ### Added
