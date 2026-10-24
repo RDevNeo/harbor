@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-24
+
 ### Added
 - One sender at a time across your PCs and phones: while someone types in a chat on another
   device, "<device> is typing…" shows everywhere and a message sent meanwhile waits in the chat's
@@ -362,7 +364,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/RDevNeo/harbor/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/RDevNeo/harbor/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/RDevNeo/harbor/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/RDevNeo/harbor/compare/v0.8.7...v0.9.0
