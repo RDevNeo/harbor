@@ -52,7 +52,8 @@ refetch everything.
     "role": "lead", "parent": null,
     "typing": [{"device": "pc:desk", "kind": "pc", "label": "desk"}],
     "switchable": {"account": true, "model": true, "effort": true, "access": true, "device": false, "fast": true},
-    "allowed_accounts": ["claude", "claude2"]
+    "allowed_accounts": ["claude", "claude2"],
+    "gid": "5f0c…-uuid", "home": "ts:desk", "home_name": "desk", "writable": true
   }],
   "accounts": [{"id": "claude", "label": "Claude · AB", "name": "…", "kind": "claude",
                 "signed_in": true, "can_start": true, "usage": [{"label": "5h", "percent": 42.0}]}],
@@ -82,6 +83,10 @@ refetch everything.
 - `typing`: who is writing in the chat now (see [Typing](#typing)).
 - `switchable` / `allowed_accounts`: which run settings `PATCH /v1/chats/{id}` may change now,
   and the accounts it may switch to (see [Run settings](#run-settings)).
+- `gid`: the chat's global id, the same on every PC of the mesh (see [Every PC is a hub](#every-pc-is-a-hub)).
+  Every `{id}` in a path may be the `gid` instead; keep it to find the chat again on another hub.
+- `home` / `home_name`: the PC the chat runs on (its peer id, its name). `writable`: false while
+  that PC is off: show the chat read-only with "<home_name> is off" (writes answer `409`).
 
 ### `GET /v1/chats/{id}/items?since=<rev>`
 
@@ -103,7 +108,7 @@ Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the
 | kind | what the desktop draws | fields |
 |---|---|---|
 | `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
-| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text}]`, `at` (unix s) |
+| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" under it when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text}]`, `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise) |
 | `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable` | `markdown`, `blocks` (below), `images`, `at`, `forkable` |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
@@ -265,6 +270,49 @@ most that many pixels on its longer side (16–2048); without, the file as it is
 ### `GET /app.apk` (and `HEAD`)
 
 No token needed. The APK the hub has (`404` when none), `application/vnd.android.package-archive`.
+
+## Every PC is a hub
+
+With Settings › Devices › "Share chats with my other PCs" on, each of the user's PCs running
+Harbor keeps a full copy of every chat (`src/mesh.rs`), so any of them answers the phone with the
+same chats, rendered the same way.
+
+- A chat runs on one PC, its `home`. Another hub holds a copy: reading it is local; a write to it
+  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `fork`, `PATCH`, `DELETE`) is forwarded
+  to the home PC and answered from there. The message records where it came from (`sender`).
+  While the home PC is off the copy is read-only (`writable: false`, writes `409`) and catches up
+  when it's back.
+- `POST /v1/chats` with a `device` that is another hub's id starts the chat on that PC (`409` when
+  it's off); the answer's `id` is the copy's id on this hub (null if it hasn't arrived yet: find
+  it by `gid` in the next state).
+- Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't.
+
+### Hub to hub (`/mesh/v1/…`)
+
+PCs talk on the same listener (port 47930, Tailscale addresses only). A caller is accepted when
+`tailscale whois` puts its address under the same Tailscale user as this PC; no token. Errors as
+above (`403`: sharing is off here, or not one of the user's devices).
+
+- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups]}`.
+  `epoch` is the hub's start revision: revisions compare only within one epoch.
+- `GET /mesh/v1/events?since=<rev>&epoch=<epoch>` → `{epoch, rev}` as soon as one of this PC's
+  own chats changed after `since` (or one was deleted), or after 20 s. Another `epoch`: start over.
+- `GET /mesh/v1/chats?since=<rev>&epoch=<epoch>` → `{epoch, rev, full, chats: [chat], gone: [id]}`:
+  this PC's own chats changed after `since`, all of them (`full: true`) when `since` is 0 or the
+  epoch is another; `gone` are own chats deleted since. A chat: `id` (on its home PC), `gid`,
+  `title`, `project: {name, path}|null`, `account`, `model`, `effort`, `access`, `device`, `settled`,
+  `updated`, `role`, `parent` (id there), `name`, `started`, `count`, `digest` (hex FNV of the
+  items, only in full lists: a copy whose digest differs fetches its items from 0), `running`,
+  `since_ms`, `queued`, `status` (as in items), `forks: [[seq, id]]`.
+- `GET /mesh/v1/chats/{id}/items?since=<rev>&epoch=<epoch>` → `{epoch, rev, count, items: [{seq, item}]}`:
+  raw transcript items (the database's JSON) changed after `since`; cut the copy to `count`.
+- `POST /mesh/v1/call` `{method, path, body, sender}`: a phone API call (`path` like
+  `["v1","chats","12","send"]`, ids of the home PC) run as if made there; `sender` is stored on
+  a message it sends. A new chat's answer carries `home` (the PC's id).
+- `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
+- `POST /mesh/v1/mint` `{group, name}` → `{token}`: this PC's token for a phone paired on another
+  PC (`group`: the pairing's id; the same group always gets the same token). `410` once removed.
+- `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
 
 ## The APK in releases
 

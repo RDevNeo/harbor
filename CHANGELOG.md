@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Every PC is a hub: with Settings › Devices › "Share chats with my other PCs" on, each of your
+  PCs running Harbor keeps a full copy of every chat and can write in any of them. A chat still
+  runs on the PC it was started on; a message typed on another PC (or sent from the phone through
+  it) goes to that PC, and every message shows where it was written ("from Pixel via desk").
+  While a chat's PC is off its copies are read-only and catch up when it's back. Only your own
+  devices on Tailscale (the same Tailscale account) are let in.
+- New chats can start on any of your PCs that is on: they appear in the composer's device picker.
+
 ## [0.9.0] - 2026-10-23
 
 ### Added
