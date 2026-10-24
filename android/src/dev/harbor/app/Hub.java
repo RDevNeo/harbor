@@ -80,6 +80,27 @@ final class Hub {
     /** Per hub: the endpoint calls go to now ("" = the paired PC). Shared by every screen. */
     private static final Map<String, String> via = new HashMap<>();
     private static final Map<String, Long> askedHubs = new HashMap<>();
+    /** hub/endpoint → when it last failed mid-call: tried last for a while. */
+    private static final Map<String, Long> bad = new HashMap<>();
+    private static final long BAD_FOR = 30_000;
+
+    /** The PC calls go to failed after connecting (it closed the connection, stopped
+     *  answering): the next call tries the others first. */
+    void failed() {
+        if (eps.isEmpty()) return;
+        synchronized (bad) { bad.put(id + "/" + via(), System.currentTimeMillis()); }
+    }
+
+    private boolean isBad(String v) {
+        synchronized (bad) {
+            Long t = bad.get(id + "/" + v);
+            return t != null && System.currentTimeMillis() - t < BAD_FOR;
+        }
+    }
+
+    private void good(String v) {
+        synchronized (bad) { bad.remove(id + "/" + v); }
+    }
 
     /** Last /v1/state per hub id, so screens open with something while they refresh. */
     static final Map<String, JSONObject> states = new HashMap<>();
@@ -292,6 +313,11 @@ final class Hub {
         order.add(cur);
         if (!cur.isEmpty()) order.add("");
         for (Ep e : eps) if (!e.pid.equals(cur) && !e.pid.equals(pid)) order.add(e.pid);
+        // PCs that just failed go last (stable: the preference stays among the rest).
+        List<String> ok = new ArrayList<>(), later = new ArrayList<>();
+        for (String v : order) (isBad(v) ? later : ok).add(v);
+        order = ok;
+        order.addAll(later);
         int connect = order.size() > 1 ? 3_000 : 8_000;
         IOException last = null;
         for (String v : order) {
@@ -380,14 +406,30 @@ final class Hub {
     JSONObject call(String method, String path, JSONObject body) throws IOException { return call(method, path, body, TIMEOUT); }
 
     JSONObject call(String method, String path, JSONObject body, int readTimeout) throws IOException {
+        try {
+            return call1(method, path, body, readTimeout);
+        } catch (ApiError e) {
+            throw e;
+        } catch (IOException e) {
+            failed();
+            // A read can go to the next PC at once; a write may have reached the PC, so not.
+            if (!"GET".equals(method) || eps.isEmpty()) throw e;
+            return call1(method, path, body, readTimeout);
+        }
+    }
+
+    private JSONObject call1(String method, String path, JSONObject body, int readTimeout) throws IOException {
         Tailnet.Http c = open(method, path, readTimeout);
+        String v = via();
         try {
             if (body != null) {
                 byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
                 c.header("Content-Type", "application/json");
                 try (OutputStream o = c.body(b.length)) { o.write(b); }
             }
-            return reply(c);
+            JSONObject r = reply(c);
+            good(v);
+            return r;
         } finally {
             c.close();
         }

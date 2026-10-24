@@ -1605,7 +1605,7 @@ impl App {
             }
             ("GET", ["v1", "chats", _, "items"]) => {
                 for it in v["items"].as_array_mut().into_iter().flatten() {
-                    if let Some(f) = it["forks_after"].as_array_mut() {
+                    if let Some(f) = it.get_mut("forks_after").and_then(|f| f.as_array_mut()) {
                         for x in f.iter_mut() {
                             *x = gid(x);
                         }
@@ -1614,7 +1614,8 @@ impl App {
                         it["chat"] = gid(&it["chat"]);
                     }
                 }
-                for a in v["status"]["waiting"]["agents"].as_array_mut().into_iter().flatten() {
+                // (get_mut: indexing a null part mutably would turn it into an object.)
+                for a in v.get_mut("status").and_then(|s| s.get_mut("waiting")).and_then(|w| w.get_mut("agents")).and_then(|a| a.as_array_mut()).into_iter().flatten() {
                     a["id"] = gid(&a["id"]);
                 }
             }
@@ -1779,7 +1780,7 @@ impl App {
             "hub_id": me.id,
             "mesh": mesh_on,
             "hubs": hubs,
-            "hub_name": crate::remote::hostname(),
+            "hub_name": if me.name.is_empty() { crate::remote::hostname() } else { me.name.clone() },
             "you": you,
             "rev": hub.rev(),
             "projects": projects,

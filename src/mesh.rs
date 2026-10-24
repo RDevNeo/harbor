@@ -900,7 +900,8 @@ impl App {
         let forks = m["forks"].as_array().into_iter().flatten().filter_map(|f| Some((f[0].as_u64()? as usize, self.shared().local_id(peer, f[1].as_i64()?)?))).collect();
         let mut status = m["status"].clone();
         // The waiting bar's agents are the home PC's chats: their ids here.
-        if let Some(agents) = status["waiting"]["agents"].as_array_mut() {
+        // (get_mut: indexing a null part mutably would turn it into an object.)
+        if let Some(agents) = status.get_mut("waiting").and_then(|w| w.get_mut("agents")).and_then(|a| a.as_array_mut()) {
             for a in agents {
                 let local = a["id"].as_i64().and_then(|h| self.shared().local_id(peer, h)).unwrap_or(0);
                 a["id"] = json!(local);
