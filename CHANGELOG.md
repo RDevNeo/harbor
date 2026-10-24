@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-24
+
 ### Added
 - Harbor no longer needs Tailscale for your phone or your other PCs. Each Harbor and each phone
   makes its own key the first time it runs, and every connection that leaves the PC is mutual TLS
@@ -400,7 +402,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/RDevNeo/harbor/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/RDevNeo/harbor/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/RDevNeo/harbor/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/RDevNeo/harbor/compare/v0.11.0...v0.12.0
