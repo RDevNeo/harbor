@@ -367,7 +367,8 @@ final class Hub {
             int connect = order.size() > 1 || where.size() > 1 ? 3_000 : 8_000;
             for (String addr : where) {
                 try {
-                    Net.Http c = Net.open(addr, p, pin == null || pin.isEmpty() ? null : pin, method, path, readTimeout, connect);
+                    Object[] hp = Addr.hostPort(addr, p);
+                    Net.Http c = Net.open((String) hp[0], (Integer) hp[1], pin == null || pin.isEmpty() ? null : pin, method, path, readTimeout, connect);
                     // A pairing from before 0.13 learned the PC's key (over Tailscale): pinned from now on.
                     if ((pin == null || pin.isEmpty()) && c.seen != null) {
                         if (e == null) fp = c.seen; else e.fp = c.seen;

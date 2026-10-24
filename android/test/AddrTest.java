@@ -63,6 +63,13 @@ public class AddrTest {
         check(f.equals(Addr.fp(f.toUpperCase())) && f.equals(Addr.fp("01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef")), "fingerprints normalised");
         check(Addr.fp("abc") == null && Addr.fp(null) == null && Addr.fp(f + "0") == null && Addr.fp(f.replace('a', 'g')) == null, "bad fingerprints");
 
+        // Addresses with a port of their own (the router's mapping).
+        check("203.0.113.7".equals(Addr.hostPort("203.0.113.7:47931", 47930)[0]) && (Integer) Addr.hostPort("203.0.113.7:47931", 47930)[1] == 47931, "IPv4 with a port");
+        check((Integer) Addr.hostPort("10.0.0.5", 47930)[1] == 47930, "IPv4 alone: the hub's port");
+        check("fd00::5".equals(Addr.hostPort("fd00::5", 47930)[0]) && (Integer) Addr.hostPort("fd00::5", 47930)[1] == 47930, "IPv6 alone");
+        check("2001:db8::5".equals(Addr.hostPort("[2001:db8::5]:47931", 1)[0]) && (Integer) Addr.hostPort("[2001:db8::5]:47931", 1)[1] == 47931, "IPv6 with a port");
+        check((Integer) Addr.hostPort("desk.local", 5)[1] == 5, "a name");
+
         if (failed > 0) { System.err.println(failed + " AddrTest check(s) failed"); System.exit(1); }
         System.out.println("AddrTest ok");
     }

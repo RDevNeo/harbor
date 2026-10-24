@@ -163,6 +163,9 @@ impl Net {
     }
 }
 
+/// This Harbor's hub, for code without the App at hand (remote.rs's device list).
+pub static HUB: std::sync::OnceLock<Arc<Hub>> = std::sync::OnceLock::new();
+
 /// What the listener threads and the UI thread share.
 pub struct Hub {
     pub enabled: AtomicBool,
@@ -698,6 +701,10 @@ pub fn response(status: u16, ctype: &str, len: usize, extra: &str) -> String {
     )
 }
 
+pub fn send_json_to(w: &mut impl Write, status: u16, v: &Value) {
+    send_json(w, status, v)
+}
+
 fn send_json(w: &mut impl Write, status: u16, v: &Value) {
     let body = serde_json::to_vec(v).unwrap_or_default();
     let _ = w.write_all(response(status, "application/json; charset=utf-8", body.len(), "").as_bytes());
@@ -751,6 +758,10 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
     if let Err(e) = crate::tls::my_server() {
         eprintln!("harbor: no TLS identity, only 127.0.0.1 will work: {e}");
     }
+    // The router opens the port for the internet (portmap.rs), unless Settings says not to.
+    if std::env::var("HARBOR_LISTEN").is_err() {
+        crate::portmap::start(*hub.port.lock().unwrap(), || crate::store::Store::open().ok().and_then(|s| s.get("net_map")).as_deref() != Some("0"));
+    }
     std::thread::spawn(move || {
         let port = *hub.port.lock().unwrap();
         let mut bound: Vec<String> = vec![];
@@ -774,13 +785,24 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
                     Err(e) => error = format!("{ip}:{port}: {e}"),
                 }
             }
-            let addrs = crate::tls::lan_addrs().iter().map(|a| a.to_string()).collect();
-            *hub.net.lock().unwrap() = Net { addrs, bound: bound.clone(), error };
+            *hub.net.lock().unwrap() = Net { addrs: phone_addrs(port), bound: bound.clone(), error };
             wake();
             // Addresses change (Wi-Fi, DHCP): look again now and then.
             std::thread::sleep(Duration::from_secs(20));
         }
     });
+}
+
+/// Where phones should try this PC, in order: its network's addresses (IPv4), the port the router
+/// maps for the internet ("ip:port" when it's another port), then IPv6, then Tailscale's.
+pub fn phone_addrs(port: u16) -> Vec<String> {
+    let all = crate::tls::lan_addrs();
+    let mut v: Vec<String> = all.iter().filter(|a| a.is_ipv4() && !crate::tls::tailnet_ip(**a)).map(|a| a.to_string()).collect();
+    if let Some(p) = crate::portmap::public_addr().and_then(|p| p.parse::<std::net::SocketAddr>().ok()) {
+        v.push(if p.port() == port { p.ip().to_string() } else { p.to_string() });
+    }
+    v.extend(all.iter().filter(|a| a.is_ipv6() || crate::tls::tailnet_ip(**a)).map(|a| a.to_string()));
+    v
 }
 
 /// How a connection reached the listener.
@@ -881,6 +903,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         if !known {
             return;
         }
+        crate::portmap::reached(ip);
     }
     let peer = Peer { ip, via };
     let mut r = BufReader::new(conn);
@@ -893,6 +916,13 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         return send_json(r.get_mut(), 426, &json!({ "error": "Harbor answers other devices over TLS only" }));
     }
     let segs = req.segments();
+    // A stream to another PC of the mesh through this one (relay.rs).
+    if segs.first() == Some(&"relay") && req.method == "POST" {
+        if !hub.mesh.on.load(Ordering::SeqCst) {
+            return send_json(r.get_mut(), 403, &json!({ "error": "this PC doesn't share its chats (Settings › Devices)" }));
+        }
+        return crate::relay::serve(r, &peer, &req, hub);
+    }
     // Another PC's Harbor (mesh.rs): known by its key, not a token.
     if segs.first() == Some(&"mesh") {
         let reply = crate::mesh::serve(&peer, &req, &mut r, hub, tx, wake);
@@ -1431,7 +1461,7 @@ fn icon_name(h: &crate::remote::Host) -> &'static str {
     }
     match h.os.as_str() {
         "macOS" => "laptop",
-        "" if !h.tailscale() => "terminal",
+        "" if !h.found() => "terminal",
         _ => "monitor",
     }
 }

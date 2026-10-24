@@ -5,6 +5,26 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Harbor finds your other PCs on the network by itself: Settings › Devices lists the Harbors it
+  hears with a Pair button, and `harbor mesh join <name> <code>` pairs by name.
+- Your phone and PCs away from home can reach a PC: Harbor asks the router to open its port
+  (UPnP, NAT-PMP or PCP, IPv4 and an IPv6 pinhole), uses global IPv6 addresses directly, and hands
+  phones and PCs every address in order (network first, then public). Settings › Phones and
+  Devices say plainly whether this PC is reachable from outside and why not, and note when a
+  paired device actually got in from the internet; `harbor net` checks from a terminal.
+- A PC that can't reach another one directly goes through a third PC of yours that can: the
+  stream is relayed, still encrypted end to end with the far PC's key. Only paired PCs and phones
+  may use a relay, only to PCs paired with it.
+- `harbor nc`: remote devices that are your paired PCs are reached through it (their network
+  address, or through another PC), in place of `tailscale nc`.
+
+### Changed
+- Settings › Devices lists your paired PCs as remote devices; Tailscale's list is only an extra
+  while it's installed, and the Tailscale section is gone.
+- The firewall fix also lets network discovery (UDP 47930) in, and Settings offers to let the
+  internet in to Harbor's port where you want that.
+
 ## [0.13.1] - 2026-10-24
 
 ### Fixed

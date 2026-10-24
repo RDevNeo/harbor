@@ -1,5 +1,5 @@
 //! Devices in the UI: the composer's "runs on" picker and Settings › Devices
-//! (Tailscale, SSH defaults, every device's name, icon, folder and bridge).
+//! (your paired PCs, SSH defaults, every device's name, icon, folder and bridge).
 
 use crate::app::{App, Popup, Sel, Tab, View};
 use crate::icons as ic;
@@ -175,7 +175,7 @@ impl App {
                 }
             });
             if devs.is_empty() {
-                w::subtle(ui, "  No other PCs yet: Tailscale finds them, or add one by SSH.", "label-12");
+                w::subtle(ui, "  No other PCs yet: pair one in Settings › Devices, or add one by SSH.", "label-12");
                 ui.add_space(4.0);
             }
             ui.add_space(4.0);
@@ -188,8 +188,8 @@ impl App {
         });
         match pick {
             Some(Some(id)) => {
-                // A Tailscale PC picked for the first time is saved, so the chat finds it
-                // even before Tailscale answers after a restart.
+                // A found PC picked for the first time is saved, so the chat finds it even
+                // before the list is read again after a restart.
                 if let Some((h, _)) = devs.iter().find(|(h, _)| h.id == id) {
                     if !self.remote.devices.iter().any(|d| d.id == id) {
                         self.remote.devices.push(h.clone());
@@ -262,44 +262,6 @@ impl App {
             }
         }
 
-        section(ui, "Tailscale");
-        let mut via = self.remote.tailscale;
-        rows(ui, |ui| {
-            let (desc, tone, badge) = if !net.installed {
-                ("Not installed. With it, your PCs on the tailnet show up here by themselves.".to_string(), Tone::Gray, "Not installed")
-            } else if net.state == "Running" {
-                (format!("Connected as {} · {} other PCs on the tailnet", net.me, net.peers.len()), Tone::Green, "Connected")
-            } else if net.state.is_empty() {
-                ("Installed, but tailscaled didn't answer.".into(), Tone::Amber, "Not running")
-            } else {
-                (format!("Installed · {}", net.state), Tone::Amber, "Not connected")
-            };
-            w::setting_row(ui, "Tailscale", &desc, |ui| {
-                if w::btn(&format!("{}  Refresh", ic::REFRESH)).sm().ghost().show(ui).clicked() {
-                    remote::refresh(&ctx);
-                }
-                if !net.installed {
-                    if w::btn("Install").sm().primary().show(ui).clicked() {
-                        let cmd = "curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up && echo && echo 'Done. Press Refresh in Harbor.'";
-                        self.open_terminal(&ctx, "Install Tailscale", crate::store::home(), vec!["bash".into(), "-lc".into(), cmd.into()], vec![]);
-                    }
-                } else if net.state != "Running" && w::btn("Connect").sm().primary().show(ui).clicked() {
-                    let cmd = "sudo tailscale up && echo && echo 'Done. Press Refresh in Harbor.'";
-                    self.open_terminal(&ctx, "Tailscale", crate::store::home(), vec!["bash".into(), "-lc".into(), cmd.into()], vec![]);
-                }
-                w::badge(ui, badge, tone);
-            });
-            w::separator(ui);
-            w::setting_row(
-                ui,
-                "Connect through Tailscale",
-                "ssh reaches Tailscale devices through `tailscale nc`: no MagicDNS needed, and it works with Tailscale SSH on the device. Off, plain ssh to their MagicDNS names.",
-                |ui| w::toggle(ui, &mut via),
-            );
-        });
-        self.remote.tailscale = via;
-
-        ui.add_space(12.0);
         self.mesh_settings(ui);
         section(ui, "SSH");
         let mut port = if self.remote.port == 0 { String::new() } else { self.remote.port.to_string() };
@@ -325,7 +287,7 @@ impl App {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             if devs.is_empty() {
-                Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "None yet. Tailscale PCs appear here by themselves; add any other one by SSH below.", "label-13"));
+                Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "None yet. PCs you pair with this one appear here by themselves; add any other one by SSH below.", "label-13"));
             }
             for (i, (h, online)) in devs.iter().enumerate() {
                 if i > 0 {
@@ -407,7 +369,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.horizontal(|ui| {
                         w::text(ui, h.label(), "strong-14");
-                        w::badge(ui, if h.tailscale() { "Tailscale" } else { "SSH" }, Tone::Gray);
+                        w::badge(ui, if h.found() { "Your PC" } else { "SSH" }, Tone::Gray);
                         match online {
                             Some(true) => w::badge(ui, "Online", Tone::Green),
                             Some(false) => w::badge(ui, "Offline", Tone::Gray),
@@ -431,9 +393,9 @@ impl App {
                     }
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let label = if h.tailscale() { if h.hidden { "Show" } else { "Hide" } } else { "Remove" };
-                    if w::btn(label).sm().variant(if h.tailscale() { w::Variant::Ghost } else { w::Variant::GhostDestructive }).show(ui).clicked() {
-                        if h.tailscale() {
+                    let label = if h.found() { if h.hidden { "Show" } else { "Hide" } } else { "Remove" };
+                    if w::btn(label).sm().variant(if h.found() { w::Variant::Ghost } else { w::Variant::GhostDestructive }).show(ui).clicked() {
+                        if h.found() {
                             e.hidden = !e.hidden;
                         } else {
                             remove = true;

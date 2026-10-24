@@ -80,6 +80,10 @@ impl App {
             }
         }
 
+        if on {
+            self.outside_section(ui);
+        }
+
         section(ui, "Pair a phone");
         w::subtle(ui, "Each phone gets its own key. Scan the code with the phone's camera app, or tap + in Harbor for Android to scan it, paste the link or type the details shown beside it.", "copy-14");
         ui.add_space(8.0);
@@ -240,6 +244,47 @@ impl App {
 }
 
 impl App {
+    /// "From outside your network": whether the router opened Harbor's port (portmap.rs), IPv6,
+    /// proof that a paired device got in from the internet, and the firewall.
+    pub fn outside_section(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let port = *self.api.hub.port.lock().unwrap();
+        section(ui, "From outside your network");
+        let mut map = self.store.get("net_map").as_deref() != Some("0");
+        let was = map;
+        let mut fix = false;
+        rows(ui, |ui| {
+            w::setting_row(
+                ui,
+                "Open a port on my router",
+                "Asks your router (UPnP, NAT-PMP or PCP) to let your phone on mobile data and your PCs elsewhere reach this PC. From the internet, Harbor answers only phones and PCs paired with it.",
+                |ui| w::toggle(ui, &mut map),
+            );
+            for (title, detail, good) in crate::portmap::summary(port) {
+                w::separator(ui);
+                w::setting_row(ui, &title, &detail, |ui| {
+                    w::badge(ui, if good { "Yes" } else { "No" }, if good { Tone::Green } else { Tone::Gray });
+                });
+            }
+            if crate::tls::firewall_blocks_internet(port) {
+                w::separator(ui);
+                w::setting_row(ui, "The firewall blocks the internet", &format!("This PC's firewall (ufw) drops port {port} from outside your network, even where the router lets it in."), |ui| {
+                    if w::btn("Allow from the internet").sm().outline().show(ui).clicked() {
+                        fix = true;
+                    }
+                });
+            }
+        });
+        if map != was {
+            self.store.set("net_map", if map { "1" } else { "0" });
+        }
+        if fix {
+            let cmd = format!("{} && echo && echo 'Done: paired devices can reach Harbor from the internet where your router lets them.'", crate::tls::firewall_fix_internet(port));
+            self.open_terminal(&ctx, "Firewall", crate::store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs(5));
+    }
+
     /// Opens a terminal that lets the local network through ufw to Harbor's port (it asks for
     /// the password there).
     pub fn open_firewall(&mut self, ctx: &egui::Context) {

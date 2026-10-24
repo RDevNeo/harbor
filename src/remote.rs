@@ -1,5 +1,6 @@
-//! Remote devices that run agents: the user's PCs on Tailscale (`tailscale status`)
-//! and SSH hosts added by hand. A chat pinned to one runs its Claude Code turns there,
+//! Remote devices that run agents: the user's other PCs paired with this Harbor (mesh.rs;
+//! while Tailscale is installed, its PCs too) and SSH hosts added by hand. ssh reaches the
+//! paired ones through `harbor nc` (relay.rs): their network address, or another paired PC. A chat pinned to one runs its Claude Code turns there,
 //! over the system `ssh`, in that PC's folder and as the account picked in Harbor (its
 //! login travels on stdin, see oauth.rs; the device's own login only when the account
 //! isn't signed in on this PC). The detached runner (detach.rs) runs `ssh` instead of
@@ -19,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-/// How old the Tailscale peer list may get while something shows it.
+/// How old the list of PCs may get while something shows it.
 const REFRESH: Duration = Duration::from_secs(15);
 /// The kv key the settings live under.
 const KEY: &str = "remote_devices";
@@ -31,8 +32,8 @@ fn yes() -> bool {
 /// Settings › Devices, stored as JSON in the kv table.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
-    /// Tailscale devices are reached through `tailscale nc` (ssh's ProxyCommand), so
-    /// they connect even without MagicDNS and work with Tailscale SSH on the device.
+    /// (Before 0.14: "connect through Tailscale". PCs found by Harbor always go through
+    /// `harbor nc` now; kept so old settings read.)
     #[serde(default = "yes")]
     pub tailscale: bool,
     /// Defaults for every device; empty / 0 leave it to ssh and ~/.ssh/config.
@@ -42,7 +43,7 @@ pub struct Config {
     pub key: String,
     #[serde(default)]
     pub port: u16,
-    /// Devices the user added or changed; Tailscale PCs not in here show with defaults.
+    /// Devices the user added or changed; PCs Harbor found that aren't in here show with defaults.
     #[serde(default)]
     pub devices: Vec<Host>,
 }
@@ -55,12 +56,13 @@ impl Default for Config {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Host {
-    /// "ts:<MagicDNS label>" for Tailscale peers, "ssh:<n>" for hosts added by hand.
+    /// A paired PC's peer id ("ts:<name>" for PCs paired before 0.13, "pc:<name>"), a Tailscale
+    /// peer's "ts:<MagicDNS label>", or "ssh:<n>" for hosts added by hand.
     pub id: String,
     /// Shown name; empty: the address.
     #[serde(default)]
     pub name: String,
-    /// What ssh connects to: a MagicDNS name, an IP or a ~/.ssh/config alias.
+    /// What ssh connects to: an IP, a name or a ~/.ssh/config alias (found PCs: through `harbor nc`).
     #[serde(default)]
     pub host: String,
     #[serde(default)]
@@ -84,12 +86,12 @@ pub struct Host {
     /// PC's project, through the bridge (workspace.rs), so edits and git stay together.
     #[serde(default)]
     pub device_files: bool,
-    /// Not offered in the composer (Tailscale PCs can't be deleted, only hidden).
+    /// Not offered in the composer (found PCs can't be deleted, only hidden).
     #[serde(default)]
     pub hidden: bool,
     #[serde(default)]
     pub os: String,
-    /// A Tailscale peer's other names (its IPs and machine name), for ~/.ssh/config.
+    /// A found PC's other names (its IPs and machine name), for ~/.ssh/config.
     #[serde(skip)]
     pub aka: Vec<String>,
 }
@@ -98,14 +100,15 @@ impl Host {
     pub fn label(&self) -> &str {
         match () {
             _ if !self.name.is_empty() => &self.name,
-            // A MagicDNS name by its machine name: "desk.example.ts.net" → "desk".
-            _ if self.tailscale() => self.host.split('.').next().unwrap_or(&self.host),
+            // A found PC by its id's name, a MagicDNS name by its machine name.
+            _ if self.found() => self.id.split_once(':').map(|(_, n)| n).unwrap_or(&self.host),
             _ => &self.host,
         }
     }
 
-    pub fn tailscale(&self) -> bool {
-        self.id.starts_with("ts:")
+    /// A PC Harbor found (paired, or on Tailscale), not one added by hand.
+    pub fn found(&self) -> bool {
+        self.id.starts_with("ts:") || self.id.starts_with("pc:")
     }
 }
 
@@ -128,7 +131,7 @@ pub fn glyph(h: &Host) -> &'static str {
     }
     match h.os.as_str() {
         "macOS" => crate::icons::LAPTOP,
-        "" if !h.tailscale() => crate::icons::TERMINAL,
+        "" if !h.found() => crate::icons::TERMINAL,
         _ => crate::icons::MONITOR,
     }
 }
@@ -215,15 +218,58 @@ pub fn parse_status(v: &Value) -> Tailnet {
     }
 }
 
+/// The PCs paired with this Harbor (keys on the allowed list), with what the mesh knows of them.
+pub fn paired_pcs(allowed: &[crate::mesh::Allowed], peers: &HashMap<String, crate::mesh::Peer>) -> Vec<Peer> {
+    allowed
+        .iter()
+        .filter(|a| !a.fp.is_empty() && !a.id.is_empty())
+        .map(|a| {
+            let p = peers.get(&a.id);
+            let mut ips: Vec<String> = a.addrs.iter().chain(p.map(|p| p.addrs.iter()).into_iter().flatten()).filter_map(|x| x.parse::<std::net::SocketAddr>().ok()).map(|x| x.ip().to_string()).collect();
+            ips.dedup();
+            // The network's address first: ssh shows it, `harbor nc` tries them all.
+            ips.sort_by_key(|i| i.parse().is_ok_and(crate::tls::tailnet_ip));
+            let name = if a.name.is_empty() { crate::mesh::label(&a.id) } else { a.name.clone() };
+            Peer {
+                id: a.id.clone(),
+                name: name.clone(),
+                dns: String::new(),
+                ip: ips.first().cloned().unwrap_or_default(),
+                ips,
+                host_name: crate::mesh::label(&a.id),
+                os: "linux".into(),
+                online: p.is_some_and(|p| p.online),
+            }
+        })
+        .collect()
+}
+
+/// Every PC Harbor knows of: the paired ones, then (while it's installed) Tailscale's others.
 fn read_tailnet() -> Tailnet {
-    if crate::providers::which("tailscale").is_none() {
-        return Tailnet::default();
+    let mut net = match crate::api::HUB.get() {
+        Some(hub) => {
+            let allowed = hub.mesh.allowed.lock().unwrap().clone();
+            let peers = hub.mesh.peers.lock().unwrap().clone();
+            Tailnet { peers: paired_pcs(&allowed, &peers), ..Default::default() }
+        }
+        None => Tailnet::default(),
+    };
+    if crate::providers::which("tailscale").is_some() {
+        let out = Command::new("tailscale").args(["status", "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let ts = match out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()) {
+            Some(v) => parse_status(&v),
+            None => Tailnet { installed: true, ..Default::default() },
+        };
+        net.installed = true;
+        net.state = ts.state;
+        net.me = ts.me;
+        for p in ts.peers {
+            if !net.peers.iter().any(|q| q.id == p.id) {
+                net.peers.push(p);
+            }
+        }
     }
-    let out = Command::new("tailscale").args(["status", "--json"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
-    match out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()) {
-        Some(v) => parse_status(&v),
-        None => Tailnet { installed: true, ..Default::default() },
-    }
+    net
 }
 
 static TAILNET: LazyLock<Mutex<Option<(Instant, Tailnet)>>> = LazyLock::new(Default::default);
@@ -252,7 +298,7 @@ pub fn refresh(ctx: &eframe::egui::Context) {
     });
 }
 
-/// Every device: the configured ones, then Tailscale PCs not configured yet (with
+/// Every device: the configured ones, then found PCs not configured yet (with
 /// defaults). Each with whether it's online (None: unknown, an SSH host never tested).
 pub fn devices(cfg: &Config, net: &Tailnet) -> Vec<(Host, Option<bool>)> {
     let mut v: Vec<(Host, Option<bool>)> = cfg
@@ -269,7 +315,7 @@ pub fn devices(cfg: &Config, net: &Tailnet) -> Vec<(Host, Option<bool>)> {
         .collect();
     for p in &net.peers {
         if !cfg.devices.iter().any(|h| h.id == p.id) {
-            let host = Host { id: p.id.clone(), host: if p.dns.is_empty() { p.ip.clone() } else { p.dns.clone() }, os: p.os.clone(), bridge: true, aka: aka(p), ..Default::default() };
+            let host = Host { id: p.id.clone(), host: if p.dns.is_empty() { p.ip.clone() } else { p.dns.clone() }, name: if p.dns.is_empty() { p.name.clone() } else { String::new() }, os: p.os.clone(), bridge: true, aka: aka(p), ..Default::default() };
             v.push((host, Some(p.online)));
         }
     }
@@ -320,8 +366,11 @@ pub fn ssh_opts(cfg: &Config, h: &Host) -> Vec<String> {
         .collect();
     // Its own connection (no ControlMaster): its port forward lives and dies with it.
     v.extend(["-o".into(), "ControlMaster=no".into(), "-o".into(), "ControlPath=none".into()]);
-    if cfg.tailscale && h.tailscale() && crate::providers::which("tailscale").is_some() {
-        v.extend(["-o".into(), "ProxyCommand=tailscale nc %h %p".into()]);
+    // PCs Harbor found go through `harbor nc`: their network address, or another paired PC.
+    if h.found() {
+        if let Some(exe) = crate::update::self_exe() {
+            v.extend(["-o".into(), format!("ProxyCommand={} nc --device {} %h %p", quote(&exe.to_string_lossy()), quote(&h.id))]);
+        }
     }
     let found = ssh_config_entry(h).unwrap_or_default();
     let port = ssh_port(cfg, h);

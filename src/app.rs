@@ -280,6 +280,7 @@ impl App {
             crate::api::load_tokens(store_ref),
             store_ref.get("api_port").and_then(|p| p.parse().ok()).unwrap_or(crate::api::DEFAULT_PORT),
         )));
+        let _ = crate::api::HUB.set(api.hub.clone());
         let mut app = Self {
             repos: store.repos(),
             chats: store.chats(),

@@ -28,6 +28,26 @@ final class Addr {
         return How.REFUSE;
     }
 
+    /** An address as a hub lists it: "10.0.0.5", "fd00::5", or with a port of its own
+     *  ("203.0.113.7:47931", "[2001:db8::5]:47931", the port its router maps). {host, port}. */
+    static Object[] hostPort(String a, int port) {
+        if (a.startsWith("[")) {
+            int e = a.indexOf(']');
+            if (e > 0) {
+                String h = a.substring(1, e);
+                if (a.length() > e + 2 && a.charAt(e + 1) == ':') {
+                    try { return new Object[] { h, Integer.parseInt(a.substring(e + 2)) }; } catch (NumberFormatException ignored) { }
+                }
+                return new Object[] { h, port };
+            }
+        }
+        int c = a.indexOf(':');
+        if (c > 0 && c == a.lastIndexOf(':')) {
+            try { return new Object[] { a.substring(0, c), Integer.parseInt(a.substring(c + 1)) }; } catch (NumberFormatException ignored) { }
+        }
+        return new Object[] { a, port };
+    }
+
     /** A fingerprint as the pairing link or a person gives it: 64 hex characters (spaces, colons
      *  and dashes dropped), lowercase; null otherwise. */
     static String fp(String s) {

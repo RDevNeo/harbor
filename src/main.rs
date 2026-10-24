@@ -13,6 +13,7 @@ mod clipboard;
 mod control;
 mod detach;
 mod devices;
+mod discover;
 mod favicon;
 mod git;
 mod icons;
@@ -31,11 +32,13 @@ mod mesh;
 mod oauth;
 mod pages;
 mod phonesui;
+mod portmap;
 mod prdetail;
 mod procs;
 mod prs;
 mod providers;
 mod queue;
+mod relay;
 mod reload;
 mod remote;
 mod remoteui;
@@ -75,6 +78,12 @@ fn main() -> eframe::Result {
     if args.get(1).map(String::as_str) == Some("mcp") {
         mcpshim::run(&args[2..]);
         return Ok(());
+    }
+    if args.get(1).map(String::as_str) == Some("net") {
+        std::process::exit(portmap::cli());
+    }
+    if args.get(1).map(String::as_str) == Some("nc") {
+        std::process::exit(relay::cli(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("mesh") {
         std::process::exit(mesh::cli(&args[2..]));

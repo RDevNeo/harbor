@@ -899,11 +899,9 @@ struct AppUpdate {
 
 impl AppUpdate {
     fn new(dev: Device, need: i64, then: Then, devices: &[Device], wake: Wake) -> Self {
-        // This PC's tailnet address: the phone reaches it whatever its DNS does.
+        // This PC's address: the phone reaches it whatever its DNS does.
         let host = devices.iter().find(|d| d.me && !d.ip.is_empty()).map(|d| d.ip.clone()).unwrap_or_else(|| {
-            Command::new("tailscale").args(["ip", "-4"]).output().ok()
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_string))
-                .unwrap_or_else(|| "localhost".into())
+            crate::tls::lan_addrs().into_iter().find(|a| a.is_ipv4()).map(|a| a.to_string()).unwrap_or_else(|| "localhost".into())
         });
         let have = dev.app.as_ref().and_then(|a| a["app"].as_i64()).unwrap_or(0);
         let mut u = Self {

@@ -9,11 +9,14 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 - **Composer**: model picker (favourites, provider rail with account badges, search, Ctrl+1–9),
   reasoning effort, access level (full / auto-edit / read only), the device it runs on, attachments
   (button, paste or drag and drop).
-- **Remote devices**: a chat can run its Claude Code agent on another PC (Tailscale peers are found by
+- **Remote devices**: a chat can run its Claude Code agent on another PC (your paired PCs show up by
   themselves, others are added by SSH). See below.
 - **Your phone and other PCs**: Harbor for Android (`android/`) and Harbor on your other PCs share
   chats over your own network, every connection mutual TLS pinned to each device's own key; pair a
-  phone with a QR code and a PC with a one-time code (`harbor mesh pair`). No VPN or other software.
+  phone with a QR code and a PC with a one-time code (`harbor mesh pair`). PCs find each other on
+  the network, ask the router to open Harbor's port (UPnP, NAT-PMP, PCP; `harbor net` shows the
+  result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
+  or other software.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks.
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
@@ -70,10 +73,13 @@ or `$XDG_DATA_HOME/remote-pcs/remote-pcs.py`. Without it, Devices isn't offered.
 
 ### Running agents on another PC
 
-Settings › Devices lists the PCs on your tailnet (`tailscale status --json`) and SSH hosts you add, with
+Settings › Devices lists the PCs paired with this one (and, while Tailscale is installed, its other PCs)
+and SSH hosts you add, with
 a name, icon, user/key/port, the folder agents start in and a Test button. The composer's device menu
 ("This PC" by default) pins a new chat to one of them; a started chat stays where its session is.
 
+- ssh reaches a paired PC through `harbor nc` (its ProxyCommand): the PC's address on your network,
+  or a stream through another paired PC that reaches it.
 - The turn runs `ssh <device> claude -p …` under Harbor's detached runner, so it streams, takes messages
   mid-turn and survives a Harbor reload like a local turn. On the device it runs in a login shell, in the
   device's folder (the project's path mirrored under its home, or the device's folder + project name),

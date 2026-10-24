@@ -49,7 +49,10 @@ The QR code in Settings › Phones encodes
 harbor://pair?host=<address>&port=<port>&token=<token>&name=<hub name>&ip=<address>&fp=<hub fingerprint>&addrs=<address>,<address>,…
 ```
 
-all values percent-encoded. `addrs` are the hub's network addresses (IPv4 first, at most 6);
+all values percent-encoded. `addrs` are the hub's addresses (at most 6) in the order to try them:
+its network's IPv4, the public address its router maps for it (`ip:port` when the router gave
+another port), IPv6 (global ones reach it from mobile data where the router lets them in), then
+Tailscale's while it's installed. An entry is `ip`, `ip:port` or `[ipv6]:port`;
 the app tries the one that answered last, then each of them, then `host` and `ip` (which apps
 before 0.13 use: a Tailscale address while the PC has one). Every try is pinned to `fp`; a hub
 that answers with another key is never sent the token. The same values are shown as text under
@@ -365,6 +368,29 @@ the PC used last. When that PC can't be reached, or a call to it fails mid-way, 
 tried; the one that answers is used from then on (shown as "via <name>"). Revisions are per hub:
 after a switch, start the long-poll over and reload. Only reads are retried at once; a write that
 may have reached a PC isn't sent twice.
+
+### Relay (`/relay/v1/…`)
+
+A PC (or phone) that can't reach a peer directly can go through another PC of the mesh that
+can: `POST /relay/v1/<peer fingerprint>/<port>` with an empty body, over that PC's pinned TLS.
+The answer is `HTTP/1.1 200 Connection established` and an empty line, and from then on the
+connection carries a raw byte stream to the peer; the caller runs a second TLS session inside
+it, pinned to the peer's key (the relay only sees ciphertext). Allowed: a PC on the relay's
+allowed list (any port of the peer: `harbor nc` uses it for ssh), or a paired phone with its
+token (only the peer's Harbor port). Only to a PC on the relay's allowed list, at the addresses
+the relay knows for it, never through a second relay. `403` not allowed, `404` not a paired PC,
+`502` the relay can't reach it either. Idle streams close after 15 minutes.
+
+The phone doesn't need it: every hub serves every chat (writes go to the chat's PC over the
+mesh), so moving to any hub that answers is enough.
+
+### Finding PCs on the network
+
+While sharing is on, each Harbor sends a UDP datagram every 30 s (and at once when asked) to
+`239.255.71.30:47930` and the broadcast address, port 47930:
+`{"harbor": 1, "t": "here"|"ask", "id", "name", "fp", "port", "v"}`. Nothing in it is trusted:
+for a paired PC it's one more address to try (pinned to its key), an unpaired one is listed in
+Settings › Devices to pair with a code, and `harbor mesh join <name> <code>` looks names up this way.
 
 ### Hub to hub (`/mesh/v1/…`)
 

@@ -102,20 +102,25 @@ pub struct Peer {
     /// Every address it says it has ("host:port").
     #[serde(default)]
     pub addrs: Vec<String>,
+    /// Reached through another PC (relay.rs), when it doesn't answer directly.
+    #[serde(skip)]
+    pub via: Option<Box<Dest>>,
 }
 
 impl Peer {
     pub fn dest(&self) -> Dest {
-        Dest { addr: self.addr.clone(), fp: self.fp.clone() }
+        Dest { addr: self.addr.clone(), fp: self.fp.clone(), via: self.via.clone() }
     }
 }
 
 /// Where a request goes: an address, and the key that must answer there ("" = plain HTTP,
-/// only to 127.0.0.1 or a Tailscale address).
+/// only to 127.0.0.1 or a Tailscale address); `via`: through that PC (relay.rs), `addr` then
+/// only gives the port.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Dest {
     pub addr: String,
     pub fp: String,
+    pub via: Option<Box<Dest>>,
 }
 
 /// What the listener threads, the peer workers and the UI thread share (in `api::Hub`).
@@ -247,9 +252,16 @@ fn clean_addrs<'a>(v: impl IntoIterator<Item = &'a Value>) -> Vec<String> {
     out
 }
 
-/// This PC's addresses as peers should try them ("host:port").
+/// This PC's addresses as peers should try them ("host:port"): its network's, the port its router
+/// maps for the internet, IPv6, Tailscale's.
 pub fn my_addrs(port: u16) -> Vec<String> {
-    crate::tls::lan_addrs().into_iter().map(|ip| crate::tls::host_port(ip, port)).collect()
+    api::phone_addrs(port)
+        .into_iter()
+        .map(|a| match a.parse::<std::net::IpAddr>() {
+            Ok(ip) => crate::tls::host_port(ip, port),
+            Err(_) => a,
+        })
+        .collect()
 }
 
 impl Shared {
@@ -281,7 +293,7 @@ impl Shared {
     }
 
     /// Where a key may answer: where it last did, what it said, what was learned. Deduplicated.
-    fn addrs_of(&self, fp: &str) -> Vec<String> {
+    pub fn addrs_of_fp(&self, fp: &str) -> Vec<String> {
         let mut v: Vec<String> = vec![];
         if let Some(p) = self.peers.lock().unwrap().values().find(|p| p.fp == fp) {
             v.push(p.addr.clone());
@@ -487,7 +499,7 @@ fn who(shared: &Shared, p: &api::Peer, req: &api::Request) -> Result<(String, Op
         api::Via::Tls(Some(fp)) => {
             if let Some(a) = shared.allowed_fp(fp) {
                 // It's here: one more place to find it (at the port it's known to listen on).
-                let port = a.addrs.iter().chain(shared.addrs_of(fp).iter()).filter_map(|x| x.parse::<std::net::SocketAddr>().ok()).map(|x| x.port()).next().unwrap_or(api::DEFAULT_PORT);
+                let port = a.addrs.iter().chain(shared.addrs_of_fp(fp).iter()).filter_map(|x| x.parse::<std::net::SocketAddr>().ok()).map(|x| x.port()).next().unwrap_or(api::DEFAULT_PORT);
                 shared.hint(fp, crate::tls::host_port(p.ip, port));
                 return Ok((peer_id(&a), None));
             }
@@ -538,6 +550,15 @@ fn who(shared: &Shared, p: &api::Peer, req: &api::Request) -> Result<(String, Op
 /// which is only ever sent to 127.0.0.1 (tests) or a Tailscale address (PCs not upgraded yet).
 pub fn http(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, wait: Duration) -> Result<(u16, Value), String> {
     let sock = dest.addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
+    if let Some(via) = &dest.via {
+        // Through another PC: a raw stream to the peer, then TLS with the peer inside it.
+        if dest.fp.is_empty() || via.via.is_some() {
+            return Err("not sent: a relay needs the peer's key, and only one relay".into());
+        }
+        let outer = crate::relay::open(via, &dest.fp, sock.port(), wait)?;
+        let (inner, _) = crate::tls::handshake(outer, sock.ip(), Some(&dest.fp))?;
+        return exchange(inner, &dest.addr, method, path, body);
+    }
     if dest.fp.is_empty() {
         let ip = crate::tls::canonical(sock.ip());
         if !ip.is_loopback() && !crate::tls::tailnet_ip(ip) {
@@ -547,6 +568,9 @@ pub fn http(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, 
         let _ = s.set_read_timeout(Some(wait));
         let _ = s.set_write_timeout(Some(wait));
         return exchange(s, &dest.addr, method, path, body);
+    }
+    if crate::relay::unreachable(&sock) {
+        return Err("unreachable (HARBOR_UNREACHABLE)".into());
     }
     let (s, _) = crate::tls::connect(&sock, Some(&dest.fp), CONNECT, wait)?;
     exchange(s, &dest.addr, method, path, body)
@@ -998,6 +1022,8 @@ pub fn start(hub: Arc<api::Hub>, tx: Sender<crate::control::Incoming>, wake: imp
             *hub.mesh.me.lock().unwrap() = me;
             *hub.mesh.node.lock().unwrap() = node;
         }
+        let port = *hub.port.lock().unwrap();
+        crate::discover::start(hub.clone(), port);
         let running: Arc<Mutex<HashSet<String>>> = Default::default();
         let mut ts: (Option<Instant>, Option<Value>) = (None, None);
         let mut probed: HashMap<String, Instant> = HashMap::new();
@@ -1091,19 +1117,27 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
                     offline(&known);
                     return; // taken off the list
                 }
-                (shared.addrs_of(fp).into_iter().map(|addr| Dest { addr, fp: fp.clone() }).collect::<Vec<_>>(), true, None)
+                (shared.addrs_of_fp(fp).into_iter().map(|addr| Dest { addr, fp: fp.clone(), via: None }).collect::<Vec<_>>(), true, None)
             }
             Target::Legacy { addr, node, .. } => {
                 if shared.upgraded(&node.id).is_some() {
                     return; // keys swapped: its Key worker takes over
                 }
-                (vec![Dest { addr: addr.clone(), fp: String::new() }], shared.admits(node), Some(node.clone()))
+                (vec![Dest { addr: addr.clone(), fp: String::new(), via: None }], shared.admits(node), Some(node.clone()))
             }
-            Target::Plain(addr) => (vec![Dest { addr: addr.clone(), fp: String::new() }], true, None),
+            Target::Plain(addr) => (vec![Dest { addr: addr.clone(), fp: String::new(), via: None }], true, None),
         };
         let mut answer: Result<(u16, Value), String> = Err("no address known for it yet".into());
         let mut dest = Dest::default();
-        for d in dests {
+        let port = dests.first().and_then(|d| d.addr.parse::<std::net::SocketAddr>().ok()).map(|a| a.port()).unwrap_or(api::DEFAULT_PORT);
+        // Not reachable from here: through each other PC that is (relay.rs).
+        let relays: Vec<Dest> = match &target {
+            Target::Key(fp) => shared.peers.lock().unwrap().values().filter(|p| p.online && !p.fp.is_empty() && p.fp != *fp && p.via.is_none()).map(|p| p.dest()).collect(),
+            _ => vec![],
+        };
+        let fp = dests.first().map(|d| d.fp.clone()).unwrap_or_default();
+        let at = std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), port).to_string();
+        for d in dests.into_iter().chain(relays.into_iter().map(|r| Dest { addr: at.clone(), fp: fp.clone(), via: Some(Box::new(r)) })) {
             answer = http(&d, "GET", "/mesh/v1/hello", None, Duration::from_secs(8));
             if answer.is_ok() {
                 dest = d;
@@ -1166,7 +1200,7 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             let port = hello["port"].as_u64().and_then(|p| u16::try_from(p).ok());
             let mut a = clean_addrs(hello["addrs"].as_array().into_iter().flatten());
             // Peers before 0.13 say only where they were reached.
-            if a.is_empty() || port.is_none() {
+            if (a.is_empty() || port.is_none()) && dest.via.is_none() {
                 a.insert(0, dest.addr.clone());
             }
             a
@@ -1175,7 +1209,8 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             // What it says now goes on file, so it's found after a restart (written when changed).
             let name: String = hello["name"].as_str().unwrap_or("").chars().take(60).collect();
             let a = shared.allowed_fp(fp).unwrap_or_default();
-            let mut keep = vec![dest.addr.clone()];
+            // (Reached through a relay: `dest.addr` is no address of it.)
+            let mut keep = if dest.via.is_none() { vec![dest.addr.clone()] } else { vec![] };
             keep.extend(addrs.iter().filter(|x| **x != dest.addr).cloned());
             if a.id != id || a.name != name || a.addrs != keep {
                 update_allowed(shared, |list| {
@@ -1192,8 +1227,9 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             let p = peers.entry(id.clone()).or_default();
             p.id = id.clone();
             p.name = hello["name"].as_str().unwrap_or("").to_string();
-            p.addr = dest.addr.clone();
+            p.addr = if dest.via.is_some() { p.addr.clone() } else { dest.addr.clone() };
             p.fp = dest.fp.clone();
+            p.via = dest.via.clone();
             p.addrs = addrs;
             if let Target::Legacy { dns, .. } = &target {
                 if !dns.is_empty() {
@@ -1328,7 +1364,7 @@ pub fn forward(dest: Dest, name: String, method: &str, path: Vec<String>, mut bo
 pub fn cli(args: &[String]) -> i32 {
     const USAGE: &str = "usage: harbor mesh status | on | off | pair | join <address> <code> | allow <PC>… | remove <PC>…
   pair             show a one-time code; type it on the other PC (Settings › Devices, or harbor mesh join)
-  join <addr> <code>  pair with the PC at <addr> (its IP, as `harbor mesh pair` there shows) that shows <code>
+  join <PC> <code>  pair with the PC that shows <code>: its name on this network, or its address
   <PC>: the fingerprint of its key (`harbor mesh status` on it), its name if it's listed here,
         or its Tailscale name / node ID (PCs from before 0.13)";
     let Ok(store) = store::Store::open() else {
@@ -1392,7 +1428,19 @@ pub fn cli(args: &[String]) -> i32 {
         Some("join") if args.len() == 3 => {
             let shared = Shared::default();
             *shared.allowed.lock().unwrap() = list;
-            match pair_join(&shared, &args[1], &args[2], port) {
+            // A name: the Harbor of that name on this network.
+            let mut target = args[1].clone();
+            if target.parse::<std::net::IpAddr>().is_err() && target.parse::<std::net::SocketAddr>().is_err() && !target.contains('.') {
+                let heard = crate::discover::ask(Duration::from_millis(1500));
+                match heard.iter().find(|l| l.name.eq_ignore_ascii_case(&target) || label(&l.id).eq_ignore_ascii_case(&target)) {
+                    Some(l) => target = l.addr.clone(),
+                    None => {
+                        eprintln!("harbor: no Harbor called {target} on this network (give its address)");
+                        return 1;
+                    }
+                }
+            }
+            match pair_join(&shared, &target, &args[2], port) {
                 Ok(a) => {
                     store.set("mesh_enabled", "1");
                     println!("paired with {} (key {}); sharing is on", if a.name.is_empty() { &args[1] } else { &a.name }, crate::tls::short(&a.fp));
@@ -1451,6 +1499,14 @@ pub fn cli(args: &[String]) -> i32 {
             println!("listens: {}", if addrs.is_empty() { "(no network)".to_string() } else { addrs.join("  ") });
             if crate::tls::firewall_blocks(port) {
                 println!("firewall: ufw drops port {port} from the network; to let your devices in:\n  {}", crate::tls::firewall_fix(port));
+            }
+            let heard = crate::discover::ask(Duration::from_millis(1500));
+            if !heard.is_empty() {
+                println!("Harbors on this network:");
+                for l in &heard {
+                    let paired = list.iter().any(|a| a.fp == l.fp);
+                    println!("  {:<20} {}  key {}{}", l.name, l.addr, crate::tls::short(&l.fp), if paired { "  (paired)" } else { "" });
+                }
             }
             println!("allowed PCs:");
             if list.is_empty() {
@@ -2344,6 +2400,14 @@ impl App {
                 keys.push((key, p.name.clone()));
             }
         }
+        // Harbors heard on this network (discover.rs) that aren't paired: to pair with a code.
+        let lan = crate::discover::unpaired(self.shared());
+        for l in &lan {
+            if !keys.iter().any(|(n, _)| *n == l.fp) {
+                keys.push((l.fp.clone(), l.name.clone()));
+            }
+        }
+        let mut pair_with: Option<(String, String)> = None;
         let mut change: Option<(String, String, bool)> = None;
         let mut enable: Option<Peer> = None;
         let mut enable_here = false;
@@ -2400,6 +2464,10 @@ impl App {
                         _ if s.is_some_and(|s| s.asked > 0) => "Asks to share chats with this PC: pair it with a code to allow it".into(),
                         _ => "Runs Harbor with sharing on".into(),
                     };
+                    let heard = lan.iter().find(|l| l.fp == *key);
+                    if let Some(l) = heard {
+                        desc = format!("On this network at {} · Harbor {} · pair it with a code", l.addr, l.version);
+                    }
                     if by_fp {
                         desc.push_str(&format!(" · key {}", crate::tls::short(key)));
                     } else if entry.is_some_and(|e| !e.node.is_empty()) || s.is_some_and(|s| !s.node.is_empty()) {
@@ -2427,6 +2495,11 @@ impl App {
                         if real && !by_fp && !listed && !auto && w::btn("Allow").sm().primary().show(ui).clicked() {
                             change = Some((key.clone(), name.clone(), true));
                         }
+                        if let Some(l) = heard.filter(|_| !listed) {
+                            if w::btn("Pair").sm().primary().show(ui).clicked() {
+                                pair_with = Some((l.addr.clone(), l.name.clone()));
+                            }
+                        }
                         if phones_off && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
                             if let Some(p) = peer {
                                 enable = Some(p.clone());
@@ -2447,6 +2520,10 @@ impl App {
         if fix_firewall {
             self.open_firewall(&ctx);
         }
+        if let Some((addr, name)) = pair_with {
+            self.mesh.pair.addr = addr;
+            *self.mesh.pair.result.lock().unwrap() = Some(Ok(format!("Now show a code on {name} (Settings › Devices › Show a code) and type it below.")));
+        }
         if enable_here {
             self.api_set_enabled(true, &ctx);
         }
@@ -2461,6 +2538,9 @@ impl App {
             self.mesh_set_enabled(on, &ctx);
         }
         self.mesh_pair_ui(ui);
+        if on {
+            self.outside_section(ui);
+        }
         ui.add_space(12.0);
     }
 
@@ -2690,7 +2770,7 @@ mod tests {
         assert!(who(&shared, &at(api::Via::Tls(None)), &req).is_err());
         assert!(who(&shared, &at(api::Via::Refused), &req).is_err());
         // A Dest without a key is never sent anywhere but loopback or Tailscale.
-        let e = http(&Dest { addr: "10.0.0.9:47930".into(), fp: String::new() }, "GET", "/mesh/v1/hello", None, Duration::from_secs(1)).unwrap_err();
+        let e = http(&Dest { addr: "10.0.0.9:47930".into(), fp: String::new(), via: None }, "GET", "/mesh/v1/hello", None, Duration::from_secs(1)).unwrap_err();
         assert!(e.contains("not sent"), "{e}");
     }
 

@@ -282,43 +282,48 @@ pub fn my_server() -> Result<Arc<ServerConfig>, String> {
 
 pub type Client = StreamOwned<ClientConnection, TcpStream>;
 
+fn config_for(pin: Option<&str>) -> Result<Arc<ClientConfig>, String> {
+    let id = me()?;
+    static CACHE: LazyLock<Mutex<HashMap<String, Arc<ClientConfig>>>> = LazyLock::new(Default::default);
+    let k = pin.unwrap_or("").to_string();
+    let mut c = CACHE.lock().unwrap();
+    if c.len() > 64 {
+        c.clear();
+    }
+    if let Some(x) = c.get(&k) {
+        return Ok(x.clone());
+    }
+    let x = client_config(id, pin)?;
+    c.insert(k, x.clone());
+    Ok(x)
+}
+
 /// A TLS connection to `addr` that shows this Harbor's certificate and checks the server's
 /// (`pin`; None only for pairing). Also returns the server's fingerprint.
 pub fn connect(addr: &SocketAddr, pin: Option<&str>, connect: Duration, wait: Duration) -> Result<(Client, String), String> {
-    let id = me()?;
-    let cfg = {
-        static CACHE: LazyLock<Mutex<HashMap<String, Arc<ClientConfig>>>> = LazyLock::new(Default::default);
-        let k = pin.unwrap_or("").to_string();
-        let mut c = CACHE.lock().unwrap();
-        if c.len() > 64 {
-            c.clear();
-        }
-        match c.get(&k) {
-            Some(x) => x.clone(),
-            None => {
-                let x = client_config(id, pin)?;
-                c.insert(k, x.clone());
-                x
-            }
-        }
-    };
     let s = TcpStream::connect_timeout(addr, connect).map_err(|e| e.to_string())?;
     let _ = s.set_nodelay(true);
     // The handshake gets the connect timeout too: a port that accepts and says nothing isn't Harbor.
     let _ = s.set_read_timeout(Some(connect.max(Duration::from_secs(3))));
     let _ = s.set_write_timeout(Some(wait));
-    let name = ServerName::IpAddress(addr.ip().into());
-    let conn = ClientConnection::new(cfg, name).map_err(|e| e.to_string())?;
-    let mut tls = StreamOwned::new(conn, s);
-    while tls.conn.is_handshaking() {
-        if let Err(e) = tls.conn.complete_io(&mut tls.sock) {
+    let (tls, fp) = handshake(s, addr.ip(), pin)?;
+    let _ = tls.sock.set_read_timeout(Some(wait));
+    Ok((tls, fp))
+}
+
+/// The client side of a TLS handshake over any stream (a TCP socket, or a relayed stream inside
+/// another TLS session), pinned like [`connect`].
+pub fn handshake<S: Read + Write>(mut s: S, ip: IpAddr, pin: Option<&str>) -> Result<(StreamOwned<ClientConnection, S>, String), String> {
+    let conn = ClientConnection::new(config_for(pin)?, ServerName::IpAddress(ip.into())).map_err(|e| e.to_string())?;
+    let mut conn = conn;
+    while conn.is_handshaking() {
+        if let Err(e) = conn.complete_io(&mut s) {
             let m = e.to_string();
             return Err(if m.contains(WRONG_KEY) { "it answers with another key than the one paired here".into() } else { format!("TLS: {m}") });
         }
     }
-    let fp = tls.conn.peer_certificates().and_then(|c| c.first()).and_then(|c| cert_fp(c)).ok_or("TLS: no certificate")?;
-    let _ = tls.sock.set_read_timeout(Some(wait));
-    Ok((tls, fp))
+    let fp = conn.peer_certificates().and_then(|c| c.first()).and_then(|c| cert_fp(c)).ok_or("TLS: no certificate")?;
+    Ok((StreamOwned::new(conn, s), fp))
 }
 
 // ================================================================== server
@@ -357,14 +362,27 @@ impl Write for Sock {
 /// An accepted connection: TLS, or plain (only ever let through for loopback or legacy).
 pub enum Conn {
     Plain(Sock),
-    Tls(Box<StreamOwned<ServerConnection, Sock>>),
+    /// None once handed on (`take_tls`): a relay pumps it now.
+    Tls(Option<Box<StreamOwned<ServerConnection, Sock>>>),
 }
 
 impl Conn {
     pub fn sock(&self) -> &Sock {
         match self {
             Conn::Plain(s) => s,
-            Conn::Tls(t) => &t.sock,
+            Conn::Tls(Some(t)) => &t.sock,
+            Conn::Tls(None) => unreachable!("a connection handed on"),
+        }
+    }
+
+    /// The TLS connection and its socket, to pump raw bytes through (relay.rs).
+    pub fn take_tls(&mut self) -> Option<(ServerConnection, TcpStream)> {
+        match self {
+            Conn::Tls(t) => t.take().map(|t| {
+                let (c, s) = t.into_parts();
+                (c, s.s)
+            }),
+            Conn::Plain(_) => None,
         }
     }
 
@@ -375,8 +393,8 @@ impl Conn {
     /// The client's fingerprint, when it showed a certificate.
     pub fn peer_fp(&self) -> Option<String> {
         match self {
-            Conn::Plain(_) => None,
-            Conn::Tls(t) => t.conn.peer_certificates().and_then(|c| c.first()).and_then(|c| cert_fp(c)),
+            Conn::Plain(_) | Conn::Tls(None) => None,
+            Conn::Tls(Some(t)) => t.conn.peer_certificates().and_then(|c| c.first()).and_then(|c| cert_fp(c)),
         }
     }
 
@@ -390,7 +408,8 @@ impl Read for Conn {
     fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
         match self {
             Conn::Plain(s) => s.read(b),
-            Conn::Tls(t) => t.read(b),
+            Conn::Tls(Some(t)) => t.read(b),
+            Conn::Tls(None) => Ok(0),
         }
     }
 }
@@ -399,20 +418,22 @@ impl Write for Conn {
     fn write(&mut self, b: &[u8]) -> io::Result<usize> {
         match self {
             Conn::Plain(s) => s.write(b),
-            Conn::Tls(t) => t.write(b),
+            Conn::Tls(Some(t)) => t.write(b),
+            Conn::Tls(None) => Err(io::ErrorKind::BrokenPipe.into()),
         }
     }
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Conn::Plain(s) => s.flush(),
-            Conn::Tls(t) => t.flush(),
+            Conn::Tls(Some(t)) => t.flush(),
+            Conn::Tls(None) => Ok(()),
         }
     }
 }
 
 impl Drop for Conn {
     fn drop(&mut self) {
-        if let Conn::Tls(t) = self {
+        if let Conn::Tls(Some(t)) = self {
             t.conn.send_close_notify();
             let _ = t.flush();
         }
@@ -441,7 +462,109 @@ pub fn accept(s: TcpStream, cfg: impl FnOnce() -> Option<Arc<ServerConfig>>, hea
     while t.conn.is_handshaking() {
         t.conn.complete_io(&mut t.sock)?;
     }
-    Ok(Conn::Tls(Box::new(t)))
+    Ok(Conn::Tls(Some(Box::new(t))))
+}
+
+// ================================================================== pumping
+
+/// Copies bytes both ways between the plaintext of a TLS connection (over `sock`) and another
+/// stream (`other_fd` readable through `other_r`, written through `other_w`) until both sides
+/// are done or nothing moves for `idle`. `pre` is plaintext already read off the TLS side.
+/// Half-closes pass through: the other side ending sends close_notify (and the TLS side is
+/// still read), the TLS side ending calls `other_done` (e.g. shutdown(Write) of a socket).
+/// One thread, poll(2) on both sockets: rustls connections can't be shared between threads.
+#[allow(unsafe_code)] // poll(2)
+#[allow(clippy::too_many_arguments)]
+pub fn pump(conn: impl Into<rustls::Connection>, mut sock: TcpStream, pre: &[u8], other_fd: std::os::fd::RawFd, other_r: &mut dyn Read, other_w: &mut dyn Write, other_done: &dyn Fn(), idle: Duration) {
+    use std::os::fd::AsRawFd;
+    let mut c: rustls::Connection = conn.into();
+    let _ = sock.set_read_timeout(Some(Duration::from_secs(30)));
+    let _ = sock.set_write_timeout(Some(Duration::from_secs(30)));
+    if !pre.is_empty() && other_w.write_all(pre).and_then(|_| other_w.flush()).is_err() {
+        return;
+    }
+    let mut buf = vec![0u8; 32 << 10];
+    let flush_tls = |c: &mut rustls::Connection, sock: &mut TcpStream| -> bool {
+        while c.wants_write() {
+            if c.write_tls(sock).is_err() {
+                return false;
+            }
+        }
+        true
+    };
+    // (TLS side finished sending, other side finished sending)
+    let (mut tls_eof, mut other_eof) = (false, false);
+    loop {
+        if !flush_tls(&mut c, &mut sock) {
+            return;
+        }
+        // Plaintext rustls already holds goes first (poll wouldn't see it).
+        while !tls_eof {
+            match c.reader().read(&mut buf) {
+                Ok(0) => {
+                    tls_eof = true;
+                    other_done();
+                }
+                Ok(n) => {
+                    if other_w.write_all(&buf[..n]).and_then(|_| other_w.flush()).is_err() {
+                        return;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(_) => {
+                    tls_eof = true;
+                    other_done();
+                }
+            }
+        }
+        if tls_eof && other_eof {
+            return;
+        }
+        let mut fds = [
+            libc::pollfd { fd: if tls_eof { -1 } else { sock.as_raw_fd() }, events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: if other_eof { -1 } else { other_fd }, events: libc::POLLIN, revents: 0 },
+        ];
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, idle.as_millis().min(i32::MAX as u128) as i32) };
+        if n == 0 {
+            return; // idle too long
+        }
+        if n < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return;
+        }
+        let gone = libc::POLLIN | libc::POLLHUP | libc::POLLERR;
+        if !tls_eof && fds[0].revents & gone != 0 {
+            match c.read_tls(&mut sock) {
+                Ok(0) => {
+                    tls_eof = true;
+                    other_done();
+                }
+                Ok(_) => {
+                    if c.process_new_packets().is_err() {
+                        let _ = flush_tls(&mut c, &mut sock);
+                        return;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return,
+            }
+        }
+        if !other_eof && fds[1].revents & gone != 0 {
+            match other_r.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    other_eof = true;
+                    c.send_close_notify();
+                }
+                Ok(n) => {
+                    if c.writer().write_all(&buf[..n]).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ================================================================== addresses
@@ -539,7 +662,8 @@ pub fn lan_addrs() -> Vec<IpAddr> {
         return a.split(',').filter_map(|x| x.trim().parse().ok()).collect();
     }
     let mut v: Vec<IpAddr> = interfaces().into_iter().filter(|(n, _)| !virtual_if(n)).map(|(_, ip)| ip).collect();
-    v.sort_by_key(|ip| (ip.is_ipv6(), tailnet_ip(*ip)));
+    // The network's own first (IPv4, then IPv6), Tailscale's last.
+    v.sort_by_key(|ip| (tailnet_ip(*ip), ip.is_ipv6()));
     v.dedup();
     v
 }
@@ -571,11 +695,16 @@ pub fn legacy(local: IpAddr, peer: IpAddr) -> bool {
 
 // ================================================================== firewall
 
-/// Whether a ufw configuration drops `port` from the local network: ufw on, incoming dropped by
-/// default, and no rule letting TCP to that port in on every interface (a rule for Tailscale's
-/// interface alone doesn't count). `rules` are the `### tuple ###` lines of user.rules and
-/// user6.rules.
-pub fn ufw_blocks(conf: &str, defaults: &str, rules: &str, port: u16) -> bool {
+/// Whether a ufw configuration drops `port` (`udp`: UDP, else TCP) from the local network: ufw
+/// on, incoming dropped by default, and no rule letting it in on every interface (a rule for
+/// Tailscale's interface alone doesn't count). `rules` are the `### tuple ###` lines of
+/// user.rules and user6.rules.
+pub fn ufw_blocks(conf: &str, defaults: &str, rules: &str, port: u16, udp: bool) -> bool {
+    ufw_drops(conf, defaults, rules, port, udp, false)
+}
+
+/// [`ufw_blocks`] for connections from anywhere (`internet`: only a rule for every source counts).
+pub fn ufw_drops(conf: &str, defaults: &str, rules: &str, port: u16, udp: bool, internet: bool) -> bool {
     let on = conf.lines().any(|l| l.trim() == "ENABLED=yes");
     let drops = defaults.lines().any(|l| matches!(l.trim(), "DEFAULT_INPUT_POLICY=\"DROP\"" | "DEFAULT_INPUT_POLICY=\"REJECT\""));
     if !on || !drops {
@@ -584,13 +713,17 @@ pub fn ufw_blocks(conf: &str, defaults: &str, rules: &str, port: u16) -> bool {
     let allows = rules.lines().filter_map(|l| l.strip_prefix("### tuple ### ")).any(|t| {
         // action proto dport dst sport src direction [comment]
         let f: Vec<&str> = t.split_whitespace().collect();
-        let [action, proto, dport, _dst, _sport, _src, dir, ..] = f[..] else { return false };
+        let [action, proto, dport, _dst, _sport, src, dir, ..] = f[..] else { return false };
+        if internet && src != "0.0.0.0/0" && src != "::/0" {
+            return false;
+        }
         let port_ok = dport == "any"
             || dport.split(',').any(|p| match p.split_once(':') {
                 Some((a, b)) => a.parse::<u16>().is_ok_and(|a| a <= port) && b.parse::<u16>().is_ok_and(|b| port <= b),
                 None => p.parse::<u16>() == Ok(port),
             });
-        matches!(action, "allow" | "limit") && matches!(proto, "tcp" | "any") && port_ok && dir == "in"
+        let proto_ok = proto == "any" || proto == if udp { "udp" } else { "tcp" };
+        matches!(action, "allow" | "limit") && proto_ok && port_ok && dir == "in"
     });
     !allows
 }
@@ -607,18 +740,38 @@ pub fn firewall_blocks(port: u16) -> bool {
     }
     let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
     let rules = format!("{}\n{}", read("/etc/ufw/user.rules"), read("/etc/ufw/user6.rules"));
-    let v = ufw_blocks(&read("/etc/ufw/ufw.conf"), &read("/etc/default/ufw"), &rules, port);
+    let (conf, defaults) = (read("/etc/ufw/ufw.conf"), read("/etc/default/ufw"));
+    // The API (TCP) and network discovery (UDP, discover.rs).
+    let v = ufw_blocks(&conf, &defaults, &rules, port, false) || ufw_blocks(&conf, &defaults, &rules, crate::discover::PORT, true);
     *c = Some((Instant::now(), port, v));
     v
 }
 
-/// The commands that let the local network reach Harbor's port through ufw (private ranges only).
+/// True when this PC's firewall (ufw) drops connections to Harbor from the internet (IPv6
+/// global addresses, a mapped port), though the local network may be let in.
+pub fn firewall_blocks_internet(port: u16) -> bool {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    let rules = format!("{}\n{}", read("/etc/ufw/user.rules"), read("/etc/ufw/user6.rules"));
+    ufw_drops(&read("/etc/ufw/ufw.conf"), &read("/etc/default/ufw"), &rules, port, false, true)
+}
+
+/// The command that lets the internet reach Harbor's port (TCP): only keys it knows get answers.
+pub fn firewall_fix_internet(port: u16) -> String {
+    format!("sudo ufw allow {port}/tcp comment harbor-internet")
+}
+
+/// The commands that let the local network reach Harbor's port (TCP and UDP) and network
+/// discovery through ufw (private ranges only).
 pub fn firewall_fix(port: u16) -> String {
     // (192.168/16 built from octets: the pre-commit hook refuses LAN addresses as text)
     let lan = format!("{}/16", std::net::Ipv4Addr::new(192, 168, 0, 0));
+    let mut ports = vec![port];
+    if port != crate::discover::PORT {
+        ports.push(crate::discover::PORT);
+    }
     ["10.0.0.0/8", "172.16.0.0/12", lan.as_str(), "fc00::/7", "fe80::/10"]
         .iter()
-        .map(|r| format!("sudo ufw allow proto tcp from {r} to any port {port} comment harbor"))
+        .flat_map(|r| ports.iter().map(move |p| format!("sudo ufw allow from {r} to any port {p} comment harbor")))
         .collect::<Vec<_>>()
         .join(" && ")
 }
@@ -860,17 +1013,20 @@ mod tests {
     fn firewall() {
         let (on, drop) = ("ENABLED=yes\n", "IPV6=yes\nDEFAULT_INPUT_POLICY=\"DROP\"\n");
         let ts = "### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0 comment=7461\n### tuple ### allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in\n";
-        assert!(ufw_blocks(on, drop, ts, 47930), "only Tailscale's interface is let in");
-        assert!(!ufw_blocks("ENABLED=no\n", drop, ts, 47930), "ufw off");
-        assert!(!ufw_blocks(on, "DEFAULT_INPUT_POLICY=\"ACCEPT\"\n", ts, 47930), "accepts by default");
+        assert!(ufw_blocks(on, drop, ts, 47930, false), "only Tailscale's interface is let in");
+        assert!(!ufw_blocks("ENABLED=no\n", drop, ts, 47930, false), "ufw off");
+        assert!(!ufw_blocks(on, "DEFAULT_INPUT_POLICY=\"ACCEPT\"\n", ts, 47930, false), "accepts by default");
         let lan = format!("{}/16", std::net::Ipv4Addr::new(192, 168, 0, 0));
         let mine = format!("{ts}### tuple ### allow tcp 47930 0.0.0.0/0 any {lan} in comment=6861\n");
-        assert!(!ufw_blocks(on, drop, &mine, 47930));
-        assert!(!ufw_blocks(on, drop, "### tuple ### allow any 47900:47999 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930), "a range");
-        assert!(ufw_blocks(on, drop, "### tuple ### allow udp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930), "UDP isn't it");
-        assert!(ufw_blocks(on, drop, "### tuple ### deny tcp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930));
-        assert!(!ufw_blocks(on, drop, "### tuple ### allow tcp 80,47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930), "a list");
-        assert!(firewall_fix(47930).contains(&format!("from {lan} to any port 47930")));
+        assert!(!ufw_blocks(on, drop, &mine, 47930, false));
+        assert!(!ufw_blocks(on, drop, "### tuple ### allow any 47900:47999 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false), "a range");
+        assert!(ufw_blocks(on, drop, "### tuple ### allow udp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false), "UDP isn't TCP");
+        assert!(!ufw_blocks(on, drop, "### tuple ### allow udp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, true));
+        assert!(ufw_blocks(on, drop, &mine, 47930, true), "a TCP rule isn't UDP");
+        assert!(ufw_blocks(on, drop, "### tuple ### deny tcp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false));
+        assert!(!ufw_blocks(on, drop, "### tuple ### allow tcp 80,47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false), "a list");
+        assert!(firewall_fix(47930).contains(&format!("from {lan} to any port 47930 ")));
+        assert!(firewall_fix(47931).contains("to any port 47930 ") && firewall_fix(47931).contains("to any port 47931 "), "discovery's port too");
     }
 
     #[test]
