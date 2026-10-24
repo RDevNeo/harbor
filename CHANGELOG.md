@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-24
+
+### Fixed
+- On a PC whose firewall (ufw) drops incoming connections, phones and other PCs on the network
+  couldn't reach Harbor once Tailscale is gone. Settings › Phones and Settings › Devices now say
+  so and offer Allow on the local network (it lets the private address ranges in to Harbor's port,
+  asking for your password in a terminal); `harbor mesh status` prints the same commands.
+- PCs prefer each other's addresses on the shared network over Tailscale's while both work.
+
 ## [0.13.0] - 2026-10-24
 
 ### Added
@@ -402,7 +411,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/RDevNeo/harbor/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/RDevNeo/harbor/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/RDevNeo/harbor/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/RDevNeo/harbor/compare/v0.12.0...v0.12.1
