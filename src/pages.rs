@@ -143,7 +143,7 @@ impl Tab {
             Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
             Tab::Limits => "usage limits quota caps cap percent warn tokens cost weekly wait switch accounts notify history",
             Tab::Integrations => "apps mcp servers sign in tools",
-            Tab::Webhooks => "hooks tailscale funnel public url",
+            Tab::Webhooks => "hooks public url https certificate lets encrypt",
             Tab::Devices => "remote machines pcs tailscale ssh run agents elsewhere mcp bridge",
             Tab::Phones => "android phone mobile app pair qr code token api",
         }
@@ -529,45 +529,89 @@ impl App {
         let port = self.hook_port.unwrap_or(crate::control::HOOK_PORT);
         w::subtle(ui, "Leads create webhooks so other services can wake them. Harbor answers only /hooks/<secret-token> on this machine; anything else gets 404.", "copy-14");
         section(ui, "Public URL");
-        w::card(ui).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                match &self.funnel {
-                    Some(base) => {
-                        w::badge(ui, "Public", Tone::Green);
-                        w::text(ui, base, "label-13-mono");
-                    }
-                    None => {
-                        w::badge(ui, "Local only", Tone::Gray);
-                        w::text(ui, format!("http://127.0.0.1:{port}/hooks"), "label-13-mono");
-                    }
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let hs = crate::hookcert::status();
+        let mut public = self.store.get("hooks_public").as_deref() == Some("1");
+        let was = public;
+        rows(ui, |ui| {
+            w::setting_row(
+                ui,
+                "Reachable from the internet",
+                &format!("Serves only /hooks/<secret-token> over HTTPS, with a certificate Harbor gets from Let's Encrypt by itself. Your router must send port 443 to this PC (port {}): Harbor asks it to.", crate::hookcert::PORT),
+                |ui| w::toggle(ui, &mut public),
+            );
+            if public {
+                w::separator(ui);
+                let (badge, tone, text) = match (&hs.base, hs.busy) {
+                    (Some(b), _) => ("Public", Tone::Green, b.clone()),
+                    (None, true) => ("Working", Tone::Gray, "Opening port 443 and getting a certificate…".to_string()),
+                    (None, false) => ("Not public", Tone::Amber, format!("http://127.0.0.1:{port}/hooks (this PC only)")),
+                };
+                w::setting_row(ui, &text, &hs.route, |ui| {
                     if w::btn(&format!("{}  Check", ic::REFRESH)).sm().ghost().show(ui).clicked() {
-                        self.check_funnel();
+                        crate::hookcert::kick();
                     }
+                    w::badge(ui, badge, tone);
+                });
+                if !hs.error.is_empty() {
+                    w::separator(ui);
+                    w::subtle(ui, format!("  {}", hs.error), "label-12");
+                }
+                w::separator(ui);
+                let mut name = self.store.get("hooks_name").unwrap_or_default();
+                let before = name.clone();
+                w::setting_row(ui, "Name", "Empty: your public address as an sslip.io name (it changes when your address does). Or a name of yours that points at it.", |ui| {
+                    w::input(ui, &mut name, if hs.name.is_empty() { "203-0-113-7.sslip.io" } else { &hs.name }, true, 260.0);
+                });
+                if name != before {
+                    self.store.set("hooks_name", name.trim());
+                }
+                if hs.expires > 0 {
+                    w::separator(ui);
+                    let days = (hs.expires - crate::store::now()) / 86400;
+                    w::subtle(ui, format!("  Certificate for {} · {days} days left · renewed by itself", hs.name), "label-12");
+                }
+            }
+        });
+        if public != was {
+            self.store.set("hooks_public", if public { "1" } else { "0" });
+            crate::hookcert::kick();
+        }
+        ui.add_space(6.0);
+        w::subtle(ui, "GitHub: set the webhook's secret to its token (the last part of its URL); Harbor then checks every delivery's signature.", "label-12");
+        // Tailscale Funnel, only while Tailscale is installed (an extra, not needed).
+        if crate::providers::which("tailscale").is_some() {
+            ui.add_space(8.0);
+            w::card(ui).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    match &self.funnel {
+                        Some(base) => {
+                            w::badge(ui, "Funnel", Tone::Green);
+                            w::text(ui, base, "label-13-mono");
+                        }
+                        None => {
+                            w::subtle(ui, "Or with Tailscale Funnel (installed here): https://<machine>.<tailnet>.ts.net/hooks", "label-13");
+                        }
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if self.funnel.is_none() {
+                            if w::btn("Enable Funnel").sm().outline().show(ui).clicked() {
+                                let cmd = format!("{} && echo && echo 'Done. Press Check in Harbor.'", crate::control::funnel_enable_cmd(port));
+                                self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
+                            }
+                        } else if w::btn("Disable").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
+                            let cmd = crate::control::funnel_disable_cmd();
+                            self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
+                            self.funnel = None;
+                        }
+                        if w::btn(&format!("{}  Check", ic::REFRESH)).sm().ghost().show(ui).clicked() {
+                            self.check_funnel();
+                        }
+                    });
                 });
             });
-            ui.add_space(6.0);
-            w::subtle(
-                ui,
-                "Tailscale Funnel publishes only the /hooks path of this machine at https://<machine>.<tailnet>.ts.net/hooks. The first time, Tailscale may ask you to allow Funnel for this device in its admin console.",
-                "label-13",
-            );
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if self.funnel.is_none() {
-                    if w::btn("Enable with Tailscale Funnel").primary().show(ui).clicked() {
-                        let cmd = format!("{} && echo && echo 'Done. Press Check in Harbor.'", crate::control::funnel_enable_cmd(port));
-                        self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
-                    }
-                } else if w::btn("Disable").variant(w::Variant::GhostDestructive).show(ui).clicked() {
-                    let cmd = crate::control::funnel_disable_cmd();
-                    self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
-                    self.funnel = None;
-                }
-            });
-        });
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs(2));
         section(ui, "Webhooks");
         let hooks = self.webhooks.clone();
         w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {

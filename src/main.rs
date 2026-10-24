@@ -16,6 +16,7 @@ mod devices;
 mod discover;
 mod favicon;
 mod git;
+mod hookcert;
 mod icons;
 mod fork;
 mod images;

@@ -187,7 +187,7 @@ impl App {
                     }
                 });
             }
-            if !hooks.is_empty() && self.funnel.is_none() {
+            if !hooks.is_empty() && self.funnel.is_none() && crate::hookcert::public_base().is_none() {
                 if w::btn("Enable public URLs…").sm().variant(w::Variant::Ghost).show(ui).clicked() {
                     self.open(View::Settings(Tab::Webhooks));
                 }

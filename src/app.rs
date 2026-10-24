@@ -387,6 +387,8 @@ impl App {
         // Dev servers and other processes keep running across Harbor restarts.
         app.procs = crate::procs::adopt(&app.store, app.proc_tx.clone(), wake.clone());
         control::start_socket(inc_tx.clone(), wake.clone());
+        // Public HTTPS for /hooks (hookcert.rs): a thread that does nothing until it's turned on.
+        crate::hookcert::start(app.hook_tokens.clone(), inc_tx.clone(), wake.clone());
         app.hook_port = control::start_hooks(inc_tx, app.hook_tokens.clone(), wake);
         app.check_funnel();
         app.mesh_load();
@@ -692,6 +694,10 @@ impl App {
     }
 
     pub fn check_funnel(&self) {
+        // Funnel is only an extra while Tailscale is installed.
+        if crate::providers::which("tailscale").is_none() {
+            return;
+        }
         let port = self.hook_port.unwrap_or(control::HOOK_PORT);
         let tx = self.bg_tx.clone();
         std::thread::spawn(move || {

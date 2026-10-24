@@ -835,10 +835,10 @@ const PER_HOST: usize = 12;
 static HOSTS: std::sync::LazyLock<Mutex<HashMap<std::net::IpAddr, usize>>> = std::sync::LazyLock::new(Default::default);
 
 /// A connection's place among its host's, given back when dropped.
-struct HostSlot(std::net::IpAddr);
+pub struct HostSlot(std::net::IpAddr);
 
 impl HostSlot {
-    fn take(ip: std::net::IpAddr) -> Option<HostSlot> {
+    pub fn take(ip: std::net::IpAddr) -> Option<HostSlot> {
         let k = crate::tls::scope_key(ip);
         let mut h = HOSTS.lock().unwrap();
         let n = h.entry(k).or_insert(0);

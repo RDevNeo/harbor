@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Webhooks from the internet without Tailscale Funnel: Settings › Webhooks › Reachable from the
+  internet serves only /hooks/<token> over HTTPS on its own port (47911), with a certificate
+  Harbor gets from Let's Encrypt by itself (TLS-ALPN-01, no web server, renewed 30 days before it
+  runs out). The name is your public address as an sslip.io name, or one of your own. Harbor
+  asks the router to send port 443 to it and says plainly when it can't.
+- GitHub webhooks are checked: set the webhook's secret to its token and every delivery's
+  X-Hub-Signature-256 must match (401 otherwise).
+
+### Changed
+- Tailscale Funnel is only offered while Tailscale is installed.
+
 ## [0.14.0] - 2026-10-24
 
 ### Added

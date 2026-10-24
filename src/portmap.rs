@@ -120,9 +120,14 @@ pub fn pmp_public_parse(r: &[u8]) -> Result<Ipv4Addr, String> {
 }
 
 pub fn pmp_request(port: u16, lifetime: u32) -> Vec<u8> {
+    pmp_request_to(port, port, lifetime)
+}
+
+/// A NAT-PMP TCP mapping of `internal`, asking for `external` outside.
+pub fn pmp_request_to(internal: u16, external: u16, lifetime: u32) -> Vec<u8> {
     let mut m = vec![0u8, 2, 0, 0];
-    m.extend(port.to_be_bytes());
-    m.extend(port.to_be_bytes());
+    m.extend(internal.to_be_bytes());
+    m.extend(external.to_be_bytes());
     m.extend(lifetime.to_be_bytes());
     m
 }
@@ -149,13 +154,18 @@ fn v6_of(ip: IpAddr) -> [u8; 16] {
 
 /// A PCP MAP request for TCP `port` from `client` (its IPv4 or IPv6 address), with `nonce`.
 pub fn pcp_request(client: IpAddr, port: u16, lifetime: u32, nonce: [u8; 12]) -> Vec<u8> {
+    pcp_request_to(client, port, port, lifetime, nonce)
+}
+
+/// A PCP MAP request of TCP `internal`, suggesting `external` outside.
+pub fn pcp_request_to(client: IpAddr, internal: u16, external: u16, lifetime: u32, nonce: [u8; 12]) -> Vec<u8> {
     let mut m = vec![2u8, 1, 0, 0];
     m.extend(lifetime.to_be_bytes());
     m.extend(v6_of(client));
     m.extend(nonce);
     m.extend([6u8, 0, 0, 0]);
-    m.extend(port.to_be_bytes());
-    m.extend(port.to_be_bytes());
+    m.extend(internal.to_be_bytes());
+    m.extend(external.to_be_bytes());
     // Suggested external address: any, of the client's family.
     m.extend(if client.is_ipv4() { v6_of(IpAddr::V4(Ipv4Addr::UNSPECIFIED)) } else { [0u8; 16] });
     m
@@ -179,9 +189,13 @@ pub fn pcp_parse(r: &[u8], nonce: [u8; 12]) -> Result<SocketAddr, String> {
 }
 
 fn pcp_map(gw: IpAddr, client: IpAddr, port: u16, lifetime: u32) -> Result<SocketAddr, String> {
+    pcp_map_to(gw, client, port, port, lifetime)
+}
+
+fn pcp_map_to(gw: IpAddr, client: IpAddr, internal: u16, external: u16, lifetime: u32) -> Result<SocketAddr, String> {
     let n = crate::store::random_bytes(12).map_err(|e| e.to_string())?;
     let nonce: [u8; 12] = n.try_into().map_err(|_| "no nonce")?;
-    let r = udp_ask(SocketAddr::new(gw, 5351), &pcp_request(client, port, lifetime, nonce), 1100)?;
+    let r = udp_ask(SocketAddr::new(gw, 5351), &pcp_request_to(client, internal, external, lifetime, nonce), 1100)?;
     pcp_parse(&r, nonce)
 }
 
@@ -280,17 +294,49 @@ fn ssdp(from: Ipv4Addr) -> Result<String, String> {
 }
 
 fn upnp(local: Ipv4Addr, port: u16) -> Result<(Option<Ipv4Addr>, SocketAddr), String> {
+    upnp_to(local, port, port)
+}
+
+fn upnp_to(local: Ipv4Addr, internal: u16, external: u16) -> Result<(Option<Ipv4Addr>, SocketAddr), String> {
     let loc = ssdp(local)?;
     let desc = http(&loc, None)?;
     let base = tag(&desc, "URLBase").map(String::from).or_else(|| base_of(&loc)).ok_or("bad description")?;
     let (st, ctl) = igd_service(&desc, &base).ok_or("no WAN connection service")?;
     let args = format!(
-        "<NewRemoteHost></NewRemoteHost><NewExternalPort>{port}</NewExternalPort><NewProtocol>TCP</NewProtocol><NewInternalPort>{port}</NewInternalPort><NewInternalClient>{local}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>Harbor</NewPortMappingDescription><NewLeaseDuration>{LIFETIME}</NewLeaseDuration>"
+        "<NewRemoteHost></NewRemoteHost><NewExternalPort>{external}</NewExternalPort><NewProtocol>TCP</NewProtocol><NewInternalPort>{internal}</NewInternalPort><NewInternalClient>{local}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>Harbor</NewPortMappingDescription><NewLeaseDuration>{LIFETIME}</NewLeaseDuration>"
     );
     http(&ctl, Some((&format!("{st}#AddPortMapping"), &soap(&st, "AddPortMapping", &args))))?;
     let ext = http(&ctl, Some((&format!("{st}#GetExternalIPAddress"), &soap(&st, "GetExternalIPAddress", "")))).ok();
     let ip = ext.as_deref().and_then(|x| tag(x, "NewExternalIPAddress")).and_then(|x| x.trim().parse::<Ipv4Addr>().ok());
-    Ok((ip, SocketAddr::new(IpAddr::V4(ip.unwrap_or(Ipv4Addr::UNSPECIFIED)), port)))
+    Ok((ip, SocketAddr::new(IpAddr::V4(ip.unwrap_or(Ipv4Addr::UNSPECIFIED)), external)))
+}
+
+/// Maps TCP `external` on the router's public IPv4 address to `internal` here (PCP, NAT-PMP,
+/// then UPnP): (how, the public address it got). The router may give another external port.
+pub fn map_to(internal: u16, external: u16) -> Result<(String, SocketAddr), String> {
+    let route = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
+    let gw = gateway_v4(&route).ok_or("no default gateway")?;
+    let local = match local_to(IpAddr::V4(gw)) {
+        Some(IpAddr::V4(l)) => l,
+        _ => return Err("no address towards the router".into()),
+    };
+    let mut why = vec![];
+    match pcp_map_to(IpAddr::V4(gw), IpAddr::V4(local), internal, external, LIFETIME) {
+        Ok(a) => return Ok(("PCP".into(), a)),
+        Err(e) => why.push(format!("PCP: {e}")),
+    }
+    let pmp = pmp_public(gw).and_then(|ip| udp_ask(SocketAddr::new(gw.into(), 5351), &pmp_request_to(internal, external, LIFETIME), 16).and_then(|r| pmp_map_parse(&r)).map(|p| (ip, p)));
+    match pmp {
+        Ok((ip, p)) => return Ok(("NAT-PMP".into(), SocketAddr::new(ip.into(), p))),
+        Err(e) => why.push(format!("NAT-PMP: {e}")),
+    }
+    match upnp_to(local, internal, external) {
+        Ok((_, a)) => Ok(("UPnP".into(), a)),
+        Err(e) => {
+            why.push(format!("UPnP: {e}"));
+            Err(why.join(" · "))
+        }
+    }
 }
 
 // ================================================================== the loop

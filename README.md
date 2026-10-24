@@ -18,7 +18,8 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
   result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
   or other software.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
-- **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks.
+- **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks (public over
+  HTTPS with a Let's Encrypt certificate Harbor gets itself, `/hooks/<token>` only).
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
 - **Side panes**: a browser (optional Servo helper, `browser/`), terminals, and Devices.
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,

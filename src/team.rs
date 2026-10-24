@@ -376,7 +376,9 @@ impl App {
 
     pub fn hook_url(&self, token: &str) -> (String, Option<String>) {
         let local = format!("http://127.0.0.1:{}/hooks/{token}", self.hook_port.unwrap_or(crate::control::HOOK_PORT));
-        (local, self.funnel.as_ref().map(|b| format!("{b}/{token}")))
+        // Harbor's own public HTTPS (hookcert.rs) first, Tailscale Funnel while it's there.
+        let base = crate::hookcert::public_base().or_else(|| self.funnel.clone());
+        (local, base.map(|b| format!("{b}/{token}")))
     }
 
     // ------------------------------------------------------------ tools
@@ -636,7 +638,7 @@ impl App {
                 Ok(match public {
                     Some(p) => format!("Webhook '{name}' created.\nPublic URL: {p}\n(Local: {local})"),
                     None => format!(
-                        "Webhook '{name}' created, but the public URL is not enabled yet. Only this machine can reach it: {local}\nTell the user to enable it in Harbor › Settings › Webhooks (Tailscale Funnel); the URL will then be https://<this-machine>/hooks/{token}."
+                        "Webhook '{name}' created, but the public URL is not enabled yet. Only this machine can reach it: {local}\nTell the user to turn on public webhooks in Harbor › Settings › Webhooks; the URL will then be https://<this PC's public name>/hooks/{token}."
                     ),
                 })
             }

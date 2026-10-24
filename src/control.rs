@@ -1,7 +1,7 @@
 //! Two listeners inside the app, both threads that sleep in `accept`:
 //! - a Unix socket (private, 0600) where `harbor mcp` relays agents' tool calls;
-//! - an HTTP port on 127.0.0.1 that only answers `/hooks/<token>` for webhooks.
-//!   Tailscale Funnel can publish exactly that path; nothing else is served.
+//! - an HTTP port on 127.0.0.1 that only answers `/hooks/<token>` for webhooks (hookcert.rs
+//!   serves the same requests over public HTTPS; Tailscale Funnel, when installed, can too).
 
 use serde_json::Value;
 use std::collections::HashSet;
@@ -141,39 +141,63 @@ pub fn start_hooks(tx: Sender<Incoming>, tokens: Arc<Mutex<HashSet<String>>>, wa
                 let _slot = slot;
                 let mut w = &stream;
                 let mut reader = BufReader::new(crate::api::Timed::new(&stream, crate::api::HEAD_WAIT, Duration::from_secs(10)));
-                let Ok(head) = crate::api::read_head_chunked(&mut reader) else {
-                    let _ = w.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    return;
-                };
+                let head = crate::api::read_head_chunked(&mut reader);
                 reader.get_mut().until = None;
-                let token = head.path.strip_prefix("/hooks/").unwrap_or("").trim_end_matches('/').to_string();
-                let known = !token.is_empty() && tokens.lock().unwrap().contains(&token);
-                if !known {
-                    let _ = w.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    return;
-                }
-                if !HOOK_RATE.lock().unwrap().allow(&token, std::time::Instant::now()) {
-                    let _ = w.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    return;
-                }
-                // Past 1 MB a body is cut (the agent sees 8000 characters of it anyway).
-                let body = if head.chunked { crate::api::read_chunked(&mut reader, 1 << 20) } else { crate::api::read_body(&mut reader, head.len.min(1 << 20), 1 << 20) };
-                let Ok(body) = body else {
-                    let _ = w.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    return;
-                };
-                let _ = w.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
-                let (method, headers) = (head.method, head.headers);
-                // Only headers that say what the event is; never auth headers.
-                let keep = ["content-type", "user-agent", "x-github-event", "x-github-delivery", "x-gitlab-event", "x-vercel-event", "stripe-signature", "x-event-key", "x-request-id"];
-                let headers = headers.into_iter().filter(|(k, _)| keep.contains(&k.as_str())).collect();
-                let body = String::from_utf8_lossy(&body).into_owned();
-                let _ = tx.send(Incoming::Hook(Hook { token, method, headers, body }));
-                wake();
+                serve_hook(head, &mut reader, &mut w, &tokens, &tx, &wake);
             });
         }
     });
     Some(port)
+}
+
+/// Answers one webhook request whose head was read (`head`); the body comes from `r`. Only
+/// `/hooks/<token>` of a live webhook is answered; a GitHub-style `X-Hub-Signature-256` must
+/// match an HMAC of the body keyed with the token (GitHub's webhook secret = the token).
+pub fn serve_hook(head: Result<crate::api::Request, (u16, &'static str)>, r: &mut impl std::io::Read, w: &mut impl Write, tokens: &Mutex<HashSet<String>>, tx: &Sender<Incoming>, wake: &(impl Fn() + Send + Sync)) {
+    let Ok(head) = head else {
+        let _ = w.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+    };
+    let token = head.path.strip_prefix("/hooks/").unwrap_or("").trim_end_matches('/').to_string();
+    let known = !token.is_empty() && tokens.lock().unwrap().contains(&token);
+    if !known {
+        let _ = w.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+    }
+    if !HOOK_RATE.lock().unwrap().allow(&token, std::time::Instant::now()) {
+        let _ = w.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+    }
+    // Past 1 MB a body is cut (the agent sees 8000 characters of it anyway).
+    let mut r = BufReader::new(r);
+    let body = if head.chunked { crate::api::read_chunked(&mut r, 1 << 20) } else { crate::api::read_body(&mut r, head.len.min(1 << 20), 1 << 20) };
+    let Ok(body) = body else {
+        let _ = w.write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+    };
+    if let Some(sig) = head.header("x-hub-signature-256") {
+        if !signature_ok(&token, &body, sig) {
+            let _ = w.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return;
+        }
+    }
+    let _ = w.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}");
+    let _ = w.flush();
+    let (method, headers) = (head.method, head.headers);
+    // Only headers that say what the event is; never auth headers.
+    let keep = ["content-type", "user-agent", "x-github-event", "x-github-delivery", "x-gitlab-event", "x-vercel-event", "stripe-signature", "x-event-key", "x-request-id"];
+    let headers = headers.into_iter().filter(|(k, _)| keep.contains(&k.as_str())).collect();
+    let body = String::from_utf8_lossy(&body).into_owned();
+    let _ = tx.send(Incoming::Hook(Hook { token, method, headers, body }));
+    wake();
+}
+
+/// `sha256=<hex>` = HMAC-SHA256(token, body), compared in constant time.
+pub fn signature_ok(token: &str, body: &[u8], sig: &str) -> bool {
+    let Some(hex) = sig.trim().strip_prefix("sha256=") else { return false };
+    let Some(want) = (0..hex.len() / 2).map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()).collect::<Option<Vec<u8>>>() else { return false };
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, token.as_bytes());
+    ring::hmac::verify(&key, body, &want).is_ok()
 }
 
 /// Public base URL when Tailscale Funnel serves /hooks to the local port.
@@ -200,6 +224,17 @@ pub fn funnel_disable_cmd() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_signatures() {
+        // HMAC-SHA256("tok", "{}"), as GitHub sends it with the secret "tok".
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"tok");
+        let tag: String = ring::hmac::sign(&key, b"{}").as_ref().iter().map(|b| format!("{b:02x}")).collect();
+        assert!(signature_ok("tok", b"{}", &format!("sha256={tag}")));
+        assert!(!signature_ok("tok", b"{ }", &format!("sha256={tag}")));
+        assert!(!signature_ok("other", b"{}", &format!("sha256={tag}")));
+        assert!(!signature_ok("tok", b"{}", "sha1=00") && !signature_ok("tok", b"{}", "sha256=zz"));
+    }
 
     #[test]
     fn webhooks_are_rate_limited_per_token() {
