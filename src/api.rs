@@ -71,6 +71,9 @@ struct Revs {
     chats: HashMap<i64, u64>,
     /// Who is typing in which chat, until when.
     typing: HashMap<i64, Vec<Typer>>,
+    /// Which PCs have which chat open, until when (mesh.rs presence); `kind` is "focused" or
+    /// "away" (its window isn't focused).
+    viewing: HashMap<i64, Vec<Typer>>,
 }
 
 impl Revs {
@@ -84,14 +87,16 @@ impl Revs {
     /// Drops typers whose lease ran out; true when any did (their chats are marked).
     fn prune(&mut self, now: Instant) -> bool {
         let mut gone = vec![];
-        for (chat, v) in self.typing.iter_mut() {
-            let n = v.len();
-            v.retain(|t| t.until > now);
-            if v.len() != n {
-                gone.push(*chat);
+        for map in [&mut self.typing, &mut self.viewing] {
+            for (chat, v) in map.iter_mut() {
+                let n = v.len();
+                v.retain(|t| t.until > now);
+                if v.len() != n {
+                    gone.push(*chat);
+                }
             }
+            map.retain(|_, v| !v.is_empty());
         }
-        self.typing.retain(|_, v| !v.is_empty());
         for c in &gone {
             self.mark(*c);
         }
@@ -99,7 +104,7 @@ impl Revs {
     }
 
     fn next_expiry(&self) -> Option<Instant> {
-        self.typing.values().flatten().map(|t| t.until).min()
+        self.typing.values().chain(self.viewing.values()).flatten().map(|t| t.until).min()
     }
 }
 
@@ -116,15 +121,20 @@ pub struct Typer {
 
 /// How long one typing signal lasts (clients renew it every ~3 s).
 pub const TYPING_TTL: Duration = Duration::from_secs(6);
+/// How long a PC's "this chat is open here" lasts (renewed every few seconds while open).
+pub const VIEWING_TTL: Duration = Duration::from_secs(15);
 
 /// A client's device id: stable per token, without giving the token away.
 pub fn device_id(token: &str) -> String {
     format!("tok:{:08x}", hash_of(&token) as u32)
 }
 
-/// This PC's own composer as a typer.
+/// This PC's own composer as a typer (its mesh id when given, see mesh.rs).
 pub fn local_device() -> String {
-    format!("pc:{}", crate::remote::hostname())
+    match std::env::var("HARBOR_MESH_ID") {
+        Ok(id) if !id.is_empty() => format!("pc:{id}"),
+        _ => format!("pc:{}", crate::remote::hostname()),
+    }
 }
 
 /// Where the listener is reachable, for Settings › Phones.
@@ -217,14 +227,31 @@ impl Hub {
     /// Someone starts, keeps or stops typing in `chat`. Starting and stopping wake the
     /// long-polls; a renewal only extends the lease. True when anything visible changed.
     pub fn set_typing(&self, chat: i64, device: &str, kind: &str, label: &str, on: bool) -> bool {
+        self.lease(false, chat, device, kind, label, on)
+    }
+
+    /// A PC has `chat` open (`focused`: its window is in front), or closed it.
+    pub fn set_viewing(&self, chat: i64, device: &str, label: &str, focused: bool, on: bool) -> bool {
+        self.lease(true, chat, device, if focused { "focused" } else { "away" }, label, on)
+    }
+
+    /// Which PCs have `chat` open now.
+    pub fn viewing(&self, chat: i64) -> Vec<Typer> {
         let now = Instant::now();
+        self.revs.lock().unwrap().viewing.get(&chat).map(|v| v.iter().filter(|t| t.until > now).cloned().collect()).unwrap_or_default()
+    }
+
+    fn lease(&self, view: bool, chat: i64, device: &str, kind: &str, label: &str, on: bool) -> bool {
+        let now = Instant::now();
+        let ttl = if view { VIEWING_TTL } else { TYPING_TTL };
         let mut r = self.revs.lock().unwrap();
         let mut changed = r.prune(now);
-        let v = r.typing.entry(chat).or_default();
+        let map = if view { &mut r.viewing } else { &mut r.typing };
+        let v = map.entry(chat).or_default();
         let at = v.iter().position(|t| t.device == device);
         match (at, on) {
             (Some(i), true) => {
-                v[i].until = now + TYPING_TTL;
+                v[i].until = now + ttl;
                 if v[i].label != label || v[i].kind != kind {
                     v[i].label = label.into();
                     v[i].kind = kind.into();
@@ -232,7 +259,7 @@ impl Hub {
                 }
             }
             (None, true) => {
-                v.push(Typer { device: device.into(), kind: kind.into(), label: label.into(), until: now + TYPING_TTL });
+                v.push(Typer { device: device.into(), kind: kind.into(), label: label.into(), until: now + ttl });
                 changed = true;
             }
             (Some(i), false) => {
@@ -241,7 +268,7 @@ impl Hub {
             }
             (None, false) => {}
         }
-        r.typing.retain(|_, v| !v.is_empty());
+        map.retain(|_, v| !v.is_empty());
         if changed {
             r.mark(chat);
             drop(r);
@@ -787,7 +814,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         // The PCs of the mesh, with this phone's token on each (mesh.rs).
         ("GET", ["v1", "hubs"]) => send_json(&mut w, 200, &crate::mesh::hubs(hub, &token)),
         ("POST", ["v1", "chats", c, "typing"]) => {
-            let Some(chat) = c.parse::<i64>().ok() else { return send_json(&mut w, 404, &json!({ "error": "no such chat" })) };
+            let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(&mut w, 404, &json!({ "error": "no such chat" })) };
             let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
             let on = body["typing"].as_bool().unwrap_or(true);
             let kind = if body["kind"].as_str() == Some("pc") { "pc" } else { "phone" };
@@ -796,6 +823,10 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             } else {
                 hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| if kind == "pc" { "A PC".into() } else { "Phone".into() })
             };
+            // Another PC's chat: its PC keeps who types in it (mesh.rs).
+            if crate::mesh::forward_lease(hub, chat, false, &device_id(&token), kind, &label, on) {
+                return send_json(&mut w, 200, &json!({ "ok": true }));
+            }
             if hub.set_typing(chat, &device_id(&token), kind, &label, on) {
                 wake(); // this PC's window shows it
             }
@@ -1423,7 +1454,7 @@ impl App {
     /// emptied draft (sent or cleared) ends it.
     fn local_typing(&mut self) {
         let crate::app::View::Chat(id) = self.view else { return };
-        let draft = self.drafts.get(&id).map(|d| d.trim()).unwrap_or("");
+        let draft = self.drafts.get(&id).map(|d| d.trim().to_string()).unwrap_or_default();
         let h = hash_of(&draft);
         if self.api.draft == Some((id, h)) {
             return;
@@ -1431,14 +1462,15 @@ impl App {
         let was = self.api.draft.replace((id, h));
         let me = local_device();
         if let Some((old, _)) = was.filter(|(old, _)| *old != id) {
-            self.api.hub.set_typing(old, &me, "pc", "", false);
+            self.set_lease(old, false, &me, "pc", "", false);
         }
         // The first look at a chat isn't typing (a draft left from earlier).
         if was.is_none_or(|(old, _)| old != id) {
             return;
         }
-        let label = crate::remote::hostname();
-        self.api.hub.set_typing(id, &me, "pc", &label, !draft.is_empty());
+        let name = self.api.hub.mesh.me().name;
+        let label = if name.is_empty() { crate::remote::hostname() } else { name };
+        self.set_lease(id, false, &me, "pc", &label, !draft.is_empty());
     }
 
     pub fn queued_count(&self, id: i64) -> usize {
@@ -1491,8 +1523,10 @@ impl App {
         let Some(call) = self.mesh_proxy(call) else { return };
         // What the phone sends says it came from the phone.
         self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
+        self.sender_device = device_id(&call.token);
         let mut r = self.api_route(&call, ctx);
         self.sender.clear();
+        self.sender_device.clear();
         if call.global && r.status < 300 {
             self.globalize(&call, &mut r.body);
         }
@@ -1635,8 +1669,8 @@ impl App {
     }
 
     /// Who is typing in a chat, as the wire says it.
-    fn typing_json(&self, chat: i64) -> Vec<Value> {
-        self.api.hub.typing(chat).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect()
+    pub fn typing_json(&self, chat: i64) -> Vec<Value> {
+        self.typers(chat).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect()
     }
 
     /// The accounts a chat may switch to: a started chat stays on its provider, a lead on Claude.
@@ -1685,6 +1719,8 @@ impl App {
             "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
             "parent": c.parent,
             "typing": self.typing_json(c.id),
+            // Other PCs with the chat open (mesh.rs): "focused" or "away".
+            "viewing": self.viewers(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
             "switchable": {
                 "account": allowed.iter().any(|a| *a != c.account),
                 "model": true,
@@ -1894,10 +1930,10 @@ impl App {
         if text.is_empty() && files.is_empty() {
             return err(400, "nothing to send");
         }
-        let busy = self.turns.contains_key(&chat);
+        let before = self.queued(chat).len();
         let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
         self.send_to(chat, text, files, mentions, ctx);
-        ok(json!({ "ok": true, "queued": busy }))
+        ok(json!({ "ok": true, "queued": self.queued(chat).len() > before }))
     }
 
     fn api_create(&mut self, body: &Value, ctx: &egui::Context) -> Reply {

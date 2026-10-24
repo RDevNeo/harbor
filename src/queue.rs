@@ -33,6 +33,9 @@ pub struct Queued {
     /// Where it was written, when not on this PC (`Item::User::sender`).
     #[serde(default)]
     pub sender: String,
+    /// The device that wrote it (its typing doesn't hold it back).
+    #[serde(default)]
+    pub device: String,
 }
 
 impl Queued {
@@ -50,8 +53,8 @@ pub struct State {
 impl App {
     /// Called by `send` while the chat's turn runs.
     pub fn enqueue(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<Mention>) {
-        let sender = self.sender.clone();
-        self.queue.chats.entry(chat_id).or_default().push(Queued { text, files, mentions, written: false, sender });
+        let (sender, device) = (self.sender.clone(), self.sending_device());
+        self.queue.chats.entry(chat_id).or_default().push(Queued { text, files, mentions, written: false, sender, device });
         // A tool is running: Claude takes it in when that tool is done.
         if self.tool_running(chat_id) {
             self.deliver(chat_id);
@@ -164,6 +167,23 @@ impl App {
         self.send_queued(chat_id, q, ctx);
     }
 
+    /// Once per frame: an idle chat's queue goes out once nobody else is typing in it (a
+    /// message sent while another device was typing waited for that; see `locked_for`).
+    pub fn queue_drain(&mut self, ctx: &egui::Context) {
+        let ready: Vec<i64> = self
+            .queue
+            .chats
+            .iter()
+            .filter(|(id, q)| !q.is_empty() && !self.turns.contains_key(id) && !self.is_foreign(**id))
+            .filter(|(id, q)| !self.locked_for(**id, &q[0].device))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ready {
+            let q = self.queue.chats.remove(&id).unwrap_or_default();
+            self.send_queued(id, q, ctx);
+        }
+    }
+
     /// Starts one turn from queued messages (merged) and puts them in the transcript.
     fn send_queued(&mut self, chat_id: i64, q: Vec<Queued>, ctx: &egui::Context) {
         if q.is_empty() {
@@ -224,7 +244,7 @@ impl App {
         let files = self.files.remove(&key).unwrap_or_default();
         let mentions = self.mentions.drafts.remove(&key).unwrap_or_default();
         if !text.is_empty() || !files.is_empty() || !mentions.is_empty() {
-            q.push(Queued { text, files, mentions, written: false, sender: String::new() });
+            q.push(Queued { text, files, mentions, written: false, sender: String::new(), device: String::new() });
         }
         if q.is_empty() {
             return;
@@ -247,7 +267,24 @@ impl App {
     /// The queued messages under the running turn: dimmed bubbles; on hover, edit
     /// (back to the composer) and remove, until Claude has them.
     pub fn queued_bubbles(&mut self, ui: &mut Ui, chat_id: i64) {
-        let q = self.queued(chat_id).to_vec();
+        // A copy: the shared queue as its home PC has it (changed there, shown here).
+        let copy = self.mesh.status.get(&chat_id).map(|r| {
+            r.status["queue"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|m| Queued {
+                    text: m["text"].as_str().unwrap_or("").into(),
+                    files: m["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str()).map(PathBuf::from).collect(),
+                    mentions: vec![],
+                    written: m["sending"].as_bool().unwrap_or(false),
+                    sender: String::new(),
+                    device: String::new(),
+                })
+                .collect::<Vec<_>>()
+        });
+        let shared = copy.is_some();
+        let q = copy.unwrap_or_else(|| self.queued(chat_id).to_vec());
         if q.is_empty() {
             return;
         }
@@ -266,7 +303,7 @@ impl App {
                 p.rect(rect, CornerRadius::same(RADIUS_LG), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
                 p.text(pos2(rect.left() + 12.0, rect.top() + 7.0), Align2::LEFT_TOP, label, FontId::proportional(11.5), t.subtle());
                 p.galley(pos2(rect.left() + 12.0, rect.top() + 23.0), galley, t.fg());
-                if resp.hovered() && !m.written {
+                if resp.hovered() && !m.written && !shared {
                     let mut x = rect.right() - 26.0;
                     for (icon, tip, act) in [(ic::X, "Remove", 0), (ic::COMPOSE, "Edit", 1)] {
                         let br = egui::Rect::from_min_size(pos2(x, rect.top() + 3.0), Vec2::splat(22.0));

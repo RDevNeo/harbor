@@ -93,6 +93,8 @@ pub struct Shared {
     pub ids: Mutex<HashMap<(String, i64), i64>>,
     /// Every chat here → its gid (phones' events name chats by gid).
     pub gids: Mutex<HashMap<i64, String>>,
+    /// Copies → (home PC, id there).
+    pub homes: Mutex<HashMap<i64, (String, i64)>>,
     /// Peer address → (when asked, its peer id when it's one of the user's devices).
     whois: Mutex<HashMap<IpAddr, (Instant, Option<String>)>>,
     /// The Tailscale user this PC is logged in as.
@@ -115,6 +117,11 @@ impl Shared {
     /// A peer's name to show, its id's label when it never answered.
     pub fn name_of(&self, id: &str) -> String {
         self.peer(id).map(|p| p.name).filter(|n| !n.is_empty()).unwrap_or_else(|| label(id))
+    }
+
+    /// A chat here by its gid.
+    pub fn by_gid(&self, gid: &str) -> Option<i64> {
+        self.gids.lock().unwrap().iter().find(|(_, g)| *g == gid).map(|(id, _)| *id)
     }
 
     pub fn local_id(&self, peer: &str, id: i64) -> Option<i64> {
@@ -147,6 +154,10 @@ pub struct Local {
     pub open_when: Option<(String, i64, Instant)>,
     /// True while a peer's forwarded call runs (it never goes on to a third PC).
     in_call: bool,
+    /// Leases sent for copies: (chat, viewing) → (on, kind, when), to send renewals sparingly.
+    leases: HashMap<(i64, bool), (bool, String, Instant)>,
+    /// The chat this PC last said it has open: (chat, focused, when).
+    viewing: Option<(i64, bool, Instant)>,
 }
 
 /// A copy's live state as its home PC says it.
@@ -160,6 +171,9 @@ pub struct Remote {
     pub status: Value,
     /// Forks made from it: (item, fork's id here).
     pub forks: Vec<(usize, i64)>,
+    /// Who types in it and which PCs have it open, as its home PC keeps them.
+    pub typing: Vec<api::Typer>,
+    pub viewing: Vec<api::Typer>,
 }
 
 /// Messages from the peer workers to the UI thread.
@@ -322,6 +336,21 @@ pub fn serve(stream: &TcpStream, req: &api::Request, r: &mut impl Read, hub: &ap
             let body = read_json(r, req.len);
             mint(hub, &body)
         }
+        ("POST", ["mesh", "v1", "lease"]) => {
+            let b = read_json(r, req.len);
+            let Some(chat) = b["chat"].as_i64().filter(|c| !shared.foreign.lock().unwrap().contains(c)) else { return err(404, "no such chat") };
+            let s = |k: &str| b[k].as_str().unwrap_or("").chars().take(60).collect::<String>();
+            let on = b["on"].as_bool().unwrap_or(false);
+            let changed = if b["view"].as_bool() == Some(true) {
+                hub.set_viewing(chat, &s("device"), &s("label"), s("kind") != "away", on)
+            } else {
+                hub.set_typing(chat, &s("device"), &s("kind"), &s("label"), on)
+            };
+            if changed {
+                wake();
+            }
+            ok(json!({ "ok": true }))
+        }
         ("POST", ["mesh", "v1", "revoke"]) => {
             let body = read_json(r, req.len);
             let groups: Vec<String> = body["groups"].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(String::from)).collect();
@@ -374,6 +403,18 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
     tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string() });
     hub.tokens_dirty.store(true, Ordering::SeqCst);
     ok(json!({ "token": token }))
+}
+
+/// A typing or viewing lease for a copy goes to its home PC (on a thread). False when the
+/// chat is this PC's own.
+pub fn forward_lease(hub: &api::Hub, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool) -> bool {
+    let Some((home, hid)) = hub.mesh.homes.lock().unwrap().get(&chat).cloned() else { return false };
+    let Some(p) = hub.mesh.peer(&home).filter(|p| p.online) else { return true };
+    let body = serde_json::to_vec(&json!({ "chat": hid, "view": view, "device": device, "kind": kind, "label": label, "on": on })).unwrap_or_default();
+    std::thread::spawn(move || {
+        let _ = http(&p.addr, "POST", "/mesh/v1/lease", Some(("application/json", &body)), Duration::from_secs(5));
+    });
+    true
 }
 
 /// Pairings removed on another PC: their phones' tokens here go too.
@@ -576,8 +617,9 @@ fn sync(hub: &api::Hub, addr: &str, id: &str, epoch: u64, tx: &Sender<crate::con
 
 /// A call forwarded to a chat's home PC, on a thread of its own: its files go first (as
 /// uploads there), then the call. `done` gets the answer, or a 503 when the PC is off.
-pub fn forward(addr: String, name: String, method: &str, path: Vec<String>, mut body: Value, files: Vec<PathBuf>, sender: String, done: impl FnOnce(Reply) + Send + 'static) {
+pub fn forward(addr: String, name: String, method: &str, path: Vec<String>, mut body: Value, files: Vec<PathBuf>, sender: (String, String), done: impl FnOnce(Reply) + Send + 'static) {
     let method = method.to_string();
+    let (sender, device) = sender;
     std::thread::spawn(move || {
         let off = || err(503, format!("{name} is off or unreachable: the chat is read-only until it's back"));
         let mut ids = vec![];
@@ -593,7 +635,7 @@ pub fn forward(addr: String, name: String, method: &str, path: Vec<String>, mut 
         if !files.is_empty() {
             body["files"] = json!(ids);
         }
-        let call = json!({ "method": method, "path": path, "body": body, "sender": sender });
+        let call = json!({ "method": method, "path": path, "body": body, "sender": sender, "device": device });
         let data = serde_json::to_vec(&call).unwrap_or_default();
         match http(&addr, "POST", "/mesh/v1/call", Some(("application/json", &data)), CALL_WAIT) {
             Ok((status, body)) => done(Reply { status, body }),
@@ -672,6 +714,7 @@ impl App {
         }
         *self.shared().foreign.lock().unwrap() = foreign;
         *self.shared().ids.lock().unwrap() = ids;
+        *self.shared().homes.lock().unwrap() = self.chats.iter().filter(|c| c.foreign()).map(|c| (c.id, (c.home.clone(), c.home_id))).collect();
         *self.shared().gids.lock().unwrap() = self.chats.iter().map(|c| (c.id, c.gid.clone())).collect();
     }
 
@@ -709,6 +752,79 @@ impl App {
         self.running_since(id).is_some()
     }
 
+    /// Who types in a chat now (a copy: as its home PC says).
+    pub fn typers(&self, chat: i64) -> Vec<api::Typer> {
+        match self.mesh.status.get(&chat) {
+            Some(r) => r.typing.iter().filter(|t| t.until > Instant::now()).cloned().collect(),
+            None => self.api.hub.typing(chat),
+        }
+    }
+
+    /// Which other PCs have a chat open now.
+    pub fn viewers(&self, chat: i64) -> Vec<api::Typer> {
+        let me = api::local_device();
+        let all = match self.mesh.status.get(&chat) {
+            Some(r) => r.viewing.iter().filter(|t| t.until > Instant::now()).cloned().collect(),
+            None => self.api.hub.viewing(chat),
+        };
+        all.into_iter().filter(|t| t.device != me).collect()
+    }
+
+    /// A typing or viewing lease of this PC (or a phone through it): kept here for this PC's
+    /// chats, sent to the home PC for copies (renewals at most every few seconds).
+    pub fn set_lease(&mut self, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool) {
+        if !self.is_foreign(chat) {
+            if view {
+                self.api.hub.set_viewing(chat, device, label, kind != "away", on);
+            } else {
+                self.api.hub.set_typing(chat, device, kind, label, on);
+            }
+            return;
+        }
+        let key = (chat, view);
+        let every = if view { Duration::from_secs(5) } else { Duration::from_millis(2500) };
+        let same = self.mesh.leases.get(&key).is_some_and(|(o, k, at)| *o == on && k == kind && at.elapsed() < every);
+        if same {
+            return;
+        }
+        self.mesh.leases.insert(key, (on, kind.to_string(), Instant::now()));
+        forward_lease(&self.api.hub, chat, view, device, kind, label, on);
+    }
+
+    /// True when someone other than `device` types in the chat: a message from `device` waits.
+    pub fn locked_for(&self, chat: i64, device: &str) -> bool {
+        self.typers(chat).iter().any(|t| t.device != device)
+    }
+
+    /// Who sends the message being handled: the phone, the PC that forwarded it, or this PC.
+    pub fn sending_device(&self) -> String {
+        if self.sender_device.is_empty() { api::local_device() } else { self.sender_device.clone() }
+    }
+
+    /// Once per frame: this PC has its open chat in view (renewed while open).
+    fn mesh_viewing(&mut self) {
+        if !self.api.hub.mesh.on.load(Ordering::Relaxed) {
+            return;
+        }
+        let open = match self.view {
+            crate::app::View::Chat(id) => Some(id),
+            _ => None,
+        };
+        let focused = crate::agent::FOCUSED.load(Ordering::Relaxed);
+        let me = api::local_device();
+        let name = self.shared().me().name;
+        if let Some((old, _, _)) = self.mesh.viewing.filter(|(o, _, _)| Some(*o) != open) {
+            self.set_lease(old, true, &me, "away", &name, false);
+            self.mesh.viewing = None;
+        }
+        let Some(id) = open else { return };
+        let due = self.mesh.viewing.is_none_or(|(_, f, at)| f != focused || at.elapsed() >= Duration::from_secs(5));
+        if due {
+            self.set_lease(id, true, &me, if focused { "focused" } else { "away" }, &name, true);
+            self.mesh.viewing = Some((id, focused, Instant::now()));
+        }
+    }
+
     /// A turn footer's "account · model · " for a chat: a copy's account is its home PC's.
     pub fn footer_who(&self, chat: i64, account: &str, model: &str) -> String {
         if let Some(c) = self.chat(chat).filter(|c| c.foreign()) {
@@ -722,6 +838,7 @@ impl App {
 
     /// Once per frame: copies written to disk now and then, the chat waiting to open.
     pub fn mesh_tick(&mut self) {
+        self.mesh_viewing();
         if self.api.hub.tokens_dirty.swap(false, Ordering::SeqCst) {
             let all = self.api.hub.tokens.lock().unwrap().clone();
             api::save_tokens(&self.store, &all);
@@ -907,9 +1024,22 @@ impl App {
                 a["id"] = json!(local);
             }
         }
+        let leases = |k: &str, ttl: Duration| -> Vec<api::Typer> {
+            m[k].as_array()
+                .into_iter()
+                .flatten()
+                .map(|t| api::Typer {
+                    device: t["device"].as_str().unwrap_or("").into(),
+                    kind: t["kind"].as_str().unwrap_or("").into(),
+                    label: t["label"].as_str().unwrap_or("").into(),
+                    until: Instant::now() + ttl,
+                })
+                .collect()
+        };
+        let (typing, viewing) = (leases("typing", api::TYPING_TTL), leases("viewing", api::VIEWING_TTL));
         self.mesh.status.insert(
             id,
-            Remote { running: m["running"].as_bool().unwrap_or(false), since_ms: m["since_ms"].as_i64(), queued: m["queued"].as_u64().unwrap_or(0) as usize, status, forks },
+            Remote { running: m["running"].as_bool().unwrap_or(false), since_ms: m["since_ms"].as_i64(), queued: m["queued"].as_u64().unwrap_or(0) as usize, status, forks, typing, viewing },
         );
         self.api_touch(id);
         Some(id)
@@ -987,10 +1117,12 @@ impl App {
                 }
                 let sender: String = call.body["sender"].as_str().unwrap_or("").chars().take(60).collect();
                 self.sender = if sender.is_empty() { self.shared().name_of(&call.device) } else { sender };
+                self.sender_device = call.body["device"].as_str().unwrap_or("").chars().take(60).collect();
                 self.mesh.in_call = true;
                 let mut r = self.api_route(&inner, ctx);
                 self.mesh.in_call = false;
                 self.sender.clear();
+                self.sender_device.clear();
                 // A new chat: the caller waits for its copy by this PC's id.
                 if r.status < 300 && r.body["id"].is_i64() {
                     r.body["home"] = json!(self.shared().me().id);
@@ -1032,6 +1164,8 @@ impl App {
             "count": count, "digest": digest,
             "running": self.turns.contains_key(&c.id), "since_ms": since_ms, "queued": self.queued_count(c.id),
             "status": self.api_status(c.id), "forks": forks,
+            "typing": self.typing_json(c.id),
+            "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
         })
     }
 
@@ -1091,7 +1225,7 @@ impl App {
         let mut path = vec!["v1".to_string(), "chats".to_string(), c.home_id.to_string()];
         path.extend(tail.iter().map(|s| s.to_string()));
         let tx = self.inc_tx.clone();
-        forward(peer.addr, name, method, path, body, files, self.shared().me().name, move |reply| {
+        forward(peer.addr, name, method, path, body, files, (self.shared().me().name, api::local_device()), move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat, what, reply, restore }));
         });
         true
@@ -1143,7 +1277,7 @@ impl App {
             "device": "", "text": text,
         });
         let tx = self.inc_tx.clone();
-        forward(peer.addr, peer.name, "POST", vec!["v1".into(), "chats".into()], body, files.to_vec(), self.shared().me().name, move |reply| {
+        forward(peer.addr, peer.name, "POST", vec!["v1".into(), "chats".into()], body, files.to_vec(), (self.shared().me().name, api::local_device()), move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat: crate::app::DRAFT, what: "start the chat", reply, restore }));
         });
         true
@@ -1240,10 +1374,11 @@ impl App {
         None
     }
 
-    fn phone_name(&self, call: &Call) -> String {
+    /// A phone's message through this PC: its name for "from …", its device id for the typing lock.
+    fn phone_name(&self, call: &Call) -> (String, String) {
         let me = self.shared().me().name;
         let phone = if call.device.is_empty() { "Phone".to_string() } else { call.device.clone() };
-        format!("{phone} via {me}")
+        (format!("{phone} via {me}"), api::device_id(&call.token))
     }
 
     /// A chat by the phone's reference: its id here or its global id.
@@ -1298,6 +1433,22 @@ impl App {
                 w::subtle(ui, format!("{}  {name} is off. This chat runs there, so it's read-only until {name} is back; then it catches up.", crate::icons::MONITOR), "label-14");
             });
         true
+    }
+
+    /// The top bar's badges: the other PCs that have this chat open.
+    pub fn mesh_badges(&self, ui: &mut eframe::egui::Ui, chat: i64) {
+        let t = self.theme.t;
+        let viewers = self.viewers(chat);
+        for v in viewers.iter().rev() {
+            let away = v.kind == "away";
+            let col = if away { t.subtle().gamma_multiply(0.6) } else { t.subtle() };
+            let text = eframe::egui::RichText::new(format!("{}  {}", crate::icons::MONITOR, v.label)).text_style(crate::theme::ts("label-12")).color(col);
+            let tip = if away { format!("Open on {} (not in front)", v.label) } else { format!("Open on {}", v.label) };
+            ui.label(text).on_hover_text(tip);
+        }
+        if let Some(soonest) = viewers.iter().map(|v| v.until).min() {
+            ui.ctx().request_repaint_after(soonest.saturating_duration_since(Instant::now()) + Duration::from_millis(50));
+        }
     }
 
     /// Settings › Devices: sharing chats with the user's other PCs, and how each one is.

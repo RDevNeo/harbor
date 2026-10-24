@@ -51,6 +51,9 @@ impl App {
         } else if self.others_typing(id).first().is_some() {
             // Someone on another device (a phone) is writing in it.
             w::Status::Text(crate::icons::PEN_LINE.to_string(), self.theme.t.blue(900))
+        } else if !self.viewers(id).is_empty() {
+            // Another PC has it open right now.
+            w::Status::Text("●".to_string(), self.theme.t.blue(900))
         } else if self.failed.contains(&id) {
             w::Status::Failed
         } else if self.unread.contains(&id) {

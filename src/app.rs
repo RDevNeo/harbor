@@ -233,6 +233,8 @@ pub struct App {
     /// Where the message being sent was written, when not on this PC (another PC or a
     /// phone, see mesh.rs): set while such a call runs, stored on the message.
     pub sender: String,
+    /// And its device id (a phone's "tok:…", another PC's "pc:…"), for the typing lock.
+    pub sender_device: String,
     /// Copies of other PCs' chats and calls forwarded to them (mesh.rs).
     pub mesh: crate::mesh::Local,
 }
@@ -362,6 +364,7 @@ impl App {
             devices_ui: Default::default(),
             usage_totals: Default::default(),
             sender: String::new(),
+            sender_device: String::new(),
             mesh: Default::default(),
         };
         app.keys = crate::keys::Keys::load(&app.store);
@@ -846,8 +849,9 @@ impl App {
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
             self.paused.remove(&p);
         }
-        if self.turns.contains_key(&chat_id) {
-            // Busy: it waits in the queue and joins the transcript once delivered.
+        // Busy, or someone on another device is typing in it (one sender at a time): it waits
+        // in the queue and joins the transcript once delivered.
+        if self.turns.contains_key(&chat_id) || self.locked_for(chat_id, &self.sending_device()) {
             self.enqueue(chat_id, text, files, mentions);
             return;
         }
@@ -1359,6 +1363,7 @@ impl eframe::App for App {
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
         self.mesh_tick();
+        self.queue_drain(ctx);
         self.api_tick();
         self.typing_repaint(ctx);
         self.maybe_reload(ctx);

@@ -234,7 +234,7 @@ impl App {
     /// Who is typing in `chat` on another device (this PC's own composer left out).
     pub fn others_typing(&self, chat: i64) -> Vec<api::Typer> {
         let me = api::local_device();
-        self.api.hub.typing(chat).into_iter().filter(|t| t.device != me).collect()
+        self.typers(chat).into_iter().filter(|t| t.device != me).collect()
     }
 
     /// "✎ Galaxy A13 is typing…" above the composer while another device writes in this chat.

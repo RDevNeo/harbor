@@ -162,6 +162,10 @@ impl App {
                     {
                         self.toggle_team();
                     }
+                    // Other PCs with this chat open (dimmed: their window isn't in front).
+                    if let Some(c) = chat {
+                        self.mesh_badges(ui, c.id);
+                    }
                 }
                 let left_rect = Rect::from_min_max(row.min, pos2((right.min_rect().left() - 12.0).max(row.left()), row.bottom()));
                 let mut left = ui.new_child(egui::UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
@@ -858,7 +862,12 @@ impl App {
                         }
                     } else {
                         let empty = draft.trim().is_empty() && self.files.get(&key).is_none_or(|f| f.is_empty()) && self.mentions.drafts.get(&key).is_none_or(|m| m.is_empty());
-                        if w::round_button(ui, ic::ARROW_UP, !empty).on_hover_text("Send (Enter)").clicked() {
+                        // Someone on another device is typing: the message waits for them (one sender at a time).
+                        let tip = match self.others_typing(key).first() {
+                            Some(t) if key != crate::app::DRAFT => format!("Queue (Enter): {} is typing; it goes out when they're done", t.label),
+                            _ => "Send (Enter)".to_string(),
+                        };
+                        if w::round_button(ui, ic::ARROW_UP, !empty).on_hover_text(tip).clicked() {
                             send = true;
                         }
                     }
