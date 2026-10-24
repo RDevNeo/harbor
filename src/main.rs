@@ -27,6 +27,7 @@ mod mentions;
 mod logos;
 mod mcp;
 mod mcpshim;
+mod mesh;
 mod oauth;
 mod pages;
 mod phonesui;

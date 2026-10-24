@@ -107,6 +107,7 @@ impl App {
             parent: None,
             name: "lead".into(),
             device: sel.device,
+            gid: String::new(), home: String::new(), home_id: 0,
         });
         let id = chat.id;
         self.chats.push(chat);
@@ -141,6 +142,7 @@ impl App {
             parent: None,
             name: "lead".into(),
             device: sel.device,
+            gid: String::new(), home: String::new(), home_id: 0,
         });
         let id = chat.id;
         self.chats.push(chat);
@@ -540,6 +542,7 @@ impl App {
                     name: name.clone(),
                     // Claude subagents run where their lead does; other CLIs only run here.
                     device: if acc.kind == Kind::Claude { me.device.clone() } else { String::new() },
+                    gid: String::new(), home: String::new(), home_id: 0,
                 });
                 let id = chat.id;
                 self.chats.push(chat);

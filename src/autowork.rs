@@ -220,7 +220,7 @@ impl App {
         }
         let id = self.new_thread_with(Some(project), &prompt, sel);
         let tr = self.transcripts.entry(id).or_default();
-        tr.items.push(Item::User { text: prompt.clone(), files: vec![], at: store::now(), mentions: vec![] });
+        tr.items.push(Item::User { text: prompt.clone(), files: vec![], at: store::now(), mentions: vec![], sender: String::new() });
         self.persist(id);
         self.start_turn(id, prompt, vec![], ctx);
         if !quiet {

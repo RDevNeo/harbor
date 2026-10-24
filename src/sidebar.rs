@@ -141,6 +141,10 @@ impl App {
     }
 
     pub fn set_chat_settled(&mut self, id: i64, settled: bool) {
+        if self.mesh_patch(id, serde_json::json!({ "settled": settled })) {
+            self.unread.remove(&id);
+            return;
+        }
         if let Some(c) = self.chat_mut(id) {
             c.settled = settled;
         }

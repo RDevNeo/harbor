@@ -873,7 +873,8 @@ impl App {
                             if w::btn("Salvar Alterações").primary().show(ui).clicked() || enter {
                                 let id = *chat;
                                 let tt = title.trim().to_string();
-                                if let Some(c) = self.chat_mut(id) {
+                                if self.mesh_patch(id, serde_json::json!({ "title": tt })) {
+                                } else if let Some(c) = self.chat_mut(id) {
                                     c.title = tt;
                                     let c = c.clone();
                                     self.store.save_chat(&c);
@@ -893,6 +894,10 @@ impl App {
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                             if w::btn("Delete").variant(w::Variant::Destructive).show(ui).clicked() {
                                 let id = *id;
+                                if self.mesh_delete(id) {
+                                    close = true;
+                                    return;
+                                }
                                 self.stop(id);
                                 self.store.delete_chat(id);
                                 self.chats.retain(|c| c.id != id);

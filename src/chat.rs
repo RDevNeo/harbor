@@ -385,7 +385,7 @@ impl App {
             use crate::view::Card;
             match &shown.card {
                 Card::Hidden => {}
-                Card::User { text, files, images: shown_images, at, mentions } => {
+                Card::User { text, files, images: shown_images, at, mentions, sender } => {
                     let bubble = ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         Frame::new()
                             .fill(t.gray(100))
@@ -440,6 +440,11 @@ impl App {
                             1 => MsgAction::Quote(text.to_string()),
                             _ => MsgAction::Mention(i),
                         });
+                    }
+                    // Written on another PC or a phone: where, under the bubble.
+                    if !sender.is_empty() {
+                        ui.add_space(-8.0);
+                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| w::subtle(ui, format!("from {sender}"), "label-12"));
                     }
                 }
                 Card::Text { text, at, forkable } => {

@@ -17,6 +17,8 @@ pub enum Card<'a> {
         images: Vec<&'a str>,
         mentions: &'a [Mention],
         at: i64,
+        /// Written on another PC or a phone: its name ("from laptop"); empty when written here.
+        sender: &'a str,
     },
     Text { text: &'a str, at: i64, forkable: bool },
     Thinking { text: &'a str },
@@ -126,8 +128,9 @@ pub fn project<'a>(items: &'a [Item], lead: bool, forks: &[(usize, i64)], who: &
 
 fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) -> Card<'a> {
     match item {
-        Item::User { text, files, at, mentions } => Card::User {
+        Item::User { text, files, at, mentions, sender } => Card::User {
             text,
+            sender,
             files: files.iter().filter(|f| !crate::images::is_image(f)).map(String::as_str).collect(),
             images: files.iter().filter(|f| crate::images::is_image(f)).map(String::as_str).collect(),
             mentions,
@@ -181,7 +184,7 @@ pub fn fixture() -> Vec<Item> {
     let tool = |name: &str, result: Option<&str>| Item::Tool { id: name.into(), name: name.into(), summary: "s".into(), input: "{}".into(), result: result.map(String::from), is_error: false };
     let result = || Item::Result { cost_usd: 3.96342, duration_ms: 4300, turns: 1, input_tokens: 189_400, output_tokens: 304, at: 9, account: "claude".into(), model: "claude-opus-5-5".into() };
     vec![
-        Item::User { text: "build it".into(), files: vec!["/tmp/shot.png".into(), "/tmp/notes.txt".into()], at: 1, mentions: vec![] },
+        Item::User { text: "build it".into(), files: vec!["/tmp/shot.png".into(), "/tmp/notes.txt".into()], at: 1, mentions: vec![], sender: String::new() },
         Item::Thinking { text: "hmm".into() },
         tool("mcp__harbor__spawn_agent", Some("ok")),
         Item::Text { text: "Started a worker.".into(), at: 2 },

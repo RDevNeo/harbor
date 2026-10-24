@@ -37,6 +37,8 @@ pub enum Incoming {
     Api(crate::api::Call),
     /// A second launch wants this window in front; `raised` when the compositor did it.
     Focus { raised: bool },
+    /// From the workers that follow other PCs' Harbors (mesh.rs).
+    Mesh(crate::mesh::Msg),
 }
 
 pub fn socket_path() -> PathBuf {

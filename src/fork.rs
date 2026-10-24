@@ -122,6 +122,7 @@ impl App {
             parent: None,
             name: "lead".into(),
             device: src.device.clone(),
+            gid: String::new(), home: String::new(), home_id: 0,
         });
         let id = chat.id;
         self.chats.push(chat);

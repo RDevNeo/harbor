@@ -230,6 +230,11 @@ pub struct App {
     pub devices_ui: crate::remoteui::State,
     /// Settings › Usage totals, summed off the UI thread.
     pub usage_totals: crate::pages::UsageTotals,
+    /// Where the message being sent was written, when not on this PC (another PC or a
+    /// phone, see mesh.rs): set while such a call runs, stored on the message.
+    pub sender: String,
+    /// Copies of other PCs' chats and calls forwarded to them (mesh.rs).
+    pub mesh: crate::mesh::Local,
 }
 
 impl App {
@@ -356,6 +361,8 @@ impl App {
             remote: Default::default(),
             devices_ui: Default::default(),
             usage_totals: Default::default(),
+            sender: String::new(),
+            mesh: Default::default(),
         };
         app.keys = crate::keys::Keys::load(&app.store);
         app.remote = crate::remote::load(&app.store);
@@ -378,8 +385,12 @@ impl App {
         control::start_socket(inc_tx.clone(), wake.clone());
         app.hook_port = control::start_hooks(inc_tx, app.hook_tokens.clone(), wake);
         app.check_funnel();
+        app.mesh_load();
         if app.store.get("api_enabled").as_deref() == Some("1") {
             app.api_set_enabled(true, ctx);
+        }
+        if app.store.get("mesh_enabled").as_deref() == Some("1") {
+            app.mesh_set_enabled(true, ctx);
         }
         app.restore_after_reload(ctx);
         // Agent turns run detached: the ones still going (or done meanwhile) come back.
@@ -536,6 +547,11 @@ impl App {
         }
         self.draft.sel = s.clone();
         if let View::Chat(id) = self.view {
+            // Another PC's chat changes there (and comes back with its copy).
+            if self.is_foreign(id) {
+                self.mesh_patch(id, serde_json::json!({ "account": s.account, "model": s.model, "effort": s.effort, "access": s.access }));
+                return;
+            }
             if let Some(c) = self.chat_mut(id) {
                 c.account = s.account;
                 c.model = s.model;
@@ -795,6 +811,13 @@ impl App {
         if text.is_empty() && files.is_empty() && mentions.is_empty() {
             return;
         }
+        if key == DRAFT && self.mesh_create(&text, &files) {
+            // The Device picked is another PC's Harbor: the chat starts there.
+            self.drafts.remove(&key);
+            self.files.remove(&key);
+            self.mentions.drafts.remove(&key);
+            return;
+        }
         let chat_id = if key == DRAFT {
             // A project can hold several chats: every send from the draft starts one.
             let id = self.new_thread(self.draft.repo, &text);
@@ -814,6 +837,10 @@ impl App {
     /// A user message for an existing chat (the composer's, or the phone's): a new turn,
     /// or queued while one runs.
     pub fn send_to(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<crate::mentions::Mention>, ctx: &egui::Context) {
+        // Another PC's chat: its PC runs the turn.
+        if self.mesh_send(chat_id, &text, &files, &mentions) {
+            return;
+        }
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
             self.paused.remove(&p);
         }
@@ -832,6 +859,7 @@ impl App {
             files: files.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
             at: store::now(),
             mentions: mentions.clone(),
+            sender: self.sender.clone(),
         });
         // Mentioned messages go first, quoted; the transcript shows them as chips.
         let quoted = crate::mentions::prompt(&mentions);
@@ -849,6 +877,10 @@ impl App {
 
     /// Starts one agent turn for a chat (user message, report, wake-up, webhook…).
     pub fn start_turn(&mut self, chat_id: i64, prompt: String, files: Vec<PathBuf>, ctx: &egui::Context) {
+        // Turns of another PC's chat run on that PC only.
+        if self.is_foreign(chat_id) {
+            return;
+        }
         // One turn per chat. A runner still going for it, even one this Harbor lost
         // track of, holds the session: the prompt waits for that turn instead.
         if self.turns.contains_key(&chat_id) || self.adopt_runner(chat_id, ctx) {
@@ -963,6 +995,9 @@ impl App {
     }
 
     pub fn stop(&mut self, chat_id: i64) {
+        if self.mesh_stop(chat_id) {
+            return;
+        }
         if let Some((t, _)) = self.turns.remove(&chat_id) {
             t.stop();
             if let Some(tr) = self.transcripts.get_mut(&chat_id) {
@@ -1288,6 +1323,7 @@ impl eframe::App for App {
                 control::Incoming::Tool(call) => self.handle_tool(call, ctx),
                 control::Incoming::Hook(h) => self.handle_hook(h, ctx),
                 control::Incoming::Api(call) => self.handle_api(call, ctx),
+                control::Incoming::Mesh(m) => self.handle_mesh(m),
                 control::Incoming::Focus { raised } => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -1320,6 +1356,7 @@ impl eframe::App for App {
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
+        self.mesh_tick();
         self.api_tick();
         self.typing_repaint(ctx);
         self.maybe_reload(ctx);

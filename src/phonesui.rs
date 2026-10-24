@@ -75,7 +75,7 @@ impl App {
             let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).primary().show(ui);
             if let Some(token) = b.clicked().then(api::new_token).and_then(|t| t.map_err(|e| eprintln!("harbor: no key for a phone: {e}")).ok()) {
                 let mut tokens = hub.tokens.lock().unwrap();
-                tokens.push(Token { token: token.clone(), name: String::new(), created: crate::store::now() });
+                tokens.push(Token { token: token.clone(), name: String::new(), created: crate::store::now(), group: crate::store::random_hex(16).unwrap_or_else(|_| token.clone()) });
                 api::save_tokens(&self.store, &tokens);
                 drop(tokens);
                 self.api.ui.pairing = Some((token, None, None));
@@ -158,6 +158,10 @@ impl App {
             }
         });
         if let Some(tok) = revoke {
+            // The phone's keys on the other PCs go too (mesh.rs).
+            if let Some(g) = hub.tokens.lock().unwrap().iter().find(|t| t.token == tok).map(|t| t.group.clone()).filter(|g| !g.is_empty()) {
+                self.mesh_revoke(&g);
+            }
             let mut tokens = hub.tokens.lock().unwrap();
             tokens.retain(|t| t.token != tok);
             api::save_tokens(&self.store, &tokens);

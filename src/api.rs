@@ -57,6 +57,10 @@ pub struct Token {
     pub name: String,
     #[serde(default)]
     pub created: i64,
+    /// The pairing it belongs to: a phone paired once gets a token from each PC in the mesh
+    /// (mesh.rs), all with the same group, so removing the phone on one PC removes it on all.
+    #[serde(default)]
+    pub group: String,
 }
 
 #[derive(Default)]
@@ -145,6 +149,14 @@ pub struct Hub {
     revs: Mutex<Revs>,
     cv: Condvar,
     pub net: Mutex<Net>,
+    /// The start revision of this run: revisions compare only within one epoch.
+    pub epoch: u64,
+    /// Sharing chats with the user's other PCs (mesh.rs).
+    pub mesh: crate::mesh::Shared,
+    /// A peer minted a phone token: the UI thread saves the list.
+    pub tokens_dirty: AtomicBool,
+    /// Pairings removed (groups), shared with peers so a removed phone is out everywhere.
+    pub revoked: Mutex<Vec<String>>,
 }
 
 impl Hub {
@@ -159,7 +171,20 @@ impl Hub {
             revs: Mutex::new(Revs { rev: base, state: base, ..Default::default() }),
             cv: Condvar::new(),
             net: Mutex::new(Net::default()),
+            epoch: base,
+            mesh: Default::default(),
+            tokens_dirty: AtomicBool::new(false),
+            revoked: Mutex::new(vec![]),
         }
+    }
+
+    /// Phones or the mesh are on: the listener answers and changes are counted.
+    pub fn active(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed) || self.mesh.on.load(Ordering::Relaxed)
+    }
+
+    pub fn mesh_revoked(&self, group: &str) -> bool {
+        self.revoked.lock().unwrap().iter().any(|g| g == group)
     }
 
     pub fn rev(&self) -> u64 {
@@ -183,7 +208,7 @@ impl Hub {
     }
 
     /// A new revision that wakes nobody (items found changed while answering).
-    fn bump(&self) -> u64 {
+    pub fn bump(&self) -> u64 {
         let mut r = self.revs.lock().unwrap();
         r.rev += 1;
         r.rev
@@ -299,7 +324,20 @@ pub fn new_token() -> std::io::Result<String> {
 }
 
 pub fn load_tokens(s: &store::Store) -> Vec<Token> {
-    s.get("api_tokens").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    let mut v: Vec<Token> = s.get("api_tokens").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    // Tokens from before pairings had groups: each its own.
+    if v.iter().any(|t| t.group.is_empty()) {
+        for t in v.iter_mut().filter(|t| t.group.is_empty()) {
+            t.group = store::random_hex(16).unwrap_or_else(|_| t.token.clone());
+        }
+        save_tokens(s, &v);
+    }
+    v
+}
+
+/// Pairings removed on any PC of the mesh (their groups).
+pub fn load_revoked(s: &store::Store) -> Vec<String> {
+    s.get("api_revoked").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
 pub fn save_tokens(s: &store::Store, t: &[Token]) {
@@ -688,7 +726,7 @@ static CONNS: Conns = Conns::new(64);
 
 fn accept(l: TcpListener, hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn() + Send + Sync + Clone + 'static) {
     for stream in l.incoming().flatten() {
-        if !hub.enabled.load(Ordering::SeqCst) {
+        if !hub.active() {
             continue; // dropped: closed without a word
         }
         let Some(slot) = CONNS.take() else { continue };
@@ -709,6 +747,14 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     };
     r.get_mut().until = None;
     let segs = req.segments();
+    // Another PC's Harbor (mesh.rs): known by its Tailscale identity, not a token.
+    if segs.first() == Some(&"mesh") {
+        let reply = crate::mesh::serve(&stream, &req, &mut r, hub, tx, wake);
+        return send_json(&mut w, reply.status, &reply.body);
+    }
+    if !hub.enabled.load(Ordering::SeqCst) {
+        return; // phones are off: closed without a word
+    }
     if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] {
         return serve_apk(&mut w, req.method == "HEAD");
     }
@@ -741,7 +787,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         ("GET", ["v1", "image"]) => serve_image(&mut w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
         ("POST", ["v1", "upload"]) => {
-            let r = upload(&mut r, &req, &uploads_dir());
+            let r = upload_to(&mut r, &req, &uploads_dir());
             send_json(&mut w, r.status, &r.body);
         }
         _ => {
@@ -847,7 +893,7 @@ pub fn safe_name(name: &str) -> String {
     if s.is_empty() { "file".into() } else { s }
 }
 
-fn upload(r: &mut impl Read, req: &Request, base: &Path) -> Reply {
+pub fn upload_to(r: &mut impl Read, req: &Request, base: &Path) -> Reply {
     if req.len > MAX_UPLOAD {
         return err(413, "files up to 200 MB");
     }
@@ -1154,9 +1200,10 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
     let images: Vec<Value> = crate::view::images(&s.card, find).iter().map(|p| json!({ "name": file_name(p), "url": image_url(p) })).collect();
     let mut v = match &s.card {
         Card::Hidden => json!({}),
-        Card::User { text, files, mentions, at, .. } => json!({
+        Card::User { text, files, mentions, at, sender, .. } => json!({
             "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "images": images,
             "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet() })).collect::<Vec<_>>(), "at": at,
+            "sender": sender,
         }),
         Card::Text { text, at, forkable } => json!({ "markdown": text, "blocks": blocks(text), "images": images, "at": at, "forkable": forkable }),
         Card::Thinking { text } => json!({ "text": text }),
@@ -1188,7 +1235,7 @@ fn hash_of(v: &impl Hash) -> u64 {
 /// What tells an item's versions apart, without serializing it: a tool's input and result
 /// are set once (a result arrives, it doesn't grow), so their lengths stand in for them;
 /// replies and thinking grow while they stream; the rest are small.
-fn fingerprint(it: &Item) -> u64 {
+pub fn fingerprint(it: &Item) -> u64 {
     match it {
         Item::Tool { id, name, summary, input, result, is_error } => hash_of(&(id, name, summary, input.len(), result.as_ref().map(String::len), is_error)),
         Item::Text { text, at } => hash_of(&(1u8, text, at)),
@@ -1297,14 +1344,14 @@ pub fn check_run(
 impl App {
     /// A chat changed (items or turn): long-polls wake.
     pub fn api_touch(&self, chat: i64) {
-        if self.api.hub.enabled.load(Ordering::Relaxed) {
+        if self.api.hub.active() {
             self.api.hub.touch(Some(chat), false);
         }
     }
 
     /// Once per frame: what `/v1/state` would say, per chat and for the rest; changes wake.
     pub fn api_tick(&mut self) {
-        if !self.api.hub.enabled.load(Ordering::Relaxed) {
+        if !self.api.hub.active() {
             return;
         }
         self.local_typing();
@@ -1319,13 +1366,20 @@ impl App {
         for c in &self.chats {
             // A lead's bars (waiting for sub-agents, a usage limit) change with it too.
             let bars = (subs.get(&c.id).copied().unwrap_or(0), self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.turns.contains_key(&c.id), self.queued_count(c.id), bars));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.is_running(c.id), self.queued_count(c.id), (bars, self.writable(c.id))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
             seen.insert(c.id, h);
         }
-        let gone = self.api.chats.keys().any(|k| !seen.contains_key(k));
+        let gone: Vec<i64> = self.api.chats.keys().filter(|k| !seen.contains_key(k)).copied().collect();
+        // This PC's own chats deleted (by any path): peers drop their copies.
+        for id in &gone {
+            if !self.api.hub.mesh.foreign.lock().unwrap().contains(id) {
+                self.mesh_gone(*id);
+            }
+        }
+        let gone = !gone.is_empty();
         let rest = hash_of(&(
             self.repos.iter().map(|r| (r.id, &r.name)).collect::<Vec<_>>(),
             self.accounts.iter().map(|a| (&a.id, a.logged_in, a.usage.iter().map(|u| (&u.label, (u.percent * 100.0) as i32)).collect::<Vec<_>>())).collect::<Vec<_>>(),
@@ -1366,7 +1420,10 @@ impl App {
         self.api.hub.set_typing(id, &me, "pc", &label, !draft.is_empty());
     }
 
-    fn queued_count(&self, id: i64) -> usize {
+    pub fn queued_count(&self, id: i64) -> usize {
+        if let Some(r) = self.mesh.status.get(&id).filter(|_| self.is_foreign(id)) {
+            return r.queued;
+        }
         self.queued(id).len() + self.pending.get(&id).map_or(0, |p| p.len())
     }
 
@@ -1380,11 +1437,16 @@ impl App {
                 move || ctx.request_repaint()
             };
             start(self.api.hub.clone(), self.inc_tx.clone(), wake);
-            // Chats changed while it was off without a word to the hub: look at them again.
-            self.api.looked.clear();
-            self.api_tick();
-            self.api.hub.touch(None, true);
+            self.api_activated();
         }
+    }
+
+    /// Phones or the mesh just turned on.
+    pub fn api_activated(&mut self) {
+        // Chats changed while it was off without a word to the hub: look at them again.
+        self.api.looked.clear();
+        self.api_tick();
+        self.api.hub.touch(None, true);
     }
 
     pub fn handle_api(&mut self, call: Call, ctx: &egui::Context) {
@@ -1398,22 +1460,34 @@ impl App {
                 save_tokens(&self.store, &all);
             }
         }
+        if call.path.first().map(String::as_str) == Some("mesh") {
+            let r = self.mesh_route(&call, ctx);
+            let _ = call.reply.send(r);
+            return;
+        }
+        // A copy of another PC's chat: the call goes there.
+        let Some(call) = self.mesh_proxy(call) else { return };
         let r = self.api_route(&call, ctx);
         let _ = call.reply.send(r);
     }
 
-    fn api_route(&mut self, call: &Call, ctx: &egui::Context) -> Reply {
+    pub fn api_route(&mut self, call: &Call, ctx: &egui::Context) -> Reply {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
-        let id = |s: &str| s.parse::<i64>().ok();
+        // A copy is written on its home PC only (mesh.rs forwards it there while it answers).
+        if call.method != "GET" && p.len() > 2 && p[1] == "chats" {
+            if let Some(c) = self.chat_by_ref(p[2]).filter(|c| c.foreign()) {
+                return err(409, format!("{} is off: this chat is read-only until it's back", self.home_name(c)));
+            }
+        }
         match (call.method.as_str(), p.as_slice()) {
             ("GET", ["v1", "state"]) => ok(self.api_state(ctx, &device_id(&call.token))),
-            ("GET", ["v1", "chats", c, "items"]) => match id(c).filter(|c| self.chat(*c).is_some()) {
+            ("GET", ["v1", "chats", c, "items"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_items(c, call.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
                 None => err(404, "no such chat"),
             },
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
             ("POST", ["v1", "chats", c, action]) => {
-                let Some(c) = id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 match *action {
                     "send" => self.api_send(c, &call.body, ctx),
                     "stop" => {
@@ -1442,7 +1516,7 @@ impl App {
                 }
             }
             ("PATCH", ["v1", "chats", c]) => {
-                let Some(c) = id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 let title = call.body["title"].as_str().map(str::trim);
                 if title == Some("") {
                     return err(400, "empty title");
@@ -1464,7 +1538,7 @@ impl App {
                 ok(json!({ "ok": true, "chat": chat }))
             }
             ("DELETE", ["v1", "chats", c]) => {
-                let Some(c) = id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 self.stop(c);
                 self.store.delete_chat(c);
                 self.chats.retain(|x| x.id != c);
@@ -1479,6 +1553,11 @@ impl App {
             (_, ["v1", ..]) => err(404, "unknown call"),
             _ => err(404, "not found"),
         }
+    }
+
+    /// A chat's id here from the phone's reference (its id here or its global id).
+    fn ref_id(&self, r: &str) -> Option<i64> {
+        self.chat_by_ref(r).map(|c| c.id)
     }
 
     /// Who is typing in a chat, as the wire says it.
@@ -1522,8 +1601,13 @@ impl App {
         json!({
             "id": c.id, "project_id": c.repo_id, "title": c.title, "device": c.device, "account": c.account,
             "model": c.model, "effort": c.effort, "access": c.access, "fast": self.fast, "settled": c.settled,
-            "running": self.turns.contains_key(&c.id), "queued": self.queued_count(c.id),
+            "running": self.is_running(c.id), "queued": self.queued_count(c.id),
             "updated_ms": c.updated * 1000, "rev": self.api.hub.chat_rev(c.id),
+            // The same chat on every PC of the mesh; the PC it runs on and whether it can be written now.
+            "gid": c.gid,
+            "home": if c.foreign() { c.home.clone() } else { self.api.hub.mesh.me().id },
+            "home_name": self.home_name(c),
+            "writable": self.writable(c.id),
             "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
             "parent": c.parent,
             "typing": self.typing_json(c.id),
@@ -1627,9 +1711,12 @@ impl App {
             let items = self.store.items(chat);
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
         }
-        let forks = self.forks_of(chat);
+        let forks = match self.mesh.status.get(&chat).filter(|_| self.is_foreign(chat)) {
+            Some(r) => r.forks.clone(),
+            None => self.forks_of(chat),
+        };
         let lead = self.chat(chat).is_some_and(|c| c.role == store::Role::Lead);
-        let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
+        let who = |account: &str, model: &str| self.footer_who(chat, account, model);
         let items = &self.transcripts[&chat].items;
         let cards = crate::view::project(items, lead, &forks, &who);
         // Every change to a chat goes through `api_touch`: nothing new since the last look,
@@ -1663,7 +1750,7 @@ impl App {
         json!({
             "rev": self.api.hub.rev(),
             "count": items.len(),
-            "running": self.turns.contains_key(&chat),
+            "running": self.is_running(chat),
             "queued": self.queued_count(chat),
             "typing": self.typing_json(chat),
             "status": self.api_status(chat),
@@ -1673,6 +1760,10 @@ impl App {
 
     /// The bars under the desktop's transcript (waiting.rs, limits.rs, queue.rs), for the phone.
     pub fn api_status(&self, chat: i64) -> Value {
+        // A copy: as its home PC says it.
+        if let Some(r) = self.mesh.status.get(&chat).filter(|_| self.is_foreign(chat)) {
+            return r.status.clone();
+        }
         let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
         let lead = self.chat(chat).is_some_and(|c| c.role == store::Role::Lead);
         let subs = if lead { self.running_subs(chat) } else { vec![] };
@@ -1711,12 +1802,21 @@ impl App {
             return err(400, "nothing to send");
         }
         let busy = self.turns.contains_key(&chat);
-        self.send_to(chat, text, files, vec![], ctx);
+        let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
+        self.send_to(chat, text, files, mentions, ctx);
         ok(json!({ "ok": true, "queued": busy }))
     }
 
     fn api_create(&mut self, body: &Value, ctx: &egui::Context) -> Reply {
         let repo = match &body["project_id"] {
+            // From another PC (mesh.rs): the project by its folder, else by its name.
+            Value::Null if body["project"].is_object() => {
+                let (path, name) = (body["project"]["path"].as_str().unwrap_or(""), body["project"]["name"].as_str().unwrap_or(""));
+                match self.repos.iter().find(|r| r.path.to_string_lossy() == path).or_else(|| self.repos.iter().find(|r| r.name == name)) {
+                    Some(r) => Some(r.id),
+                    None => return err(409, format!("{name} isn't a project on {} yet", crate::remote::hostname())),
+                }
+            }
             Value::Null => None,
             v => match v.as_i64().filter(|r| self.repo(*r).is_some()) {
                 Some(r) => Some(r),
@@ -1956,6 +2056,7 @@ mod tests {
         store::Chat {
             id: 1, repo_id: None, title: "t".into(), session_id: "s".into(), started, account: account.into(), model: "claude-opus-5-5".into(),
             effort: "high".into(), access: "full".into(), settled: false, updated: 0, role, parent: None, name: "lead".into(), device: String::new(),
+            gid: String::new(), home: String::new(), home_id: 0,
         }
     }
 
@@ -2126,7 +2227,7 @@ mod tests {
         let raw = "GET /v1/upload?name=..%2Fphoto.jpg&chat=12 HTTP/1.1\r\nContent-Length: 4\r\n\r\n";
         let mut cur = std::io::Cursor::new(format!("{raw}abcd").into_bytes());
         let req = read_head(&mut cur).unwrap();
-        let r = upload(&mut cur, &req, &base);
+        let r = upload_to(&mut cur, &req, &base);
         assert_eq!(r.status, 201, "{:?}", r.body);
         let id = r.body["id"].as_str().unwrap();
         assert!(id.starts_with("12/") && id.ends_with("-photo.jpg"), "{id}");
@@ -2134,11 +2235,11 @@ mod tests {
         // A body shorter than its length leaves nothing behind.
         let mut cur = std::io::Cursor::new(format!("{raw}ab").into_bytes());
         let req = read_head(&mut cur).unwrap();
-        assert_eq!(upload(&mut cur, &req, &base).status, 400);
+        assert_eq!(upload_to(&mut cur, &req, &base).status, 400);
         assert_eq!(std::fs::read_dir(base.join("12")).unwrap().count(), 1);
         let mut cur = std::io::Cursor::new(b"POST /v1/upload?chat=x HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec());
         let req = read_head(&mut cur).unwrap();
-        assert_eq!(upload(&mut cur, &req, &base).status, 400);
+        assert_eq!(upload_to(&mut cur, &req, &base).status, 400);
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -2193,7 +2294,7 @@ mod tests {
             let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
             card_json(&cards[0], 9, &mut |_| vec![])
         };
-        let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![] });
+        let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![], sender: String::new() });
         assert_eq!((v["kind"].as_str(), v["seq"].as_u64(), v["rev"].as_u64()), (Some("user"), Some(0), Some(9)));
         assert_eq!(v["files"], json!(["notes.txt"]));
         assert_eq!(v["images"], json!([{ "name": "photo.jpg", "url": "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512" }]));

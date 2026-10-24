@@ -29,14 +29,14 @@ pub enum Role {
 }
 
 impl Role {
-    fn parse(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "lead" => Role::Lead,
             "sub" => Role::Sub,
             _ => Role::Chat,
         }
     }
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Role::Lead => "lead",
             Role::Sub => "sub",
@@ -105,6 +105,20 @@ pub struct Chat {
     pub name: String,
     /// The device its agent runs on (remote.rs `Host::id`); empty: this PC.
     pub device: String,
+    /// Globally unique id: the same chat has it on every PC (mesh.rs), and phones key on it.
+    pub gid: String,
+    /// The PC whose Harbor owns the chat and runs its turns (mesh.rs peer id); empty: this
+    /// one. Another PC's chat is a copy kept up to date from there.
+    pub home: String,
+    /// The chat's id on its home PC (0 for this PC's own chats).
+    pub home_id: i64,
+}
+
+impl Chat {
+    /// Another PC's chat, copied here.
+    pub fn foreign(&self) -> bool {
+        !self.home.is_empty()
+    }
 }
 
 /// One rendered entry in a chat transcript.
@@ -121,6 +135,9 @@ pub enum Item {
         /// Messages mentioned with it (sent to the agent as quotes).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         mentions: Vec<crate::mentions::Mention>,
+        /// Where it was written when not on the chat's own PC: another PC or a phone ("from laptop").
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        sender: String,
     },
     Text {
         text: String,
@@ -190,7 +207,7 @@ impl std::io::Write for Fnv {
     }
 }
 
-fn item_hash(it: &Item) -> u64 {
+pub fn item_hash(it: &Item) -> u64 {
     let mut h = Fnv::new();
     let _ = serde_json::to_writer(&mut h, it);
     h.0
@@ -322,7 +339,36 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
              COMMIT;",
         )?;
     }
+    if v < 6 {
+        // Chats shared between the user's PCs (mesh.rs): a global id, the PC that owns the
+        // chat and its id there. Every existing chat is this PC's own.
+        db.execute_batch(
+            "BEGIN;
+             ALTER TABLE chats ADD COLUMN gid TEXT NOT NULL DEFAULT '';
+             ALTER TABLE chats ADD COLUMN home TEXT NOT NULL DEFAULT '';
+             ALTER TABLE chats ADD COLUMN home_id INTEGER NOT NULL DEFAULT 0;
+             PRAGMA user_version=6;
+             COMMIT;",
+        )?;
+        let ids: Vec<i64> = {
+            let mut st = db.prepare("SELECT id FROM chats WHERE gid=''")?;
+            st.query_map([], |r| r.get(0))?.flatten().collect()
+        };
+        for id in ids {
+            db.execute("UPDATE chats SET gid=?2 WHERE id=?1", params![id, new_uuid()])?;
+        }
+        db.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS chats_gid ON chats(gid);")?;
+    }
     Ok(())
+}
+
+/// A transcript's digest as copies compare it: FNV over each item's JSON.
+pub fn digest(items: &[Item]) -> u64 {
+    let mut h = Fnv::new();
+    for it in items {
+        let _ = h.write_all(&item_hash(it).to_le_bytes());
+    }
+    h.0
 }
 
 impl Store {
@@ -518,7 +564,8 @@ impl Store {
         let mut st = self
             .db
             .prepare(
-                "SELECT id, repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device
+                "SELECT id, repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device,
+                        gid, home, home_id
                  FROM chats ORDER BY updated DESC",
             )
             .unwrap();
@@ -539,6 +586,9 @@ impl Store {
                 parent: r.get(12)?,
                 name: r.get(13)?,
                 device: r.get(14)?,
+                gid: r.get(15)?,
+                home: r.get(16)?,
+                home_id: r.get(17)?,
             })
         })
         .unwrap()
@@ -548,13 +598,20 @@ impl Store {
 
     /// Inserts a chat built by the caller and returns it with its id.
     pub fn create_chat(&self, mut c: Chat) -> Chat {
-        c.updated = now();
+        // A copy of another PC's chat keeps its time; a new one starts now.
+        if !c.foreign() {
+            c.updated = now();
+        }
+        if c.gid.is_empty() {
+            c.gid = new_uuid();
+        }
         self.db
             .execute(
-                "INSERT INTO chats(repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                "INSERT INTO chats(repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device,
+                    gid, home, home_id)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated,
-                    c.role.as_str(), c.parent, c.name, c.device],
+                    c.role.as_str(), c.parent, c.name, c.device, c.gid, c.home, c.home_id],
             )
             .unwrap();
         c.id = self.db.last_insert_rowid();
@@ -564,8 +621,9 @@ impl Store {
     pub fn save_chat(&self, c: &Chat) {
         let _ = self.db.execute(
             "UPDATE chats SET repo_id=?2, title=?3, session_id=?4, started=?5, account=?6, model=?7, effort=?8,
-                access=?9, settled=?10, updated=?11, device=?12 WHERE id=?1",
-            params![c.id, c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated, c.device],
+                access=?9, settled=?10, updated=?11, device=?12, role=?13, parent=?14, name=?15 WHERE id=?1",
+            params![c.id, c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated, c.device,
+                c.role.as_str(), c.parent, c.name],
         );
     }
 
@@ -671,7 +729,7 @@ mod tests {
             s.create_chat(Chat {
                 id: 0, repo_id: Some(repo), title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
                 model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Chat,
-                parent: None, name: String::new(), device: String::new(),
+                parent: None, name: String::new(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0,
             })
             .id
         };

@@ -30,6 +30,9 @@ pub struct Queued {
     pub mentions: Vec<Mention>,
     /// Written into the running turn, waiting for Claude to take it in.
     pub written: bool,
+    /// Where it was written, when not on this PC (`Item::User::sender`).
+    #[serde(default)]
+    pub sender: String,
 }
 
 impl Queued {
@@ -47,7 +50,8 @@ pub struct State {
 impl App {
     /// Called by `send` while the chat's turn runs.
     pub fn enqueue(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<Mention>) {
-        self.queue.chats.entry(chat_id).or_default().push(Queued { text, files, mentions, written: false });
+        let sender = self.sender.clone();
+        self.queue.chats.entry(chat_id).or_default().push(Queued { text, files, mentions, written: false, sender });
         // A tool is running: Claude takes it in when that tool is done.
         if self.tool_running(chat_id) {
             self.deliver(chat_id);
@@ -113,7 +117,7 @@ impl App {
                 // queue already: it comes back as the text Claude got.
                 if found.is_none() && !text.trim().is_empty() {
                     let tr = self.transcripts.entry(chat_id).or_default();
-                    tr.items.push(Item::User { text: text.clone(), files: vec![], at: store::now(), mentions: vec![] });
+                    tr.items.push(Item::User { text: text.clone(), files: vec![], at: store::now(), mentions: vec![], sender: String::new() });
                     tr.pending_text = None;
                     tr.pending_thinking = None;
                 }
@@ -125,6 +129,7 @@ impl App {
                         files: m.files.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
                         at: store::now(),
                         mentions: m.mentions,
+                        sender: m.sender,
                     });
                     tr.pending_text = None;
                     tr.pending_thinking = None;
@@ -178,6 +183,7 @@ impl App {
                 files: m.files.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
                 at: store::now(),
                 mentions: m.mentions,
+                sender: m.sender,
             });
         }
         self.start_turn(chat_id, prompts.join("\n\n"), files, ctx);
@@ -218,7 +224,7 @@ impl App {
         let files = self.files.remove(&key).unwrap_or_default();
         let mentions = self.mentions.drafts.remove(&key).unwrap_or_default();
         if !text.is_empty() || !files.is_empty() || !mentions.is_empty() {
-            q.push(Queued { text, files, mentions, written: false });
+            q.push(Queued { text, files, mentions, written: false, sender: String::new() });
         }
         if q.is_empty() {
             return;
