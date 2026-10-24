@@ -50,8 +50,8 @@ harbor://pair?host=<address>&port=<port>&token=<token>&name=<hub name>&ip=<addre
 ```
 
 all values percent-encoded. `addrs` are the hub's addresses (at most 6) in the order to try them:
-its network's IPv4, the public address its router maps for it (`ip:port` when the router gave
-another port), IPv6 (global ones reach it from mobile data where the router lets them in), then
+its network's IPv4, the public address its router maps for it or a port forward set by hand
+(`ip:port` when the port differs), a dynamic DNS name for the home (`name:port`), IPv6 (global ones reach it from mobile data where the router lets them in), then
 Tailscale's while it's installed. An entry is `ip`, `ip:port` or `[ipv6]:port`;
 the app tries the one that answered last, then each of them, then `host` and `ip` (which apps
 before 0.13 use: a Tailscale address while the PC has one). Every try is pinned to `fp`; a hub

@@ -14,8 +14,8 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 - **Your phone and other PCs**: Harbor for Android (`android/`) and Harbor on your other PCs share
   chats over your own network, every connection mutual TLS pinned to each device's own key; pair a
   phone with a QR code and a PC with a one-time code (`harbor mesh pair`). PCs find each other on
-  the network, ask the router to open Harbor's port (UPnP, NAT-PMP, PCP; `harbor net` shows the
-  result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
+  the network, ask the router to open Harbor's port (UPnP, NAT-PMP, PCP; or use a port forward you
+  set: `harbor net forward <port>`, `harbor net name <ddns name>`; `harbor net` shows the result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
   or other software.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks (public over

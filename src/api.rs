@@ -814,6 +814,10 @@ pub fn phone_addrs(port: u16) -> Vec<String> {
     if let Some(p) = crate::portmap::public_addr().and_then(|p| p.parse::<std::net::SocketAddr>().ok()) {
         v.push(if p.port() == port { p.ip().to_string() } else { p.to_string() });
     }
+    // A dynamic DNS name the user set (it follows the address when that changes).
+    if let Some(n) = crate::portmap::public_name(port) {
+        v.push(n);
+    }
     v.extend(all.iter().filter(|a| a.is_ipv6() || crate::tls::tailnet_ip(**a)).map(|a| a.to_string()));
     v
 }

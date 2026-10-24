@@ -260,6 +260,24 @@ impl App {
                 "Asks your router (UPnP, NAT-PMP or PCP) to let your phone on mobile data and your PCs elsewhere reach this PC. From the internet, Harbor answers only phones and PCs paired with it.",
                 |ui| w::toggle(ui, &mut map),
             );
+            w::separator(ui);
+            let mut fwd = self.store.get("net_forward").unwrap_or_default();
+            let before = fwd.clone();
+            w::setting_row(ui, "Port forward on my router", &format!("If you forwarded a port on your router to this PC's port {port} by hand, its number outside. Harbor then tells your phone this network's public address with it."), |ui| {
+                w::input(ui, &mut fwd, "e.g. 47930", true, 90.0);
+            });
+            if fwd != before && (fwd.trim().is_empty() || fwd.trim().parse::<u16>().is_ok_and(|p| p != 0)) {
+                self.store.set("net_forward", fwd.trim());
+            }
+            w::separator(ui);
+            let mut name = self.store.get("net_name").unwrap_or_default();
+            let before = name.clone();
+            w::setting_row(ui, "Public name", "A dynamic DNS name that follows your home's public address (your router's DDNS, for example). Phones keep it, so they find this PC after the address changes.", |ui| {
+                w::input(ui, &mut name, "home.example.org", true, 200.0);
+            });
+            if name != before && (name.trim().is_empty() || crate::portmap::valid_name(name.trim())) {
+                self.store.set("net_name", name.trim());
+            }
             for (title, detail, good) in crate::portmap::summary(port) {
                 w::separator(ui);
                 w::setting_row(ui, &title, &detail, |ui| {

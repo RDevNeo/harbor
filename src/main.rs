@@ -81,7 +81,7 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("net") {
-        std::process::exit(portmap::cli());
+        std::process::exit(portmap::cli(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("nc") {
         std::process::exit(relay::cli(&args[2..]));

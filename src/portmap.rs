@@ -40,6 +40,8 @@ pub struct State {
     pub checked: Option<Instant>,
     /// The last time a known key reached this PC from a public address: (unix time, its address).
     pub outside: Option<(i64, IpAddr)>,
+    /// A port forward set by hand on the router (kv `net_forward`), at the current public address.
+    pub forwarded: Option<SocketAddr>,
 }
 
 pub static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -63,7 +65,54 @@ pub fn reached(from: IpAddr) {
 /// The public "ip:port" to tell phones and peers, when mapped and actually public.
 pub fn public_addr() -> Option<String> {
     let s = STATE.lock().unwrap();
-    s.mapped.as_ref().map(|(_, a)| a).filter(|a| is_public(a.ip())).map(|a| a.to_string())
+    s.mapped.as_ref().map(|(_, a)| a).filter(|a| is_public(a.ip())).or(s.forwarded.as_ref()).map(|a| a.to_string())
+}
+
+/// A name the user keeps pointing at this network (dynamic DNS), with the port that reaches
+/// this PC there: "name:port" (kv `net_name`, port from `net_forward`, else the API port).
+pub fn public_name(port: u16) -> Option<String> {
+    let st = crate::store::Store::open().ok()?;
+    let name = st.get("net_name").map(|n| n.trim().to_ascii_lowercase()).filter(|n| valid_name(n))?;
+    let p = st.get("net_forward").and_then(|f| f.trim().parse::<u16>().ok()).unwrap_or(port);
+    Some(format!("{name}:{p}"))
+}
+
+/// A DNS name as typed: letters, digits, dashes and dots, with a dot, not too long.
+pub fn valid_name(n: &str) -> bool {
+    n.len() <= 253 && n.contains('.') && !n.starts_with('.') && !n.ends_with('.') && n.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.')
+}
+
+/// The public IPv4 address the internet sees this network as, from an address-echo service
+/// over HTTPS (curl, like the rest of Harbor). Only asked when a port forward is set: the router
+/// doesn't say (no UPnP/NAT-PMP/PCP), and other PCs on the same network can't tell.
+pub fn ask_public_v4() -> Option<std::net::Ipv4Addr> {
+    for url in ["https://api.ipify.org", "https://ipv4.icanhazip.com"] {
+        let out = std::process::Command::new("curl").args(["-4", "-sf", "--max-time", "10", url]).output().ok()?;
+        if let Ok(ip) = String::from_utf8_lossy(&out.stdout).trim().parse::<std::net::Ipv4Addr>() {
+            if is_public(IpAddr::V4(ip)) {
+                return Some(ip);
+            }
+        }
+    }
+    None
+}
+
+/// The forward set in Settings (kv `net_forward`: the external port), refreshed with the
+/// current public address every 5 minutes.
+fn forward_loop() {
+    std::thread::spawn(|| loop {
+        let ext = crate::store::Store::open().ok().and_then(|s| s.get("net_forward")).and_then(|f| f.trim().parse::<u16>().ok()).filter(|p| *p != 0);
+        let now = ext.and_then(|p| ask_public_v4().map(|ip| SocketAddr::new(IpAddr::V4(ip), p)));
+        // A failed lookup keeps the last address (the network may just be down a moment).
+        let mut s = STATE.lock().unwrap();
+        if ext.is_none() {
+            s.forwarded = None;
+        } else if now.is_some() {
+            s.forwarded = now;
+        }
+        drop(s);
+        std::thread::sleep(Duration::from_secs(300));
+    });
 }
 
 /// Not private, not shared (CGNAT), not loopback: reachable from the internet if mapped.
@@ -419,11 +468,15 @@ pub fn start(port: u16, on: impl Fn() -> bool + Send + 'static) {
     if let Some((at, ip)) = crate::store::Store::open().ok().and_then(|s| s.get("net_outside")).and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| Some((v[0].as_i64()?, v[1].as_str()?.parse::<IpAddr>().ok()?))) {
         STATE.lock().unwrap().outside = Some((at, ip));
     }
+    forward_loop();
     std::thread::spawn(move || loop {
         if on() {
             let s = check(port);
-            let outside = STATE.lock().unwrap().outside;
-            *STATE.lock().unwrap() = State { outside, ..s };
+            let (outside, forwarded) = {
+                let cur = STATE.lock().unwrap();
+                (cur.outside, cur.forwarded)
+            };
+            *STATE.lock().unwrap() = State { outside, forwarded, ..s };
         } else {
             let mut s = STATE.lock().unwrap();
             s.mapped = None;
@@ -438,7 +491,11 @@ pub fn start(port: u16, on: impl Fn() -> bool + Send + 'static) {
 pub fn summary(port: u16) -> Vec<(String, String, bool)> {
     let s = state();
     let mut v = vec![];
+    if let Some(f) = s.forwarded {
+        v.push(("IPv4: open (port forward)".into(), format!("Your router forwards {f} to this PC (set by hand on the router)"), true));
+    }
     match (&s.mapped, s.checked) {
+        _ if s.forwarded.is_some() => {}
         (Some((how, a)), _) if is_public(a.ip()) => v.push(("IPv4: open".into(), format!("{how} on your router maps {a} to this PC"), true)),
         (Some((how, a)), _) => v.push(("IPv4: behind your provider's shared address".into(), format!("{how} mapped {a}, but that address is itself behind your provider's NAT, so it can't be reached from the internet"), false)),
         (None, None) => v.push(("IPv4: checking…".into(), "Asking your router to open a port".into(), false)),
@@ -458,8 +515,48 @@ pub fn summary(port: u16) -> Vec<(String, String, bool)> {
 }
 
 /// `harbor net`: asks the router now and says whether this PC is reachable from outside.
-pub fn cli() -> i32 {
+pub fn cli(args: &[String]) -> i32 {
     let port: u16 = crate::store::Store::open().ok().and_then(|s| s.get("api_port")).and_then(|p| p.parse().ok()).unwrap_or(crate::api::DEFAULT_PORT);
+    // `harbor net forward <port|off>` / `harbor net name <name|off>`: what Settings › Phones sets.
+    match (args.first().map(String::as_str), args.get(1)) {
+        (Some("forward"), Some(v)) => {
+            let Ok(st) = crate::store::Store::open() else { return 1 };
+            match v.as_str() {
+                "off" => st.set("net_forward", ""),
+                p if p.parse::<u16>().is_ok_and(|p| p != 0) => st.set("net_forward", p),
+                _ => {
+                    eprintln!("usage: harbor net forward <external port|off>");
+                    return 2;
+                }
+            }
+            println!("port forward: {v} (Harbor picks it up within 5 minutes)");
+            return 0;
+        }
+        (Some("name"), Some(v)) => {
+            let Ok(st) = crate::store::Store::open() else { return 1 };
+            if v == "off" {
+                st.set("net_name", "");
+            } else if valid_name(v) {
+                st.set("net_name", v);
+            } else {
+                eprintln!("usage: harbor net name <dns name|off>");
+                return 2;
+            }
+            println!("public name: {v}");
+            return 0;
+        }
+        (Some(_), _) => {
+            eprintln!("usage: harbor net [forward <port|off> | name <name|off>]");
+            return 2;
+        }
+        _ => {}
+    }
+    if let Some(p) = crate::store::Store::open().ok().and_then(|s| s.get("net_forward")).and_then(|f| f.trim().parse::<u16>().ok()).filter(|p| *p != 0) {
+        match ask_public_v4() {
+            Some(ip) => STATE.lock().unwrap().forwarded = Some(SocketAddr::new(IpAddr::V4(ip), p)),
+            None => println!("port forward {p} set, but the public address couldn't be learned"),
+        }
+    }
     if let Some((at, ip)) = crate::store::Store::open().ok().and_then(|s| s.get("net_outside")).and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| Some((v[0].as_i64()?, v[1].as_str()?.parse::<IpAddr>().ok()?))) {
         STATE.lock().unwrap().outside = Some((at, ip));
     }
@@ -468,7 +565,11 @@ pub fn cli() -> i32 {
     for (how, r) in &s.tried {
         println!("  {how:<11} {r}");
     }
-    *STATE.lock().unwrap() = s;
+    let forwarded = STATE.lock().unwrap().forwarded;
+    *STATE.lock().unwrap() = State { forwarded, ..s };
+    if let Some(n) = public_name(port) {
+        println!("public name: {n}");
+    }
     for (title, detail, _) in summary(port) {
         println!("{title}\n  {detail}");
     }
@@ -530,6 +631,12 @@ mod tests {
         assert_eq!(igd_service("<root/>", "http://x"), None);
         assert_eq!(base_of("http://10.0.0.1:5000/rootDesc.xml").as_deref(), Some("http://10.0.0.1:5000"));
         assert_eq!(tag("<a><NewExternalIPAddress>203.0.113.7</NewExternalIPAddress></a>", "NewExternalIPAddress"), Some("203.0.113.7"));
+    }
+
+    #[test]
+    fn names() {
+        assert!(valid_name("home.example.org") && valid_name("my-pc.ddns.net"));
+        assert!(!valid_name("localhost") && !valid_name("a b.org") && !valid_name(".x.org") && !valid_name("x.org.") && !valid_name("x;rm.org"));
     }
 
     #[test]

@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-24
+
+### Added
+- Port forwards set by hand on the router: Settings › Phones › From outside your network ›
+  Port forward on my router (the external port), or `harbor net forward <port>`. Harbor learns
+  this network's public IPv4 address (asked every 5 minutes over HTTPS) and hands phones and PCs
+  `address:port` with the others, so the phone reaches the PC on mobile data.
+- Public name: a dynamic DNS name for your home (`harbor net name <name>`), handed out too, so a
+  phone that was away while the address changed still finds the PC.
+
 ## [0.15.1] - 2026-10-24
 
 ### Fixed
@@ -460,7 +470,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/RDevNeo/harbor/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/RDevNeo/harbor/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/RDevNeo/harbor/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/RDevNeo/harbor/compare/v0.13.1...v0.14.0
