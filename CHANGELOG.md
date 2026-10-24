@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-24
+
+### Fixed
+- Phones were handed another PC's forwarded address with the wrong port (the port it has
+  outside was dropped), and the app then stopped trying that PC's other addresses. Each address
+  keeps its own port now, and an address where another device answers is skipped, not final.
+
 ## [0.16.0] - 2026-10-24
 
 ### Added
@@ -470,7 +477,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/RDevNeo/harbor/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/RDevNeo/harbor/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/RDevNeo/harbor/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/RDevNeo/harbor/compare/v0.14.0...v0.15.0

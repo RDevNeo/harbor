@@ -938,17 +938,20 @@ pub fn merge_revoked(hub: &api::Hub, groups: &[String]) {
     hub.tokens_dirty.store(true, Ordering::SeqCst);
 }
 
-/// The IPs (no ports) of "host:port" addresses, and the port of the first.
+/// "host:port" addresses as phones list them: the port of the first, and each address as its
+/// bare IP at that port, or "ip:port" / "[ipv6]:port" when it has a port of its own (a router's
+/// forward to this PC may use another port outside).
 fn ips_and_port(addrs: &[String]) -> (Vec<String>, u16) {
     let sa: Vec<std::net::SocketAddr> = addrs.iter().filter_map(|a| a.parse().ok()).collect();
-    let mut ips: Vec<String> = vec![];
+    let port = sa.first().map(|a| a.port()).unwrap_or(0);
+    let mut out: Vec<String> = vec![];
     for a in &sa {
-        let ip = a.ip().to_string();
-        if !ips.contains(&ip) {
-            ips.push(ip);
+        let e = if a.port() == port { a.ip().to_string() } else { a.to_string() };
+        if !out.contains(&e) {
+            out.push(e);
         }
     }
-    (ips, sa.first().map(|a| a.port()).unwrap_or(0))
+    (out, port)
 }
 
 /// `GET /v1/hubs` for a phone: this PC and the mesh's others, with a token for the phone on
@@ -985,7 +988,7 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
             let mut all = vec![p.addr.clone()];
             all.extend(p.addrs.iter().filter(|a| **a != p.addr).cloned());
             let (ips, port) = ips_and_port(&all);
-            let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.first()).cloned().unwrap_or_default();
+            let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.iter().find(|i| i.parse::<std::net::IpAddr>().is_ok())).cloned().unwrap_or_default();
             out.push(json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok }));
         }
     }
@@ -2753,8 +2756,8 @@ mod tests {
     fn peers_addresses_are_checked() {
         let v = json!(["10.0.0.5:47930", "[fd00::5]:47930", "nonsense", "0.0.0.0:1", "10.0.0.5:47930", "[::ffff:10.0.0.6]:47931", "224.0.0.1:5"]);
         assert_eq!(clean_addrs(v.as_array().unwrap()), ["10.0.0.5:47930", "[fd00::5]:47930", "10.0.0.6:47931"]);
-        let (ips, port) = ips_and_port(&["10.0.0.5:47931".into(), "[fd00::5]:47931".into(), "10.0.0.5:47931".into()]);
-        assert_eq!((ips, port), (vec!["10.0.0.5".to_string(), "fd00::5".to_string()], 47931));
+        let (ips, port) = ips_and_port(&["10.0.0.5:47931".into(), "[fd00::5]:47931".into(), "10.0.0.5:47931".into(), "203.0.113.7:47940".into()]);
+        assert_eq!((ips, port), (vec!["10.0.0.5".to_string(), "fd00::5".to_string(), "203.0.113.7:47940".to_string()], 47931), "a forward's own port is kept");
     }
 
     #[test]

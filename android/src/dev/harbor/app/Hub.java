@@ -384,9 +384,13 @@ final class Hub {
                     c.header("Accept", "application/json");
                     setVia(v);
                     return c;
-                } catch (Net.WrongKey | Net.Refused x) {
+                } catch (Net.Refused x) {
                     last = x; // another address of the same PC can't change this
                     break;
+                } catch (Net.WrongKey x) {
+                    // Another device answers there now (a stale address): nothing was sent to it,
+                    // the PC's other addresses are still worth a try.
+                    last = x;
                 } catch (IOException x) {
                     last = x;
                     String m = String.valueOf(x.getMessage());
