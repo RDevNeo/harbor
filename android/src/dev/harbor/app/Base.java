@@ -156,7 +156,7 @@ abstract class Base extends Activity {
 
     /** f: 0 closed .. 1 open. */
     private void slide(float f, boolean animate) {
-        if (side == null) return;
+        if (shell == null) return;
         side.view.setVisibility(View.VISIBLE);
         scrim.setVisibility(View.VISIBLE);
         float x = -panelW * (1 - f);
@@ -196,7 +196,7 @@ abstract class Base extends Activity {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent e) {
-        if (side == null) return super.dispatchTouchEvent(e);
+        if (shell == null) return super.dispatchTouchEvent(e); // no drawer on this screen
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downX = e.getRawX();
