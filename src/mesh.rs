@@ -633,10 +633,11 @@ impl App {
 
     /// A copy can be written while its home PC answers; this PC's own chats always.
     pub fn writable(&self, id: i64) -> bool {
-        match self.chat(id) {
-            Some(c) if c.foreign() => self.shared().online(&c.home),
-            _ => true,
-        }
+        self.chat(id).is_none_or(|c| self.writable_chat(c))
+    }
+
+    pub fn writable_chat(&self, c: &Chat) -> bool {
+        !c.foreign() || self.shared().online(&c.home)
     }
 
     /// The name of the PC a chat runs on (this PC's name for its own).
@@ -1256,10 +1257,16 @@ impl App {
                 for p in &peers {
                     w::separator(ui);
                     let (badge, tone) = if p.online { ("On", Tone::Green) } else { ("Off", Tone::Gray) };
-                    let mut desc = if p.online { format!("Harbor {}", p.version) } else if p.seen > 0 { format!("Last seen {} ago", crate::app::ago(p.seen)) } else { "Not seen yet".into() };
-                    let copies = self.chats.iter().filter(|c| c.home == p.id).count();
-                    if copies > 0 {
-                        desc.push_str(&format!(" · {copies} chats copied here"));
+                    let mut desc = match crate::app::ago(p.seen).as_str() {
+                        _ if p.online => format!("Harbor {}", p.version),
+                        _ if p.seen == 0 => "Not seen yet".into(),
+                        "now" => "Last seen just now".into(),
+                        a => format!("Last seen {a} ago"),
+                    };
+                    match self.chats.iter().filter(|c| c.home == p.id).count() {
+                        0 => {}
+                        1 => desc.push_str(" · 1 chat copied here"),
+                        n => desc.push_str(&format!(" · {n} chats copied here")),
                     }
                     w::setting_row(ui, &format!("{}  {}", crate::icons::MONITOR, p.name), &desc, |ui| {
                         w::badge(ui, badge, tone);

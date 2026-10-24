@@ -754,4 +754,31 @@ mod tests {
         drop((s, fresh));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn chats_have_global_ids_and_copies_keep_theirs() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-gid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Store::open_at(&dir.join("harbor.db")).unwrap();
+        let mk = |gid: &str, home: &str, home_id: i64, updated: i64| Chat {
+            id: 0, repo_id: None, title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
+            model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated, role: Role::Lead,
+            parent: None, name: String::new(), device: String::new(), gid: gid.into(), home: home.into(), home_id,
+        };
+        let own = s.create_chat(mk("", "", 0, 5));
+        assert_eq!(own.gid.len(), 36, "a new chat gets a uuid");
+        assert!(own.updated > 5, "a new chat starts now");
+        let copy = s.create_chat(mk("abc", "ts:desk", 7, 5));
+        assert_eq!((copy.gid.as_str(), copy.updated), ("abc", 5), "a copy keeps its id and time");
+        let back: Vec<Chat> = s.chats();
+        let c = back.iter().find(|c| c.id == copy.id).unwrap();
+        assert!(c.foreign() && c.home == "ts:desk" && c.home_id == 7);
+        assert!(!back.iter().find(|c| c.id == own.id).unwrap().foreign());
+        // The same items digest the same, wherever they are.
+        let items = vec![Item::Text { text: "a".into(), at: 1 }, Item::Error { text: "b".into() }];
+        assert_eq!(digest(&items), digest(&items.clone()));
+        assert_ne!(digest(&items), digest(&items[..1]));
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

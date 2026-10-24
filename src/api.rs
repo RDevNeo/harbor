@@ -1368,7 +1368,7 @@ impl App {
         for c in &self.chats {
             // A lead's bars (waiting for sub-agents, a usage limit) change with it too.
             let bars = (subs.get(&c.id).copied().unwrap_or(0), self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.is_running(c.id), self.queued_count(c.id), (bars, self.writable(c.id))));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.is_running(c.id), self.queued_count(c.id), (bars, self.writable_chat(c))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -1423,7 +1423,8 @@ impl App {
     }
 
     pub fn queued_count(&self, id: i64) -> usize {
-        if let Some(r) = self.mesh.status.get(&id).filter(|_| self.is_foreign(id)) {
+        // Only copies have a status from their home PC.
+        if let Some(r) = self.mesh.status.get(&id) {
             return r.queued;
         }
         self.queued(id).len() + self.pending.get(&id).map_or(0, |p| p.len())
@@ -1469,7 +1470,10 @@ impl App {
         }
         // A copy of another PC's chat: the call goes there.
         let Some(call) = self.mesh_proxy(call) else { return };
+        // What the phone sends says it came from the phone.
+        self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
         let r = self.api_route(&call, ctx);
+        self.sender.clear();
         let _ = call.reply.send(r);
     }
 
@@ -1609,7 +1613,7 @@ impl App {
             "gid": c.gid,
             "home": if c.foreign() { c.home.clone() } else { self.api.hub.mesh.me().id },
             "home_name": self.home_name(c),
-            "writable": self.writable(c.id),
+            "writable": self.writable_chat(c),
             "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
             "parent": c.parent,
             "typing": self.typing_json(c.id),
@@ -1713,7 +1717,7 @@ impl App {
             let items = self.store.items(chat);
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
         }
-        let forks = match self.mesh.status.get(&chat).filter(|_| self.is_foreign(chat)) {
+        let forks = match self.mesh.status.get(&chat) {
             Some(r) => r.forks.clone(),
             None => self.forks_of(chat),
         };
@@ -1763,7 +1767,7 @@ impl App {
     /// The bars under the desktop's transcript (waiting.rs, limits.rs, queue.rs), for the phone.
     pub fn api_status(&self, chat: i64) -> Value {
         // A copy: as its home PC says it.
-        if let Some(r) = self.mesh.status.get(&chat).filter(|_| self.is_foreign(chat)) {
+        if let Some(r) = self.mesh.status.get(&chat) {
             return r.status.clone();
         }
         let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
@@ -1995,7 +1999,7 @@ mod tests {
 
     #[test]
     fn auth() {
-        let hub = Hub::new(vec![Token { token: "s3cret".into(), name: String::new(), created: 0 }], DEFAULT_PORT);
+        let hub = Hub::new(vec![Token { token: "s3cret".into(), name: String::new(), created: 0, group: String::new() }], DEFAULT_PORT);
         assert!(hub.known("s3cret"));
         assert!(!hub.known("s3cre"));
         assert!(!hub.known("s3cretx"));
@@ -2004,7 +2008,7 @@ mod tests {
         assert_eq!(r.bearer(), Some("s3cret"));
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Basic s3cret\r\n\r\n").unwrap().bearer(), None);
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Bearer\r\n\r\n").unwrap().bearer(), None);
-        let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0 }], DEFAULT_PORT);
+        let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0, group: String::new() }], DEFAULT_PORT);
         assert!(!empty.known(""));
         assert_eq!(new_token().unwrap().len(), 48);
         assert_ne!(new_token().unwrap(), new_token().unwrap());
@@ -2159,7 +2163,7 @@ mod tests {
 
     #[test]
     fn http_end_to_end() {
-        let hub = Arc::new(Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0 }], 0));
+        let hub = Arc::new(Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: String::new() }], 0));
         hub.enabled.store(true, Ordering::SeqCst);
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();

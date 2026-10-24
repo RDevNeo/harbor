@@ -96,8 +96,15 @@ impl App {
         let ctx = ui.ctx().clone();
         let net = remote::tailnet(&ctx);
         let found = remote::devices(&self.remote, &net).into_iter().find(|(h, _)| h.id == sel.device);
-        let hub = self.api.hub.mesh.peer(&sel.device);
+        // Another PC's chat runs on that PC, whatever it's set to there.
+        let copy = match self.view {
+            View::Chat(id) => self.chat(id).filter(|c| c.foreign()).map(|c| c.home.clone()),
+            _ => None,
+        };
+        let hub = self.api.hub.mesh.peer(copy.as_deref().unwrap_or(&sel.device)).or_else(|| copy.as_ref().map(|h| crate::mesh::Peer { id: h.clone(), name: crate::mesh::label(h), ..Default::default() }));
+        let found = if copy.is_some() { None } else { found };
         let (label, glyph, tex, online) = match &found {
+            _ if copy.is_some() => (hub.as_ref().map(|p| p.name.clone()).unwrap_or_default(), ic::MONITOR, None, hub.as_ref().map(|p| p.online)),
             _ if sel.device.is_empty() => ("This PC".to_string(), ic::HOUSE, None, None),
             None if hub.is_some() => (hub.as_ref().map(|p| p.name.clone()).unwrap_or_default(), ic::MONITOR, None, hub.as_ref().map(|p| p.online)),
             None => ("Missing device".to_string(), ic::ALERT, None, None),
