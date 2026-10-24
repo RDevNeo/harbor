@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-24
+
 ### Added
 - Harbor finds your other PCs on the network by itself: Settings › Devices lists the Harbors it
   hears with a Pair button, and `harbor mesh join <name> <code>` pairs by name.
@@ -431,7 +433,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/RDevNeo/harbor/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/RDevNeo/harbor/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/RDevNeo/harbor/compare/v0.12.2...v0.13.0
 [0.12.2]: https://github.com/RDevNeo/harbor/compare/v0.12.1...v0.12.2
