@@ -96,14 +96,17 @@ impl App {
         let ctx = ui.ctx().clone();
         let net = remote::tailnet(&ctx);
         let found = remote::devices(&self.remote, &net).into_iter().find(|(h, _)| h.id == sel.device);
+        let hub = self.api.hub.mesh.peer(&sel.device);
         let (label, glyph, tex, online) = match &found {
             _ if sel.device.is_empty() => ("This PC".to_string(), ic::HOUSE, None, None),
+            None if hub.is_some() => (hub.as_ref().map(|p| p.name.clone()).unwrap_or_default(), ic::MONITOR, None, hub.as_ref().map(|p| p.online)),
             None => ("Missing device".to_string(), ic::ALERT, None, None),
             Some((h, o)) => (h.label().to_string(), remote::glyph(h), self.device_tex(&ctx, h), *o),
         };
         let paint = move |p: &Painter, r: Rect, fg: Color32| paint_mark(p, r, glyph, tex, online, fg, &t);
         let r = w::trigger(ui, w::Lead::Paint(&paint), if compact { "" } else { &label }, self.popup == Some(Popup::Device));
         let tip = match &found {
+            _ if hub.is_some() => format!("Runs in Harbor on {}", hub.as_ref().map(|p| p.name.as_str()).unwrap_or("")),
             Some((h, o)) => format!("Runs on {} · {}", h.label(), where_(h, *o)),
             None if sel.device.is_empty() => "Runs on this PC".into(),
             None => "This chat's device was removed in Settings › Devices".into(),
@@ -122,6 +125,9 @@ impl App {
         let devs: Vec<(Host, Option<bool>)> = remote::devices(&self.remote, &net).into_iter().filter(|(h, _)| !h.hidden || h.id == sel.device).collect();
         let texs: Vec<Option<TextureId>> = devs.iter().map(|(h, _)| self.device_tex(ctx, h)).collect();
         let me = remote::hostname();
+        // PCs running Harbor with chats shared (mesh.rs): a chat picked there starts in that Harbor.
+        let hubs = self.mesh_hosts();
+        let only_hubs: Vec<crate::mesh::Peer> = hubs.iter().filter(|p| !devs.iter().any(|(h, _)| h.id == p.id)).cloned().collect();
         let (pick, close) = w::popover(ctx, "device", self.popup_anchor, 300.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             w::subtle(ui, "  Runs on", "label-12");
@@ -137,11 +143,27 @@ impl App {
                     let current = h.id == sel.device;
                     let ok = kind == Kind::Claude && (!locked || current);
                     let glyph = remote::glyph(h);
-                    let desc = if kind != Kind::Claude { "Claude Code only".to_string() } else { where_(h, *online) };
+                    let hub = hubs.iter().find(|p| p.id == h.id);
+                    let ok = ok && hub.is_none_or(|p| p.online);
+                    let desc = match hub {
+                        _ if kind != Kind::Claude => "Claude Code only".to_string(),
+                        Some(p) if p.online => "Harbor · starts the chat there".to_string(),
+                        Some(_) => "Harbor · off".to_string(),
+                        None => where_(h, *online),
+                    };
                     let r = device_row(ui, |p, r, fg| paint_mark(p, r, glyph, *tex, *online, fg, &t), h.label(), &desc, current, ok);
                     let r = if locked && !current { r.on_hover_text("A started chat stays on the device it started on. Start a new chat to use another.") } else { r };
                     if r.clicked() {
                         pick = Some(Some(h.id.clone()));
+                    }
+                }
+                for p in &only_hubs {
+                    let current = p.id == sel.device;
+                    let ok = kind == Kind::Claude && !locked && p.online;
+                    let desc = if p.online { "Harbor · starts the chat there" } else { "Harbor · off" };
+                    let online = Some(p.online);
+                    if device_row(ui, |pa, r, fg| paint_mark(pa, r, ic::MONITOR, None, online, fg, &t), &p.name, desc, current, ok).clicked() {
+                        pick = Some(Some(p.id.clone()));
                     }
                 }
             });
@@ -271,6 +293,7 @@ impl App {
         self.remote.tailscale = via;
 
         ui.add_space(12.0);
+        self.mesh_settings(ui);
         section(ui, "SSH");
         let mut port = if self.remote.port == 0 { String::new() } else { self.remote.port.to_string() };
         rows(ui, |ui| {

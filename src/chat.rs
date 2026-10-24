@@ -276,10 +276,10 @@ impl App {
             return;
         };
         let t = self.theme.t;
-        let running = self.turns.get(&id).map(|(_, s)| s.elapsed().as_secs());
+        let running = self.running_since(id).map(|s| s.elapsed().as_secs());
         // The team is working when the lead or any subagent is.
         let team_running = if chat.role == Role::Lead {
-            let since = self.subs_of(id).iter().filter_map(|c| self.turns.get(&c.id).map(|(_, s)| s.elapsed().as_secs())).max();
+            let since = self.subs_of(id).iter().filter_map(|c| self.running_since(c.id).map(|s| s.elapsed().as_secs())).max();
             running.max(since)
         } else {
             running
@@ -712,6 +712,10 @@ impl App {
                     });
                 return;
             }
+        }
+        // Another PC's chat: where it runs, or read-only while that PC is off.
+        if self.mesh_composer(ui) {
+            return;
         }
         if let View::Chat(id) = self.view {
             self.typing_line(ui, id);

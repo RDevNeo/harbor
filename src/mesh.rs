@@ -16,8 +16,9 @@
 //! - **Transport.** The phone API's listener (port 47930, Tailscale addresses only) serves
 //!   `/mesh/v1/…` too. A peer is accepted when `tailscale whois` says its address belongs to
 //!   the same Tailscale user as this PC: only the user's own devices. No tokens are involved.
-//!   (`HARBOR_MESH_LOOPBACK=1` also accepts 127.0.0.1, for tests with several instances on
-//!   one PC; `HARBOR_MESH_PEERS=host:port,…` adds peers Tailscale doesn't list.)
+//!   (For tests with several instances on one PC: `HARBOR_MESH_LOOPBACK=1` also accepts
+//!   127.0.0.1, `HARBOR_MESH_PEERS=host:port,…` names the peers instead of Tailscale, and
+//!   `HARBOR_MESH_ID`/`HARBOR_MESH_NAME` set this instance's identity.)
 //!
 //! Settings stay local to each PC and never travel. The wire format is in android/PROTOCOL.md.
 
@@ -420,6 +421,10 @@ fn candidates(port: u16) -> Vec<(String, Option<String>, String)> {
         .filter(|a| !a.is_empty())
         .map(|a| (a.to_string(), None, String::new()))
         .collect();
+    // Peers given by hand (tests): only those.
+    if !v.is_empty() {
+        return v;
+    }
     let out = std::process::Command::new("tailscale").args(["status", "--json"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
     if let Some(s) = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()) {
         for p in crate::remote::parse_status(&s).peers.iter().filter(|p| p.os == "linux") {
@@ -1178,6 +1183,94 @@ impl App {
             Ok(id) => self.chat(id),
             Err(_) => self.chats.iter().find(|c| c.gid == r),
         }
+    }
+}
+
+// ================================================================== window
+
+impl App {
+    /// Above the composer: a forwarded call that failed, and for another PC's chat where it
+    /// runs. True when the chat is read-only now (its PC is off): that note replaces the composer.
+    pub fn mesh_composer(&mut self, ui: &mut eframe::egui::Ui) -> bool {
+        use crate::widgets as w;
+        use eframe::egui::{CornerRadius, Frame, Margin, Stroke};
+        let key = self.key();
+        if let Some((chat, text, at)) = self.mesh.error.clone() {
+            if chat == key && at.elapsed() < Duration::from_secs(12) {
+                ui.horizontal(|ui| {
+                    ui.add_space(6.0);
+                    ui.label(eframe::egui::RichText::new(format!("{}  {text}", crate::icons::ALERT)).text_style(crate::theme::ts("label-12")).color(self.theme.t.red(900)));
+                });
+                ui.add_space(4.0);
+                ui.ctx().request_repaint_after(Duration::from_secs(12).saturating_sub(at.elapsed()));
+            } else if at.elapsed() >= Duration::from_secs(12) {
+                self.mesh.error = None;
+            }
+        }
+        let crate::app::View::Chat(id) = self.view else { return false };
+        let Some(c) = self.chat(id).filter(|c| c.foreign()).cloned() else { return false };
+        let name = self.home_name(&c);
+        if self.writable(id) {
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                w::subtle(ui, format!("{}  Runs on {name}", crate::icons::MONITOR), "label-12");
+            });
+            ui.add_space(4.0);
+            return false;
+        }
+        let t = self.theme.t;
+        Frame::new()
+            .fill(t.bg200)
+            .stroke(Stroke::new(1.0, t.border()))
+            .corner_radius(CornerRadius::same(16))
+            .inner_margin(Margin::same(16))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                w::subtle(ui, format!("{}  {name} is off. This chat runs there, so it's read-only until {name} is back; then it catches up.", crate::icons::MONITOR), "label-14");
+            });
+        true
+    }
+
+    /// Settings › Devices: sharing chats with the user's other PCs, and how each one is.
+    pub fn mesh_settings(&mut self, ui: &mut eframe::egui::Ui) {
+        use crate::pages::{rows, section};
+        use crate::widgets::{self as w, Tone};
+        let ctx = ui.ctx().clone();
+        section(ui, "Your PCs");
+        let mut on = self.api.hub.mesh.on.load(Ordering::Relaxed);
+        let was = on;
+        let me = self.shared().me();
+        let peers = self.mesh_hosts();
+        rows(ui, |ui| {
+            w::setting_row(
+                ui,
+                "Share chats with my other PCs",
+                "Every PC with Harbor and this on keeps a copy of every chat and can write in any of them; the agent runs on the PC the chat was started on. Your phone keeps working through any PC that's on. Only your own devices on Tailscale (same Tailscale account) are let in.",
+                |ui| w::toggle(ui, &mut on),
+            );
+            if on {
+                for p in &peers {
+                    w::separator(ui);
+                    let (badge, tone) = if p.online { ("On", Tone::Green) } else { ("Off", Tone::Gray) };
+                    let mut desc = if p.online { format!("Harbor {}", p.version) } else if p.seen > 0 { format!("Last seen {} ago", crate::app::ago(p.seen)) } else { "Not seen yet".into() };
+                    let copies = self.chats.iter().filter(|c| c.home == p.id).count();
+                    if copies > 0 {
+                        desc.push_str(&format!(" · {copies} chats copied here"));
+                    }
+                    w::setting_row(ui, &format!("{}  {}", crate::icons::MONITOR, p.name), &desc, |ui| {
+                        w::badge(ui, badge, tone);
+                    });
+                }
+                if peers.is_empty() {
+                    w::separator(ui);
+                    w::setting_row(ui, "No other PCs yet", &format!("Turn this on in Harbor on your other PCs (same Tailscale account). This PC is {}.", me.name), |_| {});
+                }
+            }
+        });
+        if on != was {
+            self.mesh_set_enabled(on, &ctx);
+        }
+        ui.add_space(12.0);
     }
 }
 

@@ -26,7 +26,7 @@ impl App {
         self.chats
             .iter()
             .filter(|c| c.id == id || (c.role == Role::Sub && c.parent == Some(id)))
-            .filter_map(|c| self.turns.get(&c.id).map(|(_, at)| *at))
+            .filter_map(|c| self.running_since(c.id))
             .min()
     }
 

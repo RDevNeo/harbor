@@ -681,8 +681,10 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
         let port = *hub.port.lock().unwrap();
         let mut bound: Vec<String> = vec![];
         loop {
-            let (dns, ips) = tailnet_self();
-            let mut want = vec!["127.0.0.1".to_string()];
+            // HARBOR_LISTEN=127.0.0.1: only there (test instances stay off the tailnet).
+            let only: Option<Vec<String>> = std::env::var("HARBOR_LISTEN").ok().map(|l| l.split(',').map(|s| s.trim().to_string()).collect());
+            let (dns, ips) = if only.is_some() { Default::default() } else { tailnet_self() };
+            let mut want = only.clone().unwrap_or_else(|| vec!["127.0.0.1".to_string()]);
             want.extend(ips.iter().cloned());
             let mut error = String::new();
             let todo: Vec<String> = want.into_iter().filter(|ip| !bound.contains(ip)).collect();
