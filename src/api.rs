@@ -662,6 +662,9 @@ pub struct Call {
     pub token: String,
     pub device: String,
     pub reply: Sender<Reply>,
+    /// `X-Harbor-Ids: global`: chats by `gid` and projects by path in the answer, the same on
+    /// every hub of the mesh (a phone that moves between hubs asks for these).
+    pub global: bool,
 }
 
 impl Call {
@@ -764,14 +767,25 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         return send_json(&mut w, 401, &json!({ "error": "unknown token: pair this phone again in Harbor › Settings › Phones" }));
     };
     let device: String = req.header("x-harbor-device").unwrap_or("").chars().take(60).collect();
+    let global = req.header("x-harbor-ids") == Some("global");
     hub.seen.lock().unwrap().insert(token.clone(), (device.clone(), store::now()));
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["v1", "app"]) => send_json(&mut w, 200, &app_info()),
         ("GET", ["v1", "events"]) => {
             let since = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
-            let (rev, chats, state) = hub.wait(since, POLL);
+            let (rev, chats, mut state) = hub.wait(since, POLL);
+            let chats: Vec<Value> = if global {
+                let gids = hub.mesh.gids.lock().unwrap();
+                // A chat too new to have its gid listed: the phone reloads the state.
+                state |= chats.iter().any(|c| !gids.contains_key(c));
+                chats.iter().filter_map(|c| gids.get(c)).map(|g| json!(g)).collect()
+            } else {
+                chats.iter().map(|c| json!(c)).collect()
+            };
             send_json(&mut w, 200, &json!({ "rev": rev, "changed_chats": chats, "state_changed": state }));
         }
+        // The PCs of the mesh, with this phone's token on each (mesh.rs).
+        ("GET", ["v1", "hubs"]) => send_json(&mut w, 200, &crate::mesh::hubs(hub, &token)),
         ("POST", ["v1", "chats", c, "typing"]) => {
             let Some(chat) = c.parse::<i64>().ok() else { return send_json(&mut w, 404, &json!({ "error": "no such chat" })) };
             let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
@@ -817,6 +831,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 token,
                 device,
                 reply: rtx,
+                global,
             };
             if tx.send(crate::control::Incoming::Api(call)).is_err() {
                 return send_json(&mut w, 503, &json!({ "error": "Harbor is closing" }));
@@ -1382,6 +1397,10 @@ impl App {
             }
         }
         let gone = !gone.is_empty();
+        // Chats came or went: phones' gids follow.
+        if gone || self.api.chats.len() != seen.len() {
+            self.mesh_index();
+        }
         let rest = hash_of(&(
             self.repos.iter().map(|r| (r.id, &r.name)).collect::<Vec<_>>(),
             self.accounts.iter().map(|a| (&a.id, a.logged_in, a.usage.iter().map(|u| (&u.label, (u.percent * 100.0) as i32)).collect::<Vec<_>>())).collect::<Vec<_>>(),
@@ -1472,8 +1491,11 @@ impl App {
         let Some(call) = self.mesh_proxy(call) else { return };
         // What the phone sends says it came from the phone.
         self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
-        let r = self.api_route(&call, ctx);
+        let mut r = self.api_route(&call, ctx);
         self.sender.clear();
+        if call.global && r.status < 300 {
+            self.globalize(&call, &mut r.body);
+        }
         let _ = call.reply.send(r);
     }
 
@@ -1558,6 +1580,51 @@ impl App {
             }
             (_, ["v1", ..]) => err(404, "unknown call"),
             _ => err(404, "not found"),
+        }
+    }
+
+    /// An answer with chats by gid and projects by path instead of this hub's ids.
+    fn globalize(&self, call: &Call, v: &mut Value) {
+        let gid = |id: &Value| id.as_i64().and_then(|i| self.chat(i)).map(|c| json!(c.gid)).unwrap_or(Value::Null);
+        let path = |id: &Value| id.as_i64().and_then(|r| self.repo(r)).map(|r| json!(r.path.to_string_lossy())).unwrap_or(Value::Null);
+        let chat = |c: &mut Value| {
+            c["id"] = gid(&c["id"]);
+            c["parent"] = gid(&c["parent"]);
+            c["project_id"] = path(&c["project_id"]);
+        };
+        let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
+        match (call.method.as_str(), p.as_slice()) {
+            ("GET", ["v1", "state"]) => {
+                for pr in v["projects"].as_array_mut().into_iter().flatten() {
+                    pr["id"] = pr["path"].clone();
+                }
+                for c in v["chats"].as_array_mut().into_iter().flatten() {
+                    chat(c);
+                }
+                v["defaults"]["project_id"] = path(&v["defaults"]["project_id"]);
+            }
+            ("GET", ["v1", "chats", _, "items"]) => {
+                for it in v["items"].as_array_mut().into_iter().flatten() {
+                    if let Some(f) = it["forks_after"].as_array_mut() {
+                        for x in f.iter_mut() {
+                            *x = gid(x);
+                        }
+                    }
+                    if it["kind"] == "forked_from" {
+                        it["chat"] = gid(&it["chat"]);
+                    }
+                }
+                for a in v["status"]["waiting"]["agents"].as_array_mut().into_iter().flatten() {
+                    a["id"] = gid(&a["id"]);
+                }
+            }
+            ("POST", ["v1", "chats"]) | ("POST", ["v1", "chats", _, "fork"]) => v["id"] = gid(&v["id"]),
+            ("PATCH", _) => {
+                if v["chat"].is_object() {
+                    chat(&mut v["chat"]);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1691,9 +1758,27 @@ impl App {
                 devices.push(json!({ "id": h.id, "label": h.label(), "icon": icon_name(&h), "online": online }));
             }
         }
+        // The PCs of the mesh: as devices a new chat can start on, and as hubs the phone may use.
+        let me = self.api.hub.mesh.me();
+        let mesh_on = self.api.hub.mesh.on.load(Ordering::Relaxed);
+        let peers = if mesh_on { self.mesh_hosts() } else { vec![] };
+        let mut hubs = vec![json!({ "id": me.id, "name": me.name, "online": true })];
+        for p in &peers {
+            hubs.push(json!({ "id": p.id, "name": p.name, "online": p.online }));
+            match devices.iter_mut().find(|d| d["id"] == p.id.as_str()) {
+                Some(d) => {
+                    d["hub"] = json!(true);
+                    d["online"] = json!(p.online);
+                }
+                None => devices.push(json!({ "id": p.id, "label": p.name, "icon": "monitor", "online": p.online, "hub": true })),
+            }
+        }
         let s = &self.draft.sel;
         json!({
             "version": crate::update::VERSION,
+            "hub_id": me.id,
+            "mesh": mesh_on,
+            "hubs": hubs,
             "hub_name": crate::remote::hostname(),
             "you": you,
             "rev": hub.rev(),
@@ -1824,6 +1909,11 @@ impl App {
                 }
             }
             Value::Null => None,
+            // A project by its folder (phones that move between hubs know it that way).
+            Value::String(p) => match self.repos.iter().find(|r| r.path.to_string_lossy() == *p) {
+                Some(r) => Some(r.id),
+                None => return err(400, "no such project"),
+            },
             v => match v.as_i64().filter(|r| self.repo(*r).is_some()) {
                 Some(r) => Some(r),
                 None => return err(400, "no such project"),
@@ -1867,7 +1957,8 @@ impl App {
         if !text.is_empty() || !files.is_empty() {
             self.send_to(id, text, files, vec![], ctx);
         }
-        ok(json!({ "id": id }))
+        let gid = self.chat(id).map(|c| c.gid.clone()).unwrap_or_default();
+        ok(json!({ "id": id, "gid": gid }))
     }
 
     fn api_fork(&mut self, chat: i64, body: &Value) -> Reply {
@@ -1887,7 +1978,7 @@ impl App {
         self.view = view;
         self.focus_composer = focus;
         match self.chats.iter().map(|c| c.id).max().filter(|m| *m > before) {
-            Some(id) => ok(json!({ "id": id })),
+            Some(id) => ok(json!({ "id": id, "gid": self.chat(id).map(|c| c.gid.clone()).unwrap_or_default() })),
             None => err(500, "the fork failed"),
         }
     }

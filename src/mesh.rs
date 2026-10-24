@@ -91,6 +91,8 @@ pub struct Shared {
     pub foreign: Mutex<HashSet<i64>>,
     /// (peer, its chat id) → the copy's id here.
     pub ids: Mutex<HashMap<(String, i64), i64>>,
+    /// Every chat here → its gid (phones' events name chats by gid).
+    pub gids: Mutex<HashMap<i64, String>>,
     /// Peer address → (when asked, its peer id when it's one of the user's devices).
     whois: Mutex<HashMap<IpAddr, (Instant, Option<String>)>>,
     /// The Tailscale user this PC is logged in as.
@@ -338,6 +340,7 @@ pub fn serve(stream: &TcpStream, req: &api::Request, r: &mut impl Read, hub: &ap
                 token: String::new(),
                 device: peer,
                 reply: rtx,
+                global: false,
             };
             if tx.send(crate::control::Incoming::Api(call)).is_err() {
                 return err(503, "Harbor is closing");
@@ -385,6 +388,42 @@ pub fn merge_revoked(hub: &api::Hub, groups: &[String]) {
     hub.tokens_dirty.store(true, Ordering::SeqCst);
 }
 
+/// `GET /v1/hubs` for a phone: this PC and the mesh's others, with a token for the phone on
+/// each one that answers (minted there for the phone's pairing group).
+pub fn hubs(hub: &api::Hub, token: &str) -> Value {
+    let (group, name) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.group.clone(), t.name.clone())).unwrap_or_default();
+    let me = hub.mesh.me();
+    let net = hub.net.lock().unwrap().clone();
+    let port = *hub.port.lock().unwrap();
+    let ip = net.ips.iter().find(|i| !i.contains(':')).cloned().unwrap_or_default();
+    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": net.dns, "ip": ip, "port": port, "online": true, "token": token, "self": true })];
+    if hub.mesh.on.load(Ordering::Relaxed) && !group.is_empty() {
+        let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().cloned().collect();
+        let body = serde_json::to_vec(&json!({ "group": group, "name": name })).unwrap_or_default();
+        // Asked all at once: a PC that's off costs one timeout, not one each.
+        let asks: Vec<_> = peers
+            .into_iter()
+            .map(|p| {
+                let body = body.clone();
+                std::thread::spawn(move || {
+                    let tok = if p.online {
+                        http(&p.addr, "POST", "/mesh/v1/mint", Some(("application/json", &body)), Duration::from_secs(6)).ok().filter(|(s, _)| *s == 200).and_then(|(_, v)| v["token"].as_str().map(String::from))
+                    } else {
+                        None
+                    };
+                    (p, tok)
+                })
+            })
+            .collect();
+        for a in asks {
+            let Ok((p, tok)) = a.join() else { continue };
+            let (ip, port) = p.addr.rsplit_once(':').map(|(i, po)| (i.to_string(), po.parse::<u16>().unwrap_or(0))).unwrap_or_default();
+            out.push(json!({ "id": p.id, "name": p.name, "host": p.dns, "ip": ip, "port": port, "online": p.online, "token": tok }));
+        }
+    }
+    json!({ "hubs": out })
+}
+
 // ================================================================== client (workers)
 
 /// Starts discovery and the peer workers once (sharing turned on); later calls do nothing.
@@ -393,9 +432,11 @@ pub fn start(hub: Arc<api::Hub>, tx: Sender<crate::control::Incoming>, wake: imp
         return;
     }
     std::thread::spawn(move || {
-        let (me, user) = read_me();
-        *hub.mesh.me.lock().unwrap() = me;
-        *hub.mesh.user.lock().unwrap() = user;
+        if hub.mesh.user.lock().unwrap().is_none() {
+            let (me, user) = read_me();
+            *hub.mesh.me.lock().unwrap() = me;
+            *hub.mesh.user.lock().unwrap() = user;
+        }
         let mut running: HashSet<String> = HashSet::new();
         loop {
             if hub.mesh.on.load(Ordering::SeqCst) {
@@ -612,10 +653,17 @@ impl App {
         }
         *self.shared().peers.lock().unwrap() = peers;
         self.mesh_index();
+        // Who this PC is (its Tailscale name), off the UI thread.
+        let hub = self.api.hub.clone();
+        std::thread::spawn(move || {
+            let (me, user) = read_me();
+            *hub.mesh.me.lock().unwrap() = me;
+            *hub.mesh.user.lock().unwrap() = user;
+        });
     }
 
-    /// Rebuilds the copies' index (after chats came or went).
-    fn mesh_index(&self) {
+    /// Rebuilds the copies' index and the gids (after chats came or went).
+    pub fn mesh_index(&self) {
         let mut foreign = HashSet::new();
         let mut ids = HashMap::new();
         for c in self.chats.iter().filter(|c| c.foreign()) {
@@ -624,6 +672,7 @@ impl App {
         }
         *self.shared().foreign.lock().unwrap() = foreign;
         *self.shared().ids.lock().unwrap() = ids;
+        *self.shared().gids.lock().unwrap() = self.chats.iter().map(|c| (c.id, c.gid.clone())).collect();
     }
 
     /// True when the chat is a copy of another PC's.
@@ -930,6 +979,7 @@ impl App {
                     token: String::new(),
                     device: String::new(),
                     reply: call.reply.clone(),
+                    global: false,
                 };
                 if inner.path.first().map(String::as_str) != Some("v1") {
                     return err(400, "not a call");
@@ -1109,6 +1159,7 @@ impl App {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
         let mutating = matches!(call.method.as_str(), "POST" | "PATCH" | "DELETE");
         // A new chat on a peer's Harbor.
+        let global = call.global;
         if call.method == "POST" && p == ["v1", "chats"] {
             let device = call.body["device"].as_str().unwrap_or("").to_string();
             let Some(peer) = self.shared().peer(&device) else { return Some(call) };
@@ -1118,7 +1169,11 @@ impl App {
             }
             let mut body = call.body.clone();
             body["device"] = json!("");
-            body["project"] = call.body["project_id"].as_i64().and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() })).unwrap_or(Value::Null);
+            let repo = match &call.body["project_id"] {
+                Value::String(p) => self.repos.iter().find(|r| r.path.to_string_lossy() == *p),
+                v => v.as_i64().and_then(|r| self.repo(r)),
+            };
+            body["project"] = repo.map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() })).unwrap_or(Value::Null);
             if let Some(o) = body.as_object_mut() {
                 o.remove("project_id");
             }
@@ -1128,7 +1183,7 @@ impl App {
             let reply = call.reply.clone();
             let home = peer.id.clone();
             forward(peer.addr, peer.name, "POST", vec!["v1".into(), "chats".into()], strip_files(body), files, sender, move |r| {
-                let _ = reply.send(map_new(&shared, &home, r));
+                let _ = reply.send(map_new(&shared, &home, r, global));
             });
             return None;
         }
@@ -1153,16 +1208,24 @@ impl App {
         let reply = call.reply.clone();
         let home = c.home.clone();
         let (local, repo, parent, gid) = (c.id, c.repo_id, c.parent, c.gid.clone());
+        let repo_path = repo.and_then(|r| self.repo(r)).map(|r| r.path.to_string_lossy().into_owned());
+        let parent_gid = parent.and_then(|p| self.chat(p)).map(|p| p.gid.clone());
         let fork = p.get(3) == Some(&"fork");
         forward(peer.addr, name, &call.method, path, strip_files(call.body.clone()), files, sender, move |mut r| {
             if fork {
-                r = map_new(&shared, &home, r);
+                r = map_new(&shared, &home, r, global);
             }
             // The chat as the home PC answers it, with this PC's ids.
             if let Some(ch) = r.body.get_mut("chat").filter(|c| c.is_object()) {
-                ch["id"] = json!(local);
-                ch["project_id"] = json!(repo);
-                ch["parent"] = json!(parent);
+                if global {
+                    ch["id"] = json!(gid);
+                    ch["project_id"] = json!(repo_path);
+                    ch["parent"] = json!(parent_gid);
+                } else {
+                    ch["id"] = json!(local);
+                    ch["project_id"] = json!(repo);
+                    ch["parent"] = json!(parent);
+                }
                 ch["gid"] = json!(gid);
             }
             // Messages handed back: their files are the home PC's uploads, not this one's.
@@ -1298,8 +1361,13 @@ fn strip_files(mut body: Value) -> Value {
 }
 
 /// A chat made on another PC: its id there becomes the copy's id here once it arrives.
-fn map_new(hub: &api::Hub, home: &str, mut r: Reply) -> Reply {
+fn map_new(hub: &api::Hub, home: &str, mut r: Reply, global: bool) -> Reply {
     let Some(hid) = r.body["id"].as_i64().filter(|_| r.status < 300) else { return r };
+    if global {
+        // The gid is the same here: no need to wait for the copy.
+        r.body["id"] = r.body["gid"].clone();
+        return r;
+    }
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
         if let Some(id) = hub.mesh.local_id(home, hid) {
