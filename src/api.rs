@@ -754,6 +754,11 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
     if hub.started.swap(true, Ordering::SeqCst) {
         return;
     }
+    // Keys known here, for handshakes from the internet (tls::KnownClient).
+    {
+        let hub = hub.clone();
+        let _ = crate::tls::KNOWN.set(Box::new(move |fp: &str| hub.tokens.lock().unwrap().iter().any(|t| t.fp == fp) || hub.mesh.allowed_fp(fp).is_some()));
+    }
     // The key is made now (not on the first phone), so the pairing QR can show it.
     if let Err(e) = crate::tls::my_server() {
         eprintln!("harbor: no TLS identity, only 127.0.0.1 will work: {e}");
@@ -785,7 +790,15 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
                     Err(e) => error = format!("{ip}:{port}: {e}"),
                 }
             }
-            *hub.net.lock().unwrap() = Net { addrs: phone_addrs(port), bound: bound.clone(), error };
+            let addrs = phone_addrs(port);
+            let changed = hub.net.lock().unwrap().addrs != addrs;
+            *hub.net.lock().unwrap() = Net { addrs, bound: bound.clone(), error };
+            if changed {
+                // New addresses (Wi-Fi, a new IPv6 prefix): phones reload the state and see them,
+                // and the network hears it now.
+                hub.touch(None, true);
+                crate::discover::announce_now();
+            }
             wake();
             // Addresses change (Wi-Fi, DHCP): look again now and then.
             std::thread::sleep(Duration::from_secs(20));
@@ -830,8 +843,11 @@ static CONNS: Conns = Conns::new(64);
 /// Failed authentications per address: past it, connections are closed without a word.
 static FAILS: std::sync::LazyLock<crate::tls::Throttle> = std::sync::LazyLock::new(|| crate::tls::Throttle::new(30, Duration::from_secs(60)));
 
-/// Connections at once per address (IPv6: per /64), so one device can't take every slot.
+/// Connections at once per address (IPv6: per /64), so one device can't take every slot; from
+/// the internet fewer, and all internet sources together at most [`PUBLIC`].
 const PER_HOST: usize = 12;
+const PER_PUBLIC_HOST: usize = 4;
+static PUBLIC: Conns = Conns::new(24);
 static HOSTS: std::sync::LazyLock<Mutex<HashMap<std::net::IpAddr, usize>>> = std::sync::LazyLock::new(Default::default);
 
 /// A connection's place among its host's, given back when dropped.
@@ -842,7 +858,8 @@ impl HostSlot {
         let k = crate::tls::scope_key(ip);
         let mut h = HOSTS.lock().unwrap();
         let n = h.entry(k).or_insert(0);
-        if *n >= PER_HOST {
+        let cap = if crate::tls::private_ip(ip) { PER_HOST } else { PER_PUBLIC_HOST };
+        if *n >= cap {
             return None;
         }
         *n += 1;
@@ -867,12 +884,17 @@ fn accept(l: TcpListener, hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, w
         if !hub.active() {
             continue; // dropped: closed without a word
         }
-        let Some(host) = stream.peer_addr().ok().and_then(|a| HostSlot::take(a.ip())) else { continue };
+        let Some(ip) = stream.peer_addr().ok().map(|a| a.ip()) else { continue };
+        let Some(host) = HostSlot::take(ip) else { continue };
+        let public = if crate::tls::private_ip(ip) { None } else { Some(PUBLIC.take()) };
+        if matches!(public, Some(None)) {
+            continue; // the internet's share is full
+        }
         let Some(slot) = CONNS.take() else { continue };
         let (hub, tx, wake) = (hub.clone(), tx.clone(), wake.clone());
         std::thread::spawn(move || {
             serve(stream, &hub, &tx, &wake);
-            drop((slot, host));
+            drop((slot, host, public));
         });
     }
 }
@@ -883,7 +905,17 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     if FAILS.over(ip) {
         return;
     }
-    let Ok(conn) = crate::tls::accept(stream, || crate::tls::my_server().ok(), HEAD_WAIT, Duration::from_secs(30)) else { return };
+    // (HARBOR_TEST_PUBLIC: tests on one PC treat every source as the internet.)
+    let public = !crate::tls::private_ip(ip) || std::env::var("HARBOR_TEST_PUBLIC").is_ok();
+    // From the internet: the handshake needs a known key (tls::KnownClient), a shorter deadline,
+    // and plain HTTP gets nothing at all.
+    let config = || if public { crate::tls::my_public_server().ok() } else { crate::tls::my_server().ok() };
+    let Ok(conn) = crate::tls::accept(stream, config, if public { Duration::from_secs(5) } else { HEAD_WAIT }, Duration::from_secs(30)) else {
+        if public {
+            FAILS.hit(ip);
+        }
+        return;
+    };
     let via = if conn.is_tls() {
         Via::Tls(conn.peer_fp())
     } else if ip.is_loopback() {
@@ -895,7 +927,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     };
     // From the open internet (a public IPv6, a forwarded port) only a key already known here
     // gets an answer: pairing and the APK are for the local network.
-    if !crate::tls::private_ip(ip) {
+    if public {
         let known = match &via {
             Via::Tls(Some(fp)) => hub.tokens.lock().unwrap().iter().any(|t| t.fp == *fp) || hub.mesh.allowed_fp(fp).is_some(),
             _ => false,
@@ -934,7 +966,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     if !hub.enabled.load(Ordering::SeqCst) {
         return; // phones are off: closed without a word
     }
-    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] {
+    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] && !public {
         return serve_apk(r.get_mut(), req.method == "HEAD");
     }
     let token = match req.bearer().map(|t| (t, hub.auth(t, &peer.via))) {

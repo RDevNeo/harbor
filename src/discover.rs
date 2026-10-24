@@ -145,7 +145,11 @@ pub fn start(shared: Arc<crate::api::Hub>, port: u16) {
                     let _ = sock.send_to(&m, (Ipv4Addr::BROADCAST, PORT));
                     first = false;
                 }
-                std::thread::sleep(EVERY);
+                // Every 30 s, or at once when the addresses change.
+                let end = std::time::Instant::now() + EVERY;
+                while std::time::Instant::now() < end && !NOW.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
             }
         });
     }
@@ -158,6 +162,10 @@ pub fn start(shared: Arc<crate::api::Hub>, port: u16) {
                 std::thread::sleep(Duration::from_millis(200));
                 continue;
             };
+            // Only the local network: nothing from elsewhere is even read.
+            if !crate::tls::private_ip(from.ip()) {
+                continue;
+            }
             let Some((kind, lan)) = parse(&buf[..n], from) else { continue };
             if lan.fp == crate::tls::my_fp() {
                 continue;
@@ -176,6 +184,13 @@ pub fn start(shared: Arc<crate::api::Hub>, port: u16) {
         }
     });
 }
+
+/// Says "here" at once (this PC's addresses changed), instead of at the next 30 s tick.
+pub fn announce_now() {
+    NOW.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+static NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Records a Harbor heard; a paired one's address becomes one more to try.
 pub fn heard(shared: &Shared, lan: Lan) {

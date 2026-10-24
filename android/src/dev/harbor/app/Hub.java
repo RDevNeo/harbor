@@ -359,6 +359,7 @@ final class Hub {
         order = ok;
         order.addAll(later);
         IOException last = null;
+        boolean noV6 = false; // an IPv6 address was unreachable from this phone's network
         for (String v : order) {
             Ep e = ep(v);
             String tok = e == null ? token : e.token, pin = e == null ? fp : e.fp;
@@ -388,9 +389,13 @@ final class Hub {
                     break;
                 } catch (IOException x) {
                     last = x;
+                    String m = String.valueOf(x.getMessage());
+                    if (((String) Addr.hostPort(addr, p)[0]).contains(":") && (m.contains("ENETUNREACH") || m.contains("unreachable"))) noV6 = true;
                 }
             }
         }
+        if (noV6 && !(last instanceof ApiError) && !(last instanceof Net.WrongKey) && !(last instanceof Net.Refused))
+            throw new Net.Refused("Can't reach the PC. This phone's network has no IPv6, so away from home your PCs can only be reached on your home Wi-Fi (or a network with IPv6).");
         throw last != null ? last : new IOException("no address");
     }
 

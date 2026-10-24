@@ -398,7 +398,12 @@ fn listen(tokens: Arc<Mutex<HashSet<String>>>, tx: Sender<crate::control::Incomi
                 if !ON.load(std::sync::atomic::Ordering::Relaxed) {
                     continue;
                 }
-                let Some(host) = s.peer_addr().ok().and_then(|a| crate::api::HostSlot::take(a.ip())) else { continue };
+                let Some(ip) = s.peer_addr().ok().map(|a| a.ip()) else { continue };
+                // Someone trying tokens: after 20 misses a minute, nothing more for that address.
+                if MISSES.over(ip) {
+                    continue;
+                }
+                let Some(host) = crate::api::HostSlot::take(ip) else { continue };
                 let Some(slot) = CONNS.take() else { continue };
                 let (cfg, tokens, tx, wake) = (cfg.clone(), tokens.clone(), tx.clone(), wake.clone());
                 std::thread::spawn(move || {
@@ -413,6 +418,9 @@ fn listen(tokens: Arc<Mutex<HashSet<String>>>, tx: Sender<crate::control::Incomi
                     r.get_ref().clear_deadline();
                     let mut out = Vec::new();
                     crate::control::serve_hook(head, &mut r, &mut out, &tokens, &tx, &wake);
+                    if !out.starts_with(b"HTTP/1.1 202") {
+                        MISSES.hit(ip);
+                    }
                     let _ = r.get_mut().write_all(&out);
                     let _ = r.get_mut().flush();
                 });
@@ -420,6 +428,8 @@ fn listen(tokens: Arc<Mutex<HashSet<String>>>, tx: Sender<crate::control::Incomi
         });
     }
 }
+
+static MISSES: LazyLock<crate::tls::Throttle> = LazyLock::new(|| crate::tls::Throttle::new(20, Duration::from_secs(60)));
 
 static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 

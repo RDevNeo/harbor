@@ -278,6 +278,63 @@ pub fn my_server() -> Result<Arc<ServerConfig>, String> {
     C.get_or_init(|| server_config(me()?)).clone()
 }
 
+/// Which client keys this Harbor knows (a paired phone's, an allowed PC's): set by api.rs.
+pub static KNOWN: OnceLock<Box<dyn Fn(&str) -> bool + Send + Sync>> = OnceLock::new();
+
+fn known_key(fp: &str) -> bool {
+    KNOWN.get().is_some_and(|k| k(fp))
+}
+
+/// For connections from the open internet: the handshake itself fails unless the client shows a
+/// key this Harbor knows, so a stranger never gets a TLS session at all.
+#[derive(Debug)]
+struct KnownClient;
+
+impl ClientCertVerifier for KnownClient {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+    fn client_auth_mandatory(&self) -> bool {
+        true
+    }
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[]
+    }
+    fn verify_client_cert(&self, end: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: UnixTime) -> Result<ClientCertVerified, Error> {
+        match cert_fp(end) {
+            Some(fp) if known_key(&fp) => Ok(ClientCertVerified::assertion()),
+            _ => Err(Error::General("unknown key".into())),
+        }
+    }
+    fn verify_tls12_signature(&self, msg: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, Error> {
+        check13(msg, cert, dss)
+    }
+    fn verify_tls13_signature(&self, msg: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, Error> {
+        check13(msg, cert, dss)
+    }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        schemes()
+    }
+}
+
+/// This Harbor's server config for public sources ([`KnownClient`]).
+pub fn my_public_server() -> Result<Arc<ServerConfig>, String> {
+    static C: OnceLock<Result<Arc<ServerConfig>, String>> = OnceLock::new();
+    C.get_or_init(|| {
+        let id = me()?;
+        let mut c = ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+            .map_err(|e| e.to_string())?
+            .with_client_cert_verifier(Arc::new(KnownClient))
+            .with_single_cert(vec![id.cert.clone()], id.key())
+            .map_err(|e| e.to_string())?;
+        c.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
+        c.send_tls13_tickets = 0;
+        Ok(Arc::new(c))
+    })
+    .clone()
+}
+
 // ================================================================== client
 
 pub type Client = StreamOwned<ClientConnection, TcpStream>;
@@ -639,7 +696,28 @@ pub fn interfaces() -> Vec<(String, IpAddr)> {
         libc::freeifaddrs(head);
     }
     out.retain(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified() && !link_local(*ip));
+    // IPv6 privacy addresses change every few hours: the stable one is what others should keep.
+    let temp = temporary_v6(&std::fs::read_to_string("/proc/net/if_inet6").unwrap_or_default());
+    out.retain(|(_, ip)| !matches!(ip, IpAddr::V6(v) if temp.contains(v)));
     out
+}
+
+/// The temporary (privacy) and deprecated IPv6 addresses in /proc/net/if_inet6
+/// (IFA_F_TEMPORARY 0x01, IFA_F_DEPRECATED 0x20).
+pub fn temporary_v6(table: &str) -> Vec<std::net::Ipv6Addr> {
+    table
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let flags = u32::from_str_radix(f.get(4)?, 16).ok()?;
+            if flags & 0x21 == 0 {
+                return None;
+            }
+            let hex = f.first()?;
+            let b = (0..16).map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?;
+            Some(std::net::Ipv6Addr::from(<[u8; 16]>::try_from(b).ok()?))
+        })
+        .collect()
 }
 
 fn link_local(ip: IpAddr) -> bool {
@@ -1027,6 +1105,22 @@ mod tests {
         assert!(!ufw_blocks(on, drop, "### tuple ### allow tcp 80,47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930, false), "a list");
         assert!(firewall_fix(47930).contains(&format!("from {lan} to any port 47930 ")));
         assert!(firewall_fix(47931).contains("to any port 47930 ") && firewall_fix(47931).contains("to any port 47931 "), "discovery's port too");
+    }
+
+    #[test]
+    fn privacy_addresses_left_out() {
+        let t = "20010db8000000001111222233334444 03 40 00 01  wlan0\n20010db8000000005555666677778888 03 40 00 100  wlan0\n20010db800000000aaaabbbbccccdddd 03 40 00 20  wlan0\n";
+        let v = temporary_v6(t);
+        assert_eq!(v.len(), 2, "temporary and deprecated, not the stable (mngtmpaddr) one");
+        assert!(v.contains(&"2001:db8::1111:2222:3333:4444".parse().unwrap()) && !v.contains(&"2001:db8::5555:6666:7777:8888".parse().unwrap()));
+    }
+
+    #[test]
+    fn strangers_get_no_session_from_the_internet() {
+        let _ = KNOWN.set(Box::new(|fp: &str| fp.starts_with("known-")));
+        assert!(KnownClient.client_auth_mandatory());
+        let (_, stranger) = generate().unwrap();
+        assert!(KnownClient.verify_client_cert(&stranger.cert, &[], UnixTime::now()).is_err(), "an unknown key fails the handshake");
     }
 
     #[test]

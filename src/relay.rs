@@ -196,7 +196,20 @@ fn plain(s: TcpStream) -> i32 {
         let _ = std::io::copy(&mut std::io::stdin().lock(), &mut w);
         let _ = w.shutdown(std::net::Shutdown::Write);
     });
-    let _ = std::io::copy(&mut &s, &mut std::io::stdout().lock());
+    // Not io::copy into stdout: stdout is line-buffered, and ssh's binary stream has no newlines
+    // to flush it, so every chunk is flushed as it comes.
+    let mut out = std::io::stdout().lock();
+    let mut buf = vec![0u8; 32 << 10];
+    loop {
+        match (&s).read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if out.write_all(&buf[..n]).and_then(|_| out.flush()).is_err() {
+                    break;
+                }
+            }
+        }
+    }
     drop(up);
     0
 }

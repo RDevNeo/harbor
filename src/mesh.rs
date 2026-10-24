@@ -805,6 +805,9 @@ pub fn new_code(s: &store::Store) -> std::io::Result<PairCode> {
 /// the other to its allowed list. The code is good once, for 10 minutes, and 5 wrong guesses.
 fn pair_serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api::Hub) -> Reply {
     let api::Via::Tls(Some(theirs)) = &from.via else { return err(403, "pairing needs TLS and a key") };
+    if !crate::tls::private_ip(from.ip) {
+        return err(403, "pairing is for your own network");
+    }
     if !PAIR_TRIES.hit(from.ip) {
         return err(429, "too many tries: wait a minute");
     }
