@@ -504,7 +504,7 @@ fn worker(hub: Arc<api::Hub>, addr: String, ts_id: Option<String>, dns: String, 
             Err(_) => {
                 offline(&known);
                 std::thread::sleep(backoff);
-                backoff = (backoff * 2).min(Duration::from_secs(30));
+                backoff = (backoff * 2).min(Duration::from_secs(10));
                 continue;
             }
         };
