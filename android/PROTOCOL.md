@@ -86,24 +86,50 @@ refetch everything.
 ### `GET /v1/chats/{id}/items?since=<rev>`
 
 ```json
-{"rev": 1761200000200, "count": 31, "running": true, "queued": 1, "typing": [ … ], "items": [ … ]}
+{"rev": 1761200000200, "count": 31, "running": true, "queued": 1, "typing": [ … ],
+ "status": { … }, "items": [ … ]}
 ```
 
-Items whose revision is greater than `since` (`since=0`: all). `seq` is the item's index
-(0-based) and stays stable; an item comes again with a higher `rev` when it changes. If `count`
-is smaller than what you hold (a message was taken back), drop items with `seq >= count`.
-Every item has `seq`, `rev`, `kind`:
+The chat **exactly as the desktop draws it**: `items` are the desktop's own cards (one
+projection, `src/view.rs`, that `chat.rs` draws and this call sends), so a phone renders them
+1:1 and filters nothing itself. Cards whose revision is greater than `since` (`since=0`: all).
+There is one card per transcript item: `seq` is the item's index (0-based, stable; `fork` uses it)
+and a card comes again with a higher `rev` when it, or how it shows, changes. If `count` is
+smaller than what you hold (a message was taken back), drop cards with `seq >= count`.
 
-| kind | fields |
-|---|---|
-| `user` | `text`, `files` (file names), `at` (unix s) |
-| `text` | `markdown`, `blocks` (below), `at` |
-| `thinking` | `text` |
-| `tool` | `name`, `summary`, `input` (string), `result` (string, or null while running), `done`, `is_error` |
-| `error` | `text` |
-| `notice` | `icon`, `text`, `detail`. A turn's end is `icon:"result"`, `text:"Done · 1m 15s · $0.12"`; agent messages are `icon:"message"`, `text:"lead → worker"`, `detail` the message |
+Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the desktop's
+"Conversation fork · Open fork" divider(s), drawn right after the card (tap: open that chat).
 
-Tool `input`/`result` are clipped to 16 KB. Ignore unknown kinds.
+| kind | what the desktop draws | fields |
+|---|---|---|
+| `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
+| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text}]`, `at` (unix s) |
+| `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable` | `markdown`, `blocks` (below), `images`, `at`, `forkable` |
+| `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
+| `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
+| `footer` | the turn's line, monospace and subtle | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634"), `at` |
+| `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
+| `error` | the red card, monospace | `text` |
+
+`images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
+notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
+
+#### Status
+
+`status` is the bars the desktop shows under the transcript; each part is null or empty when
+the desktop shows nothing:
+
+- `queue: [{text, files, sending}]`: messages waiting for the running turn, right-aligned
+  bubbles labelled "Queued" (or "Sending" once handed to the agent).
+- `working: {since_ms, subagents, text}`: the spinner line while the chat's own turn runs;
+  show the time since `since_ms` after `text` ("Working…  ·  1 sub-agent running").
+- `waiting: {agents: [{id, name, title, since_ms}], queued}`: a lead whose own turn is done while
+  sub-agents still run: "Waiting for N sub-agents to finish  ·  Q queued" with the agents'
+  initials, and **Stop all** (`POST /v1/chats/{id}/stop_all`).
+- `limit: {text, can_cancel}`: the usage-limit line (clock icon, `text`), with **Continue now**
+  (`POST /v1/chats/{id}/continue`) and, when `can_cancel`, **Cancel** (`POST /v1/chats/{id}/cancel_limit`).
 
 #### Blocks
 
@@ -175,6 +201,8 @@ first; if any field fails nothing changes (`400` an unknown value, `409` not swi
   (`switchable.device`); other providers than Claude run on the hub only.
 - `fast`: the hub-wide flag; `true` only for providers with a fast mode (claude, codex).
 
+`switch_reason` gives, for each run setting that can't change now, why (e.g. `{"device": "A
+started chat stays on the device it started on"}`), for the greyed-out option.
 `switchable` tells which of these make sense now: `account` (another allowed account exists),
 `model`, `effort` (the provider has efforts), `access` (it has more than one level),
 `device` (not started, Claude), `fast` (the provider has a fast mode). Changes apply from the
@@ -213,6 +241,22 @@ turn (`409` otherwise).
 Raw body (the file), `Content-Length` required. `chat` is optional (files go to
 `<data>/uploads/<chat>/`, or `uploads/pending/`). → `201 {"id": "12/1761…-photo.jpg", "path": "/…"}`.
 Pass `id` in `files` of a send or a new chat. Images reach the agent as images.
+
+### `POST /v1/chats/{id}/stop_all`
+
+The waiting bar's Stop all: stops the lead and its running sub-agents and clears their queues.
+→ `{"ok": true, "returned": [...]}` like `stop`.
+
+### `POST /v1/chats/{id}/continue`, `POST /v1/chats/{id}/cancel_limit`
+
+The usage-limit line's Continue now (runs the waiting turn now) and Cancel (drops the planned
+continue). → `{"ok": true}`.
+
+### `GET /v1/image?path=<absolute path>&max=<px>`
+
+An image a card shows (its `images[].url`), with the token like every call. With `max`, a JPEG at
+most that many pixels on its longer side (16–2048); without, the file as it is. Image files only
+(png, jpg, gif, webp, …); `404` otherwise.
 
 ### `GET /v1/app`
 

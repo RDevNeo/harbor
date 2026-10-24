@@ -350,52 +350,22 @@ impl App {
         let t = self.theme.t;
         let forks = self.forks_of(id);
         let Some(tr) = self.transcripts.get(&id) else { return };
-        // Finished replies can be forked (up to the end of their turn).
-        let forkable = crate::fork::forkable(&tr.items);
         ui.spacing_mut().item_spacing.y = 12.0;
         let width = ui.available_width();
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
-        // Lead turns that hand work off: their text is only an acknowledgement, hidden.
-        let mut handoff = vec![false; tr.items.len()];
-        if lead {
-            let mut start = 0;
-            for (i, it) in tr.items.iter().enumerate() {
-                let end = matches!(it, Item::Result { .. }) || i + 1 == tr.items.len();
-                if end {
-                    let delegated = tr.items[start..=i].iter().any(|x| {
-                        matches!(x, Item::Tool { name, .. } if name == "mcp__harbor__spawn_agent" || name == "mcp__harbor__message_agent")
-                    });
-                    handoff[start..=i].fill(delegated);
-                    start = i + 1;
-                }
-            }
-        }
-        // Whether the current turn (since the last user message or result) said anything.
-        let mut said = false;
+        // The same cards the phone gets (view.rs): what's hidden, footers, dividers.
+        let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
+        let cards = crate::view::project(&tr.items, lead, &forks, &who);
         let mut action: Option<MsgAction> = None;
-        for (i, item) in tr.items.iter().enumerate() {
-            // Where a fork branched off: after the previous item, even a hidden one.
-            if let Some(f) = fork_dividers(ui, &forks, i) {
-                action = Some(MsgAction::Open(f));
-            }
-            if lead {
-                // The lead's coordination is invisible: show what it says, not how it delegates.
-                let hide = match item {
-                    Item::Tool { name, .. } => name.starts_with("mcp__harbor__"),
-                    Item::Thinking { .. } => true,
-                    Item::Notice { icon, .. } => icon == "bot",
-                    Item::Text { text, .. } => text.trim().is_empty() || handoff[i],
-                    Item::Result { .. } => !said,
-                    _ => false,
-                };
-                match item {
-                    Item::Text { text, .. } if !text.trim().is_empty() && !handoff[i] => said = true,
-                    Item::Result { .. } | Item::User { .. } => said = false,
-                    _ => {}
+        for shown in &cards {
+            let i = shown.seq;
+            let item = &tr.items[i];
+            if shown.card == crate::view::Card::Hidden {
+                // A fork can branch off after a hidden item: its divider still shows.
+                if let Some(f) = fork_dividers(ui, &shown.forks_after) {
+                    action = Some(MsgAction::Open(f));
                 }
-                if hide {
-                    continue;
-                }
+                continue;
             }
             let top = ui.cursor().top();
             // Far off screen: a message whose height is known at this width is only
@@ -412,8 +382,10 @@ impl App {
                     }
                 }
             }
-            match item {
-                Item::User { text, files, at, mentions } => {
+            use crate::view::Card;
+            match &shown.card {
+                Card::Hidden => {}
+                Card::User { text, files, images: shown_images, at, mentions } => {
                     let bubble = ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         Frame::new()
                             .fill(t.gray(100))
@@ -423,7 +395,7 @@ impl App {
                                 // Hug the text: as wide as its longest line, at most 80%.
                                 let font = ui.style().text_styles.get(&theme::ts("copy-14")).cloned().unwrap_or_default();
                                 let mut need = text.lines().map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), Color32::WHITE).size().x).fold(0.0, f32::max);
-                                let images = files.iter().filter(|f| crate::images::is_image(f)).count();
+                                let images = shown_images.len();
                                 if images > 0 {
                                     need = need.max(images.min(3) as f32 * (THUMB.x + 8.0) - 8.0);
                                 } else if !files.is_empty() {
@@ -437,7 +409,7 @@ impl App {
                                     if !mentions.is_empty() {
                                         ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing = Vec2::splat(6.0);
-                                            for m in mentions {
+                                            for m in mentions.iter() {
                                                 if let crate::mentions::Click::Open = crate::mentions::chip(ui, m, false) {
                                                     action = Some(MsgAction::Point(m.item));
                                                 }
@@ -445,16 +417,16 @@ impl App {
                                         });
                                     }
                                     if images > 0 {
-                                        let keys: Vec<String> = files.iter().filter(|f| crate::images::is_image(f)).cloned().collect();
+                                        let keys: Vec<String> = shown_images.iter().map(|s| s.to_string()).collect();
                                         crate::images::strip(ui, &keys, THUMB);
                                     }
                                     if !text.is_empty() {
-                                        ui.label(RichText::new(text).text_style(theme::ts("copy-14")));
+                                        ui.label(RichText::new(*text).text_style(theme::ts("copy-14")));
                                     }
-                                    for f in files.iter().filter(|f| !crate::images::is_image(f)) {
+                                    for f in files {
                                         let name = std::path::Path::new(f).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                                         ui.label(RichText::new(format!("{}  {name}", ic::CLIP)).text_style(theme::ts("label-12")).color(t.subtle()))
-                                            .on_hover_text(f);
+                                            .on_hover_text(*f);
                                     }
                                 });
                             })
@@ -464,13 +436,13 @@ impl App {
                     // Only the bubble's own width counts as "hovering the message".
                     if let Some(a) = hover_actions(ui, bubble.inner, true, *at, &[(ic::COPY, "Copy"), (ic::LINK, "Quote in reply"), ("@", "Mention in your next message")]) {
                         action = Some(match a {
-                            0 => MsgAction::Copy(text.clone()),
-                            1 => MsgAction::Quote(text.clone()),
+                            0 => MsgAction::Copy(text.to_string()),
+                            1 => MsgAction::Quote(text.to_string()),
                             _ => MsgAction::Mention(i),
                         });
                     }
                 }
-                Item::Text { text, at } => {
+                Card::Text { text, at, forkable } => {
                     // The transcript's 12px item spacing pushes list text below its
                     // number/bullet; markdown gets its own tighter spacing.
                     let r = ui
@@ -493,27 +465,28 @@ impl App {
                         })
                         .response
                         .rect;
-                    image_strip(ui, &crate::images::paths_in(ui.ctx(), text), 0.0);
+                    let ctx = ui.ctx().clone();
+                    image_strip(ui, &crate::view::images(&shown.card, &mut |t| crate::images::paths_in(&ctx, t)), 0.0);
                     let mut buttons = vec![(ic::COPY, "Copy"), ("@", "Mention in your next message")];
-                    if forkable[i].is_some() {
+                    if *forkable {
                         buttons.insert(1, (ic::FORK, "Fork from this response"));
                     }
                     if let Some(a) = hover_actions(ui, r, false, *at, &buttons) {
                         action = Some(match buttons[a].0 {
-                            ic::COPY => MsgAction::Copy(text.clone()),
+                            ic::COPY => MsgAction::Copy(text.to_string()),
                             ic::FORK => MsgAction::Fork(i),
                             _ => MsgAction::Mention(i),
                         });
                     }
                 }
-                Item::Thinking { text } => {
+                Card::Thinking { text } => {
                     egui::CollapsingHeader::new(RichText::new(format!("{}  Thinking", ic::BRAIN)).text_style(theme::ts("label-13")).color(t.subtle()))
                         .id_salt(("think", id, i))
                         .show(ui, |ui| {
-                            ui.label(RichText::new(text).text_style(theme::ts("copy-14")).color(t.subtle()).italics());
+                            ui.label(RichText::new(*text).text_style(theme::ts("copy-14")).color(t.subtle()).italics());
                         });
                 }
-                Item::Tool { name, summary, input, result, is_error, .. } => {
+                Card::Tool { label, summary, input, result, is_error } => {
                     let key = (id, i);
                     let open = self.expanded_tools.contains(&key);
                     let (icon, col) = match (result, is_error) {
@@ -530,7 +503,7 @@ impl App {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
                                 ui.label(RichText::new(icon).color(col).size(14.0));
-                                ui.label(RichText::new(tool_label(name)).text_style(theme::ts("strong-14")));
+                                ui.label(RichText::new(label).text_style(theme::ts("strong-14")));
                                 let rest = ui.available_width();
                                 let g = w::truncated(ui, summary, FontId::new(12.5, egui::FontFamily::Monospace), t.subtle(), rest);
                                 ui.label(g);
@@ -565,45 +538,22 @@ impl App {
                     }
                     r.on_hover_cursor(egui::CursorIcon::PointingHand);
                     // Images the tool read or wrote (a Read of a .png, a screenshot).
-                    if !*is_error {
-                        let mut paths = crate::images::paths_in(ui.ctx(), input);
-                        if let Some(res) = result {
-                            for p in crate::images::paths_in(ui.ctx(), res) {
-                                if !paths.contains(&p) {
-                                    paths.push(p);
-                                }
-                            }
-                        }
-                        image_strip(ui, &paths, 30.0);
-                    }
+                    let ctx = ui.ctx().clone();
+                    image_strip(ui, &crate::view::images(&shown.card, &mut |t| crate::images::paths_in(&ctx, t)), 30.0);
                 }
-                Item::Result { cost_usd, duration_ms, input_tokens, output_tokens, account, model, .. } => {
-                    let who = self
-                        .account(account)
-                        .map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model)))
-                        .unwrap_or_default();
-                    let cost = if *cost_usd > 0.0 { format!(" · ${cost_usd:.4}") } else { String::new() };
-                    let meta = format!(
-                        "{who}{:.1}s · {}k in · {} out{cost}",
-                        *duration_ms as f64 / 1000.0,
-                        input_tokens / 1000,
-                        output_tokens
-                    );
-                    w::subtle(ui, meta, "label-12-mono");
+                Card::Footer { text, .. } => {
+                    w::subtle(ui, text.as_str(), "label-12-mono");
                 }
                 // The top of a fork: back to the reply it was forked from.
-                Item::Notice { icon, detail, .. } if icon == "fork" && detail.starts_with("harbor:chat/") => {
-                    if crate::fork::divider(ui, "Forked from conversation", "Open source conversation") {
-                        let (c, n) = detail["harbor:chat/".len()..].split_once('/').unwrap_or_default();
-                        if let (Ok(c), Ok(n)) = (c.parse(), n.parse()) {
-                            action = Some(MsgAction::OpenAt(c, n));
-                        }
+                Card::ForkedFrom { chat, seq } => {
+                    if crate::fork::divider(ui, "Forked from conversation", "Open source conversation") && *chat > 0 {
+                        action = Some(MsgAction::OpenAt(*chat, *seq));
                     }
                 }
-                Item::Notice { icon, text, detail } => {
+                Card::Notice { icon, text, detail, markdown, url } => {
                     let key = (id, i);
                     let open = self.expanded_tools.contains(&key);
-                    let glyph = match icon.as_str() {
+                    let glyph = match *icon {
                         "bot" => ic::BOT,
                         "wake" => ic::ALARM,
                         "webhook" => ic::WEBHOOK,
@@ -625,7 +575,7 @@ impl App {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(glyph).size(13.0).color(t.subtle()));
-                                        ui.label(RichText::new(text).text_style(theme::ts("label-13")).color(t.fg()));
+                                        ui.label(RichText::new(*text).text_style(theme::ts("label-13")).color(t.fg()));
                                         if !detail.is_empty() && !detail.starts_with("http") {
                                             ui.label(RichText::new(if open { ic::UP } else { ic::DOWN }).size(12.0).color(t.subtle()));
                                         }
@@ -638,10 +588,10 @@ impl App {
                     if crate::mentions::hover_button(ui, r.rect, true) {
                         action = Some(MsgAction::Mention(i));
                     }
-                    if icon == "process" && detail.starts_with("http") {
+                    if let Some(url) = url {
                         // A process's URL: open it in Harbor's browser.
                         if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open in Harbor's browser").clicked() {
-                            action = Some(MsgAction::OpenUrl(detail.clone()));
+                            action = Some(MsgAction::OpenUrl(url.to_string()));
                         }
                     } else if !detail.is_empty() {
                         if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -654,7 +604,7 @@ impl App {
                         if open {
                             w::well(ui).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                if icon == "bot" {
+                                if *markdown {
                                     ui.push_id(("md-detail", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, detail));
                                 } else {
                                     ui.label(RichText::new(clip(detail, 6000)).text_style(theme::ts("label-12-mono")));
@@ -663,7 +613,7 @@ impl App {
                         }
                     }
                 }
-                Item::Message { from, to, text } => {
+                Card::Message { from, to, text } => {
                     let r = Frame::new()
                         .fill(t.blue(100))
                         .stroke(Stroke::new(1.0, t.blue(400)))
@@ -682,7 +632,7 @@ impl App {
                         action = Some(MsgAction::Mention(i));
                     }
                 }
-                Item::Error { text } => {
+                Card::Error { text } => {
                     Frame::new()
                         .fill(t.red(100))
                         .stroke(Stroke::new(1.0, t.red(400)))
@@ -694,13 +644,13 @@ impl App {
                         });
                 }
             }
+            if let Some(f) = fork_dividers(ui, &shown.forks_after) {
+                action = Some(MsgAction::Open(f));
+            }
             // A mention chip was clicked: this item scrolls into view and lights up.
             let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=(ui.cursor().top() - 12.0).max(top));
             self.mentions.flash(ui, id, i, rect);
             ui.data_mut(|d| d.insert_temp(height_key, (width, ui.cursor().top() - top)));
-        }
-        if let Some(f) = fork_dividers(ui, &forks, tr.items.len()) {
-            action = Some(MsgAction::Open(f));
         }
         match action {
             Some(MsgAction::Copy(text)) => ui.ctx().copy_text(text),
@@ -1368,9 +1318,10 @@ fn star_shape(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32) {
 
 /// "Conversation fork · Open fork" for the forks that branch off right before item
 /// `i`; the fork clicked, if any.
-fn fork_dividers(ui: &mut Ui, forks: &[(usize, i64)], i: usize) -> Option<i64> {
+/// "Conversation fork" dividers for the chats forked after a message; the one clicked.
+fn fork_dividers(ui: &mut Ui, forks: &[i64]) -> Option<i64> {
     let mut open = None;
-    for (_, f) in forks.iter().filter(|(at, _)| *at + 1 == i) {
+    for f in forks {
         if crate::fork::divider(ui, "Conversation fork", "Open fork") {
             open = Some(*f);
         }
@@ -1392,21 +1343,7 @@ fn image_strip(ui: &mut Ui, paths: &[String], indent: f32) {
     });
 }
 
-/// "mcp__harbor__spawn_agent" → "Spawn agent"; "mcp__github__get_pr" → "github · get_pr".
-pub fn tool_label(name: &str) -> String {
-    match name.strip_prefix("mcp__") {
-        Some(rest) => {
-            let (server, tool) = rest.split_once("__").unwrap_or(("", rest));
-            if server == "harbor" {
-                let t = tool.replace('_', " ");
-                t[..1].to_uppercase() + &t[1..]
-            } else {
-                format!("{server} · {tool}")
-            }
-        }
-        None => name.to_string(),
-    }
-}
+pub use crate::view::tool_label;
 
 enum MsgAction {
     OpenUrl(String),

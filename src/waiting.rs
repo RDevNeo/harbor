@@ -29,11 +29,7 @@ impl App {
                 // Harbor's spinner steps at 4 fps; egui's would repaint every frame.
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
                 w::spinner(ui.painter(), r.center(), 6.5, ui.visuals().strong_text_color());
-                let also = match subs.len() {
-                    0 => String::new(),
-                    1 => "  ·  1 sub-agent running".into(),
-                    n => format!("  ·  {n} sub-agents running"),
-                };
+                let also = subs_running(subs.len());
                 w::subtle(ui, format!("Working… {}{also}  ·  {}", w::elapsed(secs), if queued { "Ctrl+Enter to send now  ·  Esc to edit queued" } else { "Esc to stop" }), "label-13");
             });
             return;
@@ -41,7 +37,7 @@ impl App {
 
         // Waiting: stacked agent initials, the lit one stepping on each tick.
         let n = subs.len();
-        let queued: usize = self.subs_of(id).iter().filter(|c| !self.turns.contains_key(&c.id)).map(|c| self.pending.get(&c.id).map_or(0, |q| q.len())).sum();
+        let queued = self.subs_queued(id);
         let font = FontId::proportional(13.0);
         let mut job = LayoutJob::default();
         let fmt = |c: Color32, f: FontId| egui::TextFormat { font_id: f, color: c, ..Default::default() };
@@ -95,5 +91,19 @@ impl App {
         if stop_all {
             self.dialog = Some(crate::app::Dialog::StopAll(id));
         }
+    }
+
+    /// Messages waiting for a lead's idle sub-agents (the "· 2 queued" of the waiting bar).
+    pub fn subs_queued(&self, lead: i64) -> usize {
+        self.subs_of(lead).iter().filter(|c| !self.turns.contains_key(&c.id)).map(|c| self.pending.get(&c.id).map_or(0, |q| q.len())).sum()
+    }
+}
+
+/// What follows "Working… 12s" while sub-agents run too ("" with none). The phone shows it too.
+pub fn subs_running(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => "  ·  1 sub-agent running".into(),
+        n => format!("  ·  {n} sub-agents running"),
     }
 }

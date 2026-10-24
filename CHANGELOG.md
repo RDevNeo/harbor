@@ -9,9 +9,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Typing presence: a chat shows who is writing in it and on which device. Phones (Harbor for
   Android) and this PC's own composer report it; the desktop shows "✎ <phone> is typing…" above
   the composer and a ✎ on the chat's sidebar row, and the phone sees the PC typing.
+- Harbor for Android shows the waiting and usage-limit bars with Stop all, Continue now and
+  Cancel, attached and agent-read images as thumbnails, and why a run setting can't change.
 - Harbor for Android can change an open chat's account, model, effort, access, device and fast
   mode, with the same rules as the desktop composer (a started chat keeps its provider and
   device).
+
+### Fixed
+- A chat on the phone now shows exactly what the desktop shows: the same messages hidden (a
+  lead's thinking and agent coordination), the same agent message cards, turn footers with
+  the same numbers, attachments and fork dividers. Both draw from one projection of the chat.
 
 ## [0.8.4] - 2026-10-23
 

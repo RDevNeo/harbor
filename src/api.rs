@@ -739,6 +739,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             }
             send_json(&mut w, 200, &json!({ "ok": true }));
         }
+        ("GET", ["v1", "image"]) => serve_image(&mut w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
         ("POST", ["v1", "upload"]) => {
             let r = upload(&mut r, &req, &uploads_dir());
             send_json(&mut w, r.status, &r.body);
@@ -794,6 +795,44 @@ fn serve_apk(w: &mut impl Write, head_only: bool) {
     if w.write_all(head.as_bytes()).is_ok() && !head_only {
         let _ = std::io::copy(&mut f, w);
     }
+}
+
+/// An image a card shows (`image_url`): the file, or a JPEG at most `max` px on its longer
+/// side. Image files only; the token already lets its phone run agents on this PC.
+fn serve_image(w: &mut impl Write, path: &str, max: Option<u32>) {
+    let p = Path::new(path);
+    if !p.is_absolute() || !crate::images::is_image(path) || !p.is_file() {
+        return send_json(w, 404, &json!({ "error": "no such image" }));
+    }
+    let Some(bytes) = std::fs::read(p).ok().filter(|b| b.len() <= 40 << 20) else {
+        return send_json(w, 404, &json!({ "error": "unreadable image" }));
+    };
+    let (body, ctype) = match max.map(|m| m.clamp(16, 2048)) {
+        Some(m) => match image::load_from_memory(&bytes) {
+            Ok(img) => {
+                let small = if img.width() > m || img.height() > m { img.thumbnail(m, m) } else { img };
+                let mut out = std::io::Cursor::new(vec![]);
+                match image::DynamicImage::ImageRgb8(small.to_rgb8()).write_to(&mut out, image::ImageFormat::Jpeg) {
+                    Ok(()) => (out.into_inner(), "image/jpeg"),
+                    Err(_) => return send_json(w, 500, &json!({ "error": "could not scale the image" })),
+                }
+            }
+            Err(_) => return send_json(w, 415, &json!({ "error": "not an image Harbor can read" })),
+        },
+        None => {
+            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let ctype = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => "application/octet-stream",
+            };
+            (bytes, ctype)
+        }
+    };
+    let _ = w.write_all(response(200, ctype, body.len(), "").as_bytes());
+    let _ = w.write_all(&body);
 }
 
 pub fn uploads_dir() -> PathBuf {
@@ -1103,28 +1142,40 @@ fn file_name(p: &str) -> String {
     Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string())
 }
 
-/// One transcript item for the phone. Results and agent messages are notices.
-pub fn item_json(seq: usize, rev: u64, it: &Item) -> Value {
-    let mut v = match it {
-        Item::User { text, files, at, .. } => json!({ "kind": "user", "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "at": at }),
-        Item::Text { text, at } => json!({ "kind": "text", "markdown": text, "blocks": blocks(text), "at": at }),
-        Item::Thinking { text } => json!({ "kind": "thinking", "text": text }),
-        Item::Tool { name, summary, input, result, is_error, .. } => json!({
-            "kind": "tool", "name": name, "summary": summary, "input": clipped(input),
-            "result": result.as_deref().map(clipped), "done": result.is_some(), "is_error": is_error,
+/// Where the phone fetches an image a card shows (a ≤512 px JPEG).
+pub fn image_url(path: &str) -> String {
+    format!("/v1/image?path={}&max=512", url_encode(path))
+}
+
+/// One card of the shared projection (view.rs) for the phone: what the desktop draws for
+/// that item, field for field. `find` lists the image files a text names.
+pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<String>) -> Value {
+    use crate::view::Card;
+    let images: Vec<Value> = crate::view::images(&s.card, find).iter().map(|p| json!({ "name": file_name(p), "url": image_url(p) })).collect();
+    let mut v = match &s.card {
+        Card::Hidden => json!({}),
+        Card::User { text, files, mentions, at, .. } => json!({
+            "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "images": images,
+            "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet() })).collect::<Vec<_>>(), "at": at,
         }),
-        Item::Error { text } => json!({ "kind": "error", "text": text }),
-        Item::Notice { icon, text, detail } => json!({ "kind": "notice", "icon": icon, "text": text, "detail": detail }),
-        Item::Result { duration_ms, cost_usd, at, .. } => {
-            let secs = duration_ms / 1000;
-            let took = if secs >= 60 { format!("{}m {}s", secs / 60, secs % 60) } else { format!("{secs}s") };
-            let cost = if *cost_usd > 0.0 { format!(" · ${cost_usd:.2}") } else { String::new() };
-            json!({ "kind": "notice", "icon": "result", "text": format!("Done · {took}{cost}"), "detail": "", "at": at })
-        }
-        Item::Message { from, to, text } => json!({ "kind": "notice", "icon": "message", "text": format!("{from} → {to}"), "detail": text }),
+        Card::Text { text, at, forkable } => json!({ "markdown": text, "blocks": blocks(text), "images": images, "at": at, "forkable": forkable }),
+        Card::Thinking { text } => json!({ "text": text }),
+        Card::Tool { label, summary, input, result, is_error } => json!({
+            "label": label, "summary": summary, "input": clipped(input),
+            "result": result.map(clipped), "done": result.is_some(), "is_error": is_error, "images": images,
+        }),
+        Card::Footer { text, at } => json!({ "text": text, "at": at }),
+        Card::ForkedFrom { chat, seq } => json!({ "chat": chat, "seq": seq }),
+        Card::Notice { icon, text, detail, markdown, url } => json!({ "icon": icon, "text": text, "detail": clipped(detail), "detail_markdown": markdown, "url": url }),
+        Card::Message { from, to, text } => json!({ "from": from, "to": to, "text": clipped(text) }),
+        Card::Error { text } => json!({ "text": clipped(text) }),
     };
-    v["seq"] = json!(seq);
+    v["kind"] = json!(crate::view::kind(&s.card));
+    v["seq"] = json!(s.seq);
     v["rev"] = json!(rev);
+    if !s.forks_after.is_empty() {
+        v["forks_after"] = json!(s.forks_after);
+    }
     v
 }
 
@@ -1257,10 +1308,18 @@ impl App {
             return;
         }
         self.local_typing();
+        let mut subs: HashMap<i64, usize> = HashMap::new();
+        for c in self.chats.iter().filter(|c| c.role == store::Role::Sub && self.turns.contains_key(&c.id)) {
+            if let Some(p) = c.parent {
+                *subs.entry(p).or_default() += 1;
+            }
+        }
         let mut seen = HashMap::with_capacity(self.chats.len());
         let mut changed = vec![];
         for c in &self.chats {
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.turns.contains_key(&c.id), self.queued_count(c.id)));
+            // A lead's bars (waiting for sub-agents, a usage limit) change with it too.
+            let bars = (subs.get(&c.id).copied().unwrap_or(0), self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.turns.contains_key(&c.id), self.queued_count(c.id), bars));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -1364,6 +1423,21 @@ impl App {
                         ok(json!({ "ok": true, "returned": returned }))
                     }
                     "fork" => self.api_fork(c, &call.body),
+                    // The waiting bar's Stop all: the lead and its sub-agents; the lead's queue comes back.
+                    "stop_all" => {
+                        let returned: Vec<Value> = self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect();
+                        self.stop_all(c);
+                        ok(json!({ "ok": true, "returned": returned }))
+                    }
+                    // The usage-limit line's Continue now and Cancel.
+                    "continue" => {
+                        self.continue_chat(c, true, ctx);
+                        ok(json!({ "ok": true }))
+                    }
+                    "cancel_limit" => {
+                        self.cancel_limit(c);
+                        ok(json!({ "ok": true }))
+                    }
                     _ => err(404, "unknown action"),
                 }
             }
@@ -1418,6 +1492,30 @@ impl App {
         self.accounts.iter().filter(|a| a.installed() && locked.is_none_or(|k| a.kind == k)).map(|a| a.id.clone()).collect()
     }
 
+    /// Why a run setting can't change now, for each that can't (the phone greys it out with this).
+    fn switch_reason(&self, c: &store::Chat, kind: Kind) -> Value {
+        let mut r = serde_json::Map::new();
+        if !self.allowed_accounts(c.id).iter().any(|a| *a != c.account) {
+            let why = if c.role == store::Role::Lead { "A project's lead runs on Claude".to_string() } else if c.started { format!("A started chat stays on {}", kind.label()) } else { "No other account".to_string() };
+            r.insert("account".into(), json!(why));
+        }
+        if providers::efforts(kind).is_empty() {
+            r.insert("effort".into(), json!(format!("{} has no effort levels", kind.label())));
+        }
+        if providers::access(kind).len() <= 1 {
+            r.insert("access".into(), json!(format!("{} has one access level", kind.label())));
+        }
+        if c.started {
+            r.insert("device".into(), json!("A started chat stays on the device it started on"));
+        } else if kind != Kind::Claude {
+            r.insert("device".into(), json!("Only Claude chats run on another device"));
+        }
+        if !providers::has_fast(kind) {
+            r.insert("fast".into(), json!(format!("{} has no fast mode", kind.label())));
+        }
+        Value::Object(r)
+    }
+
     pub fn chat_json(&self, c: &store::Chat) -> Value {
         let kind = self.account(&c.account).map_or(Kind::Claude, |a| a.kind);
         let allowed = self.allowed_accounts(c.id);
@@ -1439,6 +1537,7 @@ impl App {
                 "fast": providers::has_fast(kind),
             },
             "allowed_accounts": allowed,
+            "switch_reason": self.switch_reason(c, kind),
         })
     }
 
@@ -1521,19 +1620,30 @@ impl App {
         })
     }
 
-    /// The items of a chat changed after `since`, finding what changed by hashing each one.
+    /// The cards of a chat (the desktop's projection, view.rs) changed after `since`, finding
+    /// what changed by hashing each item with how it shows.
     pub fn api_items(&mut self, chat: i64, since: u64) -> Value {
         if !self.transcripts.contains_key(&chat) {
             let items = self.store.items(chat);
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
         }
+        let forks = self.forks_of(chat);
+        let lead = self.chat(chat).is_some_and(|c| c.role == store::Role::Lead);
+        let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
         let items = &self.transcripts[&chat].items;
+        let cards = crate::view::project(items, lead, &forks, &who);
         // Every change to a chat goes through `api_touch`: nothing new since the last look,
         // nothing to hash (a phone asks again after each event, many times a second).
         let now = self.api.hub.chat_rev(chat);
         let revs = self.api.items.entry(chat).or_default();
         let fresh = self.api.looked.get(&chat) == Some(&now) && revs.len() == items.len();
-        let hashes: Vec<u64> = if fresh { vec![] } else { items.iter().map(fingerprint).collect() };
+        // An item's version includes how it shows: hidden later (a lead's turn delegating),
+        // forkable once its turn ends, a fork made from it.
+        let hashes: Vec<u64> = if fresh {
+            vec![]
+        } else {
+            items.iter().zip(&cards).map(|(it, c)| hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after))).collect()
+        };
         if !fresh {
             self.api.looked.insert(chat, now);
         }
@@ -1549,15 +1659,37 @@ impl App {
                 }
             }
         }
-        let out: Vec<Value> = items.iter().enumerate().filter(|(i, _)| revs[*i].1 > since).map(|(i, it)| item_json(i, revs[i].1, it)).collect();
+        let out: Vec<Value> = cards.iter().filter(|c| revs[c.seq].1 > since).map(|c| card_json(c, revs[c.seq].1, &mut crate::images::find_paths)).collect();
         json!({
             "rev": self.api.hub.rev(),
             "count": items.len(),
             "running": self.turns.contains_key(&chat),
             "queued": self.queued_count(chat),
             "typing": self.typing_json(chat),
+            "status": self.api_status(chat),
             "items": out,
         })
+    }
+
+    /// The bars under the desktop's transcript (waiting.rs, limits.rs, queue.rs), for the phone.
+    pub fn api_status(&self, chat: i64) -> Value {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let lead = self.chat(chat).is_some_and(|c| c.role == store::Role::Lead);
+        let subs = if lead { self.running_subs(chat) } else { vec![] };
+        let queue: Vec<Value> = self
+            .queued(chat)
+            .iter()
+            .map(|q| json!({ "text": q.text, "files": q.files.iter().map(|f| file_name(&f.to_string_lossy())).collect::<Vec<_>>(), "sending": q.written }))
+            .collect();
+        let working = self.turns.get(&chat).map(|(_, at)| {
+            json!({ "since_ms": now_ms - at.elapsed().as_millis() as i64, "subagents": subs.len(), "text": format!("Working…{}", crate::waiting::subs_running(subs.len())) })
+        });
+        let waiting = (working.is_none() && !subs.is_empty()).then(|| {
+            let agents: Vec<Value> = subs.iter().map(|(c, secs)| json!({ "id": c.id, "name": c.name, "title": c.title, "since_ms": now_ms - *secs as i64 * 1000 })).collect();
+            json!({ "agents": agents, "queued": self.subs_queued(chat) })
+        });
+        let limit = self.limit_text(chat).map(|(text, cancel)| json!({ "text": text, "can_cancel": cancel }));
+        json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit })
     }
 
     fn api_files(body: &Value) -> Result<Vec<PathBuf>, Reply> {
@@ -2056,17 +2188,52 @@ mod tests {
 
     #[test]
     fn items_on_the_wire() {
-        let v = item_json(3, 9, &Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into()], at: 5, mentions: vec![] });
-        assert_eq!(v["kind"], "user");
-        assert_eq!(v["files"], json!(["photo.jpg"]));
-        assert_eq!((v["seq"].as_u64(), v["rev"].as_u64()), (Some(3), Some(9)));
-        let v = item_json(0, 1, &Item::Tool { id: "t".into(), name: "Bash".into(), summary: "ls".into(), input: "x".repeat(CLIP * 2), result: None, is_error: false });
-        assert_eq!(v["done"], false);
+        let one = |it: Item| {
+            let items = vec![it];
+            let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
+            card_json(&cards[0], 9, &mut |_| vec![])
+        };
+        let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![] });
+        assert_eq!((v["kind"].as_str(), v["seq"].as_u64(), v["rev"].as_u64()), (Some("user"), Some(0), Some(9)));
+        assert_eq!(v["files"], json!(["notes.txt"]));
+        assert_eq!(v["images"], json!([{ "name": "photo.jpg", "url": "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512" }]));
+        let v = one(Item::Tool { id: "t".into(), name: "mcp__github__get_pr".into(), summary: "ls".into(), input: "x".repeat(CLIP * 2), result: None, is_error: false });
+        assert_eq!((v["label"].as_str(), v["done"].as_bool()), (Some("github · get_pr"), Some(false)));
         assert!(v["input"].as_str().unwrap().len() < CLIP + 100);
-        let v = item_json(0, 1, &Item::Text { text: "# H".into(), at: 0 });
-        assert_eq!(v["markdown"], "# H");
-        assert_eq!(v["blocks"][0]["type"], "heading");
-        let v = item_json(0, 1, &Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, at: 0, account: String::new(), model: String::new() });
-        assert_eq!((v["kind"].as_str(), v["text"].as_str()), (Some("notice"), Some("Done · 1m 15s")));
+        let v = one(Item::Text { text: "# H".into(), at: 0 });
+        assert_eq!((v["markdown"].as_str(), v["blocks"][0]["type"].as_str()), (Some("# H"), Some("heading")));
+        let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, at: 0, account: String::new(), model: String::new() });
+        assert_eq!((v["kind"].as_str(), v["text"].as_str()), (Some("footer"), Some("75.0s · 0k in · 0 out")));
+    }
+
+    /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,
+    /// the same kinds in the same order, the same footer text, labels, dividers and images.
+    #[test]
+    fn the_phone_sees_what_the_desktop_draws() {
+        use crate::view::{Card, kind, project};
+        let items = crate::view::fixture();
+        let who = |a: &str, _m: &str| if a == "claude" { "Claude · AB · Opus 5.5 · ".to_string() } else { String::new() };
+        let forks = [(8, 42)];
+        // What chat.rs draws: these cards, skipping the hidden ones.
+        let desktop = project(&items, true, &forks, &who);
+        let phone: Vec<Value> = desktop.iter().map(|c| card_json(c, 1, &mut |_| vec![])).collect();
+        assert_eq!(phone.len(), items.len(), "one card per item, so seq stays the item's index");
+        for (d, p) in desktop.iter().zip(&phone) {
+            assert_eq!(p["kind"].as_str(), Some(kind(&d.card)));
+            assert_eq!(p["seq"].as_u64(), Some(d.seq as u64));
+            assert_eq!(p["forks_after"].as_array().map(|a| a.len()).unwrap_or(0), d.forks_after.len());
+            match &d.card {
+                Card::Footer { text, .. } => assert_eq!(p["text"].as_str(), Some(text.as_str())),
+                Card::Text { text, forkable, .. } => assert_eq!((p["markdown"].as_str(), p["forkable"].as_bool()), (Some(*text), Some(*forkable))),
+                Card::Tool { label, .. } => assert_eq!(p["label"].as_str(), Some(label.as_str())),
+                Card::Message { from, to, text } => assert_eq!((p["from"].as_str(), p["to"].as_str(), p["text"].as_str()), (Some(*from), Some(*to), Some(*text))),
+                Card::Notice { url, .. } => assert_eq!(p["url"].as_str(), *url),
+                _ => {}
+            }
+        }
+        let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
+        assert_eq!(shown, ["user", "message", "tool", "text", "footer", "notice", "error"]);
+        assert_eq!(phone[9]["text"], "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634");
+        assert_eq!(phone[8]["forks_after"], json!([42]));
     }
 }

@@ -443,6 +443,12 @@ pub fn paths_in(ctx: &egui::Context, text: &str) -> Vec<String> {
     ctx.memory_mut(|m| m.caches.cache::<egui::cache::FrameCache<Vec<String>, Finder>>().get(text).clone())
 }
 
+/// [`paths_in`] without the frame cache (off the UI's frames, for the phone API).
+pub fn find_paths(text: &str) -> Vec<String> {
+    use egui::cache::ComputerMut;
+    Finder.compute(text)
+}
+
 #[derive(Default)]
 struct Finder;
 

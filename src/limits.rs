@@ -477,13 +477,14 @@ impl App {
     }
 
     /// The status line of a paused chat (under the transcript).
-    pub fn limit_line(&mut self, ui: &mut Ui, chat_id: i64) {
-        let Some(p) = self.paused(chat_id).cloned() else { return };
+    /// The usage-limit line under a paused chat, and whether it has a continue time to cancel
+    /// (the phone shows the same line).
+    pub fn limit_text(&self, chat_id: i64) -> Option<(String, bool)> {
+        let p = self.paused(chat_id)?;
         if self.turns.contains_key(&chat_id) {
-            return;
+            return None;
         }
-        let block = self.limits.blocks.get(&p.account).cloned();
-        let t = self.theme.t;
+        let block = self.limits.blocks.get(&p.account);
         // The user's own cap reads differently from the provider's limit.
         let what = match block.as_ref().and_then(|b| b.cap.map(|c| (c, b))) {
             Some((c, b)) => format!("Paused at your {c}% cap · resets {}", when(b.until)),
@@ -494,6 +495,12 @@ impl App {
             (None, Some(b)) if b.until > store::now() && b.cap.is_none() => format!("{what} · resets {} · waiting for you", when(b.until)),
             _ => format!("{what} · waiting for you"),
         };
+        Some((text, p.at.is_some()))
+    }
+
+    pub fn limit_line(&mut self, ui: &mut Ui, chat_id: i64) {
+        let Some((text, cancel)) = self.limit_text(chat_id) else { return };
+        let t = self.theme.t;
         // Nothing else repaints an idle chat: keep "in 2h 10m" current.
         ui.ctx().request_repaint_after(Duration::from_secs(30));
         let mut act = 0;
@@ -504,7 +511,7 @@ impl App {
             if w::btn("Continue now").sm().show(ui).clicked() {
                 act = 1;
             }
-            if p.at.is_some() && w::btn("Cancel").sm().muted().show(ui).clicked() {
+            if cancel && w::btn("Cancel").sm().muted().show(ui).clicked() {
                 act = 2;
             }
             // Always offered: continue on another account of the same provider.

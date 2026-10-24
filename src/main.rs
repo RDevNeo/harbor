@@ -50,6 +50,7 @@ mod theme;
 mod undo;
 mod usage_ctl;
 mod update;
+mod view;
 mod waiting;
 mod widgets;
 mod workspace;
