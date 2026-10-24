@@ -468,6 +468,8 @@ impl App {
             v => {
                 if let Some(tab) = Tab::from_slug(v) {
                     self.open(View::Settings(tab));
+                } else if let Some(id) = v.strip_prefix("chat:").and_then(|i| i.parse().ok()) {
+                    self.open(View::Chat(id));
                 }
             }
         }

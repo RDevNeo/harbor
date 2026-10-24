@@ -94,6 +94,10 @@ impl App {
     /// "Fork from this response": forks `chat_id` after the turn of reply `reply`
     /// into a new thread and opens it.
     pub fn fork_from(&mut self, chat_id: i64, reply: usize) {
+        // Another PC's chat forks there (its session is on that PC); the fork opens when copied.
+        if self.mesh_fork(chat_id, reply) {
+            return;
+        }
         let Some(src) = self.chat(chat_id).cloned() else { return };
         let Some(upto) = self.transcripts.get(&chat_id).and_then(|t| forkable(&t.items).get(reply).copied().flatten()) else { return };
         let Some(items) = self.transcripts.get(&chat_id).map(|t| t.items[..=upto].to_vec()) else { return };

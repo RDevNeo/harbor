@@ -723,7 +723,7 @@ impl App {
                             *d = text;
                         }
                     }
-                } else if what == "start the chat" {
+                } else if what == "start the chat" || what == "fork the chat" {
                     if let Some(hid) = reply.body["id"].as_i64() {
                         self.mesh.open_when = Some((reply.body["home"].as_str().unwrap_or("").to_string(), hid, Instant::now()));
                     }
@@ -1057,6 +1057,10 @@ impl App {
 
     pub fn mesh_patch(&mut self, chat: i64, body: Value) -> bool {
         self.mesh_forward(chat, "change the chat", "PATCH", &[], body, vec![], None)
+    }
+
+    pub fn mesh_fork(&mut self, chat: i64, seq: usize) -> bool {
+        self.mesh_forward(chat, "fork the chat", "POST", &["fork"], json!({ "seq": seq }), vec![], None)
     }
 
     pub fn mesh_delete(&mut self, chat: i64) -> bool {
