@@ -341,7 +341,12 @@ fn bash(cwd: &Path, chat_id: i64, a: &Value) -> (bool, Vec<Value>) {
     let Ok(tag) = crate::bridge::token() else { return text(false, "no randomness for a log name") };
     if a["run_in_background"].as_bool() == Some(true) {
         let log = std::env::temp_dir().join(format!("harbor-bash-{}.log", &tag[..12]));
-        let Ok(f) = std::fs::File::create(&log) else { return text(false, format!("cannot create {}", log.display())) };
+        // Owner-only and new: /tmp is shared with every account here.
+        let f = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&log)
+        };
+        let Ok(f) = f else { return text(false, format!("cannot create {}", log.display())) };
         let mut cmd = crate::bridge::shell_command(&format!("exec 2>&1\n{command}"), &here);
         let spawned = f.try_clone().and_then(|f2| cmd.stdin(std::process::Stdio::null()).stdout(f).stderr(f2).spawn());
         return match spawned {

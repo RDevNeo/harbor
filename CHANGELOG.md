@@ -11,14 +11,59 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   the composer and a ✎ on the chat's sidebar row, and the phone sees the PC typing.
 - Harbor for Android shows the waiting and usage-limit bars with Stop all, Continue now and
   Cancel, attached and agent-read images as thumbnails, and why a run setting can't change.
+- Harbor for Android pairs by scanning the QR code with its own camera (no scanner app needed),
+  takes photos with Camera, and has speech-to-text in the composer.
 - Harbor for Android can change an open chat's account, model, effort, access, device and fast
   mode, with the same rules as the desktop composer (a started chat keeps its provider and
   device).
+
+### Changed
+- Harbor for Android looks like the Claude app: a warm light theme and a matching dark one that
+  follows the phone (Settings › Color mode), the chat list as a drawer you swipe open inside a
+  chat, a rounded composer with a model pill and an Add to session sheet (Camera, Photos, Files),
+  and settings in grouped cards.
 
 ### Fixed
 - A chat on the phone now shows exactly what the desktop shows: the same messages hidden (a
   lead's thinking and agent coordination), the same agent message cards, turn footers with
   the same numbers, attachments and fork dividers. Both draw from one projection of the chat.
+- Harbor for Android's send button no longer cuts its icon at large font sizes.
+
+## [0.8.7] - 2026-10-23
+
+### Fixed
+- Processes Harbor started before an update no longer linger as zombies after they end: the
+  updated Harbor collects them.
+
+## [0.8.6] - 2026-10-23
+
+### Fixed
+- A chat or project in the sidebar stays Working while its subagents still run, instead of showing
+  Done as soon as the lead's own turn ends; it only turns Done (and notifies) once everything finished.
+
+## [0.8.5] - 2026-10-23
+
+### Security
+- Harbor's files are private to your account: its data folder (harbor.db with the phone API's and
+  webhooks' tokens, transcripts, uploads and pastes), its turn files (commands, output) and process
+  logs are owner-only now, also on existing installs. App sign-in tokens no longer go into a turn's
+  files: the turn's runner adds them itself.
+- Auto-Fix and Auto-Merge only act on text from the repo's owner, members and collaborators:
+  Auto-Fix only picks issues they opened, and unattended runs read only their comments and reviews
+  (anyone can comment on a public repo). Issue and PR titles and webhook requests reach the agent
+  fenced as untrusted data, not instructions. Fix / Merge started by you still read every comment.
+- install.sh always checks the minisign signature of what it installs: without minisign installed it
+  fetches the static minisign the release workflow uses (pinned by its SHA-256). Without either, or
+  for an offline folder without a signed SHA256SUMS, it refuses unless `HARBOR_INSECURE=1`.
+
+### Fixed
+- Long sessions stay fast: saving a chat writes only its new or changed items instead of rewriting
+  the whole transcript, huge tool inputs and outputs keep their start and end (64 KB), and chats not
+  looked at for a while leave memory until they're opened again.
+- Stopping a process started with start_process kills whatever of it is still running 5 seconds
+  after asking it to stop, and a process's log keeps only its last megabyte once it passes 8 MB.
+- Processes Harbor started before an update or reload (start_process's, MCP servers, helpers) are
+  cleaned up once they end, instead of staying behind as zombie processes until Harbor quits.
 
 ## [0.8.4] - 2026-10-23
 
@@ -286,7 +331,10 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/RDevNeo/harbor/compare/v0.8.6...v0.8.7
+[0.8.6]: https://github.com/RDevNeo/harbor/compare/v0.8.5...v0.8.6
+[0.8.5]: https://github.com/RDevNeo/harbor/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/RDevNeo/harbor/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/RDevNeo/harbor/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/RDevNeo/harbor/compare/v0.8.1...v0.8.2

@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "harbor"
-version = "0.8.4"
+version = "0.8.7"
 dependencies = [
  "arboard",
  "eframe",
@@ -1021,6 +1021,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "rusqlite",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "vt100",

@@ -42,15 +42,84 @@ impl Proc {
         tail_file(&self.log, n)
     }
 
-    /// Stops the whole process group (npm → node → vite…).
+    /// Stops the whole process group (npm → node → vite…): TERM, and KILL for whatever
+    /// is still in it a few seconds later.
     pub fn stop(&self) {
-        let _ = Command::new("kill").args(["-TERM", "--", &format!("-{}", self.pid)]).status();
+        let pid = self.pid;
+        signal_group("-TERM", pid);
+        std::thread::spawn(move || {
+            let t = Instant::now();
+            while !group(pid).is_empty() {
+                if t.elapsed() > STOP_GRACE {
+                    signal_group("-KILL", pid);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
     }
 }
 
+/// How long a stopped process group gets to exit after TERM before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+/// A log beyond this keeps only its last [`LOG_KEEP`] bytes (only its end is read).
+const LOG_MAX: u64 = 8 * 1024 * 1024;
+const LOG_KEEP: u64 = 1024 * 1024;
+
+fn signal_group(sig: &str, pgid: u32) {
+    let _ = Command::new("kill").args([sig, "--", &format!("-{pgid}")]).stderr(Stdio::null()).status();
+}
+
+/// The live processes of process group `pgid` (field 5 of /proc/<pid>/stat).
+fn group(pgid: u32) -> Vec<u32> {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|p| {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{p}/stat")) else { return false };
+            let Some((_, rest)) = stat.rsplit_once(')') else { return false };
+            let mut f = rest.split_whitespace();
+            let state = f.next().unwrap_or("Z");
+            // After the state: ppid, then pgrp.
+            state != "Z" && f.nth(1).and_then(|g| g.parse::<u32>().ok()) == Some(pgid)
+        })
+        .collect()
+}
+
+/// Keeps a process's log small while it runs: past [`LOG_MAX`] only its last
+/// [`LOG_KEEP`] bytes stay. Ends once the log is gone (the process ended).
+fn cap_log(log: PathBuf) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            let Ok(len) = std::fs::metadata(&log).map(|m| m.len()) else { return };
+            if len > LOG_MAX {
+                let _ = trim(&log, LOG_KEEP);
+            }
+        }
+    });
+}
+
+/// Cuts `path` down to its last `keep` bytes, in place: the process writes with
+/// O_APPEND, so its next output lands after them.
+fn trim(path: &Path, keep: u64) -> std::io::Result<()> {
+    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let len = f.metadata()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(keep)))?;
+    let mut tail = Vec::new();
+    f.read_to_end(&mut tail)?;
+    // From the first whole line on.
+    let start = tail.iter().position(|b| *b == b'\n').map_or(0, |i| i + 1);
+    f.set_len(0)?;
+    f.seek(SeekFrom::Start(0))?;
+    std::io::Write::write_all(&mut f, "[… earlier output cut by Harbor]\n".as_bytes())?;
+    std::io::Write::write_all(&mut f, &tail[start..])
+}
+
 pub fn log_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::store::home().join(".local/state"));
-    base.join("harbor/procs")
+    crate::store::state_dir().join("procs")
 }
 
 fn tail_file(path: &Path, n: usize) -> String {
@@ -62,6 +131,59 @@ fn tail_file(path: &Path, n: usize) -> String {
     let text = strip_ansi(&String::from_utf8_lossy(&buf));
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// Clock ticks since boot now (the unit of a process's start time in /proc).
+pub fn uptime_ticks() -> Option<i64> {
+    let up: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+    Some((up * 100.0) as i64)
+}
+
+/// Children of this process started before `born` (ticks since boot), with whether
+/// each has ended (a zombie).
+fn children_before(born: i64) -> Vec<(u32, bool)> {
+    let me = std::process::id();
+    let mut v = vec![];
+    for t in std::fs::read_dir("/proc/self/task").into_iter().flatten().flatten() {
+        let Ok(list) = std::fs::read_to_string(t.path().join("children")) else { continue };
+        for pid in list.split_whitespace().filter_map(|p| p.parse::<u32>().ok()) {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+            let Some((_, rest)) = stat.rsplit_once(')') else { continue };
+            let f: Vec<&str> = rest.split_whitespace().collect();
+            let (Some(state), Some(ppid), Some(start)) = (f.first(), f.get(1).and_then(|p| p.parse::<u32>().ok()), f.get(19).and_then(|s| s.parse::<i64>().ok())) else { continue };
+            if ppid == me && start < born && !v.iter().any(|(p, _)| *p == pid) {
+                v.push((pid, *state == "Z"));
+            }
+        }
+    }
+    v
+}
+
+/// Reaps `pid` if it has ended; never blocks.
+fn reap(pid: u32) {
+    if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
+        let _ = rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG);
+    }
+}
+
+/// A reload execs in place, so what the previous image started (start_process's
+/// processes, MCP servers, helpers) stays this process's children, but the threads that
+/// waited for them are gone: they'd stay zombies once they end. This reaps them as
+/// they do, until none are left. Children started since `born` (this image's start)
+/// have their own waiters and are never touched.
+pub fn reap_inherited(born: i64) {
+    std::thread::spawn(move || {
+        loop {
+            let kids = children_before(born);
+            if kids.is_empty() {
+                return;
+            }
+            for (pid, _) in kids.iter().filter(|k| k.1) {
+                reap(*pid);
+            }
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
 }
 
 /// Field 22 of /proc/<pid>/stat: start time in clock ticks since boot.
@@ -124,6 +246,10 @@ fn watch_url(id: i64, log: PathBuf, tx: Sender<ProcEvent>, wake: impl Fn() + Sen
         let mut offset = 0u64;
         for _ in 0..1500 {
             let Ok(mut f) = File::open(&log) else { return };
+            // Cut down meanwhile (cap_log): read it again from the start.
+            if f.metadata().is_ok_and(|m| m.len() < offset) {
+                offset = 0;
+            }
             let _ = f.seek(SeekFrom::Start(offset));
             let mut buf = Vec::new();
             if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
@@ -165,7 +291,11 @@ pub fn spawn(
     let dir = log_dir();
     let _ = std::fs::create_dir_all(&dir);
     let log = dir.join(format!("{}.log", crate::store::new_uuid()));
-    let out = File::create(&log).map_err(|e| e.to_string())?;
+    // Owner-only: dev servers print secrets (database URLs, tokens) too.
+    let out = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().append(true).create(true).mode(0o600).open(&log).map_err(|e| e.to_string())?
+    };
     let err = out.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new("bash");
     // Agents start these: same credentials as the agent itself.
@@ -213,6 +343,7 @@ pub fn spawn(
         });
     }
     watch_url(id, log.clone(), tx, wake);
+    cap_log(log.clone());
     Ok(Proc { id, name: name.into(), lead, owner, cmd: cmd.into(), pid, started: Instant::now(), log, url: None })
 }
 
@@ -228,6 +359,7 @@ pub fn adopt(store: &crate::store::Store, tx: Sender<ProcEvent>, wake: impl Fn()
         }
         let log = PathBuf::from(&r.log);
         watch_exit(r.id, pid, r.start_ticks, tx.clone(), wake.clone());
+        cap_log(log.clone());
         if r.url.is_none() {
             watch_url(r.id, log.clone(), tx.clone(), wake.clone());
         }
@@ -244,4 +376,48 @@ pub fn adopt(store: &crate::store::Store, tx: Sender<ProcEvent>, wake: impl Fn()
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trims_a_log_to_its_end() {
+        let p = std::env::temp_dir().join(format!("harbor-proc-trim-{}.log", std::process::id()));
+        let lines: String = (0..1000).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(&p, &lines).unwrap();
+        trim(&p, 100).unwrap();
+        let t = std::fs::read_to_string(&p).unwrap();
+        assert!(t.starts_with("[… earlier output cut by Harbor]\nline 9"), "{t}");
+        assert!(t.ends_with("line 999\n") && t.len() < 150);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn reaps_only_inherited_children() {
+        let before = uptime_ticks().unwrap();
+        let mut ended = Command::new("true").spawn().unwrap();
+        let pid = ended.id();
+        while std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| !s.rsplit_once(')').unwrap().1.trim_start().starts_with('Z')) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Born after `born`: this image's own child, left alone.
+        assert!(!children_before(before).iter().any(|k| k.0 == pid));
+        // Born before it: an inherited one, reaped once it has ended.
+        let born = uptime_ticks().unwrap() + 1;
+        assert!(children_before(born).contains(&(pid, true)));
+        reap(pid);
+        assert!(std::fs::metadata(format!("/proc/{pid}")).is_err(), "reaped");
+        assert!(ended.try_wait().is_err(), "nothing left to wait for");
+    }
+
+    #[test]
+    fn finds_a_process_group() {
+        let mut c = Command::new("sleep").arg("30").process_group(0).spawn().unwrap();
+        assert_eq!(group(c.id()), vec![c.id()]);
+        let _ = c.kill();
+        let _ = c.wait();
+        assert!(group(c.id()).is_empty());
+    }
 }

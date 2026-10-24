@@ -20,6 +20,16 @@ impl App {
         self.chats.iter().filter(|c| c.repo_id == Some(repo) && self.turns.contains_key(&c.id)).count()
     }
 
+    /// When a chat or one of its subagents started the turn still running (the earliest),
+    /// None once all of them finished: a lead isn't done while its team still works.
+    pub fn team_started(&self, id: i64) -> Option<std::time::Instant> {
+        self.chats
+            .iter()
+            .filter(|c| c.id == id || (c.role == Role::Sub && c.parent == Some(id)))
+            .filter_map(|c| self.turns.get(&c.id).map(|(_, at)| *at))
+            .min()
+    }
+
     /// Opens the project's main chat, or a new one if it has none.
     pub fn open_project(&mut self, repo: i64) {
         match self.main_thread(repo) {
@@ -28,10 +38,11 @@ impl App {
         }
     }
 
-    /// A chat's sidebar status, its own only (not its subagents' or other chats'):
-    /// Working, waiting out a usage limit, Done / Failed until opened, else `idle`.
+    /// A chat's sidebar status, its own and its subagents' (not other chats'):
+    /// Working while it or a subagent runs, waiting out a usage limit, Done / Failed
+    /// until opened, else `idle`.
     fn own_status(&self, id: i64, idle: w::Status) -> w::Status {
-        if let Some((_, at)) = self.turns.get(&id) {
+        if let Some(at) = self.team_started(id) {
             w::Status::Working(at.elapsed().as_secs())
         } else if let Some(p) = self.paused(id) {
             // Waiting out a usage limit: when it continues.
@@ -523,8 +534,8 @@ impl App {
                 p.text(ir.center(), egui::Align2::CENTER_CENTER, letter, FontId::new(10.5, crate::theme::semibold()), t.fg());
             }
         }
-        // Right side: the main thread's own status (working, waiting on a limit, done /
-        // failed), else snoozed, else nothing. Other chats and subagents show on their own rows.
+        // Right side: the main thread's status (working, also while its subagents do, waiting
+        // on a limit, done / failed), else snoozed, else nothing. Other chats show on their own rows.
         let idle = if snoozed { w::Status::Text(ic::ALARM.to_string(), t.subtle()) } else { w::Status::Text(String::new(), t.gray(800)) };
         let status = match self.main_thread(r.id) {
             Some(id) => self.own_status(id, idle),
