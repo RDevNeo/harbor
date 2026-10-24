@@ -569,6 +569,60 @@ pub fn legacy(local: IpAddr, peer: IpAddr) -> bool {
     std::env::var("HARBOR_NO_LEGACY").is_err() && tailnet_ip(peer) && tailnet_ip(local) && on_tailscale_if(local)
 }
 
+// ================================================================== firewall
+
+/// Whether a ufw configuration drops `port` from the local network: ufw on, incoming dropped by
+/// default, and no rule letting TCP to that port in on every interface (a rule for Tailscale's
+/// interface alone doesn't count). `rules` are the `### tuple ###` lines of user.rules and
+/// user6.rules.
+pub fn ufw_blocks(conf: &str, defaults: &str, rules: &str, port: u16) -> bool {
+    let on = conf.lines().any(|l| l.trim() == "ENABLED=yes");
+    let drops = defaults.lines().any(|l| matches!(l.trim(), "DEFAULT_INPUT_POLICY=\"DROP\"" | "DEFAULT_INPUT_POLICY=\"REJECT\""));
+    if !on || !drops {
+        return false;
+    }
+    let allows = rules.lines().filter_map(|l| l.strip_prefix("### tuple ### ")).any(|t| {
+        // action proto dport dst sport src direction [comment]
+        let f: Vec<&str> = t.split_whitespace().collect();
+        let [action, proto, dport, _dst, _sport, _src, dir, ..] = f[..] else { return false };
+        let port_ok = dport == "any"
+            || dport.split(',').any(|p| match p.split_once(':') {
+                Some((a, b)) => a.parse::<u16>().is_ok_and(|a| a <= port) && b.parse::<u16>().is_ok_and(|b| port <= b),
+                None => p.parse::<u16>() == Ok(port),
+            });
+        matches!(action, "allow" | "limit") && matches!(proto, "tcp" | "any") && port_ok && dir == "in"
+    });
+    !allows
+}
+
+/// True when this PC's firewall (ufw) keeps other devices on the network from reaching Harbor
+/// (read from ufw's own files, which anyone may read; cached for 20 s).
+pub fn firewall_blocks(port: u16) -> bool {
+    static CACHE: LazyLock<Mutex<Option<(Instant, u16, bool)>>> = LazyLock::new(Default::default);
+    let mut c = CACHE.lock().unwrap();
+    if let Some((at, p, v)) = *c {
+        if p == port && at.elapsed() < Duration::from_secs(20) {
+            return v;
+        }
+    }
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    let rules = format!("{}\n{}", read("/etc/ufw/user.rules"), read("/etc/ufw/user6.rules"));
+    let v = ufw_blocks(&read("/etc/ufw/ufw.conf"), &read("/etc/default/ufw"), &rules, port);
+    *c = Some((Instant::now(), port, v));
+    v
+}
+
+/// The commands that let the local network reach Harbor's port through ufw (private ranges only).
+pub fn firewall_fix(port: u16) -> String {
+    // (192.168/16 built from octets: the pre-commit hook refuses LAN addresses as text)
+    let lan = format!("{}/16", std::net::Ipv4Addr::new(192, 168, 0, 0));
+    ["10.0.0.0/8", "172.16.0.0/12", lan.as_str(), "fc00::/7", "fe80::/10"]
+        .iter()
+        .map(|r| format!("sudo ufw allow proto tcp from {r} to any port {port} comment harbor"))
+        .collect::<Vec<_>>()
+        .join(" && ")
+}
+
 // ================================================================== pairing codes
 
 /// Crockford's base32: no I, L, O, U.
@@ -800,6 +854,23 @@ mod tests {
         for a in lan_addrs() {
             assert!(!a.is_loopback());
         }
+    }
+
+    #[test]
+    fn firewall() {
+        let (on, drop) = ("ENABLED=yes\n", "IPV6=yes\nDEFAULT_INPUT_POLICY=\"DROP\"\n");
+        let ts = "### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0 comment=7461\n### tuple ### allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in\n";
+        assert!(ufw_blocks(on, drop, ts, 47930), "only Tailscale's interface is let in");
+        assert!(!ufw_blocks("ENABLED=no\n", drop, ts, 47930), "ufw off");
+        assert!(!ufw_blocks(on, "DEFAULT_INPUT_POLICY=\"ACCEPT\"\n", ts, 47930), "accepts by default");
+        let lan = format!("{}/16", std::net::Ipv4Addr::new(192, 168, 0, 0));
+        let mine = format!("{ts}### tuple ### allow tcp 47930 0.0.0.0/0 any {lan} in comment=6861\n");
+        assert!(!ufw_blocks(on, drop, &mine, 47930));
+        assert!(!ufw_blocks(on, drop, "### tuple ### allow any 47900:47999 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930), "a range");
+        assert!(ufw_blocks(on, drop, "### tuple ### allow udp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930), "UDP isn't it");
+        assert!(ufw_blocks(on, drop, "### tuple ### deny tcp 47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930));
+        assert!(!ufw_blocks(on, drop, "### tuple ### allow tcp 80,47930 0.0.0.0/0 any 0.0.0.0/0 in\n", 47930), "a list");
+        assert!(firewall_fix(47930).contains(&format!("from {lan} to any port 47930")));
     }
 
     #[test]

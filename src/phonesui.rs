@@ -68,6 +68,16 @@ impl App {
             if !net.error.is_empty() {
                 w::subtle(ui, format!("Couldn't listen on {}", net.error), "label-12");
             }
+            if crate::tls::firewall_blocks(port) {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    w::badge(ui, "Firewall", Tone::Amber);
+                    w::subtle(ui, format!("This PC's firewall (ufw) drops port {port}: phones on your network can't reach it."), "label-13");
+                    if w::btn("Allow on the local network").sm().primary().show(ui).clicked() {
+                        self.open_firewall(&ctx);
+                    }
+                });
+            }
         }
 
         section(ui, "Pair a phone");
@@ -230,6 +240,14 @@ impl App {
 }
 
 impl App {
+    /// Opens a terminal that lets the local network through ufw to Harbor's port (it asks for
+    /// the password there).
+    pub fn open_firewall(&mut self, ctx: &egui::Context) {
+        let port = *self.api.hub.port.lock().unwrap();
+        let cmd = format!("{} && echo && echo 'Done: other devices on your network can reach Harbor now.'", crate::tls::firewall_fix(port));
+        self.open_terminal(ctx, "Firewall", crate::store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
+    }
+
     /// A frame when the next typing lease runs out, so the sidebar's ✎ goes on time.
     pub fn typing_repaint(&self, ctx: &egui::Context) {
         if let Some(e) = self.api.hub.next_typing_expiry() {

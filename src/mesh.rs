@@ -297,6 +297,8 @@ impl Shared {
                 out.push(a);
             }
         }
+        // The network the PCs share first; Tailscale's addresses (while it's there) after them.
+        out.sort_by_key(|a| a.parse::<std::net::SocketAddr>().is_ok_and(|s| crate::tls::tailnet_ip(s.ip())));
         out
     }
 
@@ -1447,6 +1449,9 @@ pub fn cli(args: &[String]) -> i32 {
             println!("sharing: {}", if on { "on" } else { "off" });
             let addrs: Vec<String> = crate::tls::lan_addrs().into_iter().map(|a| crate::tls::host_port(a, port)).collect();
             println!("listens: {}", if addrs.is_empty() { "(no network)".to_string() } else { addrs.join("  ") });
+            if crate::tls::firewall_blocks(port) {
+                println!("firewall: ufw drops port {port} from the network; to let your devices in:\n  {}", crate::tls::firewall_fix(port));
+            }
             println!("allowed PCs:");
             if list.is_empty() {
                 println!("  none (pair one: harbor mesh pair)");
@@ -2343,6 +2348,7 @@ impl App {
         let mut enable: Option<Peer> = None;
         let mut enable_here = false;
         let phones_here = self.api.hub.enabled.load(Ordering::Relaxed);
+        let mut fix_firewall = false;
         rows(ui, |ui| {
             w::setting_row(
                 ui,
@@ -2359,6 +2365,15 @@ impl App {
                     enable_here = true;
                 }
             });
+            let port = *self.api.hub.port.lock().unwrap();
+            if on && crate::tls::firewall_blocks(port) {
+                w::separator(ui);
+                w::setting_row(ui, "The firewall blocks your other PCs", &format!("This PC's firewall (ufw) drops port {port}, so other PCs and phones on the network can't reach Harbor here."), |ui| {
+                    if w::btn("Allow on the local network").sm().primary().show(ui).clicked() {
+                        fix_firewall = true;
+                    }
+                });
+            }
             if on {
                 for (key, name) in &keys {
                     w::separator(ui);
@@ -2428,6 +2443,9 @@ impl App {
         });
         if let Some((key, name, allow)) = change {
             self.mesh_allow(&key, &name, allow);
+        }
+        if fix_firewall {
+            self.open_firewall(&ctx);
         }
         if enable_here {
             self.api_set_enabled(true, &ctx);
