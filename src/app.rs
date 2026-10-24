@@ -1362,7 +1362,7 @@ impl eframe::App for App {
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
-        self.mesh_tick();
+        self.mesh_tick(ctx);
         self.queue_drain(ctx);
         self.api_tick();
         self.typing_repaint(ctx);

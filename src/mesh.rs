@@ -837,8 +837,12 @@ impl App {
     }
 
     /// Once per frame: copies written to disk now and then, the chat waiting to open.
-    pub fn mesh_tick(&mut self) {
+    pub fn mesh_tick(&mut self, ctx: &eframe::egui::Context) {
         self.mesh_viewing();
+        // An idle window draws no frames: wake for the next renewal of "this chat is open here".
+        if self.mesh.viewing.is_some() {
+            ctx.request_repaint_after(Duration::from_secs(5));
+        }
         if self.api.hub.tokens_dirty.swap(false, Ordering::SeqCst) {
             let all = self.api.hub.tokens.lock().unwrap().clone();
             api::save_tokens(&self.store, &all);
