@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-25
+
 ### Added
 - Slash commands on the phone: type `/` at the start of a word in a chat's message box and a
   menu above it lists the same commands and skills as the desktop's, filtered as you type, each
@@ -599,7 +601,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/RDevNeo/harbor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/RDevNeo/harbor/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/RDevNeo/harbor/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/RDevNeo/harbor/compare/v0.19.0...v0.20.0
