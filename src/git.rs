@@ -46,9 +46,10 @@ pub fn output_within(cmd: &mut Command, limit: Duration) -> std::io::Result<Outp
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    // No optional locks: a status never holds (or waits on) index.lock.
+    // No optional locks: a status never holds (or waits on) index.lock. No fsmonitor: a
+    // repo's own config could name any command for it, and these run unasked.
     let mut cmd = Command::new("git");
-    cmd.env("GIT_OPTIONAL_LOCKS", "0").arg("-C").arg(dir).args(args);
+    cmd.env("GIT_OPTIONAL_LOCKS", "0").args(["-c", "core.fsmonitor=false"]).arg("-C").arg(dir).args(args);
     let out = output_within(&mut cmd, GIT_TIMEOUT).ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -123,4 +124,22 @@ pub fn open_url(url: &str) {
     std::thread::spawn(move || {
         let _ = Command::new("xdg-open").arg(url).status();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn status_ignores_repo_fsmonitor() {
+        let dir = std::env::temp_dir().join(format!("harbor-fsm-{}", std::process::id()));
+        let marker = dir.with_extension("ran");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&marker);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap();
+        git(&["init", "-q"]);
+        git(&["config", "core.fsmonitor", &format!("touch {}", marker.display())]);
+        assert!(super::status(&dir).is_some());
+        assert!(!marker.exists(), "git status ran the repo's fsmonitor command");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
