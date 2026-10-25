@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Devices › Send works for phones paired with Harbor's Android app: text or an image to the
+  phone's clipboard, images (saved to Pictures/Harbor and opened) and files (saved to
+  Download/Harbor, with a notification). Each item waits on the PC until the app picks it up (up
+  to a day), and the transfer list shows when it was delivered. A phone that isn't in Remote
+  Devices gets its own row.
+
+### Removed
+- The Control (pointer) button on device rows. The eye button still opens the screen.
+
 ## [0.16.2] - 2026-10-24
 
 ### Fixed

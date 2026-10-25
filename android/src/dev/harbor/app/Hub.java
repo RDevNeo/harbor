@@ -403,6 +403,63 @@ final class Hub {
         throw last != null ? last : new IOException("no address");
     }
 
+    /** The PCs this pairing reaches: "" (the paired one), then the mesh's others. */
+    List<String> endpoints() {
+        sync();
+        List<String> out = new ArrayList<>();
+        out.add("");
+        synchronized (eps) { for (Ep e : eps) out.add(e.pid); }
+        return out;
+    }
+
+    /** The name of PC v ("" = the paired one). */
+    String labelOn(String v) {
+        Ep e = ep(v);
+        return e == null ? label() : e.label();
+    }
+
+    /** A call to PC v itself ("" = the paired one), not to whichever PC calls go to now: what
+     *  that PC holds for this phone (Inbox). Its addresses in the usual order, pinned the same. */
+    Net.Http openOn(String v, String method, String path, int readTimeout) throws IOException {
+        sync();
+        Ep e = ep(v);
+        if (!v.isEmpty() && e == null) throw new IOException("no such PC");
+        String tok = e == null ? token : e.token, pin = e == null ? fp : e.fp;
+        int p = e == null ? port : e.port;
+        IOException last = null;
+        for (String addr : candidates(v, e)) {
+            try {
+                Object[] hp = Addr.hostPort(addr, p);
+                Net.Http c = Net.open((String) hp[0], (Integer) hp[1], pin == null || pin.isEmpty() ? null : pin, method, path, readTimeout, 3_000);
+                synchronized (goodAddr) { goodAddr.put(id + "/" + v, addr); }
+                c.header("Authorization", "Bearer " + tok);
+                c.header("X-Harbor-Device", deviceName());
+                c.header("Accept", "application/json");
+                return c;
+            } catch (Net.Refused x) {
+                throw x;
+            } catch (IOException x) {
+                last = x;
+            }
+        }
+        throw last != null ? last : new IOException("no address");
+    }
+
+    /** A JSON call to PC v itself (see openOn). */
+    JSONObject callOn(String v, String method, String path, JSONObject body) throws IOException {
+        Net.Http c = openOn(v, method, path, TIMEOUT);
+        try {
+            if (body != null) {
+                byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
+                c.header("Content-Type", "application/json");
+                try (OutputStream o = c.body(b.length)) { o.write(b); }
+            }
+            return reply(c);
+        } finally {
+            c.close();
+        }
+    }
+
     /** After a state: the mesh's other PCs and this phone's token on each, when some are new. */
     void learn(JSONObject st) {
         if (st == null) return;

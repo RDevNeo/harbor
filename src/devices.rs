@@ -9,6 +9,9 @@
 //! PCs also get a terminal (ssh in a Harbor terminal) and a file browser over the
 //! system `ssh` (python3 lists folders there, `cat` moves bytes); nothing new runs on
 //! any device. Image files preview inside Harbor (crate::images).
+//!
+//! Phones paired with Harbor's own app also take sends without Remote Devices' app: they wait in
+//! this PC's hub (api::Parcel) until the app picks them up.
 
 use crate::icons as ic;
 use crate::theme::{RADIUS_MD, Tokens};
