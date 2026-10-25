@@ -25,6 +25,12 @@ pub fn helper_path() -> Option<PathBuf> {
 }
 
 /// Folder of the helper's source, for "Build engine".
+/// An http(s) URL, the only kind "Open in my browser" hands to the system.
+fn web(url: &str) -> bool {
+    let u = url.to_ascii_lowercase();
+    u.starts_with("http://") || u.starts_with("https://")
+}
+
 pub fn source_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     Some(exe.parent()?.join("../../browser")).filter(|p| p.join("Cargo.toml").is_file()).and_then(|p| p.canonicalize().ok())
@@ -208,7 +214,8 @@ impl Browser {
                     let u = self.input.clone();
                     self.load(&u);
                 }
-                if w::btn(ic::EXTERNAL).muted().icon_sm().show(ui).on_hover_text("Open in my browser").clicked() {
+                // (the page picks this URL: only a web page goes to xdg-open)
+                if w::btn(ic::EXTERNAL).muted().icon_sm().enabled(web(&self.url)).show(ui).on_hover_text("Open in my browser").clicked() {
                     action = Some(Action::External(self.url.clone()));
                 }
             });
@@ -396,4 +403,15 @@ pub fn missing_ui(ui: &mut Ui, t: &Tokens) -> (bool, bool) {
         });
     });
     (build, close)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_web_pages_open_outside() {
+        assert!(super::web("https://example.com/a") && super::web("HTTP://localhost:3000"));
+        for u in ["file:///etc/passwd", "x-test:hello", "javascript:alert(1)", "about:blank", ""] {
+            assert!(!super::web(u), "{u}");
+        }
+    }
 }
