@@ -42,7 +42,26 @@ impl Queued {
     /// What the agent gets: mentioned messages quoted first, then the text as `said`
     /// (slash.rs puts commands in for agents that don't expand them).
     fn prompt(&self, said: &str) -> String {
-        format!("{}{said}", crate::mentions::prompt(&self.mentions))
+        let from = sent_from(&self.sender, &self.device, false);
+        // A slash command only runs at the start: where it came from follows it.
+        if said.starts_with('/') && !from.is_empty() {
+            return format!("{}{said}\n\n{}", crate::mentions::prompt(&self.mentions), from.trim_end());
+        }
+        format!("{from}{}{said}", crate::mentions::prompt(&self.mentions))
+    }
+}
+
+/// Where a message was written, for the agent (which otherwise takes the user to be at
+/// this PC): a phone or another PC's Harbor says so, and with `back` so does this PC's
+/// composer after a message from elsewhere. Empty for this PC's own messages.
+pub fn sent_from(sender: &str, device: &str, back: bool) -> String {
+    if sender.is_empty() {
+        return if back { format!("[The user sent this from '{}', the PC running Harbor.]\n\n", crate::remote::hostname()) } else { String::new() };
+    }
+    if device.starts_with("tok:") {
+        format!("[The user sent this from the Harbor app on their phone ('{sender}'), not from this PC.]\n\n")
+    } else {
+        format!("[The user sent this from Harbor on '{sender}', another PC, not from this one.]\n\n")
     }
 }
 
@@ -326,5 +345,24 @@ impl App {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sent_from_says_where_the_user_is() {
+        assert_eq!(sent_from("", "pc:me", false), "");
+        assert!(sent_from("", "pc:me", true).contains("the PC running Harbor"));
+        assert!(sent_from("Pixel", "tok:0000abcd", false).contains("phone ('Pixel')"));
+        assert!(sent_from("desk", "pc:desk", false).contains("Harbor on 'desk', another PC"));
+        // A queued slash command still starts its prompt.
+        let q = Queued { text: "/review".into(), files: vec![], mentions: vec![], written: false, sender: "Pixel".into(), device: "tok:1".into() };
+        let p = q.prompt("/review");
+        assert!(p.starts_with("/review\n\n[The user sent this"), "{p}");
+        let q = Queued { text: "hi".into(), ..q };
+        assert!(q.prompt("hi").ends_with("not from this PC.]\n\nhi"));
     }
 }

@@ -1742,6 +1742,25 @@ impl App {
         *self.shared().gids.lock().unwrap() = self.chats.iter().map(|c| (c.id, c.gid.clone())).collect();
     }
 
+    /// Why a chat of this PC can't run in its project: the folder isn't here (a project
+    /// another PC shares, listed here by its path there). Said before a turn starts, so
+    /// the agent's tools don't fail on every call in a folder that doesn't exist.
+    pub fn missing_folder(&self, chat: &Chat) -> Option<String> {
+        let r = self.repo(chat.repo_id?)?;
+        if r.path.is_dir() {
+            return None;
+        }
+        let owner = self.chats.iter().find(|c| c.repo_id == Some(r.id) && c.foreign()).map(|c| self.shared().name_of(&c.home));
+        Some(match owner {
+            Some(o) => format!(
+                "{}'s folder ({}) isn't on this PC: it's on {o}. Start the chat with {o} as its device, or clone the project here.",
+                r.name,
+                r.path.display()
+            ),
+            None => format!("{}'s folder ({}) isn't on this PC. Clone or move the project back, or pick another project.", r.name, r.path.display()),
+        })
+    }
+
     /// True when the chat is a copy of another PC's.
     pub fn is_foreign(&self, id: i64) -> bool {
         self.chat(id).is_some_and(|c| c.foreign())

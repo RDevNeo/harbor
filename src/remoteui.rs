@@ -223,7 +223,7 @@ impl App {
         // Read only stays read only: no commands on this PC either.
         let commands = h.commands && chat.access != "plan";
         let note = format!(
-            "You run on the device '{}', started over SSH from '{}' (the PC running Harbor, where the user is), in {dir}. {}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. {}",
+            "You run on the device '{}', started over SSH by Harbor on '{}', in {dir}. The user talks to you through Harbor, usually at that PC; a message written on a phone or another PC says where it came from. {}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. {}",
             h.label(),
             remote::hostname(),
             if h.device_files { "Files, shell, git and builds are that device's. " } else { "" },

@@ -441,7 +441,7 @@ fn origin(g: &Grant, msg: &Value) -> Option<Value> {
             "capabilities": { "tools": {}, "prompts": {} },
             "serverInfo": { "name": ORIGIN, "version": env!("CARGO_PKG_VERSION") },
             "instructions": format!(
-                "You run on a remote device. '{}' is the PC running Harbor, where the user is. Its prompts are the user's own slash commands and skills{}.",
+                "You run on a remote device. '{}' is the PC running Harbor (the user is usually there; a message from a phone or another PC says so). Its prompts are the user's own slash commands and skills{}.",
                 crate::remote::hostname(),
                 if !g.workspace.is_empty() {
                     "; your workspace is there: its tools (bash, read, write, edit, glob, grep) work on the project there"

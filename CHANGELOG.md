@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- A chat in a project another PC shares (its folder is on that PC, not this one) no longer starts
+  an agent whose every shell and file call fails: the chat says the folder isn't here and to pick
+  that PC as its device. The same goes for a project whose folder was moved or deleted.
+- Agents know where you are: a message sent from the phone or another PC tells the agent so, and
+  so does the next one from the Harbor PC. An agent on a remote device no longer reads that you're
+  at the Harbor PC for sure.
+- A process an agent started that already ended still answers process_logs and list_processes
+  (how it ended and its last output) instead of "no process named …".
+
 ## [0.25.0] - 2026-10-25
 
 ### Changed

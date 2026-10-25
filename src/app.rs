@@ -220,6 +220,9 @@ pub struct App {
     pub proc_tx: Sender<crate::procs::ProcEvent>,
     proc_rx: Receiver<crate::procs::ProcEvent>,
     pub expanded_procs: HashSet<i64>,
+    /// Processes that ended lately, (lead, name, how it ended, last output): process_logs
+    /// and list_processes still answer for them after the process is gone.
+    pub ended_procs: Vec<(i64, String, String, String)>,
     pub keys: crate::keys::Keys,
     /// Where Settings' Back goes: the view open before Settings.
     pub settings_back: View,
@@ -360,6 +363,7 @@ impl App {
             proc_tx,
             proc_rx,
             expanded_procs: HashSet::new(),
+            ended_procs: vec![],
             keys: Default::default(),
             settings_back: View::Draft,
             cut_off: HashSet::new(),
@@ -864,11 +868,18 @@ impl App {
             self.enqueue(chat_id, text, files, mentions);
             return;
         }
+        let device = self.sending_device();
         let tr = self.transcripts.entry(chat_id).or_default();
         if tr.items.is_empty() {
             tr.items = self.store.items(chat_id);
         }
         let item = tr.items.len();
+        // The previous message came from elsewhere: this one's place is said too.
+        let back = tr.items.iter().rev().find_map(|i| match i {
+            Item::User { sender, .. } => Some(!sender.is_empty()),
+            _ => None,
+        });
+        let from = crate::queue::sent_from(&self.sender, &device, back == Some(true));
         tr.items.push(Item::User {
             text: text.clone(),
             files: files.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
@@ -877,7 +888,7 @@ impl App {
             sender: self.sender.clone(),
         });
         // Mentioned messages go first, quoted; the transcript shows them as chips.
-        let quoted = crate::mentions::prompt(&mentions);
+        let quoted = format!("{from}{}", crate::mentions::prompt(&mentions));
         // Anything queued for an idle chat goes first; a fork's context before all.
         let fork = self.take_fork_preamble(chat_id);
         let queued = self.pending.remove(&chat_id).filter(|q| !q.is_empty());
@@ -928,6 +939,15 @@ impl App {
                 return;
             }
         };
+        // The agent's tools work in the project folder on this PC (all of them, or the
+        // workspace ones of a device without its own files): it has to be here.
+        if remote.as_ref().is_none_or(|r| r.workspace) {
+            if let Some(e) = self.missing_folder(&chat) {
+                self.transcripts.get_mut(&chat_id).unwrap().items.push(Item::Error { text: e });
+                self.persist(chat_id);
+                return;
+            }
+        }
         // Without the account's login here the device runs the turn as whoever signed in
         // there: said once per chat, not on every turn.
         if remote.as_ref().is_some_and(|r| r.token.is_none()) {

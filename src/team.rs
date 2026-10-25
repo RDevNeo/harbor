@@ -327,6 +327,7 @@ impl App {
             ProcEvent::Exited(_, code) => {
                 // An ended process just disappears; its last output goes into the thread.
                 let tail = self.procs[i].tail(25);
+                let kept = self.procs[i].tail(400);
                 let log = self.procs[i].log.clone();
                 self.procs.remove(i);
                 self.store.delete_proc(id);
@@ -338,6 +339,11 @@ impl App {
                 };
                 if let Some(l) = lead {
                     self.notice(l, "process", &format!("{name} {how}"), &tail);
+                    self.ended_procs.retain(|(x, n, ..)| !(*x == l && *n == name));
+                    self.ended_procs.push((l, name.clone(), how.clone(), kept));
+                    if self.ended_procs.len() > 20 {
+                        self.ended_procs.remove(0);
+                    }
                 }
                 self.trigger(owner, format!("[process {name}] {how}. Last output:\n{tail}"), true, ctx);
             }
@@ -469,13 +475,19 @@ impl App {
                     p.pid
                 );
                 self.procs.retain(|x| !(x.lead == lead_id && x.name == name));
+                self.ended_procs.retain(|(l, n, ..)| !(*l == lead_id && *n == name));
                 self.procs.push(p);
                 Ok(msg)
             }
             "process_logs" => {
                 let name = arg(a, "name");
-                let p = self.procs.iter().find(|p| p.lead == lead_id && p.name == name).ok_or_else(|| format!("no process named '{name}'"))?;
                 let n = a["lines"].as_u64().unwrap_or(60).min(400) as usize;
+                let Some(p) = self.procs.iter().find(|p| p.lead == lead_id && p.name == name) else {
+                    // Ended: its output as it was then.
+                    let (.., how, out) = self.ended_procs.iter().find(|(l, x, ..)| *l == lead_id && x == name).ok_or_else(|| format!("no process named '{name}'"))?;
+                    let lines: Vec<&str> = out.lines().collect();
+                    return Ok(format!("{name}: {how}\n{}", lines[lines.len().saturating_sub(n)..].join("\n")));
+                };
                 let state = format!("running {}", crate::widgets::elapsed(p.started.elapsed().as_secs()));
                 Ok(format!("{name}: {state}{}\n{}", p.url.as_ref().map(|u| format!(", serving {u}")).unwrap_or_default(), p.tail(n)))
             }
@@ -493,6 +505,7 @@ impl App {
                     .map(|p| {
                         format!("- {} [running] {}{}", p.name, p.cmd, p.url.as_ref().map(|u| format!(" → {u}")).unwrap_or_default())
                     })
+                    .chain(self.ended_procs.iter().filter(|(l, ..)| *l == lead_id).map(|(_, n, how, _)| format!("- {n} [{how}]")))
                     .collect();
                 Ok(if list.is_empty() { "No processes.".into() } else { list.join("\n") })
             }
