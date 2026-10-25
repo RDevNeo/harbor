@@ -14,6 +14,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   at the Harbor PC for sure.
 - A process an agent started that already ended still answers process_logs and list_processes
   (how it ended and its last output) instead of "no process named …".
+- A PC's file browser (Devices › Files) now works when that PC's login shell is fish: file names
+  with a backslash or quote could break out of the command Harbor runs there. Image previews stop
+  at 25 MB whatever size the folder listing claimed, the preview cache folder can't be steered by
+  a paired PC's id, and ssh never reads the PC's address as an option.
+- The embedded browser's "Open in my browser" only hands http and https pages to the system.
+- Release builds reuse the previous release's browser engine only when its signature checks out.
+- On the phone, the pairing dialog lists every address the phone will try, and a PC can't take
+  the name of another PC already paired.
 
 ## [0.25.0] - 2026-10-25
 
