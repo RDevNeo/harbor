@@ -3111,7 +3111,7 @@ mod tests {
 
     #[test]
     fn phones_seen_elsewhere_and_their_apps() {
-        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new() };
+        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new(), ..Default::default() };
         let hub = Arc::new(Hub::new(vec![tok("a", "ga"), tok("b", "gb"), tok("c", "gc")], 0));
         hub.enabled.store(true, Ordering::SeqCst);
         let l = TcpListener::bind("127.0.0.1:0").unwrap();

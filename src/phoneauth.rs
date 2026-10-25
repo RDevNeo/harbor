@@ -1204,4 +1204,21 @@ pub mod tests {
         let hub = hub_with(vec![t]);
         assert!(hub.auth("t1", &Via::Tls(Some("a".repeat(64)))).is_err());
     }
+
+    #[test]
+    fn revoking_ends_live_sessions() {
+        let (hub, phone, p) = paired();
+        let start = Instant::now();
+        hub.auth3.sessions.lock().unwrap().insert("s1".into(), Session { token: "tok".into(), phone_fp: phone.fp.clone(), bound: true, start, last: start, ratchet: Ratchet::new([7; 32]), window: Window::default(), fails: 0 });
+        let x = p.x.unwrap();
+        let mac = |n| {
+            let k = Ratchet::new([7; 32]).key(0, Duration::ZERO, 0).unwrap();
+            format!("0.{n}.{}", hex(&hmac32(&k, request_msg("s1", 0, n, "GET", "/v1/state", 0, &phone.fp, &crate::tls::my_fp(), Some(&x)).as_bytes())))
+        };
+        let req = |n| Request { method: "GET".into(), path: "/v1/state".into(), target: "/v1/state".into(), headers: vec![("x-harbor-session".into(), "s1".into()), ("x-harbor-auth".into(), mac(n))], ..Default::default() };
+        assert_eq!(crate::api::caller(&hub, &p, &req(1)), Ok(("tok".to_string(), None)));
+        hub.tokens.lock().unwrap().clear(); // Revoke (here, or merged from another PC)
+        assert!(crate::api::caller(&hub, &p, &req(2)).is_err());
+        assert_eq!(hub.auth3.status("tok").sessions, 0, "its sessions are gone");
+    }
 }
