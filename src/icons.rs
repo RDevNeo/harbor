@@ -80,7 +80,6 @@ pub const SEND: &str = "\u{e152}";
 pub const LAPTOP: &str = "\u{e1cd}";
 pub const CORNER_LEFT_UP: &str = "\u{e0a4}";
 pub const HOUSE: &str = "\u{e0f5}";
-pub const MOUSE_POINTER: &str = "\u{e1c3}";
 pub const KEYBOARD: &str = "\u{e284}";
 pub const PALETTE: &str = "\u{e1dd}";
 pub const GAUGE: &str = "\u{e1bf}";

@@ -1270,8 +1270,8 @@ impl eframe::App for App {
         }
         let focused = ctx.memory(|m| m.focused());
         let in_terminal = [crate::surface::Dock::Right, crate::surface::Dock::Bottom].iter().any(|d| focused == Some(crate::surface::term_id(*d)));
-        // Browser pages and device screens copy their own selection on Ctrl+C/X.
-        let keep_copy_keys = (0..2usize).any(|i| focused == Some(Id::NULL.with(("browser-page", i))) || focused == Some(Id::NULL.with(("device-view", i))));
+        // Browser pages copy their own selection on Ctrl+C/X.
+        let keep_copy_keys = (0..2usize).any(|i| focused == Some(Id::NULL.with(("browser-page", i))));
         crate::clipboard::shortcuts(raw, in_terminal, keep_copy_keys);
         drop_idle_ime(raw, &mut self.ime_preedit);
         self.paste_attachments(ctx, raw);
@@ -1403,9 +1403,8 @@ impl eframe::App for App {
             });
         }
 
-        // Surface panes (browser, terminals, device): right and/or bottom, or one maximized.
+        // Surface panes (browser, terminals, devices): right and/or bottom, or one maximized.
         use crate::surface::Dock;
-        self.park_hidden_views();
         if let Some(d) = self.surface_max {
             if self.pane(d).open {
                 egui::CentralPanel::default().frame(Frame::new().fill(t.bg200)).show(ui, |ui| self.pane_ui(ui, d));

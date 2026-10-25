@@ -46,10 +46,8 @@ pub enum Surface {
     /// The engine only runs while the panel is visible; `url` survives restarts.
     Browser { engine: Option<Browser>, url: String },
     Terminal(Terminal),
-    /// The user's PCs and phones (Remote Devices).
+    /// The PCs and phones paired with this Harbor.
     Devices(Box<devices::List>),
-    /// A device's screen (view or control).
-    DeviceView(Box<devices::View>),
     /// A PC's files over ssh.
     Files(Box<devices::Files>),
 }
@@ -61,7 +59,6 @@ impl Surface {
             Surface::Browser { .. } => ic::GLOBE,
             Surface::Terminal(_) => ic::TERMINAL,
             Surface::Devices(_) => ic::SMARTPHONE,
-            Surface::DeviceView(v) => v.icon(),
             Surface::Files(_) => ic::FOLDER,
         }
     }
@@ -75,7 +72,6 @@ impl Surface {
             }
             Surface::Terminal(t) => t.title.clone(),
             Surface::Devices(_) => "Devices".into(),
-            Surface::DeviceView(v) => v.title(),
             Surface::Files(f) => f.title(),
         }
     }
@@ -308,28 +304,23 @@ impl App {
         self.place(d, Surface::Devices(Box::new(devices::List::new(Self::wake(ctx)))));
     }
 
-    /// A device's screen: its tab if one is open (restarted there), else a new one.
-    fn open_device_view(&mut self, d: Dock, ctx: &egui::Context, dev: devices::Device) {
-        for dock in [d, Dock::Right, Dock::Bottom] {
-            if let Some(i) = self.pane(dock).surfaces.iter().position(|s| matches!(s, Surface::DeviceView(v) if v.dev.key == dev.key)) {
-                self.pane_mut(dock).surfaces[i] = Surface::DeviceView(Box::new(devices::View::new(dev, false, Self::wake(ctx))));
-                self.show_surface(dock, i);
-                return;
-            }
-        }
-        let s = Surface::DeviceView(Box::new(devices::View::new(dev, false, Self::wake(ctx))));
-        let p = self.pane_mut(d);
-        p.surfaces.push(s);
-        let i = p.surfaces.len() - 1;
-        self.show_surface(d, i);
+    /// A paired PC as Settings › Devices knows it (its ssh login, `harbor nc`).
+    fn device_host(&self, ctx: &egui::Context, dev: &devices::Device) -> Option<crate::remote::Host> {
+        crate::remote::find(&self.remote, &crate::remote::tailnet(ctx), &dev.key)
     }
 
     fn device_action(&mut self, d: Dock, ctx: &egui::Context, a: devices::Action) {
         match a {
-            devices::Action::Terminal { title, argv } => self.open_terminal(ctx, &title, crate::store::home(), argv, vec![]),
-            devices::Action::View(device) => self.open_device_view(d, ctx, device),
+            devices::Action::Terminal(dev) => {
+                if let Some(h) = self.device_host(ctx, &dev) {
+                    let argv = crate::remote::shell_argv(&self.remote, &h, None);
+                    self.open_terminal(ctx, &dev.name, crate::store::home(), argv, vec![]);
+                }
+            }
             devices::Action::Files(dev) => {
-                let s = Surface::Files(Box::new(devices::Files::new(dev, None, Self::wake(ctx))));
+                let Some(h) = self.device_host(ctx, &dev) else { return };
+                let ssh = devices::ssh_args(&self.remote, &h);
+                let s = Surface::Files(Box::new(devices::Files::new(dev, ssh, None, Self::wake(ctx))));
                 let p = self.pane_mut(d);
                 p.surfaces.push(s);
                 let i = p.surfaces.len() - 1;
@@ -341,17 +332,14 @@ impl App {
     // ---- for hot reload
 
     pub fn restore_devices(&mut self, d: Dock, ctx: &egui::Context) {
-        if !devices::available() {
-            return;
-        }
         self.restore_surface(d, Surface::Devices(Box::new(devices::List::new(Self::wake(ctx)))));
     }
 
     pub fn restore_files(&mut self, d: Dock, ctx: &egui::Context, dev: devices::Device, path: String) {
-        if !devices::available() {
-            return;
-        }
-        self.restore_surface(d, Surface::Files(Box::new(devices::Files::new(dev, Some(path), Self::wake(ctx)))));
+        // (a PC no longer paired doesn't come back)
+        let Some(h) = self.device_host(ctx, &dev) else { return };
+        let ssh = devices::ssh_args(&self.remote, &h);
+        self.restore_surface(d, Surface::Files(Box::new(devices::Files::new(dev, ssh, Some(path), Self::wake(ctx)))));
     }
 
     pub fn restore_surface(&mut self, d: Dock, s: Surface) {
@@ -369,17 +357,6 @@ impl App {
         let p = self.pane_mut(d);
         p.active = active.min(p.surfaces.len().saturating_sub(1));
         p.open = open && !p.surfaces.is_empty();
-    }
-
-    /// Device screens out of sight for a while end their streams (see `View::park_if_hidden`).
-    pub fn park_hidden_views(&mut self) {
-        for p in &mut self.panes {
-            for s in &mut p.surfaces {
-                if let Surface::DeviceView(v) = s {
-                    v.park_if_hidden();
-                }
-            }
-        }
     }
 
     /// Ends a pane's terminals and browser engines (their Drop reaps the processes).
@@ -469,7 +446,6 @@ impl App {
         let term_focus = std::mem::take(&mut self.pane_mut(d).term_focus);
         let mut remember: Option<String> = None;
         let mut device_action: Option<devices::Action> = None;
-        let mut view_action: Option<devices::ViewAction> = None;
         match &mut self.panes[d.idx()].surfaces[i] {
             Surface::Chooser => self.chooser(ui, d),
             Surface::Terminal(term) => {
@@ -479,7 +455,6 @@ impl App {
                 term.ui(ui, &t, term_id(d));
             }
             Surface::Devices(list) => device_action = list.ui(ui, &t),
-            Surface::DeviceView(view) => view_action = view.ui(ui, &t, Id::NULL.with(("device-view", d.idx()))),
             Surface::Files(files) => files.ui(ui, &t),
             Surface::Browser { engine, url } => {
                 if engine.as_mut().is_some_and(|b| !b.alive()) {
@@ -524,18 +499,10 @@ impl App {
         if let Some(a) = device_action {
             self.device_action(d, &ctx, a);
         }
-        match view_action {
-            Some(devices::ViewAction::Close) => self.close_surface(d, i),
-            Some(devices::ViewAction::Build(dir)) => {
-                let cmd = "mise exec rust -- cargo build --release 2>/dev/null || cargo build --release; echo; echo 'Done: switch back to the device tab and press Try again.'".to_string();
-                self.open_terminal(&ctx, "Build stream viewer", dir, vec!["bash".into(), "-lc".into(), cmd], vec![]);
-            }
-            None => {}
-        }
     }
 
     /// "Open a surface": Browser (B, with a menu of dev servers and recent URLs),
-    /// Terminal (T) and Devices (M, only with Remote Devices installed).
+    /// Terminal (T) and Devices (M).
     fn chooser(&mut self, ui: &mut Ui, d: Dock) {
         let t = self.theme.t;
         let ctx = ui.ctx().clone();
@@ -543,7 +510,6 @@ impl App {
         ui.add_space((h * 0.4 - 90.0).max(16.0));
         let width = 380.0f32.min(ui.available_width() - 32.0);
         let mut pick: Option<char> = None;
-        let has_devices = devices::available();
         // The chooser holds keyboard focus (so B/T/M work) until something else takes it.
         let focus_id = Id::NULL.with(("surface-chooser", d.idx()));
         let focus = ui.interact(ui.max_rect(), focus_id, Sense::focusable_noninteractive());
@@ -555,7 +521,7 @@ impl App {
             ui.label(egui::RichText::new("Open a surface").text_style(crate::theme::ts("label-14")).color(t.subtle()));
             ui.add_space(10.0);
             let items = [('B', ic::GLOBE, "Browser"), ('T', ic::TERMINAL, "Terminal"), ('M', ic::SMARTPHONE, "Devices")];
-            for (k, icon, label) in items.into_iter().filter(|(k, ..)| *k != 'M' || has_devices) {
+            for (k, icon, label) in items {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 38.0), Sense::click());
                 let p = ui.painter();
                 if resp.hovered() {
@@ -585,7 +551,7 @@ impl App {
         let free = ctx.memory(|m| m.focused().is_none() || m.focused() == Some(focus_id));
         if pick.is_none() && free && self.popup.is_none() && self.surface_menu.is_none() {
             pick = ctx.input_mut(|i| {
-                [('B', Key::B), ('T', Key::T), ('M', Key::M)].into_iter().filter(|(c, _)| *c != 'M' || has_devices).find(|(_, k)| i.consume_key(egui::Modifiers::NONE, *k)).map(|(c, _)| c)
+                [('B', Key::B), ('T', Key::T), ('M', Key::M)].into_iter().find(|(_, k)| i.consume_key(egui::Modifiers::NONE, *k)).map(|(c, _)| c)
             });
         }
         if let Some((md, anchor)) = self.surface_menu.filter(|(md, _)| *md == d) {

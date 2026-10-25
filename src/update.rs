@@ -182,10 +182,8 @@ fn install(version: &str) -> Result<(), String> {
         if read(&core.join("VERSION")) != version {
             return Err("the archive is for another version".into());
         }
-        for f in ["harbor", "harbor-stream"] {
-            if !core.join(f).is_file() {
-                return Err(format!("the archive has no {f}"));
-            }
+        if !core.join("harbor").is_file() {
+            return Err("the archive has no harbor".into());
         }
         // The browser engine is optional; refresh it only when installed and changed.
         let mut browser = None;
@@ -201,7 +199,10 @@ fn install(version: &str) -> Result<(), String> {
             replace(&b.join("harbor-browser"), &dir.join("harbor-browser"), Some(&prev))?;
             replace(&b.join("browser.id"), &dir.join("browser.installed"), None)?;
         }
-        replace(&core.join("harbor-stream"), &dir.join("harbor-stream"), Some(&prev))?;
+        // The screen viewer is gone since 0.18; kept only for "Restore previous version".
+        if dir.join("harbor-stream").is_file() {
+            let _ = std::fs::rename(dir.join("harbor-stream"), prev.join("harbor-stream"));
+        }
         for f in ["VERSION", "browser.id"] {
             if core.join(f).is_file() {
                 replace(&core.join(f), &dir.join(f), None)?;

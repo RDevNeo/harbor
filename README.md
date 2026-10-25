@@ -21,7 +21,8 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks (public over
   HTTPS with a Let's Encrypt certificate Harbor gets itself, `/hooks/<token>` only).
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
-- **Side panes**: a browser (optional Servo helper, `browser/`), terminals, and Devices.
+- **Side panes**: a browser (optional Servo helper, `browser/`), terminals, and Devices (your paired
+  PCs and phones: send them text, images and files).
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
   integrations, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
 - **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex presets plus custom
@@ -44,8 +45,8 @@ curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh
   against the signed `SHA256SUMS` inside.
 - install.sh checks every download against the release's minisign signature, fetching a pinned static
   minisign when none is installed; `HARBOR_INSECURE=1` installs without that check.
-- Files: `~/.local/lib/harbor/` (`harbor`, `harbor-stream`, `harbor-browser`), `~/.local/bin/harbor`, a
-  desktop entry and icons. Remote screens use the system's OpenSSL 3, Opus, ALSA and VA-API libraries.
+- Files: `~/.local/lib/harbor/` (`harbor`, `harbor-browser`), `~/.local/bin/harbor`, a desktop entry
+  and icons.
 
 Harbor updates itself: it checks GitHub Releases, verifies the download's
 [minisign](https://jedisct1.github.io/minisign/) signature (key
@@ -62,15 +63,14 @@ Rust stable:
 cargo build --release   # target/release/harbor
 ```
 
-Optional helpers, each built separately:
+Optional helper, built separately: `browser/`, the browser pane's engine (Servo),
+`cd browser && cargo build --release`.
 
-- `browser/`: the browser pane's engine (Servo), `cd browser && cargo build --release`.
-- `stream/`: `harbor-stream`, remote screens for the Devices pane (needs FFmpeg, OpenSSL, Opus and ALSA
-  development files), `cd stream && cargo build --release`.
-
-**Devices** lists your PCs and phones and opens their screens and files. It needs Remote Devices
-(`remote-pcs`, a separate app) installed, found through `$HARBOR_REMOTE_DEVICES`, `remote-pcs` on `PATH`
-or `$XDG_DATA_HOME/remote-pcs/remote-pcs.py`. Without it, Devices isn't offered.
+**Devices** (a side pane) lists what is paired with this Harbor: your other PCs (Settings › Devices)
+and phones running Harbor for Android (Settings › Phones), online or not. Send puts text or an image
+on a device's clipboard, or sends it images (they open there) and files (its Downloads). A phone
+picks them up while the app is open; they wait on this PC for up to a day. PCs also get a terminal
+and a file browser over ssh (through `harbor nc`, with Settings › Devices' login).
 
 ### Running agents on another PC
 
@@ -123,10 +123,6 @@ page by name too (`general|appearance|keybindings|providers|limits|integrations|
 - **Harbor** (this repository, apart from what's listed below): MIT, see [LICENSE](LICENSE).
 - **Browser helper** (`browser/`): MIT, see [browser/LICENSE](browser/LICENSE). It links
   [Servo](https://servo.org), which is MPL-2.0.
-- **harbor-stream** (`stream/`): GPL-3.0-or-later, see [stream/LICENSE](stream/LICENSE), because it links
-  [moonlight-common-c](https://github.com/moonlight-stream/moonlight-common-c) (GPL-3.0, vendored in
-  `stream/third_party/` with ENet and nanors, both MIT). It's a separate program that Harbor runs as a
-  subprocess.
 - **Fonts**: [Geist and Geist Mono](https://vercel.com/font) (SIL OFL 1.1, `assets/fonts/OFL.txt`) and a
   subset of [Lucide](https://lucide.dev) icons (ISC, `assets/fonts/LUCIDE-LICENSE.txt`).
 - **Logos**: integration marks from [Simple Icons](https://simpleicons.org) (CC0,
