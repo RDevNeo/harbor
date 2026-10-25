@@ -32,6 +32,7 @@ mod mcpshim;
 mod mesh;
 mod oauth;
 mod pages;
+mod phoneauth;
 mod phonesui;
 mod portmap;
 mod prdetail;

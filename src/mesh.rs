@@ -1002,18 +1002,34 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
     let name: String = body["name"].as_str().unwrap_or("").chars().take(60).collect();
     // The phone's key, as the PC it paired with has it: the token here is bound to it at once.
     let fp = body["fp"].as_str().and_then(crate::tls::normalize_fp).unwrap_or_default();
+    // Three factors: this PC's own pairing secret (the phone derived it for this PC's key and
+    // sent it over its session with the asking PC) and the phone's presence key.
+    let secret = body["secret"].as_str().filter(|s| s.len() == 64 && crate::phoneauth::unhex(s).is_some()).unwrap_or("").to_string();
+    let presence = body["presence"].as_str().filter(|p| crate::phoneauth::unhex(p).is_some_and(|k| crate::phoneauth::p256_point(&k).is_some())).unwrap_or("").to_string();
+    let binding = body["binding"].as_bool().unwrap_or(false);
+    if secret.is_empty() != presence.is_empty() || (!secret.is_empty() && fp.is_empty()) {
+        return err(400, "bad pairing secret");
+    }
     let mut tokens = hub.tokens.lock().unwrap();
     if let Some(t) = tokens.iter_mut().find(|t| t.group == group) {
         if t.fp.is_empty() && !fp.is_empty() {
-            t.fp = fp;
+            t.fp = fp.clone();
             hub.tokens_dirty.store(true, Ordering::SeqCst);
         } else if !fp.is_empty() && t.fp != fp {
             return err(409, "this pairing belongs to another phone");
         }
+        if !secret.is_empty() {
+            if !t.three() {
+                (t.secret, t.presence, t.binding) = (secret, presence, binding);
+                hub.tokens_dirty.store(true, Ordering::SeqCst);
+            } else if t.secret != secret || t.presence != presence {
+                return err(409, "this pairing has other keys here");
+            }
+        }
         return ok(json!({ "token": t.token }));
     }
     let Ok(token) = api::new_token() else { return err(500, "no randomness") };
-    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string(), fp });
+    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string(), fp, secret, presence, binding, ticket: false });
     hub.tokens_dirty.store(true, Ordering::SeqCst);
     ok(json!({ "token": token }))
 }
@@ -1060,9 +1076,12 @@ fn ips_and_port(addrs: &[String]) -> (Vec<String>, u16) {
 
 /// `GET /v1/hubs` for a phone: this PC and the mesh's others, with a token for the phone on
 /// each one that answers (minted there for the phone's pairing group, bound to the phone's
-/// key), and each PC's key and addresses.
-pub fn hubs(hub: &api::Hub, token: &str) -> Value {
-    let (group, name, fp) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.group.clone(), t.name.clone(), t.fp.clone())).unwrap_or_default();
+/// key), and each PC's key and addresses. A three-factor pairing gets tokens only from
+/// `POST /v1/hubs`, which brings each PC's pairing secret (`secrets`: fingerprint → hex);
+/// a GET then lists the PCs with `provision: true` and no token.
+pub fn hubs(hub: &api::Hub, token: &str, secrets: Option<&serde_json::Map<String, Value>>) -> Value {
+    let (group, name, fp, three, presence, binding) =
+        hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.group.clone(), t.name.clone(), t.fp.clone(), t.three(), t.presence.clone(), t.binding)).unwrap_or_default();
     let me = hub.mesh.me();
     let net = hub.net.lock().unwrap().clone();
     let port = *hub.port.lock().unwrap();
@@ -1070,15 +1089,22 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
     let mut out = vec![json!({ "id": me.id, "name": me.name, "host": ip, "ip": ip, "port": port, "fp": crate::tls::my_fp(), "addrs": net.addrs, "online": true, "phones": true, "token": token, "self": true })];
     if hub.mesh.on.load(Ordering::Relaxed) && !group.is_empty() {
         let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().cloned().collect();
-        let body = serde_json::to_vec(&json!({ "group": group, "name": name, "fp": fp })).unwrap_or_default();
         // Asked all at once: a PC that's off costs one timeout, not one each.
         let asks: Vec<_> = peers
             .into_iter()
             .map(|p| {
-                let body = body.clone();
+                let secret = if three { secrets.and_then(|s| s.get(&p.fp)).and_then(|s| s.as_str()).filter(|s| s.len() == 64).map(String::from) } else { None };
+                let ask = !three || secret.is_some();
+                let mut body = json!({ "group": group, "name": name, "fp": fp });
+                if let Some(s) = secret {
+                    body["secret"] = json!(s);
+                    body["presence"] = json!(presence);
+                    body["binding"] = json!(binding);
+                }
+                let body = serde_json::to_vec(&body).unwrap_or_default();
                 std::thread::spawn(move || {
                     // A PC with phone access off would drop the phone: no token for it.
-                    let tok = if p.online && p.phones {
+                    let tok = if ask && p.online && p.phones {
                         http(&p.dest(), "POST", "/mesh/v1/mint", Some(("application/json", &body)), Duration::from_secs(6)).ok().filter(|(s, _)| *s == 200).and_then(|(_, v)| v["token"].as_str().map(String::from))
                     } else {
                         None
@@ -1093,7 +1119,8 @@ pub fn hubs(hub: &api::Hub, token: &str) -> Value {
             all.extend(p.addrs.iter().filter(|a| **a != p.addr).cloned());
             let (ips, port) = ips_and_port(&all);
             let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.iter().find(|i| i.parse::<std::net::IpAddr>().is_ok())).cloned().unwrap_or_default();
-            out.push(json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok }));
+            let provision = three && tok.is_none() && p.online && p.phones;
+            out.push(json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok, "provision": provision }));
         }
     }
     json!({ "hubs": out })
@@ -2875,7 +2902,7 @@ mod tests {
         *shared.allowed.lock().unwrap() = vec![Allowed { fp: fp.clone(), id: "pc:laptop".into(), name: "laptop".into(), addrs: vec!["10.0.0.7:47931".into()], ..Default::default() }];
         let req = api::Request::default();
         let ip: std::net::IpAddr = "10.0.0.8".parse().unwrap();
-        let at = |via| api::Peer { ip, via };
+        let at = |via| api::Peer { ip, via, x: None };
         assert_eq!(who(&shared, &at(api::Via::Tls(Some(fp.clone()))), &req), Ok(("pc:laptop".to_string(), None)));
         // It called from a new address: kept as a hint, at the port it listens on.
         assert_eq!(shared.hints.lock().unwrap()[&fp], ["10.0.0.8:47931"]);
@@ -2902,7 +2929,7 @@ mod tests {
         let ask = |via: api::Via, method: &str, path: &str, body: Value| {
             let data = serde_json::to_vec(&body).unwrap();
             let req = api::Request { method: method.into(), path: path.into(), len: data.len(), ..Default::default() };
-            serve(&api::Peer { ip, via }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {})
+            serve(&api::Peer { ip, via, x: None }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {})
         };
         let fp = "b".repeat(64);
         let r = ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": fp, "id": "ts:laptop", "addrs": ["10.0.0.5:47930", "junk"] }));
@@ -2915,14 +2942,14 @@ mod tests {
         assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": "c".repeat(64) })).status, 409, "another key takes pairing again");
         assert_eq!(hub.mesh.allowed.lock().unwrap()[0].fp, fp);
         // Over TLS its key is who it is (same peer id as before, so its chats stay its chats).
-        assert_eq!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some(fp.clone())) }, &api::Request::default()), Ok(("ts:laptop".to_string(), None)));
-        assert!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some("c".repeat(64))) }, &api::Request::default()).is_err());
+        assert_eq!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some(fp.clone())), x: None }, &api::Request::default()), Ok(("ts:laptop".to_string(), None)));
+        assert!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some("c".repeat(64))), x: None }, &api::Request::default()).is_err());
         // A node nobody allowed can't swap keys.
         let other = std::net::IpAddr::V4(std::net::Ipv4Addr::new(100, 90, 1, 3));
         hub.mesh.whois.lock().unwrap().insert(other, (Instant::now(), Some(Node { id: "nX".into(), label: "x".into(), user: None, tagged: true })));
         let data = serde_json::to_vec(&json!({ "fp": "e".repeat(64) })).unwrap();
         let req = api::Request { method: "POST".into(), path: "/mesh/v1/enroll".into(), len: data.len(), ..Default::default() };
-        assert_eq!(serve(&api::Peer { ip: other, via: api::Via::Legacy }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {}).status, 403);
+        assert_eq!(serve(&api::Peer { ip: other, via: api::Via::Legacy, x: None }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {}).status, 403);
         // Pairing needs TLS and a key.
         assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/pair", json!({})).status, 403);
     }

@@ -5,7 +5,7 @@
 //! `POST /relay/v1/<peer fingerprint>/<port>` over the relay's own pinned TLS. The relay
 //! answers `200` and from then on copies bytes both ways; the caller runs a second TLS session
 //! inside, pinned to the peer's key, so the relay only ever sees ciphertext. Only paired keys may
-//! ask (a PC on this PC's allowed list, or a paired phone with its token), only to a PC on this
+//! ask (a PC on this PC's allowed list, or a paired phone with its session), only to a PC on this
 //! PC's allowed list, at one of the addresses this PC knows for it, and never through a second
 //! relay. Phones may only reach a peer's Harbor port; PCs any port of a peer (`harbor nc` uses
 //! it for ssh).
@@ -65,7 +65,7 @@ pub fn serve(mut r: BufReader<tls::Conn>, from: &api::Peer, req: &api::Request, 
     };
     let api::Via::Tls(Some(caller)) = &from.via else { return fail(&mut r, 403, "a relay needs TLS and a key") };
     let pc = hub.mesh.allowed_fp(caller).is_some();
-    let phone = !pc && hub.enabled.load(std::sync::atomic::Ordering::SeqCst) && req.bearer().is_some_and(|t| hub.auth(t, &from.via).is_ok());
+    let phone = !pc && hub.enabled.load(std::sync::atomic::Ordering::SeqCst) && matches!(api::caller(hub, from, req), Ok((_, None))); // a phone: its session (all three factors)
     if !pc && !phone {
         return fail(&mut r, 403, "only paired PCs and phones may use this PC as a relay");
     }
