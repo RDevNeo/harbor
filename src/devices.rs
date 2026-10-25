@@ -47,6 +47,8 @@ pub fn ssh_args(cfg: &crate::remote::Config, h: &crate::remote::Host) -> Vec<Str
         v.push(opts[i].clone());
         i += 1;
     }
+    // (`--`: the destination is never read as an option)
+    v.push("--".into());
     v.push(h.host.clone());
     v
 }
@@ -54,6 +56,18 @@ pub fn ssh_args(cfg: &crate::remote::Config, h: &crate::remote::Host) -> Vec<Str
 /// POSIX shell quoting (ssh joins its arguments into one remote command line).
 fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// `cmd` run by the PC's sh, whatever its login shell: ssh hands the command line to that shell,
+/// and fish reads `\'` inside single quotes, so it gets only base64 in quotes free of both.
+fn sh_cmd(cmd: &str) -> String {
+    format!("python3 -c 'import base64,os;os.execv(\"/bin/sh\",[\"sh\",\"-c\",base64.b64decode(\"{}\")])'", crate::agent::base64(cmd.as_bytes()))
+}
+
+/// A device's key as one folder name (a PC picks its own mesh id).
+fn dir_name(key: &str) -> String {
+    let s: String = key.chars().map(|c| if c.is_ascii_alphanumeric() || "-_.".contains(c) { c } else { '_' }).collect();
+    if s.chars().all(|c| c == '.') { format!("_{s}") } else { s }
 }
 
 fn human(n: u64) -> String {
@@ -860,7 +874,7 @@ impl Files {
     fn list(&mut self, path: String) {
         self.loading = true;
         let mut c = self.ssh();
-        c.args(["python3", "-c", &quote(LS_PY), &quote(&path)]);
+        c.arg(sh_cmd(&format!("python3 -c {} {}", quote(LS_PY), quote(&path))));
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
             let r = c.output().map_err(|e| e.to_string()).and_then(|o| {
@@ -909,7 +923,7 @@ impl Files {
     /// A remote file to ~/Downloads (or the preview cache), with progress.
     fn download(&self, remote: String, size: u64, to: PathBuf, track: bool) {
         let mut c = self.ssh();
-        c.args(["cat", "--", &quote(&remote)]).stdout(Stdio::piped());
+        c.arg(sh_cmd(&format!("cat -- {}", quote(&remote)))).stdout(Stdio::piped());
         let (tx, wake, transfers) = (self.tx.clone(), self.wake.clone(), self.transfers.clone());
         let idx = track.then(|| {
             let mut l = transfers.lock().unwrap();
@@ -935,6 +949,14 @@ impl Files {
                     }
                     f.write_all(&buf[..n]).map_err(|e| e.to_string())?;
                     sent += n as u64;
+                    // a preview stops at its cap, whatever size the listing claimed
+                    if idx.is_none() && sent > PREVIEW_MAX {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        drop(f);
+                        let _ = std::fs::remove_file(&part);
+                        return Err("too big to preview".into());
+                    }
                     if let Some(i) = idx.filter(|_| tick.elapsed() > Duration::from_millis(100)) {
                         tick = Instant::now();
                         transfers.lock().unwrap()[i].sent = sent;
@@ -985,7 +1007,7 @@ impl Files {
             let dest = self.join(&there);
             let size = std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);
             let mut c = self.ssh();
-            c.arg(format!("cat > {p} && mv -f {p} {d}", p = quote(&format!("{dest}.part")), d = quote(&dest))).stdin(Stdio::piped()).stdout(Stdio::null());
+            c.arg(sh_cmd(&format!("cat > {p} && mv -f {p} {d}", p = quote(&format!("{dest}.part")), d = quote(&dest)))).stdin(Stdio::piped()).stdout(Stdio::null());
             let (tx, wake, transfers) = (self.tx.clone(), self.wake.clone(), self.transfers.clone());
             let i = {
                 let mut l = transfers.lock().unwrap();
@@ -1044,7 +1066,7 @@ impl Files {
         (remote, mtime).hash(&mut h);
         let ext = Path::new(remote).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         let base = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::store::home().join(".cache"));
-        base.join("harbor/devices").join(&self.dev.key).join(format!("{:016x}.{ext}", h.finish()))
+        base.join("harbor/devices").join(dir_name(&self.dev.key)).join(format!("{:016x}.{ext}", h.finish()))
     }
 
     /// The local copy of a remote image, fetching it (two at a time) when needed.
@@ -1307,7 +1329,34 @@ mod tests {
         assert_eq!(v.iter().filter(|o| o.starts_with("ControlMaster=")).count(), 1, "{joined}");
         assert_eq!(v.iter().filter(|o| o.starts_with("ControlPath=")).count(), 1, "{joined}");
         assert!(joined.contains("-l me"), "{joined}");
-        assert_eq!(v.last().map(String::as_str), Some("192.0.2.5"));
+        assert_eq!(v[v.len() - 2..], ["--", "192.0.2.5"]);
+    }
+
+    #[test]
+    fn device_keys_stay_one_cache_folder() {
+        assert_eq!(dir_name("pc:desk"), "pc_desk");
+        for k in ["/tmp/x", "../../x", "..", ".", "", "a/b\0c"] {
+            let d = dir_name(k);
+            assert!(!d.contains('/') && d != "." && d != ".." && !d.is_empty(), "{k} -> {d}");
+            assert_eq!(Path::new("/c").join(&d).parent(), Some(Path::new("/c")), "{k}");
+        }
+    }
+
+    #[test]
+    fn remote_commands_survive_any_login_shell() {
+        // a name that breaks out of POSIX quoting under fish
+        let dir = std::env::temp_dir().join(format!("harbor-devq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = dir.join("\\';touch poc;#.png");
+        std::fs::write(&name, "ok").unwrap();
+        let line = sh_cmd(&format!("cat -- {}", quote(&name.to_string_lossy())));
+        assert!(!line.contains('\\') && line.matches('\'').count() == 2, "{line}");
+        if Command::new("python3").arg("-V").output().is_ok() {
+            let o = Command::new("bash").arg("-c").arg(&line).current_dir(&dir).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&o.stdout), "ok", "{}", String::from_utf8_lossy(&o.stderr));
+            assert!(!dir.join("poc").exists());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
