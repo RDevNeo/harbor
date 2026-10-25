@@ -122,6 +122,11 @@ final class Images {
         Net.Http c = null;
         try {
             c = hub.open("GET", url, 20_000);
+            // The PC ended the session (it restarted): once more with a new one.
+            if (c.code() == 401 && c.signed) {
+                c.close();
+                c = hub.open("GET", url, 20_000);
+            }
             if (c.code() != 200) return null;
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[1 << 15];

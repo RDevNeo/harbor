@@ -57,6 +57,9 @@ javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "
 # Net's connection rules are plain Java: check them on this JVM before packaging.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.AddrTest
+# And the three-factor crypto, against the hub's own test vectors (src/phoneauth.rs).
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/SecTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.SecTest
 # So is the QR scanner's decoding of a camera frame.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/QrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.QrTest "$HERE/test/pair-qr.png"

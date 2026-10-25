@@ -50,7 +50,7 @@ public class Update extends BroadcastReceiver {
         if (busy) throw new IOException("already updating");
         Hub from = bestHub == null ? null : Hub.get(c, bestHub);
         Net.Http http = from != null && bestCode > Settings.myCode(c) ? from.openOn(bestPc, "GET", "/app.apk", 60_000)
-                : hub.open("GET", "/app.apk", 60_000, false);
+                : hub.open("GET", "/app.apk", 60_000, true);
         try {
             int code = http.code();
             if (code != 200) throw new IOException("the PC has no app to send (HTTP " + code + ")");
