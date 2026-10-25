@@ -17,14 +17,18 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** One hub's chats the way the reference's drawer shows them: a bold title and search, a few
  *  nav rows (Projects, Pull requests, Issues, PCs, Settings, and Update when there is one), a
- *  thin line, then Running / Recents / Settled as one-line rows with a chat icon and a dot while
- *  a turn runs; a round avatar (this PC) and the black "New session" pill float at the bottom.
+ *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
+ *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
+ *  dot while a turn runs. A round avatar (this PC) and the black "New session" pill float at
+ *  the bottom.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
 final class Sidebar {
     final Base a;
@@ -136,7 +140,7 @@ final class Sidebar {
         this.st = st;
         list.removeAllViews();
 
-        Map<String, String> projects = new HashMap<>();
+        Map<String, String> projects = new LinkedHashMap<>(); // in the desktop sidebar's order
         JSONArray pa = st.optJSONArray("projects");
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
             JSONObject p = pa.optJSONObject(i);
@@ -168,15 +172,8 @@ final class Sidebar {
             if (c == null || "sub".equals(c.optString("role"))) continue; // a lead's subagents live inside its chat, as on the desktop
             String pid = c.isNull("project_id") ? "" : c.optString("project_id");
             if (!filter.isEmpty() && !filter.equals(pid)) continue;
-            if (!q.isEmpty() && !c.optString("title").toLowerCase().contains(q)) continue;
+            if (!q.isEmpty() && !c.optString("title").toLowerCase().contains(q) && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             chats.add(c);
-        }
-        chats.sort((x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms")));
-        List<JSONObject> running = new ArrayList<>(), recent = new ArrayList<>(), settled = new ArrayList<>();
-        for (JSONObject c : chats) {
-            if (c.optBoolean("settled")) settled.add(c);
-            else if (c.optBoolean("running") || Hub.queued(c) > 0 || typing(c, you) != null) running.add(c);
-            else recent.add(c);
         }
         if (chats.isEmpty()) {
             TextView t = Ui.text(a, q.isEmpty() ? "No chats yet. Start one with New session." : "No chat matches “" + q + "”.", 14, Ui.G700);
@@ -184,21 +181,79 @@ final class Sidebar {
             list.addView(t, Ui.fill());
             return;
         }
-        if (!running.isEmpty()) {
-            list.addView(Ui.label(a, "Running"), Ui.fill());
-            for (JSONObject c : running) list.addView(chatRow(c, you), Ui.inset());
+        chats.sort((x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms")));
+        // By project, in the desktop sidebar's order (the hub sends them so), newest first in
+        // each; chats without a project under Threads, as on the desktop; settled chats and the
+        // chats of settled projects fold into Settled at the end.
+        LinkedHashMap<String, List<JSONObject>> groups = new LinkedHashMap<>();
+        Set<String> settledProjects = new HashSet<>();
+        if (pa != null) for (int i = 0; i < pa.length(); i++) {
+            JSONObject p = pa.optJSONObject(i);
+            if (p == null) continue;
+            if (p.optBoolean("settled")) settledProjects.add(p.optString("id"));
+            else groups.put(p.optString("id"), new ArrayList<>());
         }
-        if (!recent.isEmpty()) {
-            list.addView(Ui.label(a, "Recents"), Ui.fill());
-            for (JSONObject c : recent) list.addView(chatRow(c, you), Ui.inset());
+        List<JSONObject> loose = new ArrayList<>(), settled = new ArrayList<>();
+        for (JSONObject c : chats) {
+            String pid = c.isNull("project_id") ? "" : c.optString("project_id");
+            if (c.optBoolean("settled") || settledProjects.contains(pid)) settled.add(c);
+            else if (groups.containsKey(pid)) groups.get(pid).add(c);
+            else loose.add(c);
+        }
+        boolean first = true;
+        for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
+            if (g.getValue().isEmpty()) continue;
+            if (!first) divider();
+            first = false;
+            group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty());
+        }
+        if (!loose.isEmpty()) {
+            if (!first) divider();
+            first = false;
+            group("", "Threads", loose, you, q.isEmpty());
         }
         if (!settled.isEmpty()) {
+            if (!first) divider();
             TextView h = Ui.label(a, "Settled · " + settled.size() + (showSettled ? "  ▾" : "  ▸"));
             h.setBackground(Ui.press(0, 0, 0));
             h.setOnClickListener(v -> { showSettled = !showSettled; render(st); });
             list.addView(h, Ui.fill());
             if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
         }
+    }
+
+    private void divider() {
+        View line = new View(a);
+        line.setBackgroundColor(Ui.LINE);
+        list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 6, 20, 2));
+    }
+
+    /** Projects folded on this phone, per PC ("" is Threads). */
+    private Set<String> folded() { return new HashSet<>(Ui.prefs(a).getStringSet("folded-" + a.hub.id, new HashSet<>())); }
+
+    /** A project's header (folder, name, count, chevron) and its chats. A tap folds it; a folded
+     *  project with a chat at work keeps a dot on its header. Searching shows every match. */
+    private void group(String key, String name, List<JSONObject> cs, String you, boolean foldable) {
+        Set<String> f = folded();
+        boolean fold = foldable && f.contains(key);
+        LinearLayout h = Ui.row(a);
+        h.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(6));
+        h.setBackground(Ui.press(0, 0, 10));
+        h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
+        h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
+        boolean busy = false;
+        for (JSONObject c : cs) busy |= c.optBoolean("running") || Hub.queued(c) > 0;
+        if (fold && busy) h.addView(Ui.dot(a, Ui.BLUE, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 8, 0, 0, 0));
+        h.addView(Ui.text(a, String.valueOf(cs.size()), 12, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        h.addView(Ui.icon(a, fold ? Ui.I_RIGHT : Ui.I_DOWN, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 6, 0, 0, 0));
+        h.setContentDescription((name == null ? "Project" : name) + ", " + cs.size() + (fold ? " chats, folded" : " chats"));
+        if (foldable) h.setOnClickListener(v -> {
+            if (!f.remove(key)) f.add(key);
+            Ui.prefs(a).edit().putStringSet("folded-" + a.hub.id, f).apply();
+            render(st);
+        });
+        list.addView(h, Ui.inset());
+        if (!fold) for (JSONObject c : cs) list.addView(chatRow(c, you), Ui.inset());
     }
 
     private View nav(String glyph, String title, String value, int color, View.OnClickListener on) {

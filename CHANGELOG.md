@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- On the phone, the drawer groups the chats by project, in the desktop sidebar's order (by hand,
+  or by last activity when it's set so): a small header per project with its name and how many
+  chats it has, thin lines between projects, chats without a project under Threads, and settled
+  chats and settled projects folded into Settled at the end, as on the desktop. Tap a project's
+  header to fold it (the phone remembers); a folded project with a chat at work keeps a dot. The
+  separate Running section is gone: a running chat keeps its dot in its project.
+
 ## [0.24.0] - 2026-10-25
 
 ### Added
