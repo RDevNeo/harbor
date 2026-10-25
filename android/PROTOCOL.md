@@ -461,6 +461,49 @@ project's webhooks. For a sub-agent, its lead's team. Read-only.
 - A change in a team (an agent starts, stops or queues, a process or a wake-up comes or goes, a
   webhook is called) is a change of its lead: the lead's id comes in `changed_chats`.
 
+### `GET /v1/chats/{id}/slash`
+
+The desktop composer's slash menu for this chat (`src/slash.rs`): what typing `/` at the start
+of a word offers, with the same list, sources, descriptions and hints.
+
+```json
+{"pending": false,
+ "entries": [{"name": "model", "aliases": [], "description": "Switch the model for this chat", "hint": "",
+              "source": "harbor", "badge": "Harbor", "skill": false, "command": "model"},
+             {"name": "compact", "aliases": [], "description": "Free up context", "hint": "<instructions>",
+              "source": "builtin", "badge": "Built-in", "skill": false, "command": null},
+             {"name": "review", "aliases": [], "description": "Review the diff", "hint": "",
+              "source": "personal", "badge": "Personal skill", "skill": true, "command": null}]}
+```
+
+- `source`: `harbor` (Harbor's own), `project` / `personal` (the project's and the user's
+  `.claude/commands` and `.claude/skills`), `builtin` / `plugin` (Claude Code's own list).
+  `badge` is the label to show ("Harbor", "Built-in", "Plugin", "Project command", "Project
+  skill", "Personal command", "Personal skill").
+- The list follows the chat's agent: for a Claude chat on this PC it is Claude Code's own list
+  (asked once per account and project, cached; commands that do nothing in Harbor are left out)
+  plus the user's files; for other agents, and Claude on another device, Harbor's and the files.
+  `/plan` shows only for providers with a read-only mode and becomes `/default` while the chat
+  is read only.
+- `pending`: Claude Code hasn't answered yet; ask again in a second or two for its commands.
+- Matching is the client's, as the desktop does it: case-insensitive on `name`, then `aliases`
+  (one step lower), then `description`; exact, prefix, after `-` `_` `:` `/`, anywhere, the
+  letters in order. Equal matches in `source` order harbor, project, personal, builtin, plugin,
+  then by name. After other words only entries with `skill`, and `harbor` and `plugin` ones.
+- Accepting an entry writes `/name ` in place of the word. Send it as typed: the PC expands it
+  for agents that don't (the command's text, or the skill's instructions before the message),
+  for messages from any device, queued ones too. Entries with a `command` act instead of being
+  written: `model` opens the model picker; `plan` and `default` are the call below.
+
+### `POST /v1/chats/{id}/slash`
+
+`{"command": "plan"}` or `{"command": "default"}` → `{"ok": true, "chat": {…as in /v1/state…}}`.
+The menu's /plan (the chat becomes read only, `access: "plan"`) and /default (back to the access it
+had before /plan on any device, else the provider's first level), with the rules of `PATCH`.
+
+For a copy of another PC's chat, both calls are answered by its home PC, where its files and
+agent are.
+
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
@@ -491,8 +534,8 @@ Harbor keeps a full copy of every chat (`src/mesh.rs`), so any of them answers t
 same chats, rendered the same way.
 
 - A chat runs on one PC, its `home`. Another hub holds a copy: reading it is local; a write to it
-  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `fork`, `PATCH`, `DELETE`) is forwarded
-  to the home PC and answered from there. The message records where it came from (`sender`).
+  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `fork`, `slash`, `PATCH`, `DELETE`), and
+  `GET …/slash`, is forwarded to the home PC and answered from there. The message records where it came from (`sender`).
   While the home PC is off the copy is read-only (`writable: false`, writes `409`) and catches up
   when it's back.
 - `POST /v1/chats` with a `device` that is another hub's id starts the chat on that PC (`409` when

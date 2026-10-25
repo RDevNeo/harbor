@@ -2137,6 +2137,10 @@ impl App {
                 Some(c) => ok(self.api_team(c, ctx)),
                 None => err(404, "no such chat"),
             },
+            ("GET", ["v1", "chats", c, "slash"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) => ok(self.api_slash(c, ctx)),
+                None => err(404, "no such chat"),
+            },
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
             ("POST", ["v1", "chats", c, action]) => {
                 let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
@@ -2149,6 +2153,8 @@ impl App {
                         ok(json!({ "ok": true, "returned": returned }))
                     }
                     "fork" => self.api_fork(c, &call.body),
+                    // The slash menu's /plan and /default (slash.rs).
+                    "slash" => self.api_slash_command(c, &call.body, ctx),
                     // The waiting bar's Stop all: the lead and its sub-agents; the lead's queue comes back.
                     "stop_all" => {
                         let returned: Vec<Value> = self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect();
@@ -2251,7 +2257,7 @@ impl App {
                 }
             }
             ("POST", ["v1", "chats"]) | ("POST", ["v1", "chats", _, "fork"]) => v["id"] = gid(&v["id"]),
-            ("PATCH", _) => {
+            ("PATCH", _) | ("POST", ["v1", "chats", _, "slash"]) => {
                 if v["chat"].is_object() {
                     chat(&mut v["chat"]);
                 }
@@ -2333,7 +2339,7 @@ impl App {
     }
 
     /// PATCH's account/model/effort/access/device/fast, with the desktop composer's rules.
-    fn api_patch_run(&mut self, chat: i64, body: &Value, ctx: &egui::Context) -> Result<(), Reply> {
+    pub(crate) fn api_patch_run(&mut self, chat: i64, body: &Value, ctx: &egui::Context) -> Result<(), Reply> {
         let Some(c) = self.chat(chat).cloned() else { return Err(err(404, "no such chat")) };
         let net = crate::remote::tailnet(ctx);
         let hosts: Vec<crate::remote::Host> = crate::remote::devices(&self.remote, &net).into_iter().map(|(h, _)| h).collect();

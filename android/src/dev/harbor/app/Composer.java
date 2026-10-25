@@ -15,6 +15,7 @@ import android.util.TypedValue;
 import android.view.ActionMode;
 import android.view.ContentInfo;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -37,7 +38,7 @@ final class Composer {
     static final int SPEAK = 43;
 
     final LinearLayout view;
-    final EditText edit;
+    final Edit edit;
     final TextView pill;
     private final FrameLayout send;
     private final TextView sendGlyph;
@@ -127,6 +128,25 @@ final class Composer {
     static final class Edit extends EditText {
         private final Attach attach;
         private ActionMode menu; // the floating Paste toolbar while it shows
+        /** The cursor moved (the slash menu follows the word under it). */
+        Runnable onSelection;
+        /** While it says true, Back goes to onBack before the keyboard sees it (the slash menu
+         *  closes and the keyboard stays). */
+        java.util.function.BooleanSupplier backOpen;
+        Runnable onBack;
+
+        @Override protected void onSelectionChanged(int start, int end) {
+            super.onSelectionChanged(start, end);
+            if (onSelection != null) onSelection.run();
+        }
+
+        @Override public boolean onKeyPreIme(int code, KeyEvent e) {
+            if (code == KeyEvent.KEYCODE_BACK && backOpen != null && backOpen.getAsBoolean()) {
+                if (e.getAction() == KeyEvent.ACTION_UP && !e.isCanceled()) onBack.run();
+                return true;
+            }
+            return super.onKeyPreIme(code, e);
+        }
 
         Edit(Context c, Attach attach) {
             super(c);

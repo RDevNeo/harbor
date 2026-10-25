@@ -8,6 +8,7 @@ import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -40,6 +41,7 @@ public class Chat extends Base {
     private boolean running;
     private Render render;
     private Team team;
+    private Slash slash;
 
     /** Items drawn at first; "Show earlier" adds this many more (a long chat would otherwise
      *  keep thousands of views alive and slow down every update). */
@@ -77,17 +79,24 @@ public class Chat extends Base {
         content = Ui.col(this);
         content.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
         scroll.addView(content);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        // The transcript and the bars under it; the slash menu floats over their bottom.
+        FrameLayout stage = new FrameLayout(this);
+        LinearLayout above = Ui.col(this);
+        above.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         // The desktop's bars under the transcript: queued messages, working, waiting for
         // sub-agents, usage limit; and who else is typing.
         status = Ui.col(this);
         status.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(6));
-        root.addView(status, Ui.fill());
+        above.addView(status, Ui.fill());
+        stage.addView(above, frameFill());
+        root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
 
         attach = new Attach(this, hub, chatId);
         comp = new Composer(this, attach, "Chat with Claude…");
         composer = comp.edit;
+        slash = new Slash(this, hub, chatId, comp.edit, this::harbor);
+        stage.addView(slash.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         comp.onSend = this::send;
         comp.onStop = this::stop;
@@ -192,6 +201,7 @@ public class Chat extends Base {
         offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
+        slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project);
         typingLine = Sidebar.typing(c, st == null ? "" : st.optString("you", ""));
         drawBars();
     }
@@ -471,6 +481,29 @@ public class Chat extends Base {
                 showChat(c);
             } else refreshState();
         });
+    }
+
+    /** The slash menu's Harbor commands: /model opens the model picker; /plan and /default
+     *  switch the chat to read only and back on the PC, as its composer does. */
+    private void harbor(String command) {
+        if ("model".equals(command)) {
+            if (run != null) run.pickModel(this, this::change);
+            return;
+        }
+        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/slash", new JSONObject().put("command", command)), r -> {
+            JSONObject c = r.optJSONObject("chat");
+            if (c == null) { refreshState(); return; }
+            JSONObject st = Hub.states.get(hub.id);
+            if (st != null) replaceChat(st, c);
+            showChat(c);
+            Ui.toast(this, "plan".equals(command) ? "Read only: this chat reads and plans, and changes nothing" : "Permission: " + run.accessLabel());
+        });
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (!drawerOpen() && !rightOpen() && slash != null && slash.back()) return;
+        super.onBackPressed();
     }
 
     private static void replaceChat(JSONObject st, JSONObject c) {
