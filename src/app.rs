@@ -138,6 +138,7 @@ pub struct App {
     pub drafts: HashMap<i64, String>,
     pub files: HashMap<i64, Vec<PathBuf>>,
     pub mentions: crate::mentions::State,
+    pub slash: crate::slash::State,
     pub forks: crate::fork::State,
     pub turns: HashMap<i64, (agent::Turn, Instant)>,
     pub unread: HashSet<i64>,
@@ -296,6 +297,7 @@ impl App {
             drafts: HashMap::new(),
             files: HashMap::new(),
             mentions: Default::default(),
+            slash: Default::default(),
             forks: Default::default(),
             turns: HashMap::new(),
             unread: HashSet::new(),
@@ -880,9 +882,12 @@ impl App {
         let fork = self.take_fork_preamble(chat_id);
         let queued = self.pending.remove(&chat_id).filter(|q| !q.is_empty());
         let snap = self.undo_snapshot(chat_id, item, &text, &files, &mentions, queued.as_deref().unwrap_or_default());
+        let said = self.slash_prompt(chat_id, &text);
         let prompt = match queued {
-            Some(q) => format!("{fork}{}\n\n---\n\n{quoted}{text}", q.join("\n\n---\n\n")),
-            None => format!("{fork}{quoted}{text}"),
+            Some(q) => format!("{fork}{}\n\n---\n\n{quoted}{said}", q.join("\n\n---\n\n")),
+            // A slash command only runs at the start: what goes with it follows.
+            None if said.starts_with('/') && !(fork.is_empty() && quoted.is_empty()) => format!("{said}\n\n{fork}{quoted}").trim_end().to_string(),
+            None => format!("{fork}{quoted}{said}"),
         };
         self.start_turn(chat_id, prompt, files, ctx);
         self.undo_started(chat_id, snap);
@@ -1571,7 +1576,7 @@ impl App {
             };
             (
                 k.take(i, "new_thread"),
-                !term_has_focus && !blocked && self.popup.is_none() && k.pressed(i, "stop_turn"),
+                !term_has_focus && !blocked && self.popup.is_none() && self.slash.open.is_none() && k.pressed(i, "stop_turn"),
                 k.take(i, "toggle_terminal"),
                 digit,
                 k.take(i, "toggle_sidebar"),

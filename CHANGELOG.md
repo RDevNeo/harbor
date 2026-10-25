@@ -5,6 +5,21 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Slash commands in the composer, as in T3 Code: type `/` at the start of a word and a menu above
+  the composer lists commands and skills, filtered as you type, each with its description and
+  where it comes from (Harbor, Built-in, Plugin, Personal or Project). Arrow keys move, Enter or
+  Tab accepts, Esc closes, a click accepts. Claude chats list what Claude Code itself offers
+  (built-in commands such as `/compact` and `/context`, bundled and plugin skills, and your own
+  and the project's `.claude/commands` and `.claude/skills`); Claude Code runs them. Other agents
+  get your `.claude` commands and skills too: Harbor puts the command's text, or the skill's
+  instructions, into the message for them. Harbor's own `/model` opens the model picker, and
+  `/plan` and `/default` switch the chat to read only and back.
+
+### Fixed
+- Commands and skills whose front matter writes the description over several lines (`description:
+  >`) showed `>` as their description to agents on other devices.
+
 ## [0.19.0] - 2026-10-24
 
 ### Fixed

@@ -39,9 +39,10 @@ pub struct Queued {
 }
 
 impl Queued {
-    /// What the agent gets: mentioned messages quoted first, then the text.
-    fn prompt(&self) -> String {
-        format!("{}{}", crate::mentions::prompt(&self.mentions), self.text)
+    /// What the agent gets: mentioned messages quoted first, then the text as `said`
+    /// (slash.rs puts commands in for agents that don't expand them).
+    fn prompt(&self, said: &str) -> String {
+        format!("{}{said}", crate::mentions::prompt(&self.mentions))
     }
 }
 
@@ -89,9 +90,10 @@ impl App {
 
     /// Writes the waiting messages into the running turn, if it takes input.
     fn deliver(&mut self, chat_id: i64) {
+        let said: Vec<String> = self.queued(chat_id).iter().map(|q| self.slash_prompt(chat_id, &q.text)).collect();
         let Some((turn, _)) = self.turns.get(&chat_id) else { return };
-        for q in self.queue.chats.get_mut(&chat_id).into_iter().flatten().filter(|q| !q.written) {
-            if !turn.write(&q.prompt(), &q.files) {
+        for (q, said) in self.queue.chats.get_mut(&chat_id).into_iter().flatten().zip(&said).filter(|(q, _)| !q.written) {
+            if !turn.write(&q.prompt(said), &q.files) {
                 return;
             }
             q.written = true;
@@ -189,14 +191,13 @@ impl App {
         if q.is_empty() {
             return;
         }
+        let prompts: Vec<String> = q.iter().map(|m| m.prompt(&self.slash_prompt(chat_id, &m.text))).collect();
         let tr = self.transcripts.entry(chat_id).or_default();
         if tr.items.is_empty() {
             tr.items = self.store.items(chat_id);
         }
-        let mut prompts = vec![];
         let mut files = vec![];
         for m in q {
-            prompts.push(m.prompt());
             files.extend(m.files.iter().cloned());
             tr.items.push(Item::User {
                 text: m.text,
