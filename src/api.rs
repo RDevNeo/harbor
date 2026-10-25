@@ -822,6 +822,13 @@ pub fn phone_addrs(port: u16) -> Vec<String> {
     v
 }
 
+/// Whether `/app.apk` is served: to anyone on this network, and from the internet to a phone or
+/// PC whose key is known here (a stranger never gets past the handshake there; a known phone on
+/// mobile data updates its app this way).
+fn apk_allowed(public: bool, via: &Via) -> bool {
+    !public || matches!(via, Via::Tls(Some(_)))
+}
+
 /// How a connection reached the listener.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Via {
@@ -850,7 +857,7 @@ static FAILS: std::sync::LazyLock<crate::tls::Throttle> = std::sync::LazyLock::n
 /// Connections at once per address (IPv6: per /64), so one device can't take every slot; from
 /// the internet fewer, and all internet sources together at most [`PUBLIC`].
 const PER_HOST: usize = 12;
-const PER_PUBLIC_HOST: usize = 4;
+const PER_PUBLIC_HOST: usize = 8;
 static PUBLIC: Conns = Conns::new(24);
 static HOSTS: std::sync::LazyLock<Mutex<HashMap<std::net::IpAddr, usize>>> = std::sync::LazyLock::new(Default::default);
 
@@ -970,7 +977,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     if !hub.enabled.load(Ordering::SeqCst) {
         return; // phones are off: closed without a word
     }
-    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] && !public {
+    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] && apk_allowed(public, &peer.via) {
         return serve_apk(r.get_mut(), req.method == "HEAD");
     }
     let token = match req.bearer().map(|t| (t, hub.auth(t, &peer.via))) {
@@ -2339,6 +2346,14 @@ mod tests {
         assert!(!empty.known(""));
         assert_eq!(new_token().unwrap().len(), 48);
         assert_ne!(new_token().unwrap(), new_token().unwrap());
+    }
+
+    #[test]
+    fn the_app_from_the_internet_only_with_a_known_key() {
+        let fp = "a".repeat(64);
+        assert!(apk_allowed(false, &Via::Tls(None)) && apk_allowed(false, &Via::Loopback), "this network: anyone");
+        assert!(apk_allowed(true, &Via::Tls(Some(fp))), "the internet: a key (the handshake already made sure it's known)");
+        assert!(!apk_allowed(true, &Via::Tls(None)) && !apk_allowed(true, &Via::Refused) && !apk_allowed(true, &Via::Loopback));
     }
 
     #[test]
