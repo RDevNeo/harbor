@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Linux aarch64 builds (`harbor-aarch64-linux.tar.gz`): install.sh and the updater pick the
+  archive for the PC's architecture. The built-in browser engine is x86_64 only for now.
+- Every release is installed and started on clean Ubuntu 22.04, Debian 12, Fedora and Arch images
+  (and Ubuntu/Debian on aarch64) before it's published.
+- The README lists what a fresh PC needs, required and optional, and install.sh names the optional
+  programs that are missing.
+
+### Fixed
+- File pickers (Attach, project and device icons, Devices uploads) fall back to kdialog when
+  zenity isn't installed, and say what to install when neither is, instead of doing nothing.
+- Installing Codex, Grok or Gemini from Settings › Providers says that it needs Node.js when npm
+  is missing, instead of "npm: command not found", and how to fix an npm folder that needs root.
+
 ## [0.25.1] - 2026-10-25
 
 ### Fixed

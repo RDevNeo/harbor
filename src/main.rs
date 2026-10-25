@@ -35,6 +35,7 @@ mod oauth;
 mod pages;
 mod phoneauth;
 mod phonesui;
+mod picker;
 mod portmap;
 mod prdetail;
 mod procs;

@@ -779,15 +779,9 @@ impl App {
     pub fn pick_files(&self, key: i64) {
         let tx = self.bg_tx.clone();
         std::thread::spawn(move || {
-            let out = std::process::Command::new("zenity")
-                .args(["--file-selection", "--multiple", "--separator=\n", "--title=Attach files"])
-                .output();
-            if let Ok(o) = out {
-                let files: Vec<PathBuf> =
-                    String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect();
-                if !files.is_empty() {
-                    let _ = tx.send(Bg::Files(key, files));
-                }
+            let files = crate::picker::pick(crate::picker::Opts { title: "Attach files", multiple: true, ..Default::default() });
+            if !files.is_empty() {
+                let _ = tx.send(Bg::Files(key, files));
             }
         });
     }
@@ -798,7 +792,7 @@ impl App {
         let Some(a) = self.account(account_id).cloned() else { return };
         let cwd = store::home();
         if !a.installed() {
-            let argv = vec!["bash".into(), "-lc".into(), a.kind.install_hint().into()];
+            let argv = vec!["bash".into(), "-lc".into(), a.kind.install_script()];
             self.open_terminal(ctx, &format!("Install {}", a.kind.label()), cwd, argv, vec![]);
             return;
         }
@@ -1408,6 +1402,7 @@ impl eframe::App for App {
         self.shortcuts(&ctx);
 
         let t = self.theme.t;
+        crate::picker::toast(&ctx, &t);
         let narrow = self.sidebar_narrow(&ctx);
         if !narrow {
             self.sidebar_drawer = false;

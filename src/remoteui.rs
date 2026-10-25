@@ -479,13 +479,11 @@ impl App {
                 if w::btn(&format!("{}  Image…", ic::IMAGE)).sm().outline().pressed(e.icon == "file").show(ui).clicked() {
                     let (id, done, ctx) = (e.id.clone(), self.devices_ui.picked.clone(), ctx.clone());
                     std::thread::spawn(move || {
-                        let out = std::process::Command::new("zenity")
-                            .args(["--file-selection", "--title=Device icon", "--file-filter=Images | *.png *.svg *.ico *.jpg *.jpeg *.webp *.gif"])
-                            .output();
-                        let Some(file) = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()) else { return };
+                        let opts = crate::picker::Opts { title: "Device icon", filter: Some(("Images", crate::picker::IMAGES)), ..Default::default() };
+                        let Some(file) = crate::picker::pick(opts).pop() else { return };
                         let dst = remote::icon_path(&id);
                         let _ = std::fs::create_dir_all(dst.parent().unwrap());
-                        if !file.is_empty() && std::fs::copy(&file, &dst).is_ok() {
+                        if std::fs::copy(&file, &dst).is_ok() {
                             done.lock().unwrap().push(id);
                             ctx.request_repaint();
                         }

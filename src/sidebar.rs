@@ -259,12 +259,9 @@ impl App {
         let tx = self.bg_tx.clone();
         let (path, name, ctx) = (r.path.clone(), r.name.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let out = std::process::Command::new("zenity")
-                .args(["--file-selection", "--title=Project icon", "--file-filter=Images | *.png *.svg *.ico *.jpg *.jpeg *.webp *.gif"])
-                .arg(format!("--filename={}/", path.display()))
-                .output();
-            let Some(file) = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()) else { return };
-            if file.is_empty() || !crate::favicon::set_custom(id, std::path::Path::new(&file)) {
+            let opts = crate::picker::Opts { title: "Project icon", filter: Some(("Images", crate::picker::IMAGES)), dir: Some(&path), ..Default::default() };
+            let Some(file) = crate::picker::pick(opts).pop() else { return };
+            if !crate::favicon::set_custom(id, &file) {
                 return;
             }
             let img = crate::favicon::resolve(id, &path, &name, false);

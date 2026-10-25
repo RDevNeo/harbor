@@ -71,6 +71,25 @@ impl Kind {
         }
     }
 
+    /// The install hint as a shell script. npm installs say first that they need Node.js
+    /// (instead of "npm: command not found"), and how to fix a global prefix that needs root.
+    pub fn install_script(self) -> String {
+        let hint = self.install_hint();
+        if !hint.starts_with("npm ") {
+            return hint.to_string();
+        }
+        let label = self.label();
+        format!(
+            "if ! command -v npm >/dev/null 2>&1; then\n\
+             echo '{label} installs with npm, which comes with Node.js, and Node.js isn'\\''t installed.'\n\
+             echo 'Install Node.js (https://nodejs.org, or your distribution'\\''s nodejs and npm packages), then try again.'\n\
+             exit 1\n\
+             fi\n\
+             {hint} || {{ echo; echo 'If npm failed with EACCES, its global folder needs root. Use a folder of your own:'; \
+             echo '  npm config set prefix ~/.npm-global   (then add ~/.npm-global/bin to your PATH)'; exit 1; }}"
+        )
+    }
+
 }
 
 #[derive(Clone, Debug)]
@@ -423,4 +442,20 @@ pub fn access(kind: Kind) -> &'static [(&'static str, &'static str, &'static str
 
 pub fn access_label(kind: Kind, a: &str) -> &'static str {
     access(kind).iter().find(|x| x.0 == a).map(|x| x.1).unwrap_or("Full access")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn npm_install_needs_node() {
+        assert_eq!(Kind::Claude.install_script(), Kind::Claude.install_hint());
+        let s = Kind::Codex.install_script();
+        assert!(s.starts_with("if ! command -v npm") && s.contains("Node.js") && s.contains("npm i -g @openai/codex ||"));
+        // Runs as a script: without npm on PATH it explains instead of failing on npm.
+        let out = std::process::Command::new("/bin/sh").args(["-c", &s]).env("PATH", "/nonexistent").output().unwrap();
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Codex installs with npm"));
+    }
 }

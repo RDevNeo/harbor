@@ -436,18 +436,16 @@ impl List {
     fn pick(&self, key: String, kind: Pick) {
         let (picked, wake) = (self.picked.clone(), self.wake.clone());
         std::thread::spawn(move || {
-            let mut args = vec!["--file-selection", "--separator=\n"];
-            match kind {
-                Pick::Files => args.extend(["--multiple", "--title=Send files"]),
-                Pick::Images => args.extend(["--multiple", "--title=Send images", "--file-filter=Images | *.png *.jpg *.jpeg *.gif *.webp *.PNG *.JPG *.JPEG"]),
-                Pick::ClipImage => args.extend(["--title=Image to clipboard", "--file-filter=Images | *.png *.jpg *.jpeg *.PNG *.JPG *.JPEG"]),
-            }
-            if let Ok(o) = Command::new("zenity").args(&args).output() {
-                let files: Vec<PathBuf> = String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect();
-                if !files.is_empty() {
-                    picked.lock().unwrap().push((key, kind, files));
-                    wake();
-                }
+            use crate::picker::Opts;
+            let opts = match kind {
+                Pick::Files => Opts { title: "Send files", multiple: true, ..Default::default() },
+                Pick::Images => Opts { title: "Send images", multiple: true, filter: Some(("Images", &["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.PNG", "*.JPG", "*.JPEG"])), ..Default::default() },
+                Pick::ClipImage => Opts { title: "Image to clipboard", filter: Some(("Images", &["*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.JPEG"])), ..Default::default() },
+            };
+            let files = crate::picker::pick(opts);
+            if !files.is_empty() {
+                picked.lock().unwrap().push((key, kind, files));
+                wake();
             }
         });
     }
@@ -1171,11 +1169,9 @@ impl Files {
                     if w::btn(ic::UPLOAD).muted().icon_sm().show(ui).on_hover_text("Upload files here").clicked() {
                         let (picked, wake) = (self.picked.clone(), self.wake.clone());
                         std::thread::spawn(move || {
-                            if let Ok(o) = Command::new("zenity").args(["--file-selection", "--multiple", "--separator=\n", "--title=Upload files"]).output() {
-                                let files: Vec<PathBuf> = String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect();
-                                picked.lock().unwrap().extend(files);
-                                wake();
-                            }
+                            let files = crate::picker::pick(crate::picker::Opts { title: "Upload files", multiple: true, ..Default::default() });
+                            picked.lock().unwrap().extend(files);
+                            wake();
                         });
                     }
                     let (icon, tip) = if self.show_hidden { (ic::EYE, "Hide hidden files") } else { (ic::EYE_OFF, "Show hidden files") };
