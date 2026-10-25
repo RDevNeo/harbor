@@ -56,7 +56,11 @@ pub fn tool_label(name: &str) -> String {
             let (server, tool) = rest.split_once("__").unwrap_or(("", rest));
             if server == "harbor" {
                 let t = tool.replace('_', " ");
-                t[..1].to_uppercase() + &t[1..]
+                let mut c = t.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => name.to_string(),
+                }
             } else {
                 format!("{server} · {tool}")
             }
@@ -218,6 +222,14 @@ pub fn kind(c: &Card) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_label_accepts_empty_and_non_ascii_names() {
+        assert_eq!(tool_label("mcp__harbor__spawn_agent"), "Spawn agent");
+        assert_eq!(tool_label("mcp__harbor__"), "mcp__harbor__");
+        assert_eq!(tool_label("mcp__harbor__\u{e9}t\u{e9}"), "\u{c9}t\u{e9}");
+        assert_eq!(tool_label("mcp__linear__list"), "linear · list");
+    }
 
     #[test]
     fn a_lead_hides_its_coordination() {

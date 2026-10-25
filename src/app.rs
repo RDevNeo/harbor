@@ -1211,8 +1211,9 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
+            let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h << 4 | l);
                 i += 3;
                 continue;
             }
@@ -1684,6 +1685,14 @@ const UNFOCUSED_WAKE: Duration = Duration::from_millis(250);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn percent_decode_survives_non_ascii_after_percent() {
+        assert_eq!(percent_decode("/tmp/%1\u{e9}"), "/tmp/%1\u{e9}");
+        assert_eq!(percent_decode("/tmp/%\u{e9}x"), "/tmp/%\u{e9}x");
+        assert_eq!(percent_decode("/tmp/a%20b%zz"), "/tmp/a b%zz");
+        let _ = copied_files("file:///tmp/%1\u{e9}");
+    }
 
     #[test]
     fn clips_the_middle_of_long_text() {

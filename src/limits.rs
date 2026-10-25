@@ -133,7 +133,8 @@ fn date(expr: &str, tz: Option<&str>) -> Option<i64> {
 /// An error that reads like a usage limit, from providers without structured
 /// limit events: (window, reset time if it says).
 pub fn from_text(text: &str) -> Option<(String, Option<i64>)> {
-    let l = text.to_lowercase();
+    // ASCII-only lowercasing keeps byte offsets equal to `text`'s.
+    let l = text.to_ascii_lowercase();
     let limit = ["rate limit", "rate-limit", "rate_limit", "ratelimit", "usage limit", "quota", "resource_exhausted", "hit your limit", " 429"]
         .iter()
         .any(|k| l.contains(k));
@@ -142,7 +143,7 @@ pub fn from_text(text: &str) -> Option<(String, Option<i64>)> {
     }
     // Codex: "… Try again at 3:21 PM." or "… Try again at Oct 23rd, 2026 3:21 PM."
     if let Some(i) = l.find("try again at ") {
-        let rest = &text[i + "try again at ".len()..];
+        let rest = text.get(i + "try again at ".len()..).unwrap_or("");
         let when = rest.trim_end().trim_end_matches('.').split(". ").next().unwrap_or("");
         let clean: String = when.replace("st,", ",").replace("nd,", ",").replace("rd,", ",").replace("th,", ",");
         if let Some(mut t) = date(&clean, None) {
@@ -750,5 +751,17 @@ impl App {
         if (on, ids.clone()) != before {
             self.store.set("limit_switch", if on { "1" } else { "0" });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_text_survives_case_changing_chars() {
+        assert!(from_text("\u{130} rate limit try again at ").is_some());
+        assert!(from_text("\u{212a}\u{130}rate limit, try again at \u{e9}").is_some());
+        assert!(from_text("\u{130} no limit words here").is_none());
     }
 }

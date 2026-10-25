@@ -30,6 +30,10 @@ const THUMB_PX: u32 = 384;
 const FULL_PX: u32 = 4096;
 /// Files above this are not decoded.
 const MAX_BYTES: u64 = 100 << 20;
+/// Longest side and decoded size an image may declare; its header is checked before any
+/// pixel buffer is allocated, so a tiny file can't ask for gigabytes.
+const MAX_SIDE: u32 = 16384;
+const MAX_ALLOC: u64 = 512 << 20;
 const WORKERS: usize = 2;
 /// Thumbnails kept without being drawn, before the unused ones are dropped.
 const KEEP: usize = 96;
@@ -130,7 +134,7 @@ fn worker(ctx: egui::Context, s: Shared) {
 /// Returns the image and the original dimensions.
 fn decode(key: &str, bytes: Option<Arc<[u8]>>, cap: u32) -> Result<(ColorImage, [usize; 2]), String> {
     use image::ImageDecoder;
-    let reader = match &bytes {
+    let mut reader = match &bytes {
         Some(b) => image::ImageReader::new(std::io::Cursor::new(b.to_vec())).with_guessed_format(),
         None => {
             let len = std::fs::metadata(key).map_err(|e| e.to_string())?.len();
@@ -141,7 +145,16 @@ fn decode(key: &str, bytes: Option<Arc<[u8]>>, cap: u32) -> Result<(ColorImage, 
         }
     }
     .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_ALLOC);
+    reader.limits(limits);
     let mut dec = reader.into_decoder().map_err(|e| e.to_string())?;
+    let (w, h) = dec.dimensions();
+    if w.max(h) > MAX_SIDE || dec.total_bytes() > MAX_ALLOC {
+        return Err(format!("too large ({w}×{h})"));
+    }
     let orient = dec.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
     let mut img = image::DynamicImage::from_decoder(dec).map_err(|e| e.to_string())?;
     img.apply_orientation(orient);
@@ -481,5 +494,40 @@ impl<'a> egui::cache::ComputerMut<&'a str, Vec<String>> for Finder {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbaImage::new(w, h).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        out
+    }
+
+    #[test]
+    fn decodes_a_normal_png() {
+        let (img, dims) = decode("t.png", Some(png(64, 64).into()), THUMB_PX).unwrap();
+        assert_eq!(dims, [64, 64]);
+        assert_eq!(img.size, [64, 64]);
+    }
+
+    #[test]
+    fn refuses_huge_declared_dimensions_before_allocating() {
+        // A 1x1 PNG whose IHDR (CRC fixed up) declares 2^26 x 2^30 pixels.
+        let mut b = png(1, 1);
+        b[16..20].copy_from_slice(&(1u32 << 26).to_be_bytes());
+        b[20..24].copy_from_slice(&(1u32 << 30).to_be_bytes());
+        let crc = b[12..29].iter().fold(!0u32, |mut c, &x| {
+            c ^= x as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+            c
+        });
+        b[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        assert!(decode("t.png", Some(b.into()), THUMB_PX).is_err());
     }
 }

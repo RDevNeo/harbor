@@ -974,6 +974,11 @@ impl App {
                                 self.store.remove_repo(id);
                                 self.repos = self.store.repos();
                                 self.chats = self.store.chats();
+                                // Removal revokes the project's webhooks: the database cascade drops
+                                // them, and the listener must stop accepting their tokens now.
+                                self.webhooks = self.store.webhooks();
+                                self.sync_tokens();
+                                self.timers = self.store.timers();
                                 if self.draft.repo == Some(id) {
                                     self.draft.repo = None;
                                 }

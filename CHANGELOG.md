@@ -18,6 +18,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   zenity isn't installed, and say what to install when neither is, instead of doing nothing.
 - Installing Codex, Grok or Gemini from Settings › Providers says that it needs Node.js when npm
   is missing, instead of "npm: command not found", and how to fix an npm folder that needs root.
+- Removing a project revokes its webhooks right away: their URLs stop being accepted, and a late
+  request can no longer crash Harbor or start a lead in another project.
+- Harbor no longer crashes on odd text: a percent sign before a non-ASCII character in an app
+  sign-in callback or a pasted file:// link, a usage-limit error with characters that change
+  length when lowercased, or an empty or non-ASCII Harbor tool name in a transcript.
+- Image previews refuse images whose header declares huge dimensions (over 16384 px a side or
+  512 MB decoded) instead of allocating the whole buffer, so a tiny crafted file can't crash Harbor.
 
 ## [0.25.1] - 2026-10-25
 

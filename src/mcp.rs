@@ -601,8 +601,8 @@ fn dec(s: &str) -> String {
         match b[i] {
             b'+' => out.push(b' '),
             b'%' if i + 2 < b.len() => {
-                if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    out.push(v);
+                if let (Some(h), Some(l)) = (hex_digit(b[i + 1]), hex_digit(b[i + 2])) {
+                    out.push(h << 4 | l);
                     i += 3;
                     continue;
                 }
@@ -613,6 +613,11 @@ fn dec(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// One ASCII hex digit's value. Works on bytes, so non-ASCII input never panics.
+fn hex_digit(c: u8) -> Option<u8> {
+    (c as char).to_digit(16).map(|d| d as u8)
 }
 
 /// SHA-256, for the PKCE challenge.
@@ -872,6 +877,14 @@ pub fn codex_args() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dec_survives_non_ascii_after_percent() {
+        assert_eq!(dec("%1\u{e9}"), "%1\u{e9}");
+        assert_eq!(dec("%\u{e9}"), "%\u{e9}");
+        assert_eq!(dec("a%41+b%2"), "aA b%2");
+        assert_eq!(dec("%C3%A9"), "\u{e9}");
+    }
 
     #[test]
     fn sha256_matches_known_vectors() {

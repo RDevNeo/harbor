@@ -369,6 +369,13 @@ impl App {
     /// Harbor, so they reach the agent fenced as data (see [`untrusted`]).
     pub fn handle_hook(&mut self, h: Hook, ctx: &egui::Context) {
         let Some(wh) = self.webhooks.iter().find(|w| w.token == h.token).cloned() else { return };
+        // A hook whose project is gone must never create a lead (the insert would break the
+        // foreign key, or drive a new project that reused the id): drop the stale tokens.
+        if self.repo(wh.repo_id).is_none() {
+            self.webhooks = self.store.webhooks();
+            self.sync_tokens();
+            return;
+        }
         self.store.hit_webhook(wh.id);
         self.webhooks = self.store.webhooks();
         let lead = self.ensure_lead(wh.repo_id);

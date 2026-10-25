@@ -747,6 +747,19 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_repo_drops_its_webhooks() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-hooks-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Store::open_at(&dir.join("harbor.db")).unwrap();
+        let repo = s.add_repo(&dir).unwrap();
+        s.add_webhook(repo, "ci", "tok", "");
+        assert_eq!(s.webhooks().len(), 1);
+        s.remove_repo(repo);
+        assert!(s.webhooks().is_empty(), "the project's hook tokens must not outlive it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn saves_only_what_changed() {
         let dir = std::env::temp_dir().join(format!("harbor-store-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
