@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-10-25
+
 ### Fixed
 - A chat in a project another PC shares (its folder is on that PC, not this one) no longer starts
   an agent whose every shell and file call fails: the chat says the folder isn't here and to pick
@@ -649,7 +651,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.25.1...HEAD
+[0.25.1]: https://github.com/RDevNeo/harbor/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/RDevNeo/harbor/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/RDevNeo/harbor/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/RDevNeo/harbor/compare/v0.23.0...v0.23.1
