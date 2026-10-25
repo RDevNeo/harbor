@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-10-25
+
 ### Fixed
 - install.sh with `HARBOR_INSECURE=1` installs a build that has no signature files (as it already
   did for an extracted folder) instead of stopping at the missing `.minisig`. Without it, an unsigned
@@ -709,7 +711,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/RDevNeo/harbor/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/RDevNeo/harbor/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/RDevNeo/harbor/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/RDevNeo/harbor/compare/v0.25.1...v0.26.0
