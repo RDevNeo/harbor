@@ -382,7 +382,7 @@ impl Drop for Hello {
     }
 }
 
-/// A phone that wants to pair (or to upgrade a pairing from before 0.20): waits for the person
+/// A phone that wants to pair (or to upgrade a pairing from before 0.22): waits for the person
 /// at the PC to compare the codes and confirm.
 #[derive(Clone)]
 pub struct Pending {

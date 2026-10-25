@@ -210,7 +210,7 @@ public class Hubs extends Base {
     }
 
     /** Pairs with three factors (the code confirmed on the PC), then keeps the pairing. A PC
-     *  with Harbor before 0.20 doesn't know them: paired as before, with its token and key. */
+     *  with Harbor before 0.22 doesn't know them: paired as before, with its token and key. */
     private void tryPair(Hub h) {
         Pair.run(this, h, false, () -> keep(h), e -> {
             if (e instanceof Hub.ApiError && ((Hub.ApiError) e).code == 404) { keep(h); return; }

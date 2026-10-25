@@ -18,7 +18,7 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   else (no CA, no names); it shows its own certificate. The handshake signatures are checked
   against that same key. The hub binds a pairing's token to the first phone key it's used with
   (`api_tokens[].fp`); from then on the token is refused with any other key (`401`).
-- **Three factors** (from 0.20, [below](#three-factors)): every call carries a session and a MAC
+- **Three factors** (from 0.22, [below](#three-factors)): every call carries a session and a MAC
   under the session's current key (`X-Harbor-Session`, `X-Harbor-Auth`); the pairing's token
   alone (`Authorization: Bearer <token>`) only pairs and starts sessions. `GET /app.apk` needs
   neither on the PC's own network. Optional `X-Harbor-Device: <phone name>` (shown next to the token in Settings › Phones) and,
@@ -176,11 +176,11 @@ own (`S_pc`, the same presence key).
 
 ### Upgrading older pairings
 
-A pairing made before 0.20 (token bound to the phone's TLS key, no secret) gets only
+A pairing made before 0.22 (token bound to the phone's TLS key, no secret) gets only
 `GET /v1/app`, `GET /app.apk` and `POST /v1/pair/*`; everything else is `401` with
-`upgrade: true`. The app (0.20) then offers "Upgrade the pairing": the same ceremony with the
+`upgrade: true`. The app (0.22) then offers "Upgrade the pairing": the same ceremony with the
 pairing's own token, confirmed on the PC (marked "asks to upgrade"). There is no way back: a
-three-factor pairing never works with the token alone. Apps before 0.20 can still update
+three-factor pairing never works with the token alone. Apps before 0.22 can still update
 themselves (`/v1/app`, `/app.apk`), also from outside the home network, and then upgrade.
 Plain HTTP from 127.0.0.1 keeps working with the token alone (test rigs, `adb reverse`): it's
 this PC itself.
