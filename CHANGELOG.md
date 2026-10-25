@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-24
+
 ### Changed
 - Devices no longer needs the separate Remote Devices app and is always offered. It lists what is
   paired with this Harbor: your other PCs (Settings › Devices) and phones running Harbor for
@@ -511,7 +513,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/RDevNeo/harbor/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/RDevNeo/harbor/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/RDevNeo/harbor/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/RDevNeo/harbor/compare/v0.16.0...v0.16.1
