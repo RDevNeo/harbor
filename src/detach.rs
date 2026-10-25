@@ -60,12 +60,18 @@ pub fn runner_chat(args: &[String], root: &Path) -> Option<i64> {
 }
 
 /// Live runners of this Harbor's turns, from the processes themselves (so one is found
-/// even if its folder is gone): chat id, folder, pid.
+/// even if its folder is gone): chat id, folder, pid. Only this user's processes: another
+/// user's that only looks like a runner isn't one.
 pub fn runners() -> Vec<(i64, PathBuf, u32)> {
+    use std::os::unix::fs::MetadataExt;
     let root = root();
+    let Ok(me) = std::fs::metadata("/proc/self").map(|m| m.uid()) else { return vec![] };
     let mut v = vec![];
     for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
         let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        if e.metadata().map(|m| m.uid()).ok() != Some(me) {
+            continue;
+        }
         let Ok(raw) = std::fs::read(e.path().join("cmdline")) else { continue };
         let args: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
         if let Some(chat) = runner_chat(&args, &root) {

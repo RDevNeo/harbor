@@ -7,6 +7,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 
 ### Fixed
+- Only this user's processes are taken for a chat's still-running turn; another account's
+  process that only looks like one no longer blocks the chat or trims its transcript.
 - A remote turn picked up after a restart no longer serves its MCP servers when another program
   has taken the bridge port its ssh forward points to (whoever holds it has seen the turn's token).
 
