@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-24
+
 ### Fixed
 - A phone using Harbor through another of your PCs showed offline here. The PCs now tell each
   other where they saw your phones (every 15 s), so Devices shows it online "via" that PC, with
@@ -526,7 +528,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/RDevNeo/harbor/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/RDevNeo/harbor/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/RDevNeo/harbor/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/RDevNeo/harbor/compare/v0.16.1...v0.16.2
