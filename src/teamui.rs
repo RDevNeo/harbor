@@ -96,9 +96,7 @@ impl App {
             subs.sort_by_key(|c| (!self.turns.contains_key(&c.id), std::cmp::Reverse(c.updated)));
             let marks = Settle::load(&ctx, &self.store);
             let now = store::now();
-            let (settled, active): (Vec<Chat>, Vec<Chat>) = subs.into_iter().partition(|c| {
-                !self.turns.contains_key(&c.id) && self.pending.get(&c.id).is_none_or(|q| q.is_empty()) && self.queued(c.id).is_empty() && self.paused(c.id).is_none() && marks.settled(c, now)
-            });
+            let (settled, active): (Vec<Chat>, Vec<Chat>) = subs.into_iter().partition(|c| self.settled_by(&marks, c, now));
             header(ui, ic::USERS, "Agents", active.len());
             if active.is_empty() {
                 let hint = if settled.is_empty() { "The lead spawns subagents here as it delegates work." } else { "No agents working. Earlier ones are under Settled." };
@@ -240,6 +238,15 @@ impl App {
                 self.agent_card(ui, c, true);
             }
         }
+    }
+
+    /// Whether an agent sits under Settled in the team panel (the phone API asks too).
+    pub fn agent_settled(&self, ctx: &egui::Context, c: &Chat) -> bool {
+        self.settled_by(&Settle::load(ctx, &self.store), c, store::now())
+    }
+
+    fn settled_by(&self, marks: &Settle, c: &Chat, now: i64) -> bool {
+        !self.turns.contains_key(&c.id) && self.pending.get(&c.id).is_none_or(|q| q.is_empty()) && self.queued(c.id).is_empty() && self.paused(c.id).is_none() && marks.settled(c, now)
     }
 
     /// Settle (or Unsettle) an agent now; new work unsettles it again.

@@ -292,7 +292,7 @@ turn (`409` otherwise).
 
 ### `POST /v1/upload?name=<file name>&chat=<id>`
 
-Raw body (the file), `Content-Length` required. `chat` is optional (files go to
+Raw body (the file), `Content-Length` required. `chat` is optional, an id or a gid (files go to
 `<data>/uploads/<chat>/`, or `uploads/pending/`). → `201 {"id": "12/1761…-photo.jpg", "path": "/…"}`.
 Pass `id` in `files` of a send or a new chat. Images reach the agent as images.
 
@@ -310,7 +310,35 @@ continue). → `{"ok": true}`.
 
 An image a card shows (its `images[].url`), with the token like every call. With `max`, a JPEG at
 most that many pixels on its longer side (16–2048); without, the file as it is. Image files only
-(png, jpg, gif, webp, …); `404` otherwise.
+(png, jpg, gif, webp, …); `404` otherwise. An upload's `path` works too.
+
+### `GET /v1/chats/{id}/team`
+
+What the desktop's team panel shows beside a lead: its sub-agents, processes, wake-ups and its
+project's webhooks. For a sub-agent, its lead's team. Read-only.
+
+```json
+{"lead": 12, "project_id": 1, "home": "",
+ "agents": [{"id": 15, "name": "worker", "title": "Fix the parser", "account": "Claude · AB",
+             "model": "Opus 5.5", "running": true, "started_ms": 1761200000000, "queued": 0,
+             "paused": null, "settled": false, "updated_ms": 1761200000000}],
+ "processes": [{"id": 3, "name": "dev", "cmd": "npm run dev", "url": "http://localhost:5173",
+                "started_ms": 1761200000000}],
+ "wakeups": [{"id": 4, "at_ms": 1761203600000, "reason": "Check the deploy"}],
+ "webhooks": [{"id": 2, "name": "github", "description": "", "hits": 3, "last_ms": 1761200000000,
+               "public": true, "url": "https://…/hooks/…"}]}
+```
+
+- `agents`: working ones first, then the most recently active. `started_ms` is null unless
+  `running`; `paused` names when a usage limit lets it go on ("14:00", "usage limit") or is null;
+  `settled` agents are the desktop's folded "Settled" group.
+- `processes` are the running ones; `url` is the first local URL it printed, or null.
+- `wakeups[].at_ms`: when the lead is woken; `webhooks[].last_ms`: 0 when never called, `url`
+  the public URL when there is one, else this PC's local one.
+- `home`: the PC a copy of another PC's chat runs on ("" for this PC's own). Its processes,
+  wake-ups and webhooks are there, so they're empty here.
+- A change in a team (an agent starts, stops or queues, a process or a wake-up comes or goes, a
+  webhook is called) is a change of its lead: the lead's id comes in `changed_chats`.
 
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 

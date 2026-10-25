@@ -611,6 +611,8 @@ pub struct Local {
     rest: u64,
     /// The open chat and a hash of its draft at the last frame (this PC typing).
     draft: Option<(i64, u64)>,
+    /// Lead → hash of its team panel (`/v1/chats/{id}/team`), for leads with a team.
+    teams: HashMap<i64, u64>,
     pub ui: PhonesUi,
 }
 
@@ -623,7 +625,7 @@ pub struct PhonesUi {
 
 impl Local {
     pub fn new(hub: Arc<Hub>) -> Self {
-        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, ui: Default::default() }
+        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, teams: HashMap::new(), ui: Default::default() }
     }
 }
 
@@ -1246,7 +1248,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         ("GET", ["v1", "image"]) => serve_image(w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
         ("POST", ["v1", "upload"]) => {
-            let up = upload_to(&mut r, &req, &uploads_dir());
+            let up = upload_to(&mut r, &upload_request(&req, |g| hub.mesh.by_gid(g)), &uploads_dir());
             send_json(r.get_mut(), up.status, &up.body);
         }
         _ => {
@@ -1375,6 +1377,25 @@ pub fn safe_name(name: &str) -> String {
     let s: String = base.chars().filter(|c| !c.is_control()).take(100).collect();
     let s = s.trim().trim_start_matches('.').to_string();
     if s.is_empty() { "file".into() } else { s }
+}
+
+/// An upload's `chat` as this hub's id: the app names chats by gid (`X-Harbor-Ids: global`).
+/// A chat it doesn't know files the upload under pending/; a send names it by its id anyway.
+fn upload_request(req: &Request, by_gid: impl Fn(&str) -> Option<i64>) -> Request {
+    let mut q = req.clone();
+    q.query.retain_mut(|(k, v)| {
+        if k != "chat" || v.parse::<i64>().is_ok() {
+            return true;
+        }
+        match by_gid(v) {
+            Some(id) => {
+                *v = id.to_string();
+                true
+            }
+            None => false,
+        }
+    });
+    q
 }
 
 pub fn upload_to(r: &mut impl Read, req: &Request, base: &Path) -> Reply {
@@ -1877,6 +1898,7 @@ impl App {
         let rest_changed = rest != self.api.rest;
         self.api.rest = rest;
         self.api.chats = seen;
+        let teams = self.team_hashes();
         let hub = &self.api.hub;
         for id in &changed {
             hub.touch(Some(*id), true);
@@ -1884,6 +1906,38 @@ impl App {
         if (gone || rest_changed) && changed.is_empty() {
             hub.touch(None, true);
         }
+        // A team that changed changes its lead, so a phone showing that team refetches it.
+        let old = &self.api.teams;
+        for id in teams.keys().chain(old.keys().filter(|k| !teams.contains_key(k))) {
+            if teams.get(id) != old.get(id) && !changed.contains(id) {
+                hub.touch(Some(*id), false);
+            }
+        }
+        self.api.teams = teams;
+    }
+
+    /// Per lead, a hash of what its team panel shows; leads without a team are left out.
+    fn team_hashes(&self) -> HashMap<i64, u64> {
+        let mut parts: HashMap<i64, DefaultHasher> = HashMap::new();
+        for c in self.chats.iter().filter(|c| c.role == store::Role::Sub) {
+            if let Some(lead) = c.parent {
+                (c.id, &c.name, &c.title, self.is_running(c.id), self.queued_count(c.id), self.paused(c.id).is_some()).hash(parts.entry(lead).or_default());
+            }
+        }
+        for p in &self.procs {
+            (p.id, &p.name, &p.url).hash(parts.entry(p.lead).or_default());
+        }
+        for t in &self.timers {
+            (t.id, t.at, &t.reason).hash(parts.entry(t.chat_id).or_default());
+        }
+        if !self.webhooks.is_empty() {
+            for c in self.chats.iter().filter(|c| c.role != store::Role::Sub && c.repo_id.is_some()) {
+                for h in self.webhooks.iter().filter(|h| Some(h.repo_id) == c.repo_id) {
+                    (h.id, &h.name, &h.description, h.hits, h.last_hit, self.funnel.is_some()).hash(parts.entry(c.id).or_default());
+                }
+            }
+        }
+        parts.into_iter().map(|(k, h)| (k, h.finish())).collect()
     }
 
     /// This PC's composer as a typer: an edit to an open chat's draft renews the lease, an
@@ -1981,6 +2035,10 @@ impl App {
             ("GET", ["v1", "state"]) => ok(self.api_state(ctx, &device_id(&call.token))),
             ("GET", ["v1", "chats", c, "items"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_items(c, call.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
+                None => err(404, "no such chat"),
+            },
+            ("GET", ["v1", "chats", c, "team"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) => ok(self.api_team(c, ctx)),
                 None => err(404, "no such chat"),
             },
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
@@ -2086,6 +2144,13 @@ impl App {
                 }
                 // (get_mut: indexing a null part mutably would turn it into an object.)
                 for a in v.get_mut("status").and_then(|s| s.get_mut("waiting")).and_then(|w| w.get_mut("agents")).and_then(|a| a.as_array_mut()).into_iter().flatten() {
+                    a["id"] = gid(&a["id"]);
+                }
+            }
+            ("GET", ["v1", "chats", _, "team"]) => {
+                v["lead"] = gid(&v["lead"]);
+                v["project_id"] = path(&v["project_id"]);
+                for a in v.get_mut("agents").and_then(|a| a.as_array_mut()).into_iter().flatten() {
                     a["id"] = gid(&a["id"]);
                 }
             }
@@ -2350,6 +2415,56 @@ impl App {
         });
         let limit = self.limit_text(chat).map(|(text, cancel)| json!({ "text": text, "can_cancel": cancel }));
         json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit })
+    }
+
+    /// The team panel of a chat's lead (a subagent's is its lead's), as teamui.rs draws it.
+    /// A copy of another PC's chat has its processes, wake-ups and webhooks there (`home`).
+    pub fn api_team(&self, chat: i64, ctx: &egui::Context) -> Value {
+        let lead = self.chat(chat).filter(|c| c.role == store::Role::Sub).and_then(|c| c.parent).unwrap_or(chat);
+        let lc = self.chat(lead);
+        let repo = lc.and_then(|c| c.repo_id);
+        let home = lc.filter(|c| c.foreign()).map(|c| self.home_name(c)).unwrap_or_default();
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let since = |at: Instant| now_ms - at.elapsed().as_millis() as i64;
+        let mut subs = self.subs_of(lead);
+        subs.sort_by_key(|c| (!self.is_running(c.id), std::cmp::Reverse(c.updated)));
+        let agents: Vec<Value> = subs
+            .iter()
+            .map(|c| {
+                let acc = self.account(&c.account);
+                json!({
+                    "id": c.id, "name": c.name, "title": c.title,
+                    "account": acc.map(|a| a.short()).unwrap_or_default(),
+                    "model": acc.map(|a| self.model_label(a.kind, &c.model)).unwrap_or_else(|| c.model.clone()),
+                    "running": self.is_running(c.id),
+                    "started_ms": self.running_since(c.id).map(since),
+                    "queued": self.queued_count(c.id),
+                    "paused": self.paused(c.id).map(|p| p.at.map(crate::limits::when).unwrap_or_else(|| "usage limit".into())),
+                    "settled": self.agent_settled(ctx, c),
+                    "updated_ms": c.updated * 1000,
+                })
+            })
+            .collect();
+        let processes: Vec<Value> = self
+            .procs
+            .iter()
+            .filter(|p| p.lead == lead)
+            .map(|p| json!({ "id": p.id, "name": p.name, "cmd": p.cmd, "url": p.url, "started_ms": since(p.started) }))
+            .collect();
+        let wakeups: Vec<Value> = self.timers.iter().filter(|t| t.chat_id == lead).map(|t| json!({ "id": t.id, "at_ms": t.at * 1000, "reason": t.reason })).collect();
+        let webhooks: Vec<Value> = self
+            .webhooks
+            .iter()
+            .filter(|h| home.is_empty() && Some(h.repo_id) == repo)
+            .map(|h| {
+                let (local, public) = self.hook_url(&h.token);
+                json!({
+                    "id": h.id, "name": h.name, "description": h.description, "hits": h.hits, "last_ms": h.last_hit * 1000,
+                    "public": public.is_some(), "url": public.unwrap_or(local),
+                })
+            })
+            .collect();
+        json!({ "lead": lead, "project_id": repo, "home": home, "agents": agents, "processes": processes, "wakeups": wakeups, "webhooks": webhooks })
     }
 
     fn api_files(body: &Value) -> Result<Vec<PathBuf>, Reply> {
@@ -2948,6 +3063,15 @@ mod tests {
         let mut cur = std::io::Cursor::new(b"POST /v1/upload?chat=x HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec());
         let req = read_head(&mut cur).unwrap();
         assert_eq!(upload_to(&mut cur, &req, &base).status, 400);
+        // The app names its chat by gid: the hub's own id, or pending/ for one it doesn't know.
+        let gid = |g: &str| (g == "4e47-gid").then_some(7);
+        let raw = |chat: &str| format!("POST /v1/upload?name=a.png&chat={chat} HTTP/1.1\r\nContent-Length: 2\r\n\r\nab");
+        for (chat, dir) in [("4e47-gid", "7/"), ("12", "12/"), ("someone-else", "pending/")] {
+            let mut cur = std::io::Cursor::new(raw(chat).into_bytes());
+            let req = upload_request(&read_head(&mut cur).unwrap(), gid);
+            let r = upload_to(&mut cur, &req, &base);
+            assert!(r.status == 201 && r.body["id"].as_str().unwrap().starts_with(dir), "{chat}: {:?}", r.body);
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 
