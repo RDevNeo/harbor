@@ -83,6 +83,13 @@ final class Hub {
             eps.addAll(fresh.eps);
         }
         if (!fresh.pid.isEmpty()) pid = fresh.pid;
+        // Paired again or upgraded to three factors on another screen: its secret from now on.
+        if (!fresh.secret.equals(secret) || fresh.binding != binding) {
+            secret = fresh.secret;
+            binding = fresh.binding;
+            token = fresh.token;
+            synchronized (askedHubs) { askedHubs.remove(id); }
+        }
     }
 
     /** Per hub: the endpoint calls go to now ("" = the paired PC). Shared by every screen. */
