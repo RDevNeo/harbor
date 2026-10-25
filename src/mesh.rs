@@ -576,6 +576,100 @@ pub fn http(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, 
     exchange(s, &dest.addr, method, path, body)
 }
 
+/// How often each PC asks the others where they saw the phones.
+const PHONES_EVERY: Duration = Duration::from_secs(15);
+
+/// Asks each PC of the mesh where it saw the phones (`GET /mesh/v1/phones`), so a phone that
+/// talks to another PC shows online here too, and takes the phone app from a PC that serves a
+/// newer one: a phone whose app only asks the PC it talks to then finds the update there.
+fn phones_loop(hub: Arc<api::Hub>) {
+    let mut tried: HashMap<String, (i64, Instant)> = HashMap::new();
+    loop {
+        std::thread::sleep(PHONES_EVERY);
+        if !hub.mesh.on.load(Ordering::SeqCst) {
+            continue;
+        }
+        let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().filter(|p| p.online && !p.fp.is_empty()).cloned().collect();
+        let mut seen = HashMap::new();
+        for p in peers {
+            // (a peer before 0.19 has no such call: 404, nothing to learn)
+            let Ok((200, v)) = http(&p.dest(), "GET", "/mesh/v1/phones", None, Duration::from_secs(8)) else { continue };
+            let sightings: Vec<api::Sighting> = v["phones"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|s| api::Sighting {
+                    group: s["group"].as_str().unwrap_or("").into(),
+                    name: s["name"].as_str().unwrap_or("").chars().take(60).collect(),
+                    seen: s["seen"].as_i64().unwrap_or(0).min(store::now()),
+                    app: s["app"].as_i64().unwrap_or(0),
+                })
+                .filter(|s| !s.group.is_empty())
+                .collect();
+            seen.insert(p.id.clone(), (p.name.clone(), sightings));
+            let theirs = v["apk"].as_i64().unwrap_or(0);
+            let mine = crate::update::apk().map_or(0, |(_, c)| c);
+            // A newer app there: fetched once per version and PC (again after 10 minutes on failure).
+            if theirs > mine && tried.get(&p.id).is_none_or(|(c, at)| *c != theirs || at.elapsed() > Duration::from_secs(600)) {
+                tried.insert(p.id.clone(), (theirs, Instant::now()));
+                match fetch_apk(&p.dest(), theirs) {
+                    Ok(()) => eprintln!("harbor: phone app {theirs} taken from {}", p.name),
+                    Err(e) => eprintln!("harbor: phone app {theirs} from {}: {e}", p.name),
+                }
+            }
+        }
+        *hub.elsewhere.lock().unwrap() = seen;
+    }
+}
+
+/// The phone app a PC serves (`GET /mesh/v1/app.apk`) into this PC's, as versionCode `code`.
+fn fetch_apk(dest: &Dest, code: i64) -> Result<(), String> {
+    let sock = dest.addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
+    if dest.fp.is_empty() {
+        return Err("no key on file for that PC".into());
+    }
+    let wait = Duration::from_secs(60);
+    let mut s: Box<dyn ReadWrite> = match &dest.via {
+        Some(via) if via.via.is_none() => {
+            let outer = crate::relay::open(via, &dest.fp, sock.port(), wait)?;
+            Box::new(crate::tls::handshake(outer, sock.ip(), Some(&dest.fp))?.0)
+        }
+        Some(_) => return Err("only one relay".into()),
+        None => Box::new(crate::tls::connect(&sock, Some(&dest.fp), CONNECT, wait)?.0),
+    };
+    let (id, name) = HELLO.lock().unwrap().clone();
+    let head = format!("GET /mesh/v1/app.apk HTTP/1.1\r\nHost: {}\r\nX-Harbor-Id: {}\r\nX-Harbor-Name: {}\r\nConnection: close\r\n\r\n", dest.addr, id.replace(['\r', '\n'], ""), name.replace(['\r', '\n'], ""));
+    s.write_all(head.as_bytes()).and_then(|_| s.flush()).map_err(|e| e.to_string())?;
+    let mut r = BufReader::new(s);
+    let mut line = String::new();
+    r.read_line(&mut line).map_err(|e| e.to_string())?;
+    if line.split_whitespace().nth(1) != Some("200") {
+        return Err(format!("answered {}", line.trim()));
+    }
+    let mut len: Option<u64> = None;
+    loop {
+        let mut l = String::new();
+        if r.read_line(&mut l).map_err(|e| e.to_string())? == 0 || l.trim().is_empty() {
+            break;
+        }
+        if let Some((k, v)) = l.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                len = v.trim().parse().ok();
+            }
+        }
+    }
+    let len = len.filter(|n| (1..=200 << 20).contains(n)).ok_or("no size, or too large")?;
+    let mut bytes = Vec::with_capacity(len as usize);
+    r.take(len).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if bytes.len() as u64 != len || !bytes.starts_with(b"PK\x03\x04") {
+        return Err("not an APK".into());
+    }
+    crate::update::put_apk(&bytes, code)
+}
+
+trait ReadWrite: Read + Write {}
+impl<T: Read + Write> ReadWrite for T {}
+
 /// Writes a request and reads its answer on an open connection.
 fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>) -> Result<(u16, Value), String> {
     let (ctype, data) = body.unwrap_or(("application/json", b""));
@@ -674,6 +768,11 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
                 // Only copies changed (another PC's chats): nothing this peer needs from here.
                 at = rev;
             }
+        }
+        // Where this PC saw the phones (Devices on the others), and the phone app it serves.
+        ("GET", ["mesh", "v1", "phones"]) => {
+            let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app })).collect();
+            ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c) }))
         }
         ("POST", ["mesh", "v1", "upload"]) => {
             let q = api::Request { query: vec![("name".into(), req.query("name").unwrap_or("file").into())], ..req.clone() };
@@ -1035,6 +1134,10 @@ pub fn start(hub: Arc<api::Hub>, tx: Sender<crate::control::Incoming>, wake: imp
         }
         let port = *hub.port.lock().unwrap();
         crate::discover::start(hub.clone(), port);
+        {
+            let hub = hub.clone();
+            std::thread::spawn(move || phones_loop(hub));
+        }
         let running: Arc<Mutex<HashSet<String>>> = Default::default();
         let mut ts: (Option<Instant>, Option<Value>) = (None, None);
         let mut probed: HashMap<String, Instant> = HashMap::new();

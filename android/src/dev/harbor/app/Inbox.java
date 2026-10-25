@@ -74,6 +74,8 @@ final class Inbox {
                             if (my != gen) return;
                             check(h, v);
                         }
+                    // The newest app among the PCs (every 10 minutes): the sidebar's Update.
+                    Update.check(Ui.app, false);
                 }
                 try { Thread.sleep(SWEEP); } catch (InterruptedException e) { return; }
             }

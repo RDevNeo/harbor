@@ -210,15 +210,32 @@ impl Parcel {
     }
 }
 
-/// A phone paired here, one per pairing (for Devices).
-#[derive(Clone, Debug, PartialEq)]
+/// A phone paired here, one per pairing (for Devices and Settings › Phones).
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct PairedPhone {
     pub group: String,
     pub name: String,
-    /// When its app last called this PC (0: not this session).
+    /// When its app last called this PC or (`via`) another PC of the mesh (0: not seen).
     pub seen: i64,
-    /// The address it called from.
+    /// The address it called this PC from.
     pub ip: String,
+    /// The PC it was last seen at, when that's another one (its name); "" for this PC.
+    pub via: String,
+    /// Its app's versionCode: what it says (`X-Harbor-App`, apps from 0.19), at least
+    /// [`APP_INBOX`] for an app that picks up sends, 0 when unknown (an older app).
+    pub app: i64,
+}
+
+/// The first app version that picks up what PCs send (`GET /v1/inbox`, 0.17.0).
+pub const APP_INBOX: i64 = 17000;
+
+/// A phone as another PC of the mesh saw it (`GET /mesh/v1/phones` there).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sighting {
+    pub group: String,
+    pub name: String,
+    pub seen: i64,
+    pub app: i64,
 }
 
 /// What the listener threads and the UI thread share.
@@ -231,6 +248,10 @@ pub struct Hub {
     pub seen: Mutex<HashMap<String, (String, i64)>>,
     /// Token → the address it last called from: this session only.
     pub ips: Mutex<HashMap<String, String>>,
+    /// Token → its app's versionCode (see [`PairedPhone::app`]): this session only.
+    pub apps: Mutex<HashMap<String, i64>>,
+    /// Peer id → (its name, the phones it saw): the mesh's view of where phones are.
+    pub elsewhere: Mutex<HashMap<String, (String, Vec<Sighting>)>>,
     /// What waits for phones' apps to pick it up (Devices › Send).
     pub inbox: Mutex<Vec<Parcel>>,
     revs: Mutex<Revs>,
@@ -256,6 +277,8 @@ impl Hub {
             tokens: Mutex::new(tokens),
             seen: Mutex::new(HashMap::new()),
             ips: Mutex::new(HashMap::new()),
+            apps: Mutex::new(HashMap::new()),
+            elsewhere: Mutex::new(HashMap::new()),
             inbox: Mutex::new(vec![]),
             revs: Mutex::new(Revs { rev: base, state: base, ..Default::default() }),
             cv: Condvar::new(),
@@ -416,21 +439,55 @@ impl Hub {
         self.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.group.clone()).unwrap_or_default()
     }
 
-    /// The phones paired here, one per pairing, most recently seen first.
-    pub fn paired_phones(&self) -> Vec<PairedPhone> {
+    /// The phones as this PC saw them, one per pairing (what `GET /mesh/v1/phones` tells peers).
+    pub fn local_phones(&self) -> Vec<PairedPhone> {
         let tokens = self.tokens.lock().unwrap().clone();
         let seen = self.seen.lock().unwrap().clone();
         let ips = self.ips.lock().unwrap().clone();
+        let apps = self.apps.lock().unwrap().clone();
         let mut out: Vec<PairedPhone> = vec![];
         for t in tokens.iter().filter(|t| !t.group.is_empty()) {
             let (named, at) = seen.get(&t.token).cloned().unwrap_or_default();
             let name = if !named.is_empty() { named } else { t.name.clone() };
             let ip = ips.get(&t.token).cloned().unwrap_or_default();
+            let app = apps.get(&t.token).copied().unwrap_or(0);
             match out.iter_mut().find(|p| p.group == t.group) {
-                Some(p) if at > p.seen => *p = PairedPhone { group: t.group.clone(), name: if name.is_empty() { p.name.clone() } else { name }, seen: at, ip },
-                Some(p) if p.name.is_empty() => p.name = name,
-                Some(_) => {}
-                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip }),
+                Some(p) => {
+                    p.app = p.app.max(app);
+                    if at > p.seen {
+                        p.seen = at;
+                        p.ip = ip;
+                        if !name.is_empty() {
+                            p.name = name;
+                        }
+                    } else if p.name.is_empty() {
+                        p.name = name;
+                    }
+                }
+                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new() }),
+            }
+        }
+        out
+    }
+
+    /// The phones paired here, one per pairing, with what the other PCs saw of them: last seen
+    /// wherever it was most recent (and through which PC), the newest app it showed.
+    /// Most recently seen first.
+    pub fn paired_phones(&self) -> Vec<PairedPhone> {
+        let mut out = self.local_phones();
+        let elsewhere = self.elsewhere.lock().unwrap().clone();
+        for p in out.iter_mut() {
+            for (pc, sightings) in elsewhere.values() {
+                for s in sightings.iter().filter(|s| s.group == p.group) {
+                    p.app = p.app.max(s.app);
+                    if s.seen > p.seen {
+                        p.seen = s.seen;
+                        p.via = pc.clone();
+                        if !s.name.is_empty() {
+                            p.name = s.name.clone();
+                        }
+                    }
+                }
             }
         }
         out.sort_by(|a, b| b.seen.cmp(&a.seen));
@@ -1093,6 +1150,15 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         return crate::relay::serve(r, &peer, &req, hub);
     }
+    // The phone app this PC serves, for a PC of the mesh whose is older (mesh.rs `phones_loop`).
+    if segs == ["mesh", "v1", "app.apk"] && req.method == "GET" {
+        let paired = matches!(&peer.via, Via::Tls(Some(fp)) if hub.mesh.allowed_fp(fp).is_some());
+        if !paired || !hub.mesh.on.load(Ordering::SeqCst) {
+            FAILS.hit(ip);
+            return send_json(r.get_mut(), 403, &json!({ "error": "only for paired PCs" }));
+        }
+        return serve_apk(r.get_mut(), false);
+    }
     // Another PC's Harbor (mesh.rs): known by its key, not a token.
     if segs.first() == Some(&"mesh") {
         let reply = crate::mesh::serve(&peer, &req, &mut r, hub, tx, wake);
@@ -1122,6 +1188,14 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     let global = req.header("x-harbor-ids") == Some("global");
     hub.seen.lock().unwrap().insert(token.clone(), (device.clone(), store::now()));
     hub.ips.lock().unwrap().insert(token.clone(), ip.to_string());
+    // Its app's version: said from 0.19; an app that picks up sends is 0.17 or newer.
+    let said = req.header("x-harbor-app").and_then(|v| v.trim().parse::<i64>().ok()).filter(|c| *c > 0);
+    let inbox = segs.first() == Some(&"v1") && segs.get(1) == Some(&"inbox");
+    if said.is_some() || inbox {
+        let mut apps = hub.apps.lock().unwrap();
+        let had = apps.get(&token).copied().unwrap_or(0);
+        apps.insert(token.clone(), said.unwrap_or(had.max(APP_INBOX)));
+    }
     let w = r.get_mut();
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["v1", "app"]) => send_json(w, 200, &app_info()),
@@ -2820,6 +2894,39 @@ mod tests {
         assert_eq!(p.len(), 2);
         assert_eq!((p[0].group.as_str(), p[0].name.as_str(), p[0].seen, p[0].ip.as_str()), ("ga", "Pixel 8", 50, "192.0.2.7"));
         assert_eq!((p[1].group.as_str(), p[1].seen), ("gb", 0));
+    }
+
+    #[test]
+    fn phones_seen_elsewhere_and_their_apps() {
+        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new() };
+        let hub = Arc::new(Hub::new(vec![tok("a", "ga"), tok("b", "gb"), tok("c", "gc")], 0));
+        hub.enabled.store(true, Ordering::SeqCst);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, rx) = channel();
+        {
+            let hub = hub.clone();
+            std::thread::spawn(move || accept(l, hub, tx, || {}));
+        }
+        std::thread::spawn(move || {
+            while let Ok(crate::control::Incoming::Api(c)) = rx.recv() {
+                let _ = c.reply.send(ok(json!({})));
+            }
+        });
+        // An app from 0.19 says its version; one that picks up sends is at least 0.17.
+        call(port, "GET /v1/app HTTP/1.1\r\nAuthorization: Bearer a\r\nX-Harbor-App: 18001\r\n\r\n");
+        call(port, "GET /v1/inbox HTTP/1.1\r\nAuthorization: Bearer b\r\n\r\n");
+        let local = hub.local_phones();
+        let app = |g: &str| local.iter().find(|p| p.group == g).unwrap().app;
+        assert_eq!((app("ga"), app("gb"), app("gc")), (18001, APP_INBOX, 0));
+        // Another PC saw phone c more recently (with a newer app): online there, via that PC.
+        let later = store::now() + 1;
+        hub.elsewhere.lock().unwrap().insert("pc:acer".into(), ("acer".into(), vec![Sighting { group: "gc".into(), name: "A13".into(), seen: later, app: 16002 }, Sighting { group: "zz".into(), name: "not ours".into(), seen: later, app: 1 }]));
+        let p = hub.paired_phones();
+        assert_eq!(p.len(), 3, "only pairings this PC has");
+        assert_eq!((p[0].group.as_str(), p[0].seen, p[0].via.as_str(), p[0].name.as_str(), p[0].app), ("gc", later, "acer", "A13", 16002));
+        let a = p.iter().find(|p| p.group == "ga").unwrap();
+        assert_eq!(a.via, "", "seen here last");
     }
 
     #[test]

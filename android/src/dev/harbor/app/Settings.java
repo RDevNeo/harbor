@@ -58,7 +58,7 @@ public class Settings extends Base {
         top.addView(pc, Ui.fill());
 
         LinearLayout app = card(col);
-        LinearLayout updateRow = Ui.cardRow(this, Ui.I_DOWNLOAD, "Update", "Checking…", Ui.FG, null);
+        LinearLayout updateRow = Ui.cardRow(this, Ui.I_DOWNLOAD, "Update", "Checking…", Ui.FG, v -> checkUpdates());
         updateNote = (TextView) ((LinearLayout) updateRow.getChildAt(1)).getChildAt(1);
         updateBtn = Ui.button(this, "Update", true, v -> update());
         updateBtn.setVisibility(View.GONE);
@@ -139,22 +139,28 @@ public class Settings extends Base {
     protected void onResume() {
         super.onResume();
         if (hub == null) return;
+        checkUpdates();
+    }
+
+    /** The PC's version, and the newest app any PC offers (tap the Update row to ask again). */
+    private void checkUpdates() {
+        updateNote.setText("Checking every PC…");
         Ui.pool.execute(() -> {
             String info, note, version = ""; long code = 0;
             try {
                 JSONObject st = hub.state();
                 version = st.optString("version");
                 info = "Harbor " + version;
-                JSONObject app = hub.get("/v1/app");
-                code = app.optLong("version_code");
-                long mine = myCode(this);
-                note = code <= 0 ? "This PC has no app build to offer"
-                        : code > mine ? "Version " + name(code) + " is ready on this PC"
-                        : "Up to date";
             } catch (Exception e) {
                 info = Hub.why(e);
-                note = "Can't check: " + Hub.why(e);
             }
+            // Every PC of every pairing: the one this phone talks to may run an older Harbor.
+            code = Update.check(getApplicationContext(), true);
+            long mine = myCode(this);
+            String where = Update.bestHub == null ? "" : pcName(Update.bestHub, Update.bestPc);
+            note = code <= 0 ? "No PC answered with an app to offer"
+                    : code > mine ? "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where)
+                    : "Up to date (" + name(mine) + ")";
             final String fi = info, fn = note, fv = version; final long fc = code;
             Ui.main.post(() -> {
                 if (isFinishing()) return;
@@ -166,6 +172,12 @@ public class Settings extends Base {
                 updateBtn.setVisibility(fc > myCode(this) ? View.VISIBLE : View.GONE);
             });
         });
+    }
+
+    /** The name of PC v of pairing id ("" = the paired PC). */
+    private String pcName(String id, String v) {
+        Hub h = Hub.get(this, id);
+        return h == null ? "" : h.labelOn(v);
     }
 
     /** 7001 -> 0.7.1 (android/build.sh: major*1000000 + minor*1000 + patch). */

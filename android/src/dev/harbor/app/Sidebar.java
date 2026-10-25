@@ -120,7 +120,8 @@ final class Sidebar {
     void render(JSONObject st) {
         this.st = st;
         JSONObject app = st.optJSONObject("app");
-        update.setVisibility(app != null && app.optLong("version_code") > Settings.myCode(a) ? View.VISIBLE : View.GONE);
+        long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
+        update.setVisibility(offered > Settings.myCode(a) ? View.VISIBLE : View.GONE);
         list.removeAllViews();
 
         Map<String, String> projects = new HashMap<>();
