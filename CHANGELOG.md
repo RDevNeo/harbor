@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-25
+
 ### Added
 - Slash commands in the composer, as in T3 Code: type `/` at the start of a word and a menu above
   the composer lists commands and skills, filtered as you type, each with its description and
@@ -543,7 +545,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/RDevNeo/harbor/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/RDevNeo/harbor/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/RDevNeo/harbor/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/RDevNeo/harbor/compare/v0.16.2...v0.17.0
