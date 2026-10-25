@@ -1,7 +1,7 @@
 # The optional Servo engine, harbor-browser. Its id is the git tree hash of browser/, so it is
 # rebuilt only when browser/ changes. Looked up in this order: the actions cache, then the
-# latest release's harbor-browser-x86_64-linux.tar.gz. Servo is compiled only when neither has
-# this id AND the caller asks for it:
+# latest release's harbor-browser-x86_64-linux.tar.gz, if the release key signed it. Servo is
+# compiled only when neither has this id AND the caller asks for it:
 #   - release.yml calls this with build=true on a v* tag (a release must ship the engine) and
 #     build=false on main pushes, which then just package no browser.
 #   - Run it by hand (Actions > browser > Run workflow, on main) after changing browser/, so
@@ -51,9 +51,18 @@ jobs:
       - name: Reuse the latest release's engine
         id: prev
         if: steps.bin.outputs.cache-hit != 'true'
+        # Only an engine the release key signed: the asset itself could have been replaced.
+        env:
+          MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
         run: |
           mkdir -p out /tmp/prev
-          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'harbor-browser-x86_64-linux.tar.gz' --dir /tmp/prev 2>/dev/null \
+          curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
+          echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
+          tar -xzf /tmp/minisign.tgz -C /tmp 2>/dev/null
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'harbor-browser-x86_64-linux.tar.gz*' --dir /tmp/prev 2>/dev/null \
+             && tc="$(/tmp/minisign-linux/x86_64/minisign -VQm /tmp/prev/harbor-browser-x86_64-linux.tar.gz -p packaging/minisign.pub)" \
+             && case "$tc" in "harbor v"*" harbor-browser-x86_64-linux.tar.gz") true ;; *) false ;; esac \
              && tar -xzf /tmp/prev/harbor-browser-x86_64-linux.tar.gz -C /tmp/prev \
              && [ "$(cat /tmp/prev/harbor-browser-x86_64-linux/browser.id)" = "${{ steps.id.outputs.id }}" ]; then
             cp /tmp/prev/harbor-browser-x86_64-linux/harbor-browser out/
