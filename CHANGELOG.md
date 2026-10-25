@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-10-25
+
 ### Fixed
 - Without XDG_RUNTIME_DIR, Harbor's control socket and lock live in a folder only you can open,
   not in the shared /tmp.
@@ -687,7 +689,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/RDevNeo/harbor/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/RDevNeo/harbor/compare/v0.25.1...v0.26.0
 [0.25.1]: https://github.com/RDevNeo/harbor/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/RDevNeo/harbor/compare/v0.24.0...v0.25.0
