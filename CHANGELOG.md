@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-24
+
 ### Added
 - Devices › Send works for phones paired with Harbor's Android app: text or an image to the
   phone's clipboard, images (saved to Pictures/Harbor and opened) and files (saved to
@@ -495,7 +497,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/RDevNeo/harbor/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/RDevNeo/harbor/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/RDevNeo/harbor/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/RDevNeo/harbor/compare/v0.15.1...v0.16.0
