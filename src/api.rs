@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 
 pub const DEFAULT_PORT: u16 = 47930;
 /// The longest a long-poll waits before answering with nothing new (clients time out at 25 s).
-const POLL: Duration = Duration::from_secs(20);
+pub const POLL: Duration = Duration::from_secs(20);
 /// How long a call waits for the UI thread.
 const UI_WAIT: Duration = Duration::from_secs(30);
 /// How long a long-poll that saw a change waits for more before answering.
@@ -54,7 +54,7 @@ const CLIP: usize = 16 << 10;
 
 // ================================================================== shared state
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct Token {
     pub token: String,
     /// What the phone calls itself (`X-Harbor-Device`), once it has connected.
@@ -70,6 +70,26 @@ pub struct Token {
     /// on the token only works with that key.
     #[serde(default)]
     pub fp: String,
+    /// The pairing secret (hex), made when the phone paired with the codes confirmed on the PC
+    /// (phoneauth.rs). Empty: a pairing from before three factors, which must upgrade.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub secret: String,
+    /// The phone's presence key (SubjectPublicKeyInfo, hex): it signs each session's challenge.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub presence: String,
+    /// The phone binds its calls to the TLS connection (exporter): every call must.
+    #[serde(default)]
+    pub binding: bool,
+    /// A pairing code shown on the PC, not used yet: good for pairing only, for 10 minutes.
+    #[serde(default)]
+    pub ticket: bool,
+}
+
+impl Token {
+    /// Three factors: a session is needed for every call.
+    pub fn three(&self) -> bool {
+        !self.secret.is_empty() && !self.presence.is_empty()
+    }
 }
 
 #[derive(Default)]
@@ -265,6 +285,8 @@ pub struct Hub {
     pub tokens_dirty: AtomicBool,
     /// Pairings removed (groups), shared with peers so a removed phone is out everywhere.
     pub revoked: Mutex<Vec<String>>,
+    /// Phones' sessions, handshakes and pairings waiting for a confirmation (phoneauth.rs).
+    pub auth3: crate::phoneauth::State,
 }
 
 impl Hub {
@@ -287,6 +309,7 @@ impl Hub {
             mesh: Default::default(),
             tokens_dirty: AtomicBool::new(false),
             revoked: Mutex::new(vec![]),
+            auth3: Default::default(),
         }
     }
 
@@ -539,26 +562,39 @@ impl Hub {
         self.auth(token, &Via::Loopback).is_ok()
     }
 
-    /// Whether `token` may be used over this connection. Over TLS the phone's key must be the
-    /// one bound to the token, and a token not bound yet (just paired, or a phone upgrading from
-    /// before 0.13) is bound to the key it's first used with. Plain: loopback always (test
-    /// rigs, `adb reverse`); the legacy tailnet path only for tokens no key is bound to yet.
-    pub fn auth(&self, token: &str, via: &Via) -> Result<(), &'static str> {
+    /// What `token` alone may do over this connection (phoneauth::Level). Over TLS the phone's
+    /// key must be the one bound to the token, and a token not bound yet (a phone upgrading from
+    /// before 0.13) is bound to the key it's first used with; a pairing code is bound when the
+    /// pairing is confirmed. Plain: loopback always (test rigs, `adb reverse`); the legacy
+    /// tailnet path only for tokens no key is bound to yet.
+    pub fn auth(&self, token: &str, via: &Via) -> Result<crate::phoneauth::Level, &'static str> {
+        use crate::phoneauth::Level;
         let mut tokens = self.tokens.lock().unwrap();
         // Every stored token is compared in full, so the time taken says nothing about it.
         let at = tokens.iter().enumerate().fold(None, |hit, (i, t)| if same(t.token.as_bytes(), token.as_bytes()) { Some(i) } else { hit });
         let Some(t) = at.map(|i| &mut tokens[i]) else { return Err("unknown token: pair this phone again in Harbor › Settings › Phones") };
+        if t.ticket && store::now() - t.created > crate::phoneauth::TICKET_TTL {
+            return Err("this pairing code has expired: make a new one in Harbor › Settings › Phones");
+        }
+        let level = if t.ticket {
+            Level::Ticket
+        } else if t.three() {
+            Level::Session
+        } else {
+            Level::Legacy
+        };
         match via {
-            Via::Loopback => Ok(()),
+            Via::Loopback => Ok(Level::Loopback),
+            Via::Tls(Some(_)) if t.ticket => Ok(Level::Ticket),
             Via::Tls(Some(fp)) if t.fp.is_empty() => {
                 t.fp = fp.clone();
                 self.tokens_dirty.store(true, Ordering::SeqCst);
-                Ok(())
+                Ok(level)
             }
-            Via::Tls(Some(fp)) if t.fp == *fp => Ok(()),
+            Via::Tls(Some(fp)) if t.fp == *fp => Ok(level),
             Via::Tls(Some(_)) => Err("this pairing belongs to another phone: pair this one in Harbor › Settings › Phones"),
             Via::Tls(None) => Err("this app has no key of its own: update it"),
-            Via::Legacy if t.fp.is_empty() => Ok(()),
+            Via::Legacy if t.fp.is_empty() && !t.ticket => Ok(Level::Legacy),
             Via::Legacy => Err("this phone now connects with its own key: update the app"),
             Via::Refused => Err("plain HTTP isn't answered here: use TLS"),
         }
@@ -579,6 +615,12 @@ pub fn new_token() -> std::io::Result<String> {
 
 pub fn load_tokens(s: &store::Store) -> Vec<Token> {
     let mut v: Vec<Token> = s.get("api_tokens").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    // Pairing codes nobody used in time.
+    let n = v.len();
+    v.retain(|t| !t.ticket || store::now() - t.created <= crate::phoneauth::TICKET_TTL);
+    if v.len() != n {
+        save_tokens(s, &v);
+    }
     // Tokens from before pairings had groups: each its own.
     if v.iter().any(|t| t.group.is_empty()) {
         for t in v.iter_mut().filter(|t| t.group.is_empty()) {
@@ -637,6 +679,8 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub query: Vec<(String, String)>,
+    /// The request target exactly as sent (path and query): what a phone's MAC covers.
+    pub target: String,
     pub headers: Vec<(String, String)>,
     pub len: usize,
     /// `Transfer-Encoding: chunked` (only [`read_head_chunked`] lets it through).
@@ -738,7 +782,7 @@ pub fn read_head_chunked(r: &mut impl BufRead) -> Result<Request, (u16, &'static
         })
         .collect();
     // Paths keep their '+' (only queries use it for spaces).
-    let mut req = Request { method: method.to_ascii_uppercase(), path: decode_path(path), query, ..Default::default() };
+    let mut req = Request { method: method.to_ascii_uppercase(), path: decode_path(path), query, target: target.to_string(), ..Default::default() };
     for _ in 0..100 {
         let l = line(r, 8192)?;
         if l.is_empty() {
@@ -1008,11 +1052,27 @@ pub fn phone_addrs(port: u16) -> Vec<String> {
     v
 }
 
-/// Whether `/app.apk` is served: to anyone on this network, and from the internet to a phone or
-/// PC whose key is known here (a stranger never gets past the handshake there; a known phone on
-/// mobile data updates its app this way).
-fn apk_allowed(public: bool, via: &Via) -> bool {
-    !public || matches!(via, Via::Tls(Some(_)))
+/// Whether `/app.apk` is served: to anyone on this network, and from the internet only with a
+/// session (or to a phone paired before three factors, so it can update and then upgrade).
+fn apk_allowed(public: bool, who: &Result<(String, Option<crate::phoneauth::Level>), &str>) -> bool {
+    !public || matches!(who, Ok((_, None | Some(crate::phoneauth::Level::Legacy))))
+}
+
+/// Who makes a call: the pairing token and, for a token alone, what it may do (None: a session
+/// with all three factors).
+pub fn caller(hub: &Hub, peer: &Peer, req: &Request) -> Result<(String, Option<crate::phoneauth::Level>), &'static str> {
+    if req.header("x-harbor-session").is_some() {
+        let Via::Tls(Some(fp)) = &peer.via else { return Err("a session without TLS") };
+        let token = hub.auth3.verify(req, fp, &crate::tls::my_fp(), peer.x.as_ref())?;
+        // Revoked meanwhile (here or on another PC of the mesh): its sessions end now.
+        if !hub.tokens.lock().unwrap().iter().any(|t| t.token == token && t.three() && t.fp == *fp) {
+            hub.auth3.drop_token(&token);
+            return Err("session of a removed pairing");
+        }
+        return Ok((token, None));
+    }
+    let t = req.bearer().ok_or("no token")?;
+    hub.auth(t, &peer.via).map(|l| (t.to_string(), Some(l)))
 }
 
 /// How a connection reached the listener.
@@ -1033,6 +1093,8 @@ pub enum Via {
 pub struct Peer {
     pub ip: std::net::IpAddr,
     pub via: Via,
+    /// The TLS exporter of the connection (phoneauth::EXPORTER_LABEL).
+    pub x: Option<[u8; 32]>,
 }
 
 /// Phones' connections at once (each long-polls on one).
@@ -1113,6 +1175,8 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         return;
     };
+    // Only this TLS connection has it: phones bind their calls' MACs to it (phoneauth.rs).
+    let x = conn.exporter();
     let via = if conn.is_tls() {
         Via::Tls(conn.peer_fp())
     } else if ip.is_loopback() {
@@ -1134,7 +1198,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         crate::portmap::reached(ip);
     }
-    let peer = Peer { ip, via };
+    let peer = Peer { ip, via, x };
     let mut r = BufReader::new(conn);
     let req = match read_head(&mut r) {
         Ok(q) => q,
@@ -1172,20 +1236,45 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     if !hub.enabled.load(Ordering::SeqCst) {
         return; // phones are off: closed without a word
     }
-    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] && apk_allowed(public, &peer.via) {
+    use crate::phoneauth::Level;
+    // Who calls: a session (all three factors, every call MACed), or a token alone at its level.
+    let who = caller(hub, &peer, &req);
+    if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] && apk_allowed(public, &who) {
         return serve_apk(r.get_mut(), req.method == "HEAD");
     }
-    let token = match req.bearer().map(|t| (t, hub.auth(t, &peer.via))) {
-        Some((t, Ok(()))) => t.to_string(),
-        Some((_, Err(e))) => {
+    let (token, level) = match who {
+        Ok(w) => w,
+        Err(why) => {
             FAILS.hit(ip);
-            return send_json(r.get_mut(), 401, &json!({ "error": e }));
-        }
-        None => {
-            FAILS.hit(ip);
-            return send_json(r.get_mut(), 401, &json!({ "error": "unknown token: pair this phone again in Harbor › Settings › Phones" }));
+            hub.auth3.note(ip, why);
+            return send_json(r.get_mut(), 401, &json!({ "error": crate::phoneauth::REFUSED, "rekey": true }));
         }
     };
+    if let Some(level) = level.filter(|l| *l != Level::Loopback) {
+        // Pairing, the upgrade and starting a session: the token, the TLS key and the codes or
+        // the session's proofs (phoneauth.rs).
+        if req.method == "POST" && matches!(segs.as_slice(), ["v1", "pair" | "session", _]) {
+            let Ok(body) = read_body(&mut r, req.len, 16 << 10) else { return send_json(r.get_mut(), 400, &json!({ "error": "bad body" })) };
+            let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            let reply = crate::phoneauth::serve(hub, &peer, peer.x.as_ref(), &req, &segs, &token, level, &body, wake);
+            if reply.status == 401 {
+                FAILS.hit(ip);
+            }
+            return send_json(r.get_mut(), reply.status, &reply.body);
+        }
+        // A pairing from before three factors may still update the app, then upgrade.
+        if level == Level::Legacy && req.method == "GET" && segs == ["v1", "app"] {
+            return send_json(r.get_mut(), 200, &app_info());
+        }
+        FAILS.hit(ip);
+        hub.auth3.note(ip, if level == Level::Legacy { "a pairing from before three factors" } else { "a token without a session" });
+        let body = if level == Level::Legacy {
+            json!({ "error": "This PC now asks for three factors: open Harbor on the phone and confirm the code it shows here, in Settings › Phones.", "upgrade": true })
+        } else {
+            json!({ "error": crate::phoneauth::REFUSED, "rekey": true })
+        };
+        return send_json(r.get_mut(), 401, &body);
+    }
     let device: String = req.header("x-harbor-device").unwrap_or("").chars().take(60).collect();
     let global = req.header("x-harbor-ids") == Some("global");
     hub.seen.lock().unwrap().insert(token.clone(), (device.clone(), store::now()));
@@ -1225,7 +1314,14 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             send_json(r.get_mut(), if found { 200 } else { 404 }, &if found { json!({ "ok": true }) } else { json!({ "error": "nothing waits with that id" }) });
         }
         // The PCs of the mesh, with this phone's token on each (mesh.rs).
-        ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub, &token)),
+        ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub, &token, None)),
+        // The phone hands each other PC its own pairing secret (derived from this one's).
+        ("POST", ["v1", "hubs"]) => {
+            let body: Value = read_body(&mut r, req.len, 64 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let empty = serde_json::Map::new();
+            let secrets = body["secrets"].as_object().unwrap_or(&empty);
+            send_json(r.get_mut(), 200, &crate::mesh::hubs(hub, &token, Some(secrets)));
+        }
         ("POST", ["v1", "chats", c, "typing"]) => {
             let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(w, 404, &json!({ "error": "no such chat" })) };
             let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
@@ -2683,7 +2779,7 @@ mod tests {
 
     #[test]
     fn auth() {
-        let hub = Hub::new(vec![Token { token: "s3cret".into(), name: String::new(), created: 0, group: String::new(), fp: String::new() }], DEFAULT_PORT);
+        let hub = Hub::new(vec![Token { token: "s3cret".into(), name: String::new(), created: 0, group: String::new(), fp: String::new(), ..Default::default() }], DEFAULT_PORT);
         assert!(hub.known("s3cret"));
         assert!(!hub.known("s3cre"));
         assert!(!hub.known("s3cretx"));
@@ -2692,23 +2788,25 @@ mod tests {
         assert_eq!(r.bearer(), Some("s3cret"));
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Basic s3cret\r\n\r\n").unwrap().bearer(), None);
         assert_eq!(head("GET / HTTP/1.1\r\nAuthorization: Bearer\r\n\r\n").unwrap().bearer(), None);
-        let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0, group: String::new(), fp: String::new() }], DEFAULT_PORT);
+        let empty = Hub::new(vec![Token { token: String::new(), name: String::new(), created: 0, group: String::new(), fp: String::new(), ..Default::default() }], DEFAULT_PORT);
         assert!(!empty.known(""));
         assert_eq!(new_token().unwrap().len(), 48);
         assert_ne!(new_token().unwrap(), new_token().unwrap());
     }
 
     #[test]
-    fn the_app_from_the_internet_only_with_a_known_key() {
-        let fp = "a".repeat(64);
-        assert!(apk_allowed(false, &Via::Tls(None)) && apk_allowed(false, &Via::Loopback), "this network: anyone");
-        assert!(apk_allowed(true, &Via::Tls(Some(fp))), "the internet: a key (the handshake already made sure it's known)");
-        assert!(!apk_allowed(true, &Via::Tls(None)) && !apk_allowed(true, &Via::Refused) && !apk_allowed(true, &Via::Loopback));
+    fn the_app_from_the_internet_only_with_a_session() {
+        use crate::phoneauth::Level;
+        let t = |l: Option<Level>| Ok(("tok".to_string(), l));
+        assert!(apk_allowed(false, &Err("no token")) && apk_allowed(false, &t(Some(Level::Ticket))), "this network: anyone");
+        assert!(apk_allowed(true, &t(None)), "the internet: a session");
+        assert!(apk_allowed(true, &t(Some(Level::Legacy))), "or a pairing from before three factors, to update and upgrade");
+        assert!(!apk_allowed(true, &Err("bad MAC")) && !apk_allowed(true, &t(Some(Level::Session))) && !apk_allowed(true, &t(Some(Level::Ticket))));
     }
 
     #[test]
     fn tokens_bind_to_the_phone_key() {
-        let hub = Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: "g".repeat(16), fp: String::new() }], DEFAULT_PORT);
+        let hub = Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: "g".repeat(16), fp: String::new(), ..Default::default() }], DEFAULT_PORT);
         let (a, b) = ("a".repeat(64), "b".repeat(64));
         // Not bound yet: plain over the tailnet still works (a phone before 0.13).
         assert!(hub.auth("tok", &Via::Legacy).is_ok());
@@ -2880,7 +2978,7 @@ mod tests {
 
     #[test]
     fn http_end_to_end() {
-        let hub = Arc::new(Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: String::new(), fp: String::new() }], 0));
+        let hub = Arc::new(Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: String::new(), fp: String::new(), ..Default::default() }], 0));
         hub.enabled.store(true, Ordering::SeqCst);
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
@@ -2946,7 +3044,7 @@ mod tests {
 
     #[test]
     fn the_phone_inbox() {
-        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new() };
+        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new(), ..Default::default() };
         let hub = Arc::new(Hub::new(vec![tok("a", "ga"), tok("b", "gb")], 0));
         hub.enabled.store(true, Ordering::SeqCst);
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3001,7 +3099,7 @@ mod tests {
 
     #[test]
     fn paired_phones_one_per_pairing() {
-        let tok = |t: &str, g: &str, n: &str| Token { token: t.into(), name: n.into(), created: 0, group: g.into(), fp: String::new() };
+        let tok = |t: &str, g: &str, n: &str| Token { token: t.into(), name: n.into(), created: 0, group: g.into(), fp: String::new(), ..Default::default() };
         let hub = Hub::new(vec![tok("a1", "ga", ""), tok("a2", "ga", "Pixel"), tok("b", "gb", "")], 0);
         hub.seen.lock().unwrap().insert("a1".into(), ("Pixel 8".into(), 50));
         hub.ips.lock().unwrap().insert("a1".into(), "192.0.2.7".into());
@@ -3013,7 +3111,7 @@ mod tests {
 
     #[test]
     fn phones_seen_elsewhere_and_their_apps() {
-        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new() };
+        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new(), ..Default::default() };
         let hub = Arc::new(Hub::new(vec![tok("a", "ga"), tok("b", "gb"), tok("c", "gc")], 0));
         hub.enabled.store(true, Ordering::SeqCst);
         let l = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -13,8 +13,10 @@ wake-ups, webhooks) slides in from the right. The API is in [PROTOCOL.md](PROTOC
    the GitHub release.
 2. Pair: click **Pair a phone** on the PC (each phone gets its own key) and scan the pairing QR
    code with the phone's camera app (it opens the `harbor://pair` link in Harbor), or tap **+**
-   in the app to scan it with a QR app, paste the link, or type host, port and token. Several
-   PCs can be paired.
+   in the app to scan it with a QR app, paste the link, or type host, port and token. The phone
+   then shows a 6-digit code: confirm it on the PC (Settings › Phones). The phone needs a screen
+   lock: it's the third factor, asked for when a session starts more than 5 minutes after the
+   last unlock. Several PCs can be paired.
 3. Updates: when the PC has a newer app, the chat list shows **Update**; Settings › Update
    installs it (Android asks once to allow "Install unknown apps" for Harbor; Android 12+
    updates silently after that).

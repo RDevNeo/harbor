@@ -5,6 +5,24 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Phones need three factors to reach a PC: the phone's own key (as before), a pairing secret
+  agreed when it pairs, and the phone's screen lock or fingerprint. Pairing now shows a 6-digit
+  code on the phone and in Settings › Phones (with a desktop notice): it only completes when you
+  confirm the code on the PC. A pairing code works once, for 10 minutes.
+- Once connected, the phone's session key changes every 10 minutes and every call carries a
+  signature under the current key, tied to its connection; nothing on the PC answers without it,
+  including the app download from outside your network and relaying. Refusals are logged and
+  shown in Settings › Phones; repeated failures lock the pairing for 15 minutes (Unlock there).
+- Settings › Phones shows each phone's state: three factors, connected and when its key changes
+  next, locked, or needs upgrade.
+
+### Changed
+- Phones paired before this version must upgrade: the app asks once ("Upgrade the pairing"), shows
+  a code, and you confirm it on the PC. Until then they can only update the app.
+- Your other PCs each get their own secret for a phone (derived from the pairing), sent by the
+  phone through its session; none of them holds another's.
+
 ## [0.21.0] - 2026-10-25
 
 ### Added

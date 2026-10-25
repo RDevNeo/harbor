@@ -241,7 +241,9 @@ final class Net {
                 throw e;
             }
             ss.setSoTimeout(readTimeout);
-            return new Http(ss, host, port, method, path, trust.seen);
+            Http c = new Http(ss, host, port, method, path, trust.seen);
+            c.ssl = ss;
+            return c;
         } catch (IOException | RuntimeException | java.security.GeneralSecurityException e) {
             try { s.close(); } catch (IOException ignored) { }
             if (e instanceof IOException) throw (IOException) e;
@@ -252,8 +254,19 @@ final class Net {
     /** One request: head, optional body, then the answer. The hub always answers with
      *  Content-Length and Connection: close. close() may be called from any thread. */
     static final class Http {
+        /** Adds the auth headers once the head goes out (the body's length is known then). */
+        interface Signer { void sign(Http h, long len) throws IOException; }
+
         private final Socket s;
-        private final String method;
+        final String method, path;
+        SSLSocket ssl; // null: plain loopback
+        Signer signer;
+        /** The call carried a session's MAC; a 401 then ends that session (on401). */
+        boolean signed;
+        Runnable on401;
+        private long bodyLen;
+        private byte[] exporter;
+        private boolean exported;
         private final StringBuilder head;
         /** The hub's fingerprint as its TLS handshake showed it (null: plain loopback). */
         final String seen;
@@ -265,6 +278,7 @@ final class Net {
         Http(Socket s, String host, int port, String method, String path, String seen) {
             this.s = s;
             this.method = method;
+            this.path = path;
             this.seen = seen;
             String hp = host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
             head = new StringBuilder(method).append(' ').append(path).append(" HTTP/1.1\r\n");
@@ -276,8 +290,26 @@ final class Net {
             head.append(k).append(": ").append(v.replace("\r", "").replace("\n", "")).append("\r\n");
         }
 
+        /** 32 bytes only this TLS connection has (RFC 5705 exporter, label Sec.EXPORTER), the
+         *  same the PC computes: calls are bound to their connection with it. Null without TLS
+         *  or on Android before 12, which can't export them. */
+        byte[] exporter() {
+            if (exported) return exporter;
+            exported = true;
+            if (ssl != null && android.os.Build.VERSION.SDK_INT >= 31) {
+                try {
+                    if (android.net.ssl.SSLSockets.isSupportedSocket(ssl))
+                        exporter = android.net.ssl.SSLSockets.exportKeyingMaterial(ssl, Sec.EXPORTER, null, 32);
+                } catch (Exception | LinkageError e) {
+                    exporter = null;
+                }
+            }
+            return exporter;
+        }
+
         /** Sends the head with this Content-Length; write the body to the stream returned. */
         OutputStream body(long len) throws IOException {
+            bodyLen = len;
             header("Content-Length", String.valueOf(len));
             send();
             return out;
@@ -287,6 +319,7 @@ final class Net {
             if (out != null) return;
             if (!method.equals("GET") && !method.equals("HEAD") && head.indexOf("\r\nContent-Length:") < 0)
                 header("Content-Length", "0");
+            if (signer != null) signer.sign(this, bodyLen);
             OutputStream raw = new BufferedOutputStream(s.getOutputStream(), 1 << 16);
             raw.write(head.append("\r\n").toString().getBytes(StandardCharsets.UTF_8));
             // Closing the body only flushes: the socket stays open for the answer.
@@ -313,6 +346,7 @@ final class Net {
                 }
             }
             in = length < 0 ? r : new Limited(r, length);
+            if (code == 401 && signed && on401 != null) on401.run();
             return code;
         }
 

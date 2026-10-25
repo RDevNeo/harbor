@@ -209,8 +209,17 @@ public class Hubs extends Base {
                 .setPositiveButton("Pair", (d, w) -> tryPair(h)).show();
     }
 
-    /** Checks the token against the PC before keeping it. */
+    /** Pairs with three factors (the code confirmed on the PC), then keeps the pairing. A PC
+     *  with Harbor before 0.22 doesn't know them: paired as before, with its token and key. */
     private void tryPair(Hub h) {
+        Pair.run(this, h, false, () -> keep(h), e -> {
+            if (e instanceof Hub.ApiError && ((Hub.ApiError) e).code == 404) { keep(h); return; }
+            Ui.dialog(this).setTitle("Not paired").setMessage(Hub.why(e)).setPositiveButton("OK", null).show();
+        });
+    }
+
+    /** Checks the pairing against the PC before keeping it. */
+    private void keep(Hub h) {
         Ui.toast(this, "Connecting to " + h.host + "…");
         Ui.bg(this, () -> {
             // Every address of the link is tried, each only with the PC's key.

@@ -26,6 +26,8 @@ abstract class Base extends Activity {
     LinearLayout barActions;
     LinearLayout page; // the frame's column (top bar + content)
 
+    /** Harbor screens in the foreground now (Presence only asks for the unlock then). */
+    static volatile int resumed;
     private int gen;                 // bumped to stop the current poll loop
     private volatile Net.Http polling;
     private long rev = -1;
@@ -322,6 +324,7 @@ abstract class Base extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        resumed++;
         Inbox.resumed(this);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
@@ -330,6 +333,7 @@ abstract class Base extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        resumed--;
         Inbox.paused(this);
         gen++;
         Net.Http c = polling;
@@ -353,7 +357,7 @@ abstract class Base extends Activity {
                     try {
                         if (my != gen) return; // paused while connecting
                         int code = c.code();
-                        if (code >= 400) throw new Hub.ApiError(code, code == 401 ? "This PC refused the pairing token. Pair it again." : "HTTP " + code);
+                        if (code >= 400) throw Hub.error(c, code);
                         r = new JSONObject(Hub.read(c.in()));
                     } finally {
                         c.close();
@@ -389,6 +393,10 @@ abstract class Base extends Activity {
                     }
                 } catch (Exception e) {
                     if (my != gen) return;
+                    // The PC ended the session (it restarted): the next call starts a new one.
+                    if (e instanceof Hub.ApiError && ((Hub.ApiError) e).rekey && fails == 0) { fails = 1; continue; }
+                    // A pairing from before three factors: the PC wants the codes confirmed.
+                    if (e instanceof Hub.NeedsUpgrade) Ui.main.post(() -> { if (my == gen) Pair.offerUpgrade(this, h); });
                     // The hub answers a long-poll within 20 s: no answer in 25 means it's gone (or the
                     // way to it). The next try goes to another PC of the mesh first.
                     if (!(e instanceof Hub.ApiError)) h.failed();

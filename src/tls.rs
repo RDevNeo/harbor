@@ -455,6 +455,15 @@ impl Conn {
         }
     }
 
+    /// 32 bytes of keying material only this TLS connection has (RFC 5705 / RFC 8446 §7.5,
+    /// no context): phones bind their request MACs to the connection with it (phoneauth.rs).
+    pub fn exporter(&self) -> Option<[u8; 32]> {
+        match self {
+            Conn::Tls(Some(t)) => t.conn.export_keying_material([0u8; 32], crate::phoneauth::EXPORTER_LABEL, None).ok(),
+            _ => None,
+        }
+    }
+
     /// The head is in: from now on only the idle timeout applies.
     pub fn clear_deadline(&self) {
         self.sock().until.set(None);
