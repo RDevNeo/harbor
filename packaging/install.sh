@@ -139,8 +139,10 @@ verify() {
   line="$(grep "  $1\$" "$TMP/SHA256SUMS" || true)"
   [ -n "$line" ] || die "$1 is not listed in SHA256SUMS."
   (cd "$TMP" && printf '%s\n' "$line" | sha256sum -c --quiet -) || die "$1: checksum mismatch."
-  if get_minisign; then
-    fetch "$1.minisig" || die "could not download $1.minisig"
+  # Like a folder without SHA256SUMS.minisig: refused unless HARBOR_INSECURE=1 (CI's unsigned builds).
+  if ! fetch "$1.minisig"; then
+    unchecked "could not download $1.minisig"
+  elif get_minisign; then
     "$MINISIGN" -Vqm "$TMP/$1" -P "$PUBKEY" || die "$1: bad signature."
   else
     unchecked "$1: its signature can't be checked (no minisign, and it couldn't be downloaded: install minisign)"

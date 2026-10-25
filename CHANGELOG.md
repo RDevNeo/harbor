@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- install.sh with `HARBOR_INSECURE=1` installs a build that has no signature files (as it already
+  did for an extracted folder) instead of stopping at the missing `.minisig`. Without it, an unsigned
+  download is still refused.
+
 ## [0.27.0] - 2026-10-25
 
 ### Fixed
