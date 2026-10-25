@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- On the phone, the slash menu never opened while the app was talking to a PC of the mesh with
+  an older Harbor (it has no menu to give). The app now asks the chat's own PC, or another PC it
+  is paired with, for the menu. When none can give it, typing `/` says why: that PC's Harbor
+  needs an update, or the phone's pairing needs its upgrade to three factors (tap to upgrade).
+
 ## [0.23.0] - 2026-10-25
 
 ### Added

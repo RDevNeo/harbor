@@ -502,7 +502,10 @@ The menu's /plan (the chat becomes read only, `access: "plan"`) and /default (ba
 had before /plan on any device, else the provider's first level), with the rules of `PATCH`.
 
 For a copy of another PC's chat, both calls are answered by its home PC, where its files and
-agent are.
+agent are. A PC with a Harbor before 0.23 answers both with `404`: the app then asks the chat's
+`home` PC, and the pairing's other PCs, directly (`GET /v1/hubs` tokens), and sends /plan and
+/default to the one that answered. When none can, a bare `/` shows why: the home PC's Harbor
+needs an update, or the pairing needs its upgrade to three factors.
 
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 

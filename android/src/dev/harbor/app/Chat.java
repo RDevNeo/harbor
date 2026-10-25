@@ -201,7 +201,7 @@ public class Chat extends Base {
         offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
-        slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project);
+        slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         typingLine = Sidebar.typing(c, st == null ? "" : st.optString("you", ""));
         drawBars();
     }
@@ -490,9 +490,15 @@ public class Chat extends Base {
             if (run != null) run.pickModel(this, this::change);
             return;
         }
-        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/slash", new JSONObject().put("command", command)), r -> {
+        // To the PC that gave the menu (the one calls go to may not have it).
+        Ui.bg(this, () -> slash.call("POST", "/v1/chats/" + chatId + "/slash", new JSONObject().put("command", command)), r -> {
             JSONObject c = r.optJSONObject("chat");
-            if (c == null) { refreshState(); return; }
+            // From another PC its answer has that PC's ids: the state says it with ours.
+            if (c == null || slash.elsewhere()) {
+                refreshState();
+                Ui.toast(this, "plan".equals(command) ? "Read only: this chat reads and plans, and changes nothing" : "Back from read only");
+                return;
+            }
             JSONObject st = Hub.states.get(hub.id);
             if (st != null) replaceChat(st, c);
             showChat(c);

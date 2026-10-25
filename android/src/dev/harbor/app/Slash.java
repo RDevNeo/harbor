@@ -24,6 +24,7 @@ import java.util.Map;
 final class Slash {
     /** A list is fetched again when the menu opens after this long. */
     private static final long FRESH_MS = 30_000;
+    private static final long NOTE_MS = 5_000;
     /** While Claude Code is still asked for its list: ask the PC again this often, this many times. */
     private static final long PENDING_MS = 1500;
     private static final int PENDING_TRIES = 12;
@@ -36,8 +37,17 @@ final class Slash {
         final List<SlashList.Entry> entries;
         final long at;
         final boolean pending;
+        /** The PC (Hub endpoint, "" the paired one) that gave the list when the one calls go to
+         *  has no slash menu (Harbor before 0.23); null: that one. */
+        final String from;
+        /** Why there's no list, when the user can do something about it; else null. */
+        final String note;
+        /** The note's fix is upgrading the pairing (a newer PC refused it). */
+        final boolean upgrade;
 
-        Cached(List<SlashList.Entry> entries, long at, boolean pending) { this.entries = entries; this.at = at; this.pending = pending; }
+        Cached(List<SlashList.Entry> entries, long at, boolean pending, String from, String note, boolean upgrade) {
+            this.entries = entries; this.at = at; this.pending = pending; this.from = from; this.note = note; this.upgrade = upgrade;
+        }
     }
 
     /** Per PC, chat and run settings (the list follows the agent and access). */
@@ -50,7 +60,7 @@ final class Slash {
     private final String chat;
     private final Composer.Edit edit;
     private final Harbor onHarbor;
-    private String settings = "";
+    private String settings = "", home = "", homeName = "";
     private SlashList.Word word;     // the word the menu shows for; null while it's closed
     private int dismissed = -1;      // Back closed the menu for the word starting here
     private List<SlashList.Entry> shown = new ArrayList<>(); // the rows drawn
@@ -96,11 +106,27 @@ final class Slash {
         edit.onBack = this::back;
     }
 
-    /** The chat's account, device and access: another list once they change. */
-    void settings(String s) {
+    /** The chat's account, device and access (another list once they change), and the PC it
+     *  runs on (mesh id and name), which can give the list when the PC calls go to can't. */
+    void settings(String s, String home, String homeName) {
+        this.home = home;
+        this.homeName = homeName;
         if (s.equals(settings)) return;
         settings = s;
         update();
+    }
+
+    /** A call about the menu (/plan, /default) to the PC that gave the list. */
+    JSONObject call(String method, String path, JSONObject body) throws java.io.IOException {
+        Cached c = cache.get(key());
+        return c == null || c.from == null ? hub.call(method, path, body) : hub.callOn(c.from, method, path, body);
+    }
+
+    /** Whether that call went to another PC than the one calls go to (its answer names chats by
+     *  that PC's ids). */
+    boolean elsewhere() {
+        Cached c = cache.get(key());
+        return c != null && c.from != null;
     }
 
     boolean open() { return view.getVisibility() == View.VISIBLE; }
@@ -118,7 +144,9 @@ final class Slash {
     /** The list as the PC last said it; asks again when it's old or missing. */
     private Cached list() {
         Cached c = cache.get(key());
-        if (c == null || System.currentTimeMillis() - c.at > FRESH_MS) fetch();
+        // No list yet for a reason the user may be fixing (an upgrade, an update): ask again soon.
+        long fresh = c != null && c.note != null ? NOTE_MS : FRESH_MS;
+        if (c == null || System.currentTimeMillis() - c.at > fresh) fetch();
         return c;
     }
 
@@ -126,17 +154,10 @@ final class Slash {
         if (loading) return;
         loading = true;
         final String k = key();
+        final Cached old = cache.get(k);
+        final String h = home, hn = homeName;
         Ui.pool.execute(() -> {
-            Cached got;
-            try {
-                JSONObject r = hub.get("/v1/chats/" + chat + "/slash");
-                got = new Cached(parse(r.optJSONArray("entries")), System.currentTimeMillis(), r.optBoolean("pending"));
-            } catch (Exception e) {
-                // A PC from before the menu, or not reachable now: no menu (until it's old).
-                Cached old = cache.get(k);
-                got = new Cached(old == null ? new ArrayList<>() : old.entries, System.currentTimeMillis(), false);
-            }
-            final Cached fc = got;
+            final Cached fc = load(old, h, hn);
             Ui.main.post(() -> {
                 loading = false;
                 if (a.isFinishing() || a.isDestroyed()) return;
@@ -148,6 +169,38 @@ final class Slash {
                 update();
             });
         });
+    }
+
+    /** The list from the PC calls go to; when it has no slash menu (a Harbor before 0.23
+     *  answers 404), from the chat's home PC or another PC of the pairing, asked directly. */
+    private Cached load(Cached old, String home, String homeName) {
+        String path = "/v1/chats/" + chat + "/slash";
+        String cur = hub.via();
+        // The home PC as an endpoint of this pairing ("" the paired one), or null.
+        String homeV = home.isEmpty() ? null : home.equals(hub.pid) ? "" : hub.ep(home) != null ? home : null;
+        List<String> order = new ArrayList<>();
+        if (old != null && old.from != null) order.add(old.from);
+        if (!order.contains(cur)) order.add(cur);
+        if (homeV != null && !order.contains(homeV)) order.add(homeV);
+        for (String v : hub.endpoints()) if (!order.contains(v)) order.add(v);
+        boolean homeOld = false, upgrade = false;
+        for (String v : order) {
+            try {
+                JSONObject r = v.equals(cur) ? hub.get(path) : hub.callOn(v, "GET", path, null);
+                return new Cached(parse(r.optJSONArray("entries")), System.currentTimeMillis(), r.optBoolean("pending"), v.equals(cur) ? null : v, null, false);
+            } catch (Hub.NeedsUpgrade e) {
+                upgrade = true;
+            } catch (Hub.ApiError e) {
+                if (e.code == 404 && v.equals(homeV)) homeOld = true;
+            } catch (Exception ignored) {
+                // Not reachable now: the next one.
+            }
+        }
+        // No list (until it's old): say why when the user can fix it.
+        String note = null;
+        if (homeOld) note = (homeName.isEmpty() ? "The PC this chat runs on" : homeName) + " runs a Harbor without slash commands. Update Harbor there to use them.";
+        else if (upgrade) note = "Slash commands need this phone's pairing upgraded to three factors. Tap to upgrade.";
+        return new Cached(old == null ? new ArrayList<>() : old.entries, System.currentTimeMillis(), false, null, note, upgrade && !homeOld);
     }
 
     static List<SlashList.Entry> parse(JSONArray a) {
@@ -175,9 +228,29 @@ final class Slash {
         word = w;
         Cached c = list();
         List<SlashList.Entry> m = c == null ? new ArrayList<>() : SlashList.search(c.entries, w);
-        if (m.isEmpty()) { hide(); return; }
+        if (m.isEmpty()) {
+            // No list at all: why, on the bare `/` only (a path being typed doesn't keep it up).
+            if (c != null && c.entries.isEmpty() && c.note != null && w.query.isEmpty()) { note(c); view.setVisibility(View.VISIBLE); }
+            else hide();
+            return;
+        }
         draw(m.size() > MAX_ROWS ? m.subList(0, MAX_ROWS) : m);
         view.setVisibility(View.VISIBLE);
+    }
+
+    /** One muted row saying why there's no menu; a tap upgrades the pairing when that's the fix. */
+    private void note(Cached c) {
+        shown = new ArrayList<>();
+        rows.removeAllViews();
+        LinearLayout r = Ui.row(a);
+        r.setPadding(Ui.dp(12), Ui.dp(12), Ui.dp(12), Ui.dp(12));
+        r.addView(Ui.icon(a, Ui.I_ALERT, 16, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 0, 0, 10, 0));
+        r.addView(Ui.text(a, c.note, 14, Ui.G700), Ui.weight());
+        if (c.upgrade) {
+            r.setBackground(Ui.press(0, 0, 16));
+            r.setOnClickListener(v -> { hide(); Pair.offerUpgrade(a, hub); });
+        }
+        rows.addView(r, Ui.fill());
     }
 
     private void hide() {
