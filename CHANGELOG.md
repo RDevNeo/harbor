@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- On the phone, Pull requests and Issues in the drawer, as on the desktop: the ones you wrote,
+  review or are assigned, and those of your projects' GitHub repos, in the same groups, with the
+  search, the state, Sort and the desktop's filters. A row opens the item: its state, branches
+  and size, reviewers, labels, description, checks and comments, and a PR's timeline and diff.
+  From there: Merge with… and Fix with… (a chat on the PC where the agent does it), Ready for
+  review, Close and Reopen, Review with an agent, Open on GitHub, and copy the link, the number
+  or the checkout command. The PC's GitHub CLI serves them (`/v1/prs` and `/v1/issues` in the
+  phone API).
+
 ## [0.23.1] - 2026-10-25
 
 ### Fixed

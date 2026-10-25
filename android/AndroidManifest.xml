@@ -2,8 +2,8 @@
 <!-- Harbor for Android: a chat-only client of a desktop Harbor (the hub) on the tailnet.
      Hubs pairs and lists PCs (also from harbor://pair links and QR codes), Chats lists one hub's
      chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
-     one (its team slides in from the right), NewChat starts one, Settings updates the app and
-     sets the color mode. -->
+     one (its team slides in from the right), NewChat starts one, GhList and GhItem show the
+     PC's pull requests and issues, Settings updates the app and sets the color mode. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.app">
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Tailnet: finds Tailscale's VPN network, the only way to a hub -->
@@ -41,6 +41,8 @@
         <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".NewChat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".Settings" android:exported="false" />
+        <activity android:name=".GhList" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".GhItem" android:exported="false" />
         <activity android:name=".QrScan" android:exported="false" android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
         <!-- Asks for the fingerprint or screen lock when a PC wants the third factor -->

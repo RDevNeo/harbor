@@ -22,10 +22,10 @@ import java.util.List;
 import java.util.Map;
 
 /** One hub's chats the way the reference's drawer shows them: a bold title and search, a few
- *  nav rows (Projects, PCs, Settings, and Update when there is one), a thin line, then Running /
- *  Recents / Settled as one-line rows with a chat icon and a dot while a turn runs; a round
- *  avatar (this PC) and the black "New session" pill float at the bottom. Used full screen
- *  (Chats) and as the drawer inside a chat. */
+ *  nav rows (Projects, Pull requests, Issues, PCs, Settings, and Update when there is one), a
+ *  thin line, then Running / Recents / Settled as one-line rows with a chat icon and a dot while
+ *  a turn runs; a round avatar (this PC) and the black "New session" pill float at the bottom.
+ *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
 final class Sidebar {
     final Base a;
     final FrameLayout view;
@@ -111,6 +111,13 @@ final class Sidebar {
 
     private void settings() { a.startActivity(new Intent(a, Settings.class).putExtra("hub", a.hub.id)); }
 
+    /** The PC's pull requests or issues (GhList); from inside a list, the other one replaces it. */
+    private void github(String kind) {
+        if (a instanceof GhList && kind.equals(((GhList) a).kind)) { a.closeDrawer(); return; }
+        a.startActivity(new Intent(a, GhList.class).putExtra("hub", a.hub.id).putExtra("kind", kind));
+        if (a instanceof GhList) a.finish(); else a.closeDrawer();
+    }
+
     private void newChat() {
         a.startActivity(new Intent(a, NewChat.class).putExtra("hub", a.hub.id));
         if (current != null) a.closeDrawer();
@@ -138,6 +145,8 @@ final class Sidebar {
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
 
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
+        list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
+        list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
         // Which PC answers: worth a word with several paired, or when another of the mesh does.
         String via = a.hub.viaName();
         String pc = !via.isEmpty() ? a.hub.label() + " · via " + via : Hub.all(a).size() > 1 ? a.hub.label() : null;

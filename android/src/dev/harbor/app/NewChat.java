@@ -67,6 +67,8 @@ public class NewChat extends Base {
         st = Hub.states.get(hub.id);
         if (st != null) init();
         Ui.bg(this, hub::state, s -> { boolean first = st == null; st = s; if (first) init(); else { run = rebuilt(); show(); } });
+        String text = getIntent().getStringExtra("text");
+        if (text != null) comp.edit.setText(text);
         comp.edit.requestFocus();
     }
 
@@ -93,6 +95,9 @@ public class NewChat extends Base {
         run.effort = p.getString("effort", d.optString("effort"));
         run.access = p.getString("access", d.optString("access"));
         run.fast = st.optBoolean("fast");
+        // Started from elsewhere (a pull request's Review with an agent): its project.
+        String asked = getIntent().getStringExtra("project");
+        if (asked != null) run.project = asked;
         run.normalize();
         show();
     }

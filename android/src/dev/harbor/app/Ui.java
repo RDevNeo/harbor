@@ -63,7 +63,10 @@ final class Ui {
             I_TERMINAL = "", I_GLOBE = "", I_BOT = "", I_CLOCK = "",
             I_CIRCLE_CHECK = "", I_CIRCLE_X = "", I_WEBHOOK = "", I_ACTIVITY = "",
             I_ROTATE = "", I_UP_CHEVRON = "",
-            I_PANEL_RIGHT = "\ue431";
+            I_PANEL_RIGHT = "\ue431", I_PR_OPEN = "\ue555", I_PR_DRAFT = "\ue35b", I_PR_CLOSED = "\ue35a",
+            I_MERGE = "\ue0e4", I_CIRCLE_DOT = "\ue345", I_CIRCLE_SLASH = "\ue402", I_CIRCLE_DASHED = "\ue4b0",
+            I_TAG = "\ue17f", I_BRANCH = "\ue0e2", I_EXTERNAL = "\ue0b9", I_FILTER = "\ue460", I_REFRESH = "\ue145",
+            I_SORT = "\ue046", I_MILESTONE = "\ue298", I_USERS = "\ue1a4";
 
     static Typeface sans, semi, mono, icons, serif, serifBold;
     static final Handler main = new Handler(Looper.getMainLooper());
