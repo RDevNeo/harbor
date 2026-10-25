@@ -278,6 +278,18 @@ pub fn apk() -> Option<(PathBuf, i64)> {
     f.is_file().then(|| (f, read(&dir.join(APK_VERSION)).parse().unwrap_or(0)))
 }
 
+/// A phone app another PC of the mesh served (newer than this one's): kept as this PC's.
+/// The phone checks its signature (only Harbor's key updates the installed app).
+pub fn put_apk(bytes: &[u8], code: i64) -> Result<(), String> {
+    let dir = apk_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let (f, v) = (dir.join(format!(".{APK}.new")), dir.join(format!(".{APK_VERSION}.new")));
+    std::fs::write(&f, bytes).map_err(|e| e.to_string())?;
+    std::fs::write(&v, code.to_string()).map_err(|e| e.to_string())?;
+    replace(&f, &dir.join(APK), None)?;
+    replace(&v, &dir.join(APK_VERSION), None)
+}
+
 /// Downloads and checks the release's APK into `stage`, then moves it into `dir`.
 fn fetch_apk(version: &str, stage: &Path, dir: &Path) -> Result<i64, String> {
     let (file, sig) = (stage.join(APK), stage.join(format!("{APK}.minisig")));

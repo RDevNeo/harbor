@@ -135,7 +135,7 @@ impl App {
 
         section(ui, "Paired phones");
         let tokens = hub.tokens.lock().unwrap().clone();
-        let seen = hub.seen.lock().unwrap().clone();
+        let phones = hub.paired_phones();
         let mut revoke = None;
         w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -152,13 +152,21 @@ impl App {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             let label = if t.name.is_empty() { "Not connected yet".to_string() } else { t.name.clone() };
                             w::text(ui, format!("{}  {label}", ic::SMARTPHONE), "strong-14");
-                            let last = match seen.get(&t.token) {
-                                Some((_, at)) => match crate::app::ago(*at).as_str() {
-                                    "now" => " · seen just now".to_string(),
-                                    a => format!(" · last seen {a} ago"),
-                                },
+                            // Seen here or on another PC of the mesh, and its app's version.
+                            let phone = phones.iter().find(|p| p.group == t.group && !t.group.is_empty());
+                            let mut last = match phone.filter(|p| p.seen > 0) {
+                                Some(p) => {
+                                    let via = if p.via.is_empty() { String::new() } else { format!(" via {}", p.via) };
+                                    match crate::app::ago(p.seen).as_str() {
+                                        "now" => format!(" · seen just now{via}"),
+                                        a => format!(" · last seen {a} ago{via}"),
+                                    }
+                                }
                                 None => String::new(),
                             };
+                            if let Some((note, _)) = phone.and_then(|p| crate::devices::app_note(p.app, p.seen)) {
+                                last.push_str(&format!(" · {note}"));
+                            }
                             let when = match crate::app::ago(t.created).as_str() {
                                 "now" => "just now".to_string(),
                                 a => format!("{a} ago"),

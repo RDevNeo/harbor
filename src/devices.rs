@@ -103,12 +103,16 @@ pub struct Device {
     pub ip: String,
     /// When it last answered or called (unix seconds, 0: not known).
     pub seen: i64,
+    /// Phones: the PC of the mesh it was last seen at, when that isn't this one.
+    pub via: String,
+    /// Phones: its app's versionCode (api::PairedPhone::app, 0: unknown, an old app).
+    pub app: i64,
 }
 
 impl Device {
     fn from_json(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0) }
+        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0) }
     }
 
     pub fn phone(&self) -> bool {
@@ -130,6 +134,21 @@ impl Device {
     }
 }
 
+/// What a phone's app is, for Devices and Settings › Phones: "app 0.18.1", or how it's behind
+/// the app this PC serves. None while the phone hasn't been seen.
+pub fn app_note(app: i64, seen: i64) -> Option<(String, bool)> {
+    let served = crate::update::apk().map_or(0, |(_, c)| c);
+    let name = |c: i64| format!("{}.{}.{}", c / 1_000_000, c / 1000 % 1000, c % 1000);
+    match app {
+        _ if seen == 0 => None,
+        0 => Some(("app older than 0.17: update it".into(), true)),
+        // (an app that picks up sends but doesn't say its version: 0.17 or 0.18.0)
+        a if a == crate::api::APP_INBOX => Some((if served > a { format!("app 0.17+, {} available", name(served)) } else { "app 0.17+".into() }, served > a)),
+        a if served > a => Some((format!("app {} → {} available", name(a), name(served)), true)),
+        a => Some((format!("app {}", name(a)), false)),
+    }
+}
+
 /// Everything paired: the mesh's PCs, then (with phone access on) the phones, one per pairing.
 fn paired() -> Vec<Device> {
     let Some(hub) = crate::api::HUB.get() else { return vec![] };
@@ -138,12 +157,12 @@ fn paired() -> Vec<Device> {
     let mesh_on = hub.mesh.on.load(std::sync::atomic::Ordering::Relaxed);
     let mut v: Vec<Device> = crate::remote::paired_pcs(&allowed, &peers)
         .into_iter()
-        .map(|p| Device { seen: peers.get(&p.id).map(|q| q.seen).unwrap_or(0), key: p.id, name: p.name, kind: "pc".into(), online: mesh_on && p.online, ip: p.ip })
+        .map(|p| Device { seen: peers.get(&p.id).map(|q| q.seen).unwrap_or(0), key: p.id, name: p.name, kind: "pc".into(), online: mesh_on && p.online, ip: p.ip, ..Default::default() })
         .collect();
     if hub.enabled.load(std::sync::atomic::Ordering::Relaxed) {
         for p in hub.paired_phones() {
             let online = p.seen > 0 && crate::store::now() - p.seen < PHONE_OPEN_SECS;
-            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen });
+            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen, via: p.via, app: p.app });
         }
     }
     v
@@ -533,7 +552,9 @@ impl List {
                 if w::menu_item(ui, ic::FILE_IMAGE, "Image to clipboard", None, false).clicked() {
                     pick = Some(Pick::ClipImage);
                 }
-                if d.phone() && !d.online {
+                if d.phone() && d.seen > 0 && d.app < crate::api::APP_INBOX {
+                    w::subtle(ui, "  The phone's app is too old to take these: update it (Settings › Update there)", "label-12");
+                } else if d.phone() && !d.online {
                     w::subtle(ui, "  Arrives when Harbor is open on the phone", "label-12");
                 }
             });
@@ -621,12 +642,17 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         a => format!("seen {a} ago"),
     };
     bits.push(match (d.phone(), d.online) {
+        (true, true) if !d.via.is_empty() => format!("Harbor open, via {}", d.via),
         (true, true) => "Harbor open".into(),
         (_, true) => "online".into(),
         (_, false) if d.seen > 0 => format!("offline, {}", ago(d.seen)),
         _ => "offline".into(),
     });
-    if !d.ip.is_empty() && d.online {
+    if d.phone() {
+        if let Some((note, _)) = app_note(d.app, d.seen) {
+            bits.push(note);
+        }
+    } else if !d.ip.is_empty() && d.online {
         bits.push(d.ip.clone());
     }
     let x = rect.left() + 10.0 + LEAD + 12.0;
@@ -1261,7 +1287,7 @@ impl Files {
 
 /// For hot reload: what a device tab needs to come back.
 pub fn device_json(d: &Device) -> Value {
-    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen })
+    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app })
 }
 
 pub fn device_from(v: &Value) -> Device {
@@ -1295,7 +1321,7 @@ mod tests {
 
     #[test]
     fn devices_round_trip_for_reload() {
-        let d = Device { key: "phone:g1".into(), name: "Pixel".into(), kind: "android".into(), online: true, ip: "192.0.2.9".into(), seen: 5 };
+        let d = Device { key: "phone:g1".into(), name: "Pixel".into(), kind: "android".into(), online: true, ip: "192.0.2.9".into(), seen: 5, ..Default::default() };
         let back = device_from(&device_json(&d));
         assert_eq!((back.key.as_str(), back.group(), back.phone(), back.seen), ("phone:g1", "g1", true, 5));
         assert!(back.can_send());

@@ -21,10 +21,36 @@ public class Update extends BroadcastReceiver {
 
     interface Progress { void at(long done, long total); }
 
-    /** Blocking: downloads and commits the session. Run off the UI thread. */
+    /** The newest app any PC of any pairing offers (versionCode, its pairing's id, the PC: ""
+     *  for the paired one), from the last {@link #check}. */
+    static volatile long bestCode;
+    static volatile String bestHub, bestPc;
+    private static volatile long checked;
+
+    /** Asks every PC of every pairing which app it serves (GET /v1/app), at most every
+     *  10 minutes unless forced: a PC that runs an older Harbor isn't the last word. Blocking. */
+    static long check(Context c, boolean force) {
+        if (!force && System.currentTimeMillis() - checked < 600_000) return bestCode;
+        checked = System.currentTimeMillis();
+        long best = 0; String bh = null, bp = null;
+        for (Hub h : Hub.all(c))
+            for (String v : h.endpoints()) {
+                try {
+                    long code = h.callOn(v, "GET", "/v1/app", null).optLong("version_code");
+                    if (code > best) { best = code; bh = h.id; bp = v; }
+                } catch (Exception ignored) { } // that PC is away
+            }
+        bestHub = bh; bestPc = bp; bestCode = best;
+        return best;
+    }
+
+    /** Blocking: downloads and commits the session. Run off the UI thread. From the PC with the
+     *  newest app when {@link #check} found one, else from the PC calls go to now. */
     static void install(Context c, Hub hub, Progress progress) throws Exception {
         if (busy) throw new IOException("already updating");
-        Net.Http http = hub.open("GET", "/app.apk", 60_000, false);
+        Hub from = bestHub == null ? null : Hub.get(c, bestHub);
+        Net.Http http = from != null && bestCode > Settings.myCode(c) ? from.openOn(bestPc, "GET", "/app.apk", 60_000)
+                : hub.open("GET", "/app.apk", 60_000, false);
         try {
             int code = http.code();
             if (code != 200) throw new IOException("the PC has no app to send (HTTP " + code + ")");

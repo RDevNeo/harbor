@@ -379,6 +379,7 @@ final class Hub {
                     if (auth) {
                         c.header("Authorization", "Bearer " + tok);
                         c.header("X-Harbor-Device", deviceName());
+                        c.header("X-Harbor-App", String.valueOf(appCode()));
                         c.header("X-Harbor-Ids", "global");
                     }
                     c.header("Accept", "application/json");
@@ -434,6 +435,7 @@ final class Hub {
                 synchronized (goodAddr) { goodAddr.put(id + "/" + v, addr); }
                 c.header("Authorization", "Bearer " + tok);
                 c.header("X-Harbor-Device", deviceName());
+                c.header("X-Harbor-App", String.valueOf(appCode()));
                 c.header("Accept", "application/json");
                 return c;
             } catch (Net.Refused x) {
@@ -520,6 +522,11 @@ final class Hub {
             for (int i = 0; i < hubs.size(); i++) if (hubs.get(i).id.equals(id)) hubs.set(i, this);
             save(Ui.app, hubs);
         }
+    }
+
+    /** This app's versionCode (the PCs show it, and tell when it's out of date). */
+    static long appCode() {
+        return Ui.app == null ? 0 : Settings.myCode(Ui.app);
     }
 
     /** What the PC calls this phone (typing lines, Settings › Phones): the name the user gave
