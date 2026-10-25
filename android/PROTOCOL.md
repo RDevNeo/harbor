@@ -310,6 +310,20 @@ An image a card shows (its `images[].url`), with the token like every call. With
 most that many pixels on its longer side (16–2048); without, the file as it is. Image files only
 (png, jpg, gif, webp, …); `404` otherwise.
 
+### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
+
+What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
+for up to a day, until the app takes it. `GET /v1/events` says how many wait (`"inbox": 2`), and a
+new item wakes the long-poll. The app also asks every PC of every pairing every 30 s while it's
+open.
+
+`GET /v1/inbox` → `{"items": [{"id", "kind", "name", "size", "text"?}]}`, only this pairing's items.
+`kind` is `text` (put `text` on the clipboard), `clip-image` (an image for the clipboard), `image`
+(saved to Pictures/Harbor and opened) or `file` (saved to Download/Harbor). `GET /v1/inbox/{id}`
+gives an item's bytes (`application/octet-stream`, `404` when it's gone). `POST /v1/inbox/{id}/done`
+with `{}`, or `{"error": "<why>"}` when the phone couldn't take it, removes the item, and the PC
+shows the item as delivered or failed.
+
 ### `GET /v1/app`
 
 `{"version_code": 7000, "url": "/app.apk"}`; `version_code` 0: the hub has no app to offer.

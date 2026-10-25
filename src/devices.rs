@@ -9,6 +9,9 @@
 //! PCs also get a terminal (ssh in a Harbor terminal) and a file browser over the
 //! system `ssh` (python3 lists folders there, `cat` moves bytes); nothing new runs on
 //! any device. Image files preview inside Harbor (crate::images).
+//!
+//! Phones paired with Harbor's own app also take sends without Remote Devices' app: they wait in
+//! this PC's hub (api::Parcel) until the app picks them up.
 
 use crate::icons as ic;
 use crate::theme::{RADIUS_MD, Tokens};
@@ -131,6 +134,11 @@ pub struct Device {
     pub sunshine: Option<bool>,
     /// Phones: the app version this PC serves (Remote Devices reads it from its APK).
     pub app_apk: i64,
+    /// Phones: the Harbor app pairing it has with this PC (api::Token::group), "" for none.
+    /// Sends go through it when Remote Devices' own phone app isn't running.
+    pub harbor: String,
+    /// When its Harbor app last called this PC (unix seconds, 0 = not this session).
+    pub harbor_seen: i64,
 }
 
 impl Device {
@@ -149,6 +157,8 @@ impl Device {
             app: v.get("app").filter(|a| a.is_object()).cloned(),
             sunshine: v["sunshine"].as_bool(),
             app_apk: v["app_apk"].as_i64().unwrap_or(0),
+            harbor: s("harbor"),
+            harbor_seen: 0,
         }
     }
 
@@ -191,13 +201,30 @@ impl Device {
         (self.phone() && self.online && have > 0 && have < self.app_apk).then_some((have, self.app_apk))
     }
 
-    /// Can it take an image onto its clipboard? PCs always; phones from app v11 (`clip-image`).
+    /// Can it take an image onto its clipboard? PCs always; phones through Harbor's app, or
+    /// Remote Devices' from v11 (`clip-image`).
     fn clip_image(&self) -> bool {
-        !self.phone() || self.app.as_ref().is_some_and(|a| a["app"].as_i64().unwrap_or(0) >= PHONE_CLIP_IMAGE_APP)
+        !self.phone() || !self.harbor.is_empty() || self.rd_clip_image()
     }
 
-    fn can_control(&self) -> bool {
-        !self.phone() || self.app.as_ref().is_some_and(|a| a["control"].as_bool().unwrap_or(false))
+    fn rd_clip_image(&self) -> bool {
+        self.app.as_ref().is_some_and(|a| a["app"].as_i64().unwrap_or(0) >= PHONE_CLIP_IMAGE_APP)
+    }
+
+    /// Can things be sent to it: an online PC, a phone with Remote Devices' app running, or a
+    /// phone paired with Harbor's app (it waits on this PC until the app picks it up).
+    fn can_send(&self) -> bool {
+        (self.online && (!self.phone() || self.app_ready())) || self.by_harbor()
+    }
+
+    /// Sends to this phone go through Harbor's app (Remote Devices' isn't running).
+    fn by_harbor(&self) -> bool {
+        self.phone() && !self.harbor.is_empty() && !(self.online && self.app_ready())
+    }
+
+    /// Its Harbor app called this PC lately (it does every 30 s while open).
+    fn harbor_open(&self) -> bool {
+        self.harbor_seen > 0 && crate::store::now() - self.harbor_seen < HARBOR_OPEN_SECS
     }
 }
 
@@ -219,13 +246,15 @@ pub struct Transfer {
     pub error: Option<String>,
     /// Where a download was saved.
     pub saved: Option<PathBuf>,
+    /// Waits on this PC for the phone's Harbor app to pick it up.
+    pub waiting: bool,
 }
 
 pub enum Action {
     /// Open a terminal running `argv` (ssh into the device).
     Terminal { title: String, argv: Vec<String> },
-    /// Open the device's screen in a new tab.
-    View { device: Device, control: bool },
+    /// Open the device's screen (view only) in a new tab.
+    View(Device),
     /// Browse the device's files in a new tab.
     Files(Device),
 }
@@ -257,6 +286,99 @@ enum Pick {
     ClipImage,
 }
 
+/// A phone's Harbor app calls every 30 s while it's open: seen this recently, it's online.
+const HARBOR_OPEN_SECS: i64 = 75;
+
+/// The phones paired with Harbor's app (api.rs) joined to Remote Devices' list: a phone of both
+/// (same address or name) gets its pairing, the others a row of their own.
+fn with_harbor_phones(mut devices: Vec<Device>) -> Vec<Device> {
+    let Some(hub) = crate::api::HUB.get().filter(|h| h.enabled.load(std::sync::atomic::Ordering::Relaxed)) else { return devices };
+    for p in hub.paired_phones() {
+        let same = |d: &Device| d.phone() && d.harbor.is_empty() && ((!p.ip.is_empty() && d.ip == p.ip) || (!p.name.is_empty() && d.name.trim().eq_ignore_ascii_case(p.name.trim())));
+        let i = match devices.iter().position(same) {
+            Some(i) => i,
+            None => {
+                devices.push(Device {
+                    key: format!("harbor:{}", p.group),
+                    name: if p.name.is_empty() { "Phone".into() } else { p.name.clone() },
+                    kind: "android".into(),
+                    os: "android".into(),
+                    ip: p.ip.clone(),
+                    ..Default::default()
+                });
+                devices.len() - 1
+            }
+        };
+        let d = &mut devices[i];
+        d.harbor = p.group.clone();
+        d.harbor_seen = p.seen;
+        d.online |= d.harbor_open();
+    }
+    devices
+}
+
+/// To a phone through its Harbor app: each item waits in this PC's hub (api::Parcel) until the
+/// app picks it up, tracked like a transfer.
+fn send_harbor(dev: &Device, kind: &'static str, text: Option<String>, files: Vec<PathBuf>, transfers: Arc<Mutex<Vec<Transfer>>>, wake: Wake) {
+    let Some(hub) = crate::api::HUB.get().cloned() else { return };
+    let name = dev.name.clone();
+    let mut items: Vec<(String, String, Option<PathBuf>, bool, u64)> = vec![];
+    if let Some(t) = text {
+        items.push(("Text".into(), t, None, false, 0));
+    }
+    for f in files {
+        let n = f.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let (path, temp) = if kind == "clip-image" {
+            match to_png(&f) {
+                Ok(p) => {
+                    let temp = p != f;
+                    (p, temp)
+                }
+                Err(e) => {
+                    transfers.lock().unwrap().push(Transfer { label: format!("{n} → {name}'s clipboard"), error: Some(e), ..Default::default() });
+                    continue;
+                }
+            }
+        } else {
+            (f, false)
+        };
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let n = if temp { Path::new(&n).with_extension("png").to_string_lossy().into_owned() } else { n };
+        items.push((n, String::new(), Some(path), temp, size));
+    }
+    for (label, text, path, temp, size) in items {
+        let i = {
+            let mut l = transfers.lock().unwrap();
+            let to = if matches!(kind, "text" | "clip-image") { format!("{name}'s clipboard") } else { name.clone() };
+            l.push(Transfer { label: format!("{label} → {to}"), size, waiting: true, ..Default::default() });
+            l.len() - 1
+        };
+        let (tr, wk) = (transfers.clone(), wake.clone());
+        let report: crate::api::Report = Arc::new(move |sent, done, error| {
+            if let Some(x) = tr.lock().unwrap().get_mut(i) {
+                x.waiting = false;
+                x.sent = sent.min(x.size.max(sent));
+                x.done = done;
+                x.error = error;
+            }
+            wk();
+        });
+        hub.post(crate::api::Parcel {
+            id: crate::store::random_hex(8).unwrap_or_else(|_| format!("{i}")),
+            group: dev.harbor.clone(),
+            kind,
+            name: label,
+            text,
+            path,
+            temp,
+            size,
+            at: Instant::now(),
+            report,
+        });
+    }
+    wake();
+}
+
 /// The first phone app version with the `clip-image` op (Remote Devices' Phone.APP_CLIP_IMAGE).
 const PHONE_CLIP_IMAGE_APP: i64 = 11;
 /// Older phone apps only take text onto the clipboard.
@@ -264,6 +386,10 @@ const PHONE_NO_CLIP_IMAGE: &str = "Needs the phone's Remote Devices app v11 or n
 
 /// `--clip-json`: text (on stdin) or a PNG onto a device's clipboard, tracked like a transfer.
 fn send_clip(dev: &Device, text: Option<String>, image: Option<PathBuf>, transfers: Arc<Mutex<Vec<Transfer>>>, wake: Wake) {
+    if dev.by_harbor() || (image.is_some() && dev.phone() && !dev.harbor.is_empty() && !dev.rd_clip_image()) {
+        let kind = if text.is_some() { "text" } else { "clip-image" };
+        return send_harbor(dev, kind, text, image.into_iter().collect(), transfers, wake);
+    }
     let (key, name) = (dev.key.clone(), dev.name.clone());
     let i = {
         let mut l = transfers.lock().unwrap();
@@ -389,10 +515,21 @@ impl List {
         });
     }
 
-    /// Files to a device through Remote Devices (opens there, like its Send button).
-    fn send(&self, dev: &Device, paths: Vec<PathBuf>) {
+    /// Files to a device through Remote Devices (opens there, like its Send button), or a
+    /// phone's Harbor app (images: `images` true, or dropped ones, open in its photo app;
+    /// other files land in its Downloads).
+    fn send(&self, dev: &Device, paths: Vec<PathBuf>, images: bool) {
         let files: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
         if files.is_empty() {
+            return;
+        }
+        if dev.by_harbor() {
+            let (imgs, other): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|p| images || crate::images::is_image(&p.to_string_lossy()));
+            for (kind, list) in [("image", imgs), ("file", other)] {
+                if !list.is_empty() {
+                    send_harbor(dev, kind, None, list, self.transfers.clone(), self.wake.clone());
+                }
+            }
             return;
         }
         send_files(dev, files, self.transfers.clone(), self.wake.clone());
@@ -423,12 +560,13 @@ impl List {
         }
         ui.ctx().request_repaint_after(REFRESH);
         let picked: Vec<_> = std::mem::take(&mut *self.picked.lock().unwrap());
-        let devices = self.listing.lock().unwrap().devices.clone();
+        let devices = with_harbor_phones(self.listing.lock().unwrap().devices.clone());
         for (key, kind, files) in picked {
             if let Some(d) = devices.iter().find(|d| d.key == key) {
                 match kind {
                     Pick::ClipImage => send_clip(d, None, files.into_iter().next(), self.transfers.clone(), self.wake.clone()),
-                    _ => self.send(d, files),
+                    Pick::Images => self.send(d, files, true),
+                    Pick::Files => self.send(d, files, false),
                 }
             }
         }
@@ -493,18 +631,18 @@ impl List {
                             w::separator(ui);
                         }
                         let (a, rect) = device_row(ui, t, d, hovering);
-                        if d.online && (!d.phone() || d.app_ready()) {
+                        if d.can_send() {
                             drop_rects.push(rect);
                             if !dropped.is_empty() && pointer.is_some_and(|p| rect.contains(p)) {
-                                self.send(d, dropped.clone());
+                                self.send(d, dropped.clone(), false);
                             }
                         }
                         match a {
                             Some(RowAction::Send(r)) => self.send_menu = Some((d.clone(), r)),
                             // a phone whose app is older than the one Remote Devices ships: update first
-                            Some(RowAction::Do(Action::View { device, control })) if outdated(&device, latest_app()).is_some() => {
+                            Some(RowAction::Do(Action::View(device))) if outdated(&device, latest_app()).is_some() => {
                                 let need = latest_app();
-                                self.update = Some(AppUpdate::new(device, need, Then::View(control), &devices, self.wake.clone()));
+                                self.update = Some(AppUpdate::new(device, need, Then::View, &devices, self.wake.clone()));
                             }
                             Some(RowAction::Do(x)) => action = Some(x),
                             Some(RowAction::UpdateApp) => {
@@ -532,7 +670,7 @@ impl List {
             action = Some(a);
         }
         if !self.unplaced.is_empty() {
-            let targets: Vec<Device> = devices.iter().filter(|d| d.online && (!d.phone() || d.app_ready())).cloned().collect();
+            let targets: Vec<Device> = devices.iter().filter(|d| d.can_send()).cloned().collect();
             let anchor = Rect::from_center_size(pane.center_top() + Vec2::new(0.0, 60.0), Vec2::new(10.0, 10.0));
             let n = self.unplaced.len();
             let mut chosen = None;
@@ -546,7 +684,7 @@ impl List {
             });
             if let Some(d) = chosen {
                 let files = std::mem::take(&mut self.unplaced);
-                self.send(&d, files);
+                self.send(&d, files, false);
             } else if close {
                 self.unplaced.clear();
             }
@@ -564,7 +702,7 @@ impl List {
             let u = self.update.take()?;
             self.refresh();
             return match u.then {
-                Then::View(control) => Some(Action::View { device: u.dev, control }),
+                Then::View => Some(Action::View(u.dev)),
                 Then::ClipImage => {
                     self.pick(u.dev.key.clone(), Pick::ClipImage);
                     None
@@ -627,7 +765,7 @@ impl List {
                     .with_layout(Layout::right_to_left(Align::Min), |ui| {
                         let close = w::btn("Close").outline().show(ui).clicked();
                         // the screen works with the old app too; only newer features need the update
-                        if matches!(u.then, Then::View(_)) {
+                        if matches!(u.then, Then::View) {
                             anyway = w::btn("Connect anyway").ghost().show(ui).clicked();
                         }
                         close
@@ -639,7 +777,7 @@ impl List {
         if anyway {
             let u = self.update.take()?;
             return match u.then {
-                Then::View(control) => Some(Action::View { device: u.dev, control }),
+                Then::View => Some(Action::View(u.dev)),
                 _ => None,
             };
         }
@@ -749,7 +887,7 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
     // By position, not by the row's response: the action buttons drawn over the row take
     // the hover, which would hide them again next frame (flicker).
     let hot = ui.rect_contains_pointer(rect);
-    let target = d.online && (!d.phone() || d.app_ready());
+    let target = d.can_send();
     if hot {
         let fill = if hovering && target { w::alpha(t.blue(300), 0.5) } else { w::alpha(t.accent(), 0.6) };
         p.rect_filled(rect.shrink2(Vec2::new(0.0, 2.0)), CornerRadius::same(RADIUS_MD), fill);
@@ -772,6 +910,14 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
     }
     if !d.online {
         bits.push("offline".into());
+    }
+    if d.by_harbor() {
+        bits.push(match crate::app::ago(d.harbor_seen).as_str() {
+            _ if d.harbor_open() => "Harbor app open".into(),
+            _ if d.harbor_seen == 0 => "Harbor app".into(),
+            a => format!("Harbor app, seen {a} ago"),
+        });
+    } else if !d.online {
     } else if d.phone() {
         bits.push(match &d.app {
             None => "app not running".into(),
@@ -806,19 +952,16 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         }
         right = br.left() - 8.0;
     }
-    if d.online && hot {
+    if hot && (d.online || d.can_send()) {
         let mut buttons: Vec<(&str, &str, u8)> = vec![];
         // (a PC without Sunshine set up can't share its screen yet)
-        if (!d.phone() || d.app_ready()) && d.sunshine != Some(false) {
-            if d.can_control() {
-                buttons.push((ic::MOUSE_POINTER, "Control", 0));
-            }
+        if d.online && (!d.phone() || d.app_ready()) && d.sunshine != Some(false) {
             buttons.push((ic::EYE, "View", 1));
         }
-        if !d.phone() || d.app_ready() {
+        if d.can_send() {
             buttons.push((ic::SEND, "Send", 2));
         }
-        if !d.phone() && !d.ssh_user.is_empty() {
+        if d.online && !d.phone() && !d.ssh_user.is_empty() {
             buttons.push((ic::FOLDER, "Files", 3));
             buttons.push((ic::TERMINAL, "Terminal", 4));
         }
@@ -832,8 +975,7 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
             ic::glyph(&p, br.center(), icon, 15.0, if r.hovered() { t.fg() } else { t.subtle() });
             if r.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip).clicked() {
                 out = Some(match k {
-                    0 => RowAction::Do(Action::View { device: d.clone(), control: true }),
-                    1 => RowAction::Do(Action::View { device: d.clone(), control: false }),
+                    1 => RowAction::Do(Action::View(d.clone())),
                     2 => RowAction::Send(br),
                     3 => RowAction::Do(Action::Files(d.clone())),
                     _ => RowAction::Do(Action::Terminal { title: d.name.clone(), argv: vec!["ssh".into(), d.target()] }),
@@ -841,7 +983,7 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
             }
         }
     }
-    if d.me && !(d.online && hot) {
+    if d.me && !(hot && (d.online || d.can_send())) {
         let g = p.layout_no_wrap("This PC".into(), FontId::new(12.0, crate::theme::medium()), t.subtle());
         let br = Rect::from_min_size(pos2(right - g.size().x - 14.0, rect.center().y - 10.0), Vec2::new(g.size().x + 14.0, 20.0));
         p.rect_filled(br, CornerRadius::same(10), t.gray(200));
@@ -878,7 +1020,7 @@ fn outdated(d: &Device, need: i64) -> Option<i64> {
 
 /// What to do once the phone's app is new enough.
 enum Then {
-    View(bool),
+    View,
     ClipImage,
     /// Just the update ("Update app" on the row).
     Nothing,
@@ -1023,6 +1165,8 @@ fn transfers_ui(ui: &mut Ui, t: &Tokens, transfers: &Arc<Mutex<Vec<Transfer>>>) 
                         None => human(x.size),
                     };
                     w::subtle(ui, s, "label-12");
+                } else if x.waiting {
+                    w::subtle(ui, "Waiting for Harbor on the phone (open the app)", "label-12");
                 } else {
                     w::meter(ui, if x.size > 0 { x.sent as f32 / x.size as f32 } else { 0.0 }, (width - 8.0).min(320.0));
                     w::subtle(ui, format!("{} of {}", human(x.sent), human(x.size)), "label-12");

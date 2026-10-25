@@ -35,16 +35,37 @@ public class CamProvider extends ContentProvider {
         return Uri.parse("content://" + AUTHORITY + "/" + name);
     }
 
+    /** Android 9 and older: what the PCs send (Inbox) stays in the app's own folder, shared
+     *  from here as content://dev.harbor.app.cam/recv/<name>. */
+    static File received(Context c) {
+        File d = new File(c.getExternalFilesDir(null) != null ? c.getExternalFilesDir(null) : c.getFilesDir(), "received");
+        d.mkdirs();
+        return d;
+    }
+
+    static Uri receivedUri(File f) {
+        return Uri.parse("content://" + AUTHORITY + "/recv/" + Uri.encode(f.getName()));
+    }
+
     private File file(Uri u) throws FileNotFoundException {
         String n = u.getLastPathSegment();
         if (n == null || n.contains("/") || n.startsWith(".")) throw new FileNotFoundException();
+        java.util.List<String> segs = u.getPathSegments();
+        if (segs.size() == 2 && "recv".equals(segs.get(0))) return new File(received(getContext()), n);
+        if (segs.size() != 1) throw new FileNotFoundException();
         return new File(dir(getContext()), n);
+    }
+
+    private static boolean isReceived(Uri u) {
+        return u.getPathSegments().size() == 2 && "recv".equals(u.getPathSegments().get(0));
     }
 
     @Override public boolean onCreate() { return true; }
 
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+        // Received files are only read through here; the camera writes its shot.
+        if (isReceived(uri) && mode.contains("w")) throw new FileNotFoundException();
         return ParcelFileDescriptor.open(file(uri), ParcelFileDescriptor.parseMode(mode.contains("w") ? "rwt" : "r"));
     }
 
@@ -61,7 +82,9 @@ public class CamProvider extends ContentProvider {
         return c;
     }
 
-    @Override public String getType(Uri uri) { return "image/jpeg"; }
+    @Override public String getType(Uri uri) {
+        return isReceived(uri) ? Inbox.mime(String.valueOf(uri.getLastPathSegment()), false) : "image/jpeg";
+    }
     @Override public Uri insert(Uri uri, ContentValues v) { return null; }
     @Override public int delete(Uri uri, String s, String[] a) { return 0; }
     @Override public int update(Uri uri, ContentValues v, String s, String[] a) { return 0; }

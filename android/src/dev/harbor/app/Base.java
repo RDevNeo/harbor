@@ -273,6 +273,7 @@ abstract class Base extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        Inbox.resumed(this);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
     }
@@ -280,6 +281,7 @@ abstract class Base extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        Inbox.paused(this);
         gen++;
         Net.Http c = polling;
         if (c != null) Ui.pool.execute(c::close);
@@ -323,6 +325,8 @@ abstract class Base extends Activity {
                     JSONArray a = r.optJSONArray("changed_chats");
                     if (a != null) for (int i = 0; i < a.length(); i++) changed.add(a.optString(i));
                     boolean sc = r.optBoolean("state_changed");
+                    // Something one of the PCs sent this phone waits there (Devices › Send).
+                    if (r.optInt("inbox") > 0) Inbox.poke(h, now);
                     if (fails > 0) Ui.main.post(() -> { if (my == gen) { offline = false; onOffline(false, null); } });
                     fails = 0;
                     // The first answer only tells the revision; the screen loaded on resume already,

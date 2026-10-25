@@ -166,6 +166,61 @@ impl Net {
 /// This Harbor's hub, for code without the App at hand (remote.rs's device list).
 pub static HUB: std::sync::OnceLock<Arc<Hub>> = std::sync::OnceLock::new();
 
+/// How long something sent to a phone (Devices › Send) waits for its Harbor app.
+pub const INBOX_TTL: Duration = Duration::from_secs(24 * 3600);
+
+/// Progress for whoever sent a [`Parcel`]: (bytes the phone fetched, delivered, error).
+pub type Report = Arc<dyn Fn(u64, bool, Option<String>) + Send + Sync>;
+
+/// Something this PC sends to a phone's Harbor app (Devices › Send). It waits on the hub
+/// until the app picks it up (`GET /v1/inbox`, see android/PROTOCOL.md), at most [`INBOX_TTL`].
+pub struct Parcel {
+    pub id: String,
+    /// The pairing it's for ([`Token::group`]).
+    pub group: String,
+    /// "text" (onto the clipboard), "image" (saved and opened), "clip-image" (saved, onto the
+    /// clipboard) or "file" (saved to Downloads).
+    pub kind: &'static str,
+    pub name: String,
+    pub text: String,
+    pub path: Option<PathBuf>,
+    /// `path` is a copy made for this parcel: deleted with it.
+    pub temp: bool,
+    pub size: u64,
+    pub at: Instant,
+    pub report: Report,
+}
+
+impl Parcel {
+    fn json(&self) -> Value {
+        let mut v = json!({ "id": self.id, "kind": self.kind, "name": self.name, "size": self.size });
+        if self.kind == "text" {
+            v["text"] = json!(self.text);
+        }
+        v
+    }
+
+    fn finish(self, error: Option<String>) {
+        if self.temp {
+            if let Some(p) = &self.path {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        (self.report)(if error.is_none() { self.size } else { 0 }, error.is_none(), error);
+    }
+}
+
+/// A phone paired here, one per pairing (for Devices).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PairedPhone {
+    pub group: String,
+    pub name: String,
+    /// When its app last called this PC (0: not this session).
+    pub seen: i64,
+    /// The address it called from.
+    pub ip: String,
+}
+
 /// What the listener threads and the UI thread share.
 pub struct Hub {
     pub enabled: AtomicBool,
@@ -174,6 +229,10 @@ pub struct Hub {
     pub tokens: Mutex<Vec<Token>>,
     /// Token → (device name, last seen): this session only.
     pub seen: Mutex<HashMap<String, (String, i64)>>,
+    /// Token → the address it last called from: this session only.
+    pub ips: Mutex<HashMap<String, String>>,
+    /// What waits for phones' apps to pick it up (Devices › Send).
+    pub inbox: Mutex<Vec<Parcel>>,
     revs: Mutex<Revs>,
     cv: Condvar,
     pub net: Mutex<Net>,
@@ -196,6 +255,8 @@ impl Hub {
             port: Mutex::new(port),
             tokens: Mutex::new(tokens),
             seen: Mutex::new(HashMap::new()),
+            ips: Mutex::new(HashMap::new()),
+            inbox: Mutex::new(vec![]),
             revs: Mutex::new(Revs { rev: base, state: base, ..Default::default() }),
             cv: Condvar::new(),
             net: Mutex::new(Net::default()),
@@ -348,6 +409,72 @@ impl Hub {
         let mut chats: Vec<i64> = r.chats.iter().filter(|(_, v)| **v > since).map(|(k, _)| *k).collect();
         chats.sort();
         (r.rev, chats, r.state > since)
+    }
+
+    /// The pairing a token belongs to ("" for none).
+    pub fn group_of(&self, token: &str) -> String {
+        self.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.group.clone()).unwrap_or_default()
+    }
+
+    /// The phones paired here, one per pairing, most recently seen first.
+    pub fn paired_phones(&self) -> Vec<PairedPhone> {
+        let tokens = self.tokens.lock().unwrap().clone();
+        let seen = self.seen.lock().unwrap().clone();
+        let ips = self.ips.lock().unwrap().clone();
+        let mut out: Vec<PairedPhone> = vec![];
+        for t in tokens.iter().filter(|t| !t.group.is_empty()) {
+            let (named, at) = seen.get(&t.token).cloned().unwrap_or_default();
+            let name = if !named.is_empty() { named } else { t.name.clone() };
+            let ip = ips.get(&t.token).cloned().unwrap_or_default();
+            match out.iter_mut().find(|p| p.group == t.group) {
+                Some(p) if at > p.seen => *p = PairedPhone { group: t.group.clone(), name: if name.is_empty() { p.name.clone() } else { name }, seen: at, ip },
+                Some(p) if p.name.is_empty() => p.name = name,
+                Some(_) => {}
+                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip }),
+            }
+        }
+        out.sort_by(|a, b| b.seen.cmp(&a.seen));
+        out
+    }
+
+    /// Queues a parcel for a phone's app and wakes its long-poll.
+    pub fn post(&self, p: Parcel) {
+        self.prune_inbox();
+        self.inbox.lock().unwrap().push(p);
+        self.touch(None, false);
+    }
+
+    /// Parcels nobody picked up in time: given up on.
+    fn prune_inbox(&self) {
+        let old: Vec<Parcel> = {
+            let mut inbox = self.inbox.lock().unwrap();
+            let (old, keep) = std::mem::take(&mut *inbox).into_iter().partition(|p| p.at.elapsed() > INBOX_TTL);
+            *inbox = keep;
+            old
+        };
+        for p in old {
+            p.finish(Some("The phone's Harbor app didn't pick it up within a day".into()));
+        }
+    }
+
+    /// What waits for a pairing.
+    pub fn inbox_for(&self, group: &str) -> Vec<Value> {
+        self.prune_inbox();
+        if group.is_empty() {
+            return vec![];
+        }
+        self.inbox.lock().unwrap().iter().filter(|p| p.group == group).map(Parcel::json).collect()
+    }
+
+    /// The app has it (or gave up on it, with `error`): gone from the inbox.
+    pub fn delivered(&self, group: &str, id: &str, error: Option<String>) -> bool {
+        let p = {
+            let mut inbox = self.inbox.lock().unwrap();
+            let Some(i) = inbox.iter().position(|p| p.group == group && p.id == id) else { return false };
+            inbox.remove(i)
+        };
+        p.finish(error);
+        true
     }
 
     #[cfg(test)]
@@ -994,6 +1121,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     let device: String = req.header("x-harbor-device").unwrap_or("").chars().take(60).collect();
     let global = req.header("x-harbor-ids") == Some("global");
     hub.seen.lock().unwrap().insert(token.clone(), (device.clone(), store::now()));
+    hub.ips.lock().unwrap().insert(token.clone(), ip.to_string());
     let w = r.get_mut();
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["v1", "app"]) => send_json(w, 200, &app_info()),
@@ -1008,7 +1136,17 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             } else {
                 chats.iter().map(|c| json!(c)).collect()
             };
-            send_json(w, 200, &json!({ "rev": rev, "changed_chats": chats, "state_changed": state }));
+            let inbox = hub.inbox_for(&hub.group_of(&token)).len();
+            send_json(w, 200, &json!({ "rev": rev, "changed_chats": chats, "state_changed": state, "inbox": inbox }));
+        }
+        // What this PC sent the phone (Devices › Send).
+        ("GET", ["v1", "inbox"]) => send_json(w, 200, &json!({ "items": hub.inbox_for(&hub.group_of(&token)) })),
+        ("GET", ["v1", "inbox", id]) => serve_parcel(w, hub, &hub.group_of(&token), id),
+        ("POST", ["v1", "inbox", id, "done"]) => {
+            let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let error = body["error"].as_str().filter(|e| !e.is_empty()).map(|e| format!("On the phone: {}", e.chars().take(300).collect::<String>()));
+            let found = hub.delivered(&hub.group_of(&token), id, error);
+            send_json(r.get_mut(), if found { 200 } else { 404 }, &if found { json!({ "ok": true }) } else { json!({ "error": "nothing waits with that id" }) });
         }
         // The PCs of the mesh, with this phone's token on each (mesh.rs).
         ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub, &token)),
@@ -1090,6 +1228,29 @@ fn serve_apk(w: &mut impl Write, head_only: bool) {
     if w.write_all(head.as_bytes()).is_ok() && !head_only {
         let _ = std::io::copy(&mut f, w);
     }
+}
+
+/// A parcel's bytes, reporting to its sender how far the phone got.
+fn serve_parcel(w: &mut impl Write, hub: &Hub, group: &str, id: &str) {
+    let found = hub.inbox.lock().unwrap().iter().find(|p| p.group == group && p.id == id).map(|p| (p.path.clone(), p.report.clone()));
+    let Some((Some(path), report)) = found else { return send_json(w, 404, &json!({ "error": "nothing waits with that id" })) };
+    let Ok(mut f) = std::fs::File::open(&path) else { return send_json(w, 404, &json!({ "error": "the file is gone from the PC" })) };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if w.write_all(response(200, "application/octet-stream", len as usize, "").as_bytes()).is_err() {
+        return;
+    }
+    let (mut buf, mut sent, mut told) = (vec![0u8; 1 << 16], 0u64, Instant::now());
+    while let Ok(n) = f.read(&mut buf) {
+        if n == 0 || w.write_all(&buf[..n]).is_err() {
+            break;
+        }
+        sent += n as u64;
+        if told.elapsed() > Duration::from_millis(200) {
+            report(sent, false, None);
+            told = Instant::now();
+        }
+    }
+    report(sent, false, None);
 }
 
 /// An image a card shows (`image_url`): the file, or a JPEG at most `max` px on its longer
@@ -2592,6 +2753,73 @@ mod tests {
         let mut out = String::new();
         let _ = c.read_to_string(&mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn the_phone_inbox() {
+        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new() };
+        let hub = Arc::new(Hub::new(vec![tok("a", "ga"), tok("b", "gb")], 0));
+        hub.enabled.store(true, Ordering::SeqCst);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, _rx) = channel();
+        {
+            let hub = hub.clone();
+            std::thread::spawn(move || accept(l, hub, tx, || {}));
+        }
+        let log: Arc<Mutex<Vec<(u64, bool, Option<String>)>>> = Default::default();
+        let report = |log: &Arc<Mutex<Vec<(u64, bool, Option<String>)>>>| -> Report {
+            let log = log.clone();
+            Arc::new(move |sent, done, e| log.lock().unwrap().push((sent, done, e)))
+        };
+        let dir = std::env::temp_dir().join(format!("harbor-inbox-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.bin");
+        std::fs::write(&file, b"hello phone").unwrap();
+        let since = hub.rev();
+        hub.post(Parcel { id: "t1".into(), group: "ga".into(), kind: "text", name: "Text".into(), text: "copied".into(), path: None, temp: false, size: 0, at: Instant::now(), report: report(&log) });
+        hub.post(Parcel { id: "f1".into(), group: "ga".into(), kind: "file", name: "note.bin".into(), text: String::new(), path: Some(file.clone()), temp: true, size: 11, at: Instant::now(), report: report(&log) });
+        // A post wakes the phone's long-poll, which says how much waits.
+        let (st, v) = call(port, &format!("GET /v1/events?since={since} HTTP/1.1\r\nAuthorization: Bearer a\r\n\r\n"));
+        assert_eq!((st, v["inbox"].as_u64()), (200, Some(2)));
+        let (_, v) = call(port, "GET /v1/inbox HTTP/1.1\r\nAuthorization: Bearer a\r\n\r\n");
+        assert_eq!(v["items"], json!([{ "id": "t1", "kind": "text", "name": "Text", "size": 0, "text": "copied" }, { "id": "f1", "kind": "file", "name": "note.bin", "size": 11 }]));
+        // Another pairing sees none of it, and can't fetch or end it.
+        assert_eq!(call(port, "GET /v1/inbox HTTP/1.1\r\nAuthorization: Bearer b\r\n\r\n").1["items"], json!([]));
+        assert_eq!(call(port, "GET /v1/inbox/f1 HTTP/1.1\r\nAuthorization: Bearer b\r\n\r\n").0, 404);
+        assert_eq!(call(port, "POST /v1/inbox/f1/done HTTP/1.1\r\nAuthorization: Bearer b\r\nContent-Length: 0\r\n\r\n").0, 404);
+        // The bytes, with progress for the sender.
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.write_all(b"GET /v1/inbox/f1 HTTP/1.1\r\nAuthorization: Bearer a\r\n\r\n").unwrap();
+        let mut out = String::new();
+        c.read_to_string(&mut out).unwrap();
+        assert!(out.starts_with("HTTP/1.1 200") && out.ends_with("\r\n\r\nhello phone"), "{out}");
+        assert_eq!(log.lock().unwrap().last(), Some(&(11, false, None)));
+        // Picked up: gone, delivered, its temp copy deleted.
+        assert_eq!(call(port, "POST /v1/inbox/f1/done HTTP/1.1\r\nAuthorization: Bearer a\r\nContent-Length: 2\r\n\r\n{}").0, 200);
+        assert_eq!(log.lock().unwrap().last(), Some(&(11, true, None)));
+        assert!(!file.exists());
+        let body = r#"{"error":"no space"}"#;
+        call(port, &format!("POST /v1/inbox/t1/done HTTP/1.1\r\nAuthorization: Bearer a\r\nContent-Length: {}\r\n\r\n{body}", body.len()));
+        assert_eq!(log.lock().unwrap().last(), Some(&(0, false, Some("On the phone: no space".into()))));
+        assert_eq!(call(port, "GET /v1/inbox HTTP/1.1\r\nAuthorization: Bearer a\r\n\r\n").1["items"], json!([]));
+        // Nobody came for a day: given up on.
+        hub.post(Parcel { id: "o1".into(), group: "ga".into(), kind: "text", name: "Text".into(), text: "x".into(), path: None, temp: false, size: 0, at: Instant::now() - INBOX_TTL - Duration::from_secs(1), report: report(&log) });
+        assert!(hub.inbox_for("ga").is_empty());
+        assert!(log.lock().unwrap().last().unwrap().2.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paired_phones_one_per_pairing() {
+        let tok = |t: &str, g: &str, n: &str| Token { token: t.into(), name: n.into(), created: 0, group: g.into(), fp: String::new() };
+        let hub = Hub::new(vec![tok("a1", "ga", ""), tok("a2", "ga", "Pixel"), tok("b", "gb", "")], 0);
+        hub.seen.lock().unwrap().insert("a1".into(), ("Pixel 8".into(), 50));
+        hub.ips.lock().unwrap().insert("a1".into(), "192.0.2.7".into());
+        let p = hub.paired_phones();
+        assert_eq!(p.len(), 2);
+        assert_eq!((p[0].group.as_str(), p[0].name.as_str(), p[0].seen, p[0].ip.as_str()), ("ga", "Pixel 8", 50, "192.0.2.7"));
+        assert_eq!((p[1].group.as_str(), p[1].seen), ("gb", 0));
     }
 
     #[test]

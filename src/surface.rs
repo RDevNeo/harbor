@@ -308,16 +308,16 @@ impl App {
         self.place(d, Surface::Devices(Box::new(devices::List::new(Self::wake(ctx)))));
     }
 
-    /// A device's screen: its tab if one is open (switching view/control there), else a new one.
-    fn open_device_view(&mut self, d: Dock, ctx: &egui::Context, dev: devices::Device, control: bool) {
+    /// A device's screen: its tab if one is open (restarted there), else a new one.
+    fn open_device_view(&mut self, d: Dock, ctx: &egui::Context, dev: devices::Device) {
         for dock in [d, Dock::Right, Dock::Bottom] {
             if let Some(i) = self.pane(dock).surfaces.iter().position(|s| matches!(s, Surface::DeviceView(v) if v.dev.key == dev.key)) {
-                self.pane_mut(dock).surfaces[i] = Surface::DeviceView(Box::new(devices::View::new(dev, control, Self::wake(ctx))));
+                self.pane_mut(dock).surfaces[i] = Surface::DeviceView(Box::new(devices::View::new(dev, false, Self::wake(ctx))));
                 self.show_surface(dock, i);
                 return;
             }
         }
-        let s = Surface::DeviceView(Box::new(devices::View::new(dev, control, Self::wake(ctx))));
+        let s = Surface::DeviceView(Box::new(devices::View::new(dev, false, Self::wake(ctx))));
         let p = self.pane_mut(d);
         p.surfaces.push(s);
         let i = p.surfaces.len() - 1;
@@ -327,7 +327,7 @@ impl App {
     fn device_action(&mut self, d: Dock, ctx: &egui::Context, a: devices::Action) {
         match a {
             devices::Action::Terminal { title, argv } => self.open_terminal(ctx, &title, crate::store::home(), argv, vec![]),
-            devices::Action::View { device, control } => self.open_device_view(d, ctx, device, control),
+            devices::Action::View(device) => self.open_device_view(d, ctx, device),
             devices::Action::Files(dev) => {
                 let s = Surface::Files(Box::new(devices::Files::new(dev, None, Self::wake(ctx))));
                 let p = self.pane_mut(d);
