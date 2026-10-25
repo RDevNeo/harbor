@@ -5,6 +5,27 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- On the phone, a chat's team slides in from the right (swipe left, also from the edge, or the
+  panel button at the top): its agents, processes, wake-ups and webhooks as the desktop's team
+  panel shows them, kept up to date. Tap an agent to open its chat. The phone API has
+  `GET /v1/chats/{id}/team` for it.
+- On the phone, an image pasted into the message box (long press › Paste, or the keyboard's
+  clipboard and image suggestions) is attached like a picked photo. Text pastes as before.
+- On the phone, images waiting to be sent show as thumbnails in the message box, and any image
+  (there or in the chat) opens full screen when tapped: pinch or double-tap to zoom, swipe to the
+  next one, Back to close.
+
+### Changed
+- On the phone, the chat list is laid out like the Claude app's drawer: a smaller title, three
+  short rows (Projects, PCs, Settings), then one-line chats with a chat icon under Running,
+  Recents and Settled, and a smaller avatar and New session button. Update is a row when there
+  is one.
+
+### Fixed
+- On the phone, attaching a photo or a file inside a chat failed with "bad chat id": the PC now
+  takes the chat's id the way the app sends it.
+
 ## [0.20.0] - 2026-10-25
 
 ### Added

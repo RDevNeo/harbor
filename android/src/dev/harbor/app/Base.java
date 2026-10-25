@@ -113,13 +113,16 @@ abstract class Base extends Activity {
     /** Fetch /v1/state again and redraw (after a rename, settle, delete from a menu). */
     void refresh() { }
 
-    // ---- the drawer (Chat, NewChat): the chat list slides in from the left ----
+    // ---- the side panels (Chat, NewChat): the chat list slides in from the left, a chat's
+    // team (Team) from the right ----
 
+    static final int NONE = 0, LEFT = 1, RIGHT = 2;
     Sidebar side;
+    private View right; // the right panel, or null on screens without one
     private FrameLayout shell;
     private View scrim;
-    private int panelW;
-    private boolean open;
+    private int panelW, rightW;
+    private int open = NONE;
 
     /** The menu button for the top bar's left. */
     View menuButton() {
@@ -151,29 +154,62 @@ abstract class Base extends Activity {
         if (st != null) side.render(st);
     }
 
-    void openDrawer() { slide(1f, true); }
-    void closeDrawer() { slide(0f, true); }
-    boolean drawerOpen() { return open; }
+    /** A panel for the right edge (after installDrawer): a swipe to the left opens it. */
+    void installRight(View panel) {
+        right = panel;
+        rightW = Math.min(getResources().getDisplayMetrics().widthPixels * 88 / 100, Ui.dp(400));
+        right.setElevation(Ui.dp(8));
+        shell.addView(right, new FrameLayout.LayoutParams(rightW, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END));
+        right.setTranslationX(rightW);
+        right.setVisibility(View.INVISIBLE);
+        // With gesture navigation the right edge is Back: the middle of it opens the panel here.
+        if (android.os.Build.VERSION.SDK_INT >= 29) shell.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int h = b - t, w = r - l;
+            v.setSystemGestureExclusionRects(java.util.Collections.singletonList(
+                    new android.graphics.Rect(w - Ui.dp(32), h / 2 - Ui.dp(100), w, h / 2 + Ui.dp(100))));
+        });
+    }
 
-    /** f: 0 closed .. 1 open. */
-    private void slide(float f, boolean animate) {
-        if (shell == null) return;
-        side.view.setVisibility(View.VISIBLE);
+    void openDrawer() { slide(LEFT, 1f, true); }
+    void openRight() { if (right != null) slide(RIGHT, 1f, true); }
+    /** Closes whichever panel is open. */
+    void closeDrawer() { if (open != NONE) slide(open, 0f, true); }
+    boolean drawerOpen() { return open == LEFT; }
+    boolean rightOpen() { return open == RIGHT; }
+
+    /** The right panel just opened (Chat loads the team then). */
+    void onRightOpened() { }
+
+    /** panel: LEFT or RIGHT; f: 0 closed .. 1 open. */
+    private void slide(int panel, float f, boolean animate) {
+        if (shell == null || (panel == RIGHT && right == null)) return;
+        View p = panel == LEFT ? side.view : right;
+        int w = panel == LEFT ? panelW : rightW;
+        View other = panel == LEFT ? right : side.view;
+        if (other != null && other.getVisibility() == View.VISIBLE) { // only one at a time
+            other.animate().cancel();
+            other.setTranslationX(panel == LEFT ? rightW : -panelW);
+            other.setVisibility(View.INVISIBLE);
+        }
+        p.setVisibility(View.VISIBLE);
         scrim.setVisibility(View.VISIBLE);
-        float x = -panelW * (1 - f);
+        float x = (panel == LEFT ? -w : w) * (1 - f);
         if (animate) {
-            open = f > 0.5f;
-            if (open) {
+            boolean was = open == panel;
+            open = f > 0.5f ? panel : NONE;
+            if (open == panel) {
                 hideKeyboard();
-                JSONObject st = Hub.states.get(hub.id);
-                if (st != null) side.render(st);
+                if (panel == LEFT) {
+                    JSONObject st = Hub.states.get(hub.id);
+                    if (st != null) side.render(st);
+                } else if (!was) onRightOpened();
             }
-            side.view.animate().translationX(x).setDuration(200).withEndAction(() -> {
-                if (!open) { side.view.setVisibility(View.INVISIBLE); scrim.setVisibility(View.GONE); }
+            p.animate().translationX(x).setDuration(200).withEndAction(() -> {
+                if (open != panel) { p.setVisibility(View.INVISIBLE); if (open == NONE) scrim.setVisibility(View.GONE); }
             }).start();
             scrim.animate().alpha(f).setDuration(200).start();
         } else {
-            side.view.setTranslationX(x);
+            p.setTranslationX(x);
             scrim.setAlpha(f);
         }
     }
@@ -186,14 +222,16 @@ abstract class Base extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (open) { closeDrawer(); return; }
+        if (open != NONE) { closeDrawer(); return; }
         super.onBackPressed();
     }
 
-    // A rightward swipe anywhere opens the drawer (a leftward one closes it), unless it starts
-    // on something that scrolls sideways itself (code blocks, tables, chips), which keeps it.
+    // A rightward swipe anywhere opens the drawer, a leftward one the right panel (from the
+    // right edge too); the opposite swipe closes the open one. A swipe that starts on something
+    // that scrolls sideways itself (code blocks, tables, chips) keeps it, except at the edge.
     private float downX, downY;
-    private boolean dragging, undecided, startOpen;
+    private boolean dragging, undecided;
+    private int startOpen, which;
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent e) {
@@ -204,25 +242,31 @@ abstract class Base extends Activity {
                 downY = e.getRawY();
                 dragging = false;
                 startOpen = open;
-                undecided = open || !hScrolls(shell, e.getRawX(), e.getRawY());
+                boolean edge = right != null && downX > getResources().getDisplayMetrics().widthPixels - Ui.dp(40);
+                undecided = open != NONE || edge || !hScrolls(shell, e.getRawX(), e.getRawY());
                 break;
             case MotionEvent.ACTION_MOVE: {
                 float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
                 if (undecided && !dragging) {
                     float slop = Ui.dp(14);
                     if (Math.abs(dy) > slop && Math.abs(dy) > Math.abs(dx)) undecided = false;
-                    else if (Math.abs(dx) > slop && Math.abs(dx) > 1.6f * Math.abs(dy) && (startOpen ? dx < 0 : dx > 0)) {
-                        dragging = true;
-                        MotionEvent cancel = MotionEvent.obtain(e);
-                        cancel.setAction(MotionEvent.ACTION_CANCEL);
-                        super.dispatchTouchEvent(cancel);
-                        cancel.recycle();
-                        hideKeyboard();
+                    else if (Math.abs(dx) > slop && Math.abs(dx) > 1.6f * Math.abs(dy)) {
+                        which = startOpen == LEFT ? (dx < 0 ? LEFT : NONE)
+                                : startOpen == RIGHT ? (dx > 0 ? RIGHT : NONE)
+                                : dx > 0 ? LEFT : right != null ? RIGHT : NONE;
+                        if (which == NONE) undecided = false;
+                        else {
+                            dragging = true;
+                            MotionEvent cancel = MotionEvent.obtain(e);
+                            cancel.setAction(MotionEvent.ACTION_CANCEL);
+                            super.dispatchTouchEvent(cancel);
+                            cancel.recycle();
+                            hideKeyboard();
+                        }
                     }
                 }
                 if (dragging) {
-                    float f = startOpen ? 1 + dx / panelW : dx / panelW;
-                    slide(Math.max(0, Math.min(1, f)), false);
+                    slide(which, Math.max(0, Math.min(1, dragged(dx))), false);
                     return true;
                 }
                 break;
@@ -231,14 +275,19 @@ abstract class Base extends Activity {
             case MotionEvent.ACTION_CANCEL:
                 if (dragging) {
                     dragging = false;
-                    float dx = e.getRawX() - downX;
-                    float f = startOpen ? 1 + dx / panelW : dx / panelW;
-                    slide(f > (startOpen ? 0.7f : 0.3f) ? 1f : 0f, true);
+                    float f = dragged(e.getRawX() - downX);
+                    slide(which, f > (startOpen == which ? 0.7f : 0.3f) ? 1f : 0f, true);
                     return true;
                 }
                 break;
         }
         return super.dispatchTouchEvent(e);
+    }
+
+    /** How open the dragged panel is after a drag of dx. */
+    private float dragged(float dx) {
+        if (which == LEFT) return startOpen == LEFT ? 1 + dx / panelW : dx / panelW;
+        return startOpen == RIGHT ? 1 - dx / rightW : -dx / rightW;
     }
 
     /** Whether a view under (x, y) can scroll sideways. */

@@ -62,9 +62,10 @@ final class Ui {
             I_LAYERS = "", I_SPARKLES = "", I_LINK = "", I_PEN = "",
             I_TERMINAL = "", I_GLOBE = "", I_BOT = "", I_CLOCK = "",
             I_CIRCLE_CHECK = "", I_CIRCLE_X = "", I_WEBHOOK = "", I_ACTIVITY = "",
-            I_ROTATE = "", I_UP_CHEVRON = "";
+            I_ROTATE = "", I_UP_CHEVRON = "",
+            I_PANEL_RIGHT = "\ue431";
 
-    static Typeface sans, semi, mono, icons, serif;
+    static Typeface sans, semi, mono, icons, serif, serifBold;
     static final Handler main = new Handler(Looper.getMainLooper());
     static final ExecutorService pool = Executors.newCachedThreadPool();
     static float density = 1;
@@ -80,6 +81,7 @@ final class Ui {
         mono = Typeface.createFromAsset(c.getAssets(), "fonts/GeistMono-Regular.ttf");
         icons = Typeface.createFromAsset(c.getAssets(), "fonts/lucide.ttf");
         serif = Typeface.create(Typeface.SERIF, Typeface.NORMAL);
+        serifBold = Typeface.create(Typeface.SERIF, Typeface.BOLD);
     }
 
     // ---- colour mode ----
@@ -200,6 +202,13 @@ final class Ui {
         TextView t = text(c, s, sp, FG);
         t.setTypeface(serif);
         t.setLetterSpacing(-0.01f);
+        return t;
+    }
+
+    /** The drawer's and the team panel's bold serif heading. */
+    static TextView heading(Context c, CharSequence s, float sp) {
+        TextView t = title(c, s, sp);
+        t.setTypeface(serifBold);
         return t;
     }
 
@@ -324,12 +333,26 @@ final class Ui {
         return v;
     }
 
-    /** A grey section label ("Recents"). */
-    static TextView section(Context c, String s) {
-        TextView t = bold(c, s, 15, G700);
-        t.setPadding(dp(24), dp(20), dp(24), dp(8));
+    /** A small muted section header in the side panels ("Recents", "Agents"). */
+    static TextView label(Context c, String s) {
+        TextView t = text(c, s, 13, G700);
+        t.setPadding(dp(20), dp(14), dp(20), dp(4));
         return t;
     }
+
+    /** A one-line side-panel row: a small outline icon and an ellipsized title. Trailing views
+     *  (a status dot, a count) can be added to it. */
+    static LinearLayout listRow(Context c, String glyph, int glyphColor, CharSequence title, int titleColor) {
+        LinearLayout r = row(c);
+        r.setMinimumHeight(dp(40));
+        r.setPadding(dp(12), dp(8), dp(12), dp(8));
+        r.addView(icon(c, glyph, 18, glyphColor), margins(new LinearLayout.LayoutParams(dp(20), dp(20)), 0, 0, 14, 0));
+        r.addView(subtitle(text(c, title, 15, titleColor)), weight());
+        return r;
+    }
+
+    /** Side-panel rows sit 8 dp in from the edges, so their pressed and selected fill is rounded. */
+    static LinearLayout.LayoutParams inset() { return margins(fill(), 8, 0, 8, 0); }
 
     static TextView subtitle(TextView t) {
         t.setSingleLine(true);

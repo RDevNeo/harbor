@@ -23,7 +23,8 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /** One chat: the transcript (refetched from the last revision whenever the hub says the chat
- *  changed, so streaming text grows in place), and the composer with attachments, Send, Stop. */
+ *  changed, so streaming text grows in place), and the composer with attachments, Send, Stop.
+ *  The chat list slides in from the left, its team (Team) from the right. */
 public class Chat extends Base {
     private String chatId;
     private ScrollView scroll;
@@ -38,6 +39,7 @@ public class Chat extends Base {
     private TextView workingText;   // "Working… · 12s", ticking
     private boolean running;
     private Render render;
+    private Team team;
 
     /** Items drawn at first; "Show earlier" adds this many more (a long chat would otherwise
      *  keep thousands of views alive and slow down every update). */
@@ -60,6 +62,7 @@ public class Chat extends Base {
         chatId = getIntent().getStringExtra("chat");
         render = new Render(this, null);
         LinearLayout root = frame("Chat", menuButton(), false);
+        action(Ui.I_PANEL_RIGHT, v -> openRight()).setContentDescription("Team: agents, processes, wake-ups, webhooks");
         action(Ui.I_MENU, v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
             if (c != null) Chats.menu(this, hub, c, this::refreshState, this::deleted);
@@ -104,6 +107,8 @@ public class Chat extends Base {
         offNote.setVisibility(View.GONE);
         root.addView(offNote, Ui.margins(Ui.fill(), 12, 0, 12, 12));
         installDrawer(chatId);
+        team = new Team(this, chatId);
+        installRight(team.view);
 
         showChat(Hub.chat(Hub.states.get(hub.id), chatId));
     }
@@ -130,7 +135,12 @@ public class Chat extends Base {
     void onEvents(Set<String> changed, boolean stateChanged, boolean reconnect) {
         if (reconnect || changed.contains(chatId)) load(reconnect);
         if (stateChanged) refreshState();
+        // The hub counts a change in a team as a change of its lead.
+        if (rightOpen() && (reconnect || stateChanged || changed.contains(chatId) || changed.contains(team.lead))) team.load();
     }
+
+    @Override
+    void onRightOpened() { team.load(); }
 
     @Override
     void onOffline(boolean off, String why) {

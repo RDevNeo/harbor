@@ -2,7 +2,8 @@
 <!-- Harbor for Android: a chat-only client of a desktop Harbor (the hub) on the tailnet.
      Hubs pairs and lists PCs (also from harbor://pair links and QR codes), Chats lists one hub's
      chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
-     one, NewChat starts one, Settings updates the app and sets the color mode. -->
+     one (its team slides in from the right), NewChat starts one, Settings updates the app and
+     sets the color mode. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.harbor.app">
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Tailnet: finds Tailscale's VPN network, the only way to a hub -->

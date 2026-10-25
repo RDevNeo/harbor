@@ -1,8 +1,10 @@
 package dev.harbor.app;
 
 import android.content.Intent;
+import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
@@ -19,16 +21,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** One hub's chats the way the reference's drawer shows them: the wordmark and search, nav
- *  rows (Projects, PCs, Settings), then Running / Recents / Settled with a chat icon, a blue
- *  dot while a turn runs, who's typing; a round avatar (this PC) and the black "New session"
- *  pill at the bottom. Used full screen (Chats) and as the drawer inside a chat. */
+/** One hub's chats the way the reference's drawer shows them: a bold title and search, a few
+ *  nav rows (Projects, PCs, Settings, and Update when there is one), a thin line, then Running /
+ *  Recents / Settled as one-line rows with a chat icon and a dot while a turn runs; a round
+ *  avatar (this PC) and the black "New session" pill float at the bottom. Used full screen
+ *  (Chats) and as the drawer inside a chat. */
 final class Sidebar {
     final Base a;
     final FrameLayout view;
     private final LinearLayout list;
     private final EditText search;
-    private final TextView avatar, update;
+    private final TextView avatar;
     private final String current; // the open chat (highlighted), or null
     private JSONObject st;
     private boolean showSettled;
@@ -43,49 +46,53 @@ final class Sidebar {
         LinearLayout col = Ui.col(a);
 
         LinearLayout head = Ui.row(a);
-        head.setPadding(Ui.dp(24), Ui.dp(20), Ui.dp(12), Ui.dp(8));
-        head.addView(Ui.title(a, "Harbor", 36), Ui.weight());
-        update = Ui.bold(a, "Update", 14, Ui.ON_INK);
-        update.setPadding(Ui.dp(14), Ui.dp(7), Ui.dp(14), Ui.dp(7));
-        update.setBackground(Ui.press(Ui.INK, 0, 16));
-        update.setVisibility(View.GONE);
-        update.setOnClickListener(v -> settings());
-        head.addView(update, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-        head.addView(Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> toggleSearch()));
+        head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
+        head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
+        TextView find = Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> toggleSearch());
+        find.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        find.setContentDescription("Search chats");
+        head.addView(find);
         col.addView(head, Ui.fill());
 
         search = Ui.input(a, "Search chats", false);
+        search.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        search.setPadding(Ui.dp(12), Ui.dp(9), Ui.dp(12), Ui.dp(9));
         search.setVisibility(View.GONE);
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
             @Override public void afterTextChanged(Editable e) { if (Sidebar.this.st != null) render(Sidebar.this.st); }
         });
-        col.addView(search, Ui.margins(Ui.fill(), 20, 4, 20, 8));
+        col.addView(search, Ui.margins(Ui.fill(), 16, 4, 16, 6));
 
         ScrollView sv = new ScrollView(a);
         list = Ui.col(a);
-        list.setPadding(0, 0, 0, Ui.dp(110));
+        list.setPadding(0, 0, 0, Ui.dp(88));
         sv.addView(list);
         col.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
         view.addView(col, new FrameLayout.LayoutParams(-1, -1));
 
+        // The last rows fade out under the floating buttons.
+        View fade = new View(a);
+        fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{Ui.BG, Ui.BG, Ui.BG & 0x00ffffff}));
+        view.addView(fade, new FrameLayout.LayoutParams(-1, Ui.dp(84), Gravity.BOTTOM));
+
         // Bottom: avatar (this PC → Settings) and New session.
-        avatar = Ui.bold(a, "", 20, 0xffffffff);
+        avatar = Ui.bold(a, "", 16, 0xffffffff);
         avatar.setGravity(Gravity.CENTER);
-        avatar.setBackground(Ui.press(0xff7a6ad8, 0, 28));
+        avatar.setBackground(Ui.press(0xff7a6ad8, 0, 20));
         avatar.setOnClickListener(v -> settings());
-        FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(Ui.dp(56), Ui.dp(56), Gravity.BOTTOM | Gravity.START);
-        ap.setMargins(Ui.dp(20), 0, 0, Ui.dp(20));
+        FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
+        ap.setMargins(Ui.dp(16), 0, 0, Ui.dp(18));
         view.addView(avatar, ap);
-        TextView fab = Ui.bold(a, "+  New session", 18, Ui.ON_INK);
+        TextView fab = Ui.bold(a, "+  New session", 15, Ui.ON_INK);
         fab.setGravity(Gravity.CENTER);
-        fab.setPadding(Ui.dp(26), 0, Ui.dp(26), 0);
-        fab.setBackground(Ui.press(Ui.INK, 0, 28));
-        fab.setElevation(Ui.dp(4));
+        fab.setPadding(Ui.dp(18), 0, Ui.dp(20), 0);
+        fab.setBackground(Ui.press(Ui.INK, 0, 22));
+        fab.setElevation(Ui.dp(3));
         fab.setOnClickListener(v -> newChat());
-        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(-2, Ui.dp(56), Gravity.BOTTOM | Gravity.END);
-        fp.setMargins(0, 0, Ui.dp(20), Ui.dp(20));
+        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(-2, Ui.dp(44), Gravity.BOTTOM | Gravity.END);
+        fp.setMargins(0, 0, Ui.dp(16), Ui.dp(16));
         view.addView(fab, fp);
         label();
     }
@@ -93,6 +100,7 @@ final class Sidebar {
     void label() {
         String l = a.hub.label();
         avatar.setText(l.isEmpty() ? "?" : l.substring(0, 1).toUpperCase());
+        avatar.setContentDescription(l + " settings");
     }
 
     private void toggleSearch() {
@@ -119,9 +127,6 @@ final class Sidebar {
 
     void render(JSONObject st) {
         this.st = st;
-        JSONObject app = st.optJSONObject("app");
-        long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
-        update.setVisibility(offered > Settings.myCode(a) ? View.VISIBLE : View.GONE);
         list.removeAllViews();
 
         Map<String, String> projects = new HashMap<>();
@@ -132,14 +137,18 @@ final class Sidebar {
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
 
-        list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? "All projects" : projects.get(filter), v -> pickProject(projects)));
-        // Which PC of the mesh answers now, when it isn't the paired one.
+        list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
+        // Which PC answers: worth a word with several paired, or when another of the mesh does.
         String via = a.hub.viaName();
-        list.addView(nav(Ui.I_MONITOR, "PCs", via.isEmpty() ? a.hub.label() : a.hub.label() + " · via " + via, v -> pcs()));
-        list.addView(nav(Ui.I_SETTINGS, "Settings", null, v -> settings()));
+        String pc = !via.isEmpty() ? a.hub.label() + " · via " + via : Hub.all(a).size() > 1 ? a.hub.label() : null;
+        list.addView(nav(Ui.I_MONITOR, "PCs", pc, Ui.FG, v -> pcs()), Ui.inset());
+        list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
+        JSONObject app = st.optJSONObject("app");
+        long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
+        if (offered > Settings.myCode(a)) list.addView(nav(Ui.I_DOWNLOAD, "Update available", null, Ui.BLUE, v -> settings()), Ui.inset());
         View line = new View(a);
         line.setBackgroundColor(Ui.LINE);
-        list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 10, 20, 4));
+        list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 8, 20, 2));
 
         String q = search.getText().toString().trim().toLowerCase();
         String you = st.optString("you", "");
@@ -161,36 +170,36 @@ final class Sidebar {
             else recent.add(c);
         }
         if (chats.isEmpty()) {
-            a.hintInto(list, q.isEmpty() ? "No chats yet. Start one with New session." : "No chat matches “" + q + "”.");
+            TextView t = Ui.text(a, q.isEmpty() ? "No chats yet. Start one with New session." : "No chat matches “" + q + "”.", 14, Ui.G700);
+            t.setPadding(Ui.dp(20), Ui.dp(16), Ui.dp(20), Ui.dp(16));
+            list.addView(t, Ui.fill());
             return;
         }
         if (!running.isEmpty()) {
-            list.addView(Ui.section(a, "Running"));
-            for (JSONObject c : running) list.addView(chatRow(c, projects, you));
+            list.addView(Ui.label(a, "Running"), Ui.fill());
+            for (JSONObject c : running) list.addView(chatRow(c, you), Ui.inset());
         }
         if (!recent.isEmpty()) {
-            list.addView(Ui.section(a, "Recents"));
-            for (JSONObject c : recent) list.addView(chatRow(c, projects, you));
+            list.addView(Ui.label(a, "Recents"), Ui.fill());
+            for (JSONObject c : recent) list.addView(chatRow(c, you), Ui.inset());
         }
         if (!settled.isEmpty()) {
-            TextView h = Ui.section(a, "Settled · " + settled.size() + (showSettled ? "  ▾" : "  ▸"));
+            TextView h = Ui.label(a, "Settled · " + settled.size() + (showSettled ? "  ▾" : "  ▸"));
             h.setBackground(Ui.press(0, 0, 0));
             h.setOnClickListener(v -> { showSettled = !showSettled; render(st); });
             list.addView(h, Ui.fill());
-            if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, projects, you));
+            if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
         }
     }
 
-    private View nav(String glyph, String title, String sub, View.OnClickListener on) {
-        LinearLayout r = Ui.row(a);
-        r.setPadding(Ui.dp(24), Ui.dp(14), Ui.dp(20), Ui.dp(14));
-        r.setBackground(Ui.press(0, 0, 0));
-        r.addView(Ui.icon(a, glyph, 24, Ui.FG), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(28)), 0, 0, 20, 0));
-        r.addView(Ui.text(a, title, 19, Ui.FG), Ui.wrap());
-        if (sub != null) {
-            TextView s = Ui.subtitle(Ui.text(a, sub, 15, Ui.G700));
-            s.setGravity(Gravity.END);
-            r.addView(s, Ui.margins(Ui.weight(), 12, 0, 0, 0));
+    private View nav(String glyph, String title, String value, int color, View.OnClickListener on) {
+        LinearLayout r = Ui.listRow(a, glyph, color, title, color);
+        r.setMinimumHeight(Ui.dp(44));
+        r.setBackground(Ui.press(0, 0, 12));
+        if (value != null) {
+            TextView s = Ui.subtitle(Ui.text(a, value, 13, Ui.G600));
+            s.setMaxWidth(Ui.dp(170));
+            r.addView(s, Ui.margins(Ui.wrap(), 10, 0, 0, 0));
         }
         r.setOnClickListener(on);
         return r;
@@ -209,26 +218,19 @@ final class Sidebar {
         return null;
     }
 
-    private View chatRow(JSONObject c, Map<String, String> projects, String you) {
+    private View chatRow(JSONObject c, String you) {
         String id = c.optString("id");
-        LinearLayout r = Ui.row(a);
-        r.setPadding(Ui.dp(24), Ui.dp(10), Ui.dp(20), Ui.dp(10));
-        r.setBackground(id.equals(current) ? Ui.round(Ui.G100, 0, 0) : Ui.press(0, 0, 0));
-        boolean lead = "lead".equals(c.optString("role"));
-        r.addView(Ui.icon(a, lead ? Ui.I_TERMINAL : Ui.I_CHAT, 20, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(28)), 0, 0, 20, 0));
-        LinearLayout t = Ui.col(a);
         String title = c.optString("title");
-        t.addView(Ui.subtitle(Ui.text(a, title.isEmpty() ? "New chat" : title, 18, c.optBoolean("settled") ? Ui.G700 : Ui.FG)));
-        String typing = typing(c, you);
-        String pid = c.isNull("project_id") ? "" : c.optString("project_id");
+        boolean settled = c.optBoolean("settled");
+        LinearLayout r = Ui.listRow(a, Ui.I_CHAT, Ui.G700, title.isEmpty() ? "New chat" : title, settled ? Ui.G700 : Ui.FG);
+        r.setBackground(id.equals(current) ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
+        boolean typing = typing(c, you) != null;
         int q = Hub.queued(c);
-        String sub = typing != null ? typing
-                : (pid.isEmpty() ? "" : projects.getOrDefault(pid, "") + " · ") + Ui.ago(c.optLong("updated_ms"))
-                + (q > 0 ? " · " + q + " waiting" : "");
-        t.addView(Ui.subtitle(Ui.text(a, sub, 14, typing != null ? Ui.BLUE : Ui.G700)));
-        r.addView(t, Ui.weight());
-        if (c.optBoolean("running") || q > 0)
-            r.addView(Ui.dot(a, c.optBoolean("running") ? Ui.BLUE : Ui.AMBER, 10), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(10), Ui.dp(10)), 12, 0, 0, 0));
+        if (typing) {
+            r.addView(Ui.text(a, "typing…", 12, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        } else if (c.optBoolean("running") || q > 0) {
+            r.addView(Ui.dot(a, c.optBoolean("running") ? Ui.BLUE : Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
+        }
         r.setOnClickListener(v -> open(id));
         r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
         return r;

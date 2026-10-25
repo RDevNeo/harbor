@@ -2,8 +2,8 @@
 
 A chat-only phone client of a desktop Harbor (the "hub"). The phone runs no agent: it lists,
 opens, starts and drives the hub's chats over your network (device, account, model, effort,
-access, fast), and can rename, settle, fork and delete them. The API is in
-[PROTOCOL.md](PROTOCOL.md).
+access, fast), and can rename, settle, fork and delete them. A chat's team (agents, processes,
+wake-ups, webhooks) slides in from the right. The API is in [PROTOCOL.md](PROTOCOL.md).
 
 ## Install and pair
 

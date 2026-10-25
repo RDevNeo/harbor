@@ -1,23 +1,38 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
 import android.speech.RecognizerIntent;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.TypedValue;
+import android.view.ActionMode;
+import android.view.ContentInfo;
 import android.view.Gravity;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputConnectionWrapper;
+import android.view.inputmethod.InputContentInfo;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /** The rounded composer card: attachments, the text, and a row with +, the model pill, the
  *  mic (speech to text) and the round send button, which turns into Stop while a turn runs and
- *  nothing is typed. */
+ *  nothing is typed. An image pasted into the text is attached (Edit). */
 final class Composer {
     static final int SPEAK = 43;
 
@@ -39,7 +54,7 @@ final class Composer {
         view.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(10), Ui.dp(10));
         if (attach != null) view.addView(attach.view, Ui.fill());
 
-        edit = new EditText(a);
+        edit = new Edit(a, attach);
         edit.setHint(hint);
         edit.setHintTextColor(Ui.G600);
         edit.setTextColor(Ui.FG);
@@ -99,6 +114,101 @@ final class Composer {
         boolean stop = running && empty();
         sendGlyph.setText(stop ? Ui.I_STOP : Ui.I_UP);
         send.setContentDescription(stop ? "Stop" : "Send");
+    }
+
+    // ---- pasting images ----
+
+    static final String[] IMAGES = {"image/*", "image/png", "image/jpeg", "image/gif", "image/webp"};
+
+    /** The text box. An image pasted (long press › Paste, the keyboard's clipboard or its image
+     *  and GIF insertion) is attached instead of pasted as its address; text pastes as ever.
+     *  Android 12+ hands all of these to one OnReceiveContentListener; before, paste and the
+     *  keyboard's commitContent come apart. */
+    static final class Edit extends EditText {
+        private final Attach attach;
+        private ActionMode menu; // the floating Paste toolbar while it shows
+
+        Edit(Context c, Attach attach) {
+            super(c);
+            this.attach = attach;
+            if (attach == null) return;
+            if (Build.VERSION.SDK_INT >= 31) Receive.on(this, attach);
+            // An image paste changes no text, so the toolbar would stay up: attached() closes it.
+            ActionMode.Callback keep = new ActionMode.Callback() {
+                @Override public boolean onCreateActionMode(ActionMode m, Menu x) { menu = m; return true; }
+                @Override public boolean onPrepareActionMode(ActionMode m, Menu x) { return false; }
+                @Override public boolean onActionItemClicked(ActionMode m, MenuItem i) { return false; }
+                @Override public void onDestroyActionMode(ActionMode m) { if (menu == m) menu = null; }
+            };
+            setCustomInsertionActionModeCallback(keep);
+            setCustomSelectionActionModeCallback(keep);
+        }
+
+        /** Images went to the attachments: the Paste toolbar has done its job. */
+        void attached() {
+            post(() -> { if (menu != null) menu.finish(); });
+        }
+
+        @Override public InputConnection onCreateInputConnection(EditorInfo out) {
+            InputConnection ic = super.onCreateInputConnection(out);
+            if (attach == null || Build.VERSION.SDK_INT >= 31 || ic == null) return ic;
+            out.contentMimeTypes = IMAGES;
+            return new InputConnectionWrapper(ic, false) {
+                @Override public boolean commitContent(InputContentInfo info, int flags, Bundle opts) {
+                    if ((flags & InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) != 0) {
+                        try { info.requestPermission(); } catch (Exception e) { return false; }
+                    }
+                    attach.paste(info.getContentUri(), info::releasePermission);
+                    return true;
+                }
+            };
+        }
+
+        @Override public boolean onTextContextMenuItem(int id) {
+            if (attach != null && Build.VERSION.SDK_INT < 31 && (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) && pasteImages()) return true;
+            return super.onTextContextMenuItem(id);
+        }
+
+        /** Attaches the clipboard's images and types its text; false when it holds no image. */
+        private boolean pasteImages() {
+            ClipboardManager cm = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = cm == null ? null : cm.getPrimaryClip();
+            if (clip == null) return false;
+            List<Uri> images = new ArrayList<>();
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                ClipData.Item it = clip.getItemAt(i);
+                if (it.getUri() != null && Attach.image(getContext(), it.getUri(), clip.getDescription())) images.add(it.getUri());
+                else if (it.getText() != null) text.append(it.getText());
+            }
+            if (images.isEmpty()) return false;
+            for (Uri u : images) attach.paste(u, null);
+            attached();
+            if (text.length() > 0) {
+                int a = Math.max(0, getSelectionStart()), b = Math.max(0, getSelectionEnd());
+                getText().replace(Math.min(a, b), Math.max(a, b), text);
+            }
+            return true;
+        }
+    }
+
+    /** Android 12+: paste, drag and drop and the keyboard all arrive here; what isn't an image
+     *  goes on to the text box as usual. */
+    private static final class Receive {
+        static void on(Edit e, Attach attach) {
+            e.setOnReceiveContentListener(IMAGES, (v, payload) -> {
+                ClipData all = payload.getClip();
+                ClipData rest = null;
+                for (int i = 0; i < all.getItemCount(); i++) {
+                    ClipData.Item it = all.getItemAt(i);
+                    if (it.getUri() != null && Attach.image(v.getContext(), it.getUri(), all.getDescription())) attach.paste(it.getUri(), null);
+                    else if (rest == null) rest = new ClipData(all.getDescription(), it);
+                    else rest.addItem(it);
+                }
+                if (rest == null || rest.getItemCount() < all.getItemCount()) e.attached();
+                return rest == null ? null : new ContentInfo.Builder(payload).setClip(rest).build();
+            });
+        }
     }
 
     // ---- speech to text (the phone's own recogniser) ----

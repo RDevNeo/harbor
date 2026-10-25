@@ -1,14 +1,19 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.content.ClipDescription;
+import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -24,9 +29,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** The composer's attachments: pick a photo (system photo picker) or any file
- *  (ACTION_OPEN_DOCUMENT), upload it to the hub at once, show it as a removable chip. */
+ *  (ACTION_OPEN_DOCUMENT), take one, or paste one (Composer), upload it to the hub at once and
+ *  show it: an image as a thumbnail (tap for the viewer), anything else as a chip. */
 final class Attach {
     static final int PICK = 41, SHOT = 42;
+    static final int THUMB = 256; // px of a composer thumbnail
 
     private final Activity a;
     private final Hub hub;
@@ -35,7 +42,11 @@ final class Attach {
     private final List<Up> ups = new ArrayList<>();
 
     private static final class Up {
-        String name, id; boolean failed; TextView chip;
+        String name, id; boolean failed;
+        Uri uri;          // on this phone (null: already on the hub)
+        View chip;        // the chip or the thumbnail tile
+        TextView text;    // a chip's label
+        TextView state;   // a tile's uploading / failed overlay
     }
 
     private final String chat;
@@ -105,15 +116,29 @@ final class Attach {
     /** Call from onActivityResult; true when it was ours. */
     boolean result(int req, int res, Intent data) {
         if (req == SHOT) {
-            if (res == Activity.RESULT_OK && shot != null) add(shot);
+            if (res == Activity.RESULT_OK && shot != null) add(shot, null);
             shot = null;
             return true;
         }
         if (req != PICK) return false;
         if (res != Activity.RESULT_OK || data == null) return true;
-        if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) add(data.getClipData().getItemAt(i).getUri());
-        else if (data.getData() != null) add(data.getData());
+        if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) add(data.getClipData().getItemAt(i).getUri(), null);
+        else if (data.getData() != null) add(data.getData(), null);
         return true;
+    }
+
+    /** An image pasted or sent by the keyboard, attached like a pick. done (if any) runs once
+     *  it is uploaded or failed: a keyboard's read permission can end then. */
+    void paste(Uri uri, Runnable done) { add(uri, done); }
+
+    /** Whether uri is an image: its type, else the clip's, else its name. */
+    static boolean image(Context c, Uri uri, ClipDescription d) {
+        String t = null;
+        try { t = c.getContentResolver().getType(uri); } catch (Exception ignored) { }
+        if (t != null) return t.startsWith("image/");
+        if (d != null && d.hasMimeType("image/*")) return true;
+        String s = uri.getLastPathSegment();
+        return s != null && isImage(s);
     }
 
     /** A file already on the hub (an upload id), e.g. from a stopped turn's queue. */
@@ -126,18 +151,58 @@ final class Attach {
     }
 
     private void chip(Up u) {
-        u.chip = Ui.text(a, "", 13, Ui.FG);
-        u.chip.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
-        u.chip.setBackground(Ui.round(Ui.G100, 0, 14));
-        u.chip.setOnClickListener(v -> { ups.remove(u); chips.removeView(u.chip); show(); });
+        if (u.uri != null && isImage(u.name)) tile(u);
+        else {
+            u.text = Ui.text(a, "", 13, Ui.FG);
+            u.text.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
+            u.text.setBackground(Ui.round(Ui.G100, 0, 14));
+            u.text.setOnClickListener(v -> remove(u));
+            u.chip = u.text;
+        }
         ups.add(u);
-        chips.addView(u.chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+        LinearLayout.LayoutParams p = u.text != null ? Ui.wrap() : new LinearLayout.LayoutParams(Ui.dp(72), Ui.dp(72));
+        p.rightMargin = Ui.dp(6);
+        p.gravity = Gravity.BOTTOM;
+        chips.addView(u.chip, p);
         label(u);
         show();
     }
 
-    private void add(Uri uri) {
+    /** An image about to be sent: its thumbnail, a remove badge on the corner, and a veil
+     *  while it uploads (or when it failed). */
+    private void tile(Up u) {
+        FrameLayout f = new FrameLayout(a);
+        ImageView iv = Images.tile(a, u.name);
+        f.addView(iv, new FrameLayout.LayoutParams(Ui.dp(64), Ui.dp(64), Gravity.BOTTOM | Gravity.START));
+        u.state = Ui.icon(a, Ui.I_LOADER, 18, 0xffffffff);
+        u.state.setBackground(Ui.round(0x73000000, 0, 12));
+        f.addView(u.state, new FrameLayout.LayoutParams(Ui.dp(64), Ui.dp(64), Gravity.BOTTOM | Gravity.START));
+        TextView x = Ui.icon(a, Ui.I_X, 12, Ui.ON_INK);
+        x.setBackground(Ui.round(Ui.INK, Ui.CARD, 11));
+        x.setContentDescription("Remove " + u.name);
+        x.setOnClickListener(v -> remove(u));
+        f.addView(x, new FrameLayout.LayoutParams(Ui.dp(22), Ui.dp(22), Gravity.TOP | Gravity.END));
+        View.OnClickListener open = v -> {
+            List<Images.Src> all = new ArrayList<>();
+            int at = 0;
+            for (Up o : ups) if (o.uri != null && isImage(o.name)) { if (o == u) at = all.size(); all.add(new Images.Src(o.uri, o.name)); }
+            Images.view(a, all, at);
+        };
+        iv.setOnClickListener(open);
+        u.state.setOnClickListener(open);
+        Images.local(a, u.uri, THUMB, iv);
+        u.chip = f;
+    }
+
+    private void remove(Up u) {
+        ups.remove(u);
+        chips.removeView(u.chip);
+        show();
+    }
+
+    private void add(Uri uri, Runnable done) {
         Up u = new Up();
+        u.uri = uri;
         u.name = name(uri);
         chip(u);
         Ui.pool.execute(() -> {
@@ -165,14 +230,24 @@ final class Attach {
                 String why = Hub.why(e);
                 Ui.main.post(() -> Ui.toast(a, u.name + ": " + why));
             }
-            Ui.main.post(() -> label(u));
+            Ui.main.post(() -> {
+                label(u);
+                if (done != null) done.run();
+            });
         });
     }
 
     private void label(Up u) {
+        if (u.state != null) {
+            u.state.setVisibility(u.failed || u.id == null ? View.VISIBLE : View.GONE);
+            u.state.setText(u.failed ? Ui.I_ALERT : Ui.I_LOADER);
+            u.state.setTextColor(u.failed ? Ui.RED : 0xffffffff);
+            u.state.setContentDescription(u.failed ? u.name + " failed to upload" : "Uploading " + u.name);
+            return;
+        }
         String state = u.failed ? "  failed" : u.id == null ? "  …" : "";
-        u.chip.setText((isImage(u.name) ? "▣ " : "▤ ") + u.name + state + "  ✕");
-        u.chip.setTextColor(u.failed ? Ui.RED : u.id == null ? Ui.G700 : Ui.FG);
+        u.text.setText((isImage(u.name) ? "▣ " : "▤ ") + u.name + state + "  ✕");
+        u.text.setTextColor(u.failed ? Ui.RED : u.id == null ? Ui.G700 : Ui.FG);
     }
 
     private void show() { view.setVisibility(ups.isEmpty() ? View.GONE : View.VISIBLE); }
@@ -196,17 +271,32 @@ final class Attach {
         show();
     }
 
+    /** The file's name; an image without an image extension (a pasted one is often just a
+     *  number) gets one from its type, so the hub and the agent see an image. */
     private String name(Uri uri) {
+        String n = null;
         try (Cursor c = a.getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (c != null && c.moveToFirst() && c.getString(0) != null) return c.getString(0);
+            int i = c == null ? -1 : c.getColumnIndex(OpenableColumns.DISPLAY_NAME); // some providers send other columns
+            if (i >= 0 && c.moveToFirst() && c.getString(i) != null) n = c.getString(i);
         } catch (Exception ignored) { }
-        String s = uri.getLastPathSegment();
-        return s == null ? "file" : s.substring(s.lastIndexOf('/') + 1);
+        if (n == null) {
+            String s = uri.getLastPathSegment();
+            n = s == null || s.isEmpty() ? "pasted" : s.substring(s.lastIndexOf('/') + 1);
+        }
+        String t = null;
+        try { t = a.getContentResolver().getType(uri); } catch (Exception ignored) { }
+        if (t != null && t.startsWith("image/") && !isImage(n)) {
+            String ext = t.substring(6).toLowerCase();
+            ext = ext.equals("jpeg") ? "jpg" : ext.equals("heif") ? "heic" : ext.replaceAll("[^a-z0-9].*", "");
+            n = n + "." + (ext.isEmpty() ? "png" : ext);
+        }
+        return n;
     }
 
     private long size(Uri uri) {
         try (Cursor c = a.getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
-            if (c != null && c.moveToFirst() && !c.isNull(0)) return c.getLong(0);
+            int i = c == null ? -1 : c.getColumnIndex(OpenableColumns.SIZE);
+            if (i >= 0 && c.moveToFirst() && !c.isNull(i)) return c.getLong(i);
         } catch (Exception ignored) { }
         return -1;
     }
