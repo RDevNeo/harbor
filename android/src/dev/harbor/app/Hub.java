@@ -636,7 +636,7 @@ final class Hub {
     /** Pairs with the PC of this link (a pairing code), or upgrades this pairing from before
      *  three factors: the presence key signs, an ECDH agreement gives the secret, and the
      *  6-digit code both screens show (showCode, on this thread) must be confirmed on the PC.
-     *  Throws ApiError 404 when the PC doesn't know three factors (Harbor before 0.19). */
+     *  Throws ApiError 404 when the PC doesn't know three factors (Harbor before 0.20). */
     void pair3(java.util.function.Consumer<String> showCode, java.util.function.BooleanSupplier cancelled) throws IOException {
         String why = "Pair with " + label();
         byte[] presence = Presence.publicKey();
