@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-25
+
 ### Changed
 - On the phone, the drawer groups the chats by project, in the desktop sidebar's order (by hand,
   or by last activity when it's set so): a small header per project with its name and how many
@@ -629,7 +631,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/RDevNeo/harbor/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/RDevNeo/harbor/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/RDevNeo/harbor/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/RDevNeo/harbor/compare/v0.22.0...v0.23.0
