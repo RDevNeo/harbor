@@ -185,7 +185,7 @@ fn is_pc(os: &str) -> bool {
 
 /// Parses `tailscale status --json`: the PCs among the peers.
 pub fn parse_status(v: &Value) -> Tailnet {
-    let mut peers: Vec<Peer> = v["Peer"]
+    let peers: Vec<Peer> = v["Peer"]
         .as_object()
         .into_iter()
         .flat_map(|m| m.values())
@@ -207,6 +207,29 @@ pub fn parse_status(v: &Value) -> Tailnet {
                 os: p["OS"].as_str().unwrap_or("").to_string(),
                 online: p["Online"].as_bool().unwrap_or(false),
             }
+        })
+        .collect();
+    // Two peers with one id (a node shared in from another tailnet with the same first label,
+    // or a HostName a peer chose): the one in this PC's own tailnet keeps it, the others go by
+    // their full DNS name, and one with no DNS name isn't offered. Never the first that matches.
+    let mine = v["Self"]["DNSName"].as_str().unwrap_or("").trim_end_matches('.').split_once('.').map(|x| x.1.to_string()).unwrap_or_default();
+    let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
+    let own = |p: &Peer| !mine.is_empty() && p.dns.split_once('.').is_some_and(|x| x.1 == mine);
+    let keeps: Vec<bool> = peers
+        .iter()
+        .map(|p| ids.iter().filter(|i| **i == p.id).count() == 1 || (own(p) && peers.iter().filter(|q| q.id == p.id && own(q)).count() == 1))
+        .collect();
+    let mut peers: Vec<Peer> = peers
+        .into_iter()
+        .zip(keeps)
+        .filter_map(|(mut p, keep)| {
+            if !keep {
+                if p.dns.is_empty() {
+                    return None;
+                }
+                p.id = format!("ts:{}", p.dns);
+            }
+            Some(p)
         })
         .collect();
     peers.sort_by(|a, b| b.online.cmp(&a.online).then(a.name.cmp(&b.name)));
@@ -687,6 +710,26 @@ mod tests {
         assert_eq!(t.peers.len(), 2);
         assert_eq!((t.peers[0].id.as_str(), t.peers[0].dns.as_str(), t.peers[0].online), ("ts:box", "box.tail.ts.net", true));
         assert_eq!((t.peers[1].id.as_str(), t.peers[1].os.as_str()), ("ts:mac-air", "macOS"));
+    }
+
+    #[test]
+    fn tailscale_ids_are_never_ambiguous() {
+        // A look-alike shared in from another tailnet, online while the own one is off.
+        let st = |peers: &str| parse_status(&serde_json::from_str(&format!(r#"{{"Self":{{"DNSName":"me.mytail.ts.net."}},"Peer":{{{peers}}}}}"#)).unwrap());
+        let net = st(r#""a":{"HostName":"desk","DNSName":"desk.mytail.ts.net.","OS":"linux","Online":false},
+                        "b":{"HostName":"desk","DNSName":"desk.other.ts.net.","OS":"linux","Online":true}"#);
+        let cfg = Config::default();
+        assert_eq!(find(&cfg, &net, "ts:desk").unwrap().host, "desk.mytail.ts.net");
+        assert_eq!(find(&cfg, &net, "ts:desk.other.ts.net").unwrap().host, "desk.other.ts.net");
+        // No DNS name: its HostName is the peer's own choice, so it can't take an id.
+        let net = st(r#""a":{"HostName":"desk","DNSName":"desk.mytail.ts.net.","OS":"linux","Online":false},
+                        "b":{"HostName":"desk","DNSName":"","OS":"linux","Online":true}"#);
+        assert_eq!(net.peers.len(), 1);
+        assert_eq!(find(&cfg, &net, "ts:desk").unwrap().host, "desk.mytail.ts.net");
+        // Neither in this tailnet: neither is "desk".
+        let net = st(r#""a":{"HostName":"desk","DNSName":"desk.one.ts.net.","OS":"linux"},
+                        "b":{"HostName":"desk","DNSName":"desk.two.ts.net.","OS":"linux"}"#);
+        assert!(find(&cfg, &net, "ts:desk").is_none());
     }
 
     #[test]

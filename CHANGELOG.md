@@ -7,6 +7,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 
 ### Fixed
+- Tailscale devices with the same name (a machine shared in from another tailnet, or one
+  without a DNS name) no longer stand in for each other: the one in your own tailnet keeps the
+  name, the others go by their full name.
 - Only this user's processes are taken for a chat's still-running turn; another account's
   process that only looks like one no longer blocks the chat or trims its transcript.
 - A remote turn picked up after a restart no longer serves its MCP servers when another program
