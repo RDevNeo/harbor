@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-25
+
 ### Fixed
 - Read only and Auto-edit now bind lead chats too: a lead on those levels runs without a shell
   (Claude Code in plan or accept-edits mode, no Bash, no commands on this PC for a remote chat),
@@ -702,7 +704,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/RDevNeo/harbor/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/RDevNeo/harbor/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/RDevNeo/harbor/compare/v0.25.1...v0.26.0
 [0.25.1]: https://github.com/RDevNeo/harbor/compare/v0.25.0...v0.25.1
