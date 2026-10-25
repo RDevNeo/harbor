@@ -30,8 +30,8 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 
 ## Install
 
-One build for Linux x86_64 (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), installed per
-user into `~/.local` without sudo:
+Builds for Linux x86_64 and aarch64 (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch),
+installed per user into `~/.local` without sudo:
 
 ```sh
 curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh
@@ -40,13 +40,39 @@ curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh
 - `… | sh -s -- --with-browser` also installs the built-in browser's engine (Servo, about 40 MB, glibc
   2.39+); Harbor can download it later too.
 - `… | sh -s -- --uninstall` removes Harbor and keeps your chats (`--uninstall --purge` deletes them).
-- Offline: download `harbor-x86_64-linux.tar.gz` (and optionally `harbor-browser-x86_64-linux.tar.gz`
-  beside it), extract it and run `./install.sh` in that folder; it installs those files after checking them
+- Offline: download `harbor-x86_64-linux.tar.gz` or `harbor-aarch64-linux.tar.gz` (and optionally
+  `harbor-browser-x86_64-linux.tar.gz` beside it; the browser engine is x86_64 only for now), extract it and run `./install.sh` in that folder; it installs those files after checking them
   against the signed `SHA256SUMS` inside.
 - install.sh checks every download against the release's minisign signature, fetching a pinned static
   minisign when none is installed; `HARBOR_INSECURE=1` installs without that check.
 - Files: `~/.local/lib/harbor/` (`harbor`, `harbor-browser`), `~/.local/bin/harbor`, a desktop entry
   and icons.
+
+### What a fresh PC needs
+
+Required:
+
+| | |
+|---|---|
+| A Wayland or X11 session with OpenGL/EGL | loaded at runtime (Mesa is enough) |
+| `curl`, `tar`, `sha256sum` | the installer and the self-updater |
+| An agent CLI, signed in | Claude Code, Codex, Cursor, Grok, Gemini, OpenCode… Codex, Grok and Gemini install with npm, so they need [Node.js](https://nodejs.org) |
+
+Optional (only that feature is off without it):
+
+| Program | For |
+|---|---|
+| `zenity` (or `kdialog`) | file pickers: Attach, project and device icons, Devices uploads (drag and drop and paste work without it) |
+| `wl-clipboard` | reliable clipboard on Wayland (arboard is the fallback) |
+| `git`, `gh` | projects, diffs, cloning, the Pull requests and Issues pages |
+| `notify-send`, `xdg-open` | notifications, opening links and files |
+| `ssh` | terminals, files and agents on your other PCs |
+| `rg` | the grep tool for agents on other PCs working on this PC's files |
+| `rsvg-convert` or `magick` | SVG project favicons |
+| `npx` | Convex login |
+| Hyprland or Sway | raising the open window when you launch Harbor again |
+
+install.sh notes the missing optional ones at the end.
 
 Harbor updates itself: it checks GitHub Releases, verifies the download's
 [minisign](https://jedisct1.github.io/minisign/) signature (key
