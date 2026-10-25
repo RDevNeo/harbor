@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Slash commands on the phone: type `/` at the start of a word in a chat's message box and a
+  menu above it lists the same commands and skills as the desktop's, filtered as you type, each
+  with its description and a badge for where it comes from (Harbor, Built-in, Plugin, Personal or
+  Project). Tap one to put it in the message; Back, a space or no match closes the menu, and
+  after other words it offers skills only. `/model` opens the model picker, `/plan` and
+  `/default` switch the chat to read only and back. Other agents get the command's text or the
+  skill's instructions from the PC, as on the desktop. Long press an entry for its full
+  description. The phone API has `GET /v1/chats/{id}/slash` and `POST /v1/chats/{id}/slash` for
+  it; a chat that runs on another PC of the mesh gets that PC's list.
+
 ## [0.22.0] - 2026-10-25
 
 ### Added

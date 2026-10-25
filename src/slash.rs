@@ -432,13 +432,92 @@ struct Target {
     personal: PathBuf,
 }
 
+/// The user's own `.claude` folder for an account: a Claude account's config dir, else ~/.claude.
+fn personal_dir(account: Option<&Account>) -> PathBuf {
+    account.filter(|a| a.kind == Kind::Claude).and_then(|a| a.config_dir.clone()).unwrap_or_else(|| crate::store::home().join(".claude"))
+}
+
+/// Whether Harbor puts the commands' and skills' text in for an agent: not for Claude Code on
+/// this PC (`device` empty), which expands them itself.
+pub fn expands(kind: Option<Kind>, device: &str) -> bool {
+    !(kind == Some(Kind::Claude) && device.is_empty())
+}
+
+/// The access /plan or /default leaves a chat with; `before` is what it had before /plan.
+fn access_after(h: Harbor, kind: Kind, before: Option<String>) -> String {
+    match h {
+        Harbor::Plan => "plan".to_string(),
+        _ => before.filter(|b| b != "plan").unwrap_or_else(|| providers::access(kind)[0].0.to_string()),
+    }
+}
+
+/// An entry as the phone API sends it (android/PROTOCOL.md, `GET /v1/chats/{id}/slash`).
+pub fn entry_json(e: &Entry) -> Value {
+    let (source, command) = match e.scope {
+        Scope::Harbor(Harbor::Model) => ("harbor", Some("model")),
+        Scope::Harbor(Harbor::Plan) => ("harbor", Some("plan")),
+        Scope::Harbor(Harbor::Default) => ("harbor", Some("default")),
+        Scope::Project => ("project", None),
+        Scope::Personal => ("personal", None),
+        Scope::Builtin => ("builtin", None),
+        Scope::Plugin => ("plugin", None),
+    };
+    serde_json::json!({
+        "name": e.name, "aliases": e.aliases, "description": e.description, "hint": e.hint,
+        "source": source, "skill": e.skill, "badge": e.badge().1, "command": command,
+    })
+}
+
 impl App {
     fn slash_target(&self) -> Target {
         let sel = self.sel();
-        let account = self.account(&sel.account).cloned();
+        self.target_for(&sel.account, &sel.device, &sel.access, self.current_repo())
+    }
+
+    fn target_for(&self, account: &str, device: &str, access: &str, repo: Option<i64>) -> Target {
+        let account = self.account(account).cloned();
         let kind = account.as_ref().map(|a| a.kind).unwrap_or(Kind::Claude);
-        let personal = account.as_ref().filter(|a| a.kind == Kind::Claude).and_then(|a| a.config_dir.clone()).unwrap_or_else(|| crate::store::home().join(".claude"));
-        Target { kind, remote: !sel.device.is_empty(), access: sel.access, account, cwd: self.cwd_of(self.current_repo()), personal }
+        let personal = personal_dir(account.as_ref());
+        Target { kind, remote: !device.is_empty(), access: access.to_string(), account, cwd: self.cwd_of(repo), personal }
+    }
+
+    /// `GET /v1/chats/{id}/slash`: the menu's list for a chat, as the desktop's composer has
+    /// it. Like opening the menu, it reads the files again and asks Claude Code when its list
+    /// is old; `pending` while Claude Code hasn't answered yet (ask again in a moment).
+    pub fn api_slash(&mut self, chat: i64, ctx: &egui::Context) -> Value {
+        let Some(c) = self.chat(chat) else { return serde_json::json!({ "entries": [], "pending": false }) };
+        let t = self.target_for(&c.account, &c.device, &c.access, c.repo_id);
+        self.slash_refresh(&t, ctx, true);
+        let pending = t.account.as_ref().filter(|a| a.kind == Kind::Claude && a.installed()).is_some_and(|a| {
+            self.slash.cli.lock().unwrap().get(&(a.id.clone(), t.cwd.clone())).is_some_and(|p| p.entries.is_none() && p.at.elapsed() < PROBE_TIMEOUT)
+        });
+        let entries: Vec<Value> = self.slash_entries(&t).iter().map(entry_json).collect();
+        serde_json::json!({ "entries": entries, "pending": pending })
+    }
+
+    /// `POST /v1/chats/{id}/slash` `{"command": "plan"|"default"}`: the menu's /plan and
+    /// /default for a chat, as the desktop's composer does them (one /default for both).
+    pub fn api_slash_command(&mut self, chat: i64, body: &Value, ctx: &egui::Context) -> crate::api::Reply {
+        let h = match body["command"].as_str() {
+            Some("plan") => Harbor::Plan,
+            Some("default") => Harbor::Default,
+            _ => return crate::api::err(400, "command is plan or default"),
+        };
+        let Some(c) = self.chat(chat).cloned() else { return crate::api::err(404, "no such chat") };
+        let kind = self.account(&c.account).map(|a| a.kind).unwrap_or(Kind::Claude);
+        let before = match h {
+            Harbor::Plan => None,
+            _ => self.slash.before_plan.remove(&chat),
+        };
+        let access = access_after(h, kind, before);
+        if let Err(r) = self.api_patch_run(chat, &serde_json::json!({ "access": access }), ctx) {
+            return r;
+        }
+        if h == Harbor::Plan && c.access != "plan" {
+            self.slash.before_plan.insert(chat, c.access.clone());
+        }
+        let chat = self.chat(chat).map(|ch| self.chat_json(ch)).unwrap_or_default();
+        crate::api::ok(serde_json::json!({ "ok": true, "chat": chat }))
     }
 
     /// Reads the files again, and asks Claude Code again when its list is old.
@@ -614,13 +693,14 @@ impl App {
     pub fn slash_access(&mut self, key: i64, h: Harbor) {
         let s = self.sel();
         let kind = self.account(&s.account).map(|a| a.kind).unwrap_or(Kind::Claude);
-        let access = match h {
+        let before = match h {
             Harbor::Plan => {
                 self.slash.before_plan.insert(key, s.access.clone());
-                "plan".to_string()
+                None
             }
-            _ => self.slash.before_plan.remove(&key).unwrap_or_else(|| providers::access(kind)[0].0.to_string()),
+            _ => self.slash.before_plan.remove(&key),
         };
+        let access = access_after(h, kind, before);
         self.set_sel(crate::app::Sel { access, ..s });
     }
 
@@ -630,12 +710,11 @@ impl App {
     pub fn slash_prompt(&self, chat_id: i64, text: &str) -> String {
         let Some(chat) = self.chat(chat_id) else { return text.to_string() };
         let account = self.account(&chat.account);
-        if (account.is_some_and(|a| a.kind == Kind::Claude) && chat.device.is_empty()) || !text.contains('/') {
+        if !expands(account.map(|a| a.kind), &chat.device) || !text.contains('/') {
             return text.to_string();
         }
-        let personal = account.and_then(|a| a.config_dir.clone()).unwrap_or_else(|| crate::store::home().join(".claude"));
         let mut locals = scan(&self.cwd_of(chat.repo_id).join(".claude"));
-        locals.extend(scan(&personal));
+        locals.extend(scan(&personal_dir(account)));
         expand(text, &locals)
     }
 }
@@ -791,6 +870,47 @@ mod tests {
         let out = expand("please /style this, /style", &locals);
         assert!(out.starts_with("[skill /style: follow it for this message. Its other files are in /s/style]\n\nWrite well\n\n---\n\nplease /style this"));
         assert_eq!(out.matches("Write well").count(), 1);
+    }
+
+    #[test]
+    fn the_phones_list() {
+        let cli = vec![
+            Entry { name: "compact".into(), aliases: vec!["c".into()], description: "Free up context".into(), hint: "<instructions>".into(), scope: Scope::Builtin, skill: false },
+            Entry { name: "vercel:deploy".into(), aliases: vec![], description: "(vercel) Deploy".into(), hint: String::new(), scope: Scope::Plugin, skill: false },
+        ];
+        let v: Vec<Value> = entries(Kind::Claude, false, "full", Some(&cli), &[local("proj", false, "P")], &[local("mine", true, "M")]).iter().map(entry_json).collect();
+        let row = |i: usize| (v[i]["name"].as_str().unwrap(), v[i]["source"].as_str().unwrap(), v[i]["badge"].as_str().unwrap(), v[i]["skill"].as_bool().unwrap());
+        assert_eq!(row(0), ("model", "harbor", "Harbor", false));
+        assert_eq!(v[0]["command"], "model");
+        assert_eq!(row(1), ("plan", "harbor", "Harbor", false));
+        assert_eq!(v[1]["command"], "plan");
+        assert_eq!(row(2), ("compact", "builtin", "Built-in", false));
+        assert_eq!((v[2]["hint"].as_str(), v[2]["aliases"].clone(), v[2]["command"].clone()), (Some("<instructions>"), serde_json::json!(["c"]), Value::Null));
+        assert_eq!(row(3), ("vercel:deploy", "plugin", "Plugin", false));
+        assert_eq!(row(4), ("proj", "project", "Project command", false));
+        assert_eq!(row(5), ("mine", "personal", "Personal skill", true));
+        assert_eq!(v[5]["description"], "mine does things");
+        // A chat in read-only mode gets /default instead of /plan.
+        let v = entries(Kind::Claude, false, "plan", None, &[], &[]);
+        assert_eq!(entry_json(&v[1])["command"], "default");
+    }
+
+    #[test]
+    fn plan_and_back() {
+        assert_eq!(access_after(Harbor::Plan, Kind::Claude, None), "plan");
+        assert_eq!(access_after(Harbor::Default, Kind::Claude, Some("ask".into())), "ask");
+        // Nothing remembered (another device did /plan, or Harbor restarted): the provider's first level.
+        assert_eq!(access_after(Harbor::Default, Kind::Claude, None), providers::access(Kind::Claude)[0].0);
+        assert_eq!(access_after(Harbor::Default, Kind::Claude, Some("plan".into())), providers::access(Kind::Claude)[0].0);
+    }
+
+    #[test]
+    fn who_gets_commands_expanded() {
+        // Claude Code here expands them itself; other agents and Claude on another device get the text.
+        assert!(!expands(Some(Kind::Claude), ""));
+        assert!(expands(Some(Kind::Claude), "ts:laptop"));
+        assert!(expands(Some(Kind::Codex), ""));
+        assert!(expands(None, ""));
     }
 
     #[test]

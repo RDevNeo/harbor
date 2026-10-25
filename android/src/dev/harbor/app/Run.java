@@ -214,6 +214,12 @@ final class Run {
         return r;
     }
 
+    /** The model picker alone (the slash menu's /model). */
+    void pickModel(Activity a, Changed ch) {
+        if (!can("model") || models().length() == 0) { Ui.toast(a, "The model can't change now: " + why("model")); return; }
+        pickList(a, "Model", models(), model, "model", ch);
+    }
+
     private void pickList(Activity a, String title, JSONArray list, String cur, String field, Changed ch) {
         List<Sheet.Option> o = new ArrayList<>();
         for (int i = 0; i < list.length(); i++) {

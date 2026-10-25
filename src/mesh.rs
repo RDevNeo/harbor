@@ -2338,7 +2338,6 @@ impl App {
             return Some(call);
         }
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
-        let mutating = matches!(call.method.as_str(), "POST" | "PATCH" | "DELETE");
         // A new chat on a peer's Harbor.
         let global = call.global;
         if call.method == "POST" && p == ["v1", "chats"] {
@@ -2368,7 +2367,7 @@ impl App {
             });
             return None;
         }
-        if !mutating || p.len() < 3 || p[0] != "v1" || p[1] != "chats" {
+        if !for_home(&call.method, &p) {
             return Some(call);
         }
         let Some(c) = self.chat_by_ref(p[2]).filter(|c| c.foreign()).cloned() else { return Some(call) };
@@ -2805,6 +2804,15 @@ impl App {
     }
 }
 
+/// A phone's call about a chat (`/v1/chats/{id}/…`) that the chat's home PC answers for a
+/// copy: writes, and the slash menu's list (the commands, skills and agent are there).
+fn for_home(method: &str, p: &[&str]) -> bool {
+    if p.len() < 3 || p[0] != "v1" || p[1] != "chats" {
+        return false;
+    }
+    matches!(method, "POST" | "PATCH" | "DELETE") || (method == "GET" && p.get(3) == Some(&"slash"))
+}
+
 /// The upload files of a phone's body, as files here.
 fn files_of(body: &Value) -> Vec<PathBuf> {
     body["files"].as_array().into_iter().flatten().filter_map(|f| api::resolve_upload(f.as_str()?)).collect()
@@ -2958,5 +2966,15 @@ mod tests {
     fn labels() {
         assert_eq!(label("ts:desk"), "desk");
         assert_eq!(label("desk"), "desk");
+    }
+
+    #[test]
+    fn a_copys_home_answers_writes_and_its_slash_menu() {
+        for (method, path) in [("POST", "v1/chats/7/send"), ("PATCH", "v1/chats/7"), ("DELETE", "v1/chats/7"), ("POST", "v1/chats/7/slash"), ("GET", "v1/chats/7/slash")] {
+            assert!(for_home(method, &path.split('/').collect::<Vec<_>>()), "{method} {path}");
+        }
+        for (method, path) in [("GET", "v1/chats/7/items"), ("GET", "v1/chats/7/team"), ("GET", "v1/state"), ("POST", "v1/chats"), ("POST", "v1/upload")] {
+            assert!(!for_home(method, &path.split('/').collect::<Vec<_>>()), "{method} {path}");
+        }
     }
 }
