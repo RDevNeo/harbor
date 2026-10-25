@@ -5,8 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
-
 ### Fixed
+- Without XDG_RUNTIME_DIR, Harbor's control socket and lock live in a folder only you can open,
+  not in the shared /tmp.
+- Settings › Webhooks warns when Tailscale Funnel still sends /hooks to a port that isn't Harbor's
+  now, and offers to point it here.
 - Tailscale devices with the same name (a machine shared in from another tailnet, or one
   without a DNS name) no longer stand in for each other: the one in your own tailnet keeps the
   name, the others go by their full name.

@@ -589,13 +589,19 @@ impl App {
                             w::badge(ui, "Funnel", Tone::Green);
                             w::text(ui, base, "label-13-mono");
                         }
-                        None => {
-                            w::subtle(ui, "Or with Tailscale Funnel (installed here): https://<machine>.<tailnet>.ts.net/hooks", "label-13");
-                        }
+                        None => match self.funnel_stale {
+                            Some(p) => {
+                                w::badge(ui, "Funnel", Tone::Amber);
+                                w::subtle(ui, format!("Funnel sends /hooks to 127.0.0.1:{p}, not to Harbor's port {port}: another program there would get your webhooks."), "label-13");
+                            }
+                            None => {
+                                w::subtle(ui, "Or with Tailscale Funnel (installed here): https://<machine>.<tailnet>.ts.net/hooks", "label-13");
+                            }
+                        },
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if self.funnel.is_none() {
-                            if w::btn("Enable Funnel").sm().outline().show(ui).clicked() {
+                            if w::btn(if self.funnel_stale.is_some() { "Point Funnel here" } else { "Enable Funnel" }).sm().outline().show(ui).clicked() {
                                 let cmd = format!("{} && echo && echo 'Done. Press Check in Harbor.'", crate::control::funnel_enable_cmd(port));
                                 self.open_terminal(&ctx, "Tailscale Funnel", store::home(), vec!["bash".into(), "-lc".into(), cmd], vec![]);
                             }

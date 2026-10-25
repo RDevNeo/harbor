@@ -86,7 +86,7 @@ pub enum Bg {
     Prs(u64, crate::prs::StateF, Result<crate::prs::Fetched, String>),
     PrAvatar(String, Option<egui::ColorImage>),
     Issues(u64, crate::issues::StateF, Result<crate::issues::Fetched, String>),
-    Funnel(Option<String>),
+    Funnel(Option<String>, Option<u16>),
     Avatar(i64, Option<egui::ColorImage>),
     GhRepos(Result<Vec<(String, String)>, String>),
     Cloned(Result<PathBuf, String>),
@@ -192,6 +192,8 @@ pub struct App {
     pub hook_port: Option<u16>,
     /// Public base of /hooks when Tailscale Funnel serves it.
     pub funnel: Option<String>,
+    /// Funnel still sends /hooks to this other local port (not Harbor's now).
+    pub funnel_stale: Option<u16>,
     inc_rx: Receiver<control::Incoming>,
     /// Where listeners hand work to the UI thread (the phone API starts later, from Settings).
     pub(crate) inc_tx: Sender<control::Incoming>,
@@ -345,6 +347,7 @@ impl App {
             hook_tokens: Arc::new(Mutex::new(HashSet::new())),
             hook_port: None,
             funnel: None,
+            funnel_stale: None,
             inc_rx,
             inc_tx: inc_tx.clone(),
             api,
@@ -707,7 +710,8 @@ impl App {
         let port = self.hook_port.unwrap_or(control::HOOK_PORT);
         let tx = self.bg_tx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Bg::Funnel(control::funnel_base(port)));
+            let (base, stale) = control::funnel(port);
+            let _ = tx.send(Bg::Funnel(base, stale));
         });
     }
 
@@ -1341,7 +1345,10 @@ impl eframe::App for App {
                 Bg::CursorModels(m) => {
                     self.models.insert(Kind::Cursor, m);
                 }
-                Bg::Funnel(f) => self.funnel = f,
+                Bg::Funnel(f, stale) => {
+                    self.funnel = f;
+                    self.funnel_stale = stale;
+                }
                 Bg::Git(repo, s) => self.git_loaded(repo, s),
                 Bg::Prs(generation, state, r) => self.prs_loaded(generation, state, r),
                 Bg::PrAvatar(login, img) => self.pr_avatar(ctx, login, img),

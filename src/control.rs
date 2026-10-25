@@ -45,7 +45,9 @@ pub fn socket_path() -> PathBuf {
     if let Some(p) = std::env::var_os("HARBOR_SOCK") {
         return PathBuf::from(p);
     }
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    // Without a runtime dir, a folder only this user can open (store::run_dir), not the shared
+    // /tmp where another account could make harbor.sock first and answer every agent's calls.
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(crate::store::run_dir);
     dir.join("harbor.sock")
 }
 
@@ -200,13 +202,29 @@ pub fn signature_ok(token: &str, body: &[u8], sig: &str) -> bool {
     ring::hmac::verify(&key, body, &want).is_ok()
 }
 
-/// Public base URL when Tailscale Funnel serves /hooks to the local port.
-pub fn funnel_base(port: u16) -> Option<String> {
-    let out = std::process::Command::new("tailscale").args(["funnel", "status"]).output().ok()?;
+/// Tailscale Funnel's /hooks: its public base URL when it serves the local `port`, else the
+/// other local port it still sends /hooks to (Harbor listens elsewhere now: whatever holds that
+/// port gets the webhooks).
+pub fn funnel(port: u16) -> (Option<String>, Option<u16>) {
+    let Ok(out) = std::process::Command::new("tailscale").args(["funnel", "status"]).output() else { return (None, None) };
     let text = String::from_utf8_lossy(&out.stdout);
-    if !text.contains("Funnel on") || !text.contains(&format!("127.0.0.1:{port}")) {
-        return None;
+    if !text.contains("Funnel on") {
+        return (None, None);
     }
+    match funnel_hooks_port(&text) {
+        Some(p) if p == port => (funnel_base(), None),
+        p => (None, p),
+    }
+}
+
+/// The local port `tailscale funnel status` sends /hooks to ("|-- /hooks proxy http://127.0.0.1:N/hooks").
+pub fn funnel_hooks_port(status: &str) -> Option<u16> {
+    let line = status.lines().find(|l| l.contains("/hooks") && l.contains("proxy"))?;
+    let rest = &line[line.find("127.0.0.1:")? + "127.0.0.1:".len()..];
+    rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+}
+
+fn funnel_base() -> Option<String> {
     let st = std::process::Command::new("tailscale").args(["status", "--json"]).output().ok()?;
     let v: Value = serde_json::from_slice(&st.stdout).ok()?;
     let dns = v["Self"]["DNSName"].as_str()?.trim_end_matches('.').to_string();
@@ -234,6 +252,13 @@ mod tests {
         assert!(!signature_ok("tok", b"{ }", &format!("sha256={tag}")));
         assert!(!signature_ok("other", b"{}", &format!("sha256={tag}")));
         assert!(!signature_ok("tok", b"{}", "sha1=00") && !signature_ok("tok", b"{}", "sha256=zz"));
+    }
+
+    #[test]
+    fn funnel_hooks_target_port() {
+        let st = "# Funnel on:\n#     - https://pc.example.ts.net\n\nhttps://pc.example.ts.net (Funnel on)\n|-- / proxy http://127.0.0.1:3000\n|-- /hooks proxy http://127.0.0.1:47920/hooks\n";
+        assert_eq!(funnel_hooks_port(st), Some(47920));
+        assert_eq!(funnel_hooks_port("https://pc.example.ts.net (Funnel on)\n|-- / proxy http://127.0.0.1:3000\n"), None);
     }
 
     #[test]
