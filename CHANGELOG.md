@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-25
+
 ### Fixed
 - On the phone, the slash menu never opened while the app was talking to a PC of the mesh with
   an older Harbor (it has no menu to give). The app now asks the chat's own PC, or another PC it
@@ -607,7 +609,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/RDevNeo/harbor/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/RDevNeo/harbor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/RDevNeo/harbor/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/RDevNeo/harbor/compare/v0.20.0...v0.21.0
