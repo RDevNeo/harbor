@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-25
+
 ### Added
 - On the phone, Pull requests and Issues in the drawer, as on the desktop: the ones you wrote,
   review or are assigned, and those of your projects' GitHub repos, in the same groups, with the
@@ -619,7 +621,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.23.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/RDevNeo/harbor/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/RDevNeo/harbor/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/RDevNeo/harbor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/RDevNeo/harbor/compare/v0.21.0...v0.22.0
