@@ -592,7 +592,7 @@ fn phones_loop(hub: Arc<api::Hub>) {
         let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().filter(|p| p.online && !p.fp.is_empty()).cloned().collect();
         let mut seen = HashMap::new();
         for p in peers {
-            // (a peer before 0.18.1 has no such call: 404, nothing to learn)
+            // (a peer before 0.19 has no such call: 404, nothing to learn)
             let Ok((200, v)) = http(&p.dest(), "GET", "/mesh/v1/phones", None, Duration::from_secs(8)) else { continue };
             let sightings: Vec<api::Sighting> = v["phones"]
                 .as_array()

@@ -19,7 +19,9 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   against that same key. The hub binds a pairing's token to the first phone key it's used with
   (`api_tokens[].fp`); from then on the token is refused with any other key (`401`).
 - Every request except `GET /app.apk` carries `Authorization: Bearer <token>` as well.
-  Optional `X-Harbor-Device: <phone name>` (shown next to the token in Settings › Phones).
+  Optional `X-Harbor-Device: <phone name>` (shown next to the token in Settings › Phones) and,
+  from app 0.19, `X-Harbor-App: <versionCode>` (Devices and Settings › Phones show the app's
+  version and say when it's out of date; the other PCs learn it through `GET /mesh/v1/phones`).
 - **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
   answers plain HTTP on its Tailscale interface, from Tailscale addresses, for tokens no key is
@@ -463,6 +465,13 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   another PC (`group`: the pairing's id; the same group always gets the same token), bound to the
   phone's key `fp` at once. `410` once removed, `409` when the group's token has another key.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
+- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app}], apk}`: where this PC saw the
+  phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it
+  serves. Each PC asks the others every 15 s: a phone that talks to another PC shows online
+  there, "via" that PC. A PC whose peer serves a newer app takes it.
+- `GET /mesh/v1/app.apk`: the phone app this PC serves, for a paired PC (`403` otherwise). A
+  phone app that only asks the PC it talks to thus finds the newest one there too; the app
+  from 0.19 also asks every PC it knows (`GET /v1/app` on each) and downloads from the newest.
 - `POST /mesh/v1/phones` `{}`: turn this PC's phone access on (Settings › Devices' "Enable phone
   access" on another PC).
 

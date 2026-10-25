@@ -221,7 +221,7 @@ pub struct PairedPhone {
     pub ip: String,
     /// The PC it was last seen at, when that's another one (its name); "" for this PC.
     pub via: String,
-    /// Its app's versionCode: what it says (`X-Harbor-App`, apps from 0.18.1), at least
+    /// Its app's versionCode: what it says (`X-Harbor-App`, apps from 0.19), at least
     /// [`APP_INBOX`] for an app that picks up sends, 0 when unknown (an older app).
     pub app: i64,
 }
@@ -1188,7 +1188,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     let global = req.header("x-harbor-ids") == Some("global");
     hub.seen.lock().unwrap().insert(token.clone(), (device.clone(), store::now()));
     hub.ips.lock().unwrap().insert(token.clone(), ip.to_string());
-    // Its app's version: said from 0.18.1; an app that picks up sends is 0.17 or newer.
+    // Its app's version: said from 0.19; an app that picks up sends is 0.17 or newer.
     let said = req.header("x-harbor-app").and_then(|v| v.trim().parse::<i64>().ok()).filter(|c| *c > 0);
     let inbox = segs.first() == Some(&"v1") && segs.get(1) == Some(&"inbox");
     if said.is_some() || inbox {
@@ -2913,7 +2913,7 @@ mod tests {
                 let _ = c.reply.send(ok(json!({})));
             }
         });
-        // An app from 0.18.1 says its version; one that picks up sends is at least 0.17.
+        // An app from 0.19 says its version; one that picks up sends is at least 0.17.
         call(port, "GET /v1/app HTTP/1.1\r\nAuthorization: Bearer a\r\nX-Harbor-App: 18001\r\n\r\n");
         call(port, "GET /v1/inbox HTTP/1.1\r\nAuthorization: Bearer b\r\n\r\n");
         let local = hub.local_phones();

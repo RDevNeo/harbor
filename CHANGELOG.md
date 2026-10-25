@@ -5,6 +5,19 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- A phone using Harbor through another of your PCs showed offline here. The PCs now tell each
+  other where they saw your phones (every 15 s), so Devices shows it online "via" that PC, with
+  its app version.
+- A phone talking to a PC with an older phone app was never offered the update. PCs now pass the
+  newest app to each other, and the app (from this version) checks every PC it knows and
+  downloads from whichever has the newest.
+
+### Added
+- Devices and Settings › Phones show each phone's app version and say when it's out of date
+  (or too old to take sends). On the phone, Settings › Update says where the update is and checks
+  again when tapped.
+
 ## [0.18.0] - 2026-10-24
 
 ### Changed
