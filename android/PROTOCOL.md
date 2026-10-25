@@ -507,6 +507,100 @@ agent are. A PC with a Harbor before 0.23 answers both with `404`: the app then 
 /default to the one that answered. When none can, a bare `/` shows why: the home PC's Harbor
 needs an update, or the pairing needs its upgrade to three factors.
 
+### Pull requests and issues
+
+The desktop's Pull requests and Issues pages, from this PC's GitHub CLI (`gh`, signed in on the
+PC): what you wrote, were asked to review or are assigned, plus everything in the projects' GitHub
+repos. `gh` takes seconds, so allow a 40 s read timeout; a list is served again for a minute
+(`refresh=1` asks GitHub anew). Nothing here comes through `/v1/events`: the desktop also only
+fetches when the page opens or on Refresh. `gh` failing (not installed, not signed in) answers
+`502` with its message.
+
+#### `GET /v1/prs?state=&involvement=&project=&author=&label=&draft=&review=&checks=&sort=&q=`
+
+Every parameter is optional; the PC filters, sorts and groups as the desktop does:
+`state` open (default) / closed / merged / all; `involvement` reviewing / authored; `project` a
+repo (`owner/name`, from `projects`); `author` a login; `label` (repeat it: each must be on the
+PR); `draft` only / hide; `review` approved / changes / required / none; `checks` passing /
+failing / pending; `sort` one of `sorts[].id` (default `ready`); `q` the search box, with the
+desktop's syntax (`label:a,b`, `-label:x`, `author:`, `draft:true`, `review:`, `checks:`, `#12`).
+
+```json
+{"viewer": "octocat", "total": 40,
+ "groups": [{"key": "authored", "label": "Authored", "items": [
+   {"number": 42, "title": "Compact drawer", "url": "https://github.com/o/r/pull/42", "repo": "o/r",
+    "state": "open", "draft": false, "adds": 120, "dels": 40, "created_ms": 1761000000000,
+    "updated_ms": 1761200000000, "branch": "feat/drawer", "review": "approved", "checks": "passing",
+    "conflicting": false, "author": "octocat", "labels": [{"name": "ui", "color": "a2eeef"}],
+    "review_requested": false}]}],
+ "authors": [{"login": "octocat", "n": 12}], "labels": [{"name": "ui", "color": "a2eeef", "n": 3}],
+ "sorts": [{"id": "ready", "label": "Merge readiness"}],
+ "projects": [{"id": 1, "name": "harbor", "repo": "o/r"}]}
+```
+
+`groups` are Authored / Review requested / Others (one group without a label when `involvement`
+is set); empty ones are left out. `state` open / closed / merged; `review` approved / changes /
+required / none; `checks` passing / failing / pending / none. `projects` are this PC's projects
+with a GitHub repo (ids as in `/v1/state`).
+
+#### `GET /v1/issues?state=&involvement=&project=&author=&assignee=&label=&milestone=&sort=&q=`
+
+The same for issues: `state` open (default) / closed / all; `involvement` assigned / authored /
+mentioned; `assignee` a login or `none`; `milestone` a title or `none`; `sort` one of
+`sorts[].id` (default `updated`); `q` adds `assignee:`, `no:assignee`, `milestone:`,
+`no:milestone`. Groups: Assigned / Authored / Mentioned / Others. Items:
+
+```json
+{"number": 50, "title": "…", "url": "https://github.com/o/r/issues/50", "repo": "o/r",
+ "state": "open", "created_ms": …, "updated_ms": …, "comments": 3, "author": "octocat",
+ "labels": [{"name": "bug", "color": "d73a4a"}], "assignees": ["octocat"], "milestone": "v1",
+ "mentioned": false, "linked_pr": true}
+```
+
+`state` open / done (closed as completed) / not_planned; `linked_pr`: an open PR says it fixes it.
+Also `assignees` and `milestones` (`[{"name", "n"}]`) for the pickers.
+
+#### `GET /v1/prs/view?url=<PR url>`, `GET /v1/issues/view?url=<issue url>`
+
+One item as the desktop's side panel shows it. `url` must be `https://github.com/<owner>/<repo>/
+pull/<n>` (or `/issues/<n>`); `400` otherwise. A PR:
+
+```json
+{"number": 42, "title": "…", "url": "…", "repo": "o/r", "state": "open", "draft": false,
+ "author": "octocat", "created_ms": …, "updated_ms": …, "base": "main", "head": "feat/drawer",
+ "adds": 120, "dels": 40, "files": 3, "labels": […], "conflicting": false,
+ "reviewers": [{"login": "hubot", "state": "APPROVED"}], "body": "markdown", "blocks": […],
+ "checks": [{"name": "build", "state": "pass", "url": "https://…"}],
+ "comments": [{"author": "hubot", "at_ms": …, "body": "markdown", "blocks": […]}],
+ "timeline": [{"at_ms": …, "who": "octocat", "kind": "opened"},
+              {"kind": "commit", "sha": "1a2b3c4", "headline": "…"},
+              {"kind": "review", "state": "APPROVED", "body": "…", "blocks": […]},
+              {"kind": "comment", "body": "…", "blocks": […]}],
+ "agent": "Claude"}
+```
+
+`state` open / closed / merged; reviewer `state` APPROVED / CHANGES_REQUESTED / COMMENTED /
+DISMISSED, or PENDING for a requested review; check `state` pass / fail / pending / skipped.
+`blocks` are the markdown as [Blocks](#blocks). `agent` names who Merge with… / Fix with… runs
+(as the desktop's button says it). An issue has `state` (as in the list), `assignees`,
+`milestone`, `labels`, `body`, `blocks` and `comments`.
+
+#### `GET /v1/prs/diff?url=<PR url>`
+
+`{"lines": [{"t": "file", "text": "src/x.rs", "adds": 2, "dels": 1}, {"t": "hunk", "text": "@@ …"},
+{"t": "add" | "del" | "ctx", "text": "…"}], "clipped": false}`: at most 5000 lines.
+
+#### Actions
+
+`{"url": "…"}` bodies; `400` for a URL that isn't one of GitHub's.
+
+- `POST /v1/prs/ready`: a draft, ready for review (`gh pr ready`). → `{"ok": true}`
+- `POST /v1/issues/close`, `POST /v1/issues/reopen` (`gh issue close` / `reopen`). → `{"ok": true}`
+- `POST /v1/prs/merge`, `POST /v1/issues/fix`, with `"extra": "instructions"` (optional): the
+  desktop's Merge with… and Fix with…, a new chat in the repo's project where the agent does it.
+  → `{"id": <chat>}`. `409` when the repo isn't a project, or the item isn't in a list this PC
+  fetched for phones (fetch the list first).
+
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it

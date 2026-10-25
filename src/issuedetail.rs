@@ -61,7 +61,7 @@ fn login(v: &serde_json::Value) -> String {
     v["login"].as_str().or(v["name"].as_str()).unwrap_or("ghost").to_string()
 }
 
-fn fetch(url: &str) -> Result<Full, String> {
+pub fn fetch(url: &str) -> Result<Full, String> {
     let out = gh(&["issue", "view", url, "--json", FIELDS])?;
     let v: serde_json::Value = serde_json::from_slice(&out).map_err(|e| e.to_string())?;
     Ok(parse(&v))

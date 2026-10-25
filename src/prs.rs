@@ -90,7 +90,7 @@ pub enum Sort {
 impl Sort {
     const ALL: [Sort; 7] = [Sort::Ready, Sort::Blocked, Sort::Updated, Sort::Newest, Sort::Oldest, Sort::Largest, Sort::Smallest];
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Sort::Ready => "Merge readiness",
             Sort::Blocked => "Blocked on me",

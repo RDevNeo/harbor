@@ -121,7 +121,7 @@ pub fn gh(args: &[&str]) -> Result<Vec<u8>, String> {
     Ok(out.stdout)
 }
 
-fn fetch(url: &str) -> Result<Full, String> {
+pub fn fetch(url: &str) -> Result<Full, String> {
     let out = gh(&["pr", "view", url, "--json", FIELDS])?;
     let v: serde_json::Value = serde_json::from_slice(&out).map_err(|e| e.to_string())?;
     Ok(parse(&v))

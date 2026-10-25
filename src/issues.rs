@@ -72,7 +72,7 @@ pub enum Sort {
 impl Sort {
     const ALL: [Sort; 6] = [Sort::Updated, Sort::Stale, Sort::Newest, Sort::Oldest, Sort::MostCommented, Sort::LeastCommented];
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Sort::Updated => "Recently updated",
             Sort::Stale => "Least recently updated",

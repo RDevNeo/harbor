@@ -15,6 +15,7 @@ mod detach;
 mod devices;
 mod discover;
 mod favicon;
+mod ghapi;
 mod git;
 mod hookcert;
 mod icons;

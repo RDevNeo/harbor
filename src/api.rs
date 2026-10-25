@@ -655,6 +655,8 @@ pub struct Local {
     draft: Option<(i64, u64)>,
     /// Lead → hash of its team panel (`/v1/chats/{id}/team`), for leads with a team.
     teams: HashMap<i64, u64>,
+    /// The pull requests and issues fetched for phones (ghapi.rs).
+    pub gh: crate::ghapi::Shared,
     pub ui: PhonesUi,
 }
 
@@ -667,7 +669,7 @@ pub struct PhonesUi {
 
 impl Local {
     pub fn new(hub: Arc<Hub>) -> Self {
-        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, teams: HashMap::new(), ui: Default::default() }
+        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, teams: HashMap::new(), gh: Default::default(), ui: Default::default() }
     }
 }
 
@@ -2107,6 +2109,13 @@ impl App {
         }
         // A copy of another PC's chat: the call goes there.
         let Some(call) = self.mesh_proxy(call) else { return };
+        // Pull requests and issues: this PC's GitHub, through `gh` (slow: a thread may answer).
+        if call.path.get(1).is_some_and(|s| s == "prs" || s == "issues") {
+            if let Some(r) = self.api_github(&call, ctx) {
+                let _ = call.reply.send(r);
+            }
+            return;
+        }
         // What the phone sends says it came from the phone.
         self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
         self.sender_device = device_id(&call.token);
