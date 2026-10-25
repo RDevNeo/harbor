@@ -214,6 +214,8 @@ impl App {
             format!("{prompt}\n\nDo the work through one subagent: spawn_agent with account `{}` ({}).", acc.id, acc.kind.label())
         };
         sel.device = String::new();
+        // Fix and merge threads change the project: full access, whatever the composer is on.
+        sel.access = "full".into();
         if !quiet {
             // As when the user writes: their own run lifts a project's pause.
             self.paused.remove(&project);

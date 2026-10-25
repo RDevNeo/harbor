@@ -24,6 +24,13 @@ fn arg<'a>(a: &'a Value, k: &str) -> &'a str {
     a[k].as_str().unwrap_or("").trim()
 }
 
+/// A subagent's access on `kind` under a lead with `lead` access: the same level, never
+/// more; none when that CLI has no such level.
+fn sub_access(lead: &str, kind: Kind) -> Option<String> {
+    let lead = if lead.is_empty() { "full" } else { lead };
+    crate::providers::access(kind).iter().any(|a| a.0 == lead).then(|| lead.to_string())
+}
+
 pub fn local_hm(ts: i64) -> String {
     std::process::Command::new("date")
         .args(["-d", &format!("@{ts}"), "+%H:%M"])
@@ -125,6 +132,11 @@ impl App {
             sel.account = "claude".into();
             sel.model = "claude-opus-5-5".into();
         }
+        // The access picked in the composer binds the lead too (a provider's own level, like
+        // Cursor's "ask", has no Claude match: full, as before).
+        if !crate::providers::access(Kind::Claude).iter().any(|a| a.0 == sel.access) {
+            sel.access = "full".into();
+        }
         let title: String = first_message.lines().next().unwrap_or("").trim().chars().take(60).collect();
         let chat = self.store.create_chat(Chat {
             id: 0,
@@ -135,7 +147,7 @@ impl App {
             account: sel.account,
             model: sel.model,
             effort: sel.effort,
-            access: "full".into(),
+            access: sel.access,
             settled: false,
             updated: store::now(),
             role: Role::Lead,
@@ -458,6 +470,9 @@ impl App {
                 })
             }
             "start_process" => {
+                if me.access != "full" {
+                    return Err(format!("start_process needs full access; this chat is {}", crate::providers::access_label(Kind::Claude, &me.access)));
+                }
                 let name: String = arg(a, "name").chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').take(32).collect();
                 let cmd = arg(a, "command").to_string();
                 if name.is_empty() || cmd.is_empty() {
@@ -545,6 +560,8 @@ impl App {
                     .map(String::from)
                     .unwrap_or_else(|| if acc.kind == Kind::Claude { me.model.clone() } else { String::new() });
                 let effort = arg(a, "effort").to_string();
+                // A subagent gets the lead's access, never more.
+                let access = sub_access(&me.access, acc.kind).ok_or_else(|| format!("{} has no {} access; pick another account", acc.kind.label(), crate::providers::access_label(Kind::Claude, &me.access)))?;
                 let pre = matches!(acc.kind, Kind::Claude | Kind::Grok | Kind::Meta);
                 let title: String = task.lines().next().unwrap_or("").chars().take(80).collect();
                 let chat = self.store.create_chat(Chat {
@@ -556,7 +573,7 @@ impl App {
                     account: account.clone(),
                     model: model.clone(),
                     effort,
-                    access: "full".into(),
+                    access,
                     settled: false,
                     updated: store::now(),
                     role: Role::Sub,
@@ -756,6 +773,15 @@ End every turn with a concise summary of what you did, results, and anything the
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn subagents_keep_the_leads_access() {
+        assert_eq!(super::sub_access("plan", Kind::Codex).as_deref(), Some("plan"));
+        assert_eq!(super::sub_access("edits", Kind::Claude).as_deref(), Some("edits"));
+        assert_eq!(super::sub_access("full", Kind::OpenCode).as_deref(), Some("full"));
+        assert_eq!(super::sub_access("plan", Kind::OpenCode), None);
+        assert_eq!(super::sub_access("edits", Kind::Cursor), None);
+    }
+
     use super::*;
 
     #[test]

@@ -25,11 +25,11 @@ const GREP_MAX: usize = 30_000;
 
 /// The tools a turn gets for its access: plan (read only) reads and searches; auto-edit
 /// also writes and edits but runs no commands (as a local turn there); a team lead
-/// reads and runs commands but doesn't edit (its local tools are the same).
+/// reads and, with full access, runs commands, but doesn't edit (its local tools are the same).
 pub fn for_access(access: &str, lead: bool) -> Vec<String> {
     let names: &[&str] = match () {
+        _ if access == "plan" || lead && access != "full" => &["read", "glob", "grep"],
         _ if lead => &["bash", "read", "glob", "grep"],
-        _ if access == "plan" => &["read", "glob", "grep"],
         _ if access == "edits" => &["read", "write", "edit", "glob", "grep"],
         _ => TOOLS,
     };
@@ -406,6 +406,10 @@ mod tests {
         assert_eq!(for_access("plan", false), ["read", "glob", "grep"]);
         assert!(!for_access("edits", false).contains(&"bash".to_string()));
         assert_eq!(for_access("full", false).len(), TOOLS.len());
+        // A lead runs commands only with full access.
+        assert_eq!(for_access("plan", true), ["read", "glob", "grep"]);
+        assert_eq!(for_access("edits", true), ["read", "glob", "grep"]);
+        assert!(for_access("full", true).contains(&"bash".to_string()));
         assert_eq!(tools(&for_access("plan", false)).len(), 3);
     }
 

@@ -970,6 +970,7 @@ impl App {
             fast: self.fast,
             base: self.transcripts.get(&chat_id).map_or(0, |t| t.items.len()),
             remote,
+            trusted: self.trusted(chat.repo_id),
         };
         let wake = turn_wake(ctx, chat_id);
         let tr = self.transcripts.get_mut(&chat_id).unwrap();

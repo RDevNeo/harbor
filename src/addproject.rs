@@ -80,6 +80,11 @@ fn subdirs(dir: &Path) -> Vec<PathBuf> {
     v
 }
 
+/// The setting that marks a project folder as not trusted.
+fn untrusted_key(p: &Path) -> String {
+    format!("untrusted:{}", p.display())
+}
+
 fn file_name(p: &Path) -> String {
     p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
 }
@@ -148,6 +153,20 @@ impl App {
         Ok(())
     }
 
+    /// Whether agents may load the project's own agent config: Claude Code's project
+    /// settings and hooks, Cursor's workspace. A folder the user picks or creates is
+    /// theirs; a clone is someone else's files until they trust it (the composer asks).
+    pub fn trusted(&self, repo: Option<i64>) -> bool {
+        let Some(r) = repo.and_then(|id| self.repo(id)) else { return true };
+        self.store.get(&untrusted_key(&r.path)).is_none_or(|v| v != "1")
+    }
+
+    pub fn set_trusted(&mut self, repo: i64, yes: bool) {
+        if let Some(r) = self.repo(repo) {
+            self.store.set(&untrusted_key(&r.path), if yes { "" } else { "1" });
+        }
+    }
+
     pub fn add_project_bg(&mut self, m: Bg) {
         let Some(ap) = self.add_project.as_mut() else { return };
         match m {
@@ -157,6 +176,7 @@ impl App {
             }
             Bg::Cloned(Ok(path)) => {
                 ap.busy = None;
+                self.store.set(&untrusted_key(&path), "1");
                 match self.add_project_path(&path) {
                     Ok(()) => self.add_project = None,
                     Err(e) => self.add_project.as_mut().unwrap().error = Some(e),

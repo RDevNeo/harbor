@@ -691,6 +691,35 @@ impl App {
 
     // ------------------------------------------------------------ composer
 
+    /// Over the composer in a cloned project the user hasn't trusted yet: its agents run
+    /// without the project's own agent settings and hooks until they do.
+    fn trust_bar(&mut self, ui: &mut Ui) {
+        let repo = match self.view {
+            View::Chat(id) => self.chat(id).and_then(|c| c.repo_id),
+            View::Draft => self.draft.repo,
+            _ => None,
+        };
+        let Some(repo) = repo.filter(|r| !self.trusted(Some(*r))) else { return };
+        let t = self.theme.t;
+        Frame::new()
+            .fill(t.bg200)
+            .stroke(Stroke::new(1.0, t.border()))
+            .corner_radius(CornerRadius::same(12))
+            .inner_margin(Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    w::subtle(ui, "Cloned project: agents ignore its own agent settings and hooks until you trust it.", "label-13");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if w::btn("Trust project").sm().show(ui).clicked() {
+                            self.set_trusted(repo, true);
+                        }
+                    });
+                });
+            });
+        ui.add_space(8.0);
+    }
+
     pub fn composer(&mut self, ui: &mut Ui, running: Option<u64>) {
         // Pre-team chats run an agent with all tools; work now goes through the lead.
         if let View::Chat(id) = self.view {
@@ -724,6 +753,7 @@ impl App {
         if let View::Chat(id) = self.view {
             self.typing_line(ui, id);
         }
+        self.trust_bar(ui);
         let t = self.theme.t;
         let key = self.key();
         let cid = Id::NULL.with(("composer", key));

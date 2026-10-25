@@ -130,6 +130,9 @@ pub struct TurnSpec {
     pub base: usize,
     /// Runs on another device over ssh instead of on this PC.
     pub remote: Option<Remote>,
+    /// The user trusts the project's own agent config (Claude Code's project settings and
+    /// hooks, Cursor's workspace): off for a cloned project until they say so.
+    pub trusted: bool,
 }
 
 /// Where a remote turn runs (see remote.rs); Claude Code only.
@@ -307,16 +310,12 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                     "plan" => "plan",
                     _ => "bypassPermissions",
                 };
-                match &spec.team {
-                    Some(t) if t.role == "lead" => {
-                        // The lead answers simple things itself (read, search, quick checks,
-                        // start a dev server) and delegates real work; it has no edit tools.
-                        cmd.args(["--permission-mode", "bypassPermissions"]);
-                        cmd.args(["--tools", "Read,Glob,Grep,Bash,WebFetch,WebSearch"]);
-                    }
-                    _ => {
-                        cmd.args(["--permission-mode", mode]);
-                    }
+                cmd.args(["--permission-mode", mode]);
+                if spec.team.as_ref().is_some_and(|t| t.role == "lead") {
+                    // The lead answers simple things itself (read, search, quick checks,
+                    // start a dev server) and delegates real work; it has no edit tools.
+                    // Its shell only with full access: Auto-edit and Read only run no commands.
+                    cmd.args(["--tools", if spec.access == "full" { "Read,Glob,Grep,Bash,WebFetch,WebSearch" } else { "Read,Glob,Grep,WebFetch,WebSearch" }]);
                 }
                 // Working on this PC's files: the device's own file and shell tools are off,
                 // and the bridge's stand in (only those this access allows).
@@ -326,9 +325,17 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                     _ => vec![],
                 };
                 let mut note = spec.remote.as_ref().map(|r| r.note.clone()).unwrap_or_default();
+                // Below full access, headless Claude Code refuses tools that would ask; the
+                // team's tools stay usable (Harbor checks the access for those that act).
+                let mut allowed: Vec<String> = workspace.iter().map(|t| format!("mcp__{}__{t}", crate::bridge::ORIGIN)).collect();
+                if spec.team.is_some() && spec.access != "full" {
+                    allowed.push("mcp__harbor".into());
+                }
+                if !allowed.is_empty() {
+                    cmd.arg(format!("--allowedTools={}", allowed.join(",")));
+                }
                 if !workspace.is_empty() {
-                    let allowed = workspace.iter().map(|t| format!("mcp__{}__{t}", crate::bridge::ORIGIN)).collect::<Vec<_>>().join(",");
-                    cmd.arg(format!("--disallowedTools={}", crate::workspace::REPLACED)).arg(format!("--allowedTools={allowed}"));
+                    cmd.arg(format!("--disallowedTools={}", crate::workspace::REPLACED));
                     note = format!("{note}\n\n{}", crate::workspace::note(&workspace, &spec.cwd)).trim().to_string();
                 }
                 match (&spec.team, note.as_str()) {
@@ -351,6 +358,9 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                         remote_mcp = Some(crate::bridge::remote_config(&g, remote_port).to_string());
                         grant = Some(g);
                     }
+                }
+                if !spec.trusted {
+                    cmd.args(["--setting-sources", "user"]);
                 }
                 if let Some(e) = effort {
                     cmd.args(["--effort", e]);
@@ -415,7 +425,10 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
             cmd.arg(prompt_with_paths(&spec.prompt, &others));
         }
         Kind::Cursor => {
-            cmd.args(["-p", "--output-format", "stream-json", "--stream-partial-output", "--trust"]);
+            cmd.args(["-p", "--output-format", "stream-json", "--stream-partial-output"]);
+            if spec.trusted {
+                cmd.arg("--trust");
+            }
             if spec.access == "full" {
                 cmd.arg("--force");
             }
@@ -1056,6 +1069,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A lead's access binds it: Read only and Auto-edit leads get no shell and no bypass;
+    /// an untrusted project's own settings stay off.
+    #[test]
+    fn lead_follows_the_chats_access() {
+        let account = crate::providers::Account {
+            id: "claude".into(),
+            kind: Kind::Claude,
+            name: "Claude".into(),
+            email: String::new(),
+            badge: "CL".into(),
+            plan: String::new(),
+            config_dir: None,
+            bin: None,
+            logged_in: Some(true),
+            usage: vec![],
+        };
+        let args = |access: &str, trusted: bool| {
+            let spec = TurnSpec {
+                chat_id: 999_995,
+                cwd: std::env::temp_dir(),
+                prompt: "hi".into(),
+                files: vec![],
+                session_id: "abc".into(),
+                resume: false,
+                account: account.clone(),
+                model: String::new(),
+                effort: String::new(),
+                access: access.into(),
+                team: Some(Team { role: "lead", system: "lead".into() }),
+                fast: false,
+                base: 0,
+                remote: None,
+                trusted,
+            };
+            let (cmd, _, _) = build(&spec).unwrap();
+            cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>()
+        };
+        let after = |v: &[String], k: &str| v.iter().position(|a| a == k).map(|i| v[i + 1].clone());
+        for (access, mode) in [("plan", "plan"), ("edits", "acceptEdits")] {
+            let v = args(access, true);
+            assert_eq!(after(&v, "--permission-mode").as_deref(), Some(mode));
+            assert!(!after(&v, "--tools").unwrap().contains("Bash"), "{v:?}");
+            assert!(v.contains(&"--allowedTools=mcp__harbor".to_string()), "{v:?}");
+            assert!(!v.contains(&"--setting-sources".to_string()));
+        }
+        let v = args("full", false);
+        assert_eq!(after(&v, "--permission-mode").as_deref(), Some("bypassPermissions"));
+        assert!(after(&v, "--tools").unwrap().contains("Bash"));
+        assert_eq!(after(&v, "--setting-sources").as_deref(), Some("user"));
+    }
+
     /// A remote turn carries the account's login: first on stdin, exported by the first
     /// setup line, before the profile and the session lines; never in ssh's arguments.
     #[test]
@@ -1098,6 +1162,7 @@ mod tests {
             fast: false,
             base: 0,
             remote: Some(remote(token)),
+            trusted: true,
         };
         let (cmd, input, grant) = build(&spec(Some("sk-ant-oat01-secret"))).unwrap();
         crate::bridge::revoke(&grant.unwrap().token);
@@ -1145,6 +1210,7 @@ mod tests {
             fast: false,
             base: 0,
             remote: Some(Remote { ssh, host: host.host.clone(), dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
+            trusted: true,
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();
@@ -1210,6 +1276,7 @@ mod tests {
             fast: false,
             base: 0,
             remote: Some(Remote { ssh, host: host.host.clone(), dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
+            trusted: true,
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();
@@ -1282,6 +1349,7 @@ mod tests {
             fast: false,
             base: 0,
             remote: Some(Remote { ssh, host: dest, dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
+            trusted: true,
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();

@@ -5,6 +5,19 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Read only and Auto-edit now bind lead chats too: a lead on those levels runs without a shell
+  (Claude Code in plan or accept-edits mode, no Bash, no commands on this PC for a remote chat),
+  can't start processes, and spawns subagents with its own access, never more. A new chat keeps
+  the access picked in the composer. GitHub fix and merge threads still run with full access.
+- Harbor's automatic git status no longer runs a repository's own `core.fsmonitor` command.
+
+### Changed
+- A project cloned from a Git URL or GitHub starts untrusted: its agents run without the
+  project's own agent settings and hooks (Claude Code's project settings, Cursor's workspace
+  trust) until you press Trust project above the composer. Folders you add or create are
+  trusted as before.
+
 ## [0.26.1] - 2026-10-25
 
 ### Fixed
