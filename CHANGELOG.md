@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-25
+
 ### Added
 - On the phone, a chat's team slides in from the right (swipe left, also from the edge, or the
   panel button at the top): its agents, processes, wake-ups and webhooks as the desktop's team
@@ -566,7 +568,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/RDevNeo/harbor/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/RDevNeo/harbor/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/RDevNeo/harbor/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/RDevNeo/harbor/compare/v0.17.0...v0.18.0
