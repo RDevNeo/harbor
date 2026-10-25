@@ -19,7 +19,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REPO: &str = "RDevNeo/harbor";
 /// minisign public key of the release workflow (secret: MINISIGN_SECRET_KEY on GitHub).
 const PUBKEY: &str = "RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh";
-const ARCH: &str = "x86_64";
+/// The release assets are named by it: harbor-x86_64-linux, harbor-aarch64-linux.
+const ARCH: &str = std::env::consts::ARCH;
 const CHECK_EVERY: Duration = Duration::from_secs(4 * 3600);
 /// The first check waits a little, so starting Harbor stays quick.
 const FIRST_CHECK: Duration = Duration::from_secs(20);

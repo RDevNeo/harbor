@@ -1,6 +1,7 @@
-# Builds Harbor for Linux x86_64 and publishes a GitHub Release on a v* tag.
+# Builds Harbor for Linux x86_64 and aarch64 and publishes a GitHub Release on a v* tag, once
+# smoke.yml has installed and started it on clean distro images.
 #
-# Assets: harbor-x86_64-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
+# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
 # harbor-android.apk (the phone app), SHA256SUMS, and a minisign .minisig for each. Harbor's
 # updater checks those signatures with the public key in src/update.rs.
 #
@@ -36,7 +37,12 @@ env:
 jobs:
   core:
     # Oldest supported base: the binary needs glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …).
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04, cache: core }
+          - { arch: aarch64, runner: ubuntu-22.04-arm, cache: core-aarch64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
       - name: Tag matches Cargo.toml
@@ -48,7 +54,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: core
+          key: ${{ matrix.cache }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Updater tests (version order, signatures)
         run: 'cargo test --locked -- update::'
@@ -58,7 +64,7 @@ jobs:
       - run: ldd target/release/harbor && ./target/release/harbor --version
       - uses: actions/upload-artifact@v7
         with:
-          name: harbor
+          name: harbor-${{ matrix.arch }}
           path: target/release/harbor
 
   # The phone app (android/build.sh: aapt2 + javac + d8 + apksigner, no Gradle). Main pushes
@@ -162,24 +168,26 @@ jobs:
           set -eu
           ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           mkdir -p dist
-          d=pkg/harbor-x86_64-linux
-          mkdir -p "$d/licenses"
-          install -m755 art/harbor/harbor "$d/harbor"
-          # Harbor 0.17 and older refuse an update without harbor-stream (the screen viewer,
-          # removed in 0.18): a placeholder keeps their in-app updates working.
-          printf '#!/bin/sh\necho "harbor-stream was removed in Harbor 0.18" >&2\nexit 1\n' > "$d/harbor-stream"
-          chmod 755 "$d/harbor-stream"
-          install -m755 packaging/install.sh "$d/install.sh"
-          cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
-          rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$d/harbor-256.png"
-          echo "$ver" > "$d/VERSION"
-          # The engine's id, also when this run has no engine (only main pushes; tags always do).
-          git rev-parse HEAD:browser > "$d/browser.id"
-          cp LICENSE "$d/licenses/Harbor-MIT.txt"
-          cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
-          cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
-          cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
-          [ -f lic/harbor.html ] && cp lic/harbor.html "$d/licenses/third-party-harbor.html"
+          for arch in x86_64 aarch64; do
+            d=pkg/harbor-$arch-linux
+            mkdir -p "$d/licenses"
+            install -m755 "art/harbor-$arch/harbor" "$d/harbor"
+            # Harbor 0.17 and older refuse an update without harbor-stream (the screen viewer,
+            # removed in 0.18): a placeholder keeps their in-app updates working.
+            printf '#!/bin/sh\necho "harbor-stream was removed in Harbor 0.18" >&2\nexit 1\n' > "$d/harbor-stream"
+            chmod 755 "$d/harbor-stream"
+            install -m755 packaging/install.sh "$d/install.sh"
+            cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
+            rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$d/harbor-256.png"
+            echo "$ver" > "$d/VERSION"
+            # The engine's id, also when this run has no engine (only main pushes; tags always do).
+            git rev-parse HEAD:browser > "$d/browser.id"
+            cp LICENSE "$d/licenses/Harbor-MIT.txt"
+            cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
+            cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
+            cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
+            [ ! -f lic/harbor.html ] || cp lic/harbor.html "$d/licenses/third-party-harbor.html"
+          done
 
           b=pkg/harbor-browser-x86_64-linux
           if [ "${{ needs.browser.outputs.found }}" = "true" ]; then
@@ -211,7 +219,7 @@ jobs:
           [ -n "$MINISIGN_SECRET_KEY" ] || { echo "::error::MINISIGN_SECRET_KEY is not set"; exit 1; }
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for x in harbor-x86_64-linux harbor-browser-x86_64-linux; do
+          for x in $(cd pkg && ls); do
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "pkg/$x/SHA256SUMS" -t "harbor $GITHUB_REF_NAME $x/SHA256SUMS"
           done
           rm -f /tmp/minisign.key
@@ -219,6 +227,7 @@ jobs:
         run: |
           set -eu
           tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
+          tar -C pkg -czf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
           [ ! -d pkg/harbor-browser-x86_64-linux ] || tar -C pkg -czf dist/harbor-browser-x86_64-linux.tar.gz harbor-browser-x86_64-linux
           cp packaging/install.sh dist/install.sh
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
@@ -233,16 +242,18 @@ jobs:
           set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for f in dist/harbor-x86_64-linux.tar.gz dist/harbor-browser-x86_64-linux.tar.gz dist/install.sh dist/harbor-android.apk dist/SHA256SUMS; do
+          for f in dist/*.tar.gz dist/install.sh dist/harbor-android.apk dist/SHA256SUMS; do
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
           done
           rm -f /tmp/minisign.key
           /tmp/minisign-linux/x86_64/minisign -Vm dist/harbor-x86_64-linux.tar.gz -p packaging/minisign.pub
+          /tmp/minisign-linux/x86_64/minisign -Vm dist/harbor-aarch64-linux.tar.gz -p packaging/minisign.pub
       - uses: actions/attest-build-provenance@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           subject-path: |
             dist/harbor-x86_64-linux.tar.gz
+            dist/harbor-aarch64-linux.tar.gz
             dist/harbor-browser-x86_64-linux.tar.gz
             dist/install.sh
             dist/harbor-android.apk
@@ -250,8 +261,24 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  smoke:
+    needs: package
+    uses: ./.github/workflows/smoke.yml
+    with:
+      dist: true
+
+  publish:
+    needs: [package, smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -6,7 +6,7 @@
 #   curl -fsSL …/install.sh | sh -s -- --uninstall        # remove Harbor (keeps your chats)
 #   curl -fsSL …/install.sh | sh -s -- --uninstall --purge  # …and its data
 #
-# Offline: run ./install.sh from an extracted harbor-x86_64-linux.tar.gz. It installs the files
+# Offline: run ./install.sh from an extracted harbor-<arch>-linux.tar.gz (x86_64 or aarch64). It installs the files
 # next to it, checked against the SHA256SUMS and its signature in that folder.
 # --with-browser then uses an extracted harbor-browser-x86_64-linux folder (or its .tar.gz)
 # beside it, and downloads only if there is neither.
@@ -75,7 +75,8 @@ fi
 [ "$(uname -s)" = Linux ] || die "Harbor runs on Linux only."
 case "$(uname -m)" in
   x86_64|amd64) ARCH=x86_64 ;;
-  *) die "no build for $(uname -m) yet (x86_64 only)." ;;
+  aarch64|arm64) ARCH=aarch64 ;;
+  *) die "no build for $(uname -m) yet (x86_64 and aarch64 only)." ;;
 esac
 for c in tar sha256sum; do command -v "$c" >/dev/null 2>&1 || die "$c is required."; done
 
@@ -119,8 +120,8 @@ get_minisign() {
     || die "the minisign download doesn't match its pinned checksum."
   mkdir -p "$TMP/minisign"
   tar -xzf "$TMP/minisign.tgz" -C "$TMP/minisign" 2>/dev/null || return 1
-  [ -x "$TMP/minisign/minisign-linux/x86_64/minisign" ] || return 1
-  MINISIGN="$TMP/minisign/minisign-linux/x86_64/minisign"
+  [ -x "$TMP/minisign/minisign-linux/$ARCH/minisign" ] || return 1
+  MINISIGN="$TMP/minisign/minisign-linux/$ARCH/minisign"
 }
 
 # Something can't be checked: refused, unless HARBOR_INSECURE=1 asks to install it anyway.
@@ -279,4 +280,9 @@ if [ "$BROWSER" = 0 ]; then
   say "The built-in browser is optional: install it from Harbor, or rerun with --with-browser."
 fi
 command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1 || \
-  say "Harbor drives coding-agent CLIs: install Claude Code (https://claude.ai/install.sh), Codex or Gemini too."
+  say "Harbor drives coding-agent CLIs: install Claude Code (https://claude.ai/install.sh), Codex or Gemini too (those two need Node.js)."
+# Optional programs (the README lists what each one is for).
+missing=""
+command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1 || missing="$missing zenity"
+for c in git xdg-open notify-send; do command -v "$c" >/dev/null 2>&1 || missing="$missing $c"; done
+[ -z "$missing" ] || say "Optional, not installed:$missing (see the README's list of what Harbor uses)."
