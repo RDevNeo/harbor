@@ -5,6 +5,7 @@ import android.content.ClipboardManager;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -13,6 +14,7 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -203,8 +205,13 @@ public class Hubs extends Base {
         for (Hub o : Hub.all(this))
             if (o.label().equalsIgnoreCase(h.label()) && !(o.host.equalsIgnoreCase(h.host) && o.port == h.port))
                 warn = "\n\nCareful: your paired " + o.label() + " is at " + o.host + ":" + o.port + ", not here. Only pair if you just clicked Pair a phone on that PC.";
+        // Every address the phone will try, not only the link's host.
+        List<String> at = new ArrayList<>();
+        at.add(h.host + ":" + h.port);
+        if (h.ip != null && !h.ip.isEmpty()) at.add(h.ip + ":" + h.port);
+        for (String a : h.addrs) if (!at.contains(a)) at.add(a);
         Ui.dialog(this).setTitle("Pair with " + h.label() + "?")
-                .setMessage(h.host + ":" + h.port + "\n\nThis phone will be able to read and drive this PC's chats." + warn)
+                .setMessage(TextUtils.join("\n", at) + "\n\nThis phone will be able to read and drive this PC's chats." + warn)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Pair", (d, w) -> tryPair(h)).show();
     }
@@ -223,11 +230,15 @@ public class Hubs extends Base {
         Ui.toast(this, "Connecting to " + h.host + "…");
         Ui.bg(this, () -> {
             // Every address of the link is tried, each only with the PC's key.
-            JSONObject st = h.state();
-            String n = st.optString("hub_name", "");
-            if (!n.isEmpty()) h.name = n;
-            return st;
+            return h.state();
         }, st -> {
+            // The PC's own name, unless another paired PC already goes by it.
+            String n = st.optString("hub_name", "");
+            boolean taken = false;
+            for (Hub o : Hub.all(this))
+                if (o.label().equalsIgnoreCase(n) && !(!o.fp.isEmpty() && o.fp.equals(h.fp)) && !(o.host.equalsIgnoreCase(h.host) && o.port == h.port))
+                    taken = true;
+            if (!n.isEmpty() && !taken) h.name = n;
             Hub saved = Hub.put(this, h);
             Hub.states.put(saved.id, st);
             render();
