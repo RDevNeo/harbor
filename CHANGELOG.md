@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+
+### Fixed
+- A remote turn picked up after a restart no longer serves its MCP servers when another program
+  has taken the bridge port its ssh forward points to (whoever holds it has seen the turn's token).
+
 ## [0.26.0] - 2026-10-25
 
 ### Added

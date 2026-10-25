@@ -132,15 +132,23 @@ fn saved(dir: &Path) -> Option<Grant> {
 }
 
 /// A turn followed again (after a reload): its grant is served again, also on the port its
-/// ssh forwards to when that isn't this run's (a turn started by an older build).
+/// ssh forwards to when that isn't this run's (a turn started by an older build). When that
+/// port is someone else's now (another local user took it while Harbor was away), the grant is
+/// not served at all: whoever holds the port has seen its token.
 pub fn resume(dir: &Path) {
     if let Some(g) = saved(dir) {
+        let token = g.token.clone();
         let here = grant(g);
         static EXTRA: LazyLock<Mutex<Vec<u16>>> = LazyLock::new(Default::default);
         if let Some(p) = forwarded_port(dir).filter(|p| Some(*p) != here) {
             let mut extra = EXTRA.lock().unwrap();
-            if !extra.contains(&p) && listen(p).is_some() {
-                extra.push(p);
+            if !extra.contains(&p) {
+                if listen(p).is_some() {
+                    extra.push(p);
+                } else {
+                    eprintln!("harbor: a remote turn's bridge port 127.0.0.1:{p} is taken by another process; its MCP servers are cut off");
+                    revoke(&token);
+                }
             }
         }
     }
@@ -647,6 +655,27 @@ mod tests {
         s.read_to_string(&mut out).unwrap();
         let code = out.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
         (code, out.split_once("\r\n\r\n").map(|x| x.1.to_string()).unwrap_or_default())
+    }
+
+    #[test]
+    fn resume_drops_a_grant_whose_forward_port_is_taken() {
+        // Someone else holds the port the turn's ssh forwards to: its token isn't served.
+        let squat = TcpListener::bind("127.0.0.1:0").unwrap();
+        let p = squat.local_addr().unwrap().port();
+        let dir = std::env::temp_dir().join(format!("harbor-bridge-resume-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fwd = format!("127.0.0.1:20001:127.0.0.1:{p}");
+        std::fs::write(dir.join("cmd.json"), json!({ "args": ["ssh", "-R", fwd, "host"] }).to_string()).unwrap();
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers: Map::new(), commands: true, workspace: vec![] };
+        save(&dir, &g);
+        resume(&dir);
+        assert!(!GRANTS.lock().unwrap().contains_key(&g.token));
+        // Free, it is served there again.
+        drop(squat);
+        resume(&dir);
+        assert!(GRANTS.lock().unwrap().contains_key(&g.token));
+        revoke(&g.token);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
