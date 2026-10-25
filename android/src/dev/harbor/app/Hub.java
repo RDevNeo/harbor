@@ -475,13 +475,15 @@ final class Hub {
         final String sid, hubFp, phoneFp;
         final boolean bound;
         private final Sec.Ratchet r;
-        private final long t0;
+        private final long t0, epochMs;
         private long ctr;
         private volatile long last;
         volatile boolean dead;
 
-        Sess(String sid, String hubFp, String phoneFp, boolean bound, byte[] root) {
+        Sess(String sid, String hubFp, String phoneFp, boolean bound, byte[] root, long epochMs) {
             this.sid = sid; this.hubFp = hubFp; this.phoneFp = phoneFp; this.bound = bound;
+            // The PC says how long its epochs are (10 minutes; test rigs use less).
+            this.epochMs = epochMs >= 20_000 && epochMs <= 3_600_000 ? epochMs : Sec.EPOCH_MS;
             r = new Sec.Ratchet(root);
             Sec.wipe(root);
             t0 = last = android.os.SystemClock.elapsedRealtime();
@@ -498,7 +500,7 @@ final class Hub {
          *  never used before, the call and its TLS connection. */
         synchronized String mac(String method, String target, long len, byte[] x) throws IOException {
             long now = android.os.SystemClock.elapsedRealtime();
-            long e = (now - t0) / Sec.EPOCH_MS, n = ++ctr;
+            long e = (now - t0) / epochMs, n = ++ctr;
             byte[] k = r.key(e);
             if (k == null) throw new IOException("session key gone");
             String m = Sec.hex(Sec.hmac(k, Sec.utf8(Sec.requestMsg(sid, e, n, method, target, len, phoneFp, hubFp, x))));
@@ -604,7 +606,7 @@ final class Hub {
                 Sec.wipe(root);
                 throw new IOException("The PC couldn't prove the pairing's keys: not connecting.");
             }
-            return new Sess(or.optString("sid"), hubFp, phoneFp, binding, root);
+            return new Sess(or.optString("sid"), hubFp, phoneFp, binding, root, or.optLong("epoch_ms", Sec.EPOCH_MS));
         } catch (java.security.GeneralSecurityException | JSONException ex) {
             throw new IOException("Couldn't start a session: " + ex.getMessage(), ex);
         } finally {

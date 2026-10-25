@@ -28,6 +28,18 @@ use std::time::{Duration, Instant};
 pub const EPOCH: Duration = Duration::from_secs(600);
 /// Around a change both keys work this long (calls already on the way, clocks that differ a bit).
 pub const GRACE: Duration = Duration::from_secs(30);
+/// The epoch in force: [`EPOCH`], or `HARBOR_TEST_EPOCH_S` seconds (20 to 3600) for test rigs
+/// that want to see keys change within minutes. Sessions tell the phone (`epoch_ms`).
+pub fn epoch_len() -> Duration {
+    static E: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("HARBOR_TEST_EPOCH_S").ok().and_then(|s| s.parse::<u64>().ok()).map_or(EPOCH, |s| Duration::from_secs(s.clamp(20, 3600))))
+}
+
+/// The grace around a change: [`GRACE`], at most a quarter of the epoch.
+pub fn grace() -> Duration {
+    GRACE.min(epoch_len() / 4)
+}
+
 /// A session nobody used for this long is gone (the phone starts a new one).
 pub const IDLE: Duration = Duration::from_secs(30 * 60);
 /// A session ends after this anyway: the presence key is asked again.
@@ -274,7 +286,7 @@ impl Ratchet {
     /// before it. None otherwise.
     pub fn key(&mut self, now: u64, into: Duration, want: u64) -> Option<[u8; 32]> {
         self.advance(now);
-        if into >= GRACE {
+        if into >= grace() {
             if let Some((_, mut p)) = self.prev.take() {
                 wipe(&mut p);
             }
@@ -283,7 +295,7 @@ impl Ratchet {
             Some(Self::mac_key(&self.chain))
         } else if want + 1 == self.epoch {
             self.prev.filter(|(e, _)| *e == want).map(|(_, k)| k)
-        } else if want == self.epoch + 1 && EPOCH.saturating_sub(into) <= GRACE {
+        } else if want == self.epoch + 1 && epoch_len().saturating_sub(into) <= grace() {
             let mut n = Self::next(&self.chain);
             let k = Self::mac_key(&n);
             wipe(&mut n);
@@ -347,9 +359,9 @@ struct Session {
 impl Session {
     /// The hub's epoch now, and how far into it.
     fn clock(&self, now: Instant) -> (u64, Duration) {
-        let t = now.saturating_duration_since(self.start);
-        let e = t.as_millis() / EPOCH.as_millis();
-        (e as u64, t - EPOCH * e as u32)
+        let (t, len) = (now.saturating_duration_since(self.start), epoch_len());
+        let e = t.as_millis() / len.as_millis();
+        (e as u64, t - len * e as u32)
     }
 }
 
@@ -491,7 +503,7 @@ impl State {
         if let Some(s) = mine.iter().max_by_key(|s| s.start) {
             let (e, into) = s.clock(now);
             st.epoch = e;
-            st.next_key = EPOCH - into;
+            st.next_key = epoch_len().saturating_sub(into);
         }
         drop(all);
         if let Some((_, _, Some(until))) = self.locks.lock().unwrap().get(token) {
@@ -635,7 +647,11 @@ fn pair_start(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, tok
             return Err("pairing code used by two phones");
         }
         p.retain(|q| q.token != token);
+        let who = if name.is_empty() { "A phone".to_string() } else { name.clone() };
         p.push(Pending { token: token.into(), phone_fp: phone_fp.into(), name, code, upgrade: level == Level::Legacy, at: Instant::now(), decided: None, secret, presence, binding, transcript: t });
+        if !cfg!(test) {
+            crate::limits::notify("Confirm a phone", &format!("{who} wants to pair with Harbor: compare its code in Settings › Phones."));
+        }
     }
     wake();
     Ok(reply(200, json!({ "epk": hex(&epk_h), "wait_ms": CONFIRM_TTL.as_millis() as u64 })))
@@ -756,7 +772,7 @@ fn session_open(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, t
     all.insert(sid.clone(), Session { token: token.into(), phone_fp: phone_fp.into(), bound: binding, start: now, last: now, ratchet: Ratchet::new(root), window: Window::default(), fails: 0 });
     drop(all);
     st.unlock(token);
-    Ok(reply(200, json!({ "sid": sid, "epoch_ms": EPOCH.as_millis() as u64, "grace_ms": GRACE.as_millis() as u64, "idle_ms": IDLE.as_millis() as u64, "max_ms": MAX_AGE.as_millis() as u64, "proof": hex(&hub_proof) })))
+    Ok(reply(200, json!({ "sid": sid, "epoch_ms": epoch_len().as_millis() as u64, "grace_ms": grace().as_millis() as u64, "idle_ms": IDLE.as_millis() as u64, "max_ms": MAX_AGE.as_millis() as u64, "proof": hex(&hub_proof) })))
 }
 
 // ================================================================== tests

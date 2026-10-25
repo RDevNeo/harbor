@@ -33,6 +33,42 @@ impl App {
         let hub = self.api.hub.clone();
         let mut on = hub.enabled.load(Ordering::SeqCst);
         let was = on;
+        // Phones that wait for the codes to be compared here (pairing, or upgrading a pairing
+        // from before three factors).
+        let waiting = hub.auth3.waiting();
+        if !waiting.is_empty() {
+            ui.add_space(4.0);
+            w::text(ui, "Confirm a phone", "heading-16");
+            ui.add_space(6.0);
+            for p in &waiting {
+                w::card(ui).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let who = if p.name.is_empty() { "A phone" } else { p.name.as_str() };
+                    let what = if p.upgrade { "asks to upgrade its pairing to three factors" } else { "wants to pair with this PC" };
+                    w::text(ui, format!("{}  {who} {what}", ic::SMARTPHONE), "strong-14");
+                    w::subtle(ui, format!("Its key {}. Confirm only if the phone shows this same code:", crate::tls::short(&p.phone_fp)), "label-13");
+                    ui.add_space(4.0);
+                    w::text(ui, format!("{} {}", &p.code[..3], &p.code[3..]), "heading-32");
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if w::btn("Confirm").primary().sm().show(ui).clicked() {
+                            hub.auth3.decide(&p.token, true);
+                            if self.api.ui.pairing.as_ref().is_some_and(|q| q.0 == p.token) {
+                                self.api.ui.pairing = None;
+                            }
+                        }
+                        if w::btn("Reject").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
+                            hub.auth3.decide(&p.token, false);
+                        }
+                        let left = crate::phoneauth::CONFIRM_TTL.saturating_sub(p.at.elapsed()).as_secs();
+                        w::subtle(ui, format!("{}:{:02} left", left / 60, left % 60), "label-12");
+                    });
+                });
+                ui.add_space(6.0);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+
         rows(ui, |ui| {
             w::setting_row(
                 ui,
@@ -82,40 +118,6 @@ impl App {
 
         if on {
             self.outside_section(ui);
-        }
-
-        // Phones that wait for the codes to be compared here (pairing, or upgrading a pairing
-        // from before three factors).
-        let waiting = hub.auth3.waiting();
-        if !waiting.is_empty() {
-            section(ui, "Confirm a phone");
-            for p in &waiting {
-                w::card(ui).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let who = if p.name.is_empty() { "A phone" } else { p.name.as_str() };
-                    let what = if p.upgrade { "asks to upgrade its pairing to three factors" } else { "wants to pair with this PC" };
-                    w::text(ui, format!("{}  {who} {what}", ic::SMARTPHONE), "strong-14");
-                    w::subtle(ui, format!("Its key {}. Confirm only if the phone shows this same code:", crate::tls::short(&p.phone_fp)), "label-13");
-                    ui.add_space(4.0);
-                    w::text(ui, format!("{} {}", &p.code[..3], &p.code[3..]), "heading-32");
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if w::btn("Confirm").primary().sm().show(ui).clicked() {
-                            hub.auth3.decide(&p.token, true);
-                            if self.api.ui.pairing.as_ref().is_some_and(|q| q.0 == p.token) {
-                                self.api.ui.pairing = None;
-                            }
-                        }
-                        if w::btn("Reject").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
-                            hub.auth3.decide(&p.token, false);
-                        }
-                        let left = crate::phoneauth::CONFIRM_TTL.saturating_sub(p.at.elapsed()).as_secs();
-                        w::subtle(ui, format!("{}:{:02} left", left / 60, left % 60), "label-12");
-                    });
-                });
-                ui.add_space(6.0);
-            }
-            ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
 
         section(ui, "Pair a phone");
