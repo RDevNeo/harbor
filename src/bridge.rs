@@ -477,14 +477,7 @@ fn origin(g: &Grant, msg: &Value) -> Option<Value> {
             let Some(c) = prompts().into_iter().find(|c| c.name == name) else {
                 return Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32602, "message": format!("no prompt {name}") } }));
             };
-            let args = p["arguments"]["arguments"].as_str().unwrap_or("");
-            let text = if c.body.contains("$ARGUMENTS") {
-                c.body.replace("$ARGUMENTS", args)
-            } else if args.is_empty() {
-                c.body.clone()
-            } else {
-                format!("{}\n\nArguments: {args}", c.body)
-            };
+            let text = crate::slash::with_args(&c.body, p["arguments"]["arguments"].as_str().unwrap_or(""));
             json!({ "description": c.description, "messages": [{ "role": "user", "content": { "type": "text", "text": text } }] })
         }
         "ping" => json!({}),
@@ -626,55 +619,21 @@ struct Prompt {
     body: String,
 }
 
-/// Front matter's `description:`, and the text after it.
-fn split_front(text: &str) -> (String, String) {
-    if let Some(rest) = text.strip_prefix("---\n") {
-        if let Some((front, body)) = rest.split_once("\n---") {
-            let desc = front.lines().find_map(|l| l.strip_prefix("description:")).map(|d| d.trim().trim_matches('"').to_string()).unwrap_or_default();
-            return (desc, body.trim_start_matches(['-', '\n']).to_string());
-        }
-    }
-    (String::new(), text.to_string())
-}
-
-fn md_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            md_files(&p, out);
-        } else if p.extension().is_some_and(|x| x == "md") {
-            out.push(p);
-        }
-    }
-}
-
 /// ~/.claude/commands (as `name`, folders joined with `_`) and ~/.claude/skills (as
-/// `skill_<name>`). Skills' other files stay here; the prompt says where.
+/// `skill_<folder>`). Skills' other files stay here; the prompt says where.
 fn prompts() -> Vec<Prompt> {
-    let base = crate::store::home().join(".claude");
-    let mut v = vec![];
-    let cdir = base.join("commands");
-    let mut files = vec![];
-    md_files(&cdir, &mut files);
-    files.sort();
-    for f in files {
-        let Ok(text) = std::fs::read_to_string(&f) else { continue };
-        let rel = f.strip_prefix(&cdir).unwrap_or(&f).with_extension("");
-        let name: String = rel.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-        let (desc, body) = split_front(&text);
-        let description = if desc.is_empty() { body.lines().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(120).collect() } else { desc };
-        v.push(Prompt { name, description, body });
-    }
-    let mut skills: Vec<PathBuf> = std::fs::read_dir(base.join("skills")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.join("SKILL.md").is_file()).collect();
-    skills.sort();
-    for d in skills {
-        let Ok(text) = std::fs::read_to_string(d.join("SKILL.md")) else { continue };
-        let (desc, body) = split_front(&text);
-        let name = format!("skill_{}", d.file_name().unwrap_or_default().to_string_lossy());
-        let body = format!("Follow this skill. Its other files are on the Harbor PC in {} (the origin read tool, or run_command, reads them when this device has it).\n\n{body}", d.display());
-        v.push(Prompt { name, description: desc, body });
-    }
-    v
+    let ident = |s: &str| -> String { s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect() };
+    crate::slash::scan(&crate::store::home().join(".claude"))
+        .into_iter()
+        .map(|l| match &l.skill {
+            None => Prompt { name: ident(&l.name), description: l.description, body: l.body },
+            Some(d) => Prompt {
+                name: format!("skill_{}", d.file_name().unwrap_or_default().to_string_lossy()),
+                description: l.description,
+                body: format!("Follow this skill. Its other files are on the Harbor PC in {} (the origin read tool, or run_command, reads them when this device has it).\n\n{}", d.display(), l.body),
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -779,11 +738,5 @@ mod tests {
         let (st, _) = shell("sleep 300", &dir, Duration::from_secs(1));
         assert_eq!(st, Err(String::new()));
         assert!(t.elapsed() < Duration::from_secs(9));
-    }
-
-    #[test]
-    fn front_matter() {
-        let (d, b) = split_front("---\ndescription: Do it\n---\nBody $ARGUMENTS\n");
-        assert_eq!((d.as_str(), b.as_str()), ("Do it", "Body $ARGUMENTS\n"));
     }
 }

@@ -740,6 +740,8 @@ impl App {
             state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(at + 1))));
             state.store(ui.ctx(), cid);
         }
+        // The slash menu takes its keys first: Enter accepts its entry instead of sending.
+        let mut slash = if focused { self.slash_keys(ui, key, cid, &mut draft) } else { None };
         // While a turn runs, Enter queues the message; Ctrl+Enter interrupts and sends now.
         let mut now = false;
         if focused && self.popup.is_none() && !crate::images::is_open(ui.ctx()) {
@@ -761,7 +763,8 @@ impl App {
             .inner_margin(Margin { left: 18, right: 14, top: 16, bottom: 12 });
         let mut unmention: Option<usize> = None;
         let mut point: Option<usize> = None;
-        frame.show(ui, |ui| {
+        let mut model_rect = Rect::NOTHING;
+        let shown = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
             // Mentioned messages; a click shows the message in the chat.
             if let Some(ms) = self.mentions.drafts.get(&key).filter(|m| !m.is_empty()) {
@@ -813,6 +816,7 @@ impl App {
                 let r = w::trigger(ui, w::Lead::Provider(kind, &badge), if tiny { "" } else { &mlabel }, self.popup == Some(Popup::Model));
                 let tip = account.as_ref().map(|a| a.short()).unwrap_or_default();
                 let r = r.on_hover_text(if tiny { format!("{mlabel} · {tip}") } else { tip });
+                model_rect = r.rect;
                 if r.clicked() {
                     open = Some((Popup::Model, r.rect));
                 } else if self.popup == Some(Popup::Model) {
@@ -877,7 +881,15 @@ impl App {
                 });
             });
         });
+        if let Some(h) = self.slash_menu(ui, key, cid, &mut draft, focused, shown.response.rect) {
+            slash = Some(h);
+        }
         self.drafts.insert(key, draft);
+        match slash {
+            Some(crate::slash::Harbor::Model) => open = Some((Popup::Model, model_rect)),
+            Some(h) => self.slash_access(key, h),
+            None => {}
+        }
         if let Some(i) = remove {
             if let Some(f) = self.files.get_mut(&key) {
                 f.remove(i);
