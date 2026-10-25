@@ -304,9 +304,14 @@ impl App {
         self.place(d, Surface::Devices(Box::new(devices::List::new(Self::wake(ctx)))));
     }
 
-    /// A paired PC as Settings › Devices knows it (its ssh login, `harbor nc`).
+    /// A paired PC as Settings › Devices knows it (its ssh login, `harbor nc`); before that list
+    /// is read, the PC with the defaults.
     fn device_host(&self, ctx: &egui::Context, dev: &devices::Device) -> Option<crate::remote::Host> {
+        if dev.phone() {
+            return None;
+        }
         crate::remote::find(&self.remote, &crate::remote::tailnet(ctx), &dev.key)
+            .or_else(|| Some(crate::remote::Host { id: dev.key.clone(), name: dev.name.clone(), host: dev.ip.clone(), bridge: true, ..Default::default() }))
     }
 
     fn device_action(&mut self, d: Dock, ctx: &egui::Context, a: devices::Action) {
