@@ -679,6 +679,11 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             let q = api::Request { query: vec![("name".into(), req.query("name").unwrap_or("file").into())], ..req.clone() };
             api::upload_to(r, &q, &api::uploads_dir())
         }
+        // Devices › Send on that PC: text or an image for the clipboard, an image or a file.
+        ("POST", ["mesh", "v1", "deliver"]) => {
+            let from = shared.name_of(&peer);
+            crate::devices::receive(&from, req.query("kind").unwrap_or(""), req.query("name").unwrap_or("file"), r, req.len)
+        }
         ("POST", ["mesh", "v1", "mint"]) => {
             let body = read_json(r, req.len);
             mint(hub, &body)

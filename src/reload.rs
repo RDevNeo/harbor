@@ -62,7 +62,6 @@ impl App {
                     .map(|s| match s {
                         Surface::Chooser => json!({ "t": "chooser" }),
                         Surface::Devices(_) => json!({ "t": "device" }),
-                        Surface::DeviceView(v) => json!({ "t": "device-view", "device": crate::devices::device_json(&v.dev), "control": v.control }),
                         Surface::Files(f) => json!({ "t": "device-files", "device": crate::devices::device_json(&f.dev), "path": f.path }),
                         Surface::Browser { url, .. } => json!({ "t": "browser", "url": url }),
                         Surface::Terminal(term) => json!({ "t": "terminal", "title": term.title, "cwd": term.cwd }),

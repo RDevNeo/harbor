@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Devices no longer needs the separate Remote Devices app and is always offered. It lists what is
+  paired with this Harbor: your other PCs (Settings › Devices) and phones running Harbor for
+  Android (Settings › Phones), online or not. Nothing unpaired shows up.
+- Send works for PCs as well as phones, over Harbor's own connections: text or an image onto the
+  device's clipboard, images (opened there) and files (saved to its Downloads), with a
+  notification on the PC that receives them. PCs keep the terminal and file browser, now over
+  ssh through `harbor nc` with Settings › Devices' login.
+
+### Removed
+- Device screens (the eye button) and `harbor-stream`, the viewer they needed: they only worked
+  through Remote Devices. Releases still ship a placeholder `harbor-stream` so older versions can
+  update.
+
 ## [0.17.0] - 2026-10-24
 
 ### Added

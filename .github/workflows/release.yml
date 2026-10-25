@@ -1,7 +1,6 @@
 # Builds Harbor for Linux x86_64 and publishes a GitHub Release on a v* tag.
 #
-# Assets: harbor-x86_64-linux.tar.gz (harbor + harbor-stream + desktop entry, icons, licences,
-# install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
+# Assets: harbor-x86_64-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
 # harbor-android.apk (the phone app), SHA256SUMS, and a minisign .minisig for each. Harbor's
 # updater checks those signatures with the public key in src/update.rs.
 #
@@ -31,7 +30,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  FFMPEG_TAG: n9.0.2
   MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
   MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
 
@@ -62,56 +60,6 @@ jobs:
         with:
           name: harbor
           path: target/release/harbor
-
-  stream:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y nasm pkg-config clang libclang-dev libva-dev libssl-dev libopus-dev libasound2-dev
-      # A decoder-only FFmpeg (H.264/HEVC + VAAPI, swscale), static and LGPL (no --enable-gpl).
-      - uses: actions/cache@v6
-        id: ffmpeg
-        with:
-          path: ~/ffmpeg
-          key: ffmpeg-${{ env.FFMPEG_TAG }}-ubuntu22-v1
-      - name: Build FFmpeg
-        if: steps.ffmpeg.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/$FFMPEG_TAG.tar.gz" | tar -xz -C /tmp
-          cd "/tmp/FFmpeg-$FFMPEG_TAG"
-          ./configure --prefix="$HOME/ffmpeg" --enable-static --disable-shared --enable-pic \
-            --disable-programs --disable-doc --disable-network --disable-autodetect \
-            --disable-avformat --disable-avdevice --disable-avfilter --disable-swresample \
-            --disable-everything --enable-decoder=h264,hevc --enable-parser=h264,hevc \
-            --enable-vaapi --enable-hwaccel=h264_vaapi,hevc_vaapi
-          make -j"$(nproc)"
-          make install
-          cp COPYING.LGPLv2.1 "$HOME/ffmpeg/COPYING.LGPLv2.1"
-          grep 'define FFMPEG_LICENSE "LGPL' config.h
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: stream
-          key: stream
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build harbor-stream
-        working-directory: stream
-        env:
-          FFMPEG_DIR: /home/runner/ffmpeg
-          RUSTFLAGS: -C link-arg=-lva-drm -C link-arg=-lva
-        run: cargo build --release --locked --features ffmpeg-sys-next/static
-      - name: No system FFmpeg linked
-        run: |
-          ldd stream/target/release/harbor-stream
-          ! ldd stream/target/release/harbor-stream | grep -E 'libav|libsw'
-      - run: |
-          mkdir out && cp stream/target/release/harbor-stream out/
-          cp ~/ffmpeg/COPYING.LGPLv2.1 out/FFmpeg-LGPL-2.1.txt
-          echo "FFmpeg $FFMPEG_TAG, configured: decoders h264,hevc; parsers h264,hevc; vaapi; swscale; static, LGPL" > out/FFmpeg-BUILD.txt
-      - uses: actions/upload-artifact@v7
-        with:
-          name: harbor-stream
-          path: out/
 
   # The phone app (android/build.sh: aapt2 + javac + d8 + apksigner, no Gradle). Main pushes
   # without the signing secrets sign with a throwaway key, only to prove it builds.
@@ -178,7 +126,7 @@ jobs:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
   package:
-    needs: [core, stream, browser, android]
+    needs: [core, browser, android]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -191,7 +139,7 @@ jobs:
         id: lic
         with:
           path: lic
-          key: lic-${{ hashFiles('Cargo.lock', 'stream/Cargo.lock', 'browser/Cargo.lock', 'packaging/about.toml', 'packaging/about.hbs') }}
+          key: lic-${{ hashFiles('Cargo.lock', 'browser/Cargo.lock', 'packaging/about.toml', 'packaging/about.hbs') }}
       - uses: taiki-e/install-action@v2
         if: steps.lic.outputs.cache-hit != 'true'
         with:
@@ -203,7 +151,6 @@ jobs:
         run: |
           mkdir -p lic
           cargo about generate -c packaging/about.toml packaging/about.hbs -o lic/harbor.html
-          (cd stream && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-stream.html)
           (cd browser && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-browser.html)
       - uses: actions/cache/save@v6
         if: steps.lic.outputs.cache-hit != 'true' && steps.about.outcome == 'success'
@@ -218,7 +165,10 @@ jobs:
           d=pkg/harbor-x86_64-linux
           mkdir -p "$d/licenses"
           install -m755 art/harbor/harbor "$d/harbor"
-          install -m755 art/harbor-stream/harbor-stream "$d/harbor-stream"
+          # Harbor 0.17 and older refuse an update without harbor-stream (the screen viewer,
+          # removed in 0.18): a placeholder keeps their in-app updates working.
+          printf '#!/bin/sh\necho "harbor-stream was removed in Harbor 0.18" >&2\nexit 1\n' > "$d/harbor-stream"
+          chmod 755 "$d/harbor-stream"
           install -m755 packaging/install.sh "$d/install.sh"
           cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
           rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$d/harbor-256.png"
@@ -226,18 +176,10 @@ jobs:
           # The engine's id, also when this run has no engine (only main pushes; tags always do).
           git rev-parse HEAD:browser > "$d/browser.id"
           cp LICENSE "$d/licenses/Harbor-MIT.txt"
-          cp stream/LICENSE "$d/licenses/harbor-stream-GPL-3.0.txt"
-          cp art/harbor-stream/FFmpeg-LGPL-2.1.txt art/harbor-stream/FFmpeg-BUILD.txt "$d/licenses/"
           cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
           cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
           cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
           [ -f lic/harbor.html ] && cp lic/harbor.html "$d/licenses/third-party-harbor.html"
-          [ -f lic/harbor-stream.html ] && cp lic/harbor-stream.html "$d/licenses/third-party-harbor-stream.html"
-          cat > "$d/licenses/README.txt" <<EOF
-          Harbor is MIT licensed. harbor-stream is a separate program under GPL-3.0-or-later
-          (it includes moonlight-common-c, GPL-3.0, and a static LGPL-2.1+ FFmpeg). Its source
-          code is at https://github.com/$GITHUB_REPOSITORY/tree/v$ver/stream
-          EOF
 
           b=pkg/harbor-browser-x86_64-linux
           if [ "${{ needs.browser.outputs.found }}" = "true" ]; then

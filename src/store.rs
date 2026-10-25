@@ -706,6 +706,34 @@ pub fn results() -> Vec<(i64, Item)> {
         .unwrap_or_default()
 }
 
+
+/// A folder only this user can open, in RAM, for frames and other short-lived files:
+/// `$XDG_RUNTIME_DIR/harbor` (else /dev/shm/harbor-<uid>), mode 0700. Frame files in a
+/// shared /dev/shm would be readable by other accounts (a live view of a page).
+pub fn run_dir() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        let uid = std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(u32::MAX);
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir());
+        let base = runtime.clone().unwrap_or_else(|| PathBuf::from("/dev/shm"));
+        let ours = |p: &std::path::Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && m.uid() == uid);
+        let mut dir = base.join(if runtime.is_some() { "harbor".to_string() } else { format!("harbor-{uid}") });
+        let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+        // Someone else's (made first, in a shared folder): a fresh one with an unguessable name.
+        let mut n = 0u64;
+        while !ours(&dir) && n < 100 {
+            let r = std::hash::BuildHasher::hash_one(&std::collections::hash_map::RandomState::new(), (std::time::SystemTime::now(), n));
+            dir = base.join(format!("harbor-{uid}-{r:016x}"));
+            let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+            n += 1;
+        }
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        dir
+    })
+    .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

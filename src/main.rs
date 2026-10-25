@@ -1,4 +1,4 @@
-// deny, not forbid: src/yuv.rs (raw GL for video) is the one module allowed unsafe code.
+// deny, not forbid: a few system calls std has no wrapper for allow unsafe code where they are.
 #![deny(unsafe_code)]
 
 mod addproject;
@@ -46,7 +46,6 @@ mod remoteui;
 mod sidebar;
 mod single;
 mod store;
-mod stream;
 mod surface;
 mod team;
 mod teamui;
@@ -60,7 +59,6 @@ mod view;
 mod waiting;
 mod widgets;
 mod workspace;
-mod yuv;
 
 use eframe::egui;
 

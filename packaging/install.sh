@@ -15,7 +15,7 @@
 # the static minisign pinned below is fetched (and checked against its SHA-256) for that. To install
 # without a signature check anyway: HARBOR_INSECURE=1.
 #
-# Layout: ~/.local/lib/harbor/{harbor,harbor-stream,harbor-browser,harbor-android.apk}, ~/.local/bin/harbor (link),
+# Layout: ~/.local/lib/harbor/{harbor,harbor-browser,harbor-android.apk}, ~/.local/bin/harbor (link),
 # ~/.local/share/applications/harbor.desktop, ~/.local/share/icons/hicolor/…/harbor.{svg,png}.
 # Harbor updates itself afterwards (Settings › General).
 set -eu
@@ -236,7 +236,7 @@ mkdir -p "$LIB" "$BIN" "$APPS" "$ICONS/scalable/apps" "$ICONS/256x256/apps"
 STAGE="$LIB/.staging"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp -p "$SRC/harbor" "$SRC/harbor-stream" "$STAGE/"
+cp -p "$SRC/harbor" "$STAGE/"
 cp -p "$SRC/VERSION" "$STAGE/VERSION"
 [ -f "$SRC/browser.id" ] && cp -p "$SRC/browser.id" "$STAGE/browser.id"
 cp -rp "$SRC/licenses" "$STAGE/licenses"
@@ -251,7 +251,9 @@ if [ "$BROWSER" = 1 ]; then
 fi
 # Helpers first, harbor last: a running Harbor sees its file change and reloads into the new
 # version (rename is atomic; running processes keep the old file).
-for f in harbor-stream harbor-browser harbor-android.apk harbor-android.version VERSION browser.id browser.installed; do
+# (harbor-stream, the screen viewer, is gone since 0.18)
+rm -f "$LIB/harbor-stream"
+for f in harbor-browser harbor-android.apk harbor-android.version VERSION browser.id browser.installed; do
   [ -e "$STAGE/$f" ] && mv -f "$STAGE/$f" "$LIB/$f"
 done
 rm -rf "$LIB/licenses"
@@ -273,12 +275,6 @@ case ":$PATH:" in
   *) say "Run it from your app launcher, or $BIN/harbor (add $BIN to your PATH to type just 'harbor')." ;;
 esac
 
-# The screen viewer uses a few common system libraries; say which are missing.
-missing="$(ldd "$LIB/harbor-stream" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')"
-if [ -n "$missing" ]; then
-  say "Note: remote screens need these libraries, which aren't installed: $missing"
-  say "      (Ubuntu/Debian: sudo apt install libssl3 libopus0 libasound2 libva2 libva-drm2)"
-fi
 if [ "$BROWSER" = 0 ]; then
   say "The built-in browser is optional: install it from Harbor, or rerun with --with-browser."
 fi

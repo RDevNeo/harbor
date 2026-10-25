@@ -11,7 +11,7 @@
 //! Ctrl+C/X/V into egui's Copy/Cut/Paste events via `shortcuts`, and the `Plugin`
 //! here takes egui's copy commands (`ctx.copy_text`, text selections) to the system.
 //! Those copies, and the image viewer's, show a "Copied to clipboard" notification;
-//! a device pane forwarding its PC's clipboard calls [`copy_text`] and stays quiet.
+//! text a paired PC sends (devices.rs) goes through [`copy_text`] with its own notice.
 
 use eframe::egui::{self, Event, Key};
 use std::io::{Read, Write};
@@ -103,7 +103,7 @@ pub fn read() -> Option<Clip> {
     None
 }
 
-/// Any thread, any time (e.g. a device pane forwarding its PC's clipboard).
+/// Any thread, any time (e.g. text a paired PC sent).
 pub fn copy_text(text: String) {
     std::thread::spawn(move || {
         if wayland() && wl_copy(&[], text.as_bytes()) {
@@ -194,8 +194,8 @@ fn copy_color_image(img: &egui::ColorImage) {
 /// for a paste: Ctrl+C / Ctrl+Insert copy, Ctrl+X cuts, Ctrl+V / Ctrl+Shift+V /
 /// Shift+Insert paste. In a terminal pane (`in_terminal`) Ctrl+Shift+C stays a key (there
 /// is no selection to copy) and Ctrl+C is a Copy, which the pane sends as ^C. In the
-/// browser or device pane (`keep_copy_keys`) Ctrl+C/X stay keys, so the page or the device
-/// copies its own selection; Ctrl+V there still pastes the PC's clipboard (Paste / PasteImage).
+/// browser pane (`keep_copy_keys`) Ctrl+C/X stay keys, so the page copies its own
+/// selection; Ctrl+V there still pastes the PC's clipboard (Paste / PasteImage).
 pub fn shortcuts(raw: &mut egui::RawInput, in_terminal: bool, keep_copy_keys: bool) {
     let mut out = Vec::with_capacity(raw.events.len());
     for e in std::mem::take(&mut raw.events) {
