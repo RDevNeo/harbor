@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-25
+
 ### Added
 - "Move to project…" in a chat's right-click menu in the sidebar: the chat goes to another project
   (or to No project) with its sub-agents, and its next turn runs in the new folder, resuming the
@@ -780,7 +782,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/RDevNeo/harbor/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/RDevNeo/harbor/compare/v0.31.1...v0.32.0
 [0.31.1]: https://github.com/RDevNeo/harbor/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/RDevNeo/harbor/compare/v0.30.0...v0.31.0
