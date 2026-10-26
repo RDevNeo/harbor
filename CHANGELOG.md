@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-10-26
+
 ### Fixed
 - Phone: an unset effort shows and starts as the provider's default (High for Claude) instead of
   Low, as on the desktop.
@@ -970,7 +972,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/RDevNeo/harbor/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/RDevNeo/harbor/compare/v0.42.2...v0.43.0
 [0.42.2]: https://github.com/RDevNeo/harbor/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/RDevNeo/harbor/compare/v0.42.0...v0.42.1
