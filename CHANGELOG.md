@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-10-26
+
 ### Fixed
 - `install.sh` no longer writes the launcher into a data directory outside `$HOME`: with `HOME` overridden
   but `XDG_DATA_HOME` still pointing at the real session, the real launcher got an `Exec=` into the
@@ -940,7 +942,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.42.1...HEAD
+[0.42.1]: https://github.com/RDevNeo/harbor/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/RDevNeo/harbor/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/RDevNeo/harbor/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/RDevNeo/harbor/compare/v0.39.0...v0.40.0
