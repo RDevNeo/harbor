@@ -75,6 +75,7 @@ public class NewChat extends Base {
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        comp.voice(hub);
         // No chat yet: the PC lists by the project and run settings picked here.
         slash = new Slash(this, hub, this::slashPath, comp.edit, this::harbor);
         tags = new Tags(this, hub, () -> "/v1/tags?project=" + enc(run == null ? "" : run.project) + "&", comp.edit);
@@ -91,6 +92,12 @@ public class NewChat extends Base {
         String text = getIntent().getStringExtra("text");
         if (text != null) comp.edit.setText(text);
         comp.edit.requestFocus();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (comp.voice != null) comp.voice.cancel();
     }
 
     @Override
@@ -254,6 +261,7 @@ public class NewChat extends Base {
     public void onRequestPermissionsResult(int req, String[] perms, int[] granted) {
         super.onRequestPermissionsResult(req, perms, granted);
         attach.permission(req, granted);
+        if (comp.voice != null) comp.voice.permission(req, granted);
     }
 
     @Override

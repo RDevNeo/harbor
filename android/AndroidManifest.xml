@@ -22,6 +22,16 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- The background ping job (Alive) survives a reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Dictation in the composer (Voice): the phone's recogniser, or a recording the PC
+         transcribes; asked for the first time the mic is tapped -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- Android 11+: the recogniser service must be visible to find it -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
     <!-- Harbor talks plain HTTP, but only inside the tailnet (WireGuard encrypts every hop):
          Tailnet.java checks that; the platform HTTP stack gets no cleartext at all -->
     <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher"

@@ -785,6 +785,10 @@ impl App {
         if focused {
             self.tags_keys(ui, key, cid, &mut draft);
         }
+        // The dictation shortcut works wherever the composer is (not only while it's focused).
+        if self.popup.is_none() && self.dialog.is_none() && ui.input_mut(|i| self.keys.take(i, "voice")) {
+            self.voice_toggle(key, ui.ctx());
+        }
         // While a turn runs, Enter queues the message; Ctrl+Enter interrupts and sends now.
         let mut now = false;
         if focused && self.popup.is_none() && !crate::images::is_open(ui.ctx()) {
@@ -929,6 +933,8 @@ impl App {
                     if w::btn(ic::CLIP).muted().icon().show(ui).on_hover_text("Attach files or images (or drop them here)").clicked() {
                         attach = true;
                     }
+                    // Dictation (voice.rs): the mic, or the meter and time while it records.
+                    self.voice_button(ui, key);
                 });
             });
         });

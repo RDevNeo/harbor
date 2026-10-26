@@ -125,6 +125,7 @@ public class Chat extends Base {
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        comp.voice(hub);
         work.load();
         // Another PC's chat while that PC is off: read-only, this note instead of the composer.
         offNote = Ui.text(this, "", 15, Ui.G700);
@@ -150,6 +151,7 @@ public class Chat extends Base {
     @Override
     protected void onPause() {
         super.onPause();
+        if (comp.voice != null) comp.voice.cancel();
         if (composer == null || gone) return;
         typing(false);
         String d = composer.getText().toString();
@@ -1077,6 +1079,7 @@ public class Chat extends Base {
     public void onRequestPermissionsResult(int req, String[] perms, int[] granted) {
         super.onRequestPermissionsResult(req, perms, granted);
         attach.permission(req, granted);
+        if (comp.voice != null) comp.voice.permission(req, granted);
     }
 
     @Override

@@ -24,6 +24,7 @@ pub const LEFT: &str = "\u{e06e}";
 pub const STAR: &str = "\u{e176}";
 pub const ARROW_UP: &str = "\u{e04a}";
 pub const STOP: &str = "\u{e167}";
+pub const MIC: &str = "\u{e118}";
 pub const TERMINAL: &str = "\u{e181}";
 pub const FOLDER: &str = "\u{e0d7}";
 pub const X: &str = "\u{e1b2}";

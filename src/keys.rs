@@ -37,6 +37,7 @@ pub const ACTIONS: &[Action] = &[
     a("send", "Send", "Composer", "Enter", "composerFocus"),
     a("send_now", "Send now (interrupts the running turn)", "Composer", "Ctrl+Enter", "composerFocus"),
     a("newline", "New line", "Composer", "Shift+Enter", "composerFocus"),
+    a("voice", "Dictate (start or stop the mic)", "Composer", "Ctrl+Shift+Space", ""),
     a("stop_turn", "Stop the turn (or take back the last send)", "Thread", "Escape", "chatOpen && !terminalFocus && !popup"),
     fixed("close_drawer", "Close the sidebar or team drawer", "Thread", "Escape", "drawerOpen"),
     a("toggle_terminal", "Open or close the terminal", "Panels", "Ctrl+Backtick", ""),

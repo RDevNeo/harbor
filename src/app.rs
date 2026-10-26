@@ -55,6 +55,7 @@ pub enum Tab {
     Webhooks,
     Devices,
     Phones,
+    Voice,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -243,6 +244,8 @@ pub struct App {
     pub devices_ui: crate::remoteui::State,
     /// The workspace and branch bar under the composer (worktree.rs).
     pub ws: crate::worktree::State,
+    /// The composer's mic (voice.rs).
+    pub voice: crate::voice::State,
     /// Settings › Usage totals, summed off the UI thread.
     pub usage_totals: crate::pages::UsageTotals,
     /// Where the message being sent was written, when not on this PC (another PC or a
@@ -385,6 +388,7 @@ impl App {
             remote: Default::default(),
             devices_ui: Default::default(),
             ws: Default::default(),
+            voice: Default::default(),
             usage_totals: Default::default(),
             sender: String::new(),
             sender_device: String::new(),
@@ -441,6 +445,7 @@ impl App {
         if let Ok(v) = std::env::var("HARBOR_VIEW") {
             app.debug_view(ctx, &v);
         }
+        app.voice_load();
         app.load_cursor_models();
         app.load_snoozed();
         app
@@ -1481,6 +1486,7 @@ impl App {
         self.wake_snoozed(ctx);
         self.mesh_tick(ctx);
         self.ws_poll(ctx);
+        self.voice_poll(ctx);
         self.queue_drain(ctx);
         self.recap_tick(ctx);
         self.api_tick();

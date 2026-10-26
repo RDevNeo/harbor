@@ -46,6 +46,8 @@ const UI_WAIT: Duration = Duration::from_secs(30);
 /// How long a long-poll that saw a change waits for more before answering.
 const COALESCE: Duration = Duration::from_millis(150);
 const MAX_JSON: usize = 2 << 20;
+/// A phone's recording for `POST /v1/transcribe`: 10 minutes of 16 kHz mono 16-bit, and its header.
+const MAX_AUDIO: usize = 16_000 * 2 * 600 + 4096;
 /// The most a request's line and headers may take to arrive.
 pub const HEAD_WAIT: Duration = Duration::from_secs(10);
 const MAX_UPLOAD: usize = 200 << 20;
@@ -1407,6 +1409,25 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             send_json(w, 200, &json!({ "ok": true }));
         }
         ("GET", ["v1", "image"]) => serve_image(w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
+        // A phone without a recogniser of its own: its recording (WAV, 16-bit mono), transcribed
+        // here with whisper.cpp (voice.rs), on this connection's thread.
+        ("POST", ["v1", "transcribe"]) => {
+            if req.len > MAX_AUDIO {
+                return send_json(w, 413, &json!({ "error": "recording too long" }));
+            }
+            let mut body = vec![0u8; req.len];
+            if r.read_exact(&mut body).is_err() {
+                return send_json(r.get_mut(), 400, &json!({ "error": "short body" }));
+            }
+            let lang = req.query("lang").map(String::from).filter(|l| !l.is_empty() && l != "default").unwrap_or_else(|| crate::voice::config().0);
+            let path = std::env::temp_dir().join(format!("harbor-phone-voice-{}.wav", crate::store::new_uuid()));
+            let res = std::fs::write(&path, &body).map_err(|e| e.to_string()).and_then(|_| crate::voice::transcribe(&path, &lang));
+            let _ = std::fs::remove_file(&path);
+            match res {
+                Ok(text) => send_json(r.get_mut(), 200, &json!({ "text": text })),
+                Err(e) => send_json(r.get_mut(), 409, &json!({ "error": e })),
+            }
+        }
         ("POST", ["v1", "upload"]) => {
             let up = upload_to(&mut r, &upload_request(&req, |g| hub.mesh.by_gid(g)), &uploads_dir());
             send_json(r.get_mut(), up.status, &up.body);
@@ -2612,6 +2633,8 @@ impl App {
             "app": app_info().as_object().map(|o| json!({ "version_code": o["version_code"], "url": o["url"] })).unwrap_or_default(),
             "hub_update": updates["hub_update"],
             "provider_updates": updates["provider_updates"],
+            // Whether this PC can transcribe a phone's recording (voice.rs), and why not.
+            "voice": { "transcribe": crate::voice::missing().is_none(), "why": crate::voice::missing(), "lang": crate::voice::config().0 },
         })
     }
 

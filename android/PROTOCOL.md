@@ -564,6 +564,17 @@ next turn resumes there. → `{"ok": true, "chat": {...}, "moved": [ids]}`. `409
 when it can't move now: a sub-agent (move its lead), a lead mid-turn, a chat on a device, another
 PC's chat, or a project folder that isn't on this PC.
 
+### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
+
+Dictation for a phone without a speech recogniser of its own (the app's mic first uses Android's
+`SpeechRecognizer`, on-device where the phone has one, and needs nothing from the PC). The body
+is the recording as a WAV file (16-bit PCM, mono, 16 kHz; at most 10 minutes), `Content-Type:
+audio/wav`. The PC transcribes it with whisper.cpp and its model from Settings › Voice → `{"text":
+"…"}` (it may be empty: nothing was said). `409 {"error": "…"}` says why it can't (whisper.cpp not
+installed, no model downloaded). `lang` missing or empty: the PC's own setting. `GET /v1/state`
+says beforehand (optional, 0.38): `"voice": {"transcribe": true|false, "why": "…"|null, "lang":
+"auto"}`. Hubs before 0.38 answer `404`.
+
 ### `POST /v1/upload?name=<file name>&chat=<id>`
 
 Raw body (the file), `Content-Length` required. `chat` is optional, an id or a gid (files go to

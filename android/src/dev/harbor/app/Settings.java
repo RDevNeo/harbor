@@ -101,6 +101,12 @@ public class Settings extends Base {
         cm.addView(Ui.chevron(this));
         look.addView(cm, Ui.fill());
 
+        // Dictation in the composer (Voice): the language it listens for, on this phone.
+        LinearLayout dict = card(col);
+        LinearLayout dl = Ui.cardRow(this, Ui.I_GLOBE, "Dictation language", Voice.langLabel(this), Ui.FG, v -> voiceLang());
+        dl.addView(Ui.chevron(this));
+        dict.addView(dl, Ui.fill());
+
         LinearLayout more = card(col);
         LinearLayout pair = Ui.cardRow(this, Ui.I_PLUS, "Pair another PC", "Settings › Phones › Pair a phone on that PC", Ui.FG,
                 v -> startActivity(new Intent(this, Hubs.class).putExtra("pair", true)));
@@ -124,6 +130,15 @@ public class Settings extends Base {
         LinearLayout c = Ui.card(this);
         col.addView(c, Ui.margins(Ui.fill(), 0, 0, 0, 14));
         return c;
+    }
+
+    private void voiceLang() {
+        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
+        for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "what the phone's recogniser uses by default" : "", true));
+        Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. Phones without a recogniser of their own send the recording to the PC, which transcribes it with whisper.cpp.", o, Voice.lang(this), l -> {
+            Ui.prefs(this).edit().putString("voice_lang", l).apply();
+            recreate();
+        });
     }
 
     private void colorMode() {

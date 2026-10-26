@@ -1093,6 +1093,19 @@ final class Hub {
         }
     }
 
+    /** POST /v1/transcribe: a recording (WAV, 16 kHz mono) for the PC's whisper.cpp, when this
+     *  phone has no recogniser of its own (Voice). Returns the text. */
+    String transcribe(byte[] wav, String lang) throws IOException {
+        Net.Http c = open("POST", "/v1/transcribe?lang=" + URLEncoder.encode(lang == null ? "" : lang, "UTF-8"), 180_000);
+        try {
+            c.header("Content-Type", "audio/wav");
+            try (OutputStream o = c.body(wav.length)) { o.write(wav); }
+            return reply(c).optString("text");
+        } finally {
+            c.close();
+        }
+    }
+
     /** Streams a file to POST /v1/upload; returns {id, path}. */
     JSONObject upload(String name, String chat, InputStream in, long len) throws IOException {
         String q = "/v1/upload?name=" + URLEncoder.encode(name, "UTF-8") + (chat == null ? "" : "&chat=" + URLEncoder.encode(chat, "UTF-8"));

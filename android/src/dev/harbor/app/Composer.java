@@ -50,6 +50,21 @@ final class Composer {
     TextView use;
 
     Runnable onSend, onStop, onPlus, onPill, onType;
+    /** Dictation (Voice), once `voice(hub)` set it up; its strip goes over the buttons. */
+    Voice voice;
+    private FrameLayout mic;
+    private LinearLayout row;
+
+    void voice(Hub hub) {
+        voice = new Voice(a, hub, edit);
+        view.addView(voice.strip, view.indexOfChild(row), Ui.fill());
+        voice.onState = () -> {
+            boolean on = voice.active();
+            mic.setBackground(Ui.press(on ? Ui.RED : Ui.G100, 0, 22));
+            ((android.widget.ImageView) mic.getChildAt(0)).setImageDrawable(new Ui.Draw(Ui.Draw.MIC, on ? 0xffffffff : Ui.FG));
+            mic.setContentDescription(on ? "Stop dictation" : "Dictate");
+        };
+    }
 
     Composer(Activity a, Attach attach, String hint) {
         this.a = a;
@@ -87,8 +102,8 @@ final class Composer {
         row.addView(new View(a), new LinearLayout.LayoutParams(0, 1, 1));
         use = Recap.useChip(a, this);
         row.addView(use, Ui.margins(new LinearLayout.LayoutParams(-2, Ui.dp(32)), 8, 0, 0, 0));
-        FrameLayout mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> speak());
-        mic.setContentDescription("Speak");
+        mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> { if (voice != null) voice.toggle(); else speak(); });
+        mic.setContentDescription("Dictate");
         row.addView(mic, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
         send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 44, v -> {
             if (running && empty()) { if (onStop != null) onStop.run(); }
@@ -97,6 +112,7 @@ final class Composer {
         sendGlyph = (TextView) send.getChildAt(0);
         row.addView(send, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
         view.addView(row, Ui.fill());
+        this.row = row;
 
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }

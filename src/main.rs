@@ -67,6 +67,7 @@ mod tls;
 mod tray;
 mod undo;
 mod usage_ctl;
+mod voice;
 mod update;
 mod view;
 mod waiting;
