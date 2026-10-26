@@ -231,6 +231,8 @@ pub struct App {
     ime_preedit: Option<egui::Event>,
     /// The Update button was clicked: reload as soon as the new version is on disk.
     pub reload_asked: bool,
+    /// An Update from the phone or another PC: not before this, so its reply goes out first.
+    pub reload_not_before: Option<std::time::Instant>,
     /// Long-running processes Harbor owns (dev servers, watchers, data pulls).
     pub procs: Vec<crate::procs::Proc>,
     pub proc_tx: Sender<crate::procs::ProcEvent>,
@@ -387,6 +389,7 @@ impl App {
             hold_reload: false,
             ime_preedit: None,
             reload_asked: false,
+            reload_not_before: None,
             procs: vec![],
             proc_tx,
             proc_rx,

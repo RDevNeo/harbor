@@ -2337,7 +2337,7 @@ impl App {
             // The phone's "Harbor X.Y.Z is available" banner: the hub's Update button.
             ("POST", ["v1", "hub", "update"]) => {
                 if self.harbor_offer().is_some() {
-                    self.update_clicked(ctx);
+                    self.update_requested(ctx);
                     ok(json!({ "ok": true }))
                 } else {
                     err(409, "Harbor is up to date")
@@ -2724,7 +2724,8 @@ impl App {
     /// release this hub can install, and its provider CLIs that are behind. Null when none.
     pub fn updates_json(&self) -> Value {
         let hub = self.harbor_offer().map(|(v, installing)| {
-            json!({ "version": v, "current": crate::update::VERSION, "installing": installing || self.reload_asked, "notes_url": crate::notices::notes_url(&v) })
+            // `ready` (0.47.1): already installed on disk, Update only restarts into it.
+            json!({ "version": v, "current": crate::update::VERSION, "installing": installing || self.reload_asked, "ready": self.harbor_ready().is_some(), "notes_url": crate::notices::notes_url(&v) })
         });
         let st = crate::provupdate::status();
         let providers = (!st.items.is_empty() || st.updating || st.error.is_some()).then(|| {

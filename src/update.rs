@@ -24,6 +24,8 @@ const ARCH: &str = std::env::consts::ARCH;
 const CHECK_EVERY: Duration = Duration::from_secs(4 * 3600);
 /// The first check waits a little, so starting Harbor stays quick.
 const FIRST_CHECK: Duration = Duration::from_secs(20);
+/// The scheduler looks again at least this often (a check started by hand moves the next one).
+const LOOK_EVERY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
@@ -42,6 +44,8 @@ static STATE: Mutex<State> = Mutex::new(State::Idle);
 static BUSY: AtomicBool = AtomicBool::new(false);
 static LAST_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
 static STARTED: Mutex<Option<Instant>> = Mutex::new(None);
+/// Settings › Updates › "Automatically", as last seen by `tick` (the scheduler thread reads it).
+static AUTO: AtomicBool = AtomicBool::new(false);
 static BROWSER: Mutex<Option<Result<(), String>>> = Mutex::new(None);
 
 pub fn state() -> State {
@@ -159,6 +163,17 @@ fn fetch(version: &str, name: &str, stage: &Path) -> Result<PathBuf, String> {
 
 fn read(p: &Path) -> String {
     std::fs::read_to_string(p).map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+/// The version installed in `dir` when it isn't the one running (installed by the Update
+/// button, `harbor --update`, or restored), for the reload into it.
+fn version_in(dir: &Path) -> Option<String> {
+    Some(read(&dir.join("VERSION"))).filter(|v| !v.is_empty() && v != VERSION)
+}
+
+/// The installed version waiting for a reload, if any.
+pub fn on_disk() -> Option<String> {
+    version_in(&install_dir()?)
 }
 
 /// Moves `src` over `dst` atomically, after keeping a hard link of the old file in `prev`.
@@ -367,9 +382,10 @@ pub fn cli(arg: &str) -> Option<i32> {
 
 // ------------------------------------------------------------------ driving it
 
-fn spawn(ctx: &eframe::egui::Context, job: impl FnOnce() + Send + 'static) {
+/// Runs `job` on a thread unless another one is running (false then).
+fn spawn(ctx: &eframe::egui::Context, job: impl FnOnce() + Send + 'static) -> bool {
     if BUSY.swap(true, Ordering::SeqCst) {
-        return;
+        return false;
     }
     let ctx = ctx.clone();
     std::thread::spawn(move || {
@@ -377,30 +393,56 @@ fn spawn(ctx: &eframe::egui::Context, job: impl FnOnce() + Send + 'static) {
         BUSY.store(false, Ordering::SeqCst);
         ctx.request_repaint();
     });
+    true
 }
 
-/// Called every frame: checks on start and every few hours; installs when `auto`.
+/// How long until the next scheduled check: shortly after start, then every CHECK_EVERY after
+/// the last one. Zero: due.
+fn next_check(started: Instant, last: Option<Instant>, now: Instant) -> Duration {
+    let at = match last {
+        None => started + FIRST_CHECK,
+        Some(t) => t + CHECK_EVERY,
+    };
+    at.saturating_duration_since(now)
+}
+
+/// Called every tick: keeps the "Automatically" setting for the scheduler and starts it once.
+/// The checks run on its own thread, not on frames: a hidden or unfocused window may get none
+/// for hours, and with no window (background.rs) there are none at all.
 pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
+    AUTO.store(auto, Ordering::Relaxed);
     if !managed() {
         return;
     }
-    let started = *STARTED.lock().unwrap().get_or_insert_with(Instant::now);
-    let due = match *LAST_CHECK.lock().unwrap() {
-        None => started.elapsed() >= FIRST_CHECK,
-        Some(t) => t.elapsed() >= CHECK_EVERY,
+    let started = {
+        let mut s = STARTED.lock().unwrap();
+        if s.is_some() {
+            return;
+        }
+        *s.insert(Instant::now())
     };
-    if due && !BUSY.load(Ordering::SeqCst) && !matches!(state(), State::Installed(_)) {
-        check(auto, ctx);
-    }
-    // Wake up for the next check even when nothing else repaints.
-    ctx.request_repaint_after(Duration::from_secs(60));
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        loop {
+            let last = *LAST_CHECK.lock().unwrap();
+            let wait = next_check(started, last, Instant::now());
+            if !wait.is_zero() {
+                std::thread::sleep(wait.min(LOOK_EVERY));
+                continue;
+            }
+            // Installed: the reload into it comes first. Busy: try again in a while.
+            if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installed(_)) || !check(AUTO.load(Ordering::Relaxed), &ctx) {
+                std::thread::sleep(LOOK_EVERY);
+            }
+        }
+    });
 }
 
-/// "Check now" (and the timer): finds the latest release, installs it when `auto`.
-pub fn check(auto: bool, ctx: &eframe::egui::Context) {
-    *LAST_CHECK.lock().unwrap() = Some(Instant::now());
+/// "Check now" (and the scheduler): finds the latest release, installs it when `auto`. The UI
+/// is woken at each step (the hub API reads the same state, window or not). False: busy.
+pub fn check(auto: bool, ctx: &eframe::egui::Context) -> bool {
     let ctx2 = ctx.clone();
-    spawn(ctx, move || {
+    let started = spawn(ctx, move || {
         set(State::Checking);
         ctx2.request_repaint();
         match latest() {
@@ -415,6 +457,10 @@ pub fn check(auto: bool, ctx: &eframe::egui::Context) {
             Err(e) => set(State::Failed(e)),
         }
     });
+    if started {
+        *LAST_CHECK.lock().unwrap() = Some(Instant::now());
+    }
+    started
 }
 
 fn run_install(v: String) {
@@ -493,6 +539,31 @@ mod tests {
         assert!(version_code("0.7.1") > version_code("0.7.0"));
         assert!(version_code("0.8.0") > version_code("0.7.999"));
         assert_eq!(version_code("junk"), 0);
+    }
+
+    #[test]
+    fn schedule() {
+        let t0 = Instant::now();
+        assert_eq!(next_check(t0, None, t0), FIRST_CHECK);
+        assert!(next_check(t0, None, t0 + FIRST_CHECK).is_zero());
+        assert!(next_check(t0, None, t0 + FIRST_CHECK * 50).is_zero(), "overdue stays due");
+        let last = t0 + Duration::from_secs(30);
+        assert_eq!(next_check(t0, Some(last), last + Duration::from_secs(60)), CHECK_EVERY - Duration::from_secs(60));
+        assert!(next_check(t0, Some(last), last + CHECK_EVERY).is_zero());
+    }
+
+    #[test]
+    fn version_on_disk() {
+        let dir = std::env::temp_dir().join(format!("harbor-update-disk-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(version_in(&dir), None, "no VERSION file");
+        std::fs::write(dir.join("VERSION"), format!("{VERSION}\n")).unwrap();
+        assert_eq!(version_in(&dir), None, "the running version");
+        std::fs::write(dir.join("VERSION"), "99.0.1\n").unwrap();
+        assert_eq!(version_in(&dir).as_deref(), Some("99.0.1"));
+        std::fs::write(dir.join("VERSION"), "  \n").unwrap();
+        assert_eq!(version_in(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Signed with the release key: `minisign -S -t "harbor v0.0.1 harbor-x86_64-linux.tar.gz"`.

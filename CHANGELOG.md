@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Harbor checks for updates on its own timer, not on window frames: a hidden or unfocused
+  window (which may draw nothing for hours) or no window at all still notices new releases,
+  installs them when updating automatically, and offers them to phones and other PCs.
+- A version already installed on disk (by `harbor --update`, or while this one ran) is offered
+  as "Harbor X is installed": the desktop pop-up, the phone's banner and `POST /v1/hub/update`
+  (phone or another PC) restart into it instead of answering "Harbor is up to date". A remote
+  Update replies first, then restarts, with or without a focused window.
+
 ## [0.47.0] - 2026-10-26
 
 ### Added

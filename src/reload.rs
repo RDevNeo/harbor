@@ -142,13 +142,19 @@ impl App {
     /// Called every frame: reloads when the Update button asked for it, or (updating
     /// automatically) when an update is ready and it's a good moment.
     pub fn maybe_reload(&mut self, ctx: &eframe::egui::Context) {
-        if self.reload_asked && matches!(crate::update::state(), crate::update::State::Failed(_)) {
+        // The install failed (a build already on disk still counts, whatever a check said).
+        if self.reload_asked && !self.update_ready.load(Ordering::Relaxed) && matches!(crate::update::state(), crate::update::State::Failed(_)) {
             self.reload_asked = false;
+            self.reload_not_before = None;
         }
         if !self.update_ready.load(Ordering::Relaxed) {
             return;
         }
         if self.reload_asked {
+            if let Some(wait) = self.reload_not_before.and_then(|t| t.checked_duration_since(std::time::Instant::now())) {
+                ctx.request_repaint_after(wait);
+                return;
+            }
             self.reload_now();
             return;
         }
@@ -183,6 +189,23 @@ impl App {
         crate::update::install_now(ctx);
     }
 
+    /// The Update of the phone's banner or another PC (`POST /v1/hub/update`): the button, but
+    /// the reload waits a moment so the reply leaves first, and wakes itself (as incoming calls
+    /// do), window or not, focused or not.
+    pub fn update_requested(&mut self, ctx: &eframe::egui::Context) {
+        const REPLY_FIRST: Duration = Duration::from_secs(1);
+        self.reload_asked = true;
+        self.reload_not_before = Some(std::time::Instant::now() + REPLY_FIRST);
+        let wake = ctx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(REPLY_FIRST);
+            wake.request_repaint();
+        });
+        if !self.update_ready.load(Ordering::Relaxed) {
+            crate::update::install_now(ctx);
+        }
+    }
+
     pub fn reload_now(&mut self) {
         let state = self.snapshot().to_string();
         self.store.set("reload_state", &state);
@@ -200,6 +223,7 @@ impl App {
         let err = std::process::Command::new(&exe).args(args).env_remove("HARBOR_VIEW").env_remove("HARBOR_POINTER").env(crate::single::RELOADED_PID, std::process::id().to_string()).exec();
         eprintln!("harbor: reload failed: {err}");
         self.reload_asked = false;
+        self.reload_not_before = None;
         self.update_ready.store(false, Ordering::Relaxed);
     }
 }

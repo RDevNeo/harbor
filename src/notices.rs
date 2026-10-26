@@ -91,10 +91,14 @@ impl App {
     }
 
     /// The Harbor release on offer (an installed copy only): its version and whether it is
-    /// installing.
+    /// installing. A version already installed on disk (`harbor --update`, or installed while
+    /// this one ran) is offered too: Update just restarts into it (`harbor_ready`).
     pub fn harbor_offer(&self) -> Option<(String, bool)> {
         if !crate::update::managed() {
             return None;
+        }
+        if let Some(v) = self.harbor_ready() {
+            return Some((v, false));
         }
         let (v, installing) = match crate::update::state() {
             State::Available(v) => (v, false),
@@ -102,6 +106,11 @@ impl App {
             _ => return None,
         };
         Some((v, installing))
+    }
+
+    /// The version installed on disk that this Harbor can restart into.
+    pub fn harbor_ready(&self) -> Option<String> {
+        self.update_ready.load(std::sync::atomic::Ordering::Relaxed).then(crate::update::on_disk).flatten()
     }
 
     fn harbor_toast(&mut self, ctx: &egui::Context, t: &Tokens, y: f32) -> Option<f32> {
@@ -112,6 +121,8 @@ impl App {
         let busy = installing || self.reload_asked;
         let (title, body) = if busy {
             (format!("Updating Harbor to {v}…"), "It reloads in place when it's ready; running agents keep going.".to_string())
+        } else if self.harbor_ready().is_some() {
+            (format!("Harbor {v} is installed"), format!("You still run {}. Update restarts Harbor into it; running agents keep going.", crate::update::VERSION))
         } else {
             (format!("Harbor {v} is available"), format!("You have {}. Update installs it and reloads Harbor in place.", crate::update::VERSION))
         };

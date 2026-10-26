@@ -360,7 +360,9 @@ refetch everything.
 - `hub_update` (optional, null or missing: nothing to offer): a Harbor release this hub can
   install; show it as the "Harbor X.Y.Z is available" banner with Update
   (`POST /v1/hub/update`) and What's new (`notes_url`). `installing`: it's on its way. Once the
-  hub runs it, its `app.version_code` offers the matching APK.
+  hub runs it, its `app.version_code` offers the matching APK. `ready` (optional, from 0.47.1;
+  missing: false): the version is already installed on the hub's disk and Update only restarts
+  the hub into it (a client may say "installed, restart to switch"); the call is the same.
 - `profile_check` (optional, from 0.47; null or missing: nothing to ask): `{key, title, body}`,
   "Is this you?" while this PC's owner is a detection nobody confirmed (the desktop's pop-up).
   Confirm sends `PATCH /v1/people {"op": "confirm"}`; closing remembers `key` on the phone.
@@ -1018,7 +1020,8 @@ shows the item as delivered or failed.
 `{}`. The two update banners' buttons: update the hub's provider CLIs (each with its own updater:
 `claude update`, `opencode upgrade`, `npm i -g …@latest`), or install the Harbor release on offer
 and reload into it (running agents keep going). `{"ok": true}` when started; `409` when there's
-nothing to update. Progress shows in `/v1/state` (`provider_updates.updating`,
+nothing to update. A hub with a newer version already on disk answers `{"ok": true}` and
+restarts into it about a second later (the reply goes out first). Progress shows in `/v1/state` (`provider_updates.updating`,
 `hub_update.installing`; `state_changed` fires).
 
 ### `GET /v1/app`

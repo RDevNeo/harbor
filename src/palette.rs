@@ -322,7 +322,9 @@ impl App {
                 self.fast = on;
                 self.store.set("fast_mode", if on { "1" } else { "0" });
             }
-            Act::CheckUpdates => crate::update::check(false, ctx),
+            Act::CheckUpdates => {
+                crate::update::check(false, ctx);
+            }
             Act::ToggleSidebar => self.toggle_sidebar(ctx),
             Act::ToggleTerminal => self.toggle_terminal(ctx),
             Act::ToggleBrowser => self.toggle_browser(),
