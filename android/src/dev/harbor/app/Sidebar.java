@@ -253,6 +253,13 @@ final class Sidebar {
         android.content.SharedPreferences pr = Ui.prefs(a);
         JSONObject hu = st.optJSONObject("hub_update");
         String v = hu == null ? "" : hu.optString("version");
+        // An Update asked before the PC knew of the release: it checks first (hubs from 0.51).
+        if (hu != null && hu.optBoolean("checking")) {
+            TextView icon = Ui.icon(a, Ui.I_SPARKLES, 18, Ui.BLUE);
+            icon.setBackground(Ui.round(Ui.G100, 0, 10));
+            list.addView(banner(icon, "Looking for the newest Harbor…", a.hub.label() + " installs it when found and reloads; running agents keep going.",
+                    "Updating…", false, () -> { }, null, null, null), Ui.inset());
+        }
         if (!v.isEmpty() && !v.equals(pr.getString("upd-hub-" + a.hub.id, ""))) {
             boolean busy = hu.optBoolean("installing");
             TextView icon = Ui.icon(a, Ui.I_SPARKLES, 18, Ui.BLUE);
@@ -499,20 +506,129 @@ final class Sidebar {
         });
     }
 
-    /** Paired PCs: switch to another, or pair one more. */
+    /** Paired PCs: switch to another, or pair one more. Below, every PC they reach with its
+     *  Harbor version, and Update when one is behind (the desktop's Settings › Devices). */
     private void pcs() {
-        List<Sheet.Option> o = new ArrayList<>();
-        for (Hub h : Hub.all(a)) {
+        Sheet s = new Sheet(a, "PCs");
+        LinearLayout c = s.card();
+        boolean first = true;
+        List<Hub> hubs = Hub.all(a);
+        for (Hub h : hubs) {
+            if (!first) c.addView(Ui.gap(a));
+            first = false;
             String more = h.eps.isEmpty() ? "" : " · and " + h.eps.size() + (h.eps.size() == 1 ? " more PC" : " more PCs");
-            o.add(new Sheet.Option(h.id, h.label(), h.host + ":" + h.port + more, true));
+            LinearLayout r = Ui.cardRow(a, null, h.label(), h.host + ":" + h.port + more, Ui.FG, v -> {
+                s.dismiss();
+                if (h.id.equals(a.hub.id)) return;
+                Hub.setLast(a, h.id);
+                a.startActivity(new Intent(a, Chats.class).putExtra("hub", h.id).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+                a.finish();
+            });
+            Ui.wrapSub(r, 3);
+            if (h.id.equals(a.hub.id)) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
+            c.addView(r, Ui.fill());
         }
-        o.add(new Sheet.Option("+", "Pair another PC", "scan its code in Settings › Phones", true));
-        Sheet.pick(a, "PCs", null, o, a.hub.id, id -> {
-            if ("+".equals(id)) { a.startActivity(new Intent(a, Hubs.class).putExtra("pair", true)); return; }
-            if (id.equals(a.hub.id)) return;
-            Hub.setLast(a, id);
-            a.startActivity(new Intent(a, Chats.class).putExtra("hub", id).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
-            a.finish();
+        if (!first) c.addView(Ui.gap(a));
+        c.addView(Ui.cardRow(a, null, "Pair another PC", "scan its code in Settings › Phones", Ui.FG, v -> {
+            s.dismiss();
+            a.startActivity(new Intent(a, Hubs.class).putExtra("pair", true));
+        }), Ui.fill());
+
+        TextView head = Ui.text(a, "Harbor on your PCs", 14, Ui.G700);
+        head.setPadding(Ui.dp(6), Ui.dp(4), Ui.dp(6), Ui.dp(8));
+        s.body.addView(head);
+        LinearLayout vc = s.card();
+        LinearLayout actions = Ui.row(a);
+        s.body.addView(actions, Ui.margins(Ui.fill(), 0, 0, 0, 4));
+        vc.addView(Ui.cardRow(a, null, "Asking your PCs…", null, Ui.G600, null), Ui.fill());
+        s.show();
+        versions(s, vc, actions, new java.util.HashMap<>());
+    }
+
+    /** Fills the PCs sheet's version card; `asked`: PCs updating since a tap here → the version
+     *  they ran (until they answer with another one, or say they're busy themselves). */
+    private void versions(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked) {
+        Ui.bg(a, () -> Update.pcs(a), pcs -> {
+            if (!s.dialog.isShowing()) return;
+            vc.removeAllViews();
+            actions.removeAllViews();
+            String newest = Update.newest(pcs);
+            List<Update.Pc> behind = new ArrayList<>();
+            boolean first = true, managed = false;
+            for (Update.Pc p : pcs) {
+                if (!first) vc.addView(Ui.gap(a));
+                first = false;
+                String key = p.hub.id + "/" + p.v;
+                String was = asked.get(key);
+                if (was != null && p.info != null && (p.busy() || !was.equals(p.version()))) asked.remove(key);
+                boolean busy = p.busy() || asked.containsKey(key);
+                boolean late = Update.behind(p, newest);
+                managed |= p.managed();
+                if (late && !busy) behind.add(p);
+                String sub;
+                if (p.info == null) sub = "not answering";
+                else if (p.version().isEmpty()) sub = "an older Harbor: update it on that PC";
+                else {
+                    String st = busy && !p.busy() ? "updating…" : p.status();
+                    sub = "Harbor " + p.version() + (st.isEmpty() ? "" : " · " + st);
+                    if (late && !busy && !st.contains(newest)) sub += " · " + newest + " is out";
+                }
+                LinearLayout r = Ui.cardRow(a, Ui.I_MONITOR, p.name, sub, p.info == null ? Ui.G600 : Ui.FG, null);
+                Ui.wrapSub(r, 3);
+                if (late) {
+                    TextView b = small(busy ? "Updating…" : "Update", !busy);
+                    if (!busy) b.setOnClickListener(v -> update(s, vc, actions, asked, java.util.Collections.singletonList(p)));
+                    r.addView(b, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+                }
+                vc.addView(r, Ui.fill());
+            }
+            if (behind.size() > 1) {
+                TextView all = Ui.button(a, "Update all (" + behind.size() + ")", true, v -> update(s, vc, actions, asked, behind));
+                actions.addView(all, Ui.margins(Ui.weight(), 0, 0, 8, 0));
+            }
+            if (managed) {
+                TextView check = Ui.button(a, "Check for updates", false, v -> {
+                    v.setEnabled(false);
+                    Ui.bg(a, () -> {
+                        for (Update.Pc p : pcs) if (p.managed()) {
+                            try { p.hub.callOn(p.v, "POST", "/v1/hub/check", new JSONObject()); } catch (Exception ignored) { }
+                        }
+                        Thread.sleep(4000); // GitHub answers in a moment
+                        return true;
+                    }, r -> versions(s, vc, actions, asked));
+                });
+                actions.addView(check, behind.size() > 1 ? Ui.weight() : Ui.fill());
+            }
         });
+    }
+
+    /** Presses each PC's own Update (`POST /v1/hub/update`), then looks again as they reload. */
+    private void update(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked, List<Update.Pc> pcs) {
+        for (Update.Pc p : pcs) asked.put(p.hub.id + "/" + p.v, p.version());
+        versions(s, vc, actions, asked);
+        Ui.bg(a, () -> {
+            List<String> failed = new ArrayList<>();
+            for (Update.Pc p : pcs) {
+                try { p.hub.callOn(p.v, "POST", "/v1/hub/update", new JSONObject()); }
+                catch (Exception e) { asked.remove(p.hub.id + "/" + p.v); failed.add(p.name + ": " + Hub.why(e)); }
+            }
+            return failed;
+        }, failed -> {
+            Ui.toast(a, failed.isEmpty() ? (pcs.size() == 1 ? "Updating Harbor on " + pcs.get(0).name + "…" : "Updating Harbor on " + pcs.size() + " PCs…")
+                    : String.join("\n", failed));
+            versions(s, vc, actions, asked);
+            // They download, install and reload in place: look again meanwhile.
+            for (int ms : new int[] { 8000, 25000, 60000 })
+                Ui.main.postDelayed(() -> { if (s.dialog.isShowing()) versions(s, vc, actions, asked); }, ms);
+        });
+    }
+
+    /** A compact pill button for a card row. */
+    private TextView small(String label, boolean primary) {
+        TextView t = Ui.bold(a, label, 13, primary ? Ui.ON_INK : Ui.G700);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(Ui.dp(14), Ui.dp(7), Ui.dp(14), Ui.dp(7));
+        t.setBackground(primary ? Ui.press(Ui.INK, 0, 18) : Ui.round(Ui.G100, 0, 18));
+        return t;
     }
 }

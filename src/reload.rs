@@ -147,6 +147,18 @@ impl App {
             self.reload_asked = false;
             self.reload_not_before = None;
         }
+        // An Update from a phone or another PC that checked first (api.rs `/v1/hub/update`):
+        // nothing newer after all, or the scheduled check found it first (it only offers).
+        if self.reload_asked && !self.update_ready.load(Ordering::Relaxed) {
+            match crate::update::state() {
+                crate::update::State::UpToDate => {
+                    self.reload_asked = false;
+                    self.reload_not_before = None;
+                }
+                crate::update::State::Available(_) if !crate::update::busy() => crate::update::install_now(ctx),
+                _ => {}
+            }
+        }
         if !self.update_ready.load(Ordering::Relaxed) {
             return;
         }

@@ -114,6 +114,9 @@ pub struct Peer {
     /// …and they are its own detection, not confirmed there yet (profile.rs; from 0.47).
     #[serde(default)]
     pub owner_suggested: bool,
+    /// Its Harbor's version and updates (`update::info` there; null before 0.51).
+    #[serde(skip)]
+    pub update: Value,
 }
 
 impl Peer {
@@ -411,6 +414,8 @@ pub struct Local {
     pub call_ctx: Option<(String, String, Value)>,
     /// Settings › Devices: the PC whose "its chats may" menu is open, and where.
     pub share_menu: Option<(String, eframe::egui::Rect)>,
+    /// Settings › Devices › Update: peer id → (the version it ran, when asked).
+    pub updating: HashMap<String, (String, Instant)>,
     /// Leases sent for copies: (chat, viewing) → (on, kind, when), to send renewals sparingly.
     leases: HashMap<(i64, bool), (bool, String, Instant)>,
     /// The chat this PC last said it has open: (chat, focused, when).
@@ -1544,6 +1549,7 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             p.owner = hello["owner"].as_str().unwrap_or("").chars().take(80).collect();
             p.github = hello["github"].as_str().unwrap_or("").chars().take(60).collect();
             p.owner_suggested = hello["owner_suggested"].as_bool().unwrap_or(false);
+            p.update = hello.get("update").cloned().unwrap_or(Value::Null);
             p.accounts = hello["accounts"]
                 .as_array()
                 .into_iter()
@@ -1602,6 +1608,16 @@ fn sync(hub: &api::Hub, dest: &Dest, id: &str, epoch: u64, still: &dyn Fn() -> b
             return Ok(());
         }
         let rev = chats["rev"].as_u64().unwrap_or(0);
+        // Its Harbor's updates, as they are now (Settings › Devices shows them, 0.51).
+        if let Some(u) = chats.get("update") {
+            let mut peers = hub.mesh.peers.lock().unwrap();
+            if let Some(p) = peers.get_mut(id).filter(|p| p.update != *u) {
+                p.update = u.clone();
+                drop(peers);
+                let _ = tx.send(crate::control::Incoming::Mesh(Msg::Peer));
+                wake();
+            }
+        }
         // Its phone access, as it is now (it can be turned on from here, see mesh_settings).
         if let Some(on) = chats["phones"].as_bool() {
             let mut peers = hub.mesh.peers.lock().unwrap();
@@ -2312,7 +2328,7 @@ impl App {
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
                 let port = *self.api.hub.port.lock().unwrap();
                 let about = crate::meshctx::about(&self.store);
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"] }))
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"], "update": crate::update::info() }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");
@@ -2324,7 +2340,7 @@ impl App {
                 let chats: Vec<Value> = own.iter().map(|c| self.mesh_chat_json(c, full)).collect();
                 let gone: Vec<i64> = if full { vec![] } else { self.shared().gone.lock().unwrap().iter().filter(|(r, _)| *r > since).map(|(_, id)| *id).collect() };
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
-                ok(json!({ "epoch": epoch, "rev": rev, "full": full, "chats": chats, "gone": gone, "phones": phones }))
+                ok(json!({ "epoch": epoch, "rev": rev, "full": full, "chats": chats, "gone": gone, "phones": phones, "update": crate::update::info() }))
             }
             ("GET", ["mesh", "v1", "chats", c, "items"]) => {
                 let Some(c) = c.parse::<i64>().ok().filter(|c| self.chat(*c).is_some_and(|x| !x.foreign())) else { return err(404, "no such chat") };
@@ -2771,6 +2787,21 @@ impl App {
         let mut pair_with: Option<(String, String)> = None;
         let mut change: Option<(String, String, bool)> = None;
         let mut enable: Option<Peer> = None;
+        let mut update_peers: Vec<Peer> = vec![];
+        // The newest Harbor any of them knows of: a PC behind it gets an Update button (its
+        // `/v1/hub/update` checks for itself when it hasn't yet).
+        let mut newest = crate::update::VERSION.to_string();
+        let mine = crate::update::info();
+        for v in std::iter::once(mine["latest"].as_str().unwrap_or("")).chain(peers.iter().flat_map(|p| [p.version.as_str(), p.update["latest"].as_str().unwrap_or("")])) {
+            if crate::update::newer(v, &newest) {
+                newest = v.to_string();
+            }
+        }
+        self.mesh.updating.retain(|id, (was, at)| at.elapsed() < Duration::from_secs(180) && peers.iter().any(|p| p.id == *id && p.version == *was));
+        let updating = self.mesh.updating.clone();
+        let busy = |p: &Peer| updating.contains_key(&p.id) || p.update["installing"].as_bool() == Some(true) || p.update["checking"].as_bool() == Some(true);
+        let behind = |p: &Peer| p.online && p.update["managed"].as_bool() == Some(true) && crate::update::newer(&newest, &p.version);
+        let behind_all: Vec<Peer> = peers.iter().filter(|p| behind(p) && !busy(p)).cloned().collect();
         let mut enable_here = false;
         let phones_here = self.api.hub.enabled.load(Ordering::Relaxed);
         let mut fix_firewall = false;
@@ -2784,9 +2815,12 @@ impl App {
                 |ui| w::toggle(ui, &mut on),
             );
             w::separator(ui);
-            w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), &format!("Key {}", crate::tls::short(&my_fp)), |ui| {
+            w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), &format!("Harbor {} · key {}", crate::update::VERSION, crate::tls::short(&my_fp)), |ui| {
                 if w::btn(crate::icons::COPY).muted().icon_xs().show(ui).tip("Copy this PC's full key").clicked() {
                     ui.ctx().copy_text(my_fp.clone());
+                }
+                if on && behind_all.len() > 1 && w::btn("Update all PCs").sm().outline().show(ui).tip("Install the newest Harbor on every other PC that's behind").clicked() {
+                    update_peers = behind_all.clone();
                 }
                 if on && !phones_here && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
                     enable_here = true;
@@ -2817,7 +2851,17 @@ impl App {
                         _ => ("Not paired", Tone::Gray),
                     };
                     let mut desc = match (peer, listed || auto) {
-                        (Some(p), _) if p.online => format!("Harbor {}", p.version),
+                        (Some(p), _) if p.online => {
+                            let status = if updating.contains_key(&p.id) { "updating…" } else { p.update["status"].as_str().unwrap_or("") };
+                            let mut d = format!("Harbor {}", p.version);
+                            if !status.is_empty() {
+                                d.push_str(&format!(" · {status}"));
+                            }
+                            if behind(p) && !busy(p) && !status.contains(newest.as_str()) {
+                                d.push_str(&format!(" · {newest} is out"));
+                            }
+                            d
+                        }
                         (_, true) if s.is_some_and(|s| s.refuses) => format!("Allowed here, but {name} doesn't allow {} (pair them again)", me.name),
                         (Some(p), true) if p.seen > 0 => match crate::app::ago(p.seen).as_str() {
                             "now" => "Last seen just now".into(),
@@ -2875,6 +2919,12 @@ impl App {
                                 pair_with = Some((l.addr.clone(), l.name.clone()));
                             }
                         }
+                        if let Some(p) = peer.filter(|p| behind(p)) {
+                            let b = busy(p);
+                            if w::btn(if b { "Updating…" } else { "Update" }).sm().primary().enabled(!b).show(ui).tip(&format!("Install Harbor {newest} there; it reloads in place, its running agents keep going")).clicked() {
+                                update_peers = vec![p.clone()];
+                            }
+                        }
                         if phones_off && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
                             if let Some(p) = peer {
                                 enable = Some(p.clone());
@@ -2925,6 +2975,18 @@ impl App {
         }
         if enable_here {
             self.api_set_enabled(true, &ctx);
+        }
+        for p in update_peers {
+            // Its own Update button, as a phone presses it (`/v1/hub/update`, through the mesh).
+            self.mesh.updating.insert(p.id.clone(), (p.version.clone(), Instant::now()));
+            std::thread::spawn(move || {
+                let call = serde_json::to_vec(&json!({ "method": "POST", "path": ["v1", "hub", "update"], "body": {} })).unwrap_or_default();
+                if let Ok((status, v)) = http(&p.dest(), "POST", "/mesh/v1/call", Some(("application/json", &call)), Duration::from_secs(15)) {
+                    if status >= 300 {
+                        eprintln!("harbor: updating {}: {}", p.name, v["error"].as_str().unwrap_or("refused"));
+                    }
+                }
+            });
         }
         if let Some(p) = enable {
             // Asks that PC to turn its phone access on; its next hello says so.

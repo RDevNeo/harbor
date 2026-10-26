@@ -463,6 +463,69 @@ pub fn check(auto: bool, ctx: &eframe::egui::Context) -> bool {
     started
 }
 
+/// The phone's Update (or another PC's) when this Harbor knows of no release yet: it may not
+/// have checked since it started (first check after 20 s, then every 4 h), so it checks now and
+/// installs what it finds, even a version "Restore previous version" skipped (asked for by
+/// hand). False: busy.
+pub fn check_and_install(ctx: &eframe::egui::Context) -> bool {
+    let ctx2 = ctx.clone();
+    let started = spawn(ctx, move || {
+        set(State::Checking);
+        ctx2.request_repaint();
+        match latest() {
+            Ok(v) if newer(&v, VERSION) => run_install(v),
+            Ok(_) => set(State::UpToDate),
+            Err(e) => set(State::Failed(e)),
+        }
+    });
+    if started {
+        *LAST_CHECK.lock().unwrap() = Some(Instant::now());
+    }
+    started
+}
+
+/// What this Harbor says about its own version and updates (`GET /v1/app` `hub`, the mesh's
+/// hello and chats): phones and other PCs show it beside the PC, with Update when it's behind.
+/// `latest` is a newer release it knows of (null: none, or not checked yet); `status` the line
+/// to show.
+pub fn info() -> serde_json::Value {
+    let managed = managed();
+    let s = state();
+    let ready = on_disk().filter(|v| newer(v, VERSION));
+    let known = match &s {
+        State::Available(v) | State::Installing(v) | State::Installed(v) => Some(v.clone()),
+        _ => None,
+    };
+    let latest = ready.clone().or(known).filter(|v| newer(v, VERSION));
+    let status = if !managed {
+        "built from source, doesn't update itself".to_string()
+    } else {
+        match (&s, &ready) {
+            (State::Installing(v), _) => format!("updating to {v}…"),
+            (_, Some(v)) => format!("{v} installed, restarts into it"),
+            (State::Checking, _) => "checking for updates…".into(),
+            (State::Available(v), _) => format!("{v} available"),
+            (State::UpToDate, _) => "up to date".into(),
+            (State::Failed(e), _) => format!("update failed: {e}"),
+            _ => String::new(),
+        }
+    };
+    let error = match &s {
+        State::Failed(e) => Some(e.clone()),
+        _ => None,
+    };
+    serde_json::json!({
+        "version": VERSION,
+        "managed": managed,
+        "latest": latest,
+        "ready": ready.is_some(),
+        "installing": matches!(s, State::Installing(_)),
+        "checking": matches!(s, State::Checking),
+        "error": error,
+        "status": status,
+    })
+}
+
 fn run_install(v: String) {
     set(State::Installing(v.clone()));
     match install(&v) {
@@ -550,6 +613,17 @@ mod tests {
         let last = t0 + Duration::from_secs(30);
         assert_eq!(next_check(t0, Some(last), last + Duration::from_secs(60)), CHECK_EVERY - Duration::from_secs(60));
         assert!(next_check(t0, Some(last), last + CHECK_EVERY).is_zero());
+    }
+
+    #[test]
+    fn info_of_a_source_build() {
+        // Tests run from the target dir: no `.managed`, so nothing to offer or install.
+        let i = info();
+        assert_eq!(i["version"], VERSION);
+        assert_eq!(i["managed"], false);
+        assert!(i["latest"].is_null());
+        assert_eq!(i["ready"], false);
+        assert!(i["status"].as_str().unwrap().contains("source"));
     }
 
     #[test]

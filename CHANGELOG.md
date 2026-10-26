@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Update your PCs from the phone: sidebar › PCs lists every PC your phone reaches with its
+  Harbor version and status, an Update button on each one that's behind, "Update all" when
+  several are, and "Check for updates". On the desktop, Settings › Devices shows the same per
+  PC (this one included), with Update for each PC that's behind and "Update all PCs".
+
+### Fixed
+- Update from the phone (or another PC) no longer answers "Harbor is up to date" when a release
+  is out but the PC hadn't checked yet (it checks only every 4 hours): it checks now, installs
+  what it finds and reloads, and the phone's banner shows "Looking for the newest Harbor…".
+
 ## [0.50.0] - 2026-10-26
 
 ### Added

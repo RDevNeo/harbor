@@ -363,6 +363,9 @@ refetch everything.
   hub runs it, its `app.version_code` offers the matching APK. `ready` (optional, from 0.47.1;
   missing: false): the version is already installed on the hub's disk and Update only restarts
   the hub into it (a client may say "installed, restart to switch"); the call is the same.
+  `checking` (optional, from 0.51; missing: false): an Update was asked before the hub knew of
+  any release, so it is checking first; `version` is `""` then (older apps hide the banner on
+  an empty version). The banner says "Looking for the newest Harbor…" with Update disabled.
 - `profile_check` (optional, from 0.47; null or missing: nothing to ask): `{key, title, body}`,
   "Is this you?" while this PC's owner is a detection nobody confirmed (the desktop's pop-up).
   Confirm sends `PATCH /v1/people {"op": "confirm"}`; closing remembers `key` on the phone.
@@ -1062,9 +1065,35 @@ nothing to update. A hub with a newer version already on disk answers `{"ok": tr
 restarts into it about a second later (the reply goes out first). Progress shows in `/v1/state` (`provider_updates.updating`,
 `hub_update.installing`; `state_changed` fires).
 
+From 0.51 `POST /v1/hub/update` works without an offer too: a hub only learns of a release from
+its own check (20 s after it starts, then every 4 h), so with none known it checks now and
+installs what it finds: `202 {"ok": true, "checking": true}`; `hub_update.checking`, then
+`installing`, then the reload. Nothing newer after all: it stays (`hub.status` "up to date" in
+`GET /v1/app`). `409` only for a hub built from source (it doesn't update itself) or one busy
+with another download. Hubs before 0.51 answer `409 "Harbor is up to date"` without an offer.
+
+### `POST /v1/hub/check` (from 0.51)
+
+`{}`. "Check for updates": the hub's scheduled release check, now (with Settings › Updates ›
+Automatically on it also installs). `202 {"ok": true, "checking": true}`; the result shows in
+`GET /v1/app` `hub` and in `hub_update`. `409` for a hub built from source; `404` before 0.51.
+
 ### `GET /v1/app`
 
-`{"version_code": 7000, "url": "/app.apk"}`; `version_code` 0: the hub has no app to offer.
+`{"version_code": 7000, "url": "/app.apk", "hub": {…}}`; `version_code` 0: the hub has no app
+to offer. Cheap (no UI thread), so the phone asks every PC of every pairing with it.
+
+`hub` (optional, from 0.51; missing: an older Harbor, show no Update for it): the PC's own Harbor,
+`{"version": "0.51.0", "managed": true, "latest": "0.51.1" | null, "ready": false,
+"installing": false, "checking": false, "error": null, "status": "0.51.1 available"}`.
+`managed`: an installed copy that updates itself (false: built from source, no Update).
+`latest`: a newer release it knows of (null: none, or it hasn't checked yet; it checks on Update).
+`ready`: `latest` is already on its disk. `status`: the line to show after its version ("up to
+date", "checking for updates…", "updating to X…", "update failed: …", or `""` before its first
+check). The phone's PCs page (sidebar › PCs) lists every PC with `Harbor <version> · <status>`
+and an Update (`POST /v1/hub/update` to that PC, `callOn`) when it's `managed` and older than the
+newest `version` or `latest` any PC says, plus "Update all" with two or more behind and "Check
+for updates" (`POST /v1/hub/check` to each).
 
 ### `GET /app.apk` (and `HEAD`)
 
@@ -1194,7 +1223,10 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
 - `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port, owner, github, owner_suggested}`
   (`phones`: its phone access is on; also in each chats answer; `fp`, `addrs`, `port`: its key
   and addresses; from 0.44 `owner` and `github`: who owns the PC, for the who is who; from 0.47
-  `owner_suggested`: they are that PC's own detection, not confirmed there yet).
+  `owner_suggested`: they are that PC's own detection, not confirmed there yet; from 0.51
+  `update`: its Harbor's updates, as `GET /v1/app` `hub`, also in each chats answer, for
+  Settings › Devices' per-PC version and Update, which sends `POST /mesh/v1/call`
+  `{method: "POST", path: ["v1", "hub", "update"], body: {}}` to that PC).
   `epoch` is the hub's start revision: revisions compare only within one epoch.
 - `GET /mesh/v1/events?since=<rev>&epoch=<epoch>` → `{epoch, rev}` as soon as one of this PC's
   own chats changed after `since` (or one was deleted), or after 20 s. Another `epoch`: start over.

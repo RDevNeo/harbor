@@ -1517,7 +1517,8 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
 
 fn app_info() -> Value {
     let code = crate::update::apk().map_or(0, |(_, c)| c);
-    json!({ "version_code": code, "url": "/app.apk" })
+    // `hub` (0.51): this PC's own Harbor version and updates, for the phone's PCs page.
+    json!({ "version_code": code, "url": "/app.apk", "hub": crate::update::info() })
 }
 
 fn serve_apk(w: &mut impl Write, head_only: bool) {
@@ -2409,13 +2410,30 @@ impl App {
                     err(409, "no provider update to install")
                 }
             }
-            // The phone's "Harbor X.Y.Z is available" banner: the hub's Update button.
+            // The phone's "Harbor X.Y.Z is available" banner and PCs page (and another PC's
+            // Devices): the hub's Update button. With no release known yet (none checked since
+            // start), it checks now and installs what it finds: 202, progress in `hub_update`.
             ("POST", ["v1", "hub", "update"]) => {
                 if self.harbor_offer().is_some() {
                     self.update_requested(ctx);
                     ok(json!({ "ok": true }))
+                } else if !crate::update::managed() {
+                    err(409, "this Harbor was built from source, so it doesn't update itself")
+                } else if crate::update::check_and_install(ctx) || crate::update::state() == crate::update::State::Checking {
+                    self.update_requested(ctx);
+                    Reply { status: 202, body: json!({ "ok": true, "checking": true }) }
                 } else {
-                    err(409, "Harbor is up to date")
+                    err(409, "Harbor is busy with another download: try again in a moment")
+                }
+            }
+            // "Check for updates" (the phone's PCs page): the scheduled check, now. 202; the
+            // result is in `GET /v1/app` `hub` and `hub_update`.
+            ("POST", ["v1", "hub", "check"]) => {
+                if !crate::update::managed() {
+                    err(409, "this Harbor was built from source, so it doesn't update itself")
+                } else {
+                    crate::update::check(self.auto_update(), ctx);
+                    Reply { status: 202, body: json!({ "ok": true, "checking": true }) }
                 }
             }
             ("POST", ["v1", "chats", c, action]) => {
@@ -2813,6 +2831,11 @@ impl App {
         let hub = self.harbor_offer().map(|(v, installing)| {
             // `ready` (0.47.1): already installed on disk, Update only restarts into it.
             json!({ "version": v, "current": crate::update::VERSION, "installing": installing || self.reload_asked, "ready": self.harbor_ready().is_some(), "notes_url": crate::notices::notes_url(&v) })
+        });
+        // An Update asked before any release was known (0.51): checking first, version "".
+        let hub = hub.or_else(|| {
+            (self.reload_asked && crate::update::state() == crate::update::State::Checking)
+                .then(|| json!({ "version": "", "current": crate::update::VERSION, "installing": true, "checking": true, "ready": false }))
         });
         let st = crate::provupdate::status();
         let providers = (!st.items.is_empty() || st.updating || st.error.is_some()).then(|| {
