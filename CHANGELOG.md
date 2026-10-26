@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-26
+
 ### Fixed
 - Harbor checks for updates on its own timer, not on window frames: a hidden or unfocused
   window (which may draw nothing for hours) or no window at all still notices new releases,
@@ -1088,7 +1090,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/RDevNeo/harbor/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/RDevNeo/harbor/compare/v0.46.4...v0.47.0
 [0.46.4]: https://github.com/RDevNeo/harbor/compare/v0.46.3...v0.46.4
 [0.46.3]: https://github.com/RDevNeo/harbor/compare/v0.46.2...v0.46.3
