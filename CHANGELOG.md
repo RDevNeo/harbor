@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Stop all moved into the agent strip over a lead's composer (a stop icon in its corner, desktop
+  and phone), and the old "Waiting for N sub-agents to finish" line under the transcript is gone:
+  the strip shows the agents, and says how many messages wait for them ("· 2 queued").
 
 ## [0.34.1] - 2026-10-25
 

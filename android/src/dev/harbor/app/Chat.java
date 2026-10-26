@@ -400,6 +400,8 @@ public class Chat extends Base {
             status.addView(w, Ui.margins(Ui.fill(), 36, 4, 0, 4));
         }
         JSONObject waiting = b.optJSONObject("waiting"), working = b.optJSONObject("working"), limit = b.optJSONObject("limit");
+        // A hub with the agent strip shows waiting sub-agents there (with Stop all): no waiting bar.
+        if (b.optJSONObject("agents") != null) waiting = null;
         if (waiting != null) {
             LinearLayout r = Ui.row(this);
             JSONArray ag = waiting.optJSONArray("agents");
@@ -459,14 +461,22 @@ public class Chat extends Base {
         JSONArray rows = s == null ? null : s.optJSONArray("rows");
         if (rows == null || rows.length() == 0) return;
         boolean folded = s.optBoolean("folded");
-        boolean open = stripOpen != null ? stripOpen : !folded;
+        boolean open = !folded || (stripOpen != null && stripOpen);
+        // The rows, and Stop all in the top row's corner (`POST stop_all`, as the waiting bar's was).
+        LinearLayout outer = Ui.row(this);
+        outer.setGravity(Gravity.TOP);
+        outer.setBackground(Ui.round(Ui.BG2, Ui.LINE, 12));
+        outer.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
         LinearLayout box = Ui.col(this);
-        box.setBackground(Ui.round(Ui.BG2, Ui.LINE, 12));
-        box.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
-        if (folded) {
+        outer.addView(box, Ui.weight());
+        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.G700);
+        stop.setBackground(Ui.press(0, 0, 8));
+        stop.setContentDescription("Stop all");
+        stop.setOnClickListener(v -> post("stop_all"));
+        outer.addView(stop, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        if (s.optBoolean("header", folded)) {
             LinearLayout h = Ui.row(this);
             h.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
-            h.setBackground(Ui.press(0, 0, 8));
             LinearLayout marks = Ui.row(this);
             for (int i = 0; i < Math.min(rows.length(), 4); i++) {
                 JSONObject r = rows.optJSONObject(i);
@@ -483,8 +493,12 @@ public class Chat extends Base {
             }
             h.addView(Ui.bold(this, s.optString("title"), 14, Ui.FG), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
             h.addView(Ui.subtitle(Ui.text(this, "  ·  " + names, 14, Ui.G700)), Ui.weight());
-            h.addView(Ui.icon(this, open ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
-            h.setOnClickListener(v -> { stripOpen = !open; drawBars(); });
+            // Folded it unfolds; unfolded (it says what's queued) it opens the Agents panel.
+            h.setBackground(Ui.press(0, 0, 8));
+            if (folded) {
+                h.addView(Ui.icon(this, open ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+                h.setOnClickListener(v -> { stripOpen = !open; drawBars(); });
+            } else h.setOnClickListener(v -> openRight());
             box.addView(h, Ui.fill());
         }
         if (open) for (int i = 0; i < rows.length(); i++) {
@@ -507,7 +521,7 @@ public class Chat extends Base {
             row.setOnClickListener(v -> open(this, hub, id));
             box.addView(row, Ui.fill());
         }
-        status.addView(box, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        status.addView(outer, Ui.margins(Ui.fill(), 0, 4, 0, 4));
         stripTick();
     }
 

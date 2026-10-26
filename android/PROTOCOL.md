@@ -354,11 +354,13 @@ the desktop shows nothing:
 - `working: {since_ms, subagents, text}`: the spinner line while the chat's own turn runs;
   show the time since `since_ms` after `text` ("Working…  ·  1 sub-agent running").
 - `waiting: {agents: [{id, name, title, since_ms}], queued}`: a lead whose own turn is done while
-  sub-agents still run: "Waiting for N sub-agents to finish  ·  Q queued" with the agents'
-  initials, and **Stop all** (`POST /v1/chats/{id}/stop_all`).
+  sub-agents still run. Only for apps without the agent strip below (hubs before 0.29 send no
+  `agents`): "Waiting for N sub-agents to finish  ·  Q queued" with the agents' initials, and
+  **Stop all** (`POST /v1/chats/{id}/stop_all`). When `agents` is there, don't draw it: the
+  strip shows the agents and holds Stop all.
 - `limit: {text, can_cancel}`: the usage-limit line (clock icon, `text`), with **Continue now**
   (`POST /v1/chats/{id}/continue`) and, when `can_cancel`, **Cancel** (`POST /v1/chats/{id}/cancel_limit`).
-- `agents: {title, folded, rows: [{id, name, doing, task, model, logo, badge, since_ms}]}` (optional,
+- `agents: {title, folded, header, rows: [{id, name, doing, task, model, logo, badge, since_ms}]}` (optional,
   null or missing without running sub-agents; older hubs never send it): the live strip over a
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
   sub-agent: its account mark (the provider logo `logo`, a file in the APK's `assets/logos/`,
@@ -367,8 +369,11 @@ the desktop shows nothing:
   `since_ms` on the right ("40s", "2m", "1h 5m"). Tapping a row opens that agent's chat
   (`id`). When `folded` (three or more agents) a header row comes first: the agents' logos
   overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
-  only once it is tapped open (a per-screen choice). `doing` is the hub's own reading of each
-  agent's latest step; the phone shows it as is.
+  only once it is tapped open (a per-screen choice). `header` (default `folded`): draw that
+  title row even unfolded (no chevron; a tap opens the Agents panel), as `title` then says
+  what's queued ("1 agent working  ·  2 queued"). A stop icon sits in the top right corner of
+  the box, beside the first row: **Stop all** (`POST /v1/chats/{id}/stop_all`). `doing` is the
+  hub's own reading of each agent's latest step; the phone shows it as is.
 - `recap: "…"` (optional string, missing when there is none; older hubs never send it): the
   session recap (Claude Code's "away summary"), drawn after the agent strip, right over the
   composer: "recap: " in semibold then the text in italics, both gray-900, wrapping. The hub

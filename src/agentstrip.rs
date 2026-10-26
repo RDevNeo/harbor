@@ -18,6 +18,8 @@ pub const FOLD_AT: usize = 3;
 const DOING_MAX: usize = 48;
 const REPORT_MAX: usize = 110;
 const ROW_H: f32 = 26.0;
+/// The column on the right that holds Stop all.
+const STOP_W: f32 = 30.0;
 
 /// One running subagent as the strip shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,9 +35,10 @@ pub struct Row {
     pub secs: u64,
 }
 
-/// "3 agents working".
-pub fn title(n: usize) -> String {
-    if n == 1 { "1 agent working".into() } else { format!("{n} agents working") }
+/// "3 agents working", "1 agent working  ·  2 queued".
+pub fn title(n: usize, queued: usize) -> String {
+    let t = if n == 1 { "1 agent working".to_string() } else { format!("{n} agents working") };
+    if queued > 0 { format!("{t}  ·  {queued} queued") } else { t }
 }
 
 /// How long an agent has run, short: "40s", "2m", "1h 5m".
@@ -249,7 +252,11 @@ impl App {
                 })
             })
             .collect();
-        json!({ "title": title(rows.len()), "folded": rows.len() >= FOLD_AT, "rows": list })
+        let queued = self.subs_queued(lead);
+        json!({
+            "title": title(rows.len(), queued), "folded": rows.len() >= FOLD_AT,
+            "header": rows.len() >= FOLD_AT || queued > 0, "rows": list,
+        })
     }
 
     /// The strip over a lead chat's composer while its subagents run; nothing otherwise.
@@ -262,7 +269,11 @@ impl App {
         let open_id = egui::Id::NULL.with(("agent-strip-open", lead));
         let open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(rows.len() < FOLD_AT);
         let folded = rows.len() >= FOLD_AT;
-        let lines = if open { rows.len() } else { 0 } + usize::from(folded);
+        let queued = self.subs_queued(lead);
+        // The title row: always when folded, and to say what's queued.
+        let header = folded || queued > 0;
+        let open = open || !folded;
+        let lines = if open { rows.len() } else { 0 } + usize::from(header);
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, lines as f32 * ROW_H + 8.0), Sense::hover());
         ui.painter().rect(rect, CornerRadius::same(12), t.bg200, Stroke::new(1.0, t.border()), egui::StrokeKind::Inside);
@@ -271,9 +282,17 @@ impl App {
         w::repaint_in(ui.painter(), rect, step);
         let mut y = rect.top() + 4.0;
         let mut open_chat = None;
-        if folded {
-            let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(width - 8.0, ROW_H));
-            let resp = ui.interact(r, open_id.with("head"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        // Stop all, in the top row's corner: as the old waiting bar's, it asks first.
+        let sr = Rect::from_min_size(pos2(rect.right() - 4.0 - STOP_W, y), Vec2::new(STOP_W - 2.0, ROW_H));
+        if w::overlay(ui, sr, |ui| w::btn(ic::STOP).muted().icon_sm().show(ui)).on_hover_text("Stop all: every running sub-agent, and clear their queues").clicked() {
+            self.dialog = Some(crate::app::Dialog::StopAll(lead));
+        }
+        let row_w = width - 8.0 - STOP_W;
+        if header {
+            let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(row_w, ROW_H));
+            let resp = ui.interact(r, open_id.with("head"), Sense::click());
+            // Folded it unfolds; unfolded (it says what's queued) it opens the Agents panel.
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             if resp.hovered() {
                 ui.painter().rect_filled(r, CornerRadius::same(8), t.gray(100));
             }
@@ -287,22 +306,26 @@ impl App {
                 x += 11.0;
             }
             x += 8.0;
-            let head = w::truncated(ui, &title(rows.len()), FontId::new(13.0, crate::theme::medium()), t.fg(), width * 0.5);
+            let head = w::truncated(ui, &title(rows.len(), queued), FontId::new(13.0, crate::theme::medium()), t.fg(), width * 0.5);
             let hw = head.size().x;
             ui.painter().galley(pos2(x, r.center().y - head.size().y / 2.0), head, t.fg());
             x += hw;
             let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
             let rest = w::truncated(ui, &format!("  ·  {}", names.join(", ")), FontId::proportional(13.0), t.subtle(), (r.right() - 30.0 - x).max(0.0));
             ui.painter().galley(pos2(x, r.center().y - rest.size().y / 2.0), rest, t.subtle());
-            ic::glyph(ui.painter(), pos2(r.right() - 14.0, r.center().y), if open { ic::UP } else { ic::DOWN }, 12.0, t.subtle());
-            if resp.clicked() {
+            if folded {
+                ic::glyph(ui.painter(), pos2(r.right() - 14.0, r.center().y), if open { ic::UP } else { ic::DOWN }, 12.0, t.subtle());
+            }
+            if resp.clicked() && folded {
                 ui.ctx().data_mut(|d| d.insert_temp(open_id, !open));
+            } else if resp.clicked() {
+                self.open_team();
             }
             y += ROW_H;
         }
         if open {
             for row in &rows {
-                let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(width - 8.0, ROW_H));
+                let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(row_w, ROW_H));
                 if self.strip_row(ui, r, row) {
                     open_chat = Some(row.id);
                 }
@@ -398,8 +421,8 @@ mod tests {
         assert_eq!(short_elapsed(40), "40s");
         assert_eq!(short_elapsed(150), "2m");
         assert_eq!(short_elapsed(3900), "1h 5m");
-        assert_eq!(title(1), "1 agent working");
-        assert_eq!(title(3), "3 agents working");
+        assert_eq!(title(1, 0), "1 agent working");
+        assert_eq!(title(3, 2), "3 agents working  ·  2 queued");
     }
 
     #[test]
