@@ -27,7 +27,9 @@ import java.util.ArrayList;
 /** Dictation in the composer, the desktop's mic (src/voice.rs). The phone's own recogniser
  *  (SpeechRecognizer, on-device where the phone has it) listens in place, with a level meter and
  *  the time, until the mic is tapped again: the recogniser ends a segment at a pause, so each one
- *  is kept and listening starts again on a fresh recogniser. Tapping stop puts in what was heard
+ *  is kept and the same recogniser listens again at once (a new one when it fails or goes quiet,
+ *  then the phone's other recogniser). Pauses don't end it; a minute without words does. Tapping
+ *  stop puts in what was heard
  *  (the last partial words when the final ones don't come). The words go in at the cursor, to
  *  edit before sending. Never the system's dictation popup. A phone without a recogniser, or
  *  whose recogniser fails before hearing anything, records (16 kHz WAV) and the PC transcribes
@@ -52,11 +54,19 @@ final class Voice {
     private boolean listening, stopping, onDevice;
     /** Segments heard so far, and the current segment's latest partial words. */
     private final StringBuilder heard = new StringBuilder();
+    /** Phrases of the current segment already kept (see restarted()). */
+    private final ArrayList<String> seg = new ArrayList<>();
     private String partial = "";
     /** Bumped per session, so late timers and callbacks of an old one do nothing. */
     private int gen;
-    private long lastWords, opened, lastTap;
-    private int quickFails;
+    /** When words last came, a segment began, the recogniser last said anything (the level comes
+     *  ~10 times a second), its end of speech (0: none since the segment began). */
+    private long lastWords, opened, lastEvent, endOfSpeech, lastTap;
+    /** Failed segments in a row with no words in between: they escalate (see failed()). */
+    private int fails, levels;
+    private static final String TAG = "HarborVoice";
+    /** Listening ends after this long without words. */
+    private static final long IDLE_MS = 60_000;
     private AudioRecord rec;
     private volatile boolean recording;
     private long started;
@@ -143,25 +153,41 @@ final class Voice {
         stopping = false;
         heard.setLength(0);
         partial = "";
-        quickFails = 0;
-        lastWords = android.os.SystemClock.uptimeMillis();
+        fails = 0;
+        lastWords = now();
         show(true);
-        open(device);
+        log("start, on-device " + device);
+        if (create(device)) begin();
+        watch(gen);
     }
 
-    /** A fresh recogniser for the next segment (one per segment: reusing one races with its
-     *  late callbacks). */
-    private void open(boolean device) {
+    private static long now() { return android.os.SystemClock.uptimeMillis(); }
+
+    private void log(String m) { android.util.Log.d(TAG, "[" + gen + "] " + m); }
+
+    /** A new recogniser (the old one let go); false when the phone gives none. */
+    private boolean create(boolean device) {
+        drop();
         onDevice = device;
         SpeechRecognizer r = null;
         try {
             r = device && Build.VERSION.SDK_INT >= 31 ? SpeechRecognizer.createOnDeviceSpeechRecognizer(a) : SpeechRecognizer.createSpeechRecognizer(a);
-        } catch (Exception ignored) { }
-        if (r == null) { failed(); return; }
+        } catch (Exception e) { log("create failed: " + e); }
+        if (r == null) { failed(-1); return false; }
         sr = r;
-        opened = android.os.SystemClock.uptimeMillis();
         r.setRecognitionListener(new Listener(r));
-        try { r.startListening(intent()); } catch (Exception e) { drop(); failed(); }
+        return true;
+    }
+
+    /** The next segment, on the current recogniser. */
+    private void begin() {
+        if (!listening || sr == null) return;
+        opened = lastEvent = now();
+        endOfSpeech = 0;
+        levels = 0;
+        seg.clear();
+        try { sr.startListening(intent()); log("listening"); }
+        catch (Exception e) { log("startListening threw " + e); failed(-2); }
     }
 
     private Intent intent() {
@@ -170,8 +196,10 @@ final class Voice {
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, a.getPackageName())
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000)
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000);
+                // Ints: Google's recognition service ignores a long. Most recognisers end a
+                // segment sooner anyway; the next one starts at once.
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000)
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000);
         String l = lang(a);
         if ("en".equals(l)) i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
         else if ("pt".equals(l)) i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR");
@@ -184,51 +212,59 @@ final class Voice {
         Listener(SpeechRecognizer r) { this.r = r; }
 
         /** Callbacks of a recogniser that was already let go are dropped. */
-        private boolean mine() { return r == sr; }
+        private boolean mine(String what) {
+            if (r != sr) { log("stale " + what); return false; }
+            lastEvent = now();
+            return true;
+        }
 
-        @Override public void onReadyForSpeech(Bundle b) { }
-        @Override public void onBeginningOfSpeech() { }
-        @Override public void onRmsChanged(float db) { if (mine()) meter.set(Math.max(0f, Math.min(1f, (db + 2f) / 12f))); }
+        @Override public void onReadyForSpeech(Bundle b) { if (mine("ready")) log("ready"); }
+        @Override public void onBeginningOfSpeech() { if (mine("speech")) { endOfSpeech = 0; log("speech begins"); } }
+        @Override public void onRmsChanged(float db) {
+            if (r != sr) return;
+            lastEvent = now();
+            levels++;
+            meter.set(Math.max(0f, Math.min(1f, (db + 2f) / 12f)));
+        }
         @Override public void onBufferReceived(byte[] b) { }
-        @Override public void onEndOfSpeech() { }
+        @Override public void onEndOfSpeech() { if (mine("end")) { endOfSpeech = now(); log("end of speech"); } }
         @Override public void onPartialResults(Bundle b) {
-            if (!mine()) return;
+            if (!mine("partial")) return;
             String t = best(b);
             if (t.isEmpty()) return;
+            if (!t.equals(partial)) android.util.Log.v(TAG, "partial \"" + t + "\"");
+            // Some recognisers (Google's speech services) keep one session through pauses and
+            // start the partial words over after each, with no final words for the earlier
+            // ones: keep the phrase that ended.
+            if (Phrases.restarted(partial, t)) { log("phrase kept: " + partial); seg.add(partial); commit(partial); }
             partial = t;
-            lastWords = android.os.SystemClock.uptimeMillis();
-            quickFails = 0;
+            lastWords = now();
+            fails = 0;
             showSaid();
         }
         @Override public void onResults(Bundle b) {
-            if (!mine()) return;
+            if (!mine("results")) return;
             String t = best(b);
-            commit(t.isEmpty() ? partial : t);
-            if (!t.isEmpty()) lastWords = android.os.SystemClock.uptimeMillis();
-            drop();
-            quickFails = 0;
+            log("results \"" + t + "\" (partial \"" + partial + "\", " + levels + " levels)");
+            if (!t.isEmpty() || !partial.isEmpty()) { lastWords = now(); fails = 0; }
+            commit(t.isEmpty() ? partial : Phrases.unkept(seg, t));
             next();
         }
         @Override public void onError(int error) {
-            if (!mine()) return;
-            boolean any = heard.length() > 0 || !partial.isEmpty();
+            if (!mine("error " + error)) return;
+            log("error " + error + " after " + (now() - opened) + " ms, " + levels + " levels" + (stopping ? " (stopping)" : ""));
             commit(partial);
-            drop();
             if (stopping) { finish(true); return; }
             if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
                 finish(true);
                 Ui.toast(a, "Dictation needs the microphone");
                 return;
             }
-            // Silence, a busy or briefly confused recogniser: listen again, unless it keeps
-            // failing at once (then it is as broken as the errors below).
-            boolean soft = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
-                    || error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY;
-            if (soft && android.os.SystemClock.uptimeMillis() - opened < 600) quickFails++;
-            else if (soft) quickFails = 0;
-            if (soft && quickFails < 4) { next(); return; }
-            if (any) finish(true);
-            else failed();
+            // A segment that heard nothing but silence ends like this: listen again.
+            boolean silence = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+                    && now() - opened > 1500;
+            if (silence) next();
+            else failed(error);
         }
         @Override public void onEvent(int t, Bundle b) { }
     }
@@ -251,24 +287,66 @@ final class Voice {
         said.setText(t.isEmpty() ? "Listening…" : t);
     }
 
-    /** A segment ended: the user's stop finishes; otherwise listen on, until ~15 s without words. */
+    /** A segment ended: the user's stop finishes; otherwise the same recogniser listens again
+     *  (posted, so it isn't restarted from inside its own callback). */
     private void next() {
         if (!listening) return;
         if (stopping) { finish(true); return; }
-        if (android.os.SystemClock.uptimeMillis() - lastWords > 15000) { finish(false); return; }
         final int g = gen;
-        Ui.main.postDelayed(() -> { if (listening && !stopping && g == gen && sr == null) open(onDevice); }, quickFails > 0 ? 300 : 60);
+        final SpeechRecognizer r = sr;
+        Ui.main.post(() -> { if (listening && !stopping && g == gen && r == sr) begin(); });
     }
 
-    /** The recogniser can't work here and heard nothing: the phone's other recogniser, then the PC. */
-    private void failed() {
+    /** The recogniser failed (busy, disconnected, a language it lacks, no recogniser at all):
+     *  try again on it, then on a new one, then on the phone's other recogniser. When none
+     *  works: what was heard goes in, or with nothing heard the PC transcribes a recording. */
+    private void failed(int error) {
         if (!listening) return;
         if (stopping) { finish(true); return; }
-        if (onDevice && SpeechRecognizer.isRecognitionAvailable(a)) { quickFails = 0; open(false); return; }
-        listening = false;
-        gen++;
-        drop();
-        record();
+        fails++;
+        log("failed " + error + ", " + fails + " in a row");
+        final int g = gen;
+        Runnable again;
+        if (fails == 1 && sr != null) again = this::begin;
+        else if (fails <= 3) {
+            boolean other = fails == 3 && onDevice && SpeechRecognizer.isRecognitionAvailable(a);
+            boolean device = other ? false : onDevice;
+            again = () -> { if (create(device)) begin(); };
+        } else if (fails <= 5 && !onDevice && SpeechRecognizer.isRecognitionAvailable(a)) {
+            again = () -> { if (create(false)) begin(); };
+        } else {
+            if (heard.length() > 0) {
+                finish(true);
+                Ui.toast(a, "Dictation stopped: the phone's recogniser failed (error " + error + ")");
+            } else {
+                listening = false;
+                gen++;
+                drop();
+                record();
+            }
+            return;
+        }
+        Ui.main.postDelayed(() -> { if (listening && !stopping && g == gen) again.run(); }, 250L * fails);
+    }
+
+    /** Once a second while listening: a recogniser that went quiet (nothing from it for 15 s, or
+     *  no end of its segment 10 s after the speech ended) is replaced, and a long time without
+     *  words ends the session. Recognisers end a silent segment themselves within ~5-10 s. */
+    private void watch(final int g) {
+        Ui.main.postDelayed(() -> {
+            if (!listening || g != gen) return;
+            long t = now();
+            if (!stopping && t - lastWords > IDLE_MS) { log("idle, ending"); finish(false); return; }
+            if (!stopping && sr != null) {
+                boolean stuck = (endOfSpeech > 0 && t - endOfSpeech > 10000) || t - lastEvent > 15000;
+                if (stuck) {
+                    log("recogniser went quiet, a new one");
+                    commit(partial);
+                    if (create(onDevice)) begin();
+                }
+            }
+            watch(g);
+        }, 1000);
     }
 
     /** The user's stop: the recogniser gets ~1.5 s to give its final words, then the last
@@ -276,10 +354,11 @@ final class Voice {
     private void stop() {
         if (stopping) return;
         stopping = true;
-        if (sr == null) { finish(true); return; }
-        try { sr.stopListening(); } catch (Exception e) { commit(partial); drop(); finish(true); return; }
+        log("user stop");
+        if (sr == null) { commit(partial); finish(true); return; }
+        try { sr.stopListening(); } catch (Exception e) { commit(partial); finish(true); return; }
         final int g = gen;
-        Ui.main.postDelayed(() -> { if (listening && g == gen) { commit(partial); drop(); finish(true); } }, 1500);
+        Ui.main.postDelayed(() -> { if (listening && g == gen) { log("no final words, keeping the partial ones"); commit(partial); finish(true); } }, 1500);
     }
 
     private void drop() {
@@ -292,6 +371,7 @@ final class Voice {
      *  stopped it. */
     private void finish(boolean user) {
         if (!listening) return;
+        log("finish, " + heard.length() + " chars");
         listening = false;
         stopping = false;
         gen++;

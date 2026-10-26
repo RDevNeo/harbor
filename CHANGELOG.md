@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone dictation keeps everything said across pauses: Google's speech services (what most
+  phones, Samsung's included, use) start their words over after a pause and drop the earlier
+  ones, so a sentence, a pause and the next sentence put in only the last; each phrase is kept
+  now. Listening runs on one recogniser until you tap stop (no restart gaps or beeps between
+  segments), a recogniser that goes silent is replaced, and only a minute without words ends it.
+
 ## [0.53.0] - 2026-10-26
 
 ### Added
