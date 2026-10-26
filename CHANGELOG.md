@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.46.3] - 2026-10-26
+
 ### Fixed
 - Issues: the Project filter lists the projects of every PC whose issues are on the page (with the
   PC as a hint), plus the other repos in the list, and filtering by another PC's project works, on
@@ -1050,7 +1052,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.46.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.46.3...HEAD
+[0.46.3]: https://github.com/RDevNeo/harbor/compare/v0.46.2...v0.46.3
 [0.46.2]: https://github.com/RDevNeo/harbor/compare/v0.46.1...v0.46.2
 [0.46.1]: https://github.com/RDevNeo/harbor/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/RDevNeo/harbor/compare/v0.45.0...v0.46.0
