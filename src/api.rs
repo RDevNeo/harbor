@@ -2135,7 +2135,8 @@ impl App {
     pub fn api_route(&mut self, call: &Call, ctx: &egui::Context) -> Reply {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
         // A copy is written on its home PC only (mesh.rs forwards it there while it answers).
-        if call.method != "GET" && p.len() > 2 && p[1] == "chats" {
+        // (A move says it moves there instead: movechat.rs.)
+        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && p.get(3) != Some(&"move") {
             if let Some(c) = self.chat_by_ref(p[2]).filter(|c| c.foreign()) {
                 return err(409, format!("{} is off: this chat is read-only until it's back", self.home_name(c)));
             }
@@ -2188,6 +2189,8 @@ impl App {
                         ok(json!({ "ok": true, "returned": returned }))
                     }
                     "fork" => self.api_fork(c, &call.body),
+                    // "Move to project…": {"repo": project id, its path, or null for No project}.
+                    "move" => self.api_move(c, &call.body),
                     // The slash menu's /plan and /default (slash.rs).
                     "slash" => self.api_slash_command(c, &call.body, ctx),
                     // The waiting bar's Stop all: the lead and its sub-agents; the lead's queue comes back.
@@ -2292,7 +2295,7 @@ impl App {
                 }
             }
             ("POST", ["v1", "chats"]) | ("POST", ["v1", "chats", _, "fork"]) => v["id"] = gid(&v["id"]),
-            ("PATCH", _) | ("POST", ["v1", "chats", _, "slash"]) => {
+            ("PATCH", _) | ("POST", ["v1", "chats", _, "slash" | "move"]) => {
                 if v["chat"].is_object() {
                     chat(&mut v["chat"]);
                 }
@@ -2302,6 +2305,30 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// `POST /v1/chats/<id>/move`: the chat and its sub-agents to another project.
+    fn api_move(&mut self, c: i64, body: &Value) -> Reply {
+        let Some(r) = body.get("repo").or_else(|| body.get("project_id")) else { return err(400, "say the project: {\"repo\": id, path or null}") };
+        let repo = match r {
+            Value::Null => None,
+            Value::String(p) => match self.repos.iter().find(|x| x.path.to_string_lossy() == p.trim_end_matches('/')) {
+                Some(x) => Some(x.id),
+                None => return err(404, "no such project"),
+            },
+            v => match v.as_i64().filter(|r| self.repo(*r).is_some()) {
+                Some(r) => Some(r),
+                None => return err(404, "no such project"),
+            },
+        };
+        match self.move_chat(c, repo) {
+            Ok(()) => {
+                let moved: Vec<i64> = std::iter::once(c).chain(self.subs_of(c).into_iter().map(|s| s.id)).collect();
+                let chat = self.chat(c).map(|ch| self.chat_json(ch)).unwrap_or_default();
+                ok(json!({ "ok": true, "chat": chat, "moved": moved }))
+            }
+            Err(e) => err(409, e),
         }
     }
 

@@ -102,8 +102,44 @@ impl App {
             if ui.button(if c.settled { "Unsettle" } else { "Settle" }).clicked() {
                 self.set_chat_settled(c.id, !c.settled);
             }
+            self.move_menu(ui, c);
             if ui.button("Delete").clicked() {
                 self.dialog = Some(Dialog::DeleteChat(c.id));
+            }
+        });
+    }
+
+    /// "Move to project…": the projects (and "No project") to move the chat and its
+    /// sub-agents to; greyed out, saying why, when it can't move now.
+    fn move_menu(&mut self, ui: &mut Ui, c: &crate::store::Chat) {
+        if c.role == Role::Sub {
+            return;
+        }
+        if let Err(why) = self.movable(c.id) {
+            ui.add_enabled(false, egui::Button::new("Move to project…")).on_disabled_hover_text(why);
+            return;
+        }
+        ui.menu_button("Move to project…", |ui| {
+            ui.set_min_width(220.0);
+            let mut to: Option<Option<i64>> = None;
+            if w::menu_item(ui, ic::MESSAGE, "No project", Some("Home folder"), c.repo_id.is_none()).clicked() {
+                to = Some(None);
+            }
+            let repos = self.repos.clone();
+            if !repos.is_empty() {
+                w::separator(ui);
+            }
+            for r in &repos {
+                let path = crate::app::tilde(&r.path);
+                if w::menu_item(ui, ic::FOLDER, &r.name, Some(&path), c.repo_id == Some(r.id)).clicked() {
+                    to = Some(Some(r.id));
+                }
+            }
+            if let Some(to) = to {
+                ui.close();
+                if let Err(e) = self.move_chat(c.id, to) {
+                    self.notice(c.id, "alert", &format!("Couldn't move this chat: {e}"), "");
+                }
             }
         });
     }

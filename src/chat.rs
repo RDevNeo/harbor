@@ -571,6 +571,7 @@ impl App {
                         "process" => ic::ACTIVITY,
                         "clock" => ic::CLOCK,
                         "restart" => ic::ROTATE_CW,
+                        "folder" => ic::FOLDER,
                         _ => ic::CIRCLE_CHECK,
                     };
                     let r = ui

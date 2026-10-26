@@ -18,7 +18,7 @@
 use crate::app::{App, Dialog};
 use crate::providers::Kind;
 use crate::mentions::Mention;
-use crate::store::{self, Item, Role};
+use crate::store::{Item, Role};
 use crate::widgets as w;
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
@@ -57,11 +57,10 @@ pub struct Started {
     jsonl: Option<(Option<PathBuf>, Option<u64>)>,
 }
 
-/// The Claude session file for `sid` under the account's config dir, if it exists.
+/// The Claude session file for `sid` under the account's config dir, if it exists: the
+/// newest copy (a moved chat leaves its old one behind, movechat.rs).
 pub fn session_file(config: &Option<PathBuf>, sid: &str) -> Option<PathBuf> {
-    let root = config.clone().unwrap_or_else(|| store::home().join(".claude")).join("projects");
-    let name = format!("{sid}.jsonl");
-    std::fs::read_dir(root).ok()?.flatten().map(|d| d.path().join(&name)).find(|p| p.is_file())
+    crate::movechat::session_copies(config, sid).into_iter().next()
 }
 
 impl App {
@@ -70,6 +69,10 @@ impl App {
         let chat = self.chat(chat_id)?;
         let acc = self.account(&chat.account)?;
         let jsonl = (acc.kind == Kind::Claude).then(|| {
+            // The copy the turn will write: a moved chat's is brought to its folder first.
+            if chat.started && !chat.session_id.is_empty() && chat.device.is_empty() {
+                let _ = crate::movechat::ensure_session(&acc.config_dir, &chat.session_id, &self.cwd_of(chat.repo_id));
+            }
             let path = (chat.started && !chat.session_id.is_empty()).then(|| session_file(&acc.config_dir, &chat.session_id)).flatten();
             let len = path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
             (path, len)

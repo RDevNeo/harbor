@@ -450,6 +450,14 @@ Stops a running turn first. → `{"ok": true}`.
 `{"seq": 7}` → `{"id": 14}`. `seq` must be a `text` item that is the last reply of a finished
 turn (`409` otherwise).
 
+### `POST /v1/chats/{id}/move`
+
+"Move to project…": `{"repo": 6}` (a project id, or its path) or `{"repo": null}` (No project).
+Its sub-agents move with it, and its Claude sessions are copied to the new folder's place so the
+next turn resumes there. → `{"ok": true, "chat": {...}, "moved": [ids]}`. `409` with the reason
+when it can't move now: a sub-agent (move its lead), a lead mid-turn, a chat on a device, another
+PC's chat, or a project folder that isn't on this PC.
+
 ### `POST /v1/upload?name=<file name>&chat=<id>`
 
 Raw body (the file), `Content-Length` required. `chat` is optional, an id or a gid (files go to

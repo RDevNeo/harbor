@@ -32,6 +32,7 @@ mod logos;
 mod mcp;
 mod mcpshim;
 mod mesh;
+mod movechat;
 mod notices;
 mod oauth;
 mod pages;

@@ -2829,7 +2829,8 @@ fn for_home(method: &str, p: &[&str]) -> bool {
     if p.len() < 3 || p[0] != "v1" || p[1] != "chats" {
         return false;
     }
-    matches!(method, "POST" | "PATCH" | "DELETE") || (method == "GET" && p.get(3) == Some(&"slash"))
+    // A copy doesn't move from here (movechat.rs says so).
+    (matches!(method, "POST" | "PATCH" | "DELETE") && p.get(3) != Some(&"move")) || (method == "GET" && p.get(3) == Some(&"slash"))
 }
 
 /// The upload files of a phone's body, as files here.

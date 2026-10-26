@@ -959,6 +959,10 @@ impl App {
                 self.notice(chat_id, "alert", &text, "Sign in to that account here (claude /login, or the account's profile) for the chat to run as it there.");
             }
         }
+        // Claude resumes sessions of its folder only: a moved chat's is brought over (movechat.rs).
+        if remote.is_none() && account.kind == Kind::Claude && chat.started && !chat.session_id.is_empty() {
+            let _ = crate::movechat::ensure_session(&account.config_dir, &chat.session_id, &self.cwd_of(chat.repo_id));
+        }
         let spec = agent::TurnSpec {
             chat_id,
             cwd: self.cwd_of(chat.repo_id),
@@ -1290,8 +1294,9 @@ pub fn clip(s: &str, n: usize) -> String {
 // ================================================================== frame
 
 impl eframe::App for App {
-    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|wheel[,secs]]
-    /// places the pointer there and optionally clicks once after `secs` (default 1).
+    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|wheel[,secs]]
+    /// places the pointer there and optionally clicks once after `secs` (default 1); more
+    /// steps joined by ';' follow at their own `secs` (since start).
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         // A keybinding being set takes every key first: no clipboard key, shortcut or text field sees it.
         if self.keys.capture.is_some() && matches!(self.view, View::Settings(Tab::Keybindings)) {
@@ -1305,21 +1310,40 @@ impl eframe::App for App {
         drop_idle_ime(raw, &mut self.ime_preedit);
         self.paste_attachments(ctx, raw);
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-        static CLICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        static DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let Ok(spec) = std::env::var("HARBOR_POINTER") else { return };
-        let parts: Vec<&str> = spec.split(',').collect();
-        let (Some(x), Some(y)) = (parts.first().and_then(|v| v.parse().ok()), parts.get(1).and_then(|v| v.parse().ok())) else { return };
-        let pos = egui::pos2(x, y);
-        raw.events.push(egui::Event::PointerMoved(pos));
         let start = START.get_or_init(Instant::now);
-        let delay = parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(1);
-        if parts.get(2) == Some(&"wheel") && start.elapsed() > Duration::from_secs(delay) && !CLICKED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            raw.events.push(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -400.0), phase: egui::TouchPhase::Move, modifiers: Default::default(), source: egui::MouseWheelSource::Wheel });
-        }
-        if parts.get(2) == Some(&"click") && start.elapsed() > Duration::from_secs(delay) && !CLICKED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            for pressed in [true, false] {
-                raw.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+        // Steps "x,y[,action[,secs]]" joined by ';': the pointer moves to each at its time.
+        let steps: Vec<(egui::Pos2, &str, u64)> = spec
+            .split(';')
+            .filter_map(|s| {
+                let parts: Vec<&str> = s.split(',').collect();
+                let (x, y) = (parts.first()?.trim().parse().ok()?, parts.get(1)?.trim().parse().ok()?);
+                Some((egui::pos2(x, y), parts.get(2).copied().unwrap_or(""), parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(1)))
+            })
+            .collect();
+        let Some(first) = steps.first() else { return };
+        let due = steps.iter().take_while(|s| start.elapsed() > Duration::from_secs(s.2)).count();
+        let pos = steps.get(due.max(1) - 1).map_or(first.0, |s| s.0);
+        raw.events.push(egui::Event::PointerMoved(pos));
+        let done = DONE.load(std::sync::atomic::Ordering::Relaxed);
+        if due > done {
+            DONE.store(due, std::sync::atomic::Ordering::Relaxed);
+            let (pos, action, _) = steps[due - 1];
+            match action {
+                "wheel" => raw.events.push(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -400.0), phase: egui::TouchPhase::Move, modifiers: Default::default(), source: egui::MouseWheelSource::Wheel }),
+                "click" | "rclick" => {
+                    let button = if action == "click" { egui::PointerButton::Primary } else { egui::PointerButton::Secondary };
+                    for pressed in [true, false] {
+                        raw.events.push(egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() });
+                    }
+                }
+                _ => {}
             }
+        }
+        // Later steps come on their own, without other input.
+        if steps.len() > due {
+            ctx.request_repaint_after(Duration::from_millis(200));
         }
     }
 

@@ -179,6 +179,11 @@ pub fn tools(names: &[String]) -> Vec<Value> {
 /// The bash tool's folder per chat, kept between calls and turns.
 static CWDS: LazyLock<Mutex<HashMap<i64, PathBuf>>> = LazyLock::new(Default::default);
 
+/// Drops the folder a chat's `bash` was left in (the chat moved to another project).
+pub fn forget(chat_id: i64) {
+    CWDS.lock().unwrap().remove(&chat_id);
+}
+
 fn text(ok: bool, t: impl Into<String>) -> (bool, Vec<Value>) {
     (ok, vec![json!({ "type": "text", "text": t.into() })])
 }

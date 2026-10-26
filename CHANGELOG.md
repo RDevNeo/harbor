@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- "Move to project…" in a chat's right-click menu in the sidebar: the chat goes to another project
+  (or to No project) with its sub-agents, and its next turn runs in the new folder, resuming the
+  same conversation (its Claude sessions are copied to the new folder's place; the old copies
+  stay). Not while the lead's turn runs, and not for chats on a device or another PC's chats. The
+  same from the API: `POST /v1/chats/{id}/move {"repo": id | path | null}`.
+- `HARBOR_POINTER` takes several steps (`x,y[,click|rclick|wheel[,secs]]` joined by `;`), for
+  headless screenshots of menus.
+
 ## [0.32.0] - 2026-10-25
 
 ### Added
