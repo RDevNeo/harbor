@@ -645,8 +645,9 @@ Dictation for a phone without a speech recogniser of its own (the app's mic firs
 `SpeechRecognizer`, on-device where the phone has one, and needs nothing from the PC). The body
 is the recording as a WAV file (16-bit PCM, mono, 16 kHz; at most 10 minutes), `Content-Type:
 audio/wav`. The PC transcribes it with whisper.cpp and its model from Settings › Voice → `{"text":
-"…"}` (it may be empty: nothing was said). `409 {"error": "…"}` says why it can't (whisper.cpp not
-installed, no model downloaded). `lang` missing or empty: the PC's own setting. `GET /v1/state`
+"…"}` (it may be empty: nothing was said). `409 {"error": "…"}` says why it can't, to show as is:
+since 0.49 whisper.cpp is built into the hub, and with no model yet the first recording starts its
+download and gets `409` with the progress ("try again when it's done"). `lang` missing or empty: the PC's own setting. `GET /v1/state`
 says beforehand (optional, 0.38): `"voice": {"transcribe": true|false, "why": "…"|null, "lang":
 "auto"}`. Hubs before 0.38 answer `404`.
 

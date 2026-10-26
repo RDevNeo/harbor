@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Voice input works out of the box: whisper.cpp is now built into Harbor, so dictation no longer
+  needs a separate whisper.cpp install. With no speech model yet, the first dictation downloads
+  Base (142 MB) by itself while you speak and shows its progress by the mic, then transcribes.
+  Phones that send their recording to the PC get the same: no setup on the PC either.
+  `HARBOR_WHISPER` still names an external `whisper-cli` to use instead.
+
+### Changed
+- Voice errors are short and say what to do; the mic only mentions a missing recorder when
+  neither pw-record nor parecord is there.
+
 ## [0.48.2] - 2026-10-26
 
 ### Fixed

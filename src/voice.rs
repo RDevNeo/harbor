@@ -2,11 +2,12 @@
 //! transcribes into the composer at the cursor, to edit before sending (never sent by itself).
 //!
 //! Recording is a `pw-record` (PipeWire) or `parecord` (PulseAudio) child writing raw 16 kHz
-//! mono s16 to a pipe: no audio library. Transcription is local, private and free:
-//! whisper.cpp's `whisper-cli` with a ggml model from Settings › Voice (tiny, base or small,
-//! downloaded into Harbor's data folder). Without whisper.cpp the mic says how to get it.
-//! Phones without a recogniser of their own send their recording here (`POST
-//! /v1/transcribe`, api.rs), and it's transcribed the same way.
+//! mono s16 to a pipe: no audio library. Transcription is local, private and free: whisper.cpp,
+//! compiled into Harbor (whisper-rs), with a ggml model from Settings › Voice (tiny, base or
+//! small, downloaded into Harbor's data folder; the first dictation downloads base by itself).
+//! HARBOR_WHISPER names an external `whisper-cli` to use instead. Phones without a recogniser
+//! of their own send their recording here (`POST /v1/transcribe`, api.rs), and it's
+//! transcribed the same way.
 
 use crate::widgets::Tip as _;
 use crate::app::App;
@@ -34,6 +35,9 @@ pub const MODELS: &[(&str, &str, u64)] = &[
     ("small", "Slower, most accurate", 487_601_967),
 ];
 
+/// The model the first dictation downloads when there is none yet.
+pub const DEFAULT_MODEL: &str = "base";
+
 /// The language and model, kept for the API threads (phones' recordings) too.
 static CONFIG: Mutex<(String, String)> = Mutex::new((String::new(), String::new()));
 
@@ -54,13 +58,32 @@ fn on_path(names: &[&str]) -> Option<PathBuf> {
     std::env::split_paths(&path).flat_map(|d| names.iter().map(move |n| d.join(n))).find(|p| p.is_file())
 }
 
-/// whisper.cpp's command line program (`whisper-cli`; older builds call it `main` or
-/// `whisper-cpp`). HARBOR_WHISPER names another.
-pub fn whisper_bin() -> Option<PathBuf> {
+/// What transcribes.
+pub enum Engine {
+    /// whisper.cpp compiled into Harbor.
+    Builtin,
+    /// An external whisper.cpp command line program.
+    Cli(PathBuf),
+}
+
+/// The transcriber: a `whisper-cli` named by HARBOR_WHISPER, else the built-in whisper.cpp,
+/// else (a CPU the built-in one can't run on) a `whisper-cli` on the PATH.
+pub fn engine() -> Option<Engine> {
     if let Some(p) = std::env::var_os("HARBOR_WHISPER").map(PathBuf::from).filter(|p| p.is_file()) {
-        return Some(p);
+        return Some(Engine::Cli(p));
     }
-    on_path(&["whisper-cli", "whisper-cpp", "whisper.cpp"])
+    if builtin_runs() {
+        return Some(Engine::Builtin);
+    }
+    on_path(&["whisper-cli", "whisper-cpp", "whisper.cpp"]).map(Engine::Cli)
+}
+
+/// Whether this CPU has what the built-in whisper.cpp was compiled for (.cargo/config.toml).
+fn builtin_runs() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return is_x86_feature_detected!("avx") && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && is_x86_feature_detected!("f16c");
+    #[cfg(not(target_arch = "x86_64"))]
+    true
 }
 
 /// The recorder: PipeWire's, else PulseAudio's.
@@ -87,18 +110,30 @@ pub fn current_model() -> Option<String> {
     MODELS.iter().map(|m| m.0).find(|m| installed(m)).map(String::from)
 }
 
-/// Why voice input can't work here, if it can't (the mic shows it).
+/// Why this PC can't transcribe, if it can't (a missing model isn't a reason: it downloads).
 pub fn missing() -> Option<String> {
-    if recorder().is_none() {
-        return Some("Voice input records with pw-record (PipeWire) or parecord (PulseAudio): neither is installed.".into());
+    engine().is_none().then(|| "This CPU lacks AVX2, which Harbor's speech recogniser needs. Set HARBOR_WHISPER to a whisper-cli built for it.".into())
+}
+
+/// Why the mic can't record here, if it can't.
+pub fn cant_record() -> Option<String> {
+    recorder().is_none().then(|| "Can't record: neither pw-record (PipeWire) nor parecord (PulseAudio) is on this PC.".into())
+}
+
+/// The model to transcribe with. When there's none yet, the default one starts downloading and
+/// the error says how far along it is.
+fn ready_model() -> Result<String, String> {
+    if let Some(m) = current_model() {
+        return Ok(m);
     }
-    if whisper_bin().is_none() {
-        return Some("Voice input transcribes with whisper.cpp on this PC, and it isn't installed. Install it (Arch: the whisper.cpp package; others: build github.com/ggml-org/whisper.cpp) so `whisper-cli` is on the PATH, then pick a model in Settings › Voice.".into());
+    if let Some((name, e)) = take_download_error() {
+        return Err(format!("Couldn't download the {name} speech model: {e}"));
     }
-    if current_model().is_none() {
-        return Some("Download a speech model in Settings › Voice first (base is a good start, 142 MB).".into());
+    if downloading().is_none() {
+        start_download(DEFAULT_MODEL);
     }
-    None
+    let (name, done, total) = downloading().unwrap_or((DEFAULT_MODEL.into(), 0, 0));
+    Err(format!("Getting the {name} speech model ({} of {}); try again when it's done.", megabytes(done), megabytes(total)))
 }
 
 // ------------------------------------------------------------------ recording
@@ -201,23 +236,101 @@ pub fn wav(samples: &[i16], rate: u32) -> Vec<u8> {
     v
 }
 
-/// whisper.cpp on a WAV file (16 kHz mono): the text, or why not.
+/// Transcribes a WAV file (16-bit PCM; a phone's recording): the text, or why not.
 pub fn transcribe(wav: &Path, lang: &str) -> Result<String, String> {
-    if let Some(m) = missing() {
-        return Err(m);
-    }
-    let bin = whisper_bin().ok_or("no whisper-cli")?;
-    let model = model_path(&current_model().ok_or("no model")?);
-    let lang = if LANGS.iter().any(|l| l.0 == lang) { lang } else { "auto" };
-    let threads = std::thread::available_parallelism().map(|n| n.get().clamp(1, 4)).unwrap_or(2).to_string();
-    let mut cmd = Command::new(&bin);
-    cmd.arg("-m").arg(&model).arg("-f").arg(wav).args(["-l", lang, "-t", &threads, "-nt", "-np"]);
-    let out = crate::git::output_within(&mut cmd, TRANSCRIBE_TIMEOUT).map_err(|e| format!("whisper.cpp: {e}"))?;
+    let bytes = std::fs::read(wav).map_err(|e| e.to_string())?;
+    transcribe_samples(&wav_samples(&bytes)?, lang)
+}
+
+/// whisper.cpp's command line program on a WAV file (16 kHz mono).
+fn transcribe_cli(bin: &Path, model: &Path, wav: &Path, lang: &str) -> Result<String, String> {
+    let mut cmd = Command::new(bin);
+    cmd.arg("-m").arg(model).arg("-f").arg(wav).args(["-l", lang, "-t", &threads().to_string(), "-nt", "-np"]);
+    let out = crate::git::output_within(&mut cmd, TRANSCRIBE_TIMEOUT).map_err(|e| format!("{}: {e}", bin.display()))?;
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("whisper.cpp failed: {}", e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim()));
+        return Err(format!("{} failed: {}", bin.display(), e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim()));
     }
     Ok(clean(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The built-in whisper.cpp on 16 kHz mono samples.
+fn transcribe_builtin(model: &Path, samples: &[i16], lang: &str) -> Result<String, String> {
+    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+    // whisper.cpp logs every step to stderr; with no log backend this silences it.
+    whisper_rs::install_logging_hooks();
+    let mut cp = WhisperContextParameters::default();
+    cp.use_gpu = false;
+    let ctx = WhisperContext::new_with_params(model, cp).map_err(|e| format!("Couldn't load the speech model ({e:?}). Remove it in Settings › Voice and download it again."))?;
+    let mut state = ctx.create_state().map_err(|e| format!("Couldn't start the speech recogniser: {e:?}"))?;
+    let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    p.set_n_threads(threads() as _);
+    p.set_language(Some(lang));
+    p.set_no_timestamps(true);
+    p.set_print_progress(false);
+    p.set_print_realtime(false);
+    p.set_print_special(false);
+    p.set_print_timestamps(false);
+    let pcm: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+    state.full(p, &pcm).map_err(|e| format!("Transcription failed: {e:?}"))?;
+    let text: Vec<String> = state.as_iter().filter_map(|seg| seg.to_str_lossy().ok().map(|t| t.into_owned())).collect();
+    Ok(clean(&text.join("\n")))
+}
+
+fn threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get().clamp(1, 4)).unwrap_or(2)
+}
+
+/// The samples of a 16-bit PCM WAV, as 16 kHz mono (other rates and stereo are converted).
+pub fn wav_samples(b: &[u8]) -> Result<Vec<i16>, String> {
+    let bad = || "The recording isn't a 16-bit PCM WAV file.".to_string();
+    if b.len() < 12 || &b[..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return Err(bad());
+    }
+    let (mut channels, mut rate) = (0usize, 0u32);
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let len = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
+        let body = &b[i + 8..(i + 8).saturating_add(len).min(b.len())];
+        match &b[i..i + 4] {
+            b"fmt " if body.len() >= 16 => {
+                let format = u16::from_le_bytes([body[0], body[1]]);
+                channels = u16::from_le_bytes([body[2], body[3]]) as usize;
+                rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+                let bits = u16::from_le_bytes([body[14], body[15]]);
+                if !(format == 1 || format == 0xFFFE) || bits != 16 || channels == 0 || rate == 0 {
+                    return Err(bad());
+                }
+            }
+            b"data" if channels > 0 => {
+                let frames: Vec<i16> = body
+                    .chunks_exact(2 * channels)
+                    .map(|f| (f.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as i32).sum::<i32>() / channels as i32) as i16)
+                    .collect();
+                return Ok(resample(&frames, rate, RATE));
+            }
+            _ => {}
+        }
+        i += 8 + len + (len & 1);
+    }
+    Err(bad())
+}
+
+/// Linear resampling (only for phones that record at another rate).
+fn resample(s: &[i16], from: u32, to: u32) -> Vec<i16> {
+    if from == to || s.is_empty() {
+        return s.to_vec();
+    }
+    let n = (s.len() as u64 * to as u64 / from as u64) as usize;
+    (0..n)
+        .map(|i| {
+            let x = i as f64 * from as f64 / to as f64;
+            let (j, f) = (x as usize, x.fract());
+            let a = s[j.min(s.len() - 1)] as f64;
+            let b = s[(j + 1).min(s.len() - 1)] as f64;
+            (a + (b - a) * f) as i16
+        })
+        .collect()
 }
 
 /// whisper's text as one paragraph, without its non-speech marks ("[BLANK_AUDIO]", "(music)").
@@ -239,29 +352,74 @@ pub fn clean(s: &str) -> String {
     out
 }
 
-/// Transcribes samples on this thread (via a temporary WAV file).
+/// Transcribes 16 kHz mono samples on this thread.
 pub fn transcribe_samples(samples: &[i16], lang: &str) -> Result<String, String> {
     if samples.len() < RATE as usize / 4 {
         return Err("Nothing was recorded (check the input device).".into());
     }
-    let path = std::env::temp_dir().join(format!("harbor-voice-{}-{}.wav", std::process::id(), crate::store::new_uuid()));
-    std::fs::write(&path, wav(samples, RATE)).map_err(|e| e.to_string())?;
-    let r = transcribe(&path, lang);
-    let _ = std::fs::remove_file(&path);
-    r
+    let engine = engine().ok_or_else(|| missing().unwrap_or_default())?;
+    let model = model_path(&ready_model()?);
+    let lang = if LANGS.iter().any(|l| l.0 == lang) { lang } else { "auto" };
+    match engine {
+        Engine::Builtin => transcribe_builtin(&model, samples, lang),
+        Engine::Cli(bin) => {
+            let path = std::env::temp_dir().join(format!("harbor-voice-{}-{}.wav", std::process::id(), crate::store::new_uuid()));
+            std::fs::write(&path, wav(samples, RATE)).map_err(|e| e.to_string())?;
+            let r = transcribe_cli(&bin, &model, &path, lang);
+            let _ = std::fs::remove_file(&path);
+            r
+        }
+    }
 }
 
 // ------------------------------------------------------------------ model download
 
-pub struct Download {
-    pub name: String,
-    pub total: u64,
-    pub done: Arc<AtomicU64>,
-    pub result: Arc<Mutex<Option<Result<(), String>>>>,
+struct Download {
+    name: String,
+    total: u64,
+    done: Arc<AtomicU64>,
+    result: Arc<Mutex<Option<Result<(), String>>>>,
+}
+
+/// The one model download (Settings, a first dictation, or a phone's recording started it).
+static DOWNLOAD: Mutex<Option<Download>> = Mutex::new(None);
+
+/// Starts downloading model `name`, unless a download is already under way.
+pub fn start_download(name: &str) {
+    let mut d = DOWNLOAD.lock().unwrap();
+    if d.as_ref().is_some_and(|d| d.result.lock().unwrap().is_none()) {
+        return;
+    }
+    *d = Some(download(name));
+}
+
+/// The download under way: (model, bytes so far, total bytes).
+pub fn downloading() -> Option<(String, u64, u64)> {
+    let mut g = DOWNLOAD.lock().unwrap();
+    let d = g.as_ref()?;
+    let finished = match &*d.result.lock().unwrap() {
+        None => return Some((d.name.clone(), d.done.load(Ordering::Relaxed), d.total)),
+        Some(r) => r.is_ok(),
+    };
+    if finished {
+        *g = None;
+    }
+    None
+}
+
+/// A download that failed: (model, why), once.
+pub fn take_download_error() -> Option<(String, String)> {
+    let mut g = DOWNLOAD.lock().unwrap();
+    let e = match g.as_ref().map(|d| d.result.lock().unwrap().clone()) {
+        Some(Some(Err(e))) => (g.as_ref().unwrap().name.clone(), e),
+        _ => return None,
+    };
+    *g = None;
+    Some(e)
 }
 
 /// Downloads a model from whisper.cpp's own Hugging Face repo, into a temporary name first.
-pub fn download(name: &str, wake: impl Fn() + Send + 'static) -> Download {
+fn download(name: &str) -> Download {
     let total = MODELS.iter().find(|m| m.0 == name).map(|m| m.2).unwrap_or(0);
     let d = Download { name: name.into(), total, done: Arc::new(AtomicU64::new(0)), result: Arc::new(Mutex::new(None)) };
     let (done, result, name) = (d.done.clone(), d.result.clone(), name.to_string());
@@ -285,7 +443,6 @@ pub fn download(name: &str, wake: impl Fn() + Send + 'static) -> Download {
                     break st;
                 }
                 done.store(std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0), Ordering::Relaxed);
-                wake();
                 std::thread::sleep(Duration::from_millis(400));
             };
             if !status.success() {
@@ -294,7 +451,8 @@ pub fn download(name: &str, wake: impl Fn() + Send + 'static) -> Download {
                     let _ = err.read_to_string(&mut e);
                 }
                 let _ = std::fs::remove_file(&tmp);
-                return Err(format!("download failed: {}", e.trim()));
+                let e = e.trim().trim_start_matches("curl: ");
+                return Err(if e.is_empty() { "the download stopped".into() } else { e.into() });
             }
             let len = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
             if total > 0 && len != total {
@@ -304,7 +462,6 @@ pub fn download(name: &str, wake: impl Fn() + Send + 'static) -> Download {
             std::fs::rename(&tmp, &dst).map_err(|e| e.to_string())
         })();
         *result.lock().unwrap() = Some(r);
-        wake();
     });
     d
 }
@@ -322,7 +479,8 @@ pub struct State {
     /// Transcribing for this composer, since.
     pub busy: Option<(i64, Instant)>,
     chan: Option<(Sender<(i64, Result<String, String>)>, Receiver<(i64, Result<String, String>)>)>,
-    pub download: Option<Download>,
+    /// A recording waiting for the speech model to finish downloading.
+    pending: Option<(i64, Vec<i16>)>,
 }
 
 impl App {
@@ -346,28 +504,42 @@ impl App {
     pub fn voice_toggle(&mut self, key: i64, ctx: &egui::Context) {
         if let Some((k, rec)) = self.voice.rec.take() {
             let samples = rec.stop();
-            let (tx, _) = self.voice_chan();
             self.voice.busy = Some((k, Instant::now()));
-            let (lang, _) = config();
-            let ctx = ctx.clone();
-            std::thread::spawn(move || {
-                let _ = tx.send((k, transcribe_samples(&samples, &lang)));
-                ctx.request_repaint();
-            });
+            if current_model().is_none() && engine().is_some() && samples.len() >= RATE as usize / 4 {
+                // The model is still on its way: transcribed once it's here (voice_poll).
+                start_download(DEFAULT_MODEL);
+                self.voice.pending = Some((k, samples));
+                return;
+            }
+            self.voice_transcribe(k, samples, ctx);
             return;
         }
         if self.voice.busy.is_some() {
             return;
         }
-        if let Some(why) = missing() {
+        if let Some(why) = cant_record().or_else(missing) {
             crate::picker::show_toast(ctx, why);
             return;
+        }
+        if current_model().is_none() {
+            // The first dictation: the default model downloads while you speak.
+            start_download(DEFAULT_MODEL);
         }
         let c = ctx.clone();
         match Recording::start(move || c.request_repaint()) {
             Ok(r) => self.voice.rec = Some((key, r)),
             Err(e) => crate::picker::show_toast(ctx, format!("Couldn't record: {e}")),
         }
+    }
+
+    fn voice_transcribe(&mut self, key: i64, samples: Vec<i16>, ctx: &egui::Context) {
+        let (tx, _) = self.voice_chan();
+        let (lang, _) = config();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((key, transcribe_samples(&samples, &lang)));
+            ctx.request_repaint();
+        });
     }
 
     fn voice_chan(&mut self) -> (Sender<(i64, Result<String, String>)>, ()) {
@@ -380,6 +552,23 @@ impl App {
         if self.voice.rec.as_ref().is_some_and(|(_, r)| r.too_long()) {
             let key = self.voice.rec.as_ref().map(|r| r.0).unwrap_or(crate::app::DRAFT);
             self.voice_toggle(key, ctx);
+        }
+        if let Some((name, e)) = take_download_error() {
+            crate::picker::show_toast(ctx, format!("Couldn't download the {name} speech model: {e}"));
+            if self.voice.pending.take().is_some() {
+                self.voice.busy = None;
+            }
+        }
+        if self.voice.pending.is_some() {
+            if current_model().is_some() {
+                let (k, samples) = self.voice.pending.take().unwrap();
+                self.voice_transcribe(k, samples, ctx);
+            } else {
+                if downloading().is_none() {
+                    start_download(DEFAULT_MODEL);
+                }
+                ctx.request_repaint_after(Duration::from_millis(400));
+            }
         }
         let got: Vec<(i64, Result<String, String>)> = match &self.voice.chan {
             Some((_, rx)) => rx.try_iter().collect(),
@@ -428,16 +617,23 @@ impl App {
             meter(ui.painter(), rect, level, t.red(900), t.gray(500));
             let s = secs.as_secs();
             ui.label(egui::RichText::new(format!("{}:{:02}", s / 60, s % 60)).color(t.subtle()).size(12.5).monospace());
+            if let Some(p) = model_progress() {
+                ui.label(egui::RichText::new(format!("Speech model {p}")).color(t.subtle()).size(12.5));
+            }
             ui.ctx().request_repaint_after(Duration::from_millis(100));
             return;
         }
         if busy {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
             crate::widgets::spinner(ui.painter(), rect.center(), 6.0, t.subtle());
-            ui.label(egui::RichText::new("Transcribing…").color(t.subtle()).size(12.5));
+            let what = match model_progress().filter(|_| self.voice.pending.is_some()) {
+                Some(p) => format!("Getting the speech model… {p}"),
+                None => "Transcribing…".into(),
+            };
+            ui.label(egui::RichText::new(what).color(t.subtle()).size(12.5));
             return;
         }
-        let tip = match missing() {
+        let tip = match cant_record().or_else(missing) {
             Some(why) => why,
             None => hint,
         };
@@ -470,27 +666,23 @@ impl App {
                 |ui| ui.label(egui::RichText::new(if rec.is_some() { "Ready" } else { "Missing" }).color(if rec.is_some() { t.green(900) } else { t.red(900) })),
             );
             w::separator(ui);
-            let bin = whisper_bin();
+            let engine = engine();
             w::setting_row(
                 ui,
-                "whisper.cpp",
-                &match &bin {
-                    Some(b) => format!("Transcribes with {}.", b.display()),
-                    None => "Not installed. Install whisper.cpp (Arch: the whisper.cpp package; others: build github.com/ggml-org/whisper.cpp) so whisper-cli is on the PATH, then reopen this page.".to_string(),
+                "Speech recognition",
+                &match &engine {
+                    Some(Engine::Builtin) => "whisper.cpp, built into Harbor. Runs on this PC; nothing leaves it.".to_string(),
+                    Some(Engine::Cli(b)) => format!("Transcribes with {}.", b.display()),
+                    None => missing().unwrap_or_default(),
                 },
-                |ui| ui.label(egui::RichText::new(if bin.is_some() { "Ready" } else { "Missing" }).color(if bin.is_some() { t.green(900) } else { t.red(900) })),
+                |ui| ui.label(egui::RichText::new(if engine.is_some() { "Ready" } else { "Missing" }).color(if engine.is_some() { t.green(900) } else { t.red(900) })),
             );
         });
         ui.add_space(12.0);
         section(ui, "Speech model");
-        // A finished download: kept as the model, or its error.
-        let finished = self.voice.download.as_ref().and_then(|d| d.result.lock().unwrap().take().map(|r| (d.name.clone(), r)));
-        if let Some((name, r)) = finished {
-            self.voice.download = None;
-            match r {
-                Ok(()) => self.voice_set(None, Some(&name)),
-                Err(e) => crate::picker::show_toast(&ctx, format!("Couldn't download the {name} model: {e}")),
-            }
+        let dl = downloading();
+        if dl.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(400));
         }
         let mut action: Option<(&str, &str)> = None;
         rows(ui, |ui| {
@@ -503,11 +695,9 @@ impl App {
                 let title = format!("{}{}", capital(name), if used { "  ·  in use" } else { "" });
                 let desc = format!("{what} · {}", megabytes(*size));
                 w::setting_row(ui, &title, &desc, |ui| {
-                    if let Some(d) = self.voice.download.as_ref().filter(|d| d.name == *name) {
-                        let done = d.done.load(Ordering::Relaxed);
-                        let frac = if d.total > 0 { done as f32 / d.total as f32 } else { 0.0 };
-                        ui.add(egui::ProgressBar::new(frac.min(1.0)).desired_width(140.0).text(format!("{} of {}", megabytes(done), megabytes(d.total))));
-                        ui.ctx().request_repaint_after(Duration::from_millis(400));
+                    if let Some((_, done, total)) = dl.as_ref().filter(|d| d.0 == *name) {
+                        let frac = if *total > 0 { *done as f32 / *total as f32 } else { 0.0 };
+                        ui.add(egui::ProgressBar::new(frac.min(1.0)).desired_width(140.0).text(format!("{} of {}", megabytes(*done), megabytes(*total))));
                     } else if here {
                         if w::btn("Remove").sm().outline().show(ui).clicked() {
                             action = Some(("remove", name));
@@ -515,7 +705,7 @@ impl App {
                         if !used && w::btn("Use").sm().outline().show(ui).clicked() {
                             action = Some(("use", name));
                         }
-                    } else if w::btn("Download").sm().outline().enabled(self.voice.download.is_none()).show(ui).clicked() {
+                    } else if w::btn("Download").sm().outline().enabled(dl.is_none()).show(ui).clicked() {
                         action = Some(("download", name));
                     }
                 });
@@ -523,8 +713,9 @@ impl App {
         });
         match action {
             Some(("download", name)) => {
-                let c = ctx.clone();
-                self.voice.download = Some(download(name, move || c.request_repaint()));
+                // Used once it's here (until then, whichever model is there).
+                start_download(name);
+                self.voice_set(None, Some(name));
             }
             Some(("use", name)) => self.voice_set(None, Some(name)),
             Some(("remove", name)) => {
@@ -535,7 +726,7 @@ impl App {
             }
             _ => {}
         }
-        w::subtle(ui, "Models come from whisper.cpp's own repository on Hugging Face and stay in Harbor's data folder.", "label-12");
+        w::subtle(ui, "Models come from whisper.cpp's own repository on Hugging Face and stay in Harbor's data folder. Without one, the first dictation downloads Base.", "label-12");
         ui.add_space(12.0);
         section(ui, "Language");
         rows(ui, |ui| {
@@ -557,6 +748,11 @@ impl App {
             "label-12",
         );
     }
+}
+
+/// How far the model download is, as "34%".
+fn model_progress() -> Option<String> {
+    downloading().map(|(_, done, total)| format!("{}%", if total > 0 { done * 100 / total } else { 0 }))
 }
 
 fn capital(s: &str) -> String {
@@ -630,6 +826,37 @@ mod tests {
         assert_eq!(w.len(), 44 + 6);
         assert_eq!(u32::from_le_bytes(w[24..28].try_into().unwrap()), 16_000);
         assert!(rms(&[0; 100]) == 0.0 && rms(&[16000; 100]) > 0.9);
+    }
+
+    #[test]
+    fn reads_wav() {
+        let s: Vec<i16> = (0..1600).map(|i| (i * 7) as i16).collect();
+        assert_eq!(wav_samples(&wav(&s, RATE)).unwrap(), s);
+        // 32 kHz is halved.
+        assert_eq!(wav_samples(&wav(&s, 32_000)).unwrap().len(), 800);
+        assert!(wav_samples(b"RIFF....WAVEjunk").is_err());
+    }
+
+    /// End to end with the built-in whisper.cpp: no model at first (it downloads), then the
+    /// WAV at HARBOR_VOICE_TEST_WAV is transcribed. Needs the network; run it with
+    /// `XDG_DATA_HOME=<empty dir> cargo test voice::tests::builtin -- --ignored`.
+    #[test]
+    #[ignore]
+    fn builtin_downloads_and_transcribes() {
+        let wavf = PathBuf::from(std::env::var_os("HARBOR_VOICE_TEST_WAV").expect("HARBOR_VOICE_TEST_WAV"));
+        assert!(matches!(engine(), Some(Engine::Builtin)));
+        if current_model().is_none() {
+            let e = transcribe(&wavf, "en").unwrap_err();
+            assert!(e.starts_with("Getting the base speech model"), "{e}");
+            while downloading().is_some() {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            assert!(take_download_error().is_none());
+        }
+        let t0 = Instant::now();
+        let text = transcribe(&wavf, "en").unwrap();
+        eprintln!("transcribed in {:?}: {text}", t0.elapsed());
+        assert!(!text.trim().is_empty());
     }
 
     /// With a stand-in whisper (HARBOR_WHISPER), the program is run the documented way.

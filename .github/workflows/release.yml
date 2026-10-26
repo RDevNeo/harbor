@@ -50,7 +50,8 @@ jobs:
         run: |
           v="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
-      - run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev
+      # cmake and g++: whisper.cpp, compiled into Harbor for voice input (whisper-rs-sys).
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev cmake g++
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -206,6 +207,7 @@ jobs:
             cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
             cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
             cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
+            cp packaging/whisper.cpp-LICENSE.txt "$d/licenses/whisper.cpp-MIT.txt"
             [ ! -f lic/harbor.html ] || cp lic/harbor.html "$d/licenses/third-party-harbor.html"
           done
 
