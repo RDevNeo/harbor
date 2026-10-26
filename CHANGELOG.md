@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-26
+
 ### Added
 - The phone updates itself: Settings › Update automatically (it follows your PCs' Settings ›
   Updates until you choose on the phone). New versions download and install in the background,
@@ -1215,7 +1217,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.53.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/RDevNeo/harbor/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/RDevNeo/harbor/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/RDevNeo/harbor/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/RDevNeo/harbor/compare/v0.51.0...v0.52.0
