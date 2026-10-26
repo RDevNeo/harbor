@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-10-26
+
 ### Fixed
 - Devices shows a paired phone online whenever it can reach the PC, not only while Harbor is open
   on it: the app checks in from the background every 15 minutes (a light Android job with any
@@ -869,7 +871,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.37.1...HEAD
+[0.37.1]: https://github.com/RDevNeo/harbor/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/RDevNeo/harbor/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/RDevNeo/harbor/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/RDevNeo/harbor/compare/v0.34.1...v0.35.0
