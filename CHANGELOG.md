@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.53.1] - 2026-10-26
+
 ### Fixed
 - Phone dictation keeps everything said across pauses: Google's speech services (what most
   phones, Samsung's included, use) start their words over after a pause and drop the earlier
@@ -1195,7 +1197,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.53.1...HEAD
+[0.53.1]: https://github.com/RDevNeo/harbor/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/RDevNeo/harbor/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/RDevNeo/harbor/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/RDevNeo/harbor/compare/v0.50.0...v0.51.0
