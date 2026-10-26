@@ -5,6 +5,19 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-10-26
+
+### Added
+- A workspace and branch bar under the composer, on the desktop and the phone. Left: where the
+  agent works, "Current checkout" or "New worktree" for a new chat (a git worktree of its own, in
+  Harbor's data folder on a `harbor/…` branch, so parallel agents don't collide), or the thread's
+  worktree by name. A thread in the checkout can move to a new worktree when it isn't running.
+  Right: the branch, with a picker of local and remote branches (fuzzy filter) that switches it or
+  creates a new one, and warns first about uncommitted changes. For a new worktree it picks the
+  branch it starts from. Deleting a thread removes its worktree, unless it has uncommitted changes:
+  then it's kept and Harbor says where. On the phone: two chips under the composer and on New
+  chat, with bottom sheets.
+
 ## [0.36.0] - 2026-10-25
 
 ### Added
@@ -849,7 +862,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/RDevNeo/harbor/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/RDevNeo/harbor/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/RDevNeo/harbor/compare/v0.34.1...v0.35.0
 [0.34.1]: https://github.com/RDevNeo/harbor/compare/v0.34.0...v0.34.1
