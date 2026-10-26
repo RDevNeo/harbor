@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-10-26
+
 ### Added
 - Tokens and cost per turn, thread and agent, on the desktop and the phone. The turn footer now
   splits out cached input and rounds the cost ("189k in (180k cached) · 304 out · $3.96"); the chat's
@@ -902,7 +904,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/RDevNeo/harbor/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/RDevNeo/harbor/compare/v0.37.2...v0.38.0
 [0.37.2]: https://github.com/RDevNeo/harbor/compare/v0.37.1...v0.37.2
 [0.37.1]: https://github.com/RDevNeo/harbor/compare/v0.37.0...v0.37.1
