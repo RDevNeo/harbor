@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Agents can show images and videos in their replies, inline in the chat on the desktop and the
+  phone: a markdown image in the reply (`![caption](path)`, with an absolute path, a path in the
+  project, `file://` or an https URL) or Harbor's new `show_media(path, caption)` tool, which every
+  agent is told about. PNG, JPEG, GIF, WebP and SVG images show large in the reply and open the
+  full-screen viewer (pinch to zoom on the phone); MP4, WebM and MOV videos show their first
+  frame (with ffmpeg) and a play button: the desktop opens your video player, the phone plays it
+  full screen. Only real image and video files are shown (checked by their contents, at most
+  40 MB for an image and 200 MB for a video, never from key folders like `~/.ssh`); one that's
+  missing or can't load says so with a Retry. Chats on another PC show theirs through it.
+
 ## [0.49.0] - 2026-10-26
 
 ### Changed

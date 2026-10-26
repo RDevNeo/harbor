@@ -787,6 +787,23 @@ public class Chat extends Base {
         });
     }
 
+    /** A card's `images` without those its `media` already draws large. */
+    private static JSONArray notShown(JSONObject it) {
+        JSONArray images = it.optJSONArray("images"), media = it.optJSONArray("media");
+        if (images == null || media == null) return images;
+        java.util.Set<String> shown = new java.util.HashSet<>();
+        for (int i = 0; i < media.length(); i++) {
+            JSONObject m = media.optJSONObject(i);
+            if (m != null) shown.add(m.optString("url"));
+        }
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < images.length(); i++) {
+            JSONObject im = images.optJSONObject(i);
+            if (im != null && !shown.contains(im.optString("url"))) out.put(im);
+        }
+        return out;
+    }
+
     /** One card of the hub's projection, drawn as the desktop draws it (PROTOCOL.md): no
      *  filtering or grouping of our own; "hidden" cards draw nothing (but their fork dividers). */
     private View itemView(JSONObject it) {
@@ -857,8 +874,17 @@ public class Chat extends Base {
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
                 wrap.addView(body, Ui.fill());
-                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 120);
+                View shown = Media.list(this, hub, it.optJSONArray("media"));
+                if (shown != null) wrap.addView(shown, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+                View imgs = Images.strip(this, hub, notShown(it), 120);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+                break;
+            }
+            case "media": {
+                // An image or video an agent showed (show_media).
+                View shown = Media.list(this, hub, it.optJSONArray("media"));
+                if (shown != null) wrap.addView(shown, Ui.fill());
+                else wrap.addView(Ui.text(this, "Can't show this file here", 13, Ui.G700), Ui.fill());
                 break;
             }
             case "thinking":
@@ -886,7 +912,9 @@ public class Chat extends Base {
                     }
                     return c;
                 });
-                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96);
+                View vids = Media.list(this, hub, it.optJSONArray("media"));
+                if (vids != null) wrap.addView(vids, Ui.margins(Ui.fill(), 30, 6, 0, 0));
+                View imgs = Images.strip(this, hub, notShown(it), 96);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 30, 6, 0, 0));
                 break;
             }

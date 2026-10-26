@@ -1297,6 +1297,14 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         return serve_image(r.get_mut(), req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok()));
     }
+    // A video of one of this PC's chats, the same way (`/v1/media` there).
+    if segs == ["mesh", "v1", "media"] && req.method == "GET" {
+        if !crate::mesh::admitted(hub, &peer, &req) {
+            FAILS.hit(ip);
+            return send_json(r.get_mut(), 403, &json!({ "error": "only for paired PCs" }));
+        }
+        return serve_media(r.get_mut(), req.query("path").unwrap_or(""));
+    }
     // Another PC's Harbor (mesh.rs): known by its key, not a token.
     if segs.first() == Some(&"mesh") {
         let reply = crate::mesh::serve(&peer, &req, &mut r, hub, tx, wake);
@@ -1434,6 +1442,18 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             }
             serve_image(w, path, max)
         }
+        ("GET", ["v1", "media"]) => {
+            let path = req.query("path").unwrap_or("");
+            let chat = req.query("chat").and_then(|c| c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)));
+            if !Path::new(path).is_file() {
+                if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_media(hub, c, path)) {
+                    let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
+                    let _ = w.write_all(&bytes);
+                    return;
+                }
+            }
+            serve_media(w, path)
+        }
         // A phone without a recogniser of its own: its recording (WAV, 16-bit mono), transcribed
         // here with whisper.cpp (voice.rs), on this connection's thread.
         ("POST", ["v1", "transcribe"]) => {
@@ -1536,14 +1556,25 @@ fn serve_parcel(w: &mut impl Write, hub: &Hub, group: &str, id: &str) {
 }
 
 /// An image a card shows (`image_url`): the file, or a JPEG at most `max` px on its longer
-/// side. Image files only; the token already lets its phone run agents on this PC.
+/// side. Only real image files (media.rs `check`); a video gives its poster, an SVG its
+/// drawing as PNG. The token already lets its phone run agents on this PC.
 fn serve_image(w: &mut impl Write, path: &str, max: Option<u32>) {
     let p = Path::new(path);
-    if !p.is_absolute() || !crate::images::is_image(path) || !p.is_file() {
-        return send_json(w, 404, &json!({ "error": "no such image" }));
-    }
-    let Some(bytes) = std::fs::read(p).ok().filter(|b| b.len() <= 40 << 20) else {
-        return send_json(w, 404, &json!({ "error": "unreadable image" }));
+    // An https image still downloading into the cache: wait for it a little.
+    crate::media::wait_for(p, Duration::from_secs(20));
+    let video = match crate::media::check(p) {
+        Ok(v) => v,
+        Err(e) => return send_json(w, 404, &json!({ "error": format!("no such image: {e}") })),
+    };
+    let bytes = if video {
+        crate::media::poster(p).and_then(|f| std::fs::read(f).ok())
+    } else if crate::media::is_svg(path) {
+        crate::media::svg_png(p, max.unwrap_or(1024).clamp(16, 2048))
+    } else {
+        std::fs::read(p).ok()
+    };
+    let Some(bytes) = bytes else {
+        return send_json(w, 404, &json!({ "error": if video { "no preview of this video" } else { "unreadable image" } }));
     };
     let (body, ctype) = match max.map(|m| m.clamp(16, 2048)) {
         Some(m) => match image::load_from_memory(&bytes) {
@@ -1558,12 +1589,11 @@ fn serve_image(w: &mut impl Write, path: &str, max: Option<u32>) {
             Err(_) => return send_json(w, 415, &json!({ "error": "not an image Harbor can read" })),
         },
         None => {
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-            let ctype = match ext.as_str() {
-                "png" => "image/png",
-                "jpg" | "jpeg" => "image/jpeg",
-                "gif" => "image/gif",
-                "webp" => "image/webp",
+            let ctype = match image::guess_format(&bytes) {
+                Ok(image::ImageFormat::Png) => "image/png",
+                Ok(image::ImageFormat::Jpeg) => "image/jpeg",
+                Ok(image::ImageFormat::Gif) => "image/gif",
+                Ok(image::ImageFormat::WebP) => "image/webp",
                 _ => "application/octet-stream",
             };
             (bytes, ctype)
@@ -1571,6 +1601,22 @@ fn serve_image(w: &mut impl Write, path: &str, max: Option<u32>) {
     };
     let _ = w.write_all(response(200, ctype, body.len(), "").as_bytes());
     let _ = w.write_all(&body);
+}
+
+/// A video (or an image's original) a card shows (`media_url`), streamed as it is. Only real
+/// image and video files (media.rs `check`), at most `media::MAX_VIDEO`.
+fn serve_media(w: &mut impl Write, path: &str) {
+    let p = Path::new(path);
+    crate::media::wait_for(p, Duration::from_secs(20));
+    if let Err(e) = crate::media::check(p) {
+        return send_json(w, 404, &json!({ "error": format!("no such media: {e}") }));
+    }
+    let Ok(mut f) = std::fs::File::open(p) else { return send_json(w, 404, &json!({ "error": "unreadable file" })) };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if w.write_all(response(200, crate::media::mime(path), len as usize, "").as_bytes()).is_err() {
+        return;
+    }
+    let _ = std::io::copy(&mut (&mut f).take(len), w);
 }
 
 pub fn uploads_dir() -> PathBuf {
@@ -1899,9 +1945,26 @@ fn file_name(p: &str) -> String {
     Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string())
 }
 
-/// Where the phone fetches an image a card shows (a ≤512 px JPEG).
+/// Where the phone fetches an image a card shows (a ≤512 px JPEG; a video's poster).
 pub fn image_url(path: &str) -> String {
     format!("/v1/image?path={}&max=512", url_encode(path))
+}
+
+/// Where the phone fetches a video (or an image's original file) a card shows.
+pub fn media_url(path: &str) -> String {
+    format!("/v1/media?path={}", url_encode(path))
+}
+
+/// An image or video a card shows large (PROTOCOL.md `media`).
+fn media_json(m: &crate::media::Media) -> Value {
+    let mut v = json!({
+        "name": m.name(), "caption": m.caption, "kind": if m.video { "video" } else { "image" },
+        "url": if m.video { media_url(&m.path) } else { image_url(&m.path) },
+    });
+    if m.video {
+        v["poster"] = json!(image_url(&m.path));
+    }
+    v
 }
 
 /// One card of the shared projection (view.rs) for the phone: what the desktop draws for
@@ -1909,19 +1972,27 @@ pub fn image_url(path: &str) -> String {
 /// A card's image addresses with `&chat=` (a gid or an id), so the PC answering can fetch an
 /// image of another PC's chat from that PC (`/v1/image`).
 fn with_chat(mut v: Value, chat: String) -> Value {
-    if let Some(imgs) = v.get_mut("images").and_then(|i| i.as_array_mut()) {
-        for i in imgs {
-            if let Some(u) = i.get("url").and_then(|u| u.as_str()).map(String::from) {
-                i["url"] = json!(format!("{u}&chat={}", url_encode(&chat)));
+    for list in ["images", "media"] {
+        if let Some(imgs) = v.get_mut(list).and_then(|i| i.as_array_mut()) {
+            for i in imgs {
+                for key in ["url", "poster"] {
+                    if let Some(u) = i.get(key).and_then(|u| u.as_str()).map(String::from) {
+                        i[key] = json!(format!("{u}&chat={}", url_encode(&chat)));
+                    }
+                }
             }
         }
     }
     v
 }
 
-pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<String>) -> Value {
+pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<crate::media::Media>) -> Value {
     use crate::view::Card;
-    let images: Vec<Value> = crate::view::images(&s.card, find).iter().map(|p| json!({ "name": file_name(p), "url": image_url(p) })).collect();
+    let all = crate::view::media(&s.card, find);
+    // Every image, as older phones draw them (a strip); newer ones draw `media` large and the
+    // rest of `images` as the strip.
+    let images: Vec<Value> = all.iter().filter(|m| !m.video).map(|m| json!({ "name": if m.url.is_some() { m.name() } else { file_name(&m.path) }, "url": image_url(&m.path) })).collect();
+    let media: Vec<Value> = all.iter().filter(|m| m.shown || m.video).map(media_json).collect();
     let mut v = match &s.card {
         Card::Hidden => json!({}),
         Card::User { text, files, mentions, at, sender, .. } => json!({
@@ -1929,7 +2000,7 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
             "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet() })).collect::<Vec<_>>(), "at": at,
             "sender": sender,
         }),
-        Card::Text { text, at, forkable } => json!({ "markdown": text, "blocks": blocks(text), "images": images, "at": at, "forkable": forkable }),
+        Card::Text { text, at, forkable } => json!({ "markdown": text, "blocks": blocks(&crate::media::strip_refs(text)), "images": images, "at": at, "forkable": forkable }),
         Card::Thinking { text } => json!({ "text": text }),
         Card::Tool { label, summary, input, result, is_error } => json!({
             "label": label, "summary": summary, "input": clipped(input),
@@ -1940,7 +2011,11 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
         Card::Notice { icon, text, detail, markdown, url } => json!({ "icon": icon, "text": text, "detail": clipped(detail), "detail_markdown": markdown, "url": url }),
         Card::Message { from, to, text } => json!({ "from": from, "to": to, "text": clipped(text) }),
         Card::Error { text } => json!({ "text": clipped(text) }),
+        Card::Media { caption, pending, .. } => json!({ "caption": caption, "pending": pending, "images": images }),
     };
+    if !media.is_empty() {
+        v["media"] = json!(media);
+    }
     v["kind"] = json!(crate::view::kind(&s.card));
     v["seq"] = json!(s.seq);
     v["rev"] = json!(rev);
@@ -2777,6 +2852,8 @@ impl App {
         let now = self.api.hub.chat_rev(chat);
         // Image addresses name the chat: a copy of another PC's chat fetches them from there.
         let gid = self.chat(chat).map(|c| c.gid.clone()).unwrap_or_default();
+        // Where relative media paths in its replies start.
+        let cwd = self.chat(chat).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c));
         let revs = self.api.items.entry(chat).or_default();
         let fresh = self.api.looked.get(&chat) == Some(&now) && revs.len() == items.len();
         // An item's version includes how it shows: hidden later (a lead's turn delegating),
@@ -2804,7 +2881,7 @@ impl App {
         let out: Vec<Value> = cards
             .iter()
             .filter(|c| revs[c.seq].1 > since)
-            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut crate::images::find_paths), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
+            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut |t| crate::media::find(t, cwd.as_deref())), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
             .collect();
         json!({
             "rev": self.api.hub.rev(),
@@ -3598,6 +3675,29 @@ mod tests {
         assert_eq!((v["markdown"].as_str(), v["blocks"][0]["type"].as_str()), (Some("# H"), Some("heading")));
         let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() });
         assert_eq!((v["kind"].as_str(), v["text"].as_str()), (Some("footer"), Some("75.0s · 0 in · 0 out")));
+    }
+
+    #[test]
+    fn media_on_the_wire() {
+        use crate::media::Media;
+        let items = vec![Item::Text { text: "See ![Chart](out/c.png) and the run\n\n![](/v/run.mp4)\nAlso /tmp/x.png".into(), at: 1 }];
+        let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
+        let m = |path: &str, caption: &str, video: bool, shown: bool| Media { path: path.into(), caption: caption.into(), video, shown, url: None };
+        let v = card_json(&cards[0], 3, &mut |_| vec![m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)]);
+        let v = with_chat(v, "g1".into());
+        assert_eq!(v["media"], json!([
+            { "name": "c.png", "caption": "Chart", "kind": "image", "url": "/v1/image?path=%2Fp%2Fout%2Fc.png&max=512&chat=g1" },
+            { "name": "run.mp4", "caption": "", "kind": "video", "url": "/v1/media?path=%2Fv%2Frun.mp4&chat=g1", "poster": "/v1/image?path=%2Fv%2Frun.mp4&max=512&chat=g1" },
+        ]));
+        // Older apps still get every image in their strip.
+        assert_eq!(v["images"].as_array().unwrap().len(), 2);
+        // The text drawn leaves the media out; the markdown (copy) keeps it.
+        assert!(!serde_json::to_string(&v["blocks"]).unwrap().contains("c.png"));
+        assert!(v["markdown"].as_str().unwrap().contains("![Chart](out/c.png)"));
+        // No media: no field.
+        let plain = vec![Item::Text { text: "hi".into(), at: 1 }];
+        let cards = crate::view::project(&plain, false, &[], &|_: &str, _: &str| String::new());
+        assert!(card_json(&cards[0], 1, &mut |_| vec![]).get("media").is_none());
     }
 
     /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,

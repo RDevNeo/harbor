@@ -19,14 +19,18 @@ use eframe::egui::{
     self, Color32, ColorImage, CornerRadius, CursorIcon, FontId, Id, Key, Rect, Response, Sense, Stroke, StrokeKind,
     TextureHandle, TextureOptions, Ui, Vec2, load::SizedTexture, pos2, vec2,
 };
+use crate::media::Media;
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::SystemTime;
 
 const EXTS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
 /// Longest side of a thumbnail texture, in pixels (sharp up to ~190pt at 2x).
 const THUMB_PX: u32 = 384;
+/// Keys with this prefix are the larger copy an image or video poster shown inline in a reply.
+const MID: &str = "mid:";
+const MID_PX: u32 = 1280;
 /// Longest side of the lightbox texture.
 const FULL_PX: u32 = 4096;
 /// Files above this are not decoded.
@@ -115,8 +119,13 @@ fn worker(ctx: egui::Context, s: Shared) {
             let bytes = c.bytes.get(&job.key).cloned();
             (job, bytes)
         };
-        let st = if bytes.is_none() { stamp(&job.key) } else { None };
-        let slot = match decode(&job.key, bytes, if job.full { FULL_PX } else { THUMB_PX }) {
+        let (real, cap) = match job.key.strip_prefix(MID) {
+            Some(k) => (k, MID_PX),
+            None => (job.key.as_str(), if job.full { FULL_PX } else { THUMB_PX }),
+        };
+        let bytes = bytes.or_else(|| lock(&s).bytes.get(real).cloned());
+        let st = if bytes.is_none() { stamp(real) } else { None };
+        let slot = match decode(real, bytes, cap) {
             Ok((img, dims)) => {
                 let name = format!("image-{}-{}", if job.full { "full" } else { "thumb" }, job.key);
                 Slot::Ready { tex: ctx.load_texture(name, img, TextureOptions::LINEAR), dims, stamp: st }
@@ -137,9 +146,22 @@ fn worker(ctx: egui::Context, s: Shared) {
 }
 
 /// Decodes (first frame of a GIF, EXIF-rotated) and shrinks to `cap` pixels.
-/// Returns the image and the original dimensions.
+/// Returns the image and the original dimensions. A video gives its poster (ffmpeg), an SVG
+/// its drawing (rsvg-convert).
 fn decode(key: &str, bytes: Option<Arc<[u8]>>, cap: u32) -> Result<(ColorImage, [usize; 2]), String> {
     use image::ImageDecoder;
+    let bytes = match bytes {
+        None if crate::media::is_video(key) => {
+            crate::media::check(Path::new(key))?;
+            let poster = crate::media::poster(Path::new(key)).ok_or("no preview (ffmpeg isn't installed)")?;
+            Some(std::fs::read(poster).map_err(|e| e.to_string())?.into())
+        }
+        None if crate::media::is_svg(key) => {
+            crate::media::check(Path::new(key))?;
+            Some(crate::media::svg_png(Path::new(key), cap.min(2048)).ok_or("can't draw this SVG (rsvg-convert isn't installed)")?.into())
+        }
+        b => b,
+    };
     let mut reader = match &bytes {
         Some(b) => image::ImageReader::new(std::io::Cursor::new(b.to_vec())).with_guessed_format(),
         None => {
@@ -454,53 +476,178 @@ pub fn lightbox(ctx: &egui::Context) {
     }
 }
 
-// ---------------------------------------------------------------- paths in text
+// ---------------------------------------------------------------- media in replies
 
-/// Local image files mentioned in `text` (absolute or `~/` paths that exist), at
-/// most four. Cached per text, so calling it every frame is cheap.
-pub fn paths_in(ctx: &egui::Context, text: &str) -> Vec<String> {
-    ctx.memory_mut(|m| m.caches.cache::<egui::cache::FrameCache<Vec<String>, Finder>>().get(text).clone())
-}
-
-/// [`paths_in`] without the frame cache (off the UI's frames, for the phone API).
-pub fn find_paths(text: &str) -> Vec<String> {
-    use egui::cache::ComputerMut;
-    Finder.compute(text)
+/// The media a text shows or names (media.rs `find`, relative paths against `cwd`). Cached
+/// per text, so calling it every frame is cheap; a finished download looks again.
+pub fn media_in(ctx: &egui::Context, text: &str, cwd: &str) -> Vec<Media> {
+    let g = crate::media::GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+    ctx.memory_mut(|m| m.caches.cache::<egui::cache::FrameCache<Vec<Media>, Finder>>().get((text, cwd, g)).clone())
 }
 
 #[derive(Default)]
 struct Finder;
 
-impl<'a> egui::cache::ComputerMut<&'a str, Vec<String>> for Finder {
-    fn compute(&mut self, text: &'a str) -> Vec<String> {
-        let mut out: Vec<String> = vec![];
-        let lower = text.to_ascii_lowercase();
-        if !EXTS.iter().any(|e| lower.contains(&format!(".{e}"))) {
-            return out;
+impl<'a> egui::cache::ComputerMut<(&'a str, &'a str, u64), Vec<Media>> for Finder {
+    fn compute(&mut self, (text, cwd, _): (&'a str, &'a str, u64)) -> Vec<Media> {
+        crate::media::find(text, (!cwd.is_empty()).then(|| Path::new(cwd)))
+    }
+}
+
+/// Room for a shown image or video in a reply of `width`.
+pub fn inline_size(width: f32) -> Vec2 {
+    vec2(width.min(480.0), 300.0)
+}
+
+/// A "can't load" card in `rect` with Retry; true when Retry was clicked.
+fn cant_load(ui: &mut Ui, rect: Rect, id: Id, why: &str) -> bool {
+    let t = w::tokens(ui);
+    let radius = CornerRadius::same(RADIUS_MD);
+    ui.painter().rect_filled(rect, radius, t.gray(100));
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, t.border()), StrokeKind::Inside);
+    let mut child = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(Rect::from_min_max(rect.min + vec2(12.0, 0.0), rect.max - vec2(8.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    child.spacing_mut().item_spacing.x = 8.0;
+    let retry = w::btn(&format!("{}  Retry", ic::REFRESH)).secondary().xs().show(&mut child).clicked();
+    child.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.label(egui::RichText::new(ic::ALERT).size(14.0).color(t.subtle()));
+        let why = if why.contains("os error 2") { "file not found" } else { why };
+        ui.add(egui::Label::new(egui::RichText::new(format!("Can't load: {why}")).text_style(crate::theme::ts("label-13")).color(t.subtle())).truncate()).on_hover_text(why.to_string());
+    });
+    retry
+}
+
+/// An image shown in a reply: its own aspect within `max`, a click opens `group` in the
+/// lightbox. A missing or broken file draws as "can't load" with Retry.
+pub fn inline(ui: &mut Ui, key: &str, max: Vec2, group: &[String]) -> Response {
+    let mid = format!("{MID}{key}");
+    let slot = thumb(ui.ctx(), &mid);
+    let size = match &slot {
+        Slot::Ready { tex, .. } => {
+            let s = tex.size_vec2() / ui.ctx().pixels_per_point();
+            s * (max.x / s.x).min(max.y / s.y).min(1.0)
         }
-        // Split on what can't be part of a path here: quotes, brackets, JSON escapes, markdown.
-        let tokens = text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | '(' | ')' | '<' | '>' | '[' | ']' | ',' | '=' | '\\' | '|' | '*'));
-        for tok in tokens {
-            let tok = tok.trim_end_matches(['.', ':', ';', '!', '?']);
-            let tok = tok.strip_prefix("file://").unwrap_or(tok);
-            if !is_image(tok) {
-                continue;
+        Slot::Failed(_) => vec2(max.x.min(360.0), 44.0),
+        Slot::Loading => vec2(max.x, max.x * 0.5625).min(max),
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let t = w::tokens(ui);
+    let radius = CornerRadius::same(RADIUS_MD);
+    match slot {
+        Slot::Ready { tex, dims, .. } => {
+            egui::Image::from_texture(SizedTexture::from_handle(&tex)).corner_radius(radius).paint_at(ui, rect);
+            if resp.hovered() {
+                ui.painter().rect_filled(rect, radius, Color32::from_white_alpha(10));
             }
-            let path = match tok.strip_prefix("~/") {
-                Some(rest) => crate::store::home().join(rest),
-                None if tok.starts_with('/') => PathBuf::from(tok),
-                None => continue,
-            };
-            let p = path.to_string_lossy().into_owned();
-            if !out.contains(&p) && path.is_file() {
-                out.push(p);
-                if out.len() == 4 {
-                    break;
+            ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.border() }), StrokeKind::Inside);
+            let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{}\n{} × {}", name(key), dims[0], dims[1]));
+            if resp.clicked() {
+                match group.iter().position(|k| k == key) {
+                    Some(i) => open_gallery(ui.ctx(), group.to_vec(), i),
+                    None => open(ui.ctx(), key),
                 }
             }
+            resp
         }
-        out
+        Slot::Loading => {
+            ui.painter().rect_filled(rect, radius, t.gray(100));
+            w::spinner(ui.painter(), rect.center(), 8.0, t.subtle());
+            resp
+        }
+        Slot::Failed(e) => {
+            if cant_load(ui, rect, Id::NULL.with(("media-retry", key)), &e) {
+                forget(ui.ctx(), &mid);
+                forget(ui.ctx(), key);
+            }
+            resp
+        }
     }
+}
+
+/// media.rs `check` of a file, looked at again every few seconds (not on every frame).
+fn checked(ctx: &egui::Context, key: &str) -> Result<bool, String> {
+    let id = Id::NULL.with(("media-check", key));
+    let now = ctx.input(|i| i.time);
+    if let Some((at, r)) = ctx.data(|d| d.get_temp::<(f64, Result<bool, String>)>(id)) {
+        if now - at < 5.0 {
+            return r;
+        }
+    }
+    let r = crate::media::check(Path::new(key));
+    ctx.data_mut(|d| d.insert_temp(id, (now, r.clone())));
+    r
+}
+
+/// A placeholder while a shown image or video downloads.
+pub fn downloading(ui: &mut Ui, max: Vec2) {
+    let t = w::tokens(ui);
+    let (rect, _) = ui.allocate_exact_size(vec2(max.x.min(360.0), max.x.min(360.0) * 0.5625), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS_MD), t.gray(100));
+    w::spinner(ui.painter(), rect.center(), 8.0, t.subtle());
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(400));
+}
+
+/// "Can't load" for a download that failed; true when Retry was clicked.
+pub fn failed(ui: &mut Ui, key: &str, max: Vec2, why: &str) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(max.x.min(360.0), 44.0), Sense::hover());
+    let retry = cant_load(ui, rect, Id::NULL.with(("media-retry", key)), why);
+    if retry {
+        forget(ui.ctx(), &format!("{MID}{key}"));
+    }
+    retry
+}
+
+/// A video shown in a reply: its poster (or a dark card without ffmpeg) with a play button;
+/// a click plays it in the system's player.
+pub fn video(ui: &mut Ui, key: &str, max: Vec2) -> Response {
+    let mid = format!("{MID}{key}");
+    // A file that isn't there (or isn't a video) can't play: say so, like a broken image.
+    if let Err(e) = checked(ui.ctx(), key) {
+        let (rect, resp) = ui.allocate_exact_size(vec2(max.x.min(360.0), 44.0), Sense::hover());
+        if cant_load(ui, rect, Id::NULL.with(("media-retry", key)), &e) {
+            forget(ui.ctx(), &mid);
+            ui.ctx().data_mut(|d| d.insert_temp(Id::NULL.with(("media-check", key)), (f64::NEG_INFINITY, Ok::<bool, String>(false))));
+        }
+        return resp;
+    }
+    let slot = thumb(ui.ctx(), &mid);
+    let size = match &slot {
+        Slot::Ready { tex, .. } => {
+            let s = tex.size_vec2() / ui.ctx().pixels_per_point();
+            s * (max.x / s.x).min(max.y / s.y).min(1.0)
+        }
+        _ => vec2(max.x.min(360.0), max.x.min(360.0) * 0.5625),
+    };
+    let (rect, resp) = ui.allocate_exact_size(size.max(vec2(160.0, 90.0)), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let t = w::tokens(ui);
+        let radius = CornerRadius::same(RADIUS_MD);
+        let p = ui.painter();
+        p.rect_filled(rect, radius, Color32::from_gray(24));
+        match &slot {
+            Slot::Ready { tex, .. } => {
+                egui::Image::from_texture(SizedTexture::from_handle(tex)).uv(cover(tex.size_vec2(), rect.size())).corner_radius(radius).paint_at(ui, rect);
+            }
+            Slot::Loading => w::spinner(ui.painter(), rect.center() + vec2(0.0, 34.0), 7.0, Color32::from_gray(200)),
+            Slot::Failed(_) => {}
+        }
+        let p = ui.painter();
+        let c = rect.center();
+        p.circle_filled(c, 24.0, Color32::from_black_alpha(if resp.hovered() { 210 } else { 150 }));
+        ic::glyph(p, c + vec2(2.0, 0.0), ic::PLAY, 22.0, Color32::WHITE);
+        let label = p.layout_no_wrap(name(key), FontId::proportional(12.0), Color32::from_gray(230));
+        let at = pos2(rect.left() + 10.0, rect.bottom() - 10.0 - label.size().y);
+        p.rect_filled(Rect::from_min_size(at - vec2(6.0, 3.0), label.size() + vec2(12.0, 6.0)), CornerRadius::same(4), Color32::from_black_alpha(150));
+        p.galley(at, label, Color32::from_gray(230));
+        p.rect_stroke(rect, radius, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.border() }), StrokeKind::Inside);
+    }
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{}\nPlay in your video player", name(key)));
+    if resp.clicked() {
+        crate::git::open_url(key);
+    }
+    resp
 }
 
 #[cfg(test)]

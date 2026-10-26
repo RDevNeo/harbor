@@ -432,6 +432,18 @@ Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the
 | `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
+| `media` (0.50) | an image or video an agent showed with its `show_media` tool, drawn like a `text` card's `media` | `media` (one entry; absent when the file can't be shown), `caption`, `pending` (the call hasn't answered yet), `images` |
+
+Optional on `text`, `tool` and `media` cards (0.50): `media: [{name, caption, kind, url, poster?}]`,
+the images and videos the card shows large, in order: a reply's markdown images
+(`![caption](path or https URL)`), `show_media`, and any video a reply or tool names. `kind` is
+`image` (`url` = `/v1/image?…&max=512`; ask a bigger `max` for the inline copy, open the viewer
+on tap) or `video` (`url` = `/v1/media?…`, the file itself; `poster` = `/v1/image?…` of the video,
+a JPEG of its first frame, `404` when the PC has no ffmpeg). Draw the `images` not in `media` (same
+`url`) as the strip; older apps ignore `media` and still get every image in `images`. A video
+plays from a local copy (download it with the token, then a player); a media item that can't
+load shows a small "can't load" tile that retries on tap. `blocks` leave out the markdown images
+that `media` draws.
 
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
@@ -686,6 +698,15 @@ most that many pixels on its longer side (16–2048); without, the file as it is
 `&chat=<gid>`: when the chat runs on another PC of the mesh, the PC answering fetches the image
 from there (its paths are that PC's files). When an image can't be had, show its tile with a way
 to try again.
+
+### `GET /v1/media?path=<absolute path>` (0.50)
+
+A video (or an image's original) a card's `media` shows, the file as it is with its
+`Content-Type` (`video/mp4`, `video/webm`, `video/quicktime`, `image/…`) and `Content-Length`.
+Only files that are really images or videos by their first bytes, at most 200 MB, never in key
+folders (`.ssh`, `.gnupg`, …); `404` otherwise. `/v1/image` follows the same rules (and draws
+SVGs as PNG). Card URLs carry `&chat=<gid>` like images; through another PC of the mesh a video
+comes from the chat's own PC, up to 64 MB.
 
 ### `GET /v1/chats/{id}/team`
 

@@ -366,6 +366,8 @@ impl App {
         ui.spacing_mut().item_spacing.y = if crate::theme::compact() { 8.0 } else { 12.0 };
         let width = ui.available_width();
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
+        // Where relative media paths in replies start (another PC's chat: nowhere here).
+        let cwd = self.chat(id).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c).to_string_lossy().into_owned()).unwrap_or_default();
         // The same cards the phone gets (view.rs): what's hidden, footers, dividers.
         let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
         let cards = crate::view::project(&tr.items, lead, &forks, &who);
@@ -486,12 +488,12 @@ impl App {
                             // Its own id scope: egui_commonmark numbers tables from 0 in every
                             // viewer, so two messages' tables shared an id and their grids and
                             // scroll bars overwrote each other's state, repainting every frame.
-                            ui.push_id(("md", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, &linkify(text)))
+                            ui.push_id(("md", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, &linkify(&crate::media::strip_refs(text))))
                         })
                         .response
                         .rect;
                     let ctx = ui.ctx().clone();
-                    image_strip(ui, &crate::view::images(&shown.card, &mut |t| crate::images::paths_in(&ctx, t)), 0.0);
+                    media_view(ui, &crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd)), 0.0);
                     let mut buttons = vec![(ic::COPY, "Copy"), ("@", "Mention in your next message")];
                     if *forkable {
                         buttons.insert(1, (ic::FORK, "Fork from this response"));
@@ -564,7 +566,16 @@ impl App {
                     r.on_hover_cursor(egui::CursorIcon::PointingHand);
                     // Images the tool read or wrote (a Read of a .png, a screenshot).
                     let ctx = ui.ctx().clone();
-                    image_strip(ui, &crate::view::images(&shown.card, &mut |t| crate::images::paths_in(&ctx, t)), 30.0);
+                    media_view(ui, &crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd)), 30.0);
+                }
+                // An image or video an agent showed (show_media).
+                Card::Media { .. } => {
+                    let ctx = ui.ctx().clone();
+                    let media = crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd));
+                    if media.is_empty() {
+                        w::subtle(ui, format!("{}  Can't show this file here", ic::ALERT), "label-12");
+                    }
+                    media_view(ui, &media, 0.0);
                 }
                 Card::Footer { text, .. } => {
                     w::subtle(ui, text.as_str(), "label-12-mono");
@@ -1448,6 +1459,45 @@ fn fork_dividers(ui: &mut Ui, forks: &[i64]) -> Option<i64> {
 const THUMB: Vec2 = Vec2::new(132.0, 96.0);
 
 /// A row of thumbnails under a message or tool call, indented by `indent`.
+/// The images and videos a card shows: shown ones large (an image opens the lightbox, a video
+/// the system's player) with their captions, files it only names as a strip of thumbnails.
+fn media_view(ui: &mut Ui, media: &[crate::media::Media], indent: f32) {
+    if media.is_empty() {
+        return;
+    }
+    let max = crate::images::inline_size(ui.available_width() - indent);
+    let group: Vec<String> = media.iter().filter(|m| m.shown && !m.video).map(|m| m.path.clone()).collect();
+    for m in media.iter().filter(|m| m.shown || m.video) {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                match m.url.as_deref().and_then(crate::media::download_state) {
+                    Some(None) => crate::images::downloading(ui, max),
+                    Some(Some(e)) => {
+                        if crate::images::failed(ui, &m.path, max, &e) {
+                            let url = m.url.as_deref().unwrap_or_default();
+                            crate::media::retry(url);
+                            crate::media::fetch(url);
+                        }
+                    }
+                    None if m.video => {
+                        crate::images::video(ui, &m.path, max);
+                    }
+                    None => {
+                        crate::images::inline(ui, &m.path, max, &group);
+                    }
+                }
+                if !m.caption.is_empty() {
+                    w::subtle(ui, m.caption.as_str(), "label-12");
+                }
+            });
+        });
+    }
+    let rest: Vec<String> = media.iter().filter(|m| !m.shown && !m.video).map(|m| m.path.clone()).collect();
+    image_strip(ui, &rest, indent);
+}
+
 fn image_strip(ui: &mut Ui, paths: &[String], indent: f32) {
     if paths.is_empty() {
         return;

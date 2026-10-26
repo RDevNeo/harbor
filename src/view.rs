@@ -2,6 +2,7 @@
 //! the phone API (api.rs) sends them, so a chat looks the same on both: the same items hidden
 //! (a lead's coordination), the same footers, labels, dividers and images.
 
+use crate::media::Media;
 use crate::mentions::Mention;
 use crate::store::Item;
 
@@ -38,7 +39,12 @@ pub enum Card<'a> {
     },
     Message { from: &'a str, to: &'a str, text: &'a str },
     Error { text: &'a str },
+    /// An image or video an agent showed with the `show_media` tool (its input, JSON).
+    Media { input: &'a str, caption: String, pending: bool },
 }
+
+/// The tool that puts an image or video in the reply.
+pub const SHOW_MEDIA: &str = "mcp__harbor__show_media";
 
 /// A card and where it is: `seq` is the item's index in the transcript, `forks_after` the
 /// chats forked from it ("Conversation fork" dividers drawn right after it).
@@ -91,7 +97,7 @@ pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     let mut said = false;
     for (i, item) in items.iter().enumerate() {
         out[i] = match item {
-            Item::Tool { name, .. } => name.starts_with("mcp__harbor__"),
+            Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != SHOW_MEDIA || *is_error),
             Item::Thinking { .. } => true,
             Item::Notice { icon, .. } => icon == "bot",
             Item::Text { text, .. } => text.trim().is_empty() || handoff[i],
@@ -145,6 +151,11 @@ fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) 
         },
         Item::Text { text, at } => Card::Text { text, at: *at, forkable },
         Item::Thinking { text } => Card::Thinking { text },
+        // Shown media; a call that failed stays a tool card, with its error.
+        Item::Tool { name, input, result, is_error: false, .. } if name == SHOW_MEDIA => {
+            let v: serde_json::Value = serde_json::from_str(input).unwrap_or_default();
+            Card::Media { input, caption: v["caption"].as_str().unwrap_or("").to_string(), pending: result.is_none() }
+        }
         Item::Tool { name, summary, input, result, is_error, .. } => Card::Tool { label: tool_label(name), summary, input, result: result.as_deref(), is_error: *is_error },
         Item::Result { cost_usd, duration_ms, input_tokens, output_tokens, cached, account, model, at, .. } => {
             Card::Footer { text: footer(&who(account, model), *cost_usd, *duration_ms, *input_tokens, *output_tokens, *cached), at: *at }
@@ -165,21 +176,25 @@ fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) 
     }
 }
 
-/// The images a card shows under it: a user's attached ones, the files a reply names, the
-/// images a tool read or wrote. `find` lists the image files a text names.
-pub fn images(card: &Card, find: &mut dyn FnMut(&str) -> Vec<String>) -> Vec<String> {
+/// The images and videos a card shows: a user's attached images, what a reply shows
+/// (markdown images) or names, what a tool read or wrote, what `show_media` showed. `find`
+/// lists the media of a text (media.rs `find`, resolved against the chat's folder).
+pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media> {
     match card {
-        Card::User { images, .. } => images.iter().map(|s| s.to_string()).collect(),
+        Card::User { images, .. } => images.iter().map(|s| Media { path: s.to_string(), caption: String::new(), video: false, shown: false, url: None }).collect(),
         Card::Text { text, .. } => find(text),
         Card::Tool { input, result, is_error: false, .. } => {
-            let mut paths = find(input);
-            for p in result.map(|r| find(r)).unwrap_or_default() {
-                if !paths.contains(&p) {
-                    paths.push(p);
+            let mut all = find(input);
+            for m in result.map(|r| find(r)).unwrap_or_default() {
+                if !all.iter().any(|x| x.path == m.path) {
+                    all.push(m);
                 }
             }
-            paths
+            // A tool's text names files; it doesn't show them on purpose.
+            all.iter_mut().for_each(|m| m.shown = false);
+            all
         }
+        Card::Media { input, .. } => find(&crate::media::tool_markdown(input)).into_iter().take(1).collect(),
         _ => vec![],
     }
 }
@@ -219,6 +234,7 @@ pub fn kind(c: &Card) -> &'static str {
         Card::Notice { .. } => "notice",
         Card::Message { .. } => "message",
         Card::Error { .. } => "error",
+        Card::Media { .. } => "media",
     }
 }
 
@@ -260,6 +276,27 @@ mod tests {
         let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
         assert_eq!(cards[0].card, Card::Hidden);
         assert!(matches!(cards[1].card, Card::Notice { text: "api finished: added tests", markdown: true, .. }));
+    }
+
+    #[test]
+    fn shown_media_is_a_card_even_for_a_lead() {
+        let tool = |result: Option<&str>, is_error: bool| Item::Tool { id: "m".into(), name: SHOW_MEDIA.into(), summary: String::new(), input: r#"{"path":"out/demo.mp4","caption":"Demo"}"#.into(), result: result.map(String::from), is_error };
+        let items = vec![tool(Some("Shown"), false), tool(None, false), tool(Some("no such file"), true)];
+        let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
+        let kinds: Vec<&str> = cards.iter().map(|c| kind(&c.card)).collect();
+        // A failed call stays a tool card (a lead hides it, like its other Harbor calls).
+        assert_eq!(kinds, ["media", "media", "hidden"]);
+        assert_eq!(cards[0].card, Card::Media { input: r#"{"path":"out/demo.mp4","caption":"Demo"}"#, caption: "Demo".into(), pending: false });
+        assert!(matches!(cards[1].card, Card::Media { pending: true, .. }));
+        // It resolves as the markdown image it stands for; a tool's named files aren't "shown".
+        let mut asked = vec![];
+        let m = media(&cards[0].card, &mut |t| {
+            asked.push(t.to_string());
+            vec![Media { path: "/p/out/demo.mp4".into(), caption: "Demo".into(), video: true, shown: true, url: None }]
+        });
+        assert_eq!((asked[0].as_str(), m.len()), ("![Demo](<out/demo.mp4>)", 1));
+        let t = Card::Tool { label: "Bash".into(), summary: "", input: "x", result: None, is_error: false };
+        assert!(media(&t, &mut |_| vec![Media { path: "/a.png".into(), caption: String::new(), video: false, shown: true, url: None }]).iter().all(|m| !m.shown));
     }
 
     #[test]

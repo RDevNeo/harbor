@@ -23,6 +23,7 @@ mod hookcert;
 mod icons;
 mod fork;
 mod images;
+mod media;
 mod issuedetail;
 mod issues;
 mod keys;

@@ -803,6 +803,18 @@ pub fn home_image(hub: &api::Hub, chat: i64, path: &str, max: Option<u32>) -> Op
     }
 }
 
+/// A video of a chat that runs on another PC (`/v1/media` here for a copy), the same way: at
+/// most what one mesh answer carries (64 MB).
+pub fn home_media(hub: &api::Hub, chat: i64, path: &str) -> Option<(String, Vec<u8>)> {
+    let (home, _) = hub.mesh.homes.lock().unwrap().get(&chat).cloned()?;
+    let p = hub.mesh.peer(&home).filter(|p| p.online)?;
+    let q = format!("/mesh/v1/media?path={}", api::url_encode(path));
+    match http_raw(&p.dest(), "GET", &q, None, Duration::from_secs(120)) {
+        Ok((200, ctype, bytes)) if ctype.starts_with("video/") || ctype.starts_with("image/") => Some((ctype, bytes)),
+        _ => None,
+    }
+}
+
 fn get(dest: &Dest, path: &str, wait: Duration) -> Result<Value, String> {
     match http(dest, "GET", path, None, wait)? {
         (200, v) => Ok(v),

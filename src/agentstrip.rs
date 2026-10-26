@@ -148,6 +148,7 @@ fn tool_doing(name: &str, summary: &str, input: &str, root: &str) -> String {
         ("harbor", "read_messages") => "reading messages".into(),
         ("harbor", "list_agents") => "checking the team".into(),
         ("harbor", "process_logs" | "list_processes") => "checking processes".into(),
+        ("harbor", "show_media") => "showing media".into(),
         ("harbor", t) => t.replace('_', " "),
         ("", "Bash" | "Shell" | "shell" | "run_shell_command" | "exec_command" | "bash") => shell_doing(summary),
         ("", "Edit" | "MultiEdit" | "str_replace" | "replace" | "edit_file" | "edit" | "apply_patch" | "NotebookEdit") if !summary.trim().is_empty() => format!("editing {}", path()),
