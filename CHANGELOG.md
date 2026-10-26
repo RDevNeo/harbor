@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-26
+
 ### Added
 - Issues from every PC: the Issues page (desktop and phone) merges the issues of every connected PC
   of the mesh, each fetched with that PC's own GitHub login and projects, one row per issue. A new
@@ -1012,7 +1014,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/RDevNeo/harbor/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/RDevNeo/harbor/compare/v0.43.2...v0.44.0
 [0.43.2]: https://github.com/RDevNeo/harbor/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/RDevNeo/harbor/compare/v0.43.0...v0.43.1
