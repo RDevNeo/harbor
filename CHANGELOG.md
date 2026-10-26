@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Issues: the Project filter lists the projects of every PC whose issues are on the page (with the
+  PC as a hint), plus the other repos in the list, and filtering by another PC's project works, on
+  the desktop and the phone. Before, it only offered the PC that answered.
+
 ## [0.46.2] - 2026-10-26
 
 ### Fixed

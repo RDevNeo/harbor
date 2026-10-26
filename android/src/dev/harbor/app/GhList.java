@@ -439,7 +439,9 @@ public class GhList extends Base {
                 JSONArray p = page == null ? null : page.optJSONArray("projects");
                 if (p != null) for (int i = 0; i < p.length(); i++) {
                     JSONObject x = p.optJSONObject(i);
-                    if (x != null) o.add(new Sheet.Option(x.optString("repo"), x.optString("name"), x.optString("repo"), true));
+                    if (x == null) continue;
+                    String pc = x.optString("pc");
+                    o.add(new Sheet.Option(x.optString("repo"), x.optString("name"), x.optString("repo") + (pc.isEmpty() ? "" : " · " + pc), true));
                 }
                 break;
             }

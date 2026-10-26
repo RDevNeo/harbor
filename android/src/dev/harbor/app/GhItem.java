@@ -101,7 +101,8 @@ public class GhItem extends Base {
         String repo = it().optString("repo", row.optString("repo"));
         for (int i = 0; i < projects.length(); i++) {
             JSONObject p = projects.optJSONObject(i);
-            if (p != null && p.optString("repo").equalsIgnoreCase(repo)) return p.optString("id");
+            // Another PC's project, or a repo no PC has (no id): not a project here.
+            if (p != null && p.optString("repo").equalsIgnoreCase(repo) && p.has("id") && !p.isNull("id")) return p.optString("id");
         }
         return null;
     }

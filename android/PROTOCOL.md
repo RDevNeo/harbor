@@ -897,6 +897,10 @@ Optional fields, which older hubs leave out:
 - `account=<login>` narrows the list to that account's items and makes Involvement (and the
   Assigned / Authored / Mentioned sections, and `mentioned`) about that login; without it, about
   every account's. `viewer` is then that login.
+- `projects` (from 0.46.3) lists every PC's projects: this PC's (with `id`), then the other PCs'
+  (one per repo, no `id`), then other repos of the list (no `id`, no `pc`); `pc` names the PCs
+  that have it as a project (`, `-joined). `project=<repo>` filters by any of them. An entry
+  without `id` is no project here: Fix with… then goes by the item's `fix_on`.
 - Per item `accounts`: the logins that see it; `fix_on` (a PC's name) when the repo isn't a project
   on this PC but is on that one, where `POST /v1/issues/fix` runs the agent.
 - `notes: ["laptop: unreachable", "desk: GitHub not connected"]`: PCs whose part is missing

@@ -398,6 +398,29 @@ fn with_fix_on(mut v: Value, d: &issues::Fetched, i: &issues::Issue, f: &issues:
     v
 }
 
+/// The Issues page's Project filter: this PC's projects (with ids), then the other PCs'
+/// (one per repo, no id) and the other repos of the list (no id, no `pc`); `pc` names the
+/// PCs that have each as a project.
+fn all_projects(mut local: Value, d: &issues::Fetched) -> Value {
+    let pcs_of = |repo: &str| -> Vec<String> {
+        d.sources.iter().filter(|s| s.projects.iter().any(|r| r.eq_ignore_ascii_case(repo))).map(|s| s.name.clone()).collect()
+    };
+    let Some(list) = local.as_array_mut() else { return local };
+    let mut repos = vec![];
+    for p in list.iter_mut() {
+        let repo = p["repo"].as_str().unwrap_or("").to_string();
+        let pcs = pcs_of(&repo);
+        if !pcs.is_empty() {
+            p["pc"] = json!(pcs.join(", "));
+        }
+        repos.push(repo);
+    }
+    for (name, repo, pcs) in issues::other_projects(d, &repos) {
+        list.push(if pcs.is_empty() { json!({ "name": name, "repo": repo }) } else { json!({ "name": name, "repo": repo, "pc": pcs }) });
+    }
+    local
+}
+
 pub fn issues_page(d: &issues::Fetched, f: &issues::Filters, search: &str, sort: issues::Sort) -> Value {
     let me = issues::mine(d, f);
     let groups: Vec<Value> = issues::groups(d, f, search, sort)
@@ -507,7 +530,7 @@ impl App {
                         },
                     };
                     let mut v = issues_page(&d, &f, &search, sort);
-                    v["projects"] = projects();
+                    v["projects"] = all_projects(projects(), &d);
                     ok(v)
                 }))
             }
@@ -698,6 +721,14 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_filter_lists_every_pcs_projects() {
+        let src = |pc: &str, name: &str, projects: &[&str]| issues::Source { pc: pc.into(), name: name.into(), login: "x".into(), projects: projects.iter().map(|p| p.to_string()).collect(), error: None };
+        let d = issues::Fetched { sources: vec![src("", "desk", &["o/r"]), src("ts:lap", "laptop", &["o/r", "o/crm"])], ..Default::default() };
+        let v = all_projects(json!([{ "id": 1, "name": "r", "repo": "o/r" }]), &d);
+        assert_eq!(v, json!([{ "id": 1, "name": "r", "repo": "o/r", "pc": "desk, laptop" }, { "name": "crm", "repo": "o/crm", "pc": "laptop" }]));
+    }
 
     fn call(q: &[(&str, &str)]) -> Call {
         let (tx, _) = std::sync::mpsc::channel();

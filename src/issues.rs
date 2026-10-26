@@ -210,6 +210,9 @@ pub struct Issues {
     pub filters: Filters,
     /// Harbor project picked in the Project filter.
     pub project: Option<i64>,
+    /// owner/name picked in the Project filter that isn't a project here (another PC's, or a
+    /// repo only seen in the list).
+    pub elsewhere: Option<String>,
     /// The source picker: false = All, true = GitHub (the only provider).
     github_only: bool,
     menu: Option<Menu>,
@@ -613,6 +616,34 @@ pub fn owner<'a>(data: &'a Fetched, i: &Issue, prefer: Option<&str>, project: bo
     c.first().copied()
 }
 
+/// The Project filter's choices beyond this PC's projects (`local`: their repos): the other
+/// PCs' projects, one per repo with the PCs that have it, then the other repos in the list
+/// (an issue that's yours in a repo no PC has as a project). (name, owner/name, PCs).
+pub fn other_projects(data: &Fetched, local: &[String]) -> Vec<(String, String, String)> {
+    let has = |v: &[String], r: &str| v.iter().any(|x| x.eq_ignore_ascii_case(r));
+    let mut peers: Vec<(String, Vec<String>)> = vec![];
+    for s in data.sources.iter().filter(|s| !s.pc.is_empty()) {
+        for r in s.projects.iter().filter(|r| !has(local, r)) {
+            match peers.iter_mut().find(|x| x.0.eq_ignore_ascii_case(r)) {
+                Some(x) => x.1.push(s.name.clone()),
+                None => peers.push((r.clone(), vec![s.name.clone()])),
+            }
+        }
+    }
+    let short = |r: &str| r.rsplit('/').next().unwrap_or(r).to_string();
+    peers.sort_by_key(|p| short(&p.0).to_lowercase());
+    let mut out: Vec<(String, String, String)> = peers.into_iter().map(|(r, pcs)| (short(&r), r, pcs.join(", "))).collect();
+    let mut rest: Vec<String> = vec![];
+    for i in &data.items {
+        if !has(local, &i.repo) && !out.iter().any(|o| o.1.eq_ignore_ascii_case(&i.repo)) && !has(&rest, &i.repo) {
+            rest.push(i.repo.clone());
+        }
+    }
+    rest.sort_by_key(|r| r.to_lowercase());
+    out.extend(rest.into_iter().map(|r| (r.clone(), r, String::new())));
+    out
+}
+
 pub fn authors(data: &Fetched) -> Vec<(String, usize)> {
     tally(data.items.iter().map(|i| i.author.as_str()))
 }
@@ -646,6 +677,7 @@ impl App {
         }
         if project.is_some() {
             self.issues.project = project;
+            self.issues.elsewhere = None;
         }
         self.open(View::Issues);
     }
@@ -807,7 +839,7 @@ impl App {
             self.load_issues();
         }
         let projects = self.pr_projects();
-        self.issues.filters.project = self.issues.project.and_then(|id| projects.iter().find(|p| p.0 == id).map(|p| p.2.clone()));
+        self.issues.filters.project = self.issues.project.and_then(|id| projects.iter().find(|p| p.0 == id).map(|p| p.2.clone())).or_else(|| self.issues.elsewhere.clone());
 
         let (close, tab) = prs::list_title(ui, "Issues", self.sidebar_docked(&ctx), panel, &self.issues.split);
         if close {
@@ -1002,7 +1034,7 @@ impl App {
             }
             Menu::Filters => {
                 let f = self.issues.filters.clone();
-                let project_name = self.issues.project.and_then(|id| projects.iter().find(|p| p.0 == id)).map(|p| p.1.clone());
+                let project_name = self.issues.project.and_then(|id| projects.iter().find(|p| p.0 == id)).map(|p| p.1.clone()).or_else(|| self.issues.elsewhere.clone());
                 let author = f.author.clone().unwrap_or_else(|| "Anyone".into());
                 let assignee = match &f.assignee {
                     None => "Anyone".to_string(),
@@ -1249,25 +1281,40 @@ impl App {
             }
             Sub::Project => {
                 let cur = self.issues.project;
-                let (p, r) = float(ctx, "issue-sub", sub_pos(ctx, a, 230.0), 230.0, &t, |ui| {
-                    let mut pick = None;
-                    if menu_row(ui, ic::LAYERS, "All projects", None, false, cur.is_none(), false).clicked() {
+                let elsewhere = self.issues.elsewhere.clone();
+                let local: Vec<String> = projects.iter().map(|p| p.2.clone()).collect();
+                let others = other_projects(data, &local);
+                // Some(Ok(id)): a project here; Some(Err(repo)): another PC's or a repo of the list.
+                let (p, r) = float(ctx, "issue-sub", sub_pos(ctx, a, 250.0), 250.0, &t, |ui| {
+                    let mut pick: Option<Option<Result<i64, String>>> = None;
+                    if menu_row(ui, ic::LAYERS, "All projects", None, false, cur.is_none() && elsewhere.is_none(), false).clicked() {
                         pick = Some(None);
                     }
                     ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (id, name, repo) in projects {
                             if menu_row(ui, ic::FOLDER_GIT, name, None, false, cur == Some(*id), false).tip(repo).clicked() {
-                                pick = Some(Some(*id));
+                                pick = Some(Some(Ok(*id)));
+                            }
+                        }
+                        if !others.is_empty() {
+                            menu_sep(ui);
+                        }
+                        for (name, repo, pcs) in &others {
+                            let on = elsewhere.as_ref().is_some_and(|e| e.eq_ignore_ascii_case(repo));
+                            let (icon, hint, tip) = if pcs.is_empty() { (ic::GLOBE, None, repo.clone()) } else { (ic::FOLDER_GIT, Some(pcs.as_str()), format!("{repo}, a project on {pcs}")) };
+                            if menu_row(ui, icon, name, hint, false, on, false).tip(tip).clicked() {
+                                pick = Some(Some(Err(repo.clone())));
                             }
                         }
                     });
-                    if projects.is_empty() {
+                    if projects.is_empty() && others.is_empty() {
                         note(ui, "No projects with a GitHub remote.");
                     }
                     pick
                 });
-                if let Some(v) = p {
-                    self.issues.project = v;
+                if let Some(v) = &p {
+                    self.issues.project = v.as_ref().and_then(|x| x.as_ref().ok().copied());
+                    self.issues.elsewhere = v.as_ref().and_then(|x| x.as_ref().err().cloned());
                 }
                 (p.is_some(), r)
             }
@@ -1494,6 +1541,31 @@ mod tests {
         assert_eq!(owner(&data, i2, None, true).map(|s| s.pc.as_str()), Some(""));
         let none = Issue { repo: "o/other".into(), ..i2.clone() };
         assert!(owner(&data, &none, None, true).is_none());
+    }
+
+    #[test]
+    fn project_choices_cover_every_pc() {
+        let mut lone = issue(9, "x");
+        lone.repo = "z/solo".into();
+        let mut crm = issue(8, "x");
+        crm.repo = "o/crm".into();
+        let data = merge(vec![
+            (src("", "desk", "", &["o/r"]), Some(part("kim", vec![issue(1, "x"), lone]))),
+            (src("ts:lap", "laptop", "", &["o/crm", "o/tools", "O/R"]), Some(part("sam", vec![crm]))),
+            (src("ts:pc3", "pc3", "", &["o/crm"]), Some(part("sam", vec![]))),
+        ]);
+        let got = other_projects(&data, &["o/r".to_string()]);
+        assert_eq!(
+            got,
+            vec![
+                ("crm".into(), "o/crm".into(), "laptop, pc3".into()),
+                ("tools".into(), "o/tools".into(), "laptop".into()),
+                ("z/solo".into(), "z/solo".into(), String::new()),
+            ]
+        );
+        // Filtering by another PC's project works like by this PC's.
+        let f = Filters { project: Some("o/crm".into()), state: StateF::All, ..Default::default() };
+        assert_eq!(groups(&data, &f, "", Sort::Updated).iter().flat_map(|g| g.items.iter().map(|i| i.number)).collect::<Vec<_>>(), vec![8]);
     }
 
     #[test]
