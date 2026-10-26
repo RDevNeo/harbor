@@ -36,6 +36,11 @@ public class SecTest {
         check(Sec.hex(Sec.hmac(k3, Sec.utf8(msg))).equals("78d83b9c1472be6f7cfabe8d2c59f7a155de2b26ed7c880cd877dc81fe863ad2"), "request MAC");
         check(Sec.hex(Sec.hubSecret(fill(6), "cc")).equals("849c6eb3ca9b030f2bb199862c4e88aaa29cf7460dfeb1b09daaca05f9e60571"), "hub secret");
 
+        byte[] four7 = new byte[4], four9 = new byte[4], x8 = new byte[32];
+        Arrays.fill(four7, (byte) 7); Arrays.fill(four9, (byte) 9); Arrays.fill(x8, (byte) 8);
+        check(Sec.hex(Sec.rekeyMsg("hh", "pp", "tok", four7, new byte[0], true, x8)).equals("76ff425e763a66725ee859afa39a3acf83e72379ec78c23a220775f0a8752aa1"), "rekey proof message");
+        check(Sec.hex(Sec.addPresenceMsg("hh", "pp", "tok", "sid", four9)).equals("9b66f1a091d649ccdbd56509decd14e9a881a93ebddb7f0648cae184944d85dd"), "add-presence message");
+
         // ECDH: both ends agree, keys travel as 91-byte named-curve SPKI (what the hub parses).
         KeyPair x = Sec.ephemeral(), y = Sec.ephemeral();
         byte[] sx = Sec.spki(x.getPublic()), sy = Sec.spki(y.getPublic());

@@ -55,6 +55,9 @@ final class Hub {
     String secret = "";
     /** Calls are bound to their TLS connection (Android 12+ exports keying material). */
     boolean binding;
+    /** Paired with two factors: this phone had no screen lock (so no presence key). Setting a
+     *  lock adds the third on its own (upgrade below). */
+    boolean nolock;
     final List<String> addrs = new ArrayList<>(); // every address the PC has said it has
 
     /** Another PC of the mesh, reachable with a token of its own. */
@@ -84,9 +87,10 @@ final class Hub {
         }
         if (!fresh.pid.isEmpty()) pid = fresh.pid;
         // Paired again or upgraded to three factors on another screen: its secret from now on.
-        if (!fresh.secret.equals(secret) || fresh.binding != binding) {
+        if (!fresh.secret.equals(secret) || fresh.binding != binding || fresh.nolock != nolock) {
             secret = fresh.secret;
             binding = fresh.binding;
+            nolock = fresh.nolock;
             token = fresh.token;
             synchronized (askedHubs) { askedHubs.remove(id); }
         }
@@ -193,8 +197,12 @@ final class Hub {
 
     String label() { return name == null || name.isEmpty() ? host : name; }
 
-    /** Paired with all three factors: every call goes with a session. */
+    /** Paired with a secret (three factors, or two on a phone without a screen lock): every
+     *  call goes with a session. */
     boolean three() { return secret != null && !secret.isEmpty(); }
+
+    /** 3, 2 (no screen lock), or 0 for a pairing from before three factors. */
+    int factors() { return !three() ? 0 : nolock ? 2 : 3; }
 
     /** The PC calls go to now: "" for the paired one, else its mesh id. */
     String via() {
@@ -321,6 +329,7 @@ final class Hub {
                 h.fp = o.optString("fp", "");
                 h.secret = o.optString("secret", "");
                 h.binding = o.optBoolean("binding");
+                h.nolock = o.optBoolean("nolock");
                 strings(o.optJSONArray("addrs"), h.addrs);
                 JSONArray e = o.optJSONArray("eps");
                 if (e != null) for (int j = 0; j < e.length(); j++) {
@@ -358,7 +367,7 @@ final class Hub {
                             .put("fp", x.fp).put("addrs", new JSONArray(x.addrs)));
                 a.put(new JSONObject().put("id", h.id).put("name", h.name).put("host", h.host).put("port", h.port).put("token", h.token)
                         .put("ip", h.ip).put("pid", h.pid).put("fp", h.fp).put("secret", h.secret).put("binding", h.binding)
-                        .put("addrs", new JSONArray(h.addrs)).put("eps", e));
+                        .put("nolock", h.nolock).put("addrs", new JSONArray(h.addrs)).put("eps", e));
             }
         } catch (JSONException ignored) { }
         store(c, a.toString());
@@ -375,6 +384,7 @@ final class Hub {
                 n.fp = h.fp;
                 n.secret = h.secret;
                 n.binding = h.binding;
+                n.nolock = h.nolock;
                 n.addrs.addAll(h.addrs);
                 n.pid = h.pid.isEmpty() ? o.pid : h.pid;
                 n.eps.addAll(h.eps.isEmpty() ? o.eps : h.eps);
@@ -410,6 +420,12 @@ final class Hub {
         /** A call refused for its session (it ended on the PC): a new one may fix it. */
         boolean rekey;
         ApiError(int code, String msg) { super(msg); this.code = code; }
+    }
+
+    /** This phone's presence key is gone (its screen lock was removed or changed): the pairing
+     *  goes on with two factors, or re-confirms a new key, once a code is confirmed on the PC. */
+    static final class NeedsLock extends ApiError {
+        NeedsLock(String msg) { super(401, msg); }
     }
 
     /** The PC asks this pairing (from before three factors) to upgrade: confirm a code there. */
@@ -550,6 +566,8 @@ final class Hub {
     static final class Sess {
         final String sid, hubFp, phoneFp;
         final boolean bound;
+        /** What the PC checked: 3, or 2 for a pairing without a screen lock there. */
+        int factors = 3;
         private final Sec.Ratchet r;
         private final long t0, epochMs;
         private long ctr;
@@ -620,8 +638,37 @@ final class Hub {
             if (s != null) drop(v, s);
             s = handshake(v);
             synchronized (sessions) { sessions.put(k, s); }
+            if (s.factors == 2 && Presence.secureLock()) addLock(v, s);
             return s;
         }
+    }
+
+    private static final Map<String, Long> lockTried = new HashMap<>();
+
+    /** This PC knows the pairing with two factors, and the phone has a screen lock (set since,
+     *  or the pairing went on with two factors on another PC): the presence key goes to it,
+     *  signed, over this session (in the background, at most every 10 minutes). */
+    private void addLock(String v, Sess s) {
+        String k = id + "/" + v;
+        synchronized (lockTried) {
+            Long t = lockTried.get(k);
+            if (t != null && System.currentTimeMillis() - t < 600_000) return;
+            lockTried.put(k, System.currentTimeMillis());
+        }
+        Ui.pool.execute(() -> {
+            try {
+                Ep e = ep(v);
+                String tok = e == null ? token : e.token;
+                byte[] pk = Presence.publicKey();
+                byte[] sig = Presence.sign(Sec.addPresenceMsg(s.hubFp, s.phoneFp, tok, s.sid, pk), "Add this phone's screen lock to " + labelOn(v));
+                JSONObject r = callOn(v, "POST", "/v1/pair/presence", new JSONObject().put("presence", Sec.hex(pk)).put("psig", Sec.hex(sig)));
+                if (r.optInt("factors") != 3) return;
+                s.factors = 3;
+                if (nolock) { nolock = false; persist(); }
+                // The other PCs of the mesh take it from this one (POST /v1/hubs, newest wins).
+                synchronized (askedHubs) { askedHubs.remove(id); }
+            } catch (Exception ignored) { }
+        });
     }
 
     /** PC v's secret: the pairing's own for the paired PC, derived for each other one. */
@@ -643,8 +690,11 @@ final class Hub {
         Ep e = ep(v);
         String tok = e == null ? token : e.token;
         String why = "Sign in to " + labelOn(v);
-        // Asked before connecting, so the PC never waits on a prompt.
-        Presence.ready(why);
+        // Asked before connecting, so the PC never waits on a prompt. A key that's gone (the
+        // screen lock removed or changed) needs the PC's confirmation to go on.
+        if (!nolock) {
+            try { Presence.ready(why); } catch (Presence.Gone g) { throw new NeedsLock(g.getMessage()); }
+        }
         byte[] secret = secretFor(e);
         try {
             java.security.KeyPair eph = Sec.ephemeral();
@@ -658,6 +708,15 @@ final class Hub {
             byte[] epkH = Sec.unhex(hr.optString("epk")), ch = Sec.unhex(hr.optString("challenge"));
             String hid = hr.optString("hid");
             if (epkH == null || ch == null || hid.isEmpty()) throw new IOException("bad answer from the PC");
+            // What this PC wants: 3 (a PC before 0.34.1 says nothing), or 2 for a pairing it
+            // confirmed without a screen lock.
+            int factors = hr.optInt("factors", 3) == 2 ? 2 : 3;
+            if (factors == 3 && nolock) {
+                // It hasn't heard yet that the pairing went on with two factors: the PC that
+                // confirmed it tells it (POST /v1/hubs), the other PCs serve meanwhile.
+                synchronized (askedHubs) { askedHubs.remove(id); }
+                throw new IOException(labelOn(v) + " still asks for this phone's screen lock.");
+            }
             byte[] z = Sec.agree(eph.getPrivate(), epkH);
             Net.Http o = connect(v, "POST", "/v1/session/open", 15_000, 5_000);
             byte[] x = binding ? o.exporter() : null;
@@ -666,23 +725,30 @@ final class Hub {
             if (hubFp == null) { o.close(); throw new IOException("Three factors need the encrypted connection to the PC."); }
             byte[] t2 = Sec.sessionTranscript(hubFp, phoneFp, tok, epk, epkH, nonce, ch, x == null ? new byte[0] : x);
             byte[] proof = Sec.labelled(secret, "harbor-session-v3 proof", t2);
-            byte[] sig;
-            try {
-                sig = Presence.sign(Sec.sessionPresenceMsg(t2), why);
-            } catch (IOException ex) {
-                o.close();
-                throw ex;
+            JSONObject ob = new JSONObject().put("hid", hid).put("proof", Sec.hex(proof));
+            if (factors == 3) {
+                try {
+                    ob.put("sig", Sec.hex(Presence.sign(Sec.sessionPresenceMsg(t2), why)));
+                } catch (Presence.Gone g) {
+                    o.close();
+                    throw new NeedsLock(g.getMessage());
+                } catch (IOException ex) {
+                    o.close();
+                    throw ex;
+                }
             }
             o.header("Authorization", "Bearer " + tok);
             o.header("X-Harbor-Device", deviceName());
-            JSONObject or = send(o, new JSONObject().put("hid", hid).put("proof", Sec.hex(proof)).put("sig", Sec.hex(sig)));
+            JSONObject or = send(o, ob);
             byte[] root = Sec.sessionRoot(t2, z, secret);
             Sec.wipe(z);
             if (!Sec.same(Sec.labelled(root, "harbor-session-v3 hub", t2), Sec.unhex(or.optString("proof")))) {
                 Sec.wipe(root);
                 throw new IOException("The PC couldn't prove the pairing's keys: not connecting.");
             }
-            return new Sess(or.optString("sid"), hubFp, phoneFp, binding, root, or.optLong("epoch_ms", Sec.EPOCH_MS));
+            Sess s = new Sess(or.optString("sid"), hubFp, phoneFp, binding, root, or.optLong("epoch_ms", Sec.EPOCH_MS));
+            s.factors = or.optInt("factors", 3) == 2 ? 2 : 3;
+            return s;
         } catch (java.security.GeneralSecurityException | JSONException ex) {
             throw new IOException("Couldn't start a session: " + ex.getMessage(), ex);
         } finally {
@@ -705,11 +771,27 @@ final class Hub {
     /** Pairs with the PC of this link (a pairing code), or upgrades this pairing from before
      *  three factors: the presence key signs, an ECDH agreement gives the secret, and the
      *  6-digit code both screens show (showCode, on this thread) must be confirmed on the PC.
+     *  Without a screen lock (or a Keystore that can't make the key) it pairs with two factors
+     *  and says so (nolock). rekey: a pairing with a secret re-confirms its factors (its presence
+     *  key is gone): the secret proven, the code confirmed on the PC, the secret kept.
      *  Throws ApiError 404 when the PC doesn't know three factors (Harbor before 0.22). */
-    void pair3(java.util.function.Consumer<String> showCode, java.util.function.BooleanSupplier cancelled) throws IOException {
+    void pair3(java.util.function.Consumer<String> showCode, java.util.function.BooleanSupplier cancelled) throws IOException { pair3(showCode, cancelled, false); }
+
+    void pair3(java.util.function.Consumer<String> showCode, java.util.function.BooleanSupplier cancelled, boolean rekey) throws IOException {
         String why = "Pair with " + label();
-        byte[] presence = Presence.publicKey();
-        Presence.ready(why);
+        if (rekey && !three()) throw new IOException("This pairing has no secret: pair the phone again.");
+        byte[] presence = null;
+        if (Presence.secureLock()) {
+            try {
+                if (rekey) Presence.forget(); // a key Android erased (or one the PC doesn't have): a new one
+                presence = Presence.publicKey();
+                Presence.ready(why);
+            } catch (Presence.Gone g) {
+                presence = null; // the Keystore can't keep a key behind the lock: two factors
+            }
+        }
+        boolean twoF = presence == null;
+        byte[] pres = twoF ? new byte[0] : presence;
         try {
             java.security.KeyPair eph = Sec.ephemeral();
             byte[] epk = Sec.spki(eph.getPublic());
@@ -719,21 +801,35 @@ final class Hub {
             String hubFp = c.seen, phoneFp = Net.myFp();
             if (hubFp == null || phoneFp.isEmpty()) { c.close(); throw new IOException("Pairing needs the encrypted connection to the PC (its key in the link)."); }
             byte[] xb = bind ? x : new byte[0];
-            byte[] psig;
+            JSONObject body = new JSONObject().put("epk", Sec.hex(epk)).put("binding", bind).put("name", deviceName());
             try {
-                psig = Presence.sign(Sec.pairPresenceMsg(hubFp, phoneFp, token, epk, presence, bind, xb), why);
+                if (twoF) body.put("nolock", true);
+                else body.put("presence", Sec.hex(presence)).put("psig", Sec.hex(Presence.sign(Sec.pairPresenceMsg(hubFp, phoneFp, token, epk, presence, bind, xb), why)));
+                if (rekey) {
+                    byte[] old = secretFor(null);
+                    body.put("rekey", Sec.hex(Sec.labelled(old, "harbor-rekey-v3", Sec.rekeyMsg(hubFp, phoneFp, token, epk, pres, bind, xb))));
+                    Sec.wipe(old);
+                }
             } catch (IOException ex) {
                 c.close();
                 throw ex;
             }
             c.header("Authorization", "Bearer " + token);
             c.header("X-Harbor-Device", deviceName());
-            JSONObject r = send(c, new JSONObject().put("epk", Sec.hex(epk)).put("presence", Sec.hex(presence)).put("binding", bind)
-                    .put("psig", Sec.hex(psig)).put("name", deviceName()));
+            JSONObject r;
+            try {
+                r = send(c, body);
+            } catch (ApiError ex) {
+                // A PC before 0.34.1 knows neither: say what helps.
+                if (ex.code == 401 && (twoF || rekey))
+                    throw new IOException(twoF ? "The PC refused a pairing without a screen lock. Update Harbor on the PC, or set a screen lock on this phone (Settings › Security) and try again."
+                            : "The PC refused to re-confirm this pairing. Update Harbor on the PC, or pair the phone again.", ex);
+                throw ex;
+            }
             byte[] epkH = Sec.unhex(r.optString("epk"));
             if (epkH == null) throw new IOException("bad answer from the PC");
             byte[] z = Sec.agree(eph.getPrivate(), epkH);
-            byte[] t = Sec.pairTranscript(hubFp, phoneFp, token, epk, epkH, presence, bind, xb);
+            byte[] t = Sec.pairTranscript(hubFp, phoneFp, token, epk, epkH, pres, bind, xb);
             Object[] k = Sec.pairKeys(t, z);
             Sec.wipe(z);
             byte[] s = (byte[]) k[0];
@@ -749,8 +845,9 @@ final class Hub {
                 if (!"paired".equals(fr.optString("status"))) continue;
                 if (!Sec.same(Sec.labelled(s, "harbor-pair-v3 hub", t), Sec.unhex(fr.optString("proof"))))
                     throw new IOException("The PC couldn't prove the pairing: not paired.");
-                secret = Sec.hex(s);
+                if (!rekey) secret = Sec.hex(s);
                 binding = bind;
+                nolock = twoF;
                 Sec.wipe(s);
                 endSessions(id);
                 synchronized (askedHubs) { askedHubs.remove(id); }

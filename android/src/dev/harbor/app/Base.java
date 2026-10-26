@@ -412,6 +412,8 @@ abstract class Base extends Activity {
                     if (e instanceof Hub.ApiError && ((Hub.ApiError) e).rekey && fails == 0) { fails = 1; continue; }
                     // A pairing from before three factors: the PC wants the codes confirmed.
                     if (e instanceof Hub.NeedsUpgrade) Ui.main.post(() -> { if (my == gen) Pair.offerUpgrade(this, h); });
+                    // The screen lock was removed or changed: go on with two factors, or re-confirm.
+                    if (e instanceof Hub.NeedsLock) Ui.main.post(() -> { if (my == gen) Pair.offerLock(this, h); });
                     // The hub answers a long-poll within 20 s: no answer in 25 means it's gone (or the
                     // way to it). The next try goes to another PC of the mesh first.
                     if (!(e instanceof Hub.ApiError)) h.failed();

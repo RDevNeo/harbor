@@ -1037,7 +1037,10 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
     let secret = body["secret"].as_str().filter(|s| s.len() == 64 && crate::phoneauth::unhex(s).is_some()).unwrap_or("").to_string();
     let presence = body["presence"].as_str().filter(|p| crate::phoneauth::unhex(p).is_some_and(|k| crate::phoneauth::p256_point(&k).is_some())).unwrap_or("").to_string();
     let binding = body["binding"].as_bool().unwrap_or(false);
-    if secret.is_empty() != presence.is_empty() || (!secret.is_empty() && fp.is_empty()) {
+    // A phone without a screen lock: two factors, confirmed so on the PC that asks.
+    let nolock = body["nolock"].as_bool().unwrap_or(false) && presence.is_empty();
+    let keys_at = body["keys_at"].as_i64().unwrap_or(0);
+    if (secret.is_empty() != (presence.is_empty() && !nolock)) || (!secret.is_empty() && fp.is_empty()) {
         return err(400, "bad pairing secret");
     }
     let mut tokens = hub.tokens.lock().unwrap();
@@ -1049,17 +1052,23 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
             return err(409, "this pairing belongs to another phone");
         }
         if !secret.is_empty() {
-            if !t.three() {
-                (t.secret, t.presence, t.binding) = (secret, presence, binding);
+            if !t.secured() {
+                (t.secret, t.presence, t.binding, t.nolock, t.keys_at) = (secret, presence, binding, nolock, keys_at);
                 hub.tokens_dirty.store(true, Ordering::SeqCst);
-            } else if t.secret != secret || t.presence != presence {
+            } else if t.secret != secret {
                 return err(409, "this pairing has other keys here");
+            } else if (t.presence != presence || t.nolock != nolock) && keys_at > t.keys_at {
+                // Its factors changed on the asking PC since (a screen lock set, or removed and
+                // the change confirmed there): the newest wins.
+                (t.presence, t.binding, t.nolock, t.keys_at) = (presence, binding, nolock, keys_at);
+                hub.auth3.drop_token(&t.token);
+                hub.tokens_dirty.store(true, Ordering::SeqCst);
             }
         }
         return ok(json!({ "token": t.token }));
     }
     let Ok(token) = api::new_token() else { return err(500, "no randomness") };
-    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string(), fp, secret, presence, binding, ticket: false });
+    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string(), fp, secret, presence, binding, nolock, keys_at, ticket: false });
     hub.tokens_dirty.store(true, Ordering::SeqCst);
     ok(json!({ "token": token }))
 }
@@ -1110,8 +1119,14 @@ fn ips_and_port(addrs: &[String]) -> (Vec<String>, u16) {
 /// `POST /v1/hubs`, which brings each PC's pairing secret (`secrets`: fingerprint → hex);
 /// a GET then lists the PCs with `provision: true` and no token.
 pub fn hubs(hub: &api::Hub, token: &str, secrets: Option<&serde_json::Map<String, Value>>) -> Value {
-    let (group, name, fp, three, presence, binding) =
-        hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.group.clone(), t.name.clone(), t.fp.clone(), t.three(), t.presence.clone(), t.binding)).unwrap_or_default();
+    let (group, name, fp, three, presence, binding, nolock, keys_at) = hub
+        .tokens
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|t| t.token == token)
+        .map(|t| (t.group.clone(), t.name.clone(), t.fp.clone(), t.secured(), t.presence.clone(), t.binding, t.two(), t.keys_at))
+        .unwrap_or_default();
     let me = hub.mesh.me();
     let net = hub.net.lock().unwrap().clone();
     let port = *hub.port.lock().unwrap();
@@ -1130,6 +1145,8 @@ pub fn hubs(hub: &api::Hub, token: &str, secrets: Option<&serde_json::Map<String
                     body["secret"] = json!(s);
                     body["presence"] = json!(presence);
                     body["binding"] = json!(binding);
+                    body["nolock"] = json!(nolock);
+                    body["keys_at"] = json!(keys_at);
                 }
                 let body = serde_json::to_vec(&body).unwrap_or_default();
                 std::thread::spawn(move || {

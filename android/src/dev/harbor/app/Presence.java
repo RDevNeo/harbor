@@ -40,12 +40,20 @@ public class Presence extends Activity {
         return ks;
     }
 
+    /** The presence key can't be used: no screen lock (any more), or Android erased the key when
+     *  the lock was removed or changed. The pairing then goes on with two factors, or
+     *  re-confirms a new key, after the code is confirmed on the PC (Pair.offerLock). */
+    static final class Gone extends IOException {
+        Gone(String msg) { super(msg); }
+    }
+
     static boolean secureLock() {
         KeyguardManager km = Ui.app == null ? null : Ui.app.getSystemService(KeyguardManager.class);
         return km != null && km.isDeviceSecure();
     }
 
-    /** The key's public half (SubjectPublicKeyInfo DER), made the first time. */
+    /** The key's public half (SubjectPublicKeyInfo DER), made the first time. Gone without a
+     *  screen lock, or when the Keystore can't make a key that needs one. */
     static synchronized byte[] publicKey() throws IOException {
         try {
             KeyStore ks = ks();
@@ -54,13 +62,18 @@ public class Presence extends Activity {
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {
-            throw new IOException("This phone's key store can't make Harbor's sign-in key: " + e.getMessage(), e);
+            throw new Gone("This phone's key store can't make Harbor's sign-in key: " + e.getMessage());
         }
+    }
+
+    /** Whether the key is there (made at pairing, or when a screen lock was set later). */
+    static synchronized boolean exists() {
+        try { return ks().containsAlias(ALIAS); } catch (Exception e) { return false; }
     }
 
     private static void make() throws Exception {
         if (!secureLock())
-            throw new IOException("Set a screen lock on this phone first (Settings › Security: PIN, pattern, password or fingerprint). Harbor needs it as the third factor to reach your PC.");
+            throw new Gone("This phone has no screen lock (Settings › Security: PIN, pattern, password or fingerprint).");
         KeyGenParameterSpec.Builder b = new KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
                 .setAlgorithmParameterSpec(new ECGenParameterSpec("secp256r1"))
                 .setDigests(KeyProperties.DIGEST_SHA256)
@@ -83,8 +96,11 @@ public class Presence extends Activity {
     }
 
     private static Signature signer() throws Exception {
+        PrivateKey k = (PrivateKey) ks().getKey(ALIAS, null);
+        // Erased with the screen lock (some Androids drop the entry rather than invalidate it).
+        if (k == null || !secureLock()) throw gone();
         Signature s = Signature.getInstance("SHA256withECDSA");
-        s.initSign((PrivateKey) ks().getKey(ALIAS, null));
+        s.initSign(k);
         return s;
     }
 
@@ -100,11 +116,18 @@ public class Presence extends Activity {
                 ask(why);
             } catch (KeyPermanentlyInvalidatedException e) {
                 forget();
-                throw new IOException("This phone's screen lock changed, so Harbor's sign-in key is gone. Pair the phone again.");
+                throw gone();
+            } catch (Gone e) {
+                throw e;
             } catch (Exception e) {
                 throw new IOException("Harbor's sign-in key isn't working: " + e.getMessage(), e);
             }
         }
+    }
+
+    private static Gone gone() {
+        return new Gone(secureLock() ? "This phone's screen lock changed, so Android erased Harbor's sign-in key."
+                : "This phone's screen lock was removed, so Android erased Harbor's sign-in key.");
     }
 
     /** Asks for the unlock now unless the key can already sign. Not on the UI thread. */
@@ -115,7 +138,9 @@ public class Presence extends Activity {
             ask(why);
         } catch (KeyPermanentlyInvalidatedException e) {
             forget();
-            throw new IOException("This phone's screen lock changed, so Harbor's sign-in key is gone. Pair the phone again.");
+            throw gone();
+        } catch (Gone e) {
+            throw e;
         } catch (Exception e) {
             throw new IOException("Harbor's sign-in key isn't working: " + e.getMessage(), e);
         }

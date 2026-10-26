@@ -88,7 +88,8 @@ the session's current key, which changes every 10 minutes. Code: `src/phoneauth.
 | 2. Pairing secret | 32 bytes from an ECDH agreement at pairing, confirmed by the 6-digit code on the PC | phone: the encrypted pairing list (AES-GCM key in the Keystore); hub: kv `api_tokens[].secret` | HMAC over each session's handshake |
 | 3. User presence | a second Keystore key, `harbor-presence` (EC P-256, `setUserAuthenticationRequired`, usable 5 minutes after the fingerprint, face or screen lock) | Android Keystore; the hub pins its public key (`api_tokens[].presence`) | its signature over each session's handshake |
 
-A phone without a screen lock can't make the presence key and can't pair: the app says so.
+A phone without a screen lock can't make the presence key: from 0.34.1 it pairs with **two
+factors** (1 and 2, sessions and rotating keys unchanged), see [Two factors](#two-factors-no-screen-lock).
 
 ### Notation
 
@@ -114,6 +115,8 @@ from before three factors: the upgrade, only from the TLS key that token is boun
 
 - `psig` signs `th("harbor-pair-v3 presence", hubFp, phoneFp, token, epk, presence, "1"|"0", X)`
   (so pairing already wants the unlock).
+- Two factors (no screen lock, from 0.34.1): `"nolock": true` instead of `presence` and `psig`
+  (sending both is refused); `presence` is then empty in `T`.
 - The hub answers `{"epk": "<hub ECDH key>", "wait_ms": 180000}`. Both compute
   `T = th("harbor-pair-v3", hubFp, phoneFp, token, epkPhone, epkHub, presence, "1"|"0", X)`,
   `Z` = the ECDH secret, `S = HKDF(T, Z, "harbor-pair-v3 secret")` and the code:
@@ -129,12 +132,14 @@ from before three factors: the upgrade, only from the TLS key that token is boun
 ### Sessions
 
 1. `POST /v1/session/hello` (Bearer token of a three-factor pairing, its TLS key)
-   `{"epk": "<fresh ECDH key>", "nonce": "<32 bytes>"}` → `{"hid", "epk", "challenge": "<32 bytes>"}`.
+   `{"epk": "<fresh ECDH key>", "nonce": "<32 bytes>"}` → `{"hid", "epk", "challenge": "<32 bytes>", "factors": 3}`
+   (`factors` from 0.34.1: `2` for a pairing confirmed without a screen lock; absent means 3).
 2. `POST /v1/session/open` (same) within 60 s: `{"hid", "proof", "sig"}` with
    `T2 = th("harbor-session-v3", hubFp, phoneFp, token, epkPhone, epkHub, nonce, challenge, X)`
    (`X` of this second connection), `proof = HMAC(S, "harbor-session-v3 proof", T2)` (factor 2)
    and `sig` = the presence key's signature over `"harbor-session-v3 presence" ‖ T2` (factor 3).
-   → `{"sid", "epoch_ms": 600000, "grace_ms": 30000, "idle_ms", "max_ms", "proof"}`, where
+   For a two-factor pairing `sig` is left out (the hub ignores it).
+   → `{"sid", "epoch_ms": 600000, "grace_ms": 30000, "idle_ms", "max_ms", "proof", "factors"}`, where
    `root = HKDF(T2, Z ‖ S, "harbor-session-v3 root")` and `proof = HMAC(root, "harbor-session-v3 hub", T2)`:
    the phone checks it (the hub knows `S` and the fresh `Z`).
 
@@ -143,6 +148,36 @@ the last unlock), and only while it's in front. Five failed opens within 15 minu
 pairing for 15 minutes (Settings › Phones shows it, with Unlock). A session ends after 30 minutes
 without calls, after 12 hours, when the pairing is revoked (here or on another PC), and when the
 hub restarts; at most 4 per pairing. Sessions live in memory only.
+
+### Two factors (no screen lock)
+
+From 0.34.1. Android only lets the presence key exist behind a secure screen lock
+(`KeyguardManager.isDeviceSecure()`), so a phone without one pairs with factors 1 and 2 only.
+Both screens say so: the PC's confirmation card ("wants to pair with two factors"), its
+Settings › Phones row (amber "2 factors" badge) and Devices row ("2-factor, no screen lock"), and
+the phone's Settings › Sign-in row, each with the hint that a screen lock adds the third.
+
+- Hub: `api_tokens[].nolock = true`, `presence` empty, `keys_at` (unix s of the last change of
+  factors). `nolock` is only ever set by a pairing or re-confirmation the person at the PC
+  confirmed with the code; a token with a presence key always wants its signature.
+- **Adding the third** (a lock set later): the app sees `factors: 2` on a session while the phone
+  is secure, makes the presence key and, over that session, sends
+  `POST /v1/pair/presence {"presence": "<key>", "psig": "<sig>"}`, `psig` over
+  `th("harbor-presence-v3", hubFp, phoneFp, token, sid, presence)` → `{"factors": 3}`. Adding a
+  factor needs nothing more. A pairing that has a presence key already gets `409` for another one.
+- **Losing the third** (the lock removed, or changed so Android erased the key): the app can't
+  sign, and the phone's key and secret alone must not be enough to drop the factor. It offers
+  "Use two factors" (no lock) or "Re-confirm" (a new lock, a new key): the pairing ceremony
+  again with the pairing's own token (`POST /v1/pair/start` at session level, only from the TLS
+  key it is bound to), plus `"rekey": HMAC(S, "harbor-rekey-v3", th("harbor-rekey-v3", hubFp, phoneFp, token, epk, presence, "1"|"0", X))`
+  (`presence` empty with `nolock`). A wrong proof counts as a failed session start. The PC
+  shows "lost its screen lock: asks to go on with two factors" (or "has a new screen lock") with
+  the code; only its Confirm changes anything. `S` stays the same (the mesh's PCs keep theirs).
+- **The mesh**: `POST /mesh/v1/mint` also carries `nolock` and `keys_at`; a PC with the same
+  secret takes the other factors when `keys_at` is newer (and ends that pairing's sessions).
+  A PC that still says `factors: 3` to a two-factor phone is skipped until it has heard.
+- Old hubs refuse `nolock` and re-confirmation (`401`): the app says to update Harbor on the PC
+  or set a screen lock. Old apps never send them.
 
 ### Every call
 
@@ -879,7 +914,8 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   another PC (`group`: the pairing's id; the same group always gets the same token), bound to the
   phone's key `fp` at once. `410` once removed, `409` when the group's token has another key.
   Three factors: also `secret` (this PC's own, hex), `presence` and `binding`; a token without a
-  secret takes them, one with another secret is `409`.
+  secret takes them, one with another secret is `409`. From 0.34.1 also `nolock` (two factors,
+  `presence` empty) and `keys_at`: the same secret with newer `keys_at` takes the new factors.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
 - `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app}], apk}`: where this PC saw the
   phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it

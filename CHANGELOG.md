@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phones without a screen lock can pair and use Harbor again: they pair with two factors (the
+  phone's key and the pairing secret, sessions and rotating keys unchanged) instead of failing on
+  the presence key. The PC says so (Settings › Phones "2 factors" badge, the confirmation card,
+  Devices "2-factor, no screen lock") and so does the phone (Settings › Sign-in). Setting a lock
+  later adds the third factor on its own; removing it from a three-factor phone no longer bricks
+  the app: it offers to go on with two factors once the code is confirmed on the PC (no re-pair).
+  A three-factor pairing can't be talked down without the pairing secret and that confirmation.
+
 ## [0.34.0] - 2026-10-25
 
 ### Added

@@ -121,6 +121,8 @@ pub struct Device {
     pub via: String,
     /// Phones: its app's versionCode (api::PairedPhone::app, 0: unknown, an old app).
     pub app: i64,
+    /// Phones: the pairing's factors (2: the phone has no screen lock).
+    pub factors: u8,
     /// PCs that don't answer: why (mesh::Down::slug: "harbor" isn't running there, the "pc" is off).
     pub down: String,
 }
@@ -128,7 +130,7 @@ pub struct Device {
 impl Device {
     fn from_json(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), down: s("down") }
+        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), factors: v["factors"].as_u64().unwrap_or(0) as u8, down: s("down") }
     }
 
     pub fn phone(&self) -> bool {
@@ -181,7 +183,7 @@ fn paired() -> Vec<Device> {
     if hub.enabled.load(std::sync::atomic::Ordering::Relaxed) {
         for p in hub.paired_phones() {
             let online = p.seen > 0 && crate::store::now() - p.seen < PHONE_OPEN_SECS;
-            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen, via: p.via, app: p.app, ..Default::default() });
+            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen, via: p.via, app: p.app, factors: p.factors, ..Default::default() });
         }
     }
     v
@@ -668,6 +670,9 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         _ => "offline".into(),
     });
     if d.phone() {
+        if d.factors == 2 {
+            bits.push("2-factor, no screen lock".into());
+        }
         if let Some((note, _)) = app_note(d.app, d.seen) {
             bits.push(note);
         }
@@ -1312,7 +1317,7 @@ impl Files {
 
 /// For hot reload: what a device tab needs to come back.
 pub fn device_json(d: &Device) -> Value {
-    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "down": d.down })
+    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "factors": d.factors, "down": d.down })
 }
 
 pub fn device_from(v: &Value) -> Device {

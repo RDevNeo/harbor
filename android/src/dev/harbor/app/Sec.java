@@ -125,6 +125,16 @@ final class Sec {
         return th("harbor-pair-v3", utf8(hubFp), utf8(phoneFp), utf8(token), epkP, epkH, presence, flag(binding), x);
     }
 
+    /** What the pairing secret proves when a pairing re-confirms its factors (rekey). */
+    static byte[] rekeyMsg(String hubFp, String phoneFp, String token, byte[] epk, byte[] presence, boolean binding, byte[] x) {
+        return th("harbor-rekey-v3", utf8(hubFp), utf8(phoneFp), utf8(token), epk, presence, flag(binding), x);
+    }
+
+    /** What a new presence key signs to add the third factor to a two-factor pairing. */
+    static byte[] addPresenceMsg(String hubFp, String phoneFp, String token, String sid, byte[] presence) {
+        return th("harbor-presence-v3", utf8(hubFp), utf8(phoneFp), utf8(token), utf8(sid), presence);
+    }
+
     /** The pairing secret and the 6-digit code both screens show. */
     static Object[] pairKeys(byte[] t, byte[] z) {
         byte[] s = hkdf(t, z, "harbor-pair-v3 secret");

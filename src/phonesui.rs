@@ -44,9 +44,19 @@ impl App {
                 w::card(ui).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     let who = if p.name.is_empty() { "A phone" } else { p.name.as_str() };
-                    let what = if p.upgrade { "asks to upgrade its pairing to three factors" } else { "wants to pair with this PC" };
+                    let what = match (p.upgrade, p.rekey, p.nolock) {
+                        (true, _, false) => "asks to upgrade its pairing to three factors",
+                        (true, _, true) => "asks to upgrade its pairing to two factors (it has no screen lock)",
+                        (_, true, true) => "lost its screen lock: asks to go on with two factors",
+                        (_, true, false) => "has a new screen lock: asks to re-confirm its pairing",
+                        (_, _, true) => "wants to pair with two factors (it has no screen lock)",
+                        _ => "wants to pair with this PC",
+                    };
                     w::text(ui, format!("{}  {who} {what}", ic::SMARTPHONE), "strong-14");
                     w::subtle(ui, format!("Its key {}. Confirm only if the phone shows this same code:", crate::tls::short(&p.phone_fp)), "label-13");
+                    if p.nolock {
+                        w::subtle(ui, "Without a screen lock anyone holding the phone can use it: only its key and the pairing secret protect this PC. Setting a lock on the phone adds the third factor.", "label-12");
+                    }
                     ui.add_space(4.0);
                     w::text(ui, format!("{} {}", &p.code[..3], &p.code[3..]), "heading-32");
                     ui.add_space(6.0);
@@ -235,14 +245,18 @@ impl App {
                             w::subtle(ui, format!("Paired {when} · {key}{last}"), "label-12");
                             let st = hub.auth3.status(&t.token);
                             ui.horizontal(|ui| {
-                                if !t.three() {
+                                if !t.secured() {
                                     w::badge(ui, "Needs upgrade", Tone::Amber);
                                     w::subtle(ui, "Paired before three factors: it gets nothing until you confirm its code here (open Harbor on the phone).", "label-12");
                                 } else if let Some(left) = st.locked {
                                     w::badge(ui, "Locked", Tone::Red);
                                     w::subtle(ui, format!("Too many failed sign-ins: locked for {} more min.", left.as_secs() / 60 + 1), "label-12");
                                 } else {
-                                    w::badge(ui, "3 factors", Tone::Green);
+                                    if t.two() {
+                                        w::badge(ui, "2 factors", Tone::Amber);
+                                    } else {
+                                        w::badge(ui, "3 factors", Tone::Green);
+                                    }
                                     let s = if st.sessions > 0 {
                                         let secs = st.next_key.as_secs();
                                         format!("Connected · key {} · next key in {}:{:02}{}", st.epoch + 1, secs / 60, secs % 60, if t.binding { " · bound to TLS" } else { "" })
@@ -252,6 +266,9 @@ impl App {
                                     w::subtle(ui, s, "label-12");
                                 }
                             });
+                            if t.two() {
+                                w::subtle(ui, "2-factor: the phone has no screen lock. Setting one on the phone upgrades it to 3 factors.", "label-12");
+                            }
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if w::btn("Revoke").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {

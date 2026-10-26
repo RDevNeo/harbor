@@ -10,6 +10,12 @@
 //!    it (biometric or screen lock) within the last few minutes. The hub pins its public key at
 //!    pairing and wants its signature over the session's challenge.
 //!
+//! A phone without a screen lock can't have the third: it pairs with two (`nolock`), shown as
+//! such on both screens. Setting a lock later adds the presence key over a session (adding a
+//! factor needs nothing more); dropping it, or a new presence key for one the Keystore erased,
+//! is a re-confirmation: the pairing ceremony again, with the pairing secret proven and the code
+//! confirmed on the PC, so a phone's two factors alone never take the third away.
+//!
 //! A session's root key comes from a fresh ECDH plus the pairing secret. Its key chain moves one
 //! step per 10-minute epoch (HKDF-Expand), the old link erased, so a key taken from memory
 //! now opens nothing that came before. Every call then carries a MAC under the current epoch's
@@ -186,6 +192,17 @@ pub fn hub_secret(root: &[u8; 32], hub_fp: &str) -> [u8; 32] {
 
 fn flag(b: bool) -> &'static [u8] {
     if b { b"1" } else { b"0" }
+}
+
+/// The proof of the pairing secret a re-confirmation starts with (a pairing that drops its
+/// presence key, or brings a new one): over everything [`pair_presence_msg`] covers.
+pub fn rekey_msg(hub_fp: &str, phone_fp: &str, token: &str, epk: &[u8], presence: &[u8], binding: bool, x: &[u8]) -> [u8; 32] {
+    th("harbor-rekey-v3", &[hub_fp.as_bytes(), phone_fp.as_bytes(), token.as_bytes(), epk, presence, flag(binding), x])
+}
+
+/// What a two-factor pairing's new presence key signs to add the third, over its session.
+pub fn add_presence_msg(hub_fp: &str, phone_fp: &str, token: &str, sid: &str, presence: &[u8]) -> [u8; 32] {
+    th("harbor-presence-v3", &[hub_fp.as_bytes(), phone_fp.as_bytes(), token.as_bytes(), sid.as_bytes(), presence])
 }
 
 /// What the phone's presence key signs when it pairs.
@@ -392,6 +409,11 @@ pub struct Pending {
     pub code: String,
     /// It upgrades a pairing that worked with the TLS key alone.
     pub upgrade: bool,
+    /// The phone has no screen lock: two factors, no presence key.
+    pub nolock: bool,
+    /// A pairing with a secret re-confirms its factors (drops or replaces the presence key);
+    /// its secret stays.
+    pub rekey: bool,
     pub at: Instant,
     /// The PC's answer: confirmed or refused.
     pub decided: Option<bool>,
@@ -596,8 +618,8 @@ pub fn serve(hub: &Hub, peer: &Peer, x: Option<&[u8; 32]>, req: &Request, segs: 
     };
     let hub_fp = crate::tls::my_fp();
     let r = match (req.method.as_str(), segs, level) {
-        ("POST", ["v1", "pair", "start"], Level::Ticket | Level::Legacy) => pair_start(hub, phone_fp, &hub_fp, x, token, level, body, wake),
-        ("POST", ["v1", "pair", "finish"], Level::Ticket | Level::Legacy) => pair_finish(hub, phone_fp, token, body),
+        ("POST", ["v1", "pair", "start"], Level::Ticket | Level::Legacy | Level::Session) => pair_start(hub, phone_fp, &hub_fp, x, token, level, body, wake, now),
+        ("POST", ["v1", "pair", "finish"], Level::Ticket | Level::Legacy | Level::Session) => pair_finish(hub, phone_fp, token, body),
         ("POST", ["v1", "session", "hello"], Level::Session) => session_hello(hub, phone_fp, token, body, now),
         ("POST", ["v1", "session", "open"], Level::Session) => session_open(hub, phone_fp, &hub_fp, x, token, body, now),
         _ => Err("not allowed at this pairing's level"),
@@ -609,23 +631,48 @@ pub fn serve(hub: &Hub, peer: &Peer, x: Option<&[u8; 32]>, req: &Request, segs: 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn pair_start(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, token: &str, level: Level, body: &Value, wake: &dyn Fn()) -> Result<crate::api::Reply, Why> {
-    let (Some(epk), Some(presence), Some(psig)) = (field(body, "epk"), field(body, "presence"), field(body, "psig")) else { return Err("bad pairing request") };
+fn pair_start(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, token: &str, level: Level, body: &Value, wake: &dyn Fn(), now: Instant) -> Result<crate::api::Reply, Why> {
+    // No screen lock on the phone: two factors, no presence key (and nothing it signs).
+    let nolock = body["nolock"].as_bool().unwrap_or(false);
+    let Some(epk) = field(body, "epk") else { return Err("bad pairing request") };
     let binding = body["binding"].as_bool().unwrap_or(false);
     if binding && x.is_none() {
         return Err("binding asked without TLS");
     }
     let xb: &[u8] = if binding { x.map_or(&[], |x| &x[..]) } else { &[] };
-    if p256_point(&presence).is_none() {
-        return Err("bad presence key");
-    }
-    if !sig_ok(&presence, &pair_presence_msg(hub_fp, phone_fp, token, &epk, &presence, binding, xb), &psig) {
-        return Err("bad presence signature at pairing");
-    }
+    let presence = if nolock {
+        if body.get("presence").is_some_and(|p| !p.is_null()) {
+            return Err("a presence key without a screen lock");
+        }
+        vec![]
+    } else {
+        let (Some(presence), Some(psig)) = (field(body, "presence"), field(body, "psig")) else { return Err("bad pairing request") };
+        if p256_point(&presence).is_none() {
+            return Err("bad presence key");
+        }
+        if !sig_ok(&presence, &pair_presence_msg(hub_fp, phone_fp, token, &epk, &presence, binding, xb), &psig) {
+            return Err("bad presence signature at pairing");
+        }
+        presence
+    };
     // A pairing from before three factors: only the phone whose key it already has may upgrade it.
-    let bound = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.fp.clone()).unwrap_or_default();
-    if level == Level::Legacy && bound != phone_fp {
+    // A pairing with a secret re-confirms only from its key and with its secret proven: the
+    // code on the PC then decides.
+    let (bound, secret) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (t.fp.clone(), unhex32(&t.secret))).unwrap_or_default();
+    if matches!(level, Level::Legacy | Level::Session) && bound != phone_fp {
         return Err("upgrade from another TLS key");
+    }
+    if level == Level::Session {
+        if hub.auth3.locked(token, now) {
+            return Err("pairing locked after failed session starts");
+        }
+        let Some(mut s) = secret else { return Err("re-confirmation of a pairing without a secret") };
+        let ok = field(body, "rekey").is_some_and(|p| same(&labelled(&s, "harbor-rekey-v3", &rekey_msg(hub_fp, phone_fp, token, &epk, &presence, binding, xb)), &p));
+        wipe(&mut s);
+        if !ok {
+            hub.auth3.failed(token, now);
+            return Err("bad pairing-secret proof for a re-confirmation");
+        }
     }
     let (epk_h, mut z) = ecdh(&epk).ok_or("bad ECDH key")?;
     let t = pair_transcript(hub_fp, phone_fp, token, &epk, &epk_h, &presence, binding, xb);
@@ -648,7 +695,7 @@ fn pair_start(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, tok
         }
         p.retain(|q| q.token != token);
         let who = if name.is_empty() { "A phone".to_string() } else { name.clone() };
-        p.push(Pending { token: token.into(), phone_fp: phone_fp.into(), name, code, upgrade: level == Level::Legacy, at: Instant::now(), decided: None, secret, presence, binding, transcript: t });
+        p.push(Pending { token: token.into(), phone_fp: phone_fp.into(), name, code, upgrade: level == Level::Legacy, nolock, rekey: level == Level::Session, at: Instant::now(), decided: None, secret, presence, binding, transcript: t });
         if !cfg!(test) {
             crate::limits::notify("Confirm a phone", &format!("{who} wants to pair with Harbor: compare its code in Settings › Phones."));
         }
@@ -684,8 +731,14 @@ fn pair_finish(hub: &Hub, phone_fp: &str, token: &str, body: &Value) -> Result<c
                     let mut tokens = hub.tokens.lock().unwrap();
                     let Some(t) = tokens.iter_mut().find(|t| t.token == token) else { return Err("pairing removed meanwhile") };
                     t.fp = q.phone_fp.clone();
-                    t.secret = hex(&q.secret);
+                    // A re-confirmation keeps the pairing's secret (the other PCs of the mesh
+                    // hold theirs, derived from it); only its factors change.
+                    if !q.rekey {
+                        t.secret = hex(&q.secret);
+                    }
                     t.presence = hex(&q.presence);
+                    t.nolock = q.nolock;
+                    t.keys_at = crate::store::now();
                     t.binding = q.binding;
                     t.ticket = false;
                     if !q.name.is_empty() {
@@ -716,6 +769,7 @@ fn session_hello(hub: &Hub, phone_fp: &str, token: &str, body: &Value, now: Inst
     if nonce.len() != 32 {
         return Err("bad session nonce");
     }
+    let factors = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map_or(3, |t| t.factors());
     let (epk_h, z) = ecdh(&epk_p).ok_or("bad ECDH key")?;
     let challenge = random32().ok_or("no randomness")?;
     let hid = crate::store::random_hex(16).map_err(|_| "no randomness")?;
@@ -728,7 +782,7 @@ fn session_hello(hub: &Hub, phone_fp: &str, token: &str, body: &Value, now: Inst
         }
     }
     h.insert(hid.clone(), Hello { token: token.into(), phone_fp: phone_fp.into(), epk_p, epk_h: epk_h.clone(), nonce, challenge, z, at: now });
-    Ok(reply(200, json!({ "hid": hid, "epk": hex(&epk_h), "challenge": hex(&challenge) })))
+    Ok(reply(200, json!({ "hid": hid, "epk": hex(&epk_h), "challenge": hex(&challenge), "factors": factors })))
 }
 
 fn session_open(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, token: &str, body: &Value, now: Instant) -> Result<crate::api::Reply, Why> {
@@ -741,8 +795,14 @@ fn session_open(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, t
     if h.token != token || h.phone_fp != phone_fp || now.saturating_duration_since(h.at) > HELLO_TTL {
         return Err("session hello from another pairing, key or time");
     }
-    let (secret, presence, binding) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (unhex32(&t.secret), unhex(&t.presence), t.binding)).ok_or("pairing removed")?;
-    let (Some(mut secret), Some(presence)) = (secret, presence) else { return Err("pairing without three factors") };
+    let (secret, presence, binding, two) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| (unhex32(&t.secret), unhex(&t.presence), t.binding, t.two())).ok_or("pairing removed")?;
+    let Some(mut secret) = secret else { return Err("pairing without three factors") };
+    // A presence key, unless the pairing was confirmed on the PC as one without a screen lock.
+    let presence = presence.filter(|p| p256_point(p).is_some());
+    if presence.is_none() && !two {
+        wipe(&mut secret);
+        return Err("pairing without three factors");
+    }
     if binding && x.is_none() {
         wipe(&mut secret);
         return Err("session needs a TLS connection");
@@ -751,8 +811,11 @@ fn session_open(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, t
     let t2 = session_transcript(hub_fp, phone_fp, token, &h.epk_p, &h.epk_h, &h.nonce, &h.challenge, xb);
     // Factor 2: the pairing secret.
     let proof_ok = field(body, "proof").is_some_and(|p| same(&labelled(&secret, "harbor-session-v3 proof", &t2), &p));
-    // Factor 3: the user unlocked the phone just now.
-    let sig_good = field(body, "sig").is_some_and(|s| sig_ok(&presence, &session_presence_msg(&t2), &s));
+    // Factor 3: the user unlocked the phone just now (none for a phone without a screen lock).
+    let sig_good = match &presence {
+        Some(presence) => field(body, "sig").is_some_and(|s| sig_ok(presence, &session_presence_msg(&t2), &s)),
+        None => two,
+    };
     if !proof_ok || !sig_good {
         wipe(&mut secret);
         st.failed(token, now);
@@ -772,7 +835,44 @@ fn session_open(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, t
     all.insert(sid.clone(), Session { token: token.into(), phone_fp: phone_fp.into(), bound: binding, start: now, last: now, ratchet: Ratchet::new(root), window: Window::default(), fails: 0 });
     drop(all);
     st.unlock(token);
-    Ok(reply(200, json!({ "sid": sid, "epoch_ms": epoch_len().as_millis() as u64, "grace_ms": grace().as_millis() as u64, "idle_ms": IDLE.as_millis() as u64, "max_ms": MAX_AGE.as_millis() as u64, "proof": hex(&hub_proof) })))
+    let factors = if presence.is_some() { 3 } else { 2 };
+    Ok(reply(200, json!({ "sid": sid, "epoch_ms": epoch_len().as_millis() as u64, "grace_ms": grace().as_millis() as u64, "idle_ms": IDLE.as_millis() as u64, "max_ms": MAX_AGE.as_millis() as u64, "proof": hex(&hub_proof), "factors": factors })))
+}
+
+/// `POST /v1/pair/presence` over a session of a two-factor pairing: the phone has a screen lock
+/// now and adds its presence key (the third factor), signed by that key. Adding a factor takes
+/// nothing more than the session; a pairing that has one already changes it only by
+/// re-confirming on the PC.
+pub fn add_presence(hub: &Hub, peer: &Peer, req: &Request, token: &str, body: &Value) -> crate::api::Reply {
+    let r = (|| -> Result<crate::api::Reply, Why> {
+        let Via::Tls(Some(phone_fp)) = &peer.via else { return Err("three factors need TLS with the phone's key") };
+        let sid = req.header("x-harbor-session").ok_or("no session")?;
+        let (Some(presence), Some(psig)) = (field(body, "presence"), field(body, "psig")) else { return Err("bad presence request") };
+        if p256_point(&presence).is_none() {
+            return Err("bad presence key");
+        }
+        if !sig_ok(&presence, &add_presence_msg(&crate::tls::my_fp(), phone_fp, token, sid, &presence), &psig) {
+            return Err("bad presence signature");
+        }
+        let mut tokens = hub.tokens.lock().unwrap();
+        let t = tokens.iter_mut().find(|t| t.token == token && t.fp == *phone_fp).ok_or("pairing removed")?;
+        if t.three() {
+            return if t.presence == hex(&presence) { Ok(reply(200, json!({ "factors": 3 }))) } else { Ok(reply(409, json!({ "error": "This pairing has a presence key already: re-confirm it on the PC." }))) };
+        }
+        if !t.two() {
+            return Err("presence for a pairing without a secret");
+        }
+        t.presence = hex(&presence);
+        t.nolock = false;
+        t.keys_at = crate::store::now();
+        drop(tokens);
+        hub.tokens_dirty.store(true, Ordering::SeqCst);
+        Ok(reply(200, json!({ "factors": 3 })))
+    })();
+    r.unwrap_or_else(|why| {
+        hub.auth3.note(peer.ip, why);
+        reply(400, json!({ "error": "The PC couldn't add this phone's screen lock as a factor." }))
+    })
 }
 
 // ================================================================== tests
@@ -851,6 +951,11 @@ pub mod tests {
         assert_eq!(hex(&k3), VEC_K3);
         assert_eq!(hex(&mac), VEC_MAC);
         assert_eq!(hex(&hub_secret(&[6; 32], "cc")), VEC_HUBSECRET);
+        let rk = rekey_msg("hh", "pp", "tok", &[7; 4], &[], true, &[8; 32]);
+        let ap = add_presence_msg("hh", "pp", "tok", "sid", &[9; 4]);
+        println!("VEC rekey={} addpresence={}", hex(&rk), hex(&ap));
+        assert_eq!(hex(&rk), VEC_REKEY);
+        assert_eq!(hex(&ap), VEC_ADDPRESENCE);
     }
 
     const VEC_TH: &str = "af7369f5bac5c613b958471530d69b638f0be097c6b131b91fd55b3576e787a3";
@@ -859,6 +964,8 @@ pub mod tests {
     const VEC_K0: &str = "e6b49459350050f2c0c6ea10a589ec82e565579adc99f05a00ba18fad774146e";
     const VEC_K3: &str = "7c342e37a39cace52b8281c6ea32c3125608190ff09969cfbb5750608ed66f3f";
     const VEC_MAC: &str = "78d83b9c1472be6f7cfabe8d2c59f7a155de2b26ed7c880cd877dc81fe863ad2";
+    const VEC_REKEY: &str = "76ff425e763a66725ee859afa39a3acf83e72379ec78c23a220775f0a8752aa1";
+    const VEC_ADDPRESENCE: &str = "9b66f1a091d649ccdbd56509decd14e9a881a93ebddb7f0648cae184944d85dd";
     const VEC_HUBSECRET: &str = "849c6eb3ca9b030f2bb199862c4e88aaa29cf7460dfeb1b09daaca05f9e60571";
 
     #[test]
@@ -1195,6 +1302,153 @@ pub mod tests {
         hub.auth3.decide("old", true);
         assert_eq!(call(&hub, &p, "/v1/pair/finish", "old", json!({ "proof": hex(&labelled(&phone.secret, "harbor-pair-v3 phone", &t)) })).status, 200);
         assert_eq!(hub.auth("old", &p.via), Ok(Level::Session));
+    }
+
+    /// Starts a pairing (a ticket) or a re-confirmation (`rekey`: the pairing's secret) for a
+    /// phone without a screen lock, or with `presence` a new presence key; returns the reply, code
+    /// and transcript, the ceremony's secret in `phone.secret` unless re-confirming.
+    fn start_ceremony(hub: &Hub, phone: &mut Phone, p: &Peer, token: &str, nolock: bool, rekey: Option<[u8; 32]>) -> (crate::api::Reply, String, [u8; 32]) {
+        let hub_fp = crate::tls::my_fp();
+        let (k, epk) = eph();
+        let x = p.x.unwrap();
+        let presence = if nolock { vec![] } else { phone.presence_spki() };
+        let mut body = json!({ "epk": hex(&epk), "binding": true, "name": "Pixel" });
+        if nolock {
+            body["nolock"] = json!(true);
+        } else {
+            body["presence"] = json!(hex(&presence));
+            body["psig"] = json!(hex(&phone.sign(&pair_presence_msg(&hub_fp, &phone.fp, token, &epk, &presence, true, &x))));
+        }
+        if let Some(s) = rekey {
+            body["rekey"] = json!(hex(&labelled(&s, "harbor-rekey-v3", &rekey_msg(&hub_fp, &phone.fp, token, &epk, &presence, true, &x))));
+        }
+        let r = call(hub, p, "/v1/pair/start", token, body);
+        if r.status != 200 {
+            return (r, String::new(), [0; 32]);
+        }
+        let epk_h = unhex(r.body["epk"].as_str().unwrap()).unwrap();
+        let z = agree(k, &epk_h);
+        let t = pair_transcript(&hub_fp, &phone.fp, token, &epk, &epk_h, &presence, true, &x);
+        let (s, code) = pair_keys(&t, &z);
+        if rekey.is_none() {
+            phone.secret = s;
+        }
+        // The ceremony's own key proves the finish (kept for the caller).
+        CEREMONY.with(|c| *c.borrow_mut() = s);
+        (r, code, t)
+    }
+
+    thread_local! {
+        static CEREMONY: std::cell::RefCell<[u8; 32]> = const { std::cell::RefCell::new([0; 32]) };
+    }
+
+    fn finish(hub: &Hub, p: &Peer, token: &str, t: &[u8; 32]) -> crate::api::Reply {
+        let s = CEREMONY.with(|c| *c.borrow());
+        call(hub, p, "/v1/pair/finish", token, json!({ "proof": hex(&labelled(&s, "harbor-pair-v3 phone", t)) }))
+    }
+
+    /// Opens a session without a presence signature (a phone without a screen lock).
+    fn open_two(hub: &Hub, phone: &Phone, p: &Peer, token: &str, secret: [u8; 32]) -> crate::api::Reply {
+        let hub_fp = crate::tls::my_fp();
+        let (_, epk) = eph();
+        let nonce = [4u8; 32];
+        let h = call(hub, p, "/v1/session/hello", token, json!({ "epk": hex(&epk), "nonce": hex(&nonce) }));
+        assert_eq!(h.status, 200, "{:?}", h.body);
+        let epk_h = unhex(h.body["epk"].as_str().unwrap()).unwrap();
+        let ch = unhex(h.body["challenge"].as_str().unwrap()).unwrap();
+        let t2 = session_transcript(&hub_fp, &phone.fp, token, &epk, &epk_h, &nonce, &ch, &p.x.unwrap());
+        let proof = labelled(&secret, "harbor-session-v3 proof", &t2);
+        let mut r = call(hub, p, "/v1/session/open", token, json!({ "hid": h.body["hid"], "proof": hex(&proof) }));
+        r.body["hello_factors"] = h.body["factors"].clone();
+        r
+    }
+
+    #[test]
+    fn a_phone_without_a_lock_pairs_with_two_factors() {
+        let hub = hub_with(vec![ticket("t1")]);
+        let mut phone = Phone::new(&"a".repeat(64));
+        let p = peer(&phone.fp, [1; 32]);
+        let (r, code, t) = start_ceremony(&hub, &mut phone, &p, "t1", true, None);
+        assert_eq!(r.status, 200, "{:?}", r.body);
+        let w = hub.auth3.waiting();
+        assert!(w[0].nolock && !w[0].rekey && !w[0].upgrade, "the PC is told it has no screen lock");
+        assert_eq!(w[0].code, code);
+        hub.auth3.decide("t1", true);
+        assert_eq!(finish(&hub, &p, "t1", &t).body["status"], "paired");
+        let tok = hub.tokens.lock().unwrap()[0].clone();
+        assert!(tok.two() && !tok.three() && tok.secured() && tok.factors() == 2 && tok.keys_at > 0);
+        assert_eq!(hub.auth("t1", &p.via), Ok(Level::Session), "sessions, like three factors");
+        let s = open_two(&hub, &phone, &p, "t1", phone.secret);
+        assert_eq!(s.status, 200, "{:?}", s.body);
+        assert_eq!((s.body["factors"].as_u64(), s.body["hello_factors"].as_u64()), (Some(2), Some(2)));
+        // Still factor 2: without the pairing secret, nothing.
+        assert_eq!(open_two(&hub, &phone, &p, "t1", [0x55; 32]).status, 401);
+        // A presence key sent along with "no lock" is refused (no mixing).
+        let (_, epk) = eph();
+        let bad = call(&hub, &p, "/v1/pair/start", "t1", json!({ "epk": hex(&epk), "nolock": true, "presence": hex(&phone.presence_spki()) }));
+        assert_eq!(bad.status, 401);
+    }
+
+    #[test]
+    fn a_three_factor_pairing_cant_be_talked_down() {
+        let (hub, mut phone, p) = paired();
+        let secret = phone.secret;
+        // No signature: no session, whatever the phone says.
+        let r = open_two(&hub, &phone, &p, "tok", secret);
+        assert_eq!(r.status, 401);
+        assert_eq!(r.body["hello_factors"].as_u64(), Some(3));
+        // "No lock" without the pairing secret, or with a wrong one: refused and counted.
+        assert_eq!(start_ceremony(&hub, &mut phone, &p, "tok", true, None).0.status, 401);
+        assert_eq!(start_ceremony(&hub, &mut phone, &p, "tok", true, Some([0x55; 32])).0.status, 401);
+        assert!(hub.auth3.waiting().is_empty());
+        // Another TLS key with the right secret: refused.
+        assert!(hub.auth("tok", &Via::Tls(Some("c".repeat(64)))).is_err());
+        // With the secret it only asks: the PC decides with the code.
+        let (r, _, t) = start_ceremony(&hub, &mut phone, &p, "tok", true, Some(secret));
+        assert_eq!(r.status, 200, "{:?}", r.body);
+        let w = hub.auth3.waiting();
+        assert!(w[0].rekey && w[0].nolock);
+        assert!(hub.tokens.lock().unwrap()[0].three(), "nothing changes before the PC confirms");
+        hub.auth3.decide("tok", false);
+        assert_eq!(finish(&hub, &p, "tok", &t).status, 403);
+        assert!(hub.tokens.lock().unwrap()[0].three(), "refused on the PC: still three");
+        let (_, _, t) = start_ceremony(&hub, &mut phone, &p, "tok", true, Some(secret));
+        hub.auth3.decide("tok", true);
+        assert_eq!(finish(&hub, &p, "tok", &t).body["status"], "paired");
+        let tok = hub.tokens.lock().unwrap()[0].clone();
+        assert!(tok.two(), "confirmed: two factors");
+        assert_eq!(tok.secret, hex(&secret), "the secret stays (the mesh's PCs hold theirs)");
+        assert_eq!(open_two(&hub, &phone, &p, "tok", secret).status, 200);
+    }
+
+    #[test]
+    fn a_lock_set_later_adds_the_third_factor() {
+        let hub = hub_with(vec![ticket("t1")]);
+        let mut phone = Phone::new(&"a".repeat(64));
+        let p = peer(&phone.fp, [1; 32]);
+        let (_, _, t) = start_ceremony(&hub, &mut phone, &p, "t1", true, None);
+        hub.auth3.decide("t1", true);
+        finish(&hub, &p, "t1", &t);
+        let s = open_two(&hub, &phone, &p, "t1", phone.secret);
+        let sid = s.body["sid"].as_str().unwrap().to_string();
+        let add = |signer: &Phone, presence: &[u8]| {
+            let mut req = post("/v1/pair/presence");
+            req.headers.push(("x-harbor-session".into(), sid.clone()));
+            let psig = signer.sign(&add_presence_msg(&crate::tls::my_fp(), &phone.fp, "t1", &sid, presence));
+            add_presence(&hub, &p, &req, "t1", &json!({ "presence": hex(presence), "psig": hex(&psig) }))
+        };
+        // Signed by another key than the one it brings: refused.
+        let other = Phone::new(&phone.fp);
+        assert_eq!(add(&other, &phone.presence_spki()).status, 400);
+        assert!(hub.tokens.lock().unwrap()[0].two());
+        assert_eq!(add(&phone, &phone.presence_spki()).status, 200);
+        let tok = hub.tokens.lock().unwrap()[0].clone();
+        assert!(tok.three() && !tok.nolock);
+        // From now on the presence key is needed, and another one can't replace it this way.
+        assert_eq!(open_two(&hub, &phone, &p, "t1", phone.secret).status, 401);
+        assert_eq!(open_session(&hub, &phone, &p, "t1", phone.secret, &phone).status, 200);
+        assert_eq!(add(&other, &other.presence_spki()).status, 409);
+        assert_eq!(add(&phone, &phone.presence_spki()).status, 200, "the same key again: fine");
     }
 
     #[test]

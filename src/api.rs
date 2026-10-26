@@ -80,15 +80,47 @@ pub struct Token {
     /// The phone binds its calls to the TLS connection (exporter): every call must.
     #[serde(default)]
     pub binding: bool,
+    /// Confirmed on the PC as a phone without a screen lock: two factors (TLS key and pairing
+    /// secret), no presence key. Never set by the phone alone (phoneauth.rs).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nolock: bool,
+    /// When the factors last changed (unix s): the other PCs of the mesh take the newest.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub keys_at: i64,
     /// A pairing code shown on the PC, not used yet: good for pairing only, for 10 minutes.
     #[serde(default)]
     pub ticket: bool,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 impl Token {
     /// Three factors: a session is needed for every call.
     pub fn three(&self) -> bool {
         !self.secret.is_empty() && !self.presence.is_empty()
+    }
+
+    /// Two factors: a phone without a screen lock, confirmed on the PC as one. Sessions too.
+    pub fn two(&self) -> bool {
+        !self.secret.is_empty() && self.presence.is_empty() && self.nolock
+    }
+
+    /// A pairing with a secret (two or three factors): every call needs a session.
+    pub fn secured(&self) -> bool {
+        self.three() || self.two()
+    }
+
+    /// 3, 2, or 0 for a pairing from before three factors.
+    pub fn factors(&self) -> u8 {
+        if self.three() {
+            3
+        } else if self.two() {
+            2
+        } else {
+            0
+        }
     }
 }
 
@@ -244,6 +276,8 @@ pub struct PairedPhone {
     /// Its app's versionCode: what it says (`X-Harbor-App`, apps from 0.19), at least
     /// [`APP_INBOX`] for an app that picks up sends, 0 when unknown (an older app).
     pub app: i64,
+    /// Its pairing's factors here (Token::factors): 2 for a phone without a screen lock.
+    pub factors: u8,
 }
 
 /// The first app version that picks up what PCs send (`GET /v1/inbox`, 0.17.0).
@@ -477,6 +511,7 @@ impl Hub {
             match out.iter_mut().find(|p| p.group == t.group) {
                 Some(p) => {
                     p.app = p.app.max(app);
+                    p.factors = p.factors.max(t.factors());
                     if at > p.seen {
                         p.seen = at;
                         p.ip = ip;
@@ -487,7 +522,7 @@ impl Hub {
                         p.name = name;
                     }
                 }
-                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new() }),
+                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), factors: t.factors() }),
             }
         }
         out
@@ -578,7 +613,7 @@ impl Hub {
         }
         let level = if t.ticket {
             Level::Ticket
-        } else if t.three() {
+        } else if t.secured() {
             Level::Session
         } else {
             Level::Legacy
@@ -1067,7 +1102,7 @@ pub fn caller(hub: &Hub, peer: &Peer, req: &Request) -> Result<(String, Option<c
         let Via::Tls(Some(fp)) = &peer.via else { return Err("a session without TLS") };
         let token = hub.auth3.verify(req, fp, &crate::tls::my_fp(), peer.x.as_ref())?;
         // Revoked meanwhile (here or on another PC of the mesh): its sessions end now.
-        if !hub.tokens.lock().unwrap().iter().any(|t| t.token == token && t.three() && t.fp == *fp) {
+        if !hub.tokens.lock().unwrap().iter().any(|t| t.token == token && t.secured() && t.fp == *fp) {
             hub.auth3.drop_token(&token);
             return Err("session of a removed pairing");
         }
@@ -1317,6 +1352,12 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         // The PCs of the mesh, with this phone's token on each (mesh.rs).
         ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub, &token, None)),
+        // A phone without a screen lock has one now: its presence key, the third factor.
+        ("POST", ["v1", "pair", "presence"]) => {
+            let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let reply = crate::phoneauth::add_presence(hub, &peer, &req, &token, &body);
+            send_json(r.get_mut(), reply.status, &reply.body)
+        }
         // The phone hands each other PC its own pairing secret (derived from this one's).
         ("POST", ["v1", "hubs"]) => {
             let body: Value = read_body(&mut r, req.len, 64 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);

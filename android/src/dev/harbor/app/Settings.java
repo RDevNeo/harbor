@@ -74,6 +74,20 @@ public class Settings extends Base {
         String keys = (hub.fp.isEmpty() ? "PC key not known yet" : "PC " + shortFp(hub.fp)) + " · this phone " + shortFp(Net.myFp());
         here.addView(Ui.cardRow(this, Ui.I_LOCK, "Encrypted with", keys, Ui.FG, null), Ui.fill());
         here.addView(Ui.gap(this));
+        // How this phone signs in to the PC: the factors the pairing has.
+        int f = hub.factors();
+        boolean lock = Presence.secureLock();
+        String fs = f == 3 ? (lock ? "3 factors: this phone's key, the pairing secret and its screen lock"
+                        : "3 factors, but the screen lock was removed: tap to go on with two")
+                : f == 2 ? (lock ? "2 factors: the screen lock is added the next time Harbor connects"
+                        : "2 factors: this phone has no screen lock. Set one (tap) to add the third.")
+                : "Paired before three factors: upgrade it when the PC asks";
+        boolean warn = f == 2 || (f == 3 && !lock);
+        View.OnClickListener tap = f == 2 && !lock ? v -> Pair.openLockSettings(this) : f == 3 && !lock ? v -> Pair.offerLock(this, hub) : null;
+        LinearLayout sign = Ui.cardRow(this, warn ? Ui.I_LOCK_OPEN : Ui.I_LOCK, "Sign-in", fs, warn ? Ui.AMBER : Ui.FG, tap);
+        if (tap != null) sign.addView(Ui.chevron(this));
+        here.addView(sign, Ui.fill());
+        here.addView(Ui.gap(this));
         LinearLayout ver = Ui.cardRow(this, Ui.I_MONITOR, "Harbor on the PC", "…", Ui.FG, null);
         hubVersion = (TextView) ((LinearLayout) ver.getChildAt(1)).getChildAt(1);
         here.addView(ver, Ui.fill());
