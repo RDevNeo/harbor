@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-26
+
+### Changed
+- Design: Harbor's controls follow the rengaf design system's components. Buttons take rengaf's sizes
+  (28, 32 and 36 px) and default to the outline style; menus and popovers are less rounded, with a
+  lighter shadow and rengaf's hover colour; tooltips are inverted, small and dark-on-light (light on
+  dark); switches are gray instead of blue; badges have their border; text keeps rengaf's line
+  heights and heading tracking; scrollbars and key caps match.
+
 ## [0.40.0] - 2026-10-26
 
 ### Added
@@ -918,7 +927,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/RDevNeo/harbor/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/RDevNeo/harbor/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/RDevNeo/harbor/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/RDevNeo/harbor/compare/v0.37.2...v0.38.0
