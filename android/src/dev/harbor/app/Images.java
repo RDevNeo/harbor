@@ -70,12 +70,29 @@ final class Images {
         for (int i = 0; i < all.size(); i++) {
             Src s = all.get(i);
             ImageView iv = tile(a, s.name);
+            // An image that doesn't come (the PC that has it is off, a relay can't reach it):
+            // a tile that says so, and a tap asks again.
+            FrameLayout f = new FrameLayout(a);
+            f.addView(iv, new FrameLayout.LayoutParams(-1, -1));
+            LinearLayout miss = Ui.col(a);
+            miss.setGravity(Gravity.CENTER);
+            miss.addView(Ui.icon(a, Ui.I_IMAGE, 20, Ui.G600));
+            miss.addView(Ui.text(a, "Tap to retry", 11, Ui.G600), Ui.margins(Ui.wrap(), 0, 4, 0, 0));
+            miss.setVisibility(View.GONE);
+            f.addView(miss, new FrameLayout.LayoutParams(-1, -1));
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(Ui.dp(size), Ui.dp(size));
             if (i > 0) p.leftMargin = Ui.dp(8);
-            row.addView(iv, p);
-            load(a, hub, s.url, iv);
+            row.addView(f, p);
+            Runnable failed = () -> { miss.setVisibility(View.VISIBLE); iv.setContentDescription(s.name + ": didn't load, tap to retry"); };
+            load(a, hub, s.url, iv, failed);
             int at = i;
-            iv.setOnClickListener(v -> view(a, all, at));
+            iv.setOnClickListener(v -> {
+                if (miss.getVisibility() == View.VISIBLE) {
+                    miss.setVisibility(View.GONE);
+                    iv.setContentDescription(s.name);
+                    load(a, hub, s.url, iv, failed);
+                } else view(a, all, at);
+            });
         }
         h.addView(row);
         return h;
@@ -91,14 +108,20 @@ final class Images {
         return iv;
     }
 
-    static void load(Activity a, Hub hub, String url, ImageView into) {
+    static void load(Activity a, Hub hub, String url, ImageView into) { load(a, hub, url, into, null); }
+
+    /** Loads into the view; `failed` (on the UI thread) when the image can't be had. */
+    static void load(Activity a, Hub hub, String url, ImageView into, Runnable failed) {
         if (url == null || url.isEmpty()) return;
         Bitmap b = cache.get(hub.id + url);
         if (b != null) { into.setImageBitmap(b); return; }
         into.setTag(url);
         Ui.pool.execute(() -> {
             Bitmap got = fetch(hub, url);
-            if (got == null) return;
+            if (got == null) {
+                if (failed != null) Ui.main.post(() -> { if (url.equals(into.getTag()) && !a.isDestroyed()) failed.run(); });
+                return;
+            }
             cache.put(hub.id + url, got);
             Ui.main.post(() -> { if (url.equals(into.getTag()) && !a.isDestroyed()) into.setImageBitmap(got); });
         });

@@ -374,6 +374,9 @@ refetch everything.
   window ("5h", "Weekly", …).
 - `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
 - `queued`: messages waiting for the running turn.
+- `working` (optional, older hubs leave it out: use `running`): the chat is busy as the desktop
+  sidebar shows it, its own turn or, for a lead, any of its sub-agents' turns or work queued for
+  them. Draw the list's spinner from it; `running` stays the chat's own turn (the composer's Stop).
 - `you`: this client's own device id, as it appears in `typing` (hide yourself with it).
 - `typing`: who is writing in the chat now (see [Typing](#typing)); for another PC's chat, as
   that PC keeps it (typing in a copy is passed on to its PC).
@@ -659,7 +662,10 @@ continue). → `{"ok": true}`.
 
 An image a card shows (its `images[].url`), with the token like every call. With `max`, a JPEG at
 most that many pixels on its longer side (16–2048); without, the file as it is. Image files only
-(png, jpg, gif, webp, …); `404` otherwise. An upload's `path` works too.
+(png, jpg, gif, webp, …); `404` otherwise. An upload's `path` works too. Card URLs carry
+`&chat=<gid>`: when the chat runs on another PC of the mesh, the PC answering fetches the image
+from there (its paths are that PC's files). When an image can't be had, show its tile with a way
+to try again.
 
 ### `GET /v1/chats/{id}/team`
 

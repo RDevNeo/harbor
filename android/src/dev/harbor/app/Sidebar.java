@@ -171,6 +171,14 @@ final class Sidebar {
         String via = a.hub.viaName();
         String pc = !via.isEmpty() ? a.hub.label() + " · via " + via : Hub.all(a).size() > 1 ? a.hub.label() : null;
         list.addView(nav(Ui.I_MONITOR, "PCs", pc, Ui.FG, v -> pcs()), Ui.inset());
+        // The PC answering runs an older Harbor than this app (often a relay while the phone's
+        // own PC is out of reach): newer things won't show until it's updated.
+        String older = olderPc(st);
+        if (older != null) {
+            TextView o = Ui.text(a, older, 12, Ui.AMBER);
+            o.setPadding(Ui.dp(52), 0, Ui.dp(20), Ui.dp(6));
+            list.addView(o, Ui.fill());
+        }
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
         JSONObject app = st.optJSONObject("app");
         long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
@@ -344,6 +352,26 @@ final class Sidebar {
         return wrap;
     }
 
+    /** "<PC> runs Harbor 0.28.0, older than this app: update it there", or null. */
+    private String olderPc(JSONObject st) {
+        String v = st == null ? "" : st.optString("version", "");
+        String[] p = v.split("[.\\- ]");
+        if (p.length < 2) return null;
+        try {
+            long pc = Long.parseLong(p[0]) * 1_000_000 + Long.parseLong(p[1]) * 1_000;
+            if (pc >= Hub.appCode() / 1_000 * 1_000) return null;
+        } catch (NumberFormatException e) { return null; }
+        String via = a.hub.viaName();
+        String name = !via.isEmpty() ? via : st.optString("hub_name", a.hub.label());
+        return name + " runs Harbor " + v.split(" ")[0] + ", older than this app: some things won't show until it's updated there.";
+    }
+
+    /** Busy as the desktop sidebar shows it: its own turn, or (a lead) its sub-agents'
+     *  (`working`; older PCs only send `running`). */
+    static boolean working(JSONObject c) {
+        return c.optBoolean("working", c.optBoolean("running"));
+    }
+
     // ---- the hub doesn't answer ----
 
     private String offTitle, offBody;
@@ -379,7 +407,7 @@ final class Sidebar {
         h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
         h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
         boolean busy = false;
-        for (JSONObject c : cs) busy |= c.optBoolean("running") || Hub.queued(c) > 0;
+        for (JSONObject c : cs) busy |= working(c) || Hub.queued(c) > 0;
         if (fold && busy) h.addView(Ui.dot(a, Ui.BLUE, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 8, 0, 0, 0));
         h.addView(Ui.text(a, String.valueOf(cs.size()), 12, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
         h.addView(Ui.icon(a, fold ? Ui.I_RIGHT : Ui.I_DOWN, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 6, 0, 0, 0));
@@ -429,7 +457,7 @@ final class Sidebar {
         int q = Hub.queued(c);
         if (typing) {
             r.addView(Ui.text(a, "typing…", 12, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-        } else if (c.optBoolean("running")) {
+        } else if (working(c)) {
             r.addView(Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
         } else if (q > 0) {
             r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));

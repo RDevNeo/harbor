@@ -528,6 +528,11 @@ pub fn status_node(p: &Value) -> Option<Node> {
 
 /// Who is calling: Ok((its peer id, its Tailscale node on the legacy path)) when it may share
 /// chats with this PC; Err when not (it's remembered as asking, for Settings).
+/// A PC of the mesh this one admits (as `/mesh/…` calls are), with sharing on.
+pub fn admitted(hub: &api::Hub, p: &api::Peer, req: &api::Request) -> bool {
+    hub.mesh.on.load(Ordering::SeqCst) && who(&hub.mesh, p, req).is_ok()
+}
+
 fn who(shared: &Shared, p: &api::Peer, req: &api::Request) -> Result<(String, Option<Node>), ()> {
     let says = |k: &str| req.header(k).unwrap_or("").chars().take(60).collect::<String>();
     match &p.via {
@@ -593,6 +598,13 @@ fn who(shared: &Shared, p: &api::Peer, req: &api::Request) -> Result<(String, Op
 /// With a fingerprint it's TLS, and only that key may answer; without one it's plain HTTP,
 /// which is only ever sent to 127.0.0.1 (tests) or a Tailscale address (PCs not upgraded yet).
 pub fn http(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, wait: Duration) -> Result<(u16, Value), String> {
+    let (status, _, buf) = http_raw(dest, method, path, body, wait)?;
+    let v = if buf.is_empty() { Value::Null } else { serde_json::from_slice(&buf).map_err(|e| e.to_string())? };
+    Ok((status, v))
+}
+
+/// [`http`] with the answer as it came: status, content type and bytes (an image).
+pub fn http_raw(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, wait: Duration) -> Result<(u16, String, Vec<u8>), String> {
     let sock = dest.addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
     if let Some(via) = &dest.via {
         // Through another PC: a raw stream to the peer, then TLS with the peer inside it.
@@ -736,7 +748,7 @@ trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
 
 /// Writes a request and reads its answer on an open connection.
-fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>) -> Result<(u16, Value), String> {
+fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>) -> Result<(u16, String, Vec<u8>), String> {
     let (ctype, data) = body.unwrap_or(("application/json", b""));
     let (id, name) = HELLO.lock().unwrap().clone();
     let me = format!("X-Harbor-Id: {}\r\nX-Harbor-Name: {}\r\n", id.replace(['\r', '\n'], ""), name.replace(['\r', '\n'], ""));
@@ -747,6 +759,7 @@ fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body
     r.read_line(&mut line).map_err(|e| e.to_string())?;
     let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or("not Harbor")?;
     let mut len: Option<usize> = None;
+    let mut ctype = String::new();
     loop {
         let mut l = String::new();
         if r.read_line(&mut l).map_err(|e| e.to_string())? == 0 || l.trim().is_empty() {
@@ -755,6 +768,8 @@ fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body
         if let Some((k, v)) = l.split_once(':') {
             if k.trim().eq_ignore_ascii_case("content-length") {
                 len = v.trim().parse().ok();
+            } else if k.trim().eq_ignore_ascii_case("content-type") {
+                ctype = v.trim().to_string();
             }
         }
     }
@@ -769,8 +784,19 @@ fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body
             r.take(64 << 20).read_to_end(&mut buf).map_err(|e| e.to_string())?;
         }
     }
-    let v = if buf.is_empty() { Value::Null } else { serde_json::from_slice(&buf).map_err(|e| e.to_string())? };
-    Ok((status, v))
+    Ok((status, ctype, buf))
+}
+
+/// An image of a chat that runs on another PC (`/v1/image` here for a copy): fetched from that
+/// PC, since its paths are that PC's files. None when the PC is off or has no such image.
+pub fn home_image(hub: &api::Hub, chat: i64, path: &str, max: Option<u32>) -> Option<(String, Vec<u8>)> {
+    let (home, _) = hub.mesh.homes.lock().unwrap().get(&chat).cloned()?;
+    let p = hub.mesh.peer(&home).filter(|p| p.online)?;
+    let q = format!("/mesh/v1/image?path={}{}", api::url_encode(path), max.map(|m| format!("&max={m}")).unwrap_or_default());
+    match http_raw(&p.dest(), "GET", &q, None, Duration::from_secs(20)) {
+        Ok((200, ctype, bytes)) if ctype.starts_with("image/") => Some((ctype, bytes)),
+        _ => None,
+    }
 }
 
 fn get(dest: &Dest, path: &str, wait: Duration) -> Result<Value, String> {
@@ -1045,7 +1071,8 @@ pub fn pair_join(shared: &Shared, addr: &str, code: &str, port: u16) -> Result<A
     let (id, name) = HELLO.lock().unwrap().clone();
     let body = json!({ "proof": crate::tls::proof(&key, "join", &host, &mine), "id": id, "name": name, "addrs": my_addrs(port), "port": port });
     let data = serde_json::to_vec(&body).unwrap_or_default();
-    let (status, v) = exchange(s, &target, "POST", "/mesh/v1/pair", Some(("application/json", &data)))?;
+    let (status, _, buf) = exchange(s, &target, "POST", "/mesh/v1/pair", Some(("application/json", &data)))?;
+    let v: Value = serde_json::from_slice(&buf).unwrap_or(Value::Null);
     if status != 200 {
         return Err(v["error"].as_str().map(String::from).unwrap_or_else(|| format!("{target} answered {status}")));
     }

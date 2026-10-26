@@ -1288,6 +1288,15 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         return serve_apk(r.get_mut(), false);
     }
+    // An image of one of this PC's chats, for a phone that reads it through another PC of the
+    // mesh (`/v1/image` there): only paired PCs, only image files.
+    if segs == ["mesh", "v1", "image"] && req.method == "GET" {
+        if !crate::mesh::admitted(hub, &peer, &req) {
+            FAILS.hit(ip);
+            return send_json(r.get_mut(), 403, &json!({ "error": "only for paired PCs" }));
+        }
+        return serve_image(r.get_mut(), req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok()));
+    }
     // Another PC's Harbor (mesh.rs): known by its key, not a token.
     if segs.first() == Some(&"mesh") {
         let reply = crate::mesh::serve(&peer, &req, &mut r, hub, tx, wake);
@@ -1411,7 +1420,20 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             }
             send_json(w, 200, &json!({ "ok": true }));
         }
-        ("GET", ["v1", "image"]) => serve_image(w, req.query("path").unwrap_or(""), req.query("max").and_then(|m| m.parse().ok())),
+        ("GET", ["v1", "image"]) => {
+            let path = req.query("path").unwrap_or("");
+            let max = req.query("max").and_then(|m| m.parse().ok());
+            // Another PC's chat (a copy here): its images are that PC's files.
+            let chat = req.query("chat").and_then(|c| c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)));
+            if !Path::new(path).is_file() {
+                if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_image(hub, c, path, max)) {
+                    let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
+                    let _ = w.write_all(&bytes);
+                    return;
+                }
+            }
+            serve_image(w, path, max)
+        }
         // A phone without a recogniser of its own: its recording (WAV, 16-bit mono), transcribed
         // here with whisper.cpp (voice.rs), on this connection's thread.
         ("POST", ["v1", "transcribe"]) => {
@@ -1884,6 +1906,19 @@ pub fn image_url(path: &str) -> String {
 
 /// One card of the shared projection (view.rs) for the phone: what the desktop draws for
 /// that item, field for field. `find` lists the image files a text names.
+/// A card's image addresses with `&chat=` (a gid or an id), so the PC answering can fetch an
+/// image of another PC's chat from that PC (`/v1/image`).
+fn with_chat(mut v: Value, chat: String) -> Value {
+    if let Some(imgs) = v.get_mut("images").and_then(|i| i.as_array_mut()) {
+        for i in imgs {
+            if let Some(u) = i.get("url").and_then(|u| u.as_str()).map(String::from) {
+                i["url"] = json!(format!("{u}&chat={}", url_encode(&chat)));
+            }
+        }
+    }
+    v
+}
+
 pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<String>) -> Value {
     use crate::view::Card;
     let images: Vec<Value> = crate::view::images(&s.card, find).iter().map(|p| json!({ "name": file_name(p), "url": image_url(p) })).collect();
@@ -2057,7 +2092,7 @@ impl App {
             let n = subs.get(&c.id).copied().unwrap_or(0);
             let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
             let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.is_running(c.id), self.queued_count(c.id), (bars, self.writable_chat(c))));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -2417,6 +2452,10 @@ impl App {
                 for a in v.get_mut("status").and_then(|s| s.get_mut("waiting")).and_then(|w| w.get_mut("agents")).and_then(|a| a.as_array_mut()).into_iter().flatten() {
                     a["id"] = gid(&a["id"]);
                 }
+                // The agent strip's rows open their chats.
+                for a in v.get_mut("status").and_then(|s| s.get_mut("agents")).and_then(|w| w.get_mut("rows")).and_then(|a| a.as_array_mut()).into_iter().flatten() {
+                    a["id"] = gid(&a["id"]);
+                }
             }
             ("GET", ["v1", "chats", _, "team"]) => {
                 v["lead"] = gid(&v["lead"]);
@@ -2515,6 +2554,14 @@ impl App {
         Value::Object(r)
     }
 
+    /// A chat works while its own turn runs, or (a lead) while a sub-agent runs or has work queued.
+    pub fn team_working(&self, c: &store::Chat) -> bool {
+        if c.role != store::Role::Lead {
+            return self.is_running(c.id);
+        }
+        self.team_started(c.id).is_some() || self.subs_queued(c.id) > 0
+    }
+
     pub fn chat_json(&self, c: &store::Chat) -> Value {
         let kind = self.account(&c.account).map_or(Kind::Claude, |a| a.kind);
         let allowed = self.allowed_accounts(c.id);
@@ -2522,6 +2569,9 @@ impl App {
             "id": c.id, "project_id": c.repo_id, "title": c.title, "device": c.device, "account": c.account,
             "model": c.model, "effort": c.effort, "access": c.access, "fast": self.fast, "settled": c.settled,
             "running": self.is_running(c.id), "queued": self.queued_count(c.id),
+            // Busy as the desktop sidebar says it: its own turn or any of its sub-agents' (or
+            // work queued for them), so a lead waiting on its team still shows as working.
+            "working": self.team_working(c),
             "updated_ms": c.updated * 1000, "rev": self.api.hub.chat_rev(c.id),
             // The same chat on every PC of the mesh; the PC it runs on and whether it can be written now.
             "gid": c.gid,
@@ -2710,6 +2760,8 @@ impl App {
         // Every change to a chat goes through `api_touch`: nothing new since the last look,
         // nothing to hash (a phone asks again after each event, many times a second).
         let now = self.api.hub.chat_rev(chat);
+        // Image addresses name the chat: a copy of another PC's chat fetches them from there.
+        let gid = self.chat(chat).map(|c| c.gid.clone()).unwrap_or_default();
         let revs = self.api.items.entry(chat).or_default();
         let fresh = self.api.looked.get(&chat) == Some(&now) && revs.len() == items.len();
         // An item's version includes how it shows: hidden later (a lead's turn delegating),
@@ -2734,7 +2786,11 @@ impl App {
                 }
             }
         }
-        let out: Vec<Value> = cards.iter().filter(|c| revs[c.seq].1 > since).map(|c| card_json(c, revs[c.seq].1, &mut crate::images::find_paths)).collect();
+        let out: Vec<Value> = cards
+            .iter()
+            .filter(|c| revs[c.seq].1 > since)
+            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut crate::images::find_paths), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
+            .collect();
         json!({
             "rev": self.api.hub.rev(),
             "count": items.len(),
@@ -2953,6 +3009,14 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn card_images_name_their_chat() {
+        let v = with_chat(json!({ "kind": "user", "images": [{ "name": "a.png", "url": "/v1/image?path=%2Fx%2Fa.png&max=512" }] }), "g 1".into());
+        assert_eq!(v["images"][0]["url"], "/v1/image?path=%2Fx%2Fa.png&max=512&chat=g%201");
+        // Cards without images stay as they are.
+        assert_eq!(with_chat(json!({ "kind": "text" }), "1".into()), json!({ "kind": "text" }));
+    }
 
     fn head(s: &str) -> Result<Request, (u16, &'static str)> {
         read_head(&mut std::io::Cursor::new(s.as_bytes().to_vec()))

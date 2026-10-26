@@ -185,6 +185,11 @@ public class Chat extends Base {
 
     @Override
     void onOffline(boolean off, String why) {
+        // The header says it, and the drawer has the same card as the chat list (Try again).
+        if (side != null) {
+            if (off) side.offline(hub.downTitle(offlineError), why, this::retryNow);
+            else side.offline(null, null, null);
+        }
         if (off) sub(why, Ui.RED); else { showChat(Hub.chat(Hub.states.get(hub.id), chatId)); load(true); }
     }
 
@@ -336,7 +341,7 @@ public class Chat extends Base {
         if (!items.isEmpty() && (from < 0 || from > items.lastKey())) from = Math.max(0, items.lastKey() + 1 - WINDOW);
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
         earlierButton();
-        if (items.isEmpty()) { hintView = hint("No messages yet."); content.addView(hintView); }
+        if (items.isEmpty()) { hintView = emptyView(); content.addView(hintView); }
         if (r.has("typing")) typingLine = Sidebar.typing(r, you());
         if (r.has("running")) running = r.optBoolean("running");
         bars = r.optJSONObject("status");
@@ -346,6 +351,23 @@ public class Chat extends Base {
         if (!label.equals(usageLabel)) { usageLabel = label; showChat(shown); }
         drawBars();
         if (atBottom) toEnd();
+    }
+
+    /** An empty chat: a lead says what the desktop says ("What should we work on?" and who
+     *  does the work), in the phone's serif; other chats the plain hint. */
+    private View emptyView() {
+        if (shown == null || !"lead".equals(shown.optString("role"))) return hint("No messages yet.");
+        LinearLayout v = Ui.col(this);
+        v.setGravity(Gravity.CENTER_HORIZONTAL);
+        v.setPadding(Ui.dp(24), Ui.dp(96), Ui.dp(24), Ui.dp(24));
+        TextView ask = Ui.title(this, "What should we work on?", 30);
+        ask.setGravity(Gravity.CENTER);
+        v.addView(ask, Ui.fill());
+        String p = run == null ? "" : run.projectLabel();
+        TextView sub = Ui.text(this, "The lead plans and delegates to subagents" + (run == null || p.equals("No project") ? "." : " in " + p + "."), 15, Ui.G700);
+        sub.setGravity(Gravity.CENTER);
+        v.addView(sub, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+        return v;
     }
 
     private void clear() {
@@ -539,17 +561,22 @@ public class Chat extends Base {
             row.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
             row.setBackground(Ui.press(0, 0, 8));
             row.addView(Ui.accountMark(this, r.optString("logo"), r.optString("badge"), 18));
+            // Name and what it's doing first; its tokens and cost (agentstrip.rs) on a dim line
+            // under them, so a narrow screen never squeezes the doing text out.
+            LinearLayout text = Ui.col(this);
+            LinearLayout top = Ui.row(this);
             TextView name = Ui.subtitle(Ui.bold(this, r.optString("name"), 14, Ui.FG));
-            name.setMaxWidth(Ui.dp(120));
-            row.addView(name, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-            row.addView(Ui.subtitle(Ui.text(this, "  ·  " + r.optString("doing"), 14, Ui.G700)), Ui.weight());
-            // Its tokens and cost so far, before the time (agentstrip.rs).
+            name.setMaxWidth(Ui.dp(140));
+            top.addView(name, Ui.wrap());
+            top.addView(Ui.subtitle(Ui.text(this, "  ·  " + r.optString("doing"), 14, Ui.G700)), Ui.weight());
+            text.addView(top, Ui.fill());
             String usage = r.optString("usage");
             if (!usage.isEmpty()) {
-                TextView u = Ui.text(this, usage + "  ·", 12, Ui.G700);
+                TextView u = Ui.subtitle(Ui.text(this, usage, 11, Ui.G600));
                 u.setTypeface(Ui.mono);
-                row.addView(u, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+                text.addView(u, Ui.fill());
             }
+            row.addView(text, Ui.margins(Ui.weight(), 8, 0, 0, 0));
             TextView time = Ui.text(this, "", 12, Ui.G700);
             time.setTypeface(Ui.mono);
             time.setTag(r.optLong("since_ms"));

@@ -503,8 +503,12 @@ final class Hub {
         sync();
         String cur = via();
         List<String> order = new ArrayList<>();
+        // Talking through another PC: once a minute the paired PC (whose chats these are) is
+        // tried first again, so the phone goes back to it as soon as it answers; a relay may
+        // run an older Harbor and miss things.
+        if (!cur.isEmpty() && backHome()) order.add("");
         order.add(cur);
-        if (!cur.isEmpty()) order.add("");
+        if (!cur.isEmpty() && !order.contains("")) order.add("");
         for (Ep e : eps) if (!e.pid.equals(cur) && !e.pid.equals(pid)) order.add(e.pid);
         // PCs that just failed go last (stable: the preference stays among the rest).
         List<String> ok = new ArrayList<>(), later = new ArrayList<>();
@@ -537,6 +541,20 @@ final class Hub {
         if (noV6 && !(last instanceof ApiError) && !(last instanceof Net.WrongKey) && !(last instanceof Net.Refused))
             throw new Net.Refused("Can't reach the PC. This phone's network has no IPv6, so away from home your PCs can only be reached on your home Wi-Fi (or a network with IPv6).");
         throw last != null ? last : new IOException("no address");
+    }
+
+    private static final Map<String, Long> homeTried = new HashMap<>();
+    private static final long HOME_EVERY = 60_000;
+
+    /** True at most once a minute per hub: time to try its own PC first again. */
+    private boolean backHome() {
+        long now = System.currentTimeMillis();
+        synchronized (homeTried) {
+            Long t = homeTried.get(id);
+            if (t != null && now - t < HOME_EVERY) return false;
+            homeTried.put(id, now);
+            return true;
+        }
     }
 
     /** The headers that say who calls: the session and its MAC (three factors), else the

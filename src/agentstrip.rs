@@ -353,10 +353,14 @@ impl App {
         if let Some(k) = row.kind {
             ic::account_mark(p, Rect::from_center_size(pos2(r.left() + 16.0, cy), Vec2::splat(18.0)), k, &row.badge, &t);
         }
-        let time = if row.usage.is_empty() { short_elapsed(row.secs) } else { format!("{}  ·  {}", row.usage, short_elapsed(row.secs)) };
-        let time = w::truncated(ui, &time, FontId::monospace(12.0), t.subtle(), 200.0);
-        let right = r.right() - 10.0 - time.size().x;
         let x = r.left() + 34.0;
+        // Name and what it's doing come first: the usage only shows while they keep their room
+        // (the hover has it too).
+        let elapsed = short_elapsed(row.secs);
+        let with_usage = format!("{}  ·  {elapsed}", row.usage);
+        let roomy = !row.usage.is_empty() && r.right() - 10.0 - x - w::truncated(ui, &with_usage, FontId::monospace(12.0), t.subtle(), f32::INFINITY).size().x >= 260.0;
+        let time = w::truncated(ui, if roomy { &with_usage } else { &elapsed }, FontId::monospace(12.0), t.subtle(), 200.0);
+        let right = r.right() - 10.0 - time.size().x;
         let name = w::truncated(ui, &row.name, FontId::new(13.0, crate::theme::medium()), t.fg(), ((right - x) * 0.4).max(30.0));
         let nw = name.size().x;
         let doing = w::truncated(ui, &format!("  ·  {}", row.doing), FontId::proportional(13.0), t.subtle(), (right - 8.0 - x - nw).max(0.0));
@@ -368,6 +372,9 @@ impl App {
             ui.set_max_width(360.0);
             w::text(ui, &row.name, "strong-14");
             w::subtle(ui, &row.model, "label-12-mono");
+            if !row.usage.is_empty() {
+                w::subtle(ui, &row.usage, "label-12-mono");
+            }
             if !row.task.is_empty() {
                 w::subtle(ui, &row.task, "label-12");
             }

@@ -5,6 +5,19 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- A lead chat shows as working while any of its sub-agents run or have work queued, on the phone
+  too (its chat list spinner); the API gives it as `working`.
+- Images in chats read through another PC of the mesh (a phone relayed via another PC) come from
+  the PC the chat runs on instead of an empty tile; a tile that can't load says so and retries
+  on tap.
+- The agent strip keeps the agent's name and what it's doing readable: on the phone its tokens
+  and cost go on a dim second line, on the desktop they only show when there's room (and on hover).
+- Phone: while it talks to your PCs through another one, it tries its own PC again every minute
+  and goes back to it, and it says when the PC answering runs an older Harbor than the app.
+- Phone: an empty lead chat says "What should we work on?" like the desktop, and a chat's drawer
+  shows the "Harbor isn't running" card too.
+
 ## [0.46.3] - 2026-10-26
 
 ### Fixed
