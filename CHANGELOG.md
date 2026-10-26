@@ -16,6 +16,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   so does Settings › Sign-in.
 - Phone: the "Harbor isn't running on <PC>" card no longer repeats its title in the text, and the
   update banners wait until the PC answers again (their buttons need it).
+- User messages in a chat are no longer cut off on the right (their text and the "from … via …"
+  line under them): a long agent report or notice widened the transcript past its column, and the
+  bubbles were laid out against that wider edge. Notices now end in "…" inside the column (whole on
+  hover), bubbles keep to the column at any window or panel width, and a long sender line ends in "…".
+- The composer's bottom row goes icon-only earlier, so the model, access and device pickers no
+  longer run under the mic and attach buttons in a narrow window.
 
 ## [0.43.0] - 2026-10-26
 

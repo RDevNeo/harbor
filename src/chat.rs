@@ -399,7 +399,10 @@ impl App {
             match &shown.card {
                 Card::Hidden => {}
                 Card::User { text, files, images: shown_images, at, mentions, sender } => {
-                    let bubble = ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    // Measured here, not from the transcript's start: the bubble sits against
+                    // this row's right edge and never reaches past it, whatever came before.
+                    let avail = ui.available_width().min(width);
+                    let bubble = ui.allocate_ui_with_layout(Vec2::new(avail, 0.0), Layout::right_to_left(Align::Min), |ui| {
                         Frame::new()
                             .fill(t.gray(100))
                             .corner_radius(CornerRadius::same(RADIUS_LG))
@@ -417,7 +420,7 @@ impl App {
                                 if !mentions.is_empty() {
                                     need = need.max(260.0);
                                 }
-                                ui.set_max_width((need + 2.0).min(width * 0.8));
+                                ui.set_max_width((need + 2.0).min(avail * 0.8 - 28.0).max(40.0));
                                 ui.vertical(|ui| {
                                     if !mentions.is_empty() {
                                         ui.horizontal_wrapped(|ui| {
@@ -434,7 +437,7 @@ impl App {
                                         crate::images::strip(ui, &keys, THUMB);
                                     }
                                     if !text.is_empty() {
-                                        ui.label(RichText::new(*text).text_style(theme::ts("copy-14")));
+                                        ui.add(egui::Label::new(RichText::new(*text).text_style(theme::ts("copy-14"))).wrap());
                                     }
                                     for f in files {
                                         let name = std::path::Path::new(f).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -457,7 +460,11 @@ impl App {
                     // Written on another PC or a phone: where, under the bubble.
                     if !sender.is_empty() {
                         ui.add_space(-8.0);
-                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| w::subtle(ui, format!("from {sender}"), "label-12"));
+                        // One line inside the column: a long "from … via …" ends in "…" (full on hover).
+                        ui.allocate_ui_with_layout(Vec2::new(avail, 0.0), Layout::right_to_left(Align::Min), |ui| {
+                            let from = format!("from {sender}");
+                            ui.add(egui::Label::new(RichText::new(&from).text_style(theme::ts("label-12")).color(t.subtle())).truncate()).on_hover_text(from);
+                        });
                     }
                 }
                 Card::Text { text, at, forkable } => {
@@ -583,6 +590,10 @@ impl App {
                         "folder" => ic::FOLDER,
                         _ => ic::CIRCLE_CHECK,
                     };
+                    // The pill never grows past the column (a long agent report widened the whole
+                    // transcript, and right-aligned bubbles were cut at the edge): the text ends
+                    // in "…" and shows whole on hover.
+                    let column = ui.available_width();
                     let r = ui
                         .vertical_centered(|ui| {
                             Frame::new()
@@ -594,8 +605,15 @@ impl App {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(glyph).size(13.0).color(t.subtle()));
-                                        ui.label(RichText::new(*text).text_style(theme::ts("label-13")).color(t.fg()));
-                                        if !detail.is_empty() && !detail.starts_with("http") {
+                                        let chevron = !detail.is_empty() && !detail.starts_with("http");
+                                        let rest = (column - 24.0 - 19.0 - if chevron { 18.0 } else { 0.0 }).max(40.0);
+                                        let g = w::truncated(ui, text, FontId::new(13.0, egui::FontFamily::Proportional), t.fg(), rest);
+                                        if g.size().x + 1.0 < ui.painter().layout_no_wrap(text.to_string(), FontId::new(13.0, egui::FontFamily::Proportional), t.fg()).size().x {
+                                            ui.label(g).on_hover_text(*text);
+                                        } else {
+                                            ui.label(g);
+                                        }
+                                        if chevron {
                                             ui.label(RichText::new(if open { ic::UP } else { ic::DOWN }).size(12.0).color(t.subtle()));
                                         }
                                     });
@@ -869,8 +887,8 @@ impl App {
             ui.add_space(10.0);
             // Narrow composers (T3 Code's compact footer): effort and access go
             // icon-only, so the send button always stays in view.
-            let compact = ui.available_width() < 400.0;
-            let tiny = ui.available_width() < 300.0;
+            let compact = ui.available_width() < 560.0;
+            let tiny = ui.available_width() < 460.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 let mlabel = self.model_label(kind, &sel.model);
