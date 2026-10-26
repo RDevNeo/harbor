@@ -152,6 +152,7 @@ public class Settings extends Base {
                 if (Build.VERSION.SDK_INT >= 33) requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 42);
                 else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
             });
+            Ui.wrapSub(al, 3);
             al.addView(Ui.chevron(this));
             nt.addView(al, Ui.fill());
             nt.addView(Ui.gap(this));
@@ -162,10 +163,12 @@ public class Settings extends Base {
         kinds.addView(Ui.chevron(this));
         nt.addView(kinds, Ui.fill());
         nt.addView(Ui.gap(this));
-        nt.addView(Ui.cardRow(this, Ui.I_MONITOR, "Only when I'm away from the PC", Notes.awayOnly(this) ? "On: not while you're using Harbor on that PC" : "Off", Ui.FG, v -> {
+        LinearLayout away = Ui.cardRow(this, Ui.I_MONITOR, "Only when I'm away from the PC", Notes.awayOnly(this) ? "On: not while you're using Harbor on that PC" : "Off", Ui.FG, v -> {
             Notes.prefs(this).edit().putBoolean("away", !Notes.awayOnly(this)).apply();
             notifyRows(nt);
-        }), Ui.fill());
+        });
+        Ui.wrapSub(away, 3);
+        nt.addView(away, Ui.fill());
         nt.addView(Ui.gap(this));
         int qa = Notes.quietFrom(this), qb = Notes.quietTo(this);
         LinearLayout quiet = Ui.cardRow(this, Ui.I_MOON, "Quiet hours", qa < 0 ? "Off" : Notes.hm(qa) + " – " + Notes.hm(qb), Ui.FG, v -> pickQuiet(nt));

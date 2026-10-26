@@ -177,9 +177,9 @@ final class Team {
         LinearLayout r = card(Ui.I_BOT, running ? Ui.GREEN : Ui.G700, name.isEmpty() ? "agent" : name, status, color);
         String model = o.optString("model"), acc = o.optString("account");
         String m = model.isEmpty() ? acc : acc.isEmpty() ? model : model + " · " + acc;
-        // Its tokens and cost so far (cost.rs), after the model.
+        // Its tokens and cost so far (cost.rs), first so a narrow screen cuts the model instead.
         String usage = o.isNull("usage") ? "" : o.optString("usage", "");
-        if (!usage.isEmpty()) m = m.isEmpty() ? usage : m + " · " + usage;
+        if (!usage.isEmpty()) m = m.isEmpty() ? usage : usage + " · " + m;
         if (!m.isEmpty()) r.addView(line(m, 12, Ui.G700, true));
         String task = o.optString("title");
         if (!task.isEmpty()) r.addView(line(task, 13, Ui.G900, false));

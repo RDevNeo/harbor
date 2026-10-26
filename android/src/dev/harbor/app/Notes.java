@@ -114,7 +114,7 @@ final class Notes {
         open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pi = PendingIntent.getActivity(c, code, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification.Builder b = new Notification.Builder(c, "n." + ("test".equals(kind) ? "test" : kind))
-                .setSmallIcon(c.getApplicationInfo().icon)
+                .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(title).setContentText(n.optString("body"))
                 .setStyle(new Notification.BigTextStyle().bigText(n.optString("body")))
                 .setSubText(from.isEmpty() ? h.label() : from)
@@ -151,7 +151,7 @@ final class Notes {
         channels(nm);
         Intent open = new Intent(c, Chat.class).putExtra("hub", hubId).putExtra("chat", chat).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pi = PendingIntent.getActivity(c, tag.hashCode(), open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        nm.notify(tag, 1, new Notification.Builder(c, "n.done").setSmallIcon(c.getApplicationInfo().icon)
+        nm.notify(tag, 1, new Notification.Builder(c, "n.done").setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(title).setContentText(text).setContentIntent(pi).setAutoCancel(true).setOnlyAlertOnce(true).build());
     }
 

@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: new cards no longer slide under the bars over the composer when the agent strip unfolds
+  or grows: the chat keeps its end in view.
+- Phone: a chat's token and cost total leads its header line, and an agent's leads its line in the
+  Team panel, so they aren't the part cut off on a narrow screen.
+- Phone: Harbor's notifications show its anchor in the status bar instead of a plain circle.
+- Phone: Settings › Allow notifications and Only when I'm away wrap their explanation.
+
 ## [0.46.0] - 2026-10-26
 
 ### Added

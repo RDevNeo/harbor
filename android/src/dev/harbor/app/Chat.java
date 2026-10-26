@@ -89,6 +89,12 @@ public class Chat extends Base {
         content = Ui.col(this);
         content.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
         scroll.addView(content);
+        // The bars under it grow (the agent strip unfolds, a recap arrives): the transcript keeps
+        // its end in view when it was there, instead of new cards sliding under the bars.
+        scroll.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
+            int was = oldBottom - oldTop, now = bottom - top;
+            if (now < was && scroll.getScrollY() + was >= content.getHeight() - Ui.dp(120)) scroll.post(() -> scroll.scrollTo(0, content.getHeight()));
+        });
         // The transcript and the bars under it; the slash menu floats over their bottom.
         FrameLayout stage = new FrameLayout(this);
         LinearLayout above = Ui.col(this);
@@ -224,8 +230,9 @@ public class Chat extends Base {
         String home = c.optString("home_name", "");
         if (st != null && !c.optString("home", "").isEmpty() && !c.optString("home").equals(st.optString("hub_id"))) dev = home;
         String line = dev.isEmpty() ? acc : dev + " · " + acc;
-        // The desktop header's usage, dim, after the settings (a tap on the line shows its split).
-        sub(usageLabel.isEmpty() ? line : line + " · " + usageLabel, Ui.G700);
+        // The desktop header's usage, dim, before the settings so it's never what gets cut off
+        // (a tap on the line shows its split).
+        sub(usageLabel.isEmpty() ? line : usageLabel + " · " + line, Ui.G700);
         boolean ro = c.has("writable") && !c.optBoolean("writable", true);
         offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);

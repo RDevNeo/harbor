@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The status-bar icon of Harbor's notifications: Lucide's anchor, white on transparent (Android
+     tints it). The launcher icon is opaque, so the bar showed a plain circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M12,22V8 M5,12H2a10,10 0 0,0 20,0h-3 M12,2a3,3 0 1,0 0,6a3,3 0 1,0 0,-6" />
+</vector>

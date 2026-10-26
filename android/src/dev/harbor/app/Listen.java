@@ -42,7 +42,7 @@ public class Listen extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel("listen", "Instant notifications (running)", NotificationManager.IMPORTANCE_MIN));
         PendingIntent pi = PendingIntent.getActivity(this, 7, new Intent(this, Hubs.class), PendingIntent.FLAG_IMMUTABLE);
-        Notification n = new Notification.Builder(this, "listen").setSmallIcon(getApplicationInfo().icon)
+        Notification n = new Notification.Builder(this, "listen").setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle("Listening for your PCs").setContentText("Instant notifications are on (Settings › Notifications).")
                 .setContentIntent(pi).setOngoing(true).build();
         if (Build.VERSION.SDK_INT >= 34) startForeground(9, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
