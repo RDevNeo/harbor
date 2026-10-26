@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-25
+
 ### Added
 - Harbor keeps running in the background when its window is closed, so phones and other PCs keep
   reaching this PC, and the queue, automatic work, wake-ups, webhooks and update checks go on
@@ -805,7 +807,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.33.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/RDevNeo/harbor/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/RDevNeo/harbor/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/RDevNeo/harbor/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/RDevNeo/harbor/compare/v0.31.1...v0.32.0
