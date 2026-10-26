@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-26
+
 ### Added
 - Who is who fills itself in: each PC detects its owner's name and GitHub login from what it
   finds (git, gh, its agent accounts and phones, SSH hosts and key comments, CLAUDE.md, what the
@@ -1077,7 +1079,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.46.4...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/RDevNeo/harbor/compare/v0.46.4...v0.47.0
 [0.46.4]: https://github.com/RDevNeo/harbor/compare/v0.46.3...v0.46.4
 [0.46.3]: https://github.com/RDevNeo/harbor/compare/v0.46.2...v0.46.3
 [0.46.2]: https://github.com/RDevNeo/harbor/compare/v0.46.1...v0.46.2
