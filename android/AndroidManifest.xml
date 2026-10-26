@@ -10,7 +10,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Settings › Update installs the APK the hub serves ("Install unknown apps" for Harbor) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- Android 12+: updates of itself install without the system dialog -->
+    <!-- Android 12+: updates of itself install without the system dialog (also in the
+         background: Settings › Update automatically) -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- Pairing: the in-app QR scanner (QrScan) reads the PC's code; asked for only when used -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -65,7 +66,12 @@
         <activity android:name=".Presence" android:exported="false" android:excludeFromRecents="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-        <receiver android:name=".Update" android:exported="false" />
+        <!-- The install's result; and MY_PACKAGE_REPLACED, after an update: jobs and Listen again -->
+        <receiver android:name=".Update" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <!-- Tells the PCs every 15 minutes that this phone is reachable (Devices: online) -->
         <service android:name=".Alive" android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />

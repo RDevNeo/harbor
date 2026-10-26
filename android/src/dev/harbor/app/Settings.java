@@ -20,6 +20,7 @@ import org.json.JSONObject;
 public class Settings extends Base {
     private TextView updateNote, hubVersion, badge;
     private View updateBtn;
+    private LinearLayout autoRow;
     private long available;
 
     static long myCode(Context c) {
@@ -63,7 +64,12 @@ public class Settings extends Base {
         updateBtn = Ui.button(this, "Update", true, v -> update());
         updateBtn.setVisibility(View.GONE);
         updateRow.addView(updateBtn);
+        Ui.wrapSub(updateRow, 3);
         app.addView(updateRow, Ui.fill());
+        app.addView(Ui.gap(this));
+        autoRow = Ui.col(this);
+        autoRows();
+        app.addView(autoRow, Ui.fill());
         app.addView(Ui.gap(this));
         app.addView(Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this) + " (" + myCode(this) + ")", Ui.FG, null), Ui.fill());
         app.addView(Ui.gap(this));
@@ -144,6 +150,39 @@ public class Settings extends Base {
         TextView note = Ui.text(this, "Unpairing forgets the token on this phone. Revoke it on the PC in Settings › Phones.", 13, Ui.G700);
         note.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
         col.addView(note);
+    }
+
+    /** "Update automatically": like the PCs until chosen here (Update.auto). */
+    private void autoRows() {
+        autoRow.removeAllViews();
+        boolean on = Update.auto(this), allowed = getPackageManager().canRequestPackageInstalls();
+        String sub = !on ? "Off: tap Update when a new version is ready"
+                : allowed ? "On: new versions install while the screen is off, and Harbor opens again on the chat you had"
+                : "On, but Android doesn't let Harbor install apps yet: tap to allow it";
+        if (Update.autoChoice(this) == null) sub += " (as your PCs: Settings › Updates there)";
+        LinearLayout r = Ui.cardRow(this, Ui.I_REFRESH, "Update automatically", sub, on && !allowed ? Ui.AMBER : Ui.FG, v -> toggleAuto());
+        Ui.wrapSub(r, 3);
+        // On without the permission: the tap asks for it; a long press turns it off.
+        if (on && !allowed) r.setOnLongClickListener(v -> { Update.setAuto(this, false); autoRows(); return true; });
+        autoRow.addView(r, Ui.fill());
+    }
+
+    private void toggleAuto() {
+        boolean on = Update.auto(this);
+        if (on && !getPackageManager().canRequestPackageInstalls()) { allowInstalls(); return; }
+        Update.setAuto(this, !on);
+        autoRows();
+        if (!on && !getPackageManager().canRequestPackageInstalls()) allowInstalls();
+    }
+
+    /** Android's "Install unknown apps" for Harbor: asked once, for every update after it. */
+    private void allowInstalls() {
+        Ui.dialog(this).setTitle("Allow Harbor to install updates")
+                .setMessage("Android asks once: turn on “Allow from this source” for Harbor, then come back.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Open settings", (d, w) -> startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName()))))
+                .show();
     }
 
     private void notifyRows(LinearLayout nt) {
@@ -480,6 +519,7 @@ public class Settings extends Base {
     protected void onResume() {
         super.onResume();
         if (hub == null) return;
+        autoRows(); // back from Android's "Install unknown apps"
         checkUpdates();
     }
 
@@ -499,8 +539,11 @@ public class Settings extends Base {
             code = Update.check(getApplicationContext(), true);
             long mine = myCode(this);
             String where = Update.bestHub == null ? "" : pcName(Update.bestHub, Update.bestPc);
+            String failed = Update.failure(getApplicationContext(), code);
             note = code <= 0 ? "No PC answered with an app to offer"
                     : code > mine ? "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where)
+                        + (!failed.isEmpty() ? ". It didn't install by itself (" + failed + "): tap Update"
+                        : Update.silent(getApplicationContext(), code) ? ". It installs by itself the next time the screen is off" : "")
                     : "Up to date (" + name(mine) + ")";
             final String fi = info, fn = note, fv = version; final long fc = code;
             Ui.main.post(() -> {
@@ -528,12 +571,7 @@ public class Settings extends Base {
 
     private void update() {
         if (!getPackageManager().canRequestPackageInstalls()) {
-            Ui.dialog(this).setTitle("Allow Harbor to install updates")
-                    .setMessage("Android asks once: turn on “Allow from this source” for Harbor, then come back and tap Update.")
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Open settings", (d, w) -> startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                            Uri.parse("package:" + getPackageName()))))
-                    .show();
+            allowInstalls();
             return;
         }
         updateBtn.setEnabled(false);
@@ -545,7 +583,7 @@ public class Settings extends Base {
                 Update.install(getApplicationContext(), hub, (done, total) -> {
                     int pct = (int) (done * 100 / total);
                     Ui.main.post(() -> updateNote.setText("Downloading… " + pct + "%"));
-                });
+                }, false);
             } catch (Exception e) {
                 err = Hub.why(e);
             }
@@ -553,7 +591,7 @@ public class Settings extends Base {
             Ui.main.post(() -> {
                 updateBtn.setEnabled(true);
                 updateBtn.setAlpha(1f);
-                updateNote.setText(fe == null ? "Installing " + name(available) + "… Harbor closes when it's done: open it again." : "Update failed: " + fe);
+                updateNote.setText(fe == null ? "Installing " + name(available) + "… Harbor closes when it's done: open it again and it's back on your chat." : "Update failed: " + fe);
             });
         });
     }

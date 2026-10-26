@@ -4,7 +4,7 @@
 //! in Settings, downloads it, checks its minisign signature against the key below, and renames
 //! the new files over the old ones (helpers first, harbor last). The hot reload (reload.rs)
 //! sees its own file change and restarts into the new version; agent turns run detached and
-//! live on.
+//! live on. Automatically, that restart waits for a moment nobody sees it (`reload::quiet`).
 //!
 //! The previous files are kept in `.previous/` (hard links), for "Restore previous version".
 //! Builds from a source tree have no marker and are never touched.
@@ -35,7 +35,7 @@ pub enum State {
     Available(String),
     Installing(String),
     /// Installed; the reload into it happens on the Update button (or, updating automatically,
-    /// when the window is focused).
+    /// when nobody sees it: reload::quiet).
     Installed(String),
     Failed(String),
 }
@@ -523,6 +523,8 @@ pub fn info() -> serde_json::Value {
         "checking": matches!(s, State::Checking),
         "error": error,
         "status": status,
+        // Settings › Updates › Automatically (0.53): phones that haven't chosen follow it.
+        "auto": AUTO.load(Ordering::Relaxed),
     })
 }
 
@@ -624,6 +626,7 @@ mod tests {
         assert!(i["latest"].is_null());
         assert_eq!(i["ready"], false);
         assert!(i["status"].as_str().unwrap().contains("source"));
+        assert!(i["auto"].is_boolean(), "phones follow it");
     }
 
     #[test]

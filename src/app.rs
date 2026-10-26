@@ -228,7 +228,10 @@ pub struct App {
     pub team_docks: bool,
     /// A new build of Harbor is on disk; reload when it's a good moment.
     pub update_ready: Arc<std::sync::atomic::AtomicBool>,
-    pub hold_reload: bool,
+    /// When the window was last touched, for an automatic update's quiet moment (reload.rs).
+    pub reload_watch: crate::reload::Watch,
+    /// The chat on screen is scrolled up, away from its end (chat.rs).
+    pub reading_back: bool,
     /// The IME composition in progress, as its last pre-edit (see [`drop_idle_ime`]).
     ime_preedit: Option<egui::Event>,
     /// The Update button was clicked: reload as soon as the new version is on disk.
@@ -388,7 +391,8 @@ impl App {
             team_drawer: false,
             team_docks: true,
             update_ready: crate::reload::new_flag(),
-            hold_reload: false,
+            reload_watch: crate::reload::Watch::default(),
+            reading_back: false,
             ime_preedit: None,
             reload_asked: false,
             reload_not_before: None,

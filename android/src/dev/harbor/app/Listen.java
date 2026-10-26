@@ -65,6 +65,8 @@ public class Listen extends Service {
                 try { hubs.get(i).alive(i == 0 ? 240_000 : 0); ok = true; } catch (Exception ignored) { }
             }
             if (hubs.isEmpty()) break;
+            // Updating automatically: a new version installs while nobody sees Harbor.
+            if (ok && running) Update.background(this);
             if (!ok) {
                 SystemClock.sleep(backoff);
                 backoff = Math.min(backoff * 2, 5 * 60_000L);

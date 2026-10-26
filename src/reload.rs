@@ -1,7 +1,8 @@
 //! Hot reload: when the Harbor binary on disk changes (a new build), Harbor
 //! saves what's on screen, replaces itself in place with the new binary (same
 //! pid, via exec) and restores it, running agent turns included (they run detached,
-//! see detach.rs). It waits for the window to be focused, so it reappears where it was.
+//! see detach.rs). Updating automatically, it waits for a moment nobody sees it (`quiet`):
+//! no window, or a focused window left untouched for a while, so it reappears where it was.
 
 use crate::app::{App, Tab, View};
 use crate::surface::{Dock, Surface};
@@ -10,7 +11,89 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
+
+/// An automatic update swaps a focused window in only after it went untouched this long (under
+/// the usual screensaver delay: Omarchy's starts at 2.5 minutes and takes the focus).
+const IDLE: Duration = Duration::from_secs(2 * 60);
+/// ... or this long while the chat on screen is still running (its reply may be read as it comes).
+const IDLE_WATCHING: Duration = Duration::from_secs(20 * 60);
+/// No frame for this long: the screen was off or the window out of sight; it may be back now.
+const STARVED: Duration = Duration::from_secs(45);
+/// How often it looks again while it waits.
+const LOOK: Duration = Duration::from_secs(30);
+
+/// When the user last touched the window, and when an update last looked at it.
+pub struct Watch {
+    input: Instant,
+    looked: Option<Instant>,
+}
+
+impl Default for Watch {
+    fn default() -> Self {
+        Watch { input: Instant::now(), looked: None }
+    }
+}
+
+impl Watch {
+    /// The user did something (or a window just opened).
+    pub fn touched(&mut self) {
+        self.input = Instant::now();
+    }
+}
+
+/// What an automatic update sees of the window.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Moment {
+    /// No window (background.rs): nobody sees the restart.
+    pub hidden: bool,
+    pub focused: bool,
+    /// Since the window was last touched.
+    pub idle: Duration,
+    /// The composer on screen holds text (it's kept, but the user may be mid-sentence), or the
+    /// chat is scrolled up to older messages (the restart would bring it back to its end).
+    pub editing: bool,
+    /// Files wait to be sent: a restart would drop them.
+    pub attached: bool,
+    /// The chat on screen is running.
+    pub watching: bool,
+    /// The frame before this one was long ago (screen off, window out of sight).
+    pub starved: bool,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Swap {
+    Now,
+    /// Look again after this.
+    Later(Duration),
+}
+
+/// Whether an automatic update may swap in now. On Wayland a new window opens where the user
+/// is (the active workspace) and takes the focus, so a window that isn't focused waits: the
+/// user is elsewhere, and the restart would pull Harbor over what they're doing. A focused one
+/// is replaced in place once nobody has touched it for a while.
+pub fn quiet(m: Moment) -> Swap {
+    if m.attached {
+        return Swap::Later(LOOK);
+    }
+    if m.hidden {
+        return Swap::Now;
+    }
+    if !m.focused || m.starved || m.editing {
+        return Swap::Later(LOOK);
+    }
+    let need = if m.watching { IDLE_WATCHING } else { IDLE };
+    match need.checked_sub(m.idle) {
+        Some(left) if !left.is_zero() => Swap::Later(left.min(LOOK)),
+        _ => Swap::Now,
+    }
+}
+
+/// Input that means someone is at the window.
+fn touches(e: &eframe::egui::Event) -> bool {
+    use eframe::egui::Event as E;
+    matches!(e, E::Key { .. } | E::Text(_) | E::PointerMoved(_) | E::PointerButton { .. } | E::MouseWheel { .. } | E::Zoom(_) | E::Touch { .. } | E::Ime(_) | E::Copy | E::Cut | E::Paste(_))
+}
 
 /// A new build is written in place; an update or a package manager renames a new file over
 /// it (another inode, possibly the same size and time).
@@ -142,6 +225,9 @@ impl App {
     /// Called every frame: reloads when the Update button asked for it, or (updating
     /// automatically) when an update is ready and it's a good moment.
     pub fn maybe_reload(&mut self, ctx: &eframe::egui::Context) {
+        if !crate::background::hidden() && ctx.input(|i| i.events.iter().any(touches) || i.pointer.any_down()) {
+            self.reload_watch.touched();
+        }
         // The install failed (a build already on disk still counts, whatever a check said).
         if self.reload_asked && !self.update_ready.load(Ordering::Relaxed) && matches!(crate::update::state(), crate::update::State::Failed(_)) {
             self.reload_asked = false;
@@ -174,11 +260,24 @@ impl App {
         if !self.auto_update() {
             return;
         }
-        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
         // Agent turns run detached and are picked up again, so they don't hold it back.
         // With no window nobody is interrupted: it restarts at once, still in the background.
-        if (focused || crate::background::hidden()) && !self.hold_reload {
-            self.reload_now();
+        let now = Instant::now();
+        let starved = self.reload_watch.looked.is_none_or(|t| now.duration_since(t) > STARVED);
+        self.reload_watch.looked = Some(now);
+        let key = self.key();
+        let m = Moment {
+            hidden: crate::background::hidden(),
+            focused: ctx.input(|i| i.viewport().focused.unwrap_or(false)),
+            idle: now.duration_since(self.reload_watch.input),
+            editing: self.drafts.get(&key).is_some_and(|d| !d.trim().is_empty()) || (matches!(self.view, View::Chat(_)) && self.reading_back),
+            attached: self.files.values().any(|f| !f.is_empty()),
+            watching: matches!(self.view, View::Chat(id) if self.turns.contains_key(&id)),
+            starved,
+        };
+        match quiet(m) {
+            Swap::Now => self.reload_now(),
+            Swap::Later(wait) => ctx.request_repaint_after(wait),
         }
     }
 
@@ -243,4 +342,34 @@ impl App {
 /// Keeps a flag the UI can show (the Update button).
 pub fn new_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at_window(idle: u64) -> Moment {
+        Moment { focused: true, idle: Duration::from_secs(idle), ..Default::default() }
+    }
+
+    #[test]
+    fn swaps_only_when_nobody_sees_it() {
+        // No window: at once, unless files wait to be sent (a restart drops them).
+        assert_eq!(quiet(Moment { hidden: true, editing: true, ..Default::default() }), Swap::Now);
+        assert_eq!(quiet(Moment { hidden: true, attached: true, ..Default::default() }), Swap::Later(LOOK));
+        // A focused window in use waits until it was left alone for IDLE, looking again meanwhile.
+        assert_eq!(quiet(at_window(0)), Swap::Later(LOOK));
+        assert_eq!(quiet(at_window(IDLE.as_secs() - 10)), Swap::Later(Duration::from_secs(10)));
+        assert_eq!(quiet(at_window(IDLE.as_secs())), Swap::Now);
+        assert_eq!(quiet(at_window(3600)), Swap::Now);
+        // Not while something is being written, nor while the user looks elsewhere (the new
+        // window would open over what they're doing), nor right after the screen came back.
+        assert_eq!(quiet(Moment { editing: true, ..at_window(3600) }), Swap::Later(LOOK));
+        assert_eq!(quiet(Moment { attached: true, ..at_window(3600) }), Swap::Later(LOOK));
+        assert_eq!(quiet(Moment { focused: false, ..at_window(3600) }), Swap::Later(LOOK));
+        assert_eq!(quiet(Moment { starved: true, ..at_window(3600) }), Swap::Later(LOOK));
+        // A reply coming in on screen may be read as it comes: a longer wait.
+        assert_eq!(quiet(Moment { watching: true, ..at_window(IDLE.as_secs()) }), Swap::Later(LOOK));
+        assert_eq!(quiet(Moment { watching: true, ..at_window(IDLE_WATCHING.as_secs()) }), Swap::Now);
+    }
 }

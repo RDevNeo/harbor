@@ -108,6 +108,12 @@ impl App {
         Some((v, installing))
     }
 
+    /// Updating automatically it installs and swaps in by itself while you're away: no toast
+    /// here, and no banner on the phones (`hub_update`).
+    pub fn harbor_silent(&self, installing: bool) -> bool {
+        self.auto_update() && !self.reload_asked && (installing || self.harbor_ready().is_some())
+    }
+
     /// The version installed on disk that this Harbor can restart into.
     pub fn harbor_ready(&self) -> Option<String> {
         self.update_ready.load(std::sync::atomic::Ordering::Relaxed).then(crate::update::on_disk).flatten()
@@ -116,6 +122,9 @@ impl App {
     fn harbor_toast(&mut self, ctx: &egui::Context, t: &Tokens, y: f32) -> Option<f32> {
         let (v, installing) = self.harbor_offer()?;
         if self.store.get(HARBOR_DISMISSED).as_deref() == Some(v.as_str()) {
+            return None;
+        }
+        if self.harbor_silent(installing) {
             return None;
         }
         let busy = installing || self.reload_asked;

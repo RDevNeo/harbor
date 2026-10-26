@@ -160,6 +160,7 @@ public class Chat extends Base {
     protected void onResume() {
         super.onResume();
         if (hub == null) return;
+        Update.shown(this, hub.id, chatId);
         load(!loaded);
         refreshState();
     }

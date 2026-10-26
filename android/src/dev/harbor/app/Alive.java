@@ -14,7 +14,8 @@ import android.os.SystemClock;
  *  every 15 minutes, kept across reboots (Android runs it later in Doze or when the app is
  *  rarely used); and a burst right after the user leaves the app, long-polling for a few
  *  minutes, when an answer to what was just asked is most likely. Each ping: the pairing
- *  secret's MAC over the time, no session and no screen lock. */
+ *  secret's MAC over the time, no session and no screen lock. After the pings, an automatic
+ *  update when one is due and nobody sees Harbor (Update.background). */
 public class Alive extends JobService {
     static final int JOB = 4711, BURST = 4712;
     static final long EVERY_MS = 15 * 60_000L;
@@ -72,6 +73,8 @@ public class Alive extends JobService {
                     int wait = burst && i == 0 ? (int) Math.min(60_000, Math.max(0, until - SystemClock.elapsedRealtime())) : 0;
                     try { hubs.get(i).alive(wait); } catch (Exception e) { if (burst) SystemClock.sleep(10_000); }
                 }
+                // Updating automatically: a new version installs while nobody sees Harbor.
+                if (!stop) Update.background(this);
             } while (burst && !stop && Base.resumed <= 0 && SystemClock.elapsedRealtime() < until);
             jobFinished(p, false);
         });

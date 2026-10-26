@@ -420,7 +420,7 @@ impl App {
             State::UpToDate => "Harbor is up to date.".into(),
             State::Available(v) => format!("Harbor {v} is available."),
             State::Installing(v) => format!("Installing {v}…"),
-            State::Installed(v) if auto => format!("Harbor {v} is installed. It takes over the next time this window is focused; running agents carry on."),
+            State::Installed(v) if auto => format!("Harbor {v} is installed. It takes over by itself when you're away (window closed, or left alone a few minutes); running agents carry on."),
             State::Installed(v) => format!("Harbor {v} is installed. Click Update ready at the top to switch to it; running agents carry on."),
             State::Failed(e) => format!("The last update failed: {e}"),
         };
@@ -442,7 +442,7 @@ impl App {
             w::setting_row(
                 ui,
                 "Updates",
-                "Ask me: an Update button appears at the top when a new version or build is out; clicking it installs it and reloads Harbor in place, without losing your place. Automatically: new versions are downloaded, their signature checked, and swapped in when the window is focused.",
+                "Ask me: an Update button appears at the top when a new version or build is out; clicking it installs it and reloads Harbor in place, without losing your place. Automatically: new versions are downloaded and their signature checked in the background, then swapped in while you're away (the window closed, or left alone a few minutes with nothing typed), back on the same screen. Phones that haven't chosen for themselves follow this.",
                 |ui| {
                     if let Some(i) = w::tabs(ui, &["Ask me", "Automatically"], usize::from(auto)) {
                         auto = i == 1;

@@ -2453,6 +2453,17 @@ impl App {
                     Reply { status: 202, body: json!({ "ok": true, "checking": true }) }
                 }
             }
+            // Settings › Updates from another PC or the phone (0.53): `{"on": true}` updates
+            // automatically from now on (and looks for a release at once), false asks first.
+            ("POST", ["v1", "hub", "auto"]) => {
+                let Some(on) = call.body["on"].as_bool() else { return err(400, "send {\"on\": true} or false") };
+                self.store.set("auto_update", if on { "1" } else { "0" });
+                crate::update::tick(on, ctx);
+                if on && crate::update::managed() {
+                    crate::update::check(true, ctx);
+                }
+                ok(json!({ "ok": true, "auto": on }))
+            }
             ("POST", ["v1", "chats", c, action]) => {
                 let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 match *action {
@@ -2845,7 +2856,9 @@ impl App {
     /// The two update banners' data (notices.rs draws the same on the desktop): the Harbor
     /// release this hub can install, and its provider CLIs that are behind. Null when none.
     pub fn updates_json(&self) -> Value {
-        let hub = self.harbor_offer().map(|(v, installing)| {
+        // Updating automatically (0.53) the desktop shows no toast while it installs and waits
+        // to swap in: the phone's banner neither.
+        let hub = self.harbor_offer().filter(|(_, installing)| !self.harbor_silent(*installing)).map(|(v, installing)| {
             // `ready` (0.47.1): already installed on disk, Update only restarts into it.
             json!({ "version": v, "current": crate::update::VERSION, "installing": installing || self.reload_asked, "ready": self.harbor_ready().is_some(), "notes_url": crate::notices::notes_url(&v) })
         });

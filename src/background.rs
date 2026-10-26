@@ -160,6 +160,8 @@ impl App {
     pub fn window_opened(&mut self, ctx: &egui::Context) {
         HIDDEN.store(false, Ordering::Relaxed);
         SHOW.store(false, Ordering::Relaxed);
+        // Someone just opened it: an automatic update waits until it's left alone again.
+        self.reload_watch.touched();
         // A changed missing-glyph policy makes egui build new fonts (a full atlas upload).
         use egui::MissingGlyphPolicy as P;
         let policy = ctx.missing_glyph_policy();

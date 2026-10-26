@@ -182,7 +182,8 @@ final class Sidebar {
         list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
         JSONObject app = st.optJSONObject("app");
         long offered = Math.max(app == null ? 0 : app.optLong("version_code"), Update.bestCode);
-        if (offered > Settings.myCode(a)) list.addView(nav(Ui.I_DOWNLOAD, "Update available", null, Ui.BLUE, v -> settings()), Ui.inset());
+        // Updating automatically it installs by itself while the phone sleeps: nothing to tap.
+        if (offered > Settings.myCode(a) && !Update.silent(a, offered)) list.addView(nav(Ui.I_DOWNLOAD, "Update available", null, Ui.BLUE, v -> settings()), Ui.inset());
         View line = new View(a);
         line.setBackgroundColor(Ui.LINE);
         list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 8, 20, 2));
@@ -553,7 +554,7 @@ final class Sidebar {
             vc.removeAllViews();
             actions.removeAllViews();
             String newest = Update.newest(pcs);
-            List<Update.Pc> behind = new ArrayList<>();
+            List<Update.Pc> behind = new ArrayList<>(), asks = new ArrayList<>();
             boolean first = true, managed = false;
             for (Update.Pc p : pcs) {
                 if (!first) vc.addView(Ui.gap(a));
@@ -572,8 +573,12 @@ final class Sidebar {
                     String st = busy && !p.busy() ? "updating…" : p.status();
                     sub = "Harbor " + p.version() + (st.isEmpty() ? "" : " · " + st);
                     if (late && !busy && !st.contains(newest)) sub += " · " + newest + " is out";
+                    if (p.managed() && Boolean.TRUE.equals(p.auto())) sub += " · updates automatically";
                 }
-                LinearLayout r = Ui.cardRow(a, Ui.I_MONITOR, p.name, sub, p.info == null ? Ui.G600 : Ui.FG, null);
+                if (p.asks()) asks.add(p);
+                // Hubs from 0.53: a tap sets how that PC updates (its Settings › Updates).
+                LinearLayout r = Ui.cardRow(a, Ui.I_MONITOR, p.name, sub, p.info == null ? Ui.G600 : Ui.FG,
+                        p.managed() && p.auto() != null ? v -> pickAuto(s, vc, actions, asked, p) : null);
                 Ui.wrapSub(r, 3);
                 if (late) {
                     TextView b = small(busy ? "Updating…" : "Update", !busy);
@@ -584,6 +589,10 @@ final class Sidebar {
             }
             if (behind.size() > 1) {
                 TextView all = Ui.button(a, "Update all (" + behind.size() + ")", true, v -> update(s, vc, actions, asked, behind));
+                actions.addView(all, Ui.margins(Ui.weight(), 0, 0, 8, 0));
+            }
+            if (!asks.isEmpty() && behind.size() <= 1) {
+                TextView all = Ui.button(a, asks.size() == 1 ? "Auto-update it" : "Auto-update all (" + asks.size() + ")", false, v -> setAuto(s, vc, actions, asked, asks, true));
                 actions.addView(all, Ui.margins(Ui.weight(), 0, 0, 8, 0));
             }
             if (managed) {
@@ -597,7 +606,7 @@ final class Sidebar {
                         return true;
                     }, r -> versions(s, vc, actions, asked));
                 });
-                actions.addView(check, behind.size() > 1 ? Ui.weight() : Ui.fill());
+                actions.addView(check, actions.getChildCount() > 0 ? Ui.weight() : Ui.fill());
             }
         });
     }
@@ -620,6 +629,32 @@ final class Sidebar {
             // They download, install and reload in place: look again meanwhile.
             for (int ms : new int[] { 8000, 25000, 60000 })
                 Ui.main.postDelayed(() -> { if (s.dialog.isShowing()) versions(s, vc, actions, asked); }, ms);
+        });
+    }
+
+    /** How PC p updates: Automatically or Ask me (its Settings › Updates). */
+    private void pickAuto(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked, Update.Pc p) {
+        List<Sheet.Option> o = new ArrayList<>();
+        o.add(new Sheet.Option("auto", "Automatically", "new versions install in the background and swap in while nobody uses Harbor there", true));
+        o.add(new Sheet.Option("ask", "Ask me", "an Update button waits on that PC", true));
+        Sheet.pick(a, "Updates on " + p.name, null, o, Boolean.TRUE.equals(p.auto()) ? "auto" : "ask",
+                id -> setAuto(s, vc, actions, asked, java.util.Collections.singletonList(p), "auto".equals(id)));
+    }
+
+    /** Sets each PC's Settings › Updates (`POST /v1/hub/auto`), then looks again. */
+    private void setAuto(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked, List<Update.Pc> pcs, boolean on) {
+        Ui.bg(a, () -> {
+            List<String> failed = new ArrayList<>();
+            JSONObject b = new JSONObject();
+            b.put("on", on);
+            for (Update.Pc p : pcs) {
+                try { p.hub.callOn(p.v, "POST", "/v1/hub/auto", b); }
+                catch (Exception e) { failed.add(p.name + ": " + Hub.why(e)); }
+            }
+            return failed;
+        }, failed -> {
+            if (!failed.isEmpty()) Ui.toast(a, String.join("\n", failed));
+            versions(s, vc, actions, asked);
         });
     }
 

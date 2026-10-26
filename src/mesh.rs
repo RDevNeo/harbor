@@ -2802,6 +2802,11 @@ impl App {
         let busy = |p: &Peer| updating.contains_key(&p.id) || p.update["installing"].as_bool() == Some(true) || p.update["checking"].as_bool() == Some(true);
         let behind = |p: &Peer| p.online && p.update["managed"].as_bool() == Some(true) && crate::update::newer(&newest, &p.version);
         let behind_all: Vec<Peer> = peers.iter().filter(|p| behind(p) && !busy(p)).cloned().collect();
+        // PCs that ask before updating (`update.auto`, from 0.53): Auto-update turns it on there.
+        let mut auto_peers: Vec<Peer> = vec![];
+        let mut auto_all = false;
+        let asks = |p: &Peer| p.online && p.update["managed"].as_bool() == Some(true) && p.update["auto"].as_bool() == Some(false);
+        let asks_all: Vec<Peer> = peers.iter().filter(|p| asks(p)).cloned().collect();
         let mut enable_here = false;
         let phones_here = self.api.hub.enabled.load(Ordering::Relaxed);
         let mut fix_firewall = false;
@@ -2821,6 +2826,10 @@ impl App {
                 }
                 if on && behind_all.len() > 1 && w::btn("Update all PCs").sm().outline().show(ui).tip("Install the newest Harbor on every other PC that's behind").clicked() {
                     update_peers = behind_all.clone();
+                }
+                if on && !asks_all.is_empty() && w::btn("Auto-update all PCs").sm().outline().show(ui).tip("Settings › Updates › Automatically on this PC and every other one: new versions install in the background and swap in while nobody uses Harbor there").clicked() {
+                    auto_peers = asks_all.clone();
+                    auto_all = true;
                 }
                 if on && !phones_here && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
                     enable_here = true;
@@ -2859,6 +2868,9 @@ impl App {
                             }
                             if behind(p) && !busy(p) && !status.contains(newest.as_str()) {
                                 d.push_str(&format!(" · {newest} is out"));
+                            }
+                            if p.update["managed"].as_bool() == Some(true) && p.update["auto"].as_bool() == Some(true) {
+                                d.push_str(" · updates automatically");
                             }
                             d
                         }
@@ -2925,6 +2937,11 @@ impl App {
                                 update_peers = vec![p.clone()];
                             }
                         }
+                        if let Some(p) = peer.filter(|p| asks(p)) {
+                            if w::btn("Auto-update").sm().outline().show(ui).tip("Turn on Settings › Updates › Automatically there: new versions install in the background and swap in while nobody uses Harbor on it").clicked() {
+                                auto_peers = vec![p.clone()];
+                            }
+                        }
                         if phones_off && w::btn("Enable phone access").sm().outline().show(ui).clicked() {
                             if let Some(p) = peer {
                                 enable = Some(p.clone());
@@ -2984,6 +3001,22 @@ impl App {
                 if let Ok((status, v)) = http(&p.dest(), "POST", "/mesh/v1/call", Some(("application/json", &call)), Duration::from_secs(15)) {
                     if status >= 300 {
                         eprintln!("harbor: updating {}: {}", p.name, v["error"].as_str().unwrap_or("refused"));
+                    }
+                }
+            });
+        }
+        if auto_all {
+            // "Auto-update all PCs": this one too.
+            self.store.set("auto_update", "1");
+        }
+        for p in auto_peers {
+            // Its Settings › Updates › Automatically (`/v1/hub/auto`, through the mesh); its next
+            // hello says so.
+            std::thread::spawn(move || {
+                let call = serde_json::to_vec(&json!({ "method": "POST", "path": ["v1", "hub", "auto"], "body": { "on": true } })).unwrap_or_default();
+                if let Ok((status, v)) = http(&p.dest(), "POST", "/mesh/v1/call", Some(("application/json", &call)), Duration::from_secs(15)) {
+                    if status >= 300 {
+                        eprintln!("harbor: auto-updates on {}: {}", p.name, v["error"].as_str().unwrap_or("refused"));
                     }
                 }
             });

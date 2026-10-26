@@ -132,6 +132,7 @@ impl App {
                         let (text, tip) = match &offer {
                             State::Available(v) => ("Update", format!("Install Harbor {v} and reload into it{keep}")),
                             State::Installing(v) => ("Updating…", format!("Installing Harbor {v}…")),
+                            _ if self.auto_update() => ("Update ready", format!("Reload into the new build now{keep}; else it does by itself while you're away")),
                             _ => ("Update ready", format!("Reload into the new build{keep}")),
                         };
                         // Icon-only when the bar is narrow.
@@ -346,7 +347,7 @@ impl App {
             .show_separator_line(false)
             .show(ui, |ui| centered(ui, CONTENT_W, |ui| self.composer(ui, running)));
 
-        ScrollArea::vertical()
+        let out = ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
             .id_salt(("transcript", id))
@@ -357,6 +358,9 @@ impl App {
                     ui.add_space(24.0);
                 });
             });
+        // Scrolled up to older messages: an automatic update waits (reload.rs), as the restart
+        // would bring the transcript back to its end.
+        self.reading_back = out.state.clamped_offset().y + out.inner_rect.height() < out.content_size.y - 48.0;
     }
 
     fn transcript(&mut self, ui: &mut Ui, id: i64, _running: Option<u64>) {

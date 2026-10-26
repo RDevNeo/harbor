@@ -5,6 +5,24 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- The phone updates itself: Settings › Update automatically (it follows your PCs' Settings ›
+  Updates until you choose on the phone). New versions download and install in the background,
+  only while the screen is off or locked, never while you use Harbor, and the next time you open
+  it you're back on the chat you had, draft included. If Android still wants you to confirm, a
+  notification finishes it instead of a dialog popping up.
+- Turn on automatic updates for your other PCs from one place: Settings › Devices has
+  Auto-update per PC and "Auto-update all PCs"; on the phone, tap a PC in sidebar › PCs to pick
+  Automatically or Ask me, or "Auto-update all". Each PC's line says when it updates
+  automatically.
+
+### Changed
+- Automatic updates on the desktop no longer restart Harbor in front of you: the new version
+  installs in the background with no toast and swaps in only while nobody sees it (the window
+  closed, or focused and left alone for two minutes with nothing typed in the composer and the
+  chat not scrolled back), instead of as soon as the window is focused, and comes back on the
+  same screen. The Update ready button still swaps in at once.
+
 ## [0.53.1] - 2026-10-26
 
 ### Fixed

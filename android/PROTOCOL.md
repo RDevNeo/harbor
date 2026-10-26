@@ -366,6 +366,8 @@ refetch everything.
   `checking` (optional, from 0.51; missing: false): an Update was asked before the hub knew of
   any release, so it is checking first; `version` is `""` then (older apps hide the banner on
   an empty version). The banner says "Looking for the newest Harbor…" with Update disabled.
+  From 0.53 a hub that updates automatically (`GET /v1/app` `hub.auto`) leaves it null while it
+  installs and while the new version waits on its disk to swap in, as its desktop shows no toast.
 - `profile_check` (optional, from 0.47; null or missing: nothing to ask): `{key, title, body}`,
   "Is this you?" while this PC's owner is a detection nobody confirmed (the desktop's pop-up).
   Confirm sends `PATCH /v1/people {"op": "confirm"}`; closing remembers `key` on the phone.
@@ -1116,6 +1118,16 @@ with another download. Hubs before 0.51 answer `409 "Harbor is up to date"` with
 Automatically on it also installs). `202 {"ok": true, "checking": true}`; the result shows in
 `GET /v1/app` `hub` and in `hub_update`. `409` for a hub built from source; `404` before 0.51.
 
+### `POST /v1/hub/auto` (from 0.53)
+
+`{"on": true}` or `{"on": false}`: the hub's Settings › Updates, "Automatically" or "Ask me".
+Turned on, a hub that updates itself also looks for a release at once (and installs it, then
+swaps in while nobody uses it). `{"ok": true, "auto": true}`; `400` without `on`; `404` before
+0.53 (offer it only for PCs whose `GET /v1/app` `hub` has `auto`). The phone's PCs sheet: a tap
+on a PC picks Automatically / Ask me, and "Auto-update all" turns it on for every PC that asks;
+the desktop's Settings › Devices has Auto-update per PC and "Auto-update all PCs" (through
+`/mesh/v1/call`).
+
 ### `GET /v1/app`
 
 `{"version_code": 7000, "url": "/app.apk", "hub": {…}}`; `version_code` 0: the hub has no app
@@ -1132,6 +1144,20 @@ check). The phone's PCs page (sidebar › PCs) lists every PC with `Harbor <vers
 and an Update (`POST /v1/hub/update` to that PC, `callOn`) when it's `managed` and older than the
 newest `version` or `latest` any PC says, plus "Update all" with two or more behind and "Check
 for updates" (`POST /v1/hub/check` to each).
+
+`hub.auto` (optional, from 0.53; missing: false): the PC's Settings › Updates is
+"Automatically". Such a PC installs releases in the background and swaps them in while nobody
+looks at it (window closed, or focused and left alone for a few minutes with nothing typed), so
+it shows no update toast meanwhile and its `/v1/state` `hub_update` stays null while it installs
+or waits to swap in (an Update asked from the phone still shows as before).
+
+The phone's own Settings › Update automatically follows `auto` until it's chosen on the phone
+(on when any PC that answered says true). On, the background jobs (Alive, Listen) look for a
+newer app (this call, at most every 10 minutes) and install it only while none of Harbor's
+screens is in front and the screen is off or locked: Android always ends an app's process when
+it replaces it. The next start opens the chat the user had (drafts are kept). A version that
+didn't go in (refused, or Android asked to confirm: then a notification finishes it) is tried
+again by itself only after 6 hours.
 
 ### `GET /app.apk` (and `HEAD`)
 

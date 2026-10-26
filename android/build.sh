@@ -72,6 +72,9 @@ java -cp "$W/classes:$W/test" dev.harbor.app.TagTest
 # And dictation's phrase rules (Voice).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/PhrasesTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.PhrasesTest
+# And when an automatic update may install (Quiet).
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/UpdateTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.UpdateTest
 # So is the QR scanner's decoding of a camera frame.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/QrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.QrTest "$HERE/test/pair-qr.png"

@@ -40,6 +40,7 @@ public class Chats extends Base {
         Hub fresh = Hub.get(this, hub.id);
         if (fresh == null) { finish(); return; }
         hub = fresh;
+        Update.shown(this, hub.id, null);
         side.label();
         load();
     }

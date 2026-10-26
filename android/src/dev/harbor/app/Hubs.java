@@ -41,6 +41,8 @@ public class Hubs extends Base {
 
         if (b == null && !handleLink(getIntent())) {
             if (getIntent().getBooleanExtra("pair", false)) { pair(); return; }
+            // Right after an update: back to the chat the user had.
+            if (Update.resume(this)) return;
             // A cold start goes straight back to the PC used last.
             String last = Hub.last(this);
             List<Hub> all = Hub.all(this);
