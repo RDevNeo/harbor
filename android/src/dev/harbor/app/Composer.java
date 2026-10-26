@@ -87,21 +87,24 @@ final class Composer {
         edit.setMaxLines(7);
         edit.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        view.addView(edit, Ui.fill());
+        // The text, with the suggestion's Use chip in its top-right corner (the desktop's "⇥ Tab"
+        // tag): never in the button row, where it pushed the send button out of the card.
+        FrameLayout box = new FrameLayout(a);
+        box.addView(edit, new FrameLayout.LayoutParams(-1, -2));
+        use = Recap.useChip(a, this);
+        box.addView(use, Ui.margins(new FrameLayout.LayoutParams(-2, Ui.dp(28), Gravity.TOP | Gravity.END), 0, 8, 6, 0));
+        Recap.tapToUse(this);
+        view.addView(box, Ui.fill());
 
         LinearLayout row = Ui.row(a);
         row.setPadding(Ui.dp(4), Ui.dp(4), 0, 0);
         row.addView(Ui.roundButton(a, Ui.I_PLUS, Ui.G100, Ui.FG, 44, v -> { if (onPlus != null) onPlus.run(); }));
         pill = Ui.pill(a, "", v -> { if (onPill != null) onPill.run(); });
-        // Large font sizes must not push the send button out of the card: the pill ellipsizes
-        // (screen - composer margins and padding - three 44 dp buttons and their gaps).
-        pill.setMaxWidth(a.getResources().getDisplayMetrics().widthPixels - Ui.dp(24 + 16 + 4 + 3 * 44 + 3 * 8 + 4));
-        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-2, Ui.dp(44));
-        pp.leftMargin = Ui.dp(8);
-        row.addView(pill, pp);
-        row.addView(new View(a), new LinearLayout.LayoutParams(0, 1, 1));
-        use = Recap.useChip(a, this);
-        row.addView(use, Ui.margins(new LinearLayout.LayoutParams(-2, Ui.dp(32)), 8, 0, 0, 0));
+        // The pill hugs its label inside the room the fixed buttons leave, and ellipsizes there:
+        // no width or font scale can push mic or send out of the card.
+        FrameLayout slot = new FrameLayout(a);
+        slot.addView(pill, new FrameLayout.LayoutParams(-2, Ui.dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
+        row.addView(slot, Ui.margins(new LinearLayout.LayoutParams(0, Ui.dp(44), 1), 8, 0, 0, 0));
         mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> { if (voice != null) voice.toggle(); else speak(); });
         mic.setContentDescription("Dictate");
         row.addView(mic, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));

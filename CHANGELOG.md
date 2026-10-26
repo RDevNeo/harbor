@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: the suggestion's "⇥ Use" chip no longer pushes the send button off the composer. It sits
+  in the text box's top-right corner (where the desktop shows "⇥ Tab"), a tap on the grayed
+  suggestion itself takes it too, and the model pill shortens with "…" before anything else moves,
+  so send and mic always fit at any width or font size.
+
 ## [0.46.1] - 2026-10-26
 
 ### Fixed
