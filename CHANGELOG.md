@@ -5,6 +5,24 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A chat waiting at a usage limit offers **Continue on…** on the phone too: a chip under the
+  limit line opens a sheet of the provider's other signed-in accounts that aren't blocked, and
+  the chat moves to the one picked and continues there (also for chats on remote devices and
+  chats whose home is another PC). The hub sends them as the limit's optional `targets` and
+  takes the choice at `POST /v1/chats/{id}/continue_on`.
+- When automatic switching is off but another account could take the chat, the limit
+  notification says "Continue on <account> available".
+
+### Fixed
+- A limit reported twice in one turn (Claude's rate-limit event, then its message without a
+  reset time) no longer replaces the known reset with a 15-minute guess: a chat at its weekly
+  limit waits for the real reset instead of waking every 15 minutes, burning a turn and hitting
+  the limit again.
+- Claude's "You've hit your weekly limit · resets 12am (America/Sao_Paulo)" wording (also
+  "resets 3:30pm (…)" and "resets Oct 30, 5pm (…)") is read as a limit with its reset time and
+  window.
+
 ## [0.47.1] - 2026-10-26
 
 ### Fixed

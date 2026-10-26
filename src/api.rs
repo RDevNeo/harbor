@@ -2373,6 +2373,18 @@ impl App {
                         self.cancel_limit(c);
                         ok(json!({ "ok": true }))
                     }
+                    // The limit line's Continue on…: {"account": one of the limit's `targets`}.
+                    "continue_on" => {
+                        let to = call.body["account"].as_str().unwrap_or("").to_string();
+                        if !self.switch_targets(c, false).contains(&to) {
+                            return err(409, "that account can't take this chat now");
+                        }
+                        if self.continue_on(c, &to, "is at its usage limit", ctx) {
+                            ok(json!({ "ok": true }))
+                        } else {
+                            err(409, "couldn't move the chat to that account")
+                        }
+                    }
                     _ => err(404, "unknown action"),
                 }
             }
@@ -2828,7 +2840,15 @@ impl App {
             let agents: Vec<Value> = subs.iter().map(|(c, secs)| json!({ "id": c.id, "name": c.name, "title": c.title, "since_ms": now_ms - *secs as i64 * 1000 })).collect();
             json!({ "agents": agents, "queued": self.subs_queued(chat) })
         });
-        let limit = self.limit_text(chat).map(|(text, cancel)| json!({ "text": text, "can_cancel": cancel }));
+        let limit = self.limit_text(chat).map(|(text, cancel)| {
+            // The line's Continue on…: other accounts of the provider, as the desktop lists them.
+            let targets: Vec<Value> = self
+                .switch_targets(chat, false)
+                .iter()
+                .map(|id| json!({ "id": id, "name": self.account(id).map(|a| format!("{} · {}", a.short(), a.email)).unwrap_or_else(|| id.clone()) }))
+                .collect();
+            json!({ "text": text, "can_cancel": cancel, "targets": targets })
+        });
         json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit, "agents": self.strip_json(chat) })
     }
 

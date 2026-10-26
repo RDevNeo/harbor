@@ -452,6 +452,9 @@ the desktop shows nothing:
   strip shows the agents and holds Stop all.
 - `limit: {text, can_cancel}`: the usage-limit line (clock icon, `text`), with **Continue now**
   (`POST /v1/chats/{id}/continue`) and, when `can_cancel`, **Cancel** (`POST /v1/chats/{id}/cancel_limit`).
+  `targets: [{id, name}]` (optional, hubs before 0.48 send none): other signed-in accounts of the
+  same provider that aren't blocked; when not empty, a **Continue on…** chip opens a picker of
+  their `name`s and sends the choice to `POST /v1/chats/{id}/continue_on`.
 - `agents: {title, folded, header, rows: [{id, name, doing, task, model, logo, badge, since_ms, usage}]}` (optional,
   null or missing without running sub-agents; older hubs never send it): the live strip over a
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
@@ -662,6 +665,13 @@ The waiting bar's Stop all: stops the lead and its running sub-agents and clears
 
 The usage-limit line's Continue now (runs the waiting turn now) and Cancel (drops the planned
 continue). → `{"ok": true}`.
+
+### `POST /v1/chats/{id}/continue_on`
+
+`{"account": "<id>"}`, one of the limit line's `targets`: the chat moves to that account and
+continues there now (like the desktop's Continue on…). → `{"ok": true}`; `409` when that account
+can't take it now (blocked, signed out, gone) or the chat couldn't move. Hubs before 0.48 answer
+`404 unknown action`.
 
 ### `GET /v1/image?path=<absolute path>&max=<px>`
 
@@ -1040,7 +1050,7 @@ Harbor keeps a full copy of every chat (`src/mesh.rs`), so any of them answers t
 same chats, rendered the same way.
 
 - A chat runs on one PC, its `home`. Another hub holds a copy: reading it is local; a write to it
-  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `fork`, `slash`, `PATCH`, `DELETE`), and
+  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `continue_on`, `fork`, `slash`, `PATCH`, `DELETE`), and
   `GET …/slash`, is forwarded to the home PC and answered from there. The message records where it came from (`sender`).
   While the home PC is off the copy is read-only (`writable: false`, writes `409`) and catches up
   when it's back.

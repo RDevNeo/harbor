@@ -137,7 +137,8 @@ pub fn from_text(text: &str) -> Option<(String, Option<i64>)> {
     let l = text.to_ascii_lowercase();
     let limit = ["rate limit", "rate-limit", "rate_limit", "ratelimit", "usage limit", "quota", "resource_exhausted", "hit your limit", " 429"]
         .iter()
-        .any(|k| l.contains(k));
+        .any(|k| l.contains(k))
+        || (l.contains("hit your ") && l.contains(" limit"));
     if !limit {
         return None;
     }
@@ -153,11 +154,61 @@ pub fn from_text(text: &str) -> Option<(String, Option<i64>)> {
             return Some((String::new(), Some(t)));
         }
     }
+    // Claude: "You've hit your weekly limit · resets 12am (America/Sao_Paulo)", also
+    // "resets 3:30pm (…)" or "resets Oct 30, 5pm (…)".
+    if let Some(t) = claude_reset(text, &l) {
+        let kind = if l.contains("weekly") { "seven_day" } else if l.contains("5-hour") || l.contains("session limit") { "five_hour" } else { "" };
+        return Some((kind.into(), Some(t)));
+    }
     // Gemini: daily quotas reset at midnight Pacific.
     if l.contains("daily quota") || l.contains("per day") {
         return Some(("daily".into(), date("tomorrow 00:00", Some("America/Los_Angeles"))));
     }
     Some((String::new(), None))
+}
+
+/// The reset time in Claude's "resets 12am (America/Sao_Paulo)" wording (`l` is
+/// `text` lowercased). A bare time already past today means tomorrow.
+fn claude_reset(text: &str, l: &str) -> Option<i64> {
+    let i = l.find("resets ")? + "resets ".len();
+    let rest = text.get(i..)?;
+    let (when, tz) = match rest.find(" (") {
+        Some(j) => {
+            let tz = rest[j + 2..].split(')').next().unwrap_or("");
+            (&rest[..j], Some(tz))
+        }
+        None => (rest.split(['.', '\n']).next().unwrap_or(""), None),
+    };
+    // Only a plausible zone name goes into TZ.
+    let tz = tz.filter(|z| !z.is_empty() && z.len() < 64 && z.chars().all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c)));
+    let when = when.trim().replace(", ", " ").replace(" at ", " ");
+    if when.is_empty() || when.len() > 40 || !when.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let mut t = date(&when, tz)?;
+    if t < store::now() {
+        t += 24 * 3600;
+    }
+    Some(t)
+}
+
+/// The account's block after a limit hit, given the one it had.
+fn next_block(prev: Option<&Block>, kind: &str, resets_at: Option<i64>, now: i64) -> Block {
+    match resets_at.filter(|t| *t > now) {
+        // An unknown reset never replaces a known one still ahead (one turn reports
+        // the limit twice; the second report may not say when it resets).
+        None if prev.is_some_and(|b| b.known && b.until > now && b.cap.is_none()) => prev.cloned().unwrap(),
+        Some(until) => {
+            let tries = prev.filter(|b| b.until == until).map_or(0, |b| b.tries + 1);
+            Block { until, kind: kind.to_string(), known: true, tries, cap: None }
+        }
+        None => {
+            // Unknown reset: back off 15, 30, then 60 minutes.
+            let tries = prev.filter(|b| !b.known && b.until > now - 3 * 3600).map_or(0, |b| b.tries + 1);
+            let mins = [15, 30, 60].get(tries as usize).copied().unwrap_or(60);
+            Block { until: now + mins * 60, kind: kind.to_string(), known: false, tries, cap: None }
+        }
+    }
 }
 
 impl App {
@@ -250,7 +301,12 @@ impl App {
                 true
             }
             Event::Limit { kind, resets_at, text } => {
-                self.limit_hit(chat_id, kind, *resets_at, text);
+                // Newer CLIs leave quotaLimits out of the synthetic message: read its text.
+                let (kind, resets_at) = match (resets_at, from_text(text)) {
+                    (None, Some((k, Some(t)))) => (if kind.is_empty() { k } else { kind.clone() }, Some(t)),
+                    _ => (kind.clone(), *resets_at),
+                };
+                self.limit_hit(chat_id, &kind, resets_at, text);
                 true
             }
             // Providers without structured limit events (and a Claude limit that only
@@ -282,18 +338,7 @@ impl App {
         let now = store::now();
         let first = self.limits.hit.insert(chat_id);
         let prev = self.limits.blocks.get(&chat.account).cloned();
-        let block = match resets_at.filter(|t| *t > now) {
-            Some(until) => {
-                let tries = prev.as_ref().filter(|b| b.until == until).map_or(0, |b| b.tries + 1);
-                Block { until, kind: kind.to_string(), known: true, tries, cap: None }
-            }
-            None => {
-                // Unknown reset: back off 15, 30, then 60 minutes.
-                let tries = prev.as_ref().filter(|b| !b.known && b.until > now - 3 * 3600).map_or(0, |b| b.tries + 1);
-                let mins = [15, 30, 60].get(tries as usize).copied().unwrap_or(60);
-                Block { until: now + mins * 60, kind: kind.to_string(), known: false, tries, cap: None }
-            }
-        };
+        let block = next_block(prev.as_ref(), kind, resets_at, now);
         if !first && prev.as_ref().is_some_and(|b| b.until == block.until) {
             return; // the same hit, seen twice (rate_limit_event and the message)
         }
@@ -316,7 +361,12 @@ impl App {
         self.notice(chat_id, "clock", &text, said);
         // Notifications: waiting for you needs you; continuing on its own is just news.
         let waits = self.paused(chat_id).is_some_and(|p| p.at.is_none());
-        self.note_limit(chat_id, &chat.account, waits, &text);
+        // Not switching by itself, but another account could take it: say so, the user decides.
+        let note = match self.switch_targets(chat_id, false).first() {
+            Some(to) => format!("{text} · Continue on {} available", self.account(to).map(account_name).unwrap_or_else(|| to.clone())),
+            None => text.clone(),
+        };
+        self.note_limit(chat_id, &chat.account, waits, &note);
         // Other chats already waiting on this account move to the new time.
         let others: Vec<i64> = self.limits.paused.iter().filter(|(id, p)| **id != chat_id && p.account == chat.account).map(|(id, _)| *id).collect();
         for id in others {
@@ -761,5 +811,45 @@ mod tests {
         assert!(from_text("\u{130} rate limit try again at ").is_some());
         assert!(from_text("\u{212a}\u{130}rate limit, try again at \u{e9}").is_some());
         assert!(from_text("\u{130} no limit words here").is_none());
+    }
+
+    #[test]
+    fn claude_reset_wording() {
+        let now = store::now();
+        let (kind, at) = from_text("You've hit your weekly limit · resets 12am (America/Sao_Paulo)").unwrap();
+        assert_eq!(kind, "seven_day");
+        let at = at.expect("reset time parsed");
+        assert!(at > now && at <= now + 24 * 3600 + 60);
+        // Midnight in São Paulo is 03:00 UTC (no DST there since 2019).
+        assert_eq!(at.rem_euclid(86400), 3 * 3600);
+        let (_, at) = from_text("You've hit your limit · resets 3:30pm (Europe/London)").unwrap();
+        assert!(at.is_some_and(|t| t > now && t <= now + 24 * 3600 + 60));
+        let (_, at) = from_text("Claude usage limit reached · resets Oct 30, 5pm (UTC)").unwrap();
+        assert!(at.is_some());
+        // No time in it: still a limit, reset unknown.
+        assert_eq!(from_text("You've hit your usage limit · resets soon").map(|(_, a)| a), Some(None));
+        assert!(from_text("resets 12am (UTC) but no limit words").is_none());
+    }
+
+    #[test]
+    fn unknown_reset_keeps_known_block() {
+        let now = 1_000_000;
+        let known = next_block(None, "seven_day", Some(now + 6 * 3600), now);
+        assert!(known.known && known.until == now + 6 * 3600);
+        // The message after the rate_limit_event, with no reset time.
+        let again = next_block(Some(&known), "", None, now);
+        assert!(again.known);
+        assert_eq!(again.until, known.until);
+        assert_eq!(window_label(&again.kind), "weekly");
+        // A known block that has passed: back off as before.
+        let later = next_block(Some(&known), "", None, now + 7 * 3600);
+        assert!(!later.known && later.until == now + 7 * 3600 + 15 * 60);
+        // A user's cap block isn't a provider reset: the hit replaces it.
+        let cap = Block { cap: Some(80), ..known.clone() };
+        assert!(!next_block(Some(&cap), "", None, now).known);
+        // Unknown after unknown still backs off 15, 30, 60.
+        let a = next_block(None, "", None, now);
+        let b = next_block(Some(&a), "", None, now + 60);
+        assert_eq!((a.until - now, b.until - now - 60), (15 * 60, 30 * 60));
     }
 }

@@ -3060,7 +3060,7 @@ impl App {
 /// A forwarded call about a chat (`tail` after `/v1/chats/{id}`) that may start a turn: it
 /// carries this PC's instructions and memory (meshctx.rs).
 fn starts_turn(method: &str, tail: &[&str]) -> bool {
-    method == "POST" && matches!(tail.first(), Some(&"send") | Some(&"continue") | Some(&"slash"))
+    method == "POST" && matches!(tail.first(), Some(&"send") | Some(&"continue") | Some(&"continue_on") | Some(&"slash"))
 }
 
 /// A phone's call about a chat (`/v1/chats/{id}/…`) that the chat's home PC answers for a

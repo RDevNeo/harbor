@@ -488,9 +488,15 @@ public class Chat extends Base {
             LinearLayout r = Ui.row(this);
             r.addView(Ui.icon(this, Ui.I_CLOCK, 15, Ui.AMBER));
             r.addView(Ui.text(this, limit.optString("text"), 14, Ui.G900), Ui.margins(Ui.weight(), 8, 0, 8, 0));
-            r.addView(small("Continue now", () -> post("continue")));
-            if (limit.optBoolean("can_cancel")) r.addView(small("Cancel", () -> post("cancel_limit")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+            // The chips under the line: a phone is too narrow for three beside the text.
+            LinearLayout acts = Ui.row(this);
+            acts.addView(small("Continue now", () -> post("continue")));
+            if (limit.optBoolean("can_cancel")) acts.addView(small("Cancel", () -> post("cancel_limit")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+            // Continue on another account of the provider (hubs from 0.48 send `targets`).
+            JSONArray targets = limit.optJSONArray("targets");
+            if (targets != null && targets.length() > 0) acts.addView(small("Continue on…", () -> continueOn(targets)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+            status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
         }
         if (typingLine != null) {
             TextView t = Ui.subtitle(Ui.text(this, typingLine, 14, Ui.BLUE));
@@ -623,6 +629,24 @@ public class Chat extends Base {
         String text = w.optString("text", "Working…");
         workingText.setText(text + " · " + el);
         Ui.main.postDelayed(ticker, 1000);
+    }
+
+    /** The limit line's Continue on…: a sheet of the accounts the hub offers; the chat moves
+     *  to the one picked and continues there (`POST continue_on`). */
+    private void continueOn(JSONArray targets) {
+        List<Sheet.Option> o = new ArrayList<>();
+        for (int i = 0; i < targets.length(); i++) {
+            JSONObject t = targets.optJSONObject(i);
+            if (t == null) continue;
+            String name = t.optString("name", t.optString("id"));
+            int dot = name.indexOf(" · ");
+            o.add(new Sheet.Option(t.optString("id"), dot > 0 ? name.substring(0, dot) : name, dot > 0 ? name.substring(dot + 3) : "", true));
+        }
+        Sheet.pick(this, "Continue on", "This account is at its usage limit. The chat moves to the one you pick and goes on there now.", o, null, id -> {
+            JSONObject body = new JSONObject();
+            try { body.put("account", id); } catch (Exception ignored) { }
+            Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/continue_on", body), r -> load(false));
+        });
     }
 
     private void post(String action) {
