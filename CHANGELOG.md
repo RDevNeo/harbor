@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-26
+
 ### Added
 - Update your PCs from the phone: sidebar › PCs lists every PC your phone reaches with its
   Harbor version and status, an Update button on each one that's behind, "Update all" when
@@ -1162,7 +1164,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/RDevNeo/harbor/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/RDevNeo/harbor/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/RDevNeo/harbor/compare/v0.48.2...v0.49.0
 [0.48.2]: https://github.com/RDevNeo/harbor/compare/v0.48.1...v0.48.2
