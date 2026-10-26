@@ -1001,6 +1001,9 @@ impl App {
                                     return;
                                 }
                                 self.stop(id);
+                                if let Some(w) = self.ws_drop(id) {
+                                    crate::picker::show_toast(ui.ctx(), w);
+                                }
                                 self.store.delete_chat(id);
                                 self.chats.retain(|c| c.id != id);
                                 self.transcripts.remove(&id);

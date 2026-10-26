@@ -423,6 +423,9 @@ usage; the update banners). A typing lease running out is a change too (its chat
 
 → `{"id": 13}`. Fields left out take the hub's defaults (`project_id` missing or null: no
 project). With no `text` and no `files` the chat is created idle. `fast` sets the hub-wide flag.
+Since 0.37 (optional): `"worktree": true, "base": "<branch>"` starts it in a new git worktree of
+the project made from `base` ("" or missing: the checkout's branch); a hub that can't make it
+answers `409` with git's reason and creates nothing. Ignored with a `device`.
 
 ### `POST /v1/chats/{id}/send`
 
@@ -483,7 +486,45 @@ Harbor doesn't act as a client of a hub yet (chats aren't shared between PCs' Ha
 
 ### `DELETE /v1/chats/{id}`
 
-Stops a running turn first. → `{"ok": true}`.
+Stops a running turn first. → `{"ok": true}`. Its worktree is removed with it (0.37), unless it has
+uncommitted changes: then `"kept_worktree": "<what to do>"` (optional) says it was kept.
+
+### Workspace and branch (0.37)
+
+The desktop's bar under the composer (src/worktree.rs), as two chips under the phone's composer
+and New chat screen. Where the agent works: the project's own checkout, or a git worktree of its
+own (`<Harbor data>/worktrees/<project>-<6 hex>`, branch `harbor/<6 hex>`) so parallel agents don't
+collide. Hubs before 0.37 answer `404`: show no chips.
+
+`GET /v1/workspace?chat=<id>` (a chat) or `?project=<id>&worktree=0|1&base=<branch>` (New chat,
+with its picks) →
+
+```json
+{"git": true, "mode": "checkout", "name": null, "path": "/home/sam/Projects/app",
+ "branch": "main", "dirty": 2, "base": "", "can_move": true, "move_why": null, "branch_lock": null}
+```
+
+`git: false` (and nothing else): no chips (no project, not a git repo, another PC's chat, a chat on
+another device). `mode` is `worktree` for a chat in its worktree (`name`, `path` its folder) and
+for New chat with `worktree=1` (`base`: the branch it would start from). `branch` reads
+`detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
+a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
+switched now (an agent is working there), null when it can.
+
+`GET /v1/branches?chat=|project=&q=<filter>` → `{"current": "main", "dirty": 2, "warning": "2
+uncommitted changes here: …" | null, "checkout_note": "Switches the project's checkout …" | null,
+"branches": [{"name": "feature/x", "remote": false, "current": false}, …], "can_create": true,
+"branch_lock": null}`. Ranked on the hub (recent first when `q` is empty; remote branches only when
+no local one has their name). Show `warning` before switching.
+
+`POST /v1/branches` `{"chat": id | "project": id, "switch": "<name>", "remote": false}` or
+`{…, "create": "<name>"}` → `{"ok": true, "branch": "<now>"}`; `409` with git's reason (it refuses
+to overwrite uncommitted changes, a bad name, `branch_lock`). For New chat with a new worktree
+the pick is only the `base` of `POST /v1/chats`: nothing is sent.
+
+`POST /v1/chats/{id}/worktree` → `{"ok": true, "name", "path"}`: the chat (and its sub-agents) moves
+to a new worktree from the checkout's branch; `409` with why not (`move_why`). A chat in a
+worktree stays there.
 
 ### `POST /v1/chats/{id}/fork`
 

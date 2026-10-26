@@ -840,7 +840,7 @@ impl App {
         if !expands(account.map(|a| a.kind), &chat.device) || !text.contains('/') {
             return format!("{text}{tags}");
         }
-        let mut locals = scan(&self.cwd_of(chat.repo_id).join(".claude"));
+        let mut locals = scan(&self.chat_cwd(&chat).join(".claude"));
         locals.extend(scan(&personal_dir(account)));
         format!("{}{tags}", expand(text, &locals))
     }

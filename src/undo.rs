@@ -71,7 +71,7 @@ impl App {
         let jsonl = (acc.kind == Kind::Claude).then(|| {
             // The copy the turn will write: a moved chat's is brought to its folder first.
             if chat.started && !chat.session_id.is_empty() && chat.device.is_empty() {
-                let _ = crate::movechat::ensure_session(&acc.config_dir, &chat.session_id, &self.cwd_of(chat.repo_id));
+                let _ = crate::movechat::ensure_session(&acc.config_dir, &chat.session_id, &self.chat_cwd(&chat));
             }
             let path = (chat.started && !chat.session_id.is_empty()).then(|| session_file(&acc.config_dir, &chat.session_id)).flatten();
             let len = path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());

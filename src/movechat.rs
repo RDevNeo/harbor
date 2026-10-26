@@ -81,6 +81,9 @@ impl App {
         if self.is_running(chat_id) {
             return Err("its turn is running: move it once it ends".into());
         }
+        if let Some(w) = self.worktree_of(c) {
+            return Err(format!("it works in its own worktree, {}", w.display()));
+        }
         Ok(ids)
     }
 

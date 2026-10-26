@@ -26,6 +26,7 @@ public class NewChat extends Base {
     private Composer comp;
     private Attach attach;
     private Run run;
+    private WorkBar work;
     private TextView project;
     private boolean starting;
     private Slash slash;
@@ -68,7 +69,12 @@ public class NewChat extends Base {
             sh.show();
         };
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
-        root.addView(comp.view, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        // Under the composer: Current checkout or New worktree, and the branch (WorkBar).
+        work = new WorkBar(this, hub);
+        LinearLayout below = Ui.col(this);
+        below.addView(comp.view, Ui.fill());
+        below.addView(work.view, Ui.fill());
+        root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
         // No chat yet: the PC lists by the project and run settings picked here.
         slash = new Slash(this, hub, this::slashPath, comp.edit, this::harbor);
         tags = new Tags(this, hub, () -> "/v1/tags?project=" + enc(run == null ? "" : run.project) + "&", comp.edit);
@@ -169,6 +175,9 @@ public class NewChat extends Base {
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, "", "");
         comp.pill.setText(run.pill());
         project.setText(run.projectLabel() + "  ▾");
+        // A worktree is this PC's: not for a chat that runs on another device.
+        work.project = run.device.isEmpty() ? run.project : "";
+        work.load();
         String k = run.kind();
         comp.edit.setHint("Chat with " + (k.isEmpty() ? "Claude" : Character.toUpperCase(k.charAt(0)) + k.substring(1)) + "…");
     }
@@ -218,6 +227,7 @@ public class NewChat extends Base {
             body.put("project_id", run.project.isEmpty() ? JSONObject.NULL : Hub.num(run.project)).put("device", run.device)
                     .put("account", run.account).put("model", run.model).put("effort", run.effort).put("access", run.access)
                     .put("fast", run.fast).put("text", text).put("files", attach.ids());
+            if (work.worktree && run.device.isEmpty()) body.put("worktree", true).put("base", work.base);
         } catch (Exception ignored) { }
         Ui.pool.execute(() -> {
             String id = null, err = null;

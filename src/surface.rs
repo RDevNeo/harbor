@@ -248,7 +248,7 @@ impl App {
             self.hide_pane(d);
             return;
         }
-        let cwd = self.cwd_of(self.current_repo());
+        let cwd = self.cwd_here();
         if let Some(i) = self.pane(d).surfaces.iter().position(|s| matches!(s, Surface::Terminal(t) if t.cwd == cwd && t.alive())) {
             self.show_surface(d, i);
         } else {
@@ -596,7 +596,7 @@ impl App {
         match pick {
             Some('B') => self.open_browser_in(d, None),
             Some('T') => {
-                let cwd = self.cwd_of(self.current_repo());
+                let cwd = self.cwd_here();
                 let title = cwd.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "~".into());
                 self.open_terminal_in(d, &ctx, &title, cwd, vec![], vec![]);
             }

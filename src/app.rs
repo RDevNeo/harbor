@@ -68,6 +68,10 @@ pub enum Popup {
     Snooze,
     /// Which device the agent runs on.
     Device,
+    /// Current checkout or a worktree (worktree.rs).
+    Workspace,
+    /// The branch picker under the composer.
+    Branch,
 }
 
 pub enum Dialog {
@@ -237,6 +241,8 @@ pub struct App {
     /// Settings › Devices (remote.rs) and its page's state.
     pub remote: crate::remote::Config,
     pub devices_ui: crate::remoteui::State,
+    /// The workspace and branch bar under the composer (worktree.rs).
+    pub ws: crate::worktree::State,
     /// Settings › Usage totals, summed off the UI thread.
     pub usage_totals: crate::pages::UsageTotals,
     /// Where the message being sent was written, when not on this PC (another PC or a
@@ -378,6 +384,7 @@ impl App {
             cut_off: HashSet::new(),
             remote: Default::default(),
             devices_ui: Default::default(),
+            ws: Default::default(),
             usage_totals: Default::default(),
             sender: String::new(),
             sender_device: String::new(),
@@ -547,6 +554,14 @@ impl App {
 
     pub fn cwd_of(&self, repo: Option<i64>) -> PathBuf {
         repo.and_then(|r| self.repo(r)).map(|r| r.path.clone()).unwrap_or_else(store::home)
+    }
+
+    /// Where the current view's agent works: the chat's worktree or project, the draft's project.
+    pub fn cwd_here(&self) -> PathBuf {
+        match self.view {
+            View::Chat(id) => self.chat(id).map(|c| self.chat_cwd(c)).unwrap_or_else(|| self.cwd_of(self.current_repo())),
+            _ => self.cwd_of(self.draft.repo),
+        }
     }
 
     pub fn key(&self) -> i64 {
@@ -852,8 +867,17 @@ impl App {
             return;
         }
         let chat_id = if key == DRAFT {
+            // "New worktree" under the composer: made first, so a failure keeps the draft.
+            let wt = match self.ws_for_new_chat(self.draft.repo, &self.draft.sel.device.clone()) {
+                Ok(w) => w,
+                Err(e) => {
+                    crate::picker::show_toast(ctx, e);
+                    return;
+                }
+            };
             // A project can hold several chats: every send from the draft starts one.
             let id = self.new_thread(self.draft.repo, &text);
+            self.ws_attach(id, wt);
             self.view = View::Chat(id);
             self.store.set("last_chat", &id.to_string());
             id
@@ -974,11 +998,11 @@ impl App {
         }
         // Claude resumes sessions of its folder only: a moved chat's is brought over (movechat.rs).
         if remote.is_none() && account.kind == Kind::Claude && chat.started && !chat.session_id.is_empty() {
-            let _ = crate::movechat::ensure_session(&account.config_dir, &chat.session_id, &self.cwd_of(chat.repo_id));
+            let _ = crate::movechat::ensure_session(&account.config_dir, &chat.session_id, &self.chat_cwd(&chat));
         }
         let spec = agent::TurnSpec {
             chat_id,
-            cwd: self.cwd_of(chat.repo_id),
+            cwd: self.chat_cwd(&chat),
             prompt,
             files,
             session_id: chat.session_id.clone(),

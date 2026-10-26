@@ -28,6 +28,7 @@ import java.util.TreeMap;
  *  The chat list slides in from the left, its team (Team) from the right. */
 public class Chat extends Base {
     private String chatId;
+    private WorkBar work;
     private ScrollView scroll;
     private LinearLayout content, status;
     private Composer comp;
@@ -117,7 +118,14 @@ public class Chat extends Base {
             sh.show();
         };
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
-        root.addView(comp.view, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        // The composer, and under it where the agent works and its branch (WorkBar).
+        work = new WorkBar(this, hub);
+        work.chat = chatId;
+        LinearLayout below = Ui.col(this);
+        below.addView(comp.view, Ui.fill());
+        below.addView(work.view, Ui.fill());
+        root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        work.load();
         // Another PC's chat while that PC is off: read-only, this note instead of the composer.
         offNote = Ui.text(this, "", 15, Ui.G700);
         offNote.setBackground(Ui.round(Ui.CARD, Ui.LINE, 20));
@@ -152,6 +160,7 @@ public class Chat extends Base {
     @Override
     void onEvents(Set<String> changed, boolean stateChanged, boolean reconnect) {
         if (reconnect || changed.contains(chatId)) load(reconnect);
+        if (reconnect || stateChanged) work.load();
         if (stateChanged) refreshState();
         // The hub counts a change in a team as a change of its lead.
         if (rightOpen() && (reconnect || stateChanged || changed.contains(chatId) || changed.contains(team.lead))) team.load();

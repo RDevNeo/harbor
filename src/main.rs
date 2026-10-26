@@ -72,6 +72,7 @@ mod view;
 mod waiting;
 mod widgets;
 mod workspace;
+mod worktree;
 
 use eframe::egui;
 

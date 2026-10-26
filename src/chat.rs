@@ -932,6 +932,8 @@ impl App {
                 });
             });
         });
+        // Where the agent works and its branch, attached under the box (worktree.rs).
+        self.workspace_bar(ui);
         if let Some(h) = self.slash_menu(ui, key, cid, &mut draft, focused, shown.response.rect) {
             slash = Some(h);
         }
@@ -1106,6 +1108,8 @@ impl App {
                 close
             }
             Popup::Device => self.device_menu(ctx),
+            Popup::Workspace => self.workspace_menu(ctx),
+            Popup::Branch => self.branch_menu(ctx),
             Popup::Snooze => {
                 let ((), close) = w::popover(ctx, "snooze", anchor, 220.0, false, &t, |ui| self.snooze_menu(ui));
                 close

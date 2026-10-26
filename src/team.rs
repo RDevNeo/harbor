@@ -481,7 +481,7 @@ impl App {
                 if let Some(p) = self.procs.iter().find(|p| p.lead == lead_id && p.name == name) {
                     return Err(format!("'{name}' is already running (pid {}). Use process_logs or stop_process.", p.pid));
                 }
-                let base = self.cwd_of(repo_id);
+                let base = self.chat(lead_id).map(|c| self.chat_cwd(c)).unwrap_or_else(|| self.cwd_of(repo_id));
                 let cwd = match arg(a, "cwd") {
                     "" => base,
                     c if c.starts_with('/') => std::path::PathBuf::from(c),

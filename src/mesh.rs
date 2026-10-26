@@ -1815,6 +1815,9 @@ impl App {
     /// another PC shares, listed here by its path there). Said before a turn starts, so
     /// the agent's tools don't fail on every call in a folder that doesn't exist.
     pub fn missing_folder(&self, chat: &Chat) -> Option<String> {
+        if let Some(w) = self.worktree_of(chat).filter(|w| !w.is_dir()) {
+            return Some(format!("This thread's worktree ({}) is gone. Start a new chat in the project to go on.", w.display()));
+        }
         let r = self.repo(chat.repo_id?)?;
         if r.path.is_dir() {
             return None;

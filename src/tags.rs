@@ -559,7 +559,7 @@ impl App {
         let repo = self.chat(chat_id).and_then(|c| c.repo_id);
         let mut lines = vec![];
         if repo.is_some() {
-            let cwd = self.cwd_of(repo);
+            let cwd = self.chat(chat_id).map(|c| self.chat_cwd(c)).unwrap_or_else(|| self.cwd_of(repo));
             for f in &files {
                 let p = cwd.join(f);
                 if !f.is_empty() && !f.starts_with('/') && !f.contains("..") && p.exists() {
