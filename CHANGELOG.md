@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Stop all moved into the agent strip over a lead's composer (a stop icon in its corner, desktop
+  and phone), and the old "Waiting for N sub-agents to finish" line under the transcript is gone:
+  the strip shows the agents, and says how many messages wait for them ("· 2 queued").
+
+## [0.31.0] - 2026-10-25
+
 ### Added
 - Tagging in the composer, on the desktop and the phone. `@` lists the project's files (tracked and
   untracked-not-ignored) with a file-type icon, the name and its dimmed folder, fuzzy-matched as you
@@ -748,7 +755,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/RDevNeo/harbor/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/RDevNeo/harbor/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/RDevNeo/harbor/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/RDevNeo/harbor/compare/v0.27.1...v0.28.0
