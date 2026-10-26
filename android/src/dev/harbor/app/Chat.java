@@ -38,6 +38,8 @@ public class Chat extends Base {
     private String typingLine;      // "Desk is typing…" from the hub, or null
     private JSONObject bars;        // the items reply's "status": queue, working, waiting, limit
     private TextView workingText;   // "Working… · 12s", ticking
+    private Boolean stripOpen;      // the agent strip unfolded (null: the hub's default)
+    private final java.util.List<TextView> stripTimes = new java.util.ArrayList<>(); // its elapsed labels
     private boolean running;
     private Render render;
     private Team team;
@@ -432,8 +434,83 @@ public class Chat extends Base {
             TextView t = Ui.subtitle(Ui.text(this, typingLine, 14, Ui.BLUE));
             status.addView(t, Ui.margins(Ui.fill(), 0, 4, 0, 4));
         }
+        strip(b.optJSONObject("agents"));
         status.setVisibility(status.getChildCount() == 0 ? View.GONE : View.VISIBLE);
         comp.running(running);
+    }
+
+    /** The desktop's agent strip over the composer (agentstrip.rs, PROTOCOL.md "status.agents"):
+     *  one row per running sub-agent, "name · doing · 2m", folded into "3 agents working" from
+     *  three on. Tapping a row opens the agent; tapping the title folds or unfolds. */
+    private void strip(JSONObject s) {
+        stripTimes.clear();
+        Ui.main.removeCallbacks(stripTicker);
+        JSONArray rows = s == null ? null : s.optJSONArray("rows");
+        if (rows == null || rows.length() == 0) return;
+        boolean folded = s.optBoolean("folded");
+        boolean open = stripOpen != null ? stripOpen : !folded;
+        LinearLayout box = Ui.col(this);
+        box.setBackground(Ui.round(Ui.BG2, Ui.LINE, 12));
+        box.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
+        if (folded) {
+            LinearLayout h = Ui.row(this);
+            h.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
+            h.setBackground(Ui.press(0, 0, 8));
+            LinearLayout marks = Ui.row(this);
+            for (int i = 0; i < Math.min(rows.length(), 4); i++) {
+                JSONObject r = rows.optJSONObject(i);
+                View m = Ui.accountMark(this, r == null ? "" : r.optString("logo"), "", 16);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16));
+                if (i > 0) lp.leftMargin = -Ui.dp(4);
+                marks.addView(m, lp);
+            }
+            h.addView(marks);
+            StringBuilder names = new StringBuilder();
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject r = rows.optJSONObject(i);
+                if (r != null) names.append(names.length() > 0 ? ", " : "").append(r.optString("name"));
+            }
+            h.addView(Ui.bold(this, s.optString("title"), 14, Ui.FG), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            h.addView(Ui.subtitle(Ui.text(this, "  ·  " + names, 14, Ui.G700)), Ui.weight());
+            h.addView(Ui.icon(this, open ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+            h.setOnClickListener(v -> { stripOpen = !open; drawBars(); });
+            box.addView(h, Ui.fill());
+        }
+        if (open) for (int i = 0; i < rows.length(); i++) {
+            JSONObject r = rows.optJSONObject(i);
+            if (r == null) continue;
+            LinearLayout row = Ui.row(this);
+            row.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
+            row.setBackground(Ui.press(0, 0, 8));
+            row.addView(Ui.accountMark(this, r.optString("logo"), r.optString("badge"), 18));
+            TextView name = Ui.subtitle(Ui.bold(this, r.optString("name"), 14, Ui.FG));
+            name.setMaxWidth(Ui.dp(120));
+            row.addView(name, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            row.addView(Ui.subtitle(Ui.text(this, "  ·  " + r.optString("doing"), 14, Ui.G700)), Ui.weight());
+            TextView time = Ui.text(this, "", 12, Ui.G700);
+            time.setTypeface(Ui.mono);
+            time.setTag(r.optLong("since_ms"));
+            stripTimes.add(time);
+            row.addView(time, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            String id = r.optString("id");
+            row.setOnClickListener(v -> open(this, hub, id));
+            box.addView(row, Ui.fill());
+        }
+        status.addView(box, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        stripTick();
+    }
+
+    private final Runnable stripTicker = this::stripTick;
+
+    /** The strip's "40s", "2m", "1h 5m" (agentstrip::short_elapsed), counted here. */
+    private void stripTick() {
+        Ui.main.removeCallbacks(stripTicker);
+        if (stripTimes.isEmpty() || isFinishing()) return;
+        for (TextView t : stripTimes) {
+            long s = Math.max(0, (System.currentTimeMillis() - (Long) t.getTag()) / 1000);
+            t.setText(s < 60 ? s + "s" : s < 3600 ? s / 60 + "m" : s / 3600 + "h " + s % 3600 / 60 + "m");
+        }
+        Ui.main.postDelayed(stripTicker, 1000);
     }
 
     private TextView small(String label, Runnable on) {
@@ -697,7 +774,7 @@ public class Chat extends Base {
         String url = it.isNull("url") ? "" : it.optString("url", "");
         String glyph;
         switch (icon) {
-            case "bot": glyph = Ui.I_BOT; break;
+            case "bot": case "report": glyph = Ui.I_BOT; break;
             case "wake": case "clock": glyph = Ui.I_CLOCK; break;
             case "webhook": glyph = Ui.I_WEBHOOK; break;
             case "alert": glyph = Ui.I_ALERT; break;

@@ -357,6 +357,56 @@ final class Ui {
     /** Side-panel rows sit 8 dp in from the edges, so their pressed and selected fill is rounded. */
     static LinearLayout.LayoutParams inset() { return margins(fill(), 8, 0, 8, 0); }
 
+    // ---- provider logos (assets/logos, shared with the desktop's src/logos.rs) ----
+
+    private static final java.util.Map<String, android.graphics.Bitmap> logos = new java.util.HashMap<>();
+
+    /** A provider's 48×48 logo: RGBA ones as drawn, alpha masks in the text colour; null if unknown. */
+    static android.graphics.Bitmap logo(Context c, String file) {
+        if (file == null || file.isEmpty()) return null;
+        String key = file + "|" + FG;
+        if (logos.containsKey(key)) return logos.get(key);
+        android.graphics.Bitmap b = null;
+        try (java.io.InputStream in = c.getAssets().open("logos/" + file)) {
+            byte[] d = new byte[48 * 48 * 4];
+            int n = 0, r;
+            while (n < d.length && (r = in.read(d, n, d.length - n)) > 0) n += r;
+            int[] px = new int[48 * 48];
+            boolean rgba = n == 48 * 48 * 4;
+            for (int i = 0; i < px.length; i++) {
+                if (rgba) px[i] = (d[i * 4 + 3] & 0xff) << 24 | (d[i * 4] & 0xff) << 16 | (d[i * 4 + 1] & 0xff) << 8 | (d[i * 4 + 2] & 0xff);
+                else px[i] = (d[i] & 0xff) << 24 | (FG & 0xffffff);
+            }
+            b = android.graphics.Bitmap.createBitmap(px, 48, 48, android.graphics.Bitmap.Config.ARGB_8888);
+        } catch (Exception ignored) { }
+        logos.put(key, b);
+        return b;
+    }
+
+    /** The desktop's account mark: the provider's logo with the account badge ("AB") in its
+     *  lower right corner. `size` in dp. */
+    static View accountMark(Context c, String file, String badge, int size) {
+        FrameLayout f = new FrameLayout(c);
+        android.graphics.Bitmap b = logo(c, file);
+        if (b != null) {
+            ImageView iv = new ImageView(c);
+            iv.setImageBitmap(b);
+            int s = Math.round(size * 0.76f);
+            f.addView(iv, new FrameLayout.LayoutParams(dp(s), dp(s)));
+        } else {
+            f.addView(icon(c, I_BOT, size * 0.8f, G700), new FrameLayout.LayoutParams(dp(size), dp(size)));
+        }
+        if (badge != null && !badge.isEmpty()) {
+            TextView t = bold(c, badge, 7, FG);
+            t.setIncludeFontPadding(false);
+            t.setPadding(dp(2), 0, dp(2), 0);
+            t.setBackground(round(G300, 0, 3));
+            f.addView(t, new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.BOTTOM));
+        }
+        f.setLayoutParams(new LinearLayout.LayoutParams(dp(size), dp(size)));
+        return f;
+    }
+
     static TextView subtitle(TextView t) {
         t.setSingleLine(true);
         t.setEllipsize(TextUtils.TruncateAt.END);

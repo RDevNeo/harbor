@@ -1968,7 +1968,9 @@ impl App {
         let mut changed = vec![];
         for c in &self.chats {
             // A lead's bars (waiting for sub-agents, a usage limit) change with it too.
-            let bars = (subs.get(&c.id).copied().unwrap_or(0), self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
+            let n = subs.get(&c.id).copied().unwrap_or(0);
+            let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
+            let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
             let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, self.is_running(c.id), self.queued_count(c.id), (bars, self.writable_chat(c))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
@@ -2531,7 +2533,7 @@ impl App {
             json!({ "agents": agents, "queued": self.subs_queued(chat) })
         });
         let limit = self.limit_text(chat).map(|(text, cancel)| json!({ "text": text, "can_cancel": cancel }));
-        json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit })
+        json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit, "agents": self.strip_json(chat) })
     }
 
     /// The team panel of a chat's lead (a subagent's is its lead's), as teamui.rs draws it.

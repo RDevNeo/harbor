@@ -563,7 +563,7 @@ impl App {
                     let key = (id, i);
                     let open = self.expanded_tools.contains(&key);
                     let glyph = match *icon {
-                        "bot" => ic::BOT,
+                        "bot" | "report" => ic::BOT,
                         "wake" => ic::ALARM,
                         "webhook" => ic::WEBHOOK,
                         "alert" => ic::ALERT,
@@ -752,6 +752,7 @@ impl App {
         }
         if let View::Chat(id) = self.view {
             self.typing_line(ui, id);
+            self.agent_strip(ui, id);
         }
         self.trust_bar(ui);
         let t = self.theme.t;

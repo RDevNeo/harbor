@@ -47,6 +47,9 @@ W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 # Harbor's own fonts (Geist, Geist Mono, the Lucide icon subset), shared with the desktop.
 mkdir -p "$W/assets/fonts"
 cp "$ROOT/assets/fonts/"{Geist-Regular,Geist-SemiBold,GeistMono-Regular,lucide}.ttf "$W/assets/fonts/"
+# And the providers' logos (48×48 alpha masks or RGBA), as the desktop draws them.
+mkdir -p "$W/assets/logos"
+cp "$ROOT/assets/logos/"p-*.{a8,rgba} "$W/assets/logos/"
 
 "$BT/aapt2" compile --dir "$HERE/res" -o "$W/res.zip"
 "$BT/aapt2" link -I "$JAR" --manifest "$HERE/AndroidManifest.xml" -o "$W/base.apk" "$W/res.zip" \

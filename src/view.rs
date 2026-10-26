@@ -154,7 +154,7 @@ fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) 
             icon,
             text,
             detail,
-            markdown: icon == "bot",
+            markdown: icon == "bot" || icon == "report",
             url: (icon == "process" && detail.starts_with("http")).then_some(detail.as_str()),
         },
         Item::Message { from, to, text } => Card::Message { from, to, text },
@@ -246,6 +246,17 @@ mod tests {
         assert!(matches!(cards[10].card, Card::Notice { url: Some("http://127.0.0.1:3000"), .. }));
         // Not a lead: everything shows.
         assert!(project(&items, false, &[], &who).iter().all(|s| s.card != Card::Hidden));
+    }
+
+    #[test]
+    fn a_lead_shows_its_agents_report_lines() {
+        let items = vec![
+            Item::Notice { icon: "bot".into(), text: "api finished".into(), detail: "old".into() },
+            Item::Notice { icon: "report".into(), text: "api finished: added tests".into(), detail: "**Added tests.**".into() },
+        ];
+        let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
+        assert_eq!(cards[0].card, Card::Hidden);
+        assert!(matches!(cards[1].card, Card::Notice { text: "api finished: added tests", markdown: true, .. }));
     }
 
     #[test]

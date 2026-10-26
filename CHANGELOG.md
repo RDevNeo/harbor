@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A live agent strip over a lead chat's composer while its sub-agents run, on the desktop and the
+  phone: one row per agent with its provider mark, name, what it is doing right now ("running
+  tests", "editing src/chat.rs", read from its latest step, no model calls) and how long it has
+  run; three or more fold into "3 agents working" with expand. Click or tap a row to open the agent.
+- When a sub-agent finishes, the lead's chat shows one line with the first sentence of its own
+  report ("api finished: Added tests for the parser"), expandable to the whole report, on both.
+
 ## [0.28.0] - 2026-10-25
 
 ### Changed

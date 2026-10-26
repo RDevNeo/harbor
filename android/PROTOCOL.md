@@ -287,7 +287,7 @@ Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
 | `footer` | the turn's line, monospace and subtle | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
-| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
 
@@ -308,6 +308,17 @@ the desktop shows nothing:
   initials, and **Stop all** (`POST /v1/chats/{id}/stop_all`).
 - `limit: {text, can_cancel}`: the usage-limit line (clock icon, `text`), with **Continue now**
   (`POST /v1/chats/{id}/continue`) and, when `can_cancel`, **Cancel** (`POST /v1/chats/{id}/cancel_limit`).
+- `agents: {title, folded, rows: [{id, name, doing, task, model, logo, badge, since_ms}]}` (optional,
+  null or missing without running sub-agents; older hubs never send it): the live strip over a
+  lead chat's composer, drawn after the typing line. A rounded box with one row per running
+  sub-agent: its account mark (the provider logo `logo`, a file in the APK's `assets/logos/`,
+  48×48 RGBA when 9216 bytes, else an alpha mask in the text colour; `badge` in its corner),
+  `name` in semibold, "  ·  `doing`" ("running tests", "editing src/chat.rs") and the time since
+  `since_ms` on the right ("40s", "2m", "1h 5m"). Tapping a row opens that agent's chat
+  (`id`). When `folded` (three or more agents) a header row comes first: the agents' logos
+  overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
+  only once it is tapped open (a per-screen choice). `doing` is the hub's own reading of each
+  agent's latest step; the phone shows it as is.
 
 #### Blocks
 

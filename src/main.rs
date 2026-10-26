@@ -3,6 +3,7 @@
 
 mod addproject;
 mod agent;
+mod agentstrip;
 mod api;
 mod browser;
 mod app;

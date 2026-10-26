@@ -271,7 +271,7 @@ impl App {
         if chat.role == Role::Sub && !stopped && !self.hit_limit(chat_id) && !self.resumes(chat_id) {
             if let Some(lead) = chat.parent {
                 let report = self.last_reply(chat_id);
-                self.notice(lead, "bot", &format!("{} finished", chat.name), &report);
+                self.notice(lead, "report", &crate::agentstrip::report_line(&chat.name, &report), &report);
                 self.trigger(lead, format!("[agent {}] finished its turn. Its report:\n\n{}", chat.name, report), true, ctx);
             }
         }
