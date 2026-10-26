@@ -51,6 +51,7 @@ mod providers;
 mod provupdate;
 mod queue;
 mod relay;
+mod profile;
 mod recap;
 mod reload;
 mod remote;

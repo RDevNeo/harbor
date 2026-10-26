@@ -422,33 +422,46 @@ pub fn device_note(project: Option<&Path>, workspace: bool) -> String {
 
 // ================================================================== who is who
 
-/// This PC's owner as it tells the mesh: what Settings › Devices says, else the account's
-/// full name.
+/// This PC's owner as it tells the mesh: what the user typed (Settings › Devices, the phone),
+/// else what profile.rs detected, else the account's full name.
 pub fn owner(s: &Store) -> String {
-    s.get(OWNER_KEY).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).unwrap_or_else(full_name)
+    pick(s.get(OWNER_KEY), crate::profile::load(s).map(|d| d.me.owner), crate::profile::full_name)
 }
 
-/// The GitHub login: what Settings › Devices says, else Harbor's GitHub sign-in.
+/// The GitHub login: typed, else detected, else Harbor's GitHub sign-in.
 pub fn github(s: &Store) -> String {
-    s.get(GITHUB_KEY).map(|t| t.trim().trim_start_matches('@').to_string()).filter(|t| !t.is_empty()).or_else(crate::mcp::github_user).unwrap_or_default()
+    let t = |v: Option<String>| v.map(|t| t.trim().trim_start_matches('@').to_string());
+    pick(t(s.get(GITHUB_KEY)), t(crate::profile::load(s).map(|d| d.me.github)), || crate::mcp::github_user().unwrap_or_default())
 }
 
-/// The user's full name from the password database (its GECOS field), if set.
-fn full_name() -> String {
-    let user = std::env::var("USER").unwrap_or_default();
-    std::fs::read_to_string("/etc/passwd")
-        .unwrap_or_default()
-        .lines()
-        .find_map(|l| {
-            let f: Vec<&str> = l.split(':').collect();
-            (f.len() > 4 && f[0] == user).then(|| f[4].split(',').next().unwrap_or("").trim().to_string())
-        })
-        .unwrap_or_default()
+/// Typed beats detected beats the fallback; blanks don't count.
+pub fn pick(typed: Option<String>, detected: Option<String>, fallback: impl FnOnce() -> String) -> String {
+    let ok = |v: Option<String>| v.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    ok(typed).or_else(|| ok(detected)).unwrap_or_else(fallback)
 }
 
-/// `{owner, github}` for `hello` and `/mesh/v1/phones`.
+/// The user has said who owns this PC: typed a name, or confirmed the detected one.
+pub fn confirmed(s: &Store) -> bool {
+    s.get(OWNER_KEY).is_some_and(|t| !t.trim().is_empty())
+}
+
+/// Confirm: what shows now (detected or fallback) becomes the user's own, in the fields that
+/// are still empty; a typed value stays as it is.
+pub fn confirm(s: &Store) {
+    let (o, g) = (owner(s), github(s));
+    if !confirmed(s) && !o.is_empty() {
+        s.set(OWNER_KEY, &o);
+    }
+    if s.get(GITHUB_KEY).is_none_or(|t| t.trim().is_empty()) && !g.is_empty() {
+        s.set(GITHUB_KEY, &g);
+    }
+}
+
+/// `{owner, github, owner_suggested}` for `hello` and `/mesh/v1/phones` (`owner_suggested`:
+/// detected, not confirmed yet; from 0.47).
 pub fn about(s: &Store) -> Value {
-    json!({ "owner": owner(s), "github": github(s) })
+    let o = owner(s);
+    json!({ "owner": o, "github": github(s), "owner_suggested": !o.is_empty() && !confirmed(s) })
 }
 
 /// One PC of the mesh, for the agent and the people lists.
@@ -463,11 +476,27 @@ pub struct Pc {
     pub github: String,
     pub phones: Vec<String>,
     pub accounts: Vec<String>,
+    /// Owner and login are a detection nobody has confirmed (profile.rs).
+    pub suggested: bool,
+    /// …made by this PC about a peer that says nothing itself.
+    pub guessed: bool,
+    /// The detection's evidence, where this PC has it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub why: String,
+}
+
+/// "Sam (detected, not confirmed)" and the like.
+fn owner_label(p: &Pc) -> String {
+    match (p.guessed, p.suggested) {
+        (true, _) => format!("{} (guessed here, not confirmed)", p.owner),
+        (_, true) => format!("{} (detected, not confirmed)", p.owner),
+        _ => p.owner.clone(),
+    }
 }
 
 /// One PC in a line: owner, GitHub, phones, accounts.
 pub fn pc_line(p: &Pc) -> String {
-    let mut parts = vec![if p.owner.is_empty() { "Owner not set".to_string() } else { p.owner.clone() }];
+    let mut parts = vec![if p.owner.is_empty() { "Owner not set".to_string() } else { owner_label(p) }];
     if !p.github.is_empty() {
         parts.push(format!("GitHub {}", p.github));
     }
@@ -488,10 +517,10 @@ pub fn people_note(pcs: &[Pc]) -> String {
     if pcs.len() < 2 {
         return String::new();
     }
-    let mut s = String::from("Harbor mesh, who is who (each PC's Harbor says its owner; PCs share chats):");
+    let mut s = String::from("Harbor mesh, who is who (each PC's Harbor says its owner; PCs share chats; \"not confirmed\" ones were detected from the PC's accounts and settings):");
     for p in pcs {
         let mut parts = vec![];
-        parts.push(if p.owner.is_empty() { "owner not set".to_string() } else { format!("owner {}", p.owner) });
+        parts.push(if p.owner.is_empty() { "owner not set".to_string() } else { format!("owner {}", owner_label(p)) });
         if !p.github.is_empty() {
             parts.push(format!("GitHub {}", p.github));
         }
@@ -598,14 +627,52 @@ impl crate::app::App {
         let mut github_out = crate::machines::github_on(&self.store);
         let before = (name.clone(), gh.clone(), send, github_out);
         let pcs = self.mesh_pcs();
+        let check = self.profile_check();
+        let detected = crate::profile::load(&self.store);
+        let (shown_owner, shown_gh) = (owner(&self.store), github(&self.store));
+        let (mut confirm_now, mut edit) = (false, false);
+        let mut detect = false;
         rows(ui, |ui| {
-            w::setting_row(ui, "Your name", "How this PC's owner shows to agents and to your other PCs (who is who). Empty: your account's full name.", |ui| {
-                w::input(ui, &mut name, &full_name(), false, 200.0);
+            // A detection nobody has confirmed: what it found, and why.
+            if check.is_some() {
+                let who = if shown_gh.is_empty() { shown_owner.clone() } else { format!("{shown_owner} · GitHub {shown_gh}") };
+                let why = detected.as_ref().map(|d| d.me.why.clone()).filter(|w| !w.is_empty()).map(|w| format!(" {}.", w.trim_end_matches('.'))).unwrap_or_default();
+                w::setting_row(ui, "Detected, confirm?", &format!("{who}.{why} Agents and your other PCs see it as this PC's owner."), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    confirm_now = w::btn("Confirm").sm().primary().show(ui).clicked();
+                    edit = w::btn("Edit").sm().show(ui).clicked();
+                });
+                w::separator(ui);
+            }
+            if edit {
+                name = shown_owner.clone();
+                gh = shown_gh.clone();
+            }
+            w::setting_row(ui, "Your name", "How this PC's owner shows to agents and to your other PCs (who is who). Empty: the detected name.", |ui| {
+                let r = w::input(ui, &mut name, &shown_owner, false, 200.0);
+                if edit {
+                    r.request_focus();
+                }
             });
             w::separator(ui);
-            w::setting_row(ui, "Your GitHub login", "Empty: the account signed in under Settings › Integrations › Apps.", |ui| {
-                w::input(ui, &mut gh, &crate::mcp::github_user().unwrap_or_default(), false, 160.0);
+            w::setting_row(ui, "Your GitHub login", "Empty: the detected login, else the account signed in under Settings › Integrations › Apps.", |ui| {
+                w::input(ui, &mut gh, &shown_gh, false, 160.0);
             });
+            w::separator(ui);
+            let status = if self.profile.running {
+                "Detecting…".to_string()
+            } else {
+                match &detected {
+                    Some(d) => format!("Last run {} ({}).", crate::app::ago(d.at), if d.by == "rules" { "rules only: no Claude account to ask".to_string() } else { d.by.clone() }),
+                    None => "Not run yet.".into(),
+                }
+            };
+            w::setting_row(
+                ui,
+                "Detect who is who",
+                &format!("Reads names and logins on this PC (git, gh, agent accounts, phones, SSH hosts and key comments, CLAUDE.md; never keys or tokens) and asks this PC's own Claude account for each PC's owner. A name you typed always stays. {status}"),
+                |ui| detect = w::btn("Detect again").sm().enabled(!self.profile.running).show(ui).clicked(),
+            );
             w::separator(ui);
             w::setting_row(
                 ui,
@@ -624,10 +691,20 @@ impl crate::app::App {
                 for p in &pcs {
                     w::separator(ui);
                     let title = format!("{}  {}{}", crate::icons::MONITOR, p.name, if p.me { " (this PC)" } else { "" });
-                    w::setting_row(ui, &title, &pc_line(p), |_| {});
+                    let line = if p.why.is_empty() { pc_line(p) } else { format!("{}\n{}", pc_line(p), p.why) };
+                    w::setting_row(ui, &title, &line, |_| {});
                 }
             }
         });
+        if confirm_now {
+            confirm(&self.store);
+            *self.api.hub.mesh.about.lock().unwrap() = about(&self.store);
+            self.share_publish();
+            return;
+        }
+        if detect {
+            self.profile.want = true;
+        }
         if (name.clone(), gh.clone(), send, github_out) != before {
             self.store.set(OWNER_KEY, &name);
             self.store.set(GITHUB_KEY, &gh);
@@ -655,17 +732,28 @@ impl crate::app::App {
             "levels": crate::machines::Level::ALL.iter().map(|l| json!({ "id": l.slug(), "label": l.label(), "about": crate::machines::about_level(*l) })).collect::<Vec<_>>(),
             "me": {
                 "owner": self.store.get(OWNER_KEY).unwrap_or_default(),
-                "owner_hint": full_name(),
+                "owner_hint": owner(&self.store),
                 "github": self.store.get(GITHUB_KEY).unwrap_or_default(),
-                "github_hint": crate::mcp::github_user().unwrap_or_default(),
+                "github_hint": github(&self.store),
+                // profile.rs (0.47): the detection, whether the user has confirmed, a run going.
+                "suggested": crate::profile::load(&self.store).map(|d| json!({ "owner": d.me.owner, "github": d.me.github, "confidence": d.me.confidence, "why": d.me.why, "by": d.by, "at": d.at })),
+                "confirmed": confirmed(&self.store),
+                "detecting": self.profile.running || self.profile.want,
+                "check": self.profile_check_json(),
                 "send_context": self.store.get(SEND_KEY).as_deref() != Some("0"),
                 "share_github": crate::machines::github_on(&self.store),
             },
         })
     }
 
-    /// `PATCH /v1/people` `{owner?, github?, send_context?}`.
+    /// `PATCH /v1/people` `{owner?, github?, send_context?, share_github?, share?, op?}`
+    /// (`op`: "confirm" the detected profile, "detect" again).
     pub fn api_people_set(&mut self, body: &Value) {
+        match body["op"].as_str() {
+            Some("confirm") => confirm(&self.store),
+            Some("detect") => self.profile.want = true,
+            _ => {}
+        }
         if let Some(o) = body["owner"].as_str() {
             self.store.set(OWNER_KEY, &o.chars().take(80).collect::<String>());
         }
@@ -695,7 +783,11 @@ impl crate::app::App {
         let name = if me.name.is_empty() { crate::remote::hostname() } else { me.name };
         let phones: Vec<String> = self.api.hub.local_phones().iter().map(|p| p.name.clone()).filter(|n| !n.is_empty()).collect();
         let accounts: Vec<String> = self.accounts.iter().filter(|a| a.installed()).map(|a| a.short()).collect();
-        let mut v = vec![Pc { id: me.id, name, me: true, online: true, owner: owner(&self.store), github: github(&self.store), phones, accounts }];
+        let detected = crate::profile::load(&self.store);
+        let mine = about(&self.store);
+        let suggested = mine["owner_suggested"].as_bool().unwrap_or(false);
+        let why = detected.as_ref().filter(|_| suggested).map(|d| d.me.why.clone()).unwrap_or_default();
+        let mut v = vec![Pc { id: me.id, name, me: true, online: true, owner: owner(&self.store), github: github(&self.store), phones, accounts, suggested, guessed: false, why }];
         if !shared.on.load(std::sync::atomic::Ordering::Relaxed) {
             return v;
         }
@@ -703,7 +795,14 @@ impl crate::app::App {
         for p in self.mesh_hosts() {
             let phones = elsewhere.get(&p.id).map(|(_, s)| s.iter().map(|x| x.name.clone()).filter(|n| !n.is_empty()).collect()).unwrap_or_default();
             let accounts = p.accounts.iter().map(|a| a.1.clone()).collect();
-            v.push(Pc { id: p.id.clone(), name: p.name.clone(), me: false, online: p.online, owner: p.owner.clone(), github: p.github.clone(), phones, accounts });
+            let mut pc = Pc { id: p.id.clone(), name: p.name.clone(), me: false, online: p.online, owner: p.owner.clone(), github: p.github.clone(), phones, accounts, suggested: p.owner_suggested, ..Default::default() };
+            // A peer that says nothing (before 0.44, or nothing found there): this PC's guess.
+            if pc.owner.is_empty() && pc.github.is_empty() {
+                if let Some(g) = detected.as_ref().and_then(|d| d.peers.get(&p.id)) {
+                    (pc.owner, pc.github, pc.why, pc.suggested, pc.guessed) = (g.owner.clone(), g.github.clone(), g.why.clone(), true, true);
+                }
+            }
+            v.push(pc);
         }
         v
     }
@@ -723,6 +822,29 @@ mod tests {
     }
 
     #[test]
+    fn typed_beats_detected() {
+        assert_eq!(pick(Some(" Sam ".into()), Some("Samuel".into()), || "gecos".into()), "Sam");
+        assert_eq!(pick(Some("  ".into()), Some("Samuel".into()), || "gecos".into()), "Samuel");
+        assert_eq!(pick(None, Some("".into()), || "gecos".into()), "gecos");
+        let s = Store::open_temp();
+        let d = crate::profile::Detected { me: crate::profile::Proposal { owner: "Samuel Lee".into(), github: "samlee".into(), ..Default::default() }, ..Default::default() };
+        s.set(crate::profile::KEY, &serde_json::to_string(&d).unwrap());
+        assert_eq!((owner(&s), github(&s)), ("Samuel Lee".to_string(), "samlee".to_string()));
+        assert_eq!(about(&s)["owner_suggested"], json!(true));
+        // The user typed a GitHub login: it stays; Confirm fills only the empty name.
+        s.set(GITHUB_KEY, "@sam-gh");
+        assert_eq!(github(&s), "sam-gh");
+        confirm(&s);
+        assert_eq!((s.get(OWNER_KEY).unwrap().as_str(), s.get(GITHUB_KEY).unwrap().as_str()), ("Samuel Lee", "@sam-gh"));
+        assert!(confirmed(&s) && about(&s)["owner_suggested"] == json!(false));
+        // A later detection never overwrites what the user has.
+        let d2 = crate::profile::Detected { me: crate::profile::Proposal { owner: "Someone Else".into(), github: "else".into(), ..Default::default() }, ..Default::default() };
+        s.set(crate::profile::KEY, &serde_json::to_string(&d2).unwrap());
+        confirm(&s);
+        assert_eq!((owner(&s), github(&s)), ("Samuel Lee".to_string(), "sam-gh".to_string()));
+    }
+
+    #[test]
     fn people_note_lists_pcs() {
         assert_eq!(people_note(&[Pc { name: "desk".into(), me: true, ..Default::default() }]), "");
         let n = people_note(&[
@@ -731,6 +853,8 @@ mod tests {
         ]);
         assert!(n.contains("- desk (this PC, where you run): owner Sam; GitHub sam-gh; phones: Pixel"));
         assert!(n.contains("- laptop (offline): owner Alex"));
+        let g = Pc { name: "lap".into(), owner: "Alex".into(), suggested: true, guessed: true, ..Default::default() };
+        assert_eq!(pc_line(&g), "Alex (guessed here, not confirmed) · offline");
     }
 
     #[test]

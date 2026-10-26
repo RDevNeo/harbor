@@ -25,7 +25,7 @@ pub fn notes_url(v: &str) -> String {
     format!("https://github.com/RDevNeo/harbor/releases/tag/v{v}")
 }
 
-enum Click {
+pub enum Click {
     None,
     Primary,
     Secondary,
@@ -34,7 +34,7 @@ enum Click {
 
 /// One pop-up: an icon on the left (drawn by `icon`), a title, a line, two buttons and a close.
 #[allow(clippy::too_many_arguments)]
-fn toast(ctx: &egui::Context, t: &Tokens, id: &str, y: f32, icon: impl FnOnce(&egui::Painter, Rect), title: &str, body: &str, primary: Option<(&str, bool)>, secondary: &str) -> (Click, f32) {
+pub fn toast(ctx: &egui::Context, t: &Tokens, id: &str, y: f32, icon: impl FnOnce(&egui::Painter, Rect), title: &str, body: &str, primary: Option<(&str, bool)>, secondary: &str) -> (Click, f32) {
     let mut click = Click::None;
     let r = egui::Area::new(egui::Id::NULL.with(id))
         .order(egui::Order::Foreground)
@@ -82,6 +82,9 @@ impl App {
         let t = self.theme.t;
         let mut y = 52.0;
         if let Some(h) = self.harbor_toast(ctx, &t, y) {
+            y += h + 8.0;
+        }
+        if let Some(h) = self.profile_toast(ctx, &t, y) {
             y += h + 8.0;
         }
         self.provider_toast(ctx, &t, y);

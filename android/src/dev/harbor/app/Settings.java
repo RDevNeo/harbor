@@ -106,6 +106,7 @@ public class Settings extends Base {
         LinearLayout pr = Ui.cardRow(this, Ui.I_USERS, "People and memory", "Who is who, and your instructions on other PCs", Ui.FG, v -> people());
         pr.addView(Ui.chevron(this));
         people.addView(pr, Ui.fill());
+        if (getIntent().getBooleanExtra("people", false)) people();
         Ui.pool.execute(() -> {
             try {
                 hub.get("/v1/people");
@@ -285,13 +286,43 @@ public class Settings extends Base {
         JSONObject me = r.optJSONObject("me");
         if (me == null) me = new JSONObject();
         final JSONObject m = me;
-        LinearLayout you = s.card();
+        // Hubs from 0.47 detect the owner (src/profile.rs): ask to confirm until the user has.
+        boolean detects = m.has("confirmed");
+        boolean confirmed = m.optBoolean("confirmed", true);
         String owner = m.optString("owner"), gh = m.optString("github");
-        you.addView(Ui.cardRow(this, Ui.I_USER, "Your name", owner.isEmpty() ? m.optString("owner_hint", "Not set") + " (from the PC's account)" : owner, Ui.FG,
-                v -> editPerson("Your name", "owner", owner, m.optString("owner_hint"))), Ui.fill());
+        String shownOwner = m.optString("owner_hint"), shownGh = m.optString("github_hint");
+        JSONObject sug = m.optJSONObject("suggested");
+        if (detects && !confirmed && !shownOwner.isEmpty()) {
+            LinearLayout d = s.card();
+            d.setPadding(Ui.dp(18), Ui.dp(14), Ui.dp(16), Ui.dp(14));
+            d.addView(Ui.bold(this, "Detected, confirm?", 17, Ui.FG));
+            String why = sug == null ? "" : sug.optString("why");
+            String who = shownOwner + (shownGh.isEmpty() ? "" : " · GitHub " + shownGh);
+            d.addView(Ui.text(this, who + "." + (why.isEmpty() ? "" : " " + why.replaceAll("\\.$", "") + ".") + " Agents and your other PCs see it as this PC's owner.", 14, Ui.G700),
+                    Ui.margins(Ui.fill(), 0, 4, 0, 12));
+            LinearLayout btns = Ui.row(this);
+            btns.addView(Ui.button(this, "Confirm", true, v -> patchPeople("op", "confirm")), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
+            btns.addView(Ui.button(this, "Edit", false, v -> editProfile(shownOwner, shownGh)), Ui.wrap());
+            d.addView(btns);
+        }
+        LinearLayout you = s.card();
+        String unconf = detects && !confirmed ? " (detected, not confirmed)" : "";
+        you.addView(Ui.cardRow(this, Ui.I_USER, "Your name", owner.isEmpty()
+                        ? (shownOwner.isEmpty() ? "Not set" : shownOwner + (detects ? unconf : " (from the PC's account)")) : owner, Ui.FG,
+                v -> editPerson("Your name", "owner", owner, shownOwner)), Ui.fill());
         you.addView(Ui.gap(this));
-        you.addView(Ui.cardRow(this, Ui.I_GLOBE, "Your GitHub login", gh.isEmpty() ? (m.optString("github_hint").isEmpty() ? "Not set" : m.optString("github_hint") + " (Harbor's sign-in)") : gh, Ui.FG,
-                v -> editPerson("Your GitHub login", "github", gh, m.optString("github_hint"))), Ui.fill());
+        you.addView(Ui.cardRow(this, Ui.I_GLOBE, "Your GitHub login", gh.isEmpty() ? (shownGh.isEmpty() ? "Not set" : shownGh + (detects ? unconf : " (Harbor's sign-in)")) : gh, Ui.FG,
+                v -> editPerson("Your GitHub login", "github", gh, shownGh)), Ui.fill());
+        if (detects) {
+            you.addView(Ui.gap(this));
+            boolean busy = m.optBoolean("detecting");
+            String last = sug == null ? "Not run yet" : "rules".equals(sug.optString("by")) ? "Last run used rules only (no Claude account to ask)" : "Last run asked " + sug.optString("by");
+            LinearLayout dr = Ui.cardRow(this, Ui.I_REFRESH, busy ? "Detecting…" : "Detect again",
+                    last + ". Reads names and logins on the PC (git, gh, accounts, phones, SSH hosts and key comments; never keys or tokens). A name you typed stays.",
+                    Ui.FG, busy ? null : v -> detectAgain());
+            Ui.wrapSub(dr, 4);
+            you.addView(dr, Ui.fill());
+        }
         you.addView(Ui.gap(this));
         boolean send = m.optBoolean("send_context", true);
         you.addView(Ui.cardRow(this, Ui.I_BRAIN, "Send my instructions and memory", send
@@ -317,7 +348,8 @@ public class Settings extends Base {
                 String title = p.optString("name") + (p.optBoolean("self") ? " (this PC)" : "");
                 // Other PCs (hubs from 0.45): what their chats may do with this PC's files; tap to change.
                 String share = p.optString("share", "");
-                String sub = p.optString("line") + (share.isEmpty() ? "" : "\nIts chats here: " + p.optString("share_label"));
+                String why = p.optString("why");
+                String sub = p.optString("line") + (why.isEmpty() ? "" : "\n" + why) + (share.isEmpty() ? "" : "\nIts chats here: " + p.optString("share_label"));
                 View.OnClickListener tap = share.isEmpty() ? null : v -> pickShare(p.optString("id"), p.optString("name"), share, r.optJSONArray("levels"));
                 LinearLayout row = Ui.cardRow(this, Ui.I_MONITOR, title, sub, p.optBoolean("online", true) ? Ui.FG : Ui.G700, tap);
                 if (tap != null) row.addView(Ui.chevron(this));
@@ -344,6 +376,40 @@ public class Settings extends Base {
                 return hub.call("PATCH", "/v1/people", b);
             }, this::showPeople);
         });
+    }
+
+    /** Edit the detected profile: both fields at once, filled with what was detected. */
+    private void editProfile(String owner, String gh) {
+        LinearLayout f = Ui.col(this);
+        f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        EditText name = Ui.input(this, "Your name", false);
+        name.setText(owner);
+        EditText login = Ui.input(this, "GitHub login", false);
+        login.setText(gh);
+        f.addView(name, Ui.fill());
+        f.addView(login, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        Ui.dialog(this).setTitle("This PC's owner").setView(f).setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (d, w) -> Ui.bg(this, () -> {
+                    JSONObject b = new JSONObject();
+                    b.put("owner", name.getText().toString().trim());
+                    b.put("github", login.getText().toString().trim());
+                    return hub.call("PATCH", "/v1/people", b);
+                }, this::showPeople)).show();
+    }
+
+    /** "Detect again": the hub runs it in the background; ask until it's done (at most ~2 min). */
+    private void detectAgain() {
+        Ui.bg(this, () -> {
+            JSONObject b = new JSONObject();
+            b.put("op", "detect");
+            JSONObject r = hub.call("PATCH", "/v1/people", b);
+            for (int i = 0; i < 40 && r.optJSONObject("me") != null && r.optJSONObject("me").optBoolean("detecting"); i++) {
+                Thread.sleep(3000);
+                r = hub.get("/v1/people");
+            }
+            return r;
+        }, this::showPeople);
+        Ui.toast(this, "Detecting who is who…");
     }
 
     private void editPerson(String title, String key, String now, String hint) {

@@ -194,6 +194,7 @@ pub struct App {
     pub queue: crate::queue::State,
     pub limits: crate::limits::State,
     pub recap: crate::recap::State,
+    pub profile: crate::profile::State,
     /// Prompts waiting for a chat's current turn to end.
     pub pending: HashMap<i64, Vec<String>>,
     pub auto_turns: HashMap<i64, VecDeque<Instant>>,
@@ -362,6 +363,7 @@ impl App {
             queue: Default::default(),
             limits: Default::default(),
             recap: Default::default(),
+            profile: Default::default(),
             pending: HashMap::new(),
             auto_turns: HashMap::new(),
             paused: HashSet::new(),

@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Who is who fills itself in: each PC detects its owner's name and GitHub login from what it
+  finds (git, gh, its agent accounts and phones, SSH hosts and key comments, CLAUDE.md, what the
+  other PCs report), with one short Haiku question through the PC's own Claude account (plain
+  rules without one). Never keys or tokens. The detection shows as "detected, not confirmed"
+  until you confirm it: Settings › Devices › People and memory (Confirm, Edit, Detect again) on
+  the desktop and the phone, plus a one-time "Is this you?" pop-up and phone banner. A name or
+  login you typed always wins. It runs at startup while unconfirmed and again when a PC or phone
+  pairs.
+
 ## [0.46.4] - 2026-10-26
 
 ### Fixed

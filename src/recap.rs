@@ -59,7 +59,7 @@ Format: 2-12 words, match the user's style. Or nothing.
 Reply with ONLY the suggestion, no quotes or explanation.";
 
 const SYSTEM: &str = "You read the transcript of a session between a user and Claude Code, an AI coding agent, and do only what the last message asks. You have no tools.";
-const MODEL: &str = "claude-haiku-5-5";
+pub const MODEL: &str = "claude-haiku-5-5";
 /// After a turn ends, how long the user has to be away before the recap (Claude Code: 3 min;
 /// `HARBOR_TEST_RECAP_S` shortens it for test rigs).
 fn delay() -> Duration {
@@ -344,13 +344,14 @@ fn full_prompt(items: &[Item], ask: &str) -> String {
 }
 
 /// One question to Haiku through the account's Claude Code: no tools, servers, hooks or session.
-fn ask(bin: String, env: Vec<(String, Option<String>)>, prompt: String) -> Result<String, String> {
+/// Also profile.rs's who-is-who detection, with its own system prompt.
+pub fn ask(bin: String, env: Vec<(String, Option<String>)>, system: &str, prompt: String) -> Result<String, String> {
     let dir = store::data_dir().join("recap");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut cmd = Command::new(bin);
     cmd.current_dir(&dir)
         .args(["-p", "--model", MODEL, "--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config"])
-        .args(["--setting-sources", "user", "--settings", r#"{"disableAllHooks":true}"#, "--system-prompt", SYSTEM])
+        .args(["--setting-sources", "user", "--settings", r#"{"disableAllHooks":true}"#, "--system-prompt", system])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -506,7 +507,7 @@ impl App {
         let ctx = ctx.clone();
         let (bin, env) = (a.bin_str(), a.env());
         std::thread::spawn(move || {
-            let r = ask(bin, env, prompt);
+            let r = ask(bin, env, SYSTEM, prompt);
             let _ = tx.send((chat, what, turn, r));
             ctx.request_repaint();
         });

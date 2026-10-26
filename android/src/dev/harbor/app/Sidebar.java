@@ -268,6 +268,22 @@ final class Sidebar {
                     () -> { try { a.startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(notes))); } catch (Exception e) { Ui.copy(a, notes); } },
                     () -> { pr.edit().putString("upd-hub-" + a.hub.id, v).apply(); render(this.st); }), Ui.inset());
         }
+        // "Is this you?": the hub's detected owner, until confirmed (hubs from 0.47, src/profile.rs).
+        JSONObject pc = st.optJSONObject("profile_check");
+        String pk = pc == null ? "" : pc.optString("key");
+        if (!pk.isEmpty() && !pk.equals(pr.getString("prof-" + a.hub.id, ""))) {
+            TextView icon = Ui.icon(a, Ui.I_USERS, 18, Ui.G700);
+            icon.setBackground(Ui.round(Ui.G100, 0, 10));
+            list.addView(banner(icon, pc.optString("title"), a.hub.label() + ": " + pc.optString("body"), "Confirm", true,
+                    () -> Ui.bg(a, () -> {
+                        JSONObject b = new JSONObject();
+                        b.put("op", "confirm");
+                        return a.hub.call("PATCH", "/v1/people", b);
+                    }, r -> { pr.edit().putString("prof-" + a.hub.id, pk).apply(); render(this.st); }),
+                    "Review",
+                    () -> { pr.edit().putString("prof-" + a.hub.id, pk).apply(); a.startActivity(new Intent(a, Settings.class).putExtra("hub", a.hub.id).putExtra("people", true)); },
+                    () -> { pr.edit().putString("prof-" + a.hub.id, pk).apply(); render(this.st); }), Ui.inset());
+        }
         JSONObject pu = st.optJSONObject("provider_updates");
         if (pu == null) return;
         JSONArray items = pu.optJSONArray("items");

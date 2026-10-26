@@ -111,6 +111,9 @@ pub struct Peer {
     pub owner: String,
     #[serde(default)]
     pub github: String,
+    /// …and they are its own detection, not confirmed there yet (profile.rs; from 0.47).
+    #[serde(default)]
+    pub owner_suggested: bool,
 }
 
 impl Peer {
@@ -671,6 +674,7 @@ fn phones_loop(hub: Arc<api::Hub>) {
                 if let Some(x) = hub.mesh.peers.lock().unwrap().get_mut(&p.id) {
                     x.owner = o.chars().take(80).collect();
                     x.github = g.chars().take(60).collect();
+                    x.owner_suggested = v["owner_suggested"].as_bool().unwrap_or(false);
                 }
             }
             // Its notifications, for the phones that ask this PC (a peer before 0.40: 404).
@@ -871,7 +875,7 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
         ("GET", ["mesh", "v1", "phones"]) => {
             let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0 || p.alive > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive })).collect();
             let about = shared.about.lock().unwrap().clone();
-            ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c), "owner": about["owner"], "github": about["github"] }))
+            ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c), "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"] }))
         }
         ("POST", ["mesh", "v1", "upload"]) => {
             let q = api::Request { query: vec![("name".into(), req.query("name").unwrap_or("file").into())], ..req.clone() };
@@ -1527,6 +1531,7 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             p.version = hello["version"].as_str().unwrap_or("").to_string();
             p.owner = hello["owner"].as_str().unwrap_or("").chars().take(80).collect();
             p.github = hello["github"].as_str().unwrap_or("").chars().take(60).collect();
+            p.owner_suggested = hello["owner_suggested"].as_bool().unwrap_or(false);
             p.accounts = hello["accounts"]
                 .as_array()
                 .into_iter()
@@ -2032,6 +2037,9 @@ impl App {
 
     /// Once per frame: copies written to disk now and then, the chat waiting to open.
     pub fn mesh_tick(&mut self, ctx: &eframe::egui::Context) {
+        // Who is who: a detection that finished, or one that's due (profile.rs).
+        let full = self.mesh.reread.is_none_or(|t| t.elapsed() >= Duration::from_secs(10));
+        self.profile_tick(ctx, full);
         // Settings changed from outside (`harbor mesh …` on a terminal, over SSH) apply live.
         if self.mesh.reread.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
             self.mesh.reread = Some(Instant::now());
@@ -2297,7 +2305,7 @@ impl App {
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
                 let port = *self.api.hub.port.lock().unwrap();
                 let about = crate::meshctx::about(&self.store);
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"] }))
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"] }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");

@@ -2713,6 +2713,8 @@ impl App {
             "app": app_info().as_object().map(|o| json!({ "version_code": o["version_code"], "url": o["url"] })).unwrap_or_default(),
             "hub_update": updates["hub_update"],
             "provider_updates": updates["provider_updates"],
+            // "Is this you?": this PC's detected owner, until confirmed (profile.rs; 0.47).
+            "profile_check": self.profile_check_json(),
             // Whether this PC can transcribe a phone's recording (voice.rs), and why not.
             "voice": { "transcribe": crate::voice::missing().is_none(), "why": crate::voice::missing(), "lang": crate::voice::config().0 },
         })

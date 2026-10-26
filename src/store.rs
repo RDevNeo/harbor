@@ -406,6 +406,13 @@ impl Store {
         Ok(store)
     }
 
+    /// A throwaway database for tests.
+    #[cfg(test)]
+    pub fn open_temp() -> Self {
+        let p = std::env::temp_dir().join(format!("harbor-test-{}.db", random_hex(6).unwrap()));
+        Self::open_at(&p).unwrap()
+    }
+
     fn open_at(path: &std::path::Path) -> rusqlite::Result<Self> {
         let db = Connection::open(path)?;
         db.execute_batch(

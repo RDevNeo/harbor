@@ -361,6 +361,9 @@ refetch everything.
   install; show it as the "Harbor X.Y.Z is available" banner with Update
   (`POST /v1/hub/update`) and What's new (`notes_url`). `installing`: it's on its way. Once the
   hub runs it, its `app.version_code` offers the matching APK.
+- `profile_check` (optional, from 0.47; null or missing: nothing to ask): `{key, title, body}`,
+  "Is this you?" while this PC's owner is a detection nobody confirmed (the desktop's pop-up).
+  Confirm sends `PATCH /v1/people {"op": "confirm"}`; closing remembers `key` on the phone.
 - `provider_updates` (optional, null or missing: none): the hub's provider CLIs that are behind,
   as the separate "Updates available: N providers" banner ("<names> can be updated"), with
   Update (`POST /v1/providers/update`). `updating`: the hub is running the updaters; `error`:
@@ -983,6 +986,19 @@ and `share_label`; `levels` lists the choices (`[{id, label, about}]`); `me.shar
 whether chats this PC drives on other PCs may run `gh` here with its GitHub sign-in. `PATCH` also
 takes `share_github` and `share: {pc, level}`.
 
+From 0.47 (detected profiles, `src/profile.rs`): each PC detects its owner's name and GitHub login
+(git, gh, agent accounts, phones, SSH hosts and key comments, CLAUDE.md, the mesh's reports; one
+Haiku question through the PC's own Claude account, else rules). Until the user confirms, that
+detection fills in wherever nothing was typed. `me.owner_hint`/`github_hint` are what shows now
+(typed, else detected, else the old fallbacks); `me` also has `suggested` (null before the first
+run: `{owner, github, confidence: "high"|"medium"|"low"|"", why, by, at}`), `confirmed` (the user
+typed a name or confirmed one), `detecting` (a run is going) and `check` (as `profile_check` in
+`/v1/state`). Each entry of `pcs` has `suggested` (a detection nobody confirmed), `guessed` (this
+PC's guess about a peer that says nothing itself) and `why` (the evidence, when this PC has it).
+`PATCH` also takes `{"op": "confirm"}` (what shows becomes the user's own, in the fields still
+empty; typed values stay) and `{"op": "detect"}` (run again; poll `GET` for `detecting`). Older
+hubs ignore `op` and send none of these fields.
+
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
@@ -1134,9 +1150,10 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   names it): the two swap keys, which go into their allowed entries. From then on that PC gets
   only `hello` and `enroll` in plain HTTP; everything else needs TLS with its key. `409` when
   another key is already on file for it (pair again).
-- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port, owner, github}`
+- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port, owner, github, owner_suggested}`
   (`phones`: its phone access is on; also in each chats answer; `fp`, `addrs`, `port`: its key
-  and addresses; from 0.44 `owner` and `github`: who owns the PC, for the who is who).
+  and addresses; from 0.44 `owner` and `github`: who owns the PC, for the who is who; from 0.47
+  `owner_suggested`: they are that PC's own detection, not confirmed there yet).
   `epoch` is the hub's start revision: revisions compare only within one epoch.
 - `GET /mesh/v1/events?since=<rev>&epoch=<epoch>` → `{epoch, rev}` as soon as one of this PC's
   own chats changed after `since` (or one was deleted), or after 20 s. Another `epoch`: start over.
@@ -1197,7 +1214,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   secret takes them, one with another secret is `409`. From 0.34.1 also `nolock` (two factors,
   `presence` empty) and `keys_at`: the same secret with newer `keys_at` takes the new factors.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
-- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk, owner, github}` (`alive`: unix s of its last background ping, from 0.37.1; `owner`, `github` from 0.44, as in `hello`): where this PC saw the
+- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk, owner, github, owner_suggested}` (`alive`: unix s of its last background ping, from 0.37.1; `owner`, `github` from 0.44, `owner_suggested` from 0.47, as in `hello`): where this PC saw the
   phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it
   serves. Each PC asks the others every 15 s: a phone that talks to another PC shows online
   there, "via" that PC. A PC whose peer serves a newer app takes it.
