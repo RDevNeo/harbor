@@ -31,6 +31,7 @@ public class Chat extends Base {
     private WorkBar work;
     private ScrollView scroll;
     private LinearLayout content, status;
+    private TextView recapLine;     // the hub's recap in the bars, hidden while typing
     private Composer comp;
     private EditText composer;
     private Attach attach;
@@ -119,6 +120,9 @@ public class Chat extends Base {
         comp.edit.onSelection = () -> { slash.update(); tags.update(); };
         comp.edit.backOpen = () -> slash.open() || tags.open();
         comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
+        // The recap steps aside while typing: the keyboard leaves little room for the transcript.
+        comp.edit.getViewTreeObserver().addOnGlobalFocusChangeListener((was, now) -> recapWhileTyping());
+        comp.edit.getViewTreeObserver().addOnGlobalLayoutListener(this::recapWhileTyping);
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         comp.onSend = this::send;
         comp.onStop = this::stop;
@@ -506,9 +510,26 @@ public class Chat extends Base {
         // The hub's recap over the composer, its suggestion in the empty composer (Recap.java).
         TextView recap = Recap.line(this, b);
         if (recap != null) status.addView(recap, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        recapLine = recap;
         Recap.suggest(comp, b.optString("suggestion", ""));
-        status.setVisibility(status.getChildCount() == 0 ? View.GONE : View.VISIBLE);
+        recapWhileTyping();
         comp.running(running);
+    }
+
+    /** Hides the recap while the composer has focus with the keyboard up (it comes back when the
+     *  keyboard closes), and the bars with it when it was their only line. */
+    private void recapWhileTyping() {
+        boolean typing = comp.edit.hasFocus();
+        if (typing && android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.WindowInsets in = comp.edit.getRootWindowInsets();
+            typing = in == null || in.isVisible(android.view.WindowInsets.Type.ime());
+        }
+        int want = typing ? View.GONE : View.VISIBLE;
+        if (recapLine != null && recapLine.getVisibility() != want) recapLine.setVisibility(want);
+        boolean any = false;
+        for (int i = 0; i < status.getChildCount() && !any; i++) any = status.getChildAt(i).getVisibility() != View.GONE;
+        int bars = any ? View.VISIBLE : View.GONE;
+        if (status.getVisibility() != bars) status.setVisibility(bars);
     }
 
     /** The desktop's agent strip over the composer (agentstrip.rs, PROTOCOL.md "status.agents"):

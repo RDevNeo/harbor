@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- On the phone, the recap over the composer steps aside while you type (composer focused, keyboard
+  up) so the transcript stays readable, and comes back when the keyboard closes.
+
 ## [0.48.0] - 2026-10-26
 
 ### Added
