@@ -20,7 +20,8 @@ pub const CONTENT_W: f32 = 760.0;
 /// `CHAT_MIN_W`, otherwise they open as drawers over it.
 pub const NARROW_W: f32 = 768.0;
 pub const CHAT_MIN_W: f32 = 440.0;
-pub const SIDEBAR_W: f32 = 272.0;
+/// rengaf's sidebar: 16rem.
+pub const SIDEBAR_W: f32 = 256.0;
 pub const TEAM_W: f32 = 300.0;
 /// Composer/attachment key of the new-chat screen.
 pub const DRAFT: i64 = 0;

@@ -2515,6 +2515,10 @@ impl App {
             "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
             "parent": c.parent,
             "typing": self.typing_json(c.id),
+            // Finished while nobody had it open, not opened since (the sidebar's blue dot), and
+            // whether that last turn failed (optional, 0.42).
+            "unread": self.unread.contains(&c.id),
+            "failed": self.failed.contains(&c.id),
             // Other PCs with the chat open (mesh.rs): "focused" or "away".
             "viewing": self.viewers(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
             "switchable": {
@@ -2666,6 +2670,10 @@ impl App {
     /// what changed by hashing each item with how it shows.
     pub fn api_items(&mut self, chat: i64, since: u64) -> Value {
         self.recap_seen(chat);
+        // Opened on a phone: read, as when it's opened here.
+        if self.unread.remove(&chat) | self.failed.remove(&chat) {
+            self.api.hub.bump();
+        }
         if !self.transcripts.contains_key(&chat) {
             let items = self.store.items(chat);
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });

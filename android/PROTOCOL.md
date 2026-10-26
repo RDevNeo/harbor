@@ -340,6 +340,10 @@ refetch everything.
 }
 ```
 
+- Chats also have `unread` and `failed` (optional, 0.42): the last turn ended while nobody had the
+  chat open and nobody opened it since (the desktop sidebar's blue dot), and whether that turn
+  failed. Fetching the chat's items (`GET /v1/chats/{id}/items`) marks it read, as opening it on the
+  desktop does. Older hubs leave them out: no dot.
 - `projects` come in the desktop sidebar's order (by hand, or by last activity when it's set so).
   Projects never settle, only chats do. Older hubs sent a project `settled`; clients ignore it,
   and current hubs no longer send it.

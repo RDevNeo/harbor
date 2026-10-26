@@ -217,6 +217,8 @@ pub enum Action {
     Terminal(Device),
     /// Browse the PC's files in a new tab.
     Files(Device),
+    /// Settings › Devices (nothing is paired yet).
+    Settings,
 }
 
 /// The Devices tab.
@@ -493,7 +495,10 @@ impl List {
                 w::subtle(ui, if devices.is_empty() { "Nothing paired yet".to_string() } else { format!("{online} of {} online", devices.len()) }, "label-13");
                 ui.add_space(12.0);
                 if devices.is_empty() {
-                    w::subtle(ui, "Your PCs show up here once they're paired in Settings › Devices, and your phones once Harbor for Android is paired in Settings › Phones.", "copy-14");
+                    ui.add_space(24.0);
+                    if w::empty(ui, ic::MONITOR, "Nothing paired yet", "Your PCs show up here once they're paired in Settings › Devices, and your phones once Harbor for Android is paired in Settings › Phones.", Some("Open Settings › Devices")) {
+                        action = Some(Action::Settings);
+                    }
                     return;
                 }
                 if hovering {

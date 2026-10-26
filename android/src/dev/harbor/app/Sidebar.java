@@ -426,8 +426,15 @@ final class Sidebar {
         int q = Hub.queued(c);
         if (typing) {
             r.addView(Ui.text(a, "typing…", 12, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-        } else if (c.optBoolean("running") || q > 0) {
-            r.addView(Ui.dot(a, c.optBoolean("running") ? Ui.BLUE : Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
+        } else if (c.optBoolean("running")) {
+            r.addView(Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        } else if (q > 0) {
+            r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
+        } else if (c.optBoolean("failed")) {
+            r.addView(Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        } else if (c.optBoolean("unread")) {
+            // Finished while nobody had it open (the desktop sidebar's blue dot).
+            r.addView(Ui.dot(a, Ui.BLUE, 6), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(6), Ui.dp(6)), 10, 0, 4, 0));
         }
         r.setOnClickListener(v -> open(id));
         r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });

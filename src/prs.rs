@@ -1558,15 +1558,8 @@ impl App {
 }
 
 pub fn empty(ui: &mut Ui, icon: &str, title: &str, desc: &str) {
-    let t = w::tokens(ui);
     ui.add_space(64.0);
-    ui.vertical_centered(|ui| {
-        ui.label(egui::RichText::new(icon).size(28.0).color(t.gray(800)));
-        ui.add_space(10.0);
-        w::text(ui, title, "heading-16");
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(desc).text_style(theme::ts("label-14")).color(t.subtle()));
-    });
+    w::empty(ui, icon, title, desc, None);
 }
 
 pub fn section(ui: &mut Ui, icon: &str, label: &str, n: usize) {

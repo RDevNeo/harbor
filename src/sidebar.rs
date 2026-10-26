@@ -372,13 +372,14 @@ impl App {
         let mut drop: Option<(i64, usize)> = None;
         ScrollArea::vertical().id_salt("projects").max_height(list_h).min_scrolled_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
             if active.is_empty() {
-                ui.add_space(12.0);
-                ui.vertical_centered(|ui| {
-                    w::subtle(ui, if q.is_empty() { "No projects yet" } else { "No match" }, "label-13");
-                    if q.is_empty() && w::btn(&format!("{}  Add project", ic::FOLDER_PLUS)).xs().outline().show(ui).clicked() {
+                ui.add_space(24.0);
+                if q.is_empty() {
+                    if w::empty(ui, ic::FOLDER_PLUS, "No projects yet", "Add a folder or clone a repository to start.", Some("Add project")) {
                         self.open_add_project();
                     }
-                });
+                } else {
+                    w::empty(ui, ic::SEARCH, "No match", "", None);
+                }
             }
             for (i, r) in active.iter().enumerate() {
                 let Some(resp) = self.project_row(ui, r, draggable) else { continue };
@@ -425,14 +426,19 @@ impl App {
         if n_settled > 0 {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
             let p = ui.painter();
-            let g = p.layout_no_wrap(format!("Settled ({n_settled})"), FontId::proportional(13.0), t.subtle());
-            let gw = g.size().x;
-            p.galley(pos2(rect.left() + 8.0, rect.center().y - g.size().y / 2.0), g, t.subtle());
-            let (x0, x1) = (rect.left() + 8.0 + gw + 10.0, rect.right() - 30.0);
-            if x1 > x0 {
-                p.hline(x0..=x1, rect.center().y, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.gray(500) }));
+            // rengaf SidebarGroupLabel (h-8 px-2, 12 medium at 70%) with a SidebarMenuBadge count.
+            let fg = if resp.hovered() { t.fg() } else { w::alpha(t.fg(), 0.7) };
+            if resp.hovered() {
+                p.rect_filled(rect, egui::CornerRadius::same(crate::theme::RADIUS_MD), t.accent());
             }
-            ic::glyph(p, pos2(rect.right() - 14.0, rect.center().y), if self.settled_open { ic::DOWN } else { ic::UP }, 14.0, t.subtle());
+            let g = p.layout_no_wrap("Settled".into(), FontId::new(12.0, crate::theme::medium()), fg);
+            let gw = g.size().x;
+            p.galley(pos2(rect.left() + 8.0, rect.center().y - g.size().y / 2.0), g, fg);
+            let c = p.layout_no_wrap(n_settled.to_string(), FontId::new(12.0, crate::theme::medium()), t.subtle());
+            let cr = egui::Rect::from_min_size(pos2(rect.left() + 8.0 + gw + 6.0, rect.center().y - 10.0), Vec2::new(c.size().x.max(8.0) + 12.0, 20.0));
+            p.rect_filled(cr, egui::CornerRadius::same(crate::theme::RADIUS_MD), t.gray(200));
+            p.galley(cr.center() - c.size() / 2.0, c, t.subtle());
+            ic::glyph(p, pos2(rect.right() - 14.0, rect.center().y), if self.settled_open { ic::DOWN } else { ic::UP }, 14.0, fg);
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 self.settled_open = !self.settled_open;
             }

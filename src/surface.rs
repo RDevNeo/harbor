@@ -332,6 +332,7 @@ impl App {
                 let i = p.surfaces.len() - 1;
                 self.show_surface(d, i);
             }
+            devices::Action::Settings => self.open(crate::app::View::Settings(crate::app::Tab::Devices)),
         }
     }
 

@@ -244,7 +244,7 @@ fn menu_row_with(ui: &mut Ui, active: bool, icon: &str, label: &str, right_w: f3
 pub enum Status {
     /// A turn is running; seconds since it started.
     Working(u64),
-    /// Finished while you were elsewhere and not opened yet.
+    /// Finished while you were elsewhere and not opened yet: the unread dot.
     Done,
     Failed,
     /// Idle: plain text such as the last activity ("5h"), in the given colour.
@@ -289,7 +289,13 @@ pub fn elapsed(secs: u64) -> String {
 
 const STATUS_ICON: f32 = 13.0;
 
+/// The unread dot (rengaf nav-sidebar's `size-1.5 rounded-full`, in info blue).
+const UNREAD_DOT: f32 = 6.0;
+
 pub fn status_width(ui: &Ui, s: &Status) -> f32 {
+    if matches!(s, Status::Done) {
+        return UNREAD_DOT + 4.0;
+    }
     let t = tokens(ui);
     let (text, col, _) = status_parts(&t, s);
     let g = ui.painter().layout_no_wrap(text, FontId::proportional(12.5), col);
@@ -300,6 +306,10 @@ pub fn status_width(ui: &Ui, s: &Status) -> f32 {
 /// Paints a status right-aligned at `right` (vertically centred on it).
 pub fn paint_status(p: &egui::Painter, right: egui::Pos2, s: &Status) {
     let t = p.ctx().data(|d| d.get_temp::<TokensCell>(egui::Id::NULL)).map(|c| c.0).unwrap_or_else(|| crate::theme::Theme::new(crate::theme::Mode::Dark).t);
+    if matches!(s, Status::Done) {
+        p.circle_filled(egui::pos2(right.x - UNREAD_DOT / 2.0 - 2.0, right.y), UNREAD_DOT / 2.0, t.blue(700));
+        return;
+    }
     let (text, col, icon) = status_parts(&t, s);
     let g = p.layout_no_wrap(text, FontId::proportional(12.5), col);
     let x = right.x - g.size().x;
@@ -763,6 +773,35 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, id: Option<egui:
 pub fn overlay<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::centered_and_justified(egui::Direction::TopDown)));
     add(&mut child)
+}
+
+// ---------------------------------------------------------------- Empty state
+
+/// rengaf's Empty: a 40px muted tile with the icon, a heading-16 title, a copy-14 subtle line,
+/// and an optional primary action (true when clicked). Centred in the width it has.
+pub fn empty(ui: &mut Ui, icon: &str, title: &str, desc: &str, action: Option<&str>) -> bool {
+    let t = tokens(ui);
+    let mut clicked = false;
+    ui.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let (tile, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
+        ui.painter().rect_filled(tile, CornerRadius::same(RADIUS_LG), t.gray(100));
+        crate::icons::glyph(ui.painter(), tile.center(), icon, 24.0, t.fg());
+        ui.add_space(16.0);
+        ui.label(rich(title, "heading-16"));
+        if !desc.is_empty() {
+            ui.add_space(4.0);
+            let w = ui.available_width().min(360.0);
+            ui.allocate_ui(Vec2::new(w, 0.0), |ui| {
+                ui.vertical_centered(|ui| ui.add(egui::Label::new(rich(desc, "copy-14").color(t.subtle())).wrap()));
+            });
+        }
+        if let Some(a) = action {
+            ui.add_space(16.0);
+            clicked = btn(a).primary().show(ui).clicked();
+        }
+    });
+    clicked
 }
 
 // ---------------------------------------------------------------- Tooltip
