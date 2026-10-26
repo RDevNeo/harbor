@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-10-26
+
 ### Added
 - Notifications for what matters, on the desktop and the phone: an agent needs you (a lead chat
   asks you something, or waits after a usage limit), a lead chat finished (sub-agents too if you
@@ -916,7 +918,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/RDevNeo/harbor/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/RDevNeo/harbor/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/RDevNeo/harbor/compare/v0.37.2...v0.38.0
 [0.37.2]: https://github.com/RDevNeo/harbor/compare/v0.37.1...v0.37.2
