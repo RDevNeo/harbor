@@ -449,6 +449,20 @@ impl App {
             });
         });
         ui.add_space(8.0);
+        // Provider CLI updates (the same as the "Updates available" pop-up).
+        let up = crate::provupdate::status();
+        if !up.items.is_empty() || up.updating || up.error.is_some() {
+            rows(ui, |ui| {
+                let list = up.items.iter().map(|p| format!("{} {} → {}", p.kind.label(), p.current, p.latest)).collect::<Vec<_>>().join(", ");
+                let desc = up.error.clone().map(|e| format!("The last update failed: {e}")).unwrap_or(list);
+                w::setting_row(ui, if up.updating { "Updating providers…" } else { "Updates available" }, &desc, |ui| {
+                    if w::btn("Update").sm().primary().enabled(!up.busy && !up.items.is_empty()).show(ui).clicked() {
+                        crate::provupdate::update_all(&ctx, &self.accounts);
+                    }
+                });
+            });
+            ui.add_space(8.0);
+        }
         let accounts = self.accounts.clone();
         let default = self.draft.sel.account.clone();
         w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {

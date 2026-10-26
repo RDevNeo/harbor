@@ -1412,6 +1412,7 @@ impl eframe::App for App {
 
         let t = self.theme.t;
         crate::picker::toast(&ctx, &t);
+        self.update_toasts(&ctx);
         let narrow = self.sidebar_narrow(&ctx);
         if !narrow {
             self.sidebar_drawer = false;

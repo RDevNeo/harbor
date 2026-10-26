@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -148,6 +149,7 @@ final class Sidebar {
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
 
+        banners(st);
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
@@ -218,6 +220,110 @@ final class Sidebar {
             list.addView(h, Ui.fill());
             if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
         }
+    }
+
+    // ---- the two update banners (the desktop's pop-ups, src/notices.rs), never merged ----
+
+    /** "Harbor X.Y.Z is available" (the hub's own update: blue sparkles, Update / What's new)
+     *  and apart from it "Updates available: N providers" (the hub's CLIs: their logos, Update /
+     *  Details). Closing one remembers its version(s) on this phone; the next ones show again. */
+    private void banners(JSONObject st) {
+        android.content.SharedPreferences pr = Ui.prefs(a);
+        JSONObject hu = st.optJSONObject("hub_update");
+        String v = hu == null ? "" : hu.optString("version");
+        if (!v.isEmpty() && !v.equals(pr.getString("upd-hub-" + a.hub.id, ""))) {
+            boolean busy = hu.optBoolean("installing");
+            TextView icon = Ui.icon(a, Ui.I_SPARKLES, 18, Ui.BLUE);
+            icon.setBackground(Ui.round(Ui.G100, 0, 10));
+            String notes = hu.optString("notes_url");
+            list.addView(banner(icon,
+                    busy ? "Updating Harbor to " + v + "…" : "Harbor " + v + " is available",
+                    busy ? a.hub.label() + " reloads when it's ready; running agents keep going."
+                         : a.hub.label() + " runs " + hu.optString("current") + ". Update installs it there; this app follows.",
+                    busy ? "Updating…" : "Update", !busy,
+                    () -> Ui.bg(a, () -> a.hub.call("POST", "/v1/hub/update", new JSONObject()), r -> Ui.toast(a, "Updating Harbor on " + a.hub.label() + "…")),
+                    notes.isEmpty() ? null : "What's new",
+                    () -> { try { a.startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(notes))); } catch (Exception e) { Ui.copy(a, notes); } },
+                    () -> { pr.edit().putString("upd-hub-" + a.hub.id, v).apply(); render(this.st); }), Ui.inset());
+        }
+        JSONObject pu = st.optJSONObject("provider_updates");
+        if (pu == null) return;
+        JSONArray items = pu.optJSONArray("items");
+        int n = items == null ? 0 : items.length();
+        String key = pu.optString("key");
+        boolean updating = pu.optBoolean("updating");
+        String error = pu.isNull("error") ? "" : pu.optString("error");
+        boolean offered = n > 0 && !key.equals(pr.getString("upd-prov-" + a.hub.id, ""));
+        if (!updating && error.isEmpty() && !offered) return;
+        String names = pu.optString("names");
+        String title, body, primary;
+        if (updating) { title = "Updating providers…"; body = "Updating " + names + " on " + a.hub.label() + ". Chats keep running."; primary = "Updating…"; }
+        else if (!error.isEmpty()) { title = "A provider update failed"; body = error; primary = n > 0 ? "Try again" : null; }
+        else { title = "Updates available: " + n + " provider" + (n == 1 ? "" : "s"); body = names + " can be updated on " + a.hub.label() + "."; primary = "Update"; }
+        // The providers' logos, overlapping a little (at most three).
+        FrameLayout icon = new FrameLayout(a);
+        icon.setBackground(Ui.round(Ui.G200, 0, 10));
+        int shown = Math.min(n, 3);
+        for (int i = 0; i < shown; i++) {
+            android.graphics.Bitmap b = Ui.logo(a, items.optJSONObject(i).optString("logo"));
+            if (b == null) continue;
+            ImageView iv = new ImageView(a);
+            iv.setImageBitmap(b);
+            int size = shown == 1 ? 22 : 18;
+            iv.setTranslationX(Ui.dp((i - (shown - 1) / 2f) * 7));
+            icon.addView(iv, new FrameLayout.LayoutParams(Ui.dp(size), Ui.dp(size), Gravity.CENTER));
+        }
+        if (icon.getChildCount() == 0) icon.addView(Ui.icon(a, Ui.I_BOT, 18, Ui.G700), new FrameLayout.LayoutParams(-1, -1));
+        StringBuilder details = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            JSONObject it = items.optJSONObject(i);
+            details.append(it.optString("label")).append("  ").append(it.optString("current")).append(" → ").append(it.optString("latest")).append('\n');
+        }
+        list.addView(banner(icon, title, body, primary, !updating && n > 0,
+                () -> Ui.bg(a, () -> a.hub.call("POST", "/v1/providers/update", new JSONObject()), r -> { }),
+                n > 0 ? "Details" : null,
+                () -> Ui.dialog(a).setTitle("Provider updates on " + a.hub.label()).setMessage(details.toString().trim()).setPositiveButton("OK", null).show(),
+                () -> { pr.edit().putString("upd-prov-" + a.hub.id, key).apply(); render(this.st); }), Ui.inset());
+    }
+
+    /** One banner card: an icon tile, a title and a line, a black pill and a quiet text button,
+     *  and a close X. `primary` or `secondary` null: no such button. */
+    private View banner(View icon, String title, String body, String primary, boolean enabled, Runnable onPrimary, String secondary, Runnable onSecondary, Runnable onClose) {
+        LinearLayout card = Ui.row(a);
+        card.setGravity(Gravity.TOP);
+        card.setBackground(Ui.round(Ui.CARD, Ui.LINE, 14));
+        card.setPadding(Ui.dp(12), Ui.dp(12), Ui.dp(4), Ui.dp(12));
+        card.addView(icon, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)), 0, 0, 12, 0));
+        LinearLayout col = Ui.col(a);
+        col.addView(Ui.bold(a, title, 15, Ui.FG));
+        TextView t = Ui.text(a, body, 13, Ui.G700);
+        col.addView(t, Ui.margins(Ui.fill(), 0, 2, 0, 8));
+        LinearLayout btns = Ui.row(a);
+        if (primary != null) {
+            TextView p = Ui.bold(a, primary, 14, Ui.ON_INK);
+            p.setGravity(Gravity.CENTER);
+            p.setPadding(Ui.dp(16), Ui.dp(8), Ui.dp(16), Ui.dp(8));
+            p.setBackground(Ui.press(enabled ? Ui.INK : Ui.G500, 0, 18));
+            p.setEnabled(enabled);
+            p.setOnClickListener(v -> onPrimary.run());
+            btns.addView(p, Ui.margins(Ui.wrap(), 0, 0, 8, 0));
+        }
+        if (secondary != null) {
+            TextView s2 = Ui.bold(a, secondary, 14, Ui.FG);
+            s2.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(8));
+            s2.setBackground(Ui.press(0, 0, 18));
+            s2.setOnClickListener(v -> onSecondary.run());
+            btns.addView(s2, Ui.wrap());
+        }
+        if (btns.getChildCount() > 0) col.addView(btns);
+        card.addView(col, Ui.weight());
+        TextView x = Ui.iconButton(a, Ui.I_X, Ui.G700, v -> onClose.run());
+        x.setContentDescription("Dismiss");
+        card.addView(x, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        LinearLayout wrap = Ui.col(a);
+        wrap.setPadding(0, Ui.dp(4), 0, Ui.dp(6));
+        wrap.addView(card, Ui.fill());
+        return wrap;
     }
 
     private void divider() {

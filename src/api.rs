@@ -1995,6 +1995,7 @@ impl App {
             self.accounts.iter().map(|a| (&a.id, a.logged_in, a.usage.iter().map(|u| (&u.label, (u.percent * 100.0) as i32)).collect::<Vec<_>>())).collect::<Vec<_>>(),
             self.fast,
             self.models.values().map(|m| m.len()).sum::<usize>(),
+            self.updates_json().to_string(),
         ));
         let rest_changed = rest != self.api.rest;
         self.api.rest = rest;
@@ -2154,6 +2155,23 @@ impl App {
                 None => err(404, "no such chat"),
             },
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
+            // The phone's "Updates available" banner: updates the hub's provider CLIs.
+            ("POST", ["v1", "providers", "update"]) => {
+                if crate::provupdate::update_all(ctx, &self.accounts) {
+                    ok(json!({ "ok": true }))
+                } else {
+                    err(409, "no provider update to install")
+                }
+            }
+            // The phone's "Harbor X.Y.Z is available" banner: the hub's Update button.
+            ("POST", ["v1", "hub", "update"]) => {
+                if self.harbor_offer().is_some() {
+                    self.update_clicked(ctx);
+                    ok(json!({ "ok": true }))
+                } else {
+                    err(409, "Harbor is up to date")
+                }
+            }
             ("POST", ["v1", "chats", c, action]) => {
                 let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 match *action {
@@ -2432,6 +2450,7 @@ impl App {
             }
         }
         let s = &self.draft.sel;
+        let updates = self.updates_json();
         json!({
             "version": crate::update::VERSION,
             "hub_id": me.id,
@@ -2454,7 +2473,28 @@ impl App {
             "fast": self.fast,
             "defaults": { "account": s.account, "model": s.model, "effort": s.effort, "access": s.access, "device": s.device, "project_id": self.draft.repo },
             "app": app_info().as_object().map(|o| json!({ "version_code": o["version_code"], "url": o["url"] })).unwrap_or_default(),
+            "hub_update": updates["hub_update"],
+            "provider_updates": updates["provider_updates"],
         })
+    }
+
+    /// The two update banners' data (notices.rs draws the same on the desktop): the Harbor
+    /// release this hub can install, and its provider CLIs that are behind. Null when none.
+    pub fn updates_json(&self) -> Value {
+        let hub = self.harbor_offer().map(|(v, installing)| {
+            json!({ "version": v, "current": crate::update::VERSION, "installing": installing || self.reload_asked, "notes_url": crate::notices::notes_url(&v) })
+        });
+        let st = crate::provupdate::status();
+        let providers = (!st.items.is_empty() || st.updating || st.error.is_some()).then(|| {
+            json!({
+                "items": st.items.iter().map(|p| json!({ "kind": kind_slug(p.kind), "label": p.kind.label(), "logo": crate::provupdate::logo_file(p.kind), "current": p.current, "latest": p.latest })).collect::<Vec<_>>(),
+                "names": crate::provupdate::names(&st.items),
+                "key": crate::provupdate::key(&st.items),
+                "updating": st.updating,
+                "error": st.error,
+            })
+        });
+        json!({ "hub_update": hub, "provider_updates": providers })
     }
 
     /// The cards of a chat (the desktop's projection, view.rs) changed after `since`, finding

@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Two separate update pop-ups, on the desktop (top right) and the phone (banners in the chat list).
+  Providers: "Updates available: 2 providers. Codex and Claude can be updated", with Update, which
+  runs each CLI's own updater right there (`claude update`, `opencode upgrade`, `npm i -g …`), and
+  Settings. Harbor: "Harbor X.Y.Z is available", with Update (installs and reloads in place) and
+  What's new. Closing one hides it until the next version. Harbor now checks npm for newer Claude
+  Code, Codex, Gemini, Grok and OpenCode versions every few hours; Settings › Providers lists them.
+
 ## [0.29.0] - 2026-10-25
 
 ### Added

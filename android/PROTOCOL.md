@@ -227,7 +227,13 @@ refetch everything.
   "fast": false,
   "defaults": {"account": "claude", "model": "claude-opus-5-5", "effort": "high", "access": "full",
                "device": "", "project_id": null},
-  "app": {"version_code": 7000, "url": "/app.apk"}
+  "app": {"version_code": 7000, "url": "/app.apk"},
+  "hub_update": {"version": "0.29.0", "current": "0.28.0", "installing": false,
+                 "notes_url": "https://github.com/RDevNeo/harbor/releases/tag/v0.29.0"},
+  "provider_updates": {"items": [{"kind": "codex", "label": "Codex", "logo": "p-openai.a8", "current": "0.46.0", "latest": "0.47.0"},
+                                 {"kind": "claude", "label": "Claude", "logo": "p-claude-color.rgba", "current": "2.0.14", "latest": "2.0.15"}],
+                       "names": "Codex and Claude", "key": "codex=0.47.0,claude=2.0.15",
+                       "updating": false, "error": null}
 }
 ```
 
@@ -241,6 +247,15 @@ refetch everything.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
   running Harbor; a new chat with that device starts there, so it can only be picked while `online`.
+- `hub_update` (optional, null or missing: nothing to offer): a Harbor release this hub can
+  install; show it as the "Harbor X.Y.Z is available" banner with Update
+  (`POST /v1/hub/update`) and What's new (`notes_url`). `installing`: it's on its way. Once the
+  hub runs it, its `app.version_code` offers the matching APK.
+- `provider_updates` (optional, null or missing: none): the hub's provider CLIs that are behind,
+  as the separate "Updates available: N providers" banner ("<names> can be updated"), with
+  Update (`POST /v1/providers/update`). `updating`: the hub is running the updaters; `error`:
+  the last update failed (text). Dismissing either banner remembers its version (`version`, or
+  `key` for providers), so it shows again for the next one. Older hubs send neither field.
 - `hub_fp`, `hub_addrs`, `hub_port`: this hub's key and where it answers (keep the pairing's
   address list up to date with them).
 - `hub_id`: this hub's id in the mesh; `mesh`: chats are shared with the user's other PCs; `hubs`:
@@ -346,7 +361,7 @@ gathers a burst of streaming changes), or after 20 s with nothing:
 
 `state_changed` is true when anything in `/v1/state` changed (a chat's title, settled, running,
 queued, updated time, run settings, who is typing; chats added or removed; projects; accounts'
-usage). A typing lease running out is a change too (its chat is in `changed_chats`). Use a read timeout of
+usage; the update banners). A typing lease running out is a change too (its chat is in `changed_chats`). Use a read timeout of
 25 s and reconnect on any error.
 
 ### `POST /v1/chats`
@@ -628,6 +643,14 @@ open.
 gives an item's bytes (`application/octet-stream`, `404` when it's gone). `POST /v1/inbox/{id}/done`
 with `{}`, or `{"error": "<why>"}` when the phone couldn't take it, removes the item, and the PC
 shows the item as delivered or failed.
+
+### `POST /v1/providers/update`, `POST /v1/hub/update`
+
+`{}`. The two update banners' buttons: update the hub's provider CLIs (each with its own updater:
+`claude update`, `opencode upgrade`, `npm i -g …@latest`), or install the Harbor release on offer
+and reload into it (running agents keep going). `{"ok": true}` when started; `409` when there's
+nothing to update. Progress shows in `/v1/state` (`provider_updates.updating`,
+`hub_update.installing`; `state_changed` fires).
 
 ### `GET /v1/app`
 
