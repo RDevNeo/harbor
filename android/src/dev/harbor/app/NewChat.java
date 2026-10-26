@@ -132,7 +132,7 @@ public class NewChat extends Base {
         try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return ""; }
     }
 
-    /** GET /v1/slash with this screen's picks (hubs before 0.32.1 have none: no menu). */
+    /** GET /v1/slash with this screen's picks (hubs before 0.33.1 have none: no menu). */
     private String slashPath() {
         if (run == null) return "/v1/slash";
         return "/v1/slash?project=" + enc(run.project) + "&account=" + enc(run.account) + "&device=" + enc(run.device) + "&access=" + enc(run.access);

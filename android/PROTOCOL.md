@@ -600,7 +600,7 @@ needs an update, or the pairing needs its upgrade to three factors.
 
 ### `GET /v1/slash?project=&account=&device=&access=` and `GET /v1/tags?project=&trigger=@&q=`
 
-The same two menus for the new-chat screen, which has no chat yet (since 0.32.1; older PCs answer
+The same two menus for the new-chat screen, which has no chat yet (since 0.33.1; older PCs answer
 `404`: show no menu). `project` is a project's `id` (or its `path`, as in `POST /v1/chats`), empty
 for none; `account`, `device` and `access` are the screen's picks (an unknown account: the
 desktop's current one). The answers are those of the chat calls. Only Harbor's `model`, `effort`,
