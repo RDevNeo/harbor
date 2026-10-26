@@ -2155,6 +2155,16 @@ impl App {
                 Some(c) => ok(self.api_slash(c, ctx)),
                 None => err(404, "no such chat"),
             },
+            // A new chat's composer (no chat yet): the same, by project and run settings.
+            ("GET", ["v1", "slash"]) => {
+                let q = |k: &str| call.query(k).unwrap_or("").to_string();
+                let repo = self.project_ref(&q("project"));
+                ok(self.api_slash_draft(&q("account"), &q("device"), &q("access"), repo, ctx))
+            }
+            ("GET", ["v1", "tags"]) => {
+                let repo = self.project_ref(call.query("project").unwrap_or(""));
+                ok(self.api_tags_in(repo, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx))
+            }
             // The composer's `@` files and `#` issues and PRs (tags.rs).
             ("GET", ["v1", "chats", c, "tags"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_tags(c, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx)),

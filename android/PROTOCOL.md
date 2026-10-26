@@ -597,6 +597,16 @@ agent are. A PC with a Harbor before 0.23 answers both with `404`: the app then 
 /default to the one that answered. When none can, a bare `/` shows why: the home PC's Harbor
 needs an update, or the pairing needs its upgrade to three factors.
 
+
+### `GET /v1/slash?project=&account=&device=&access=` and `GET /v1/tags?project=&trigger=@&q=`
+
+The same two menus for the new-chat screen, which has no chat yet (since 0.32.1; older PCs answer
+`404`: show no menu). `project` is a project's `id` (or its `path`, as in `POST /v1/chats`), empty
+for none; `account`, `device` and `access` are the screen's picks (an unknown account: the
+desktop's current one). The answers are those of the chat calls. Only Harbor's `model`, `effort`,
+`plan` and `default` commands are listed (no chat to fork, settle or clear), and all four are the
+screen's own pickers: `plan` sets the Permission pick to `plan`, `default` back to what it was.
+Ask the PC the screen talks to; another PC's projects aren't its own.
 ### Pull requests and issues
 
 The desktop's Pull requests and Issues pages, from this PC's GitHub CLI (`gh`, signed in on the

@@ -508,6 +508,21 @@ impl App {
     /// (ask again in a moment).
     pub fn api_tags(&mut self, chat: i64, trigger: &str, query: &str, ctx: &egui::Context) -> Value {
         let repo = self.chat(chat).and_then(|c| c.repo_id);
+        self.api_tags_in(repo, trigger, query, ctx)
+    }
+
+    /// A project named on the wire (`project=`): its id here, or its folder (as phones that
+    /// move between PCs know it). None for none or an unknown one.
+    pub fn project_ref(&self, r: &str) -> Option<i64> {
+        match r.parse::<i64>() {
+            Ok(id) => self.repo(id).map(|r| r.id),
+            Err(_) => self.repos.iter().find(|x| x.path.to_string_lossy() == r).map(|x| x.id),
+        }
+    }
+
+    /// `GET /v1/tags?project=…&trigger=…&q=…`: the same rows for a new chat's composer (no
+    /// chat yet), by its project.
+    pub fn api_tags_in(&mut self, repo: Option<i64>, trigger: &str, query: &str, ctx: &egui::Context) -> Value {
         let t = if trigger.starts_with('#') { '#' } else { '@' };
         let (rows, pending) = self.tags_rows(repo, t, query, ctx, true);
         json!({ "items": rows.iter().map(Row::json).collect::<Vec<_>>(), "pending": pending })

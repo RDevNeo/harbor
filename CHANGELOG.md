@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- The phone's New chat screen has the composer's `@` files, `#` issues and PRs and `/` commands
+  too, as the desktop's new-chat composer does (the PC ranks them by the project picked there).
+
 ## [0.33.0] - 2026-10-25
 
 ### Added

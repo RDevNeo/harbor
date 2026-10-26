@@ -57,7 +57,8 @@ final class Slash {
     private final LinearLayout rows;
     private final Activity a;
     private final Hub hub;
-    private final String chat;
+    /** Where the list comes from: a chat's, or a new chat's by project and run settings. */
+    private final java.util.function.Supplier<String> path;
     private final Composer.Edit edit;
     private final Harbor onHarbor;
     private String settings = "", home = "", homeName = "";
@@ -68,9 +69,14 @@ final class Slash {
     private int tries;
 
     Slash(Activity a, Hub hub, String chat, Composer.Edit edit, Harbor onHarbor) {
+        this(a, hub, () -> "/v1/chats/" + chat + "/slash", edit, onHarbor);
+    }
+
+    /** For the new-chat screen: `path` is GET /v1/slash with its picks (no chat yet). */
+    Slash(Activity a, Hub hub, java.util.function.Supplier<String> path, Composer.Edit edit, Harbor onHarbor) {
         this.a = a;
         this.hub = hub;
-        this.chat = chat;
+        this.path = path;
         this.edit = edit;
         this.onHarbor = onHarbor;
         view = Ui.col(a);
@@ -139,7 +145,7 @@ final class Slash {
         return true;
     }
 
-    private String key() { return hub.id + "/" + chat + "/" + settings; }
+    private String key() { return hub.id + "/" + path.get() + "/" + settings; }
 
     /** The list as the PC last said it; asks again when it's old or missing. */
     private Cached list() {
@@ -174,7 +180,7 @@ final class Slash {
     /** The list from the PC calls go to; when it has no slash menu (a Harbor before 0.23
      *  answers 404), from the chat's home PC or another PC of the pairing, asked directly. */
     private Cached load(Cached old, String home, String homeName) {
-        String path = "/v1/chats/" + chat + "/slash";
+        String path = this.path.get();
         String cur = hub.via();
         // The home PC as an endpoint of this pairing ("" the paired one), or null.
         String homeV = home.isEmpty() ? null : home.equals(hub.pid) ? "" : hub.ep(home) != null ? home : null;
@@ -183,6 +189,8 @@ final class Slash {
         if (!order.contains(cur)) order.add(cur);
         if (homeV != null && !order.contains(homeV)) order.add(homeV);
         for (String v : hub.endpoints()) if (!order.contains(v)) order.add(v);
+        // A new chat's list names this PC's projects: from this PC only.
+        if (!path.startsWith("/v1/chats/")) order.retainAll(java.util.Collections.singletonList(cur));
         boolean homeOld = false, upgrade = false;
         for (String v : order) {
             try {

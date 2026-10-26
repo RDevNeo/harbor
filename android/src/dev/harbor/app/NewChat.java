@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -27,6 +28,9 @@ public class NewChat extends Base {
     private Run run;
     private TextView project;
     private boolean starting;
+    private Slash slash;
+    private Tags tags;
+    private String beforePlan; // the access before /plan, for /default
 
     @Override
     protected void onCreate(Bundle b) {
@@ -49,7 +53,10 @@ public class NewChat extends Base {
         pp.topMargin = Ui.dp(10);
         pp.gravity = Gravity.CENTER_HORIZONTAL;
         mid.addView(project, pp);
-        root.addView(mid, new LinearLayout.LayoutParams(-1, 0, 1));
+        // The prompt, and the slash and tag menus floating over its bottom, as in a chat.
+        FrameLayout stage = new FrameLayout(this);
+        stage.addView(mid, frameFill());
+        root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
 
         attach = new Attach(this, hub, null);
         comp = new Composer(this, attach, "Chat with Claude…");
@@ -62,6 +69,14 @@ public class NewChat extends Base {
         };
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
         root.addView(comp.view, Ui.margins(Ui.fill(), 12, 0, 12, 12));
+        // No chat yet: the PC lists by the project and run settings picked here.
+        slash = new Slash(this, hub, this::slashPath, comp.edit, this::harbor);
+        tags = new Tags(this, hub, () -> "/v1/tags?project=" + enc(run == null ? "" : run.project) + "&", comp.edit);
+        stage.addView(slash.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
+        stage.addView(tags.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
+        comp.edit.onSelection = () -> { slash.update(); tags.update(); };
+        comp.edit.backOpen = () -> slash.open() || tags.open();
+        comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
         installDrawer(null);
 
         st = Hub.states.get(hub.id);
@@ -113,7 +128,45 @@ public class NewChat extends Base {
         return r;
     }
 
+    private static String enc(String s) {
+        try { return java.net.URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return ""; }
+    }
+
+    /** GET /v1/slash with this screen's picks (hubs before 0.32.1 have none: no menu). */
+    private String slashPath() {
+        if (run == null) return "/v1/slash";
+        return "/v1/slash?project=" + enc(run.project) + "&account=" + enc(run.account) + "&device=" + enc(run.device) + "&access=" + enc(run.access);
+    }
+
+    /** The slash menu's Harbor commands for a chat not started yet: the pickers, and /plan and
+     *  /default as the Permission pick. */
+    private void harbor(String command) {
+        if (run == null) return;
+        switch (command) {
+            case "model": run.pickModel(this, this::change); break;
+            case "effort": run.pickEffort(this, this::change); break;
+            case "plan":
+                beforePlan = run.access;
+                change("access", "plan");
+                Ui.toast(this, "Read only: this chat reads and plans, and changes nothing");
+                break;
+            case "default":
+                change("access", beforePlan != null && !beforePlan.equals("plan") ? beforePlan : "");
+                beforePlan = null;
+                Ui.toast(this, "Permission: " + run.accessLabel());
+                break;
+            default: break;
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (!drawerOpen() && slash != null && (slash.back() || tags.back())) return;
+        super.onBackPressed();
+    }
+
     private void show() {
+        slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, "", "");
         comp.pill.setText(run.pill());
         project.setText(run.projectLabel() + "  ▾");
         String k = run.kind();

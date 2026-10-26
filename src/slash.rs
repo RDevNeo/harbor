@@ -549,6 +549,18 @@ impl App {
     pub fn api_slash(&mut self, chat: i64, ctx: &egui::Context) -> Value {
         let Some(c) = self.chat(chat) else { return serde_json::json!({ "entries": [], "pending": false }) };
         let t = self.target_for(&c.account, &c.device, &c.access, c.repo_id, Some(chat));
+        self.api_slash_for(t, ctx)
+    }
+
+    /// `GET /v1/slash?project=…&account=…&device=…&access=…`: the menu's list for a new chat's
+    /// composer (no chat yet), with the run settings picked there.
+    pub fn api_slash_draft(&mut self, account: &str, device: &str, access: &str, repo: Option<i64>, ctx: &egui::Context) -> Value {
+        let account = if self.account(account).is_some() { account.to_string() } else { self.draft.sel.account.clone() };
+        let t = self.target_for(&account, device, access, repo, None);
+        self.api_slash_for(t, ctx)
+    }
+
+    fn api_slash_for(&mut self, t: Target, ctx: &egui::Context) -> Value {
         self.slash_refresh(&t, ctx, true);
         let pending = t.account.as_ref().filter(|a| a.kind == Kind::Claude && a.installed()).is_some_and(|a| {
             self.slash.cli.lock().unwrap().get(&(a.id.clone(), t.cwd.clone())).is_some_and(|p| p.entries.is_none() && p.at.elapsed() < PROBE_TIMEOUT)

@@ -46,7 +46,8 @@ final class Tags {
     private final LinearLayout rows;
     private final Activity a;
     private final Hub hub;
-    private final String chat;
+    /** The call's path up to its parameters: a chat's, or a new chat's by project. */
+    private final java.util.function.Supplier<String> base;
     private final Composer.Edit edit;
     private TagList.Word word;  // the word the menu shows for; null while it's closed
     private int dismissed = -1; // Back closed the menu for the word starting here
@@ -56,9 +57,14 @@ final class Tags {
     private boolean highlighting;
 
     Tags(Activity a, Hub hub, String chat, Composer.Edit edit) {
+        this(a, hub, () -> "/v1/chats/" + chat + "/tags?", edit);
+    }
+
+    /** For the new-chat screen: `base` is "/v1/tags?project=…&" (no chat yet). */
+    Tags(Activity a, Hub hub, java.util.function.Supplier<String> base, Composer.Edit edit) {
         this.a = a;
         this.hub = hub;
-        this.chat = chat;
+        this.base = base;
         this.edit = edit;
         view = Ui.col(a);
         view.setBackground(Ui.round(Ui.CARD, Ui.LINE, 20));
@@ -99,7 +105,7 @@ final class Tags {
         view.setVisibility(View.GONE);
     }
 
-    private String key(TagList.Word w) { return hub.id + "/" + chat + "/" + w.trigger + w.query; }
+    private String key(TagList.Word w) { return hub.id + "/" + base.get() + "/" + w.trigger + w.query; }
 
     /** Follows the text and the cursor: shows the rows for the word under it, or hides. */
     void update() {
@@ -130,7 +136,7 @@ final class Tags {
             try {
                 String q = URLEncoder.encode(w.query, "UTF-8");
                 String t = URLEncoder.encode(String.valueOf(w.trigger), "UTF-8");
-                JSONObject r = hub.get("/v1/chats/" + chat + "/tags?trigger=" + t + "&q=" + q);
+                JSONObject r = hub.get(base.get() + "trigger=" + t + "&q=" + q);
                 JSONArray items = r.optJSONArray("items");
                 got = new Answer(items == null ? new JSONArray() : items, r.optBoolean("pending"), System.currentTimeMillis());
             } catch (Exception e) {
