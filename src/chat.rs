@@ -753,6 +753,7 @@ impl App {
         if let View::Chat(id) = self.view {
             self.typing_line(ui, id);
             self.agent_strip(ui, id);
+            self.recap_line(ui, id);
         }
         self.trust_bar(ui);
         let t = self.theme.t;
@@ -761,6 +762,12 @@ impl App {
         let focused = ui.memory(|m| m.has_focus(cid));
         let mut send = false;
         let mut draft = self.drafts.remove(&key).unwrap_or_default();
+        // The suggested next prompt (recap.rs): the empty composer's placeholder; Tab or → takes it.
+        let ghost = match self.view {
+            View::Chat(id) if running.is_none() => self.ghost(id, &draft),
+            _ => None,
+        };
+        crate::recap::accept_keys(ui, cid, &mut draft, ghost.as_deref());
         // Shift+Enter (by default): a line break at the cursor. Keys match exactly
         // (keys.rs), so the order of these checks doesn't matter.
         if focused && ui.input_mut(|i| self.keys.take(i, "newline")) {
@@ -838,7 +845,13 @@ impl App {
                 });
                 ui.add_space(6.0);
             }
-            w::composer(ui, cid, &mut draft, "Ask for changes, send follow-ups, or attach images", 3);
+            if ghost.is_some() {
+                crate::recap::tint_hint(ui, cid);
+            }
+            let input = w::composer(ui, cid, &mut draft, ghost.as_deref().unwrap_or("Ask for changes, send follow-ups, or attach images"), 3);
+            if ghost.is_some() && draft.is_empty() {
+                crate::recap::tab_tag(ui, input.rect);
+            }
             ui.add_space(10.0);
             // Narrow composers (T3 Code's compact footer): effort and access go
             // icon-only, so the send button always stays in view.

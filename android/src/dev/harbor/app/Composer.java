@@ -44,11 +44,16 @@ final class Composer {
     private final TextView sendGlyph;
     private final Activity a;
     private boolean running;
+    /** The usual placeholder; the hub's suggested next message and its Use chip (Recap.java). */
+    final String hint;
+    String ghost;
+    TextView use;
 
     Runnable onSend, onStop, onPlus, onPill, onType;
 
     Composer(Activity a, Attach attach, String hint) {
         this.a = a;
+        this.hint = hint;
         view = Ui.col(a);
         view.setBackground(Ui.round(Ui.CARD, Ui.LINE, 28));
         view.setElevation(Ui.dp(Ui.dark ? 0 : 1));
@@ -80,6 +85,8 @@ final class Composer {
         pp.leftMargin = Ui.dp(8);
         row.addView(pill, pp);
         row.addView(new View(a), new LinearLayout.LayoutParams(0, 1, 1));
+        use = Recap.useChip(a, this);
+        row.addView(use, Ui.margins(new LinearLayout.LayoutParams(-2, Ui.dp(32)), 8, 0, 0, 0));
         FrameLayout mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> speak());
         mic.setContentDescription("Speak");
         row.addView(mic, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
@@ -115,6 +122,7 @@ final class Composer {
         boolean stop = running && empty();
         sendGlyph.setText(stop ? Ui.I_STOP : Ui.I_UP);
         send.setContentDescription(stop ? "Stop" : "Send");
+        Recap.refresh(this);
     }
 
     // ---- pasting images ----

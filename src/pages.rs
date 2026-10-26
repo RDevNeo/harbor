@@ -137,7 +137,7 @@ impl Tab {
     /// What the settings search matches besides the name.
     pub fn keywords(self) -> &'static str {
         match self {
-            Tab::General => "restart resume continue order activity sort fast mode",
+            Tab::General => "restart resume continue order activity sort fast mode recap summary suggestion prompt",
             Tab::Appearance => "theme dark light omarchy colours colors",
             Tab::Keybindings => "shortcuts keyboard keys hotkeys",
             Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
@@ -254,6 +254,9 @@ impl App {
             self.fast = fast;
             self.store.set("fast_mode", b(fast));
         }
+        ui.add_space(12.0);
+        section(ui, "Recaps and suggestions");
+        self.recap_rows(ui);
         ui.add_space(12.0);
         section(ui, "Issues and pull requests");
         self.auto_rows(ui);

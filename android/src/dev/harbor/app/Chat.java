@@ -442,6 +442,10 @@ public class Chat extends Base {
             status.addView(t, Ui.margins(Ui.fill(), 0, 4, 0, 4));
         }
         strip(b.optJSONObject("agents"));
+        // The hub's recap over the composer, its suggestion in the empty composer (Recap.java).
+        TextView recap = Recap.line(this, b);
+        if (recap != null) status.addView(recap, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        Recap.suggest(comp, b.optString("suggestion", ""));
         status.setVisibility(status.getChildCount() == 0 ? View.GONE : View.VISIBLE);
         comp.running(running);
     }

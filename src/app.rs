@@ -182,6 +182,7 @@ pub struct App {
     pub undo: crate::undo::State,
     pub queue: crate::queue::State,
     pub limits: crate::limits::State,
+    pub recap: crate::recap::State,
     /// Prompts waiting for a chat's current turn to end.
     pub pending: HashMap<i64, Vec<String>>,
     pub auto_turns: HashMap<i64, VecDeque<Instant>>,
@@ -341,6 +342,7 @@ impl App {
             undo: Default::default(),
             queue: Default::default(),
             limits: Default::default(),
+            recap: Default::default(),
             pending: HashMap::new(),
             auto_turns: HashMap::new(),
             paused: HashSet::new(),
@@ -1335,6 +1337,7 @@ impl eframe::App for App {
                 self.queue_exited(id, stopped, ctx);
                 self.limit_exited(id, ctx);
                 self.restart_exited(id, ctx);
+                self.recap_exited(id, stopped, ctx);
             }
         }
         while let Ok(m) = self.bg_rx.try_recv() {
@@ -1401,6 +1404,7 @@ impl eframe::App for App {
         self.wake_snoozed(ctx);
         self.mesh_tick(ctx);
         self.queue_drain(ctx);
+        self.recap_tick(ctx);
         self.api_tick();
         self.typing_repaint(ctx);
         self.maybe_reload(ctx);

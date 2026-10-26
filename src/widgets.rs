@@ -451,7 +451,8 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
             let out = TextEdit::multiline(text)
                 .id(id)
                 .layouter(&mut layouter)
-                .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
+                // A caller may tint the hint for this frame (recap.rs: the suggestion is grayer).
+                .hint_text(WidgetText::from(hint).color(ui.data_mut(|d| d.remove_temp::<egui::Color32>(id.with("hint-color"))).unwrap_or(tokens(ui).gray(900))))
                 .font(theme::ts("copy-14"))
                 .desired_rows(rows)
                 .desired_width(f32::INFINITY)

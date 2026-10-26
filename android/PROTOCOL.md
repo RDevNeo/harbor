@@ -334,6 +334,16 @@ the desktop shows nothing:
   overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
   only once it is tapped open (a per-screen choice). `doing` is the hub's own reading of each
   agent's latest step; the phone shows it as is.
+- `recap: "…"` (optional string, missing when there is none; older hubs never send it): the
+  session recap (Claude Code's "away summary"), drawn after the agent strip, right over the
+  composer: "recap: " in semibold then the text in italics, both gray-900, wrapping. The hub
+  writes it once the user has been away for 3 minutes after a turn, and drops it when the next
+  turn starts.
+- `suggestion: "…"` (optional string, missing when there is none): the message the user would
+  likely send next. While the composer is empty it is the composer's placeholder, in gray-700
+  instead of the usual placeholder colour, with a small "⇥ Use" chip in the composer's row (the
+  desktop's Tab / →): tapping it puts the text into the composer (it doesn't send). Typing
+  anything hides both. Gone once the next turn starts.
 
 #### Blocks
 

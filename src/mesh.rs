@@ -2228,7 +2228,7 @@ impl App {
             "role": c.role.as_str(), "parent": c.parent, "name": c.name, "started": c.started,
             "count": count, "digest": digest,
             "running": self.turns.contains_key(&c.id), "since_ms": since_ms, "queued": self.queued_count(c.id),
-            "status": self.api_status(c.id), "forks": forks,
+            "status": self.status_json(c.id), "forks": forks,
             "typing": self.typing_json(c.id),
             "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
         })

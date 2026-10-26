@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Session recap and prompt suggestions, as in Claude Code, on the desktop and the phone. Come back
+  to a chat a few minutes after its turn ended and a dim "recap:" line over the composer says where
+  it stands and what's next; after each turn the message you'd likely send next shows grayed in the
+  empty composer: Tab or → takes it on the desktop, "⇥ Use" on the phone. Made on the PC with
+  Claude Code's own prompts (Haiku, the chat's account; Claude chats only, not near a usage limit),
+  gone once the next turn starts, and each can be turned off in Settings › General.
+
 ## [0.31.1] - 2026-10-25
 
 ### Fixed

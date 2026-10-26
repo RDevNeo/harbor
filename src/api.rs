@@ -2509,6 +2509,7 @@ impl App {
     /// The cards of a chat (the desktop's projection, view.rs) changed after `since`, finding
     /// what changed by hashing each item with how it shows.
     pub fn api_items(&mut self, chat: i64, since: u64) -> Value {
+        self.recap_seen(chat);
         if !self.transcripts.contains_key(&chat) {
             let items = self.store.items(chat);
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
@@ -2555,7 +2556,7 @@ impl App {
             "running": self.is_running(chat),
             "queued": self.queued_count(chat),
             "typing": self.typing_json(chat),
-            "status": self.api_status(chat),
+            "status": self.status_json(chat),
             "items": out,
         })
     }
