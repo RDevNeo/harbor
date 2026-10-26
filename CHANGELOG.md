@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-25
+
 ### Added
 - Session recap and prompt suggestions, as in Claude Code, on the desktop and the phone. Come back
   to a chat a few minutes after its turn ended and a dim "recap:" line over the composer says where
@@ -769,7 +771,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.31.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/RDevNeo/harbor/compare/v0.31.1...v0.32.0
 [0.31.1]: https://github.com/RDevNeo/harbor/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/RDevNeo/harbor/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/RDevNeo/harbor/compare/v0.29.0...v0.30.0
