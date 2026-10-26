@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-10-25
+
+### Fixed
+- The 0.31.0 release built no downloads (the Android build script lost its executable bit);
+  0.31.1 ships the composer tagging of 0.31.0.
+
 ### Changed
 - Stop all moved into the agent strip over a lead's composer (a stop icon in its corner, desktop
   and phone), and the old "Waiting for N sub-agents to finish" line under the transcript is gone:
@@ -755,7 +761,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.31.1...HEAD
+[0.31.1]: https://github.com/RDevNeo/harbor/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/RDevNeo/harbor/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/RDevNeo/harbor/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/RDevNeo/harbor/compare/v0.28.0...v0.29.0
