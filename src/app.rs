@@ -866,18 +866,21 @@ impl App {
             self.mentions.drafts.remove(&key);
             return;
         }
+        // "New worktree" under the composer: made on a thread; the message goes once it's ready
+        // (or back into the composer if it can't be made).
+        if key == DRAFT {
+            if let Some((repo_dir, base)) = self.ws_wants_worktree(self.draft.repo, &self.draft.sel.device.clone()) {
+                self.drafts.remove(&key);
+                self.files.remove(&key);
+                self.mentions.drafts.remove(&key);
+                let held = crate::worktree::Held { repo: self.draft.repo, text, files, mentions };
+                self.ws_send_in_worktree(ctx, repo_dir, base, held);
+                return;
+            }
+        }
         let chat_id = if key == DRAFT {
-            // "New worktree" under the composer: made first, so a failure keeps the draft.
-            let wt = match self.ws_for_new_chat(self.draft.repo, &self.draft.sel.device.clone()) {
-                Ok(w) => w,
-                Err(e) => {
-                    crate::picker::show_toast(ctx, e);
-                    return;
-                }
-            };
             // A project can hold several chats: every send from the draft starts one.
             let id = self.new_thread(self.draft.repo, &text);
-            self.ws_attach(id, wt);
             self.view = View::Chat(id);
             self.store.set("last_chat", &id.to_string());
             id
@@ -1477,6 +1480,7 @@ impl App {
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
         self.wake_snoozed(ctx);
         self.mesh_tick(ctx);
+        self.ws_poll(ctx);
         self.queue_drain(ctx);
         self.recap_tick(ctx);
         self.api_tick();

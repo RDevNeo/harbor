@@ -1015,6 +1015,7 @@ pub fn err(status: u16, msg: impl Into<String>) -> Reply {
 }
 
 /// A call for the UI thread.
+#[derive(Clone)]
 pub struct Call {
     pub method: String,
     pub path: Vec<String>,
@@ -2181,6 +2182,13 @@ impl App {
             }
             return;
         }
+        // Workspace and branch calls: git runs on threads (worktree.rs), which may answer later.
+        if let Some(r) = self.ws_api(&call, ctx) {
+            if let Some(r) = r {
+                let _ = call.reply.send(r);
+            }
+            return;
+        }
         // What the phone sends says it came from the phone.
         self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
         self.sender_device = device_id(&call.token);
@@ -2241,13 +2249,6 @@ impl App {
                 self.api_palette_run(&call.body, chat, ctx)
             }
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
-            // The workspace and branch chips under the composer (worktree.rs).
-            ("GET", ["v1", "workspace"]) => {
-                let r = self.api_workspace(call.query("chat"), call.query("project"), call.query("worktree") == Some("1"), call.query("base").unwrap_or(""));
-                r.map_or_else(|(s, e)| err(s, e), ok)
-            }
-            ("GET", ["v1", "branches"]) => self.api_branches(call.query("chat"), call.query("project"), call.query("q").unwrap_or("")).map_or_else(|(s, e)| err(s, e), ok),
-            ("POST", ["v1", "branches"]) => self.api_branch_post(&call.body).map_or_else(|(s, e)| err(s, e), ok),
             // The phone's "Updates available" banner: updates the hub's provider CLIs.
             ("POST", ["v1", "providers", "update"]) => {
                 if crate::provupdate::update_all(ctx, &self.accounts) {
@@ -2276,11 +2277,6 @@ impl App {
                         ok(json!({ "ok": true, "returned": returned }))
                     }
                     "fork" => self.api_fork(c, &call.body),
-                    // "Move to a new worktree" (worktree.rs).
-                    "worktree" => match self.ws_move_to_worktree(c) {
-                        Ok(d) => ok(json!({ "ok": true, "name": d.file_name().map(|n| n.to_string_lossy().into_owned()), "path": d.to_string_lossy() })),
-                        Err(e) => err(409, e),
-                    },
                     // "Move to project…": {"repo": project id, its path, or null for No project}.
                     "move" => self.api_move(c, &call.body),
                     // The slash menu's /plan and /default (slash.rs).
@@ -2328,7 +2324,7 @@ impl App {
             ("DELETE", ["v1", "chats", c]) => {
                 let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 self.stop(c);
-                let kept = self.ws_drop(c);
+                self.ws_drop(c, ctx);
                 self.store.delete_chat(c);
                 self.chats.retain(|x| x.id != c);
                 self.transcripts.remove(&c);
@@ -2337,8 +2333,7 @@ impl App {
                 if self.view == crate::app::View::Chat(c) {
                     self.view = crate::app::View::Draft;
                 }
-                // A worktree with uncommitted changes stays: said to the phone (optional field).
-                ok(json!({ "ok": true, "kept_worktree": kept }))
+                ok(json!({ "ok": true }))
             }
             (_, ["v1", ..]) => err(404, "unknown call"),
             _ => err(404, "not found"),
@@ -2346,7 +2341,7 @@ impl App {
     }
 
     /// An answer with chats by gid and projects by path instead of this hub's ids.
-    fn globalize(&self, call: &Call, v: &mut Value) {
+    pub(crate) fn globalize(&self, call: &Call, v: &mut Value) {
         let gid = |id: &Value| id.as_i64().and_then(|i| self.chat(i)).map(|c| json!(c.gid)).unwrap_or(Value::Null);
         let path = |id: &Value| id.as_i64().and_then(|r| self.repo(r)).map(|r| json!(r.path.to_string_lossy())).unwrap_or(Value::Null);
         let chat = |c: &mut Value| {
@@ -2794,25 +2789,38 @@ impl App {
     }
 
     fn api_create(&mut self, body: &Value, ctx: &egui::Context) -> Reply {
-        let repo = match &body["project_id"] {
+        self.api_create_in(body, ctx, None)
+    }
+
+    /// The project a new chat asks for (`project_id`, or `project` from another PC).
+    pub(crate) fn api_create_repo(&self, body: &Value) -> Result<Option<i64>, Reply> {
+        Ok(match &body["project_id"] {
             // From another PC (mesh.rs): the project by its folder, else by its name.
             Value::Null if body["project"].is_object() => {
                 let (path, name) = (body["project"]["path"].as_str().unwrap_or(""), body["project"]["name"].as_str().unwrap_or(""));
                 match self.repos.iter().find(|r| r.path.to_string_lossy() == path).or_else(|| self.repos.iter().find(|r| r.name == name)) {
                     Some(r) => Some(r.id),
-                    None => return err(409, format!("{name} isn't a project on {} yet", crate::remote::hostname())),
+                    None => return Err(err(409, format!("{name} isn't a project on {} yet", crate::remote::hostname()))),
                 }
             }
             Value::Null => None,
             // A project by its folder (phones that move between hubs know it that way).
             Value::String(p) => match self.repos.iter().find(|r| r.path.to_string_lossy() == *p) {
                 Some(r) => Some(r.id),
-                None => return err(400, "no such project"),
+                None => return Err(err(400, "no such project")),
             },
             v => match v.as_i64().filter(|r| self.repo(*r).is_some()) {
                 Some(r) => Some(r),
-                None => return err(400, "no such project"),
+                None => return Err(err(400, "no such project")),
             },
+        })
+    }
+
+    /// `POST /v1/chats`, in worktree `wt` (made by worktree.rs) when given.
+    pub(crate) fn api_create_in(&mut self, body: &Value, ctx: &egui::Context, wt: Option<PathBuf>) -> Reply {
+        let repo = match self.api_create_repo(body) {
+            Ok(r) => r,
+            Err(r) => return r,
         };
         let d = self.draft.sel.clone();
         let str_or = |k: &str, d: &str| body[k].as_str().map(String::from).unwrap_or_else(|| d.to_string());
@@ -2842,17 +2850,6 @@ impl App {
         }
         let model = str_or("model", if account == d.account { &d.model } else { "" });
         let sel = Sel { account, model, effort: effort.clone(), access: access.clone(), device: device.clone() };
-        // "New worktree" on the phone's New chat screen (optional): made first, from `base`.
-        let wt = if body["worktree"].as_bool() == Some(true) && device.is_empty() {
-            let base = body["base"].as_str().unwrap_or("").to_string();
-            let Some(info) = self.ws_info(crate::worktree::Target::Draft(repo)) else { return err(409, "a worktree needs a git project") };
-            match crate::worktree::add(&info.repo, &base) {
-                Ok(d) => Some(d),
-                Err(e) => return err(409, e),
-            }
-        } else {
-            None
-        };
         let id = self.new_thread_with(repo, &text, sel);
         self.ws_attach(id, wt);
         if let Some(c) = self.chat_mut(id) {

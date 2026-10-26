@@ -508,7 +508,8 @@ Harbor doesn't act as a client of a hub yet (chats aren't shared between PCs' Ha
 ### `DELETE /v1/chats/{id}`
 
 Stops a running turn first. → `{"ok": true}`. Its worktree is removed with it (0.37), unless it has
-uncommitted changes: then `"kept_worktree": "<what to do>"` (optional) says it was kept.
+uncommitted changes: then it's kept, and the PC says so (a toast and a desktop notification).
+(0.37.0 answered `"kept_worktree"`; since 0.37.2 removal runs after the answer, and it's gone.)
 
 ### Workspace and branch (0.37)
 
@@ -530,7 +531,10 @@ another device). `mode` is `worktree` for a chat in its worktree (`name`, `path`
 for New chat with `worktree=1` (`base`: the branch it would start from). `branch` reads
 `detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
 a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
-switched now (an agent is working there), null when it can.
+switched now (an agent is working there), null when it can. `pending` (0.37.2, optional): what git is
+doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Every git call runs off
+the hub's UI thread, so a big repository answers late but never freezes it: give these calls the
+long timeout, and show a pending chip meanwhile.
 
 `GET /v1/branches?chat=|project=&q=<filter>` → `{"current": "main", "dirty": 2, "warning": "2
 uncommitted changes here: …" | null, "checkout_note": "Switches the project's checkout …" | null,

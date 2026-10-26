@@ -105,7 +105,28 @@ final class WorkBar {
         String b = r.optString("branch");
         if (chat == null && wt) b = "from " + r.optString("base");
         int dirty = r.optInt("dirty");
+        // Git busy on the PC for its own bar ("Creating worktree…").
+        String pend = r.isNull("pending") ? "" : r.optString("pending");
+        if (!pend.isEmpty()) { label(ws, Ui.I_LOADER, pend); Ui.main.postDelayed(this::load, 1500); }
         label(br, null, b.isEmpty() ? "…" : b + (dirty > 0 && !(chat == null && wt) ? "  ·  " + dirty + " changed" : ""));
+    }
+
+    /** A call to the PC; on failure its reason as a toast, and the chips read again. */
+    private void act(Ui.Job<JSONObject> job, Ui.Done<JSONObject> done) {
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject r = job.run();
+                Ui.main.post(() -> { if (!a.isFinishing()) done.ok(r); });
+            } catch (Exception e) {
+                Ui.main.post(() -> { if (!a.isFinishing()) { Ui.toast(a, Hub.why(e)); load(); } });
+            }
+        });
+    }
+
+    /** While a call runs: the chip says what git does ("Switching to main…"). */
+    void pending(boolean branch, String what) {
+        view.setVisibility(View.VISIBLE);
+        label(branch ? br : ws, Ui.I_LOADER, what);
     }
 
     // ---- where it works ----
@@ -135,7 +156,8 @@ final class WorkBar {
         opts.add(new Sheet.Option("move", "Move to a new worktree", can ? "From the checkout's branch; the thread goes on there" : "Can't now: " + why, can));
         Sheet.pick(a, "Workspace", null, opts, "checkout", id -> {
             if (!"move".equals(id)) return;
-            Ui.bg(a, () -> hub.call("POST", "/v1/chats/" + chat + "/worktree", new JSONObject()), r -> {
+            pending(false, "Creating worktree…");
+            act(() -> hub.call("POST", "/v1/chats/" + chat + "/worktree", new JSONObject()), r -> {
                 Ui.toast(a, "Moved to " + r.optString("name"));
                 load();
             });
@@ -213,14 +235,16 @@ final class WorkBar {
 
     private void choose(String name, boolean remote, boolean forBase) {
         if (forBase) { base = name; load(); return; }
-        Ui.bg(a, () -> hub.call("POST", "/v1/branches", target(new JSONObject()).put("switch", name).put("remote", remote)), r -> {
+        pending(true, "Switching to " + name + "…");
+        act(() -> hub.call("POST", "/v1/branches", target(new JSONObject()).put("switch", name).put("remote", remote)), r -> {
             Ui.toast(a, "On " + r.optString("branch"));
             load();
         });
     }
 
     private void create(String name) {
-        Ui.bg(a, () -> hub.call("POST", "/v1/branches", target(new JSONObject()).put("create", name)), r -> {
+        pending(true, "Creating " + name + "…");
+        act(() -> hub.call("POST", "/v1/branches", target(new JSONObject()).put("create", name)), r -> {
             Ui.toast(a, "On " + r.optString("branch"));
             load();
         });

@@ -229,6 +229,8 @@ public class NewChat extends Base {
                     .put("fast", run.fast).put("text", text).put("files", attach.ids());
             if (work.worktree && run.device.isEmpty()) body.put("worktree", true).put("base", work.base);
         } catch (Exception ignored) { }
+        // The PC makes the worktree first: the chip says so meanwhile.
+        if (work.worktree && run.device.isEmpty()) work.pending(false, "Creating worktree…");
         Ui.pool.execute(() -> {
             String id = null, err = null;
             try {
@@ -241,7 +243,7 @@ public class NewChat extends Base {
                 starting = false;
                 comp.busy(false);
                 if (isFinishing()) return;
-                if (fe != null) { Ui.toast(this, fe); return; }
+                if (fe != null) { Ui.toast(this, fe); work.load(); return; }
                 Chat.open(this, hub, fid);
                 finish();
             });
