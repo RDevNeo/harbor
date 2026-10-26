@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-26
+
 ### Added
 - A chat waiting at a usage limit offers **Continue on…** on the phone too: a chip under the
   limit line opens a sheet of the provider's other signed-in accounts that aren't blocked, and
@@ -1108,7 +1110,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/RDevNeo/harbor/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/RDevNeo/harbor/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/RDevNeo/harbor/compare/v0.46.4...v0.47.0
 [0.46.4]: https://github.com/RDevNeo/harbor/compare/v0.46.3...v0.46.4
