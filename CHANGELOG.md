@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-25
+
 ### Added
 - A live agent strip over a lead chat's composer while its sub-agents run, on the desktop and the
   phone: one row per agent with its provider mark, name, what it is doing right now ("running
@@ -726,7 +728,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/RDevNeo/harbor/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/RDevNeo/harbor/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/RDevNeo/harbor/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/RDevNeo/harbor/compare/v0.26.1...v0.27.0
