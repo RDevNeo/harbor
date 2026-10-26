@@ -700,9 +700,14 @@ pub fn labels(data: &Fetched) -> Vec<(String, [u8; 3], usize)> {
 
 /// owner/name of a GitHub remote URL.
 pub fn github_repo(remote: &str) -> Option<String> {
-    let rest = remote.strip_prefix("https://github.com/").or_else(|| remote.strip_prefix("http://github.com/"))?;
+    let r = remote.trim();
+    let rest = ["https://github.com/", "http://github.com/", "git@github.com:", "ssh://git@github.com/", "ssh://git@github.com:22/", "git://github.com/"]
+        .iter()
+        .find_map(|p| r.strip_prefix(p))
+        .or_else(|| r.strip_prefix("https://").and_then(|x| x.split_once('@')).and_then(|(_, h)| h.strip_prefix("github.com/")))?;
     let mut it = rest.trim_end_matches('/').split('/');
     let (o, n) = (it.next()?, it.next()?);
+    let n = n.strip_suffix(".git").unwrap_or(n);
     (!o.is_empty() && !n.is_empty()).then(|| format!("{o}/{n}"))
 }
 
@@ -1777,5 +1782,9 @@ mod tests {
     fn remotes() {
         assert_eq!(github_repo("https://github.com/RDevNeo/harbor").as_deref(), Some("RDevNeo/harbor"));
         assert_eq!(github_repo("https://gitlab.com/a/b"), None);
+        for r in ["git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "ssh://git@github.com:22/o/r", "https://github.com/o/r.git", "https://token@github.com/o/r", "git@github.com:o/r/"] {
+            assert_eq!(github_repo(r).as_deref(), Some("o/r"), "{r}");
+        }
+        assert_eq!(github_repo("git@gitlab.com:o/r.git"), None);
     }
 }

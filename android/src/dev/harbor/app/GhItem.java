@@ -151,7 +151,9 @@ public class GhItem extends Base {
         // Actions, as the desktop's header has them.
         LinearLayout acts = Ui.row(this);
         String agent = full == null ? "" : full.optString("agent", "");
-        boolean project = projectId() != null;
+        // fix_on: the repo is a project on another PC of the mesh, which runs the agent (the hub says).
+        String fixOn = pr ? "" : row.optString("fix_on");
+        boolean project = projectId() != null || !fixOn.isEmpty();
         if (open() && project && full != null) {
             TextView go = Ui.button(this, (pr ? "Merge with " : "Fix with ") + (agent.isEmpty() ? "an agent" : agent), true, v -> agentThread());
             go.setPadding(Ui.dp(16), Ui.dp(9), Ui.dp(16), Ui.dp(9));
@@ -160,6 +162,8 @@ public class GhItem extends Base {
         if (pr && open() && it.optBoolean("draft")) acts.addView(small(busy ? "Marking ready…" : "Ready for review", () -> post("ready")), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
         if (!pr && full != null) acts.addView(small(open() ? "Close" : "Reopen", () -> post(open() ? "close" : "reopen")), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
         if (acts.getChildCount() > 0) head.addView(acts, Ui.margins(Ui.fill(), 0, 14, 0, 0));
+        if (open() && projectId() == null && !fixOn.isEmpty() && full != null)
+            head.addView(Ui.text(this, "The agent runs on " + fixOn + ", which has this project.", 12, Ui.G700), Ui.margins(Ui.fill(), 0, 8, 0, 0));
         if (open() && !project && full != null)
             head.addView(Ui.text(this, "Add this repo as a project on the PC to let an agent work on it.", 12, Ui.G700), Ui.margins(Ui.fill(), 0, 8, 0, 0));
         drawTabs();

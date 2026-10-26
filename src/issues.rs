@@ -19,8 +19,9 @@ use std::collections::{HashMap, HashSet};
 
 // ------------------------------------------------------------------ model
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum IssueState {
+    #[default]
     Open,
     /// Closed as completed.
     Done,
@@ -28,7 +29,7 @@ pub enum IssueState {
     NotPlanned,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Issue {
     pub number: u64,
     pub title: String,
@@ -44,8 +45,10 @@ pub struct Issue {
     pub labels: Vec<(String, [u8; 3])>,
     pub assignees: Vec<String>,
     pub milestone: Option<String>,
-    /// It mentions the viewer.
-    pub mentioned: bool,
+    /// The GitHub logins it mentions, of the accounts it was fetched with.
+    pub mentions: Vec<String>,
+    /// The GitHub logins (of the mesh's PCs) it was fetched with: who can act on it.
+    pub accounts: Vec<String>,
     /// An open pull request says it fixes it.
     pub linked_pr: bool,
     /// Its author is the repo's owner, a member of its organisation or a collaborator
@@ -55,8 +58,27 @@ pub struct Issue {
 
 #[derive(Clone, Default)]
 pub struct Fetched {
+    /// This PC's GitHub login (the first account that answered when this PC's `gh` didn't).
     pub viewer: String,
     pub items: Vec<Issue>,
+    /// Where the items came from: this PC and each PC of the mesh, with its own `gh` login.
+    /// Empty for a single PC's fetch.
+    pub sources: Vec<Source>,
+}
+
+/// One PC's part of the merged list.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Source {
+    /// The peer's mesh id; "" for this PC.
+    pub pc: String,
+    /// The PC's name to show.
+    pub name: String,
+    /// Its `gh` login ("" when it has none or didn't answer).
+    pub login: String,
+    /// Its projects' GitHub repos (owner/name): Fix with… runs on a PC that has the project.
+    pub projects: Vec<String>,
+    /// Why it has no part: unreachable, GitHub not connected, too old.
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Default, Debug)]
@@ -121,6 +143,8 @@ pub enum Assignee {
 
 #[derive(Clone, Default, PartialEq)]
 pub struct Filters {
+    /// One GitHub login of the mesh's accounts (None: all of them).
+    pub account: Option<String>,
     pub state: StateF,
     pub involvement: Involvement,
     pub author: Option<String>,
@@ -139,6 +163,7 @@ impl Filters {
         [
             self.state != StateF::Open,
             self.involvement != Involvement::All,
+            self.account.is_some(),
             self.project.is_some(),
             self.author.is_some(),
             self.assignee.is_some(),
@@ -160,6 +185,7 @@ enum Menu {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Sub {
+    Account,
     State,
     Involvement,
     Author,
@@ -248,12 +274,14 @@ fn parse(v: &serde_json::Value) -> Fetched {
         for n in d[a]["nodes"].as_array().into_iter().flatten() {
             let Some(i) = node(n) else { continue };
             if seen.insert(i.url.clone()) {
-                items.push(Issue { mentioned: mentioned.contains(&i.url), ..i });
+                let mentions = if mentioned.contains(&i.url) && !viewer.is_empty() { vec![viewer.clone()] } else { vec![] };
+                let accounts = if viewer.is_empty() { vec![] } else { vec![viewer.clone()] };
+                items.push(Issue { mentions, accounts, ..i });
             }
         }
     }
     items.sort_by(|a, b| b.updated.cmp(&a.updated));
-    Fetched { viewer, items }
+    Fetched { viewer, items, sources: vec![] }
 }
 
 fn node(n: &serde_json::Value) -> Option<Issue> {
@@ -278,9 +306,9 @@ fn node(n: &serde_json::Value) -> Option<Issue> {
             .collect(),
         assignees: n["assignees"]["nodes"].as_array().into_iter().flatten().filter_map(|a| a["login"].as_str().map(String::from)).collect(),
         milestone: n["milestone"]["title"].as_str().map(String::from),
-        mentioned: false,
         linked_pr: n["closedByPullRequestsReferences"]["nodes"].as_array().into_iter().flatten().any(|p| p["state"].as_str() == Some("OPEN")),
         author_trusted: crate::autowork::trusted(n["authorAssociation"].as_str().unwrap_or("")),
+        ..Default::default()
     })
 }
 
@@ -336,12 +364,34 @@ pub struct Group {
     pub items: Vec<Issue>,
 }
 
-fn is(login: &str, viewer: &str) -> bool {
-    !viewer.is_empty() && login.eq_ignore_ascii_case(viewer)
+fn is(login: &str, me: &[String]) -> bool {
+    me.iter().any(|m| !m.is_empty() && login.eq_ignore_ascii_case(m))
 }
 
-fn assigned(i: &Issue, viewer: &str) -> bool {
-    i.assignees.iter().any(|a| is(a, viewer))
+fn assigned(i: &Issue, me: &[String]) -> bool {
+    i.assignees.iter().any(|a| is(a, me))
+}
+
+fn mentioned(i: &Issue, me: &[String]) -> bool {
+    i.mentions.iter().any(|m| is(m, me))
+}
+
+/// The logins Involvement and the sections are about: the picked account, else every
+/// account of the list (the viewer alone for a single PC's list).
+pub fn mine(data: &Fetched, f: &Filters) -> Vec<String> {
+    if let Some(a) = &f.account {
+        return vec![a.clone()];
+    }
+    let mut v: Vec<String> = vec![];
+    for s in data.sources.iter().filter(|s| !s.login.is_empty()) {
+        if !is(&s.login, &v) {
+            v.push(s.login.clone());
+        }
+    }
+    if v.is_empty() && !data.viewer.is_empty() {
+        v.push(data.viewer.clone());
+    }
+    v
 }
 
 fn passes(i: &Issue, f: &Filters, q: &Query) -> bool {
@@ -355,6 +405,7 @@ fn passes(i: &Issue, f: &Filters, q: &Query) -> bool {
     let assignee = q.assignee.as_ref().or(f.assignee.as_ref());
     let milestone = q.milestone.as_ref().or(f.milestone.as_ref());
     state
+        && f.account.as_ref().is_none_or(|a| i.accounts.iter().any(|x| x.eq_ignore_ascii_case(a)))
         && f.project.as_ref().is_none_or(|r| i.repo.eq_ignore_ascii_case(r))
         && author.is_none_or(|a| i.author.eq_ignore_ascii_case(a.trim_start_matches('@')))
         && assignee.is_none_or(|a| match a {
@@ -422,12 +473,12 @@ fn sort_group(items: &mut [Issue], sort: Sort, text: &str) {
 /// section it fits: Assigned, Authored, Mentioned, then Others.
 pub fn groups(data: &Fetched, f: &Filters, search: &str, sort: Sort) -> Vec<Group> {
     let q = parse_query(search);
-    let viewer = data.viewer.as_str();
+    let me = mine(data, f);
     let items = data.items.iter().filter(|i| match f.involvement {
         Involvement::All => true,
-        Involvement::Assigned => assigned(i, viewer),
-        Involvement::Authored => is(&i.author, viewer),
-        Involvement::Mentioned => i.mentioned,
+        Involvement::Assigned => assigned(i, &me),
+        Involvement::Authored => is(&i.author, &me),
+        Involvement::Mentioned => mentioned(i, &me),
     });
     let items: Vec<Issue> = items.filter(|i| passes(i, f, &q) && matches_text(i, &q.base.text)).cloned().collect();
     let mut out = if f.involvement != Involvement::All {
@@ -435,11 +486,11 @@ pub fn groups(data: &Fetched, f: &Filters, search: &str, sort: Sort) -> Vec<Grou
     } else {
         let (mut a, mut b, mut m, mut o) = (vec![], vec![], vec![], vec![]);
         for i in items {
-            if assigned(&i, viewer) {
+            if assigned(&i, &me) {
                 a.push(i)
-            } else if is(&i.author, viewer) {
+            } else if is(&i.author, &me) {
                 b.push(i)
-            } else if i.mentioned {
+            } else if mentioned(&i, &me) {
                 m.push(i)
             } else {
                 o.push(i)
@@ -468,6 +519,98 @@ fn tally<'a>(it: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
     let mut v: Vec<_> = m.into_iter().collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.to_lowercase().cmp(&b.0.to_lowercase())));
     v
+}
+
+/// The Account filter's choices: each GitHub login of the list, the PCs signed in with it
+/// (", "-joined) and how many issues it sees.
+pub fn accounts(data: &Fetched) -> Vec<(String, String, usize)> {
+    let mut v: Vec<(String, Vec<String>)> = vec![];
+    for s in data.sources.iter().filter(|s| !s.login.is_empty()) {
+        match v.iter_mut().find(|x| x.0.eq_ignore_ascii_case(&s.login)) {
+            Some(x) => x.1.push(s.name.clone()),
+            None => v.push((s.login.clone(), vec![s.name.clone()])),
+        }
+    }
+    v.into_iter()
+        .map(|(l, pcs)| {
+            let n = data.items.iter().filter(|i| i.accounts.iter().any(|a| a.eq_ignore_ascii_case(&l))).count();
+            (l, pcs.join(", "), n)
+        })
+        .collect()
+}
+
+/// What the page says about PCs whose part is missing ("laptop: unreachable").
+pub fn notes(data: &Fetched) -> Vec<String> {
+    data.sources.iter().filter_map(|s| Some(format!("{}: {}", s.name, s.error.as_ref()?))).collect()
+}
+
+/// A PC's `gh` error as the page's note says it.
+pub fn short_error(e: &str) -> String {
+    if e.contains("auth login") || e.contains("isn't installed") {
+        "GitHub not connected".into()
+    } else {
+        let e = e.lines().next().unwrap_or("").trim();
+        if e.chars().count() > 80 { format!("{}…", e.chars().take(79).collect::<String>()) } else { e.to_string() }
+    }
+}
+
+/// The lists of this PC and the mesh's PCs as one (this PC's part first): an issue several
+/// accounts see is there once, with all of them, as its most recently updated copy says.
+pub fn merge(parts: Vec<(Source, Option<Fetched>)>) -> Fetched {
+    let mut out = Fetched::default();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    for (mut src, part) in parts {
+        if let Some(p) = part {
+            if src.login.is_empty() {
+                src.login = p.viewer.clone();
+            }
+            if out.viewer.is_empty() {
+                out.viewer = p.viewer.clone();
+            }
+            for i in p.items {
+                let Some(&k) = at.get(&i.url) else {
+                    at.insert(i.url.clone(), out.items.len());
+                    out.items.push(i);
+                    continue;
+                };
+                let have = &mut out.items[k];
+                let (mut accounts, mut mentions) = (std::mem::take(&mut have.accounts), std::mem::take(&mut have.mentions));
+                for a in &i.accounts {
+                    if !is(a, &accounts) {
+                        accounts.push(a.clone());
+                    }
+                }
+                for m in &i.mentions {
+                    if !is(m, &mentions) {
+                        mentions.push(m.clone());
+                    }
+                }
+                if i.updated > have.updated {
+                    *have = i;
+                }
+                have.accounts = accounts;
+                have.mentions = mentions;
+            }
+        }
+        out.sources.push(src);
+    }
+    out.items.sort_by(|a, b| b.updated.cmp(&a.updated));
+    out
+}
+
+/// The PC an action on `i` runs on: one whose account fetched it (the picked account's
+/// first, then this PC), or with `project`, one that has its repo as a project (one whose
+/// account fetched it first). None: nobody fits, this PC tries (as before the mesh).
+pub fn owner<'a>(data: &'a Fetched, i: &Issue, prefer: Option<&str>, project: bool) -> Option<&'a Source> {
+    let sees = |s: &Source| !s.login.is_empty() && is(&s.login, &i.accounts);
+    let mut c: Vec<&Source> = data
+        .sources
+        .iter()
+        .filter(|s| s.error.is_none())
+        .filter(|s| if project { s.projects.iter().any(|r| r.eq_ignore_ascii_case(&i.repo)) } else { sees(s) })
+        .collect();
+    c.sort_by_key(|s| (!sees(s), !prefer.is_some_and(|p| s.login.eq_ignore_ascii_case(p)), !s.pc.is_empty()));
+    c.first().copied()
 }
 
 pub fn authors(data: &Fetched) -> Vec<(String, usize)> {
@@ -523,8 +666,14 @@ impl App {
         let (generation, state) = (self.issues.generation, self.issues.filters.state);
         let tx = self.bg_tx.clone();
         let ctx = self.prs.ctx.clone();
+        let (me, peers) = self.issue_peers();
         std::thread::spawn(move || {
-            let _ = tx.send(Bg::Issues(generation, state, fetch(state, &repos())));
+            // Every PC of the mesh with its own GitHub account; theirs fresh, as this PC's is.
+            let r = crate::ghapi::fetch_merged(state, true, me, peers, || {
+                let repos = repos();
+                (fetch(state, &repos), repos)
+            });
+            let _ = tx.send(Bg::Issues(generation, state, r));
             if let Some(c) = ctx {
                 c.request_repaint();
             }
@@ -546,6 +695,38 @@ impl App {
             self.fetch_avatars(f.items.iter().map(|i| (i.author.clone(), i.avatar.clone())));
         }
         self.issues.data = Some(r.map(std::sync::Arc::new));
+        // A picked account that's gone (its PC is off) shows everything again.
+        if let (Some(a), Some(Ok(d))) = (&self.issues.filters.account, &self.issues.data) {
+            if !d.sources.iter().any(|s| s.login.eq_ignore_ascii_case(a)) {
+                self.issues.filters.account = None;
+            }
+        }
+    }
+
+    /// The PC of the mesh an action on `i` goes to, when it isn't this one (see [`owner`]):
+    /// its own GitHub account sees the issue, or (`project`) it has the repo as a project.
+    pub fn issue_peer(&self, i: &Issue, project: bool) -> Option<crate::mesh::Peer> {
+        let Some(Ok(d)) = &self.issues.data else { return None };
+        let pc = owner(d, i, self.issues.filters.account.as_deref(), project)?.pc.clone();
+        (!pc.is_empty()).then(|| self.api.hub.mesh.peer(&pc)).flatten().filter(|p| p.online)
+    }
+
+    /// The issue at `url` in the list, if it's there.
+    pub fn listed_issue(&self, url: &str) -> Option<Issue> {
+        let Some(Ok(d)) = &self.issues.data else { return None };
+        d.items.iter().find(|i| i.url == url).cloned()
+    }
+
+    /// Fix with… on another PC of the mesh, which has the repo as a project: the agent's
+    /// thread starts there and opens here once its copy arrives.
+    pub fn fix_issue_on_peer(&mut self, i: &Issue, extra: &str) {
+        let Some(peer) = self.issue_peer(i, true) else { return };
+        let tx = self.inc_tx.clone();
+        let body = serde_json::json!({ "url": i.url, "extra": extra });
+        let sender = (self.api.hub.mesh.me().name, crate::api::local_device());
+        crate::mesh::forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "issues".into(), "fix".into()], body, vec![], sender, self.ctx_for(None), move |reply| {
+            let _ = tx.send(crate::control::Incoming::Mesh(crate::mesh::Msg::Done { chat: crate::app::DRAFT, what: "start the chat", reply, restore: None }));
+        });
     }
 }
 
@@ -658,9 +839,20 @@ impl App {
         let mut browse = None;
         let mut work = None;
         let fix_label = format!("Fix with {}", self.agent_label());
+        // Items name their accounts once the list has more than one.
+        let several = accounts(&fetched).len() > 1;
+        let notes = notes(&fetched);
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             centered(ui, 1180.0, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                // PCs of the mesh whose part is missing (off, not signed in to GitHub).
+                if !notes.is_empty() && matches!(data, Some(Ok(_))) {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        w::subtle(ui, &format!("{}  {}", ic::ALERT, notes.join("  ·  ")), "label-13");
+                    });
+                }
                 match &data {
                     None => {
                         ui.add_space(24.0);
@@ -688,11 +880,12 @@ impl App {
                             for i in &g.items {
                                 let avatar = self.prs.avatars.get(&i.author).and_then(|a| a.clone());
                                 let selected = self.issues.split.current() == Some(i.url.as_str());
-                                let resp = row(ui, i, avatar.as_ref(), selected);
+                                let resp = row(ui, i, avatar.as_ref(), selected, several.then_some(i.accounts.as_slice()));
                                 if resp.clicked() {
                                     open_url = Some(i.url.clone());
                                 }
-                                let proj = projects.iter().find(|x| x.2.eq_ignore_ascii_case(&i.repo)).map(|x| x.0);
+                                // 0: no project here, another PC of the mesh has it (and runs the agent).
+                                let proj = projects.iter().find(|x| x.2.eq_ignore_ascii_case(&i.repo)).map(|x| x.0).or_else(|| self.issue_peer(i, true).map(|_| 0));
                                 resp.context_menu(|ui| {
                                     if ui.button(format!("{}  Open in side panel", ic::PANEL_RIGHT)).clicked() {
                                         open_url = Some(i.url.clone());
@@ -739,6 +932,8 @@ impl App {
         if let Some((id, i, ask)) = work {
             if ask {
                 self.ask_instructions(id, crate::autowork::Job::Fix(i));
+            } else if id == 0 {
+                self.fix_issue_on_peer(&i, "");
             } else {
                 self.fix_issue(&ctx, id, &i, "");
             }
@@ -821,6 +1016,7 @@ impl App {
                     Some(Some(m)) => m.clone(),
                 };
                 let sub = self.issues.sub;
+                let account = accounts(data).len() > 1 || f.account.is_some();
                 let (hover, rect) = float(ctx, "issue-filters", pos, 250.0, &t, |ui| {
                     let mut hover = None;
                     let mut item = |ui: &mut Ui, s: Sub, icon: &str, label: &str, value: &str| {
@@ -829,6 +1025,9 @@ impl App {
                             hover = Some((s, r.rect));
                         }
                     };
+                    if account {
+                        item(ui, Sub::Account, ic::USER_ROUND, "Account", f.account.as_deref().unwrap_or("All"));
+                    }
                     item(ui, Sub::State, ic::CIRCLE_DOT, "State", name_of(&STATES, f.state));
                     item(ui, Sub::Involvement, ic::LAYERS, "Involvement", name_of(&INVOLVEMENTS, f.involvement));
                     menu_sep(ui);
@@ -918,6 +1117,32 @@ impl App {
             ui.add_space(6.0);
         };
         match s {
+            Sub::Account => {
+                let list = accounts(data);
+                let cur = f.account.clone();
+                let (p, r) = float(ctx, "issue-sub", sub_pos(ctx, a, 240.0), 240.0, &t, |ui| {
+                    let mut pick: Option<Option<String>> = None;
+                    if menu_row(ui, ic::USERS, "All", None, false, cur.is_none(), false).clicked() {
+                        pick = Some(None);
+                    }
+                    menu_sep(ui);
+                    ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for (login, pcs, n) in &list {
+                            let checked = cur.as_ref().is_some_and(|c| c.eq_ignore_ascii_case(login));
+                            let r = menu_row(ui, " ", login, Some(&format!("{pcs} · {n}")), false, checked, false).tip(format!("Signed in on {pcs}; sees {n}"));
+                            paint_avatar(ui.painter(), pos2(r.rect.left() + 16.0, r.rect.center().y), 8.0, avatars.get(login).and_then(|a| a.as_ref()), login, &t);
+                            if r.clicked() {
+                                pick = Some(Some(login.clone()));
+                            }
+                        }
+                    });
+                    pick
+                });
+                if let Some(v) = &p {
+                    f.account = v.clone();
+                }
+                (p.is_some(), r)
+            }
             Sub::State => {
                 let (p, r) = float(ctx, "issue-sub", sub_pos(ctx, a, 190.0), 190.0, &t, |ui| radio(ui, &STATES, f.state));
                 if let Some(v) = p {
@@ -1052,7 +1277,8 @@ impl App {
 
 /// One issue: state icon, #N and title; author, repo and labels below;
 /// comments and age on the right.
-fn row(ui: &mut Ui, i: &Issue, avatar: Option<&egui::TextureHandle>, selected: bool) -> egui::Response {
+/// `accounts`: the GitHub logins that see it, shown as a chip when the list has several.
+fn row(ui: &mut Ui, i: &Issue, avatar: Option<&egui::TextureHandle>, selected: bool, accounts: Option<&[String]>) -> egui::Response {
     let t = w::tokens(ui);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 62.0), Sense::click());
     if !ui.is_rect_visible(rect) {
@@ -1082,7 +1308,19 @@ fn row(ui: &mut Ui, i: &Issue, avatar: Option<&egui::TextureHandle>, selected: b
     }
     let line2 = inner.top() + 42.0;
     let age = painter.layout_no_wrap(ago(i.updated), FontId::proportional(12.5), t.subtle());
-    painter.galley(pos2(right - age.size().x, line2 - age.size().y / 2.0), age, t.subtle());
+    let mut meta_end = right - age.size().x;
+    painter.galley(pos2(meta_end, line2 - age.size().y / 2.0), age, t.subtle());
+    meta_end -= 10.0;
+    if let Some(a) = accounts.filter(|a| !a.is_empty()) {
+        let text = if a.len() > 2 { format!("{} +{}", a[0], a.len() - 1) } else { a.join(", ") };
+        let g = painter.layout_no_wrap(text, FontId::proportional(11.5), t.subtle());
+        let chip = Rect::from_min_size(pos2(meta_end - g.size().x - 26.0, line2 - 9.0), Vec2::new(g.size().x + 26.0, 18.0));
+        painter.rect(chip, CornerRadius::same(9), Color32::TRANSPARENT, egui::Stroke::new(1.0, t.border()), egui::StrokeKind::Inside);
+        ic::glyph(&painter, pos2(chip.left() + 11.0, chip.center().y), ic::USER_ROUND, 11.0, t.subtle());
+        painter.galley(pos2(chip.left() + 20.0, chip.center().y - g.size().y / 2.0), g, t.subtle());
+        ui.interact(chip, ui.scope_id().with(("issue-accounts", &i.url)), Sense::hover()).tip("The GitHub accounts that see it");
+        meta_end = chip.left() - 8.0;
+    }
 
     // #N and title
     let x0 = inner.left() + 44.0;
@@ -1093,7 +1331,7 @@ fn row(ui: &mut Ui, i: &Issue, avatar: Option<&egui::TextureHandle>, selected: b
     let title = w::truncated(ui, &i.title, FontId::new(15.0, theme::medium()), t.fg(), (cx - 24.0 - tx).max(40.0));
     painter.galley(pos2(tx, top - title.size().y / 2.0), title, t.fg());
 
-    prs::row_meta(&painter, pos2(x0, line2), right - 90.0, avatar, &i.author, &i.repo, &i.labels, &t);
+    prs::row_meta(&painter, pos2(x0, line2), (meta_end - 10.0).min(right - 90.0), avatar, &i.author, &i.repo, &i.labels, &t);
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -1116,9 +1354,9 @@ mod tests {
             labels: vec![],
             assignees: vec![],
             milestone: None,
-            mentioned: false,
             linked_pr: false,
             author_trusted: true,
+            ..Default::default()
         }
     }
 
@@ -1151,11 +1389,11 @@ mod tests {
         b.labels = vec![("bug".into(), [255, 0, 0])];
         b.milestone = Some("v1".into());
         let mut c = issue(3, "them");
-        c.mentioned = true;
+        c.mentions = vec!["me".into()];
         let mut d = issue(4, "them");
         d.state = IssueState::Done;
         d.comments = 9;
-        let data = Fetched { viewer: "me".into(), items: vec![a, b, c, d] };
+        let data = Fetched { viewer: "me".into(), items: vec![a, b, c, d], sources: vec![] };
         let keys = |g: Vec<Group>| g.iter().map(|g| (g.key, g.items.len())).collect::<Vec<_>>();
         assert_eq!(keys(groups(&data, &Filters::default(), "", Sort::Updated)), vec![("assigned", 1), ("authored", 1), ("mentioned", 1)]);
         assert_eq!(groups(&data, &Filters::default(), "label:bug", Sort::Updated)[0].items[0].number, 2);
@@ -1199,8 +1437,68 @@ mod tests {
         let f = parse(&v);
         assert_eq!(f.items.len(), 1);
         let i = &f.items[0];
-        assert!(i.mentioned && i.state == IssueState::NotPlanned && i.comments == 3);
+        assert!(i.mentions == ["me"] && i.accounts == ["me"] && i.state == IssueState::NotPlanned && i.comments == 3);
         assert_eq!((i.assignees.clone(), i.milestone.clone()), (vec!["b".to_string()], Some("v2".to_string())));
         assert_eq!(i.labels[0], ("bug".to_string(), [255, 0, 0]));
+    }
+
+    fn src(pc: &str, name: &str, login: &str, projects: &[&str]) -> Source {
+        Source { pc: pc.into(), name: name.into(), login: login.into(), projects: projects.iter().map(|p| p.to_string()).collect(), error: None }
+    }
+
+    fn part(viewer: &str, items: Vec<Issue>) -> Fetched {
+        let items = items.into_iter().map(|i| Issue { accounts: vec![viewer.into()], ..i }).collect();
+        Fetched { viewer: viewer.into(), items, sources: vec![] }
+    }
+
+    #[test]
+    fn merges_accounts_and_filters_by_one() {
+        // Both accounts see #1; only "sam" sees #2 (assigned to sam), "kim" mentioned in #3.
+        let mut one = issue(1, "kim");
+        one.updated = 10;
+        let mut one_b = issue(1, "kim");
+        one_b.updated = 20;
+        one_b.title = "newer".into();
+        let mut two = issue(2, "x");
+        two.assignees = vec!["sam".into()];
+        let mut three = issue(3, "x");
+        three.mentions = vec!["kim".into()];
+        let off = Source { error: Some("unreachable".into()), ..src("ts:old", "old", "", &[]) };
+        let data = merge(vec![
+            (src("", "desk", "", &["o/r"]), Some(part("kim", vec![one, three]))),
+            (src("ts:lap", "laptop", "", &[]), Some(part("sam", vec![one_b, two]))),
+            (off, None),
+        ]);
+        assert_eq!(data.viewer, "kim");
+        assert_eq!(data.items.len(), 3);
+        let i1 = data.items.iter().find(|i| i.number == 1).unwrap();
+        assert_eq!((i1.title.as_str(), i1.accounts.clone()), ("newer", vec!["kim".to_string(), "sam".to_string()]));
+        assert_eq!(accounts(&data), vec![("kim".into(), "desk".into(), 2), ("sam".into(), "laptop".into(), 2)]);
+        assert_eq!(notes(&data), vec!["old: unreachable".to_string()]);
+        let keys = |f: &Filters| groups(&data, f, "", Sort::Updated).iter().map(|g| (g.key, g.items.iter().map(|i| i.number).collect::<Vec<_>>())).collect::<Vec<_>>();
+        // All accounts: #1 authored by kim, #2 assigned to sam, #3 mentions kim.
+        assert_eq!(keys(&Filters::default()), vec![("assigned", vec![2]), ("authored", vec![1]), ("mentioned", vec![3])]);
+        // Only sam: #3 isn't sam's; #1 is there but not authored by sam.
+        let sam = Filters { account: Some("SAM".into()), ..Default::default() };
+        assert_eq!(keys(&sam), vec![("assigned", vec![2]), ("others", vec![1])]);
+        let f = Filters { involvement: Involvement::Authored, ..sam.clone() };
+        assert!(keys(&f).is_empty());
+        let f = Filters { involvement: Involvement::Mentioned, account: Some("kim".into()), ..Default::default() };
+        assert_eq!(keys(&f), vec![("others", vec![3])]);
+        // Actions: #2 only on the laptop; #1 here first, or on the picked account's PC.
+        let i2 = data.items.iter().find(|i| i.number == 2).unwrap();
+        assert_eq!(owner(&data, i2, None, false).map(|s| s.pc.as_str()), Some("ts:lap"));
+        assert_eq!(owner(&data, i1, None, false).map(|s| s.pc.as_str()), Some(""));
+        assert_eq!(owner(&data, i1, Some("sam"), false).map(|s| s.pc.as_str()), Some("ts:lap"));
+        // Fix with…: only this PC has o/r as a project, though only the laptop's account sees #2.
+        assert_eq!(owner(&data, i2, None, true).map(|s| s.pc.as_str()), Some(""));
+        let none = Issue { repo: "o/other".into(), ..i2.clone() };
+        assert!(owner(&data, &none, None, true).is_none());
+    }
+
+    #[test]
+    fn short_errors() {
+        assert_eq!(short_error("Not signed in to GitHub. Run `gh auth login`."), "GitHub not connected");
+        assert_eq!(short_error("boom\nmore"), "boom");
     }
 }

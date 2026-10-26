@@ -25,7 +25,8 @@ import java.util.List;
 /** The PC's Pull requests or Issues page (GET /v1/prs, /v1/issues): a search, the state, Sort
  *  and Filters, then the desktop's sections (Authored, Review requested… or Assigned,
  *  Authored, Mentioned…) with one row per item. The PC filters, sorts and groups the list as
- *  the desktop does; a row opens GhItem. The picks are kept per PC. */
+ *  the desktop does; a row opens GhItem. The picks are kept per PC. Issues come from every PC
+ *  of the mesh, each with its own GitHub account: with several, an Account chip picks one. */
 public class GhList extends Base {
     static final String PRS = "prs", ISSUES = "issues";
     /** Set by GhItem after a change on GitHub: the next resume fetches anew. */
@@ -118,7 +119,7 @@ public class GhList extends Base {
     private String path(boolean refresh) {
         StringBuilder q = new StringBuilder("/v1/").append(kind).append("?");
         String[] keys = prs() ? new String[]{"state", "involvement", "project", "author", "draft", "review", "checks", "sort", "q"}
-                : new String[]{"state", "involvement", "project", "author", "assignee", "milestone", "sort", "q"};
+                : new String[]{"state", "account", "involvement", "project", "author", "assignee", "milestone", "sort", "q"};
         try {
             for (String k : keys) if (!f.optString(k).isEmpty()) q.append(k).append('=').append(URLEncoder.encode(f.optString(k), "UTF-8")).append('&');
             JSONArray l = f.optJSONArray("labels");
@@ -154,6 +155,7 @@ public class GhList extends Base {
 
     private void render(JSONObject r) {
         page = r;
+        drawStates();
         drawFilters();
         list.removeAllViews();
         JSONArray groups = r.optJSONArray("groups");
@@ -170,7 +172,12 @@ public class GhList extends Base {
         int total = r.optInt("total");
         String what = prs() ? "pull requests" : "issues";
         note.setTextColor(Ui.G700);
-        note.setText(shown == total ? total + " " + what : shown + " of " + total + " " + what);
+        String count = shown == total ? total + " " + what : shown + " of " + total + " " + what;
+        // PCs of the mesh whose part is missing (off, not signed in to GitHub).
+        JSONArray notes = r.optJSONArray("notes");
+        List<String> ns = new ArrayList<>();
+        if (notes != null) for (int i = 0; i < notes.length(); i++) ns.add(notes.optString(i));
+        note.setText(ns.isEmpty() ? count : count + "\n" + TextUtils.join(" · ", ns));
         if (shown == 0) {
             TextView t = Ui.text(this, total == 0 ? "No " + what + " here. Your projects' GitHub repos and what you're part of show up."
                     : "Nothing matches the search and filters.", 14, Ui.G700);
@@ -234,6 +241,12 @@ public class GhList extends Base {
         title.setEllipsize(TextUtils.TruncateAt.END);
         t.addView(title);
         String meta = "#" + it.optInt("number") + " · " + it.optString("repo").toLowerCase() + " · " + it.optString("author") + " · " + Ui.ago(it.optLong("updated_ms"));
+        JSONArray acc = it.optJSONArray("accounts");
+        if (severalAccounts() && acc != null && acc.length() > 0) {
+            List<String> v = new ArrayList<>();
+            for (int i = 0; i < acc.length(); i++) v.add(acc.optString(i));
+            meta += " · " + TextUtils.join(", ", v);
+        }
         t.addView(Ui.subtitle(Ui.text(this, meta, 12.5f, Ui.G700)), Ui.margins(Ui.fill(), 0, 2, 0, 0));
         JSONArray ls = it.optJSONArray("labels");
         if (ls != null && ls.length() > 0) t.addView(labels(this, ls, 3), Ui.margins(Ui.fill(), 0, 5, 0, 0));
@@ -291,11 +304,35 @@ public class GhList extends Base {
             box.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
         }
         states.addView(box, Ui.weight());
+        // Issues: which PC's GitHub account, once the list has several (the hub merges them).
+        if (!prs() && (severalAccounts() || !f.optString("account").isEmpty())) {
+            String acct = f.optString("account");
+            LinearLayout chip = Ui.row(this);
+            chip.setGravity(Gravity.CENTER_VERTICAL);
+            chip.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
+            chip.setBackground(Ui.press(Ui.CARD, Ui.LINE, 12));
+            chip.addView(Ui.icon(this, Ui.I_USER, 15, acct.isEmpty() ? Ui.G700 : Ui.BLUE), new LinearLayout.LayoutParams(Ui.dp(17), Ui.dp(17)));
+            TextView t = Ui.text(this, acct.isEmpty() ? "All accounts" : acct, 14, acct.isEmpty() ? Ui.FG : Ui.BLUE);
+            t.setMaxLines(1);
+            t.setEllipsize(TextUtils.TruncateAt.END);
+            t.setMaxWidth(Ui.dp(130));
+            chip.addView(t, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+            chip.setContentDescription("Account");
+            chip.setOnClickListener(v -> Sheet.pick(this, "Account", null, options("account"), f.optString("account"),
+                    id -> { put("account", id); drawStates(); load(false); }));
+            states.addView(chip, Ui.margins(new LinearLayout.LayoutParams(-2, -1), 8, 0, 0, 0));
+        }
+    }
+
+    /** The list has more than one GitHub account (PCs of the mesh signed in as others). */
+    private boolean severalAccounts() {
+        JSONArray a = page == null ? null : page.optJSONArray("accounts");
+        return a != null && a.length() > 1;
     }
 
     private void drawFilters() {
         int n = 0;
-        for (String k : new String[]{"involvement", "project", "author", "draft", "review", "checks", "assignee", "milestone"}) if (!f.optString(k).isEmpty()) n++;
+        for (String k : new String[]{"account", "involvement", "project", "author", "draft", "review", "checks", "assignee", "milestone"}) if (!f.optString(k).isEmpty()) n++;
         JSONArray l = f.optJSONArray("labels");
         if (l != null) n += l.length();
         filtersBtn.setText(n == 0 ? "Filters" : "Filters · " + n);
@@ -329,6 +366,7 @@ public class GhList extends Base {
             rows.add(new String[]{"review", "Review", Ui.I_CIRCLE_CHECK});
             rows.add(new String[]{"checks", "Checks", Ui.I_CIRCLE_DASHED});
         } else {
+            if (severalAccounts() || !f.optString("account").isEmpty()) rows.add(new String[]{"account", "Account", Ui.I_USER});
             rows.add(new String[]{"involvement", "Involvement", Ui.I_USERS});
             rows.add(new String[]{"project", "Project", Ui.I_LAYERS});
             rows.add(new String[]{"author", "Author", Ui.I_USER});
@@ -348,8 +386,9 @@ public class GhList extends Base {
             LinearLayout c2 = s.card();
             c2.addView(Ui.cardRow(this, Ui.I_X, "Clear filters", null, Ui.RED, v -> {
                 s.dismiss();
-                for (String k : new String[]{"involvement", "project", "author", "draft", "review", "checks", "assignee", "milestone", "labels"}) f.remove(k);
+                for (String k : new String[]{"account", "involvement", "project", "author", "draft", "review", "checks", "assignee", "milestone", "labels"}) f.remove(k);
                 save();
+                drawStates();
                 load(false);
             }), Ui.fill());
         }
@@ -373,6 +412,17 @@ public class GhList extends Base {
     private List<Sheet.Option> options(String k) {
         List<Sheet.Option> o = new ArrayList<>();
         switch (k) {
+            case "account": {
+                o.add(new Sheet.Option("", "All accounts", "", true));
+                JSONArray p = page == null ? null : page.optJSONArray("accounts");
+                if (p != null) for (int i = 0; i < p.length(); i++) {
+                    JSONObject x = p.optJSONObject(i);
+                    if (x == null) continue;
+                    int n = x.optInt("n");
+                    o.add(new Sheet.Option(x.optString("login"), x.optString("login"), x.optString("pc") + " · " + n + (n == 1 ? " issue" : " issues"), true));
+                }
+                break;
+            }
             case "involvement":
                 o.add(new Sheet.Option("", "All", "", true));
                 if (prs()) {
@@ -439,7 +489,7 @@ public class GhList extends Base {
 
     private void pick(String k, String title) {
         if ("labels".equals(k)) { pickLabels(); return; }
-        Sheet.pick(this, title, null, options(k), f.optString(k), id -> { put(k, id); load(false); openFilters(); });
+        Sheet.pick(this, title, null, options(k), f.optString(k), id -> { put(k, id); drawStates(); load(false); openFilters(); });
     }
 
     /** Labels add up (every one picked must be on the item): a tap turns one on or off. */

@@ -2303,7 +2303,12 @@ impl App {
                 self.mesh.in_call = true;
                 // A turn this starts runs with the caller's instructions and memory (meshctx.rs).
                 self.mesh.call_ctx = Some((call.device.clone(), self.shared().name_of(&call.device), call.body["ctx"].clone()));
-                let mut r = self.api_route(&inner, ctx);
+                // Pull requests and issues (ghapi.rs) may answer from a thread: status 0 here.
+                let mut r = if inner.path.get(1).is_some_and(|s| s == "prs" || s == "issues") {
+                    self.api_github(&inner, ctx).unwrap_or(Reply { status: 0, body: Value::Null })
+                } else {
+                    self.api_route(&inner, ctx)
+                };
                 self.mesh.call_ctx = None;
                 self.mesh.in_call = false;
                 self.sender.clear();
@@ -2575,7 +2580,7 @@ impl App {
     /// A phone's message through this PC: its name for "from …", its device id for the typing lock.
     /// This PC's instructions and memory for a call that may start a turn on another PC, with
     /// the memory of `repo` as this PC has it (meshctx.rs).
-    fn ctx_for(&self, repo: Option<i64>) -> Value {
+    pub fn ctx_for(&self, repo: Option<i64>) -> Value {
         crate::meshctx::outgoing(&self.store, repo.and_then(|r| self.repo(r)).map(|r| r.path.as_path()))
     }
 
@@ -2993,7 +2998,7 @@ fn strip_files(mut body: Value) -> Value {
 }
 
 /// A chat made on another PC: its id there becomes the copy's id here once it arrives.
-fn map_new(hub: &api::Hub, home: &str, mut r: Reply, global: bool) -> Reply {
+pub fn map_new(hub: &api::Hub, home: &str, mut r: Reply, global: bool) -> Reply {
     let Some(hid) = r.body["id"].as_i64().filter(|_| r.status < 300) else { return r };
     if global {
         // The gid is the same here: no need to wait for the copy.

@@ -870,7 +870,7 @@ is set); empty ones are left out. `state` open / closed / merged; `review` appro
 required / none; `checks` passing / failing / pending / none. `projects` are this PC's projects
 with a GitHub repo (ids as in `/v1/state`).
 
-#### `GET /v1/issues?state=&involvement=&project=&author=&assignee=&label=&milestone=&sort=&q=`
+#### `GET /v1/issues?state=&account=&involvement=&project=&author=&assignee=&label=&milestone=&sort=&q=`
 
 The same for issues: `state` open (default) / closed / all; `involvement` assigned / authored /
 mentioned; `assignee` a login or `none`; `milestone` a title or `none`; `sort` one of
@@ -881,11 +881,32 @@ mentioned; `assignee` a login or `none`; `milestone` a title or `none`; `sort` o
 {"number": 50, "title": "…", "url": "https://github.com/o/r/issues/50", "repo": "o/r",
  "state": "open", "created_ms": …, "updated_ms": …, "comments": 3, "author": "octocat",
  "labels": [{"name": "bug", "color": "d73a4a"}], "assignees": ["octocat"], "milestone": "v1",
- "mentioned": false, "linked_pr": true}
+ "mentioned": false, "linked_pr": true, "accounts": ["octocat"]}
 ```
 
 `state` open / done (closed as completed) / not_planned; `linked_pr`: an open PR says it fixes it.
 Also `assignees` and `milestones` (`[{"name", "n"}]`) for the pickers.
+
+**Every PC's account (from 0.45).** The hub merges the Issues of every PC of the mesh, each
+fetched with that PC's own `gh` login and projects (`GET /mesh/v1/issues`), one item per URL.
+Optional fields, which older hubs leave out:
+
+- `accounts: [{"login": "octocat", "pc": "desk", "n": 12}]`: the logins in the list, the PCs
+  signed in with each (`, `-joined) and how many items each sees: the Account filter's choices.
+  The app shows the Account chip once there are two or more.
+- `account=<login>` narrows the list to that account's items and makes Involvement (and the
+  Assigned / Authored / Mentioned sections, and `mentioned`) about that login; without it, about
+  every account's. `viewer` is then that login.
+- Per item `accounts`: the logins that see it; `fix_on` (a PC's name) when the repo isn't a project
+  on this PC but is on that one, where `POST /v1/issues/fix` runs the agent.
+- `notes: ["laptop: unreachable", "desk: GitHub not connected"]`: PCs whose part is missing
+  (off, not signed in, an older Harbor). The rest still shows; only when no PC has a list does
+  the call fail (`502`, this PC's `gh` error).
+
+`/v1/issues/view`, `close`, `reopen` and `fix` go to a PC whose account sees the issue (this PC
+first), and `fix` to one that has the repo as a project; the hub forwards them over the mesh.
+They take an optional `account` (query or body) to prefer that login's PC. A chat that `fix`
+starts on another PC answers with this hub's id for its copy, as `POST /v1/chats` does.
 
 #### `GET /v1/prs/view?url=<PR url>`, `GET /v1/issues/view?url=<issue url>`
 
@@ -1128,6 +1149,14 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   removed) in a chat this PC commanded, sent back by the PC it ran on. Written only into the
   memory folder `id` was handed out for (in a `ctx`, valid 30 days), flat `*.md` names only;
   `404` for an unknown id.
+- `GET /mesh/v1/issues?state=open|closed|all[&refresh=1]` → `{login, projects: ["owner/name"], items: [item]}`
+  (0.45): this PC's own Issues, with its `gh` login and its projects' repos, for another PC's
+  merged page. Items are `/v1/issues` items plus `avatar` and `trusted` (author is owner, member
+  or collaborator). `gh` failing answers `200 {login: "", projects, error}`. Served again for a
+  minute unless `refresh=1`. Older PCs answer `404`.
+- `GET /mesh/v1/issues/view?url=<issue url>` → the raw `gh issue view --json` object, and
+  `POST /mesh/v1/issues/close|reopen?url=<issue url>` → `{ok: true}`: with this PC's account,
+  for a PC whose own can't see the issue.
 - `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
 - `POST /mesh/v1/lease` `{chat, view, device, kind, label, on}`: someone types in (`view: false`)
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.

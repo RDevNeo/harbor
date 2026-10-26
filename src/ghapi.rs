@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 /// How long a fetched list is served again before `gh` is asked anew.
 const FRESH: Duration = Duration::from_secs(60);
+/// How long a PC's part of the Issues page is waited for (a phone waits 40 s for the whole).
+const PEER_WAIT: Duration = Duration::from_secs(35);
 /// The most diff lines sent.
 const MAX_DIFF: usize = 5000;
 
@@ -22,7 +24,10 @@ const MAX_DIFF: usize = 5000;
 #[derive(Default)]
 pub struct Cache {
     prs: Vec<(prs::StateF, Instant, Arc<prs::Fetched>)>,
+    /// The Issues page as phones get it: this PC's and the mesh's PCs' lists, merged.
     issues: Vec<(issues::StateF, Instant, Arc<issues::Fetched>)>,
+    /// This PC's own list (its `gh` login), as the other PCs ask for it.
+    own_issues: Vec<(issues::StateF, Instant, Arc<issues::Fetched>)>,
 }
 
 pub type Shared = Arc<Mutex<Cache>>;
@@ -234,6 +239,7 @@ pub fn issue_filters(call: &Call) -> (issues::Filters, issues::Sort, String) {
             Some("closed") => StateF::Closed,
             _ => StateF::Open,
         },
+        account: param(call, "account").map(String::from),
         involvement: match param(call, "involvement") {
             Some("assigned") => Involvement::Assigned,
             Some("authored") => Involvement::Authored,
@@ -258,22 +264,151 @@ fn issue_state(s: issues::IssueState) -> &'static str {
     }
 }
 
-pub fn issue_json(i: &issues::Issue) -> Value {
+/// One issue; `mentioned` is about the logins in `me` (the picked account, or all of them).
+pub fn issue_json(i: &issues::Issue, me: &[String]) -> Value {
+    let mentioned = i.mentions.iter().any(|m| me.iter().any(|x| x.eq_ignore_ascii_case(m)));
     json!({
         "number": i.number, "title": i.title, "url": i.url, "repo": i.repo, "state": issue_state(i.state),
         "created_ms": i.created * 1000, "updated_ms": i.updated * 1000, "comments": i.comments, "author": i.author,
-        "labels": labels_json(&i.labels), "assignees": i.assignees, "milestone": i.milestone, "mentioned": i.mentioned, "linked_pr": i.linked_pr,
+        "labels": labels_json(&i.labels), "assignees": i.assignees, "milestone": i.milestone, "mentioned": mentioned, "linked_pr": i.linked_pr,
+        "accounts": i.accounts,
     })
 }
 
+fn state_slug(s: issues::StateF) -> &'static str {
+    match s {
+        issues::StateF::All => "all",
+        issues::StateF::Open => "open",
+        issues::StateF::Closed => "closed",
+    }
+}
+
+/// One issue as a PC hands it to another (`GET /mesh/v1/issues`): the phone's item, plus its
+/// author's avatar and whether the author is trusted (Auto-Fix).
+fn issue_mesh_json(i: &issues::Issue) -> Value {
+    let mut v = issue_json(i, &i.mentions);
+    v["avatar"] = json!(i.avatar);
+    v["trusted"] = json!(i.author_trusted);
+    v
+}
+
+/// A peer's issue (`issue_mesh_json`), fetched with its `login`.
+fn issue_of_json(v: &Value, login: &str) -> Option<issues::Issue> {
+    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    let strs = |k: &str| v[k].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>();
+    let me = if login.is_empty() { vec![] } else { vec![login.to_string()] };
+    Some(issues::Issue {
+        number: v["number"].as_u64()?,
+        title: s("title"),
+        url: gh_url(v["url"].as_str()?, "issues")?,
+        repo: s("repo"),
+        state: match v["state"].as_str() {
+            Some("done") => issues::IssueState::Done,
+            Some("not_planned") => issues::IssueState::NotPlanned,
+            _ => issues::IssueState::Open,
+        },
+        created: v["created_ms"].as_i64().unwrap_or(0) / 1000,
+        updated: v["updated_ms"].as_i64().unwrap_or(0) / 1000,
+        comments: v["comments"].as_u64().unwrap_or(0),
+        author: s("author"),
+        avatar: s("avatar"),
+        labels: v["labels"].as_array().into_iter().flatten().filter_map(|l| Some((l["name"].as_str()?.to_string(), prs::hex_rgb(l["color"].as_str().unwrap_or(""))))).collect(),
+        assignees: strs("assignees"),
+        milestone: v["milestone"].as_str().map(String::from),
+        mentions: if v["mentioned"].as_bool() == Some(true) { me.clone() } else { vec![] },
+        accounts: me,
+        linked_pr: v["linked_pr"].as_bool().unwrap_or(false),
+        author_trusted: v["trusted"].as_bool().unwrap_or(false),
+    })
+}
+
+/// A peer's part of the Issues page (`GET /mesh/v1/issues`), with its own `gh` login.
+fn peer_part(p: &crate::mesh::Peer, state: issues::StateF, refresh: bool) -> (issues::Source, Option<issues::Fetched>) {
+    let src = issues::Source { pc: p.id.clone(), name: p.name.clone(), ..Default::default() };
+    let fail = |e: &str| (issues::Source { error: Some(e.to_string()), ..src.clone() }, None);
+    if !p.online {
+        return fail("unreachable");
+    }
+    let path = format!("/mesh/v1/issues?state={}{}", state_slug(state), if refresh { "&refresh=1" } else { "" });
+    match crate::mesh::http(&p.dest(), "GET", &path, None, PEER_WAIT) {
+        Ok((200, v)) => {
+            let login = v["login"].as_str().unwrap_or("").to_string();
+            if let Some(e) = v["error"].as_str() {
+                return (issues::Source { login, error: Some(issues::short_error(e)), ..src }, None);
+            }
+            let items = v["items"].as_array().into_iter().flatten().filter_map(|i| issue_of_json(i, &login)).collect();
+            let projects = v["projects"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(String::from)).collect();
+            (issues::Source { login: login.clone(), projects, ..src }, Some(issues::Fetched { viewer: login, items, sources: vec![] }))
+        }
+        Ok((404, _)) => fail("runs an older Harbor"),
+        Ok((_, v)) => fail(&issues::short_error(v["error"].as_str().unwrap_or("didn't answer"))),
+        Err(_) => fail("unreachable"),
+    }
+}
+
+/// The Issues page across the mesh: this PC's list (`local`: the list and its projects'
+/// repos) and every peer's, each fetched with that PC's `gh`, asked at once and merged.
+/// A PC that doesn't answer or isn't signed in leaves a note; only when no PC has a list
+/// does it fail, with this PC's error.
+pub fn fetch_merged(
+    state: issues::StateF,
+    refresh: bool,
+    me: String,
+    peers: Vec<crate::mesh::Peer>,
+    local: impl FnOnce() -> (Result<issues::Fetched, String>, Vec<String>),
+) -> Result<issues::Fetched, String> {
+    let asks: Vec<_> = peers.into_iter().map(|p| std::thread::spawn(move || peer_part(&p, state, refresh))).collect();
+    let (r, projects) = local();
+    let here = issues::Source { pc: String::new(), name: me, projects, ..Default::default() };
+    let mut local_err = None;
+    let mut parts = vec![match r {
+        Ok(f) => (issues::Source { login: f.viewer.clone(), ..here }, Some(f)),
+        Err(e) => {
+            let short = issues::short_error(&e);
+            local_err = Some(e);
+            (issues::Source { error: Some(short), ..here }, None)
+        }
+    }];
+    parts.extend(asks.into_iter().filter_map(|h| h.join().ok()));
+    if let Some(e) = local_err.filter(|_| parts.iter().all(|p| p.1.is_none())) {
+        return Err(e);
+    }
+    Ok(issues::merge(parts))
+}
+
+/// This PC's own list (its `gh`), from the cache while it's fresh; with its projects' repos.
+fn own_issues(cache: &Shared, state: issues::StateF, refresh: bool, repos: impl FnOnce() -> Vec<String>) -> (Result<issues::Fetched, String>, Vec<String>) {
+    let repos = repos();
+    if let Some(d) = cached(&mut cache.lock().unwrap().own_issues, state, refresh) {
+        return (Ok((*d).clone()), repos);
+    }
+    let r = issues::fetch(state, &repos);
+    if let Ok(d) = &r {
+        keep(&mut cache.lock().unwrap().own_issues, state, Arc::new(d.clone()));
+    }
+    (r, repos)
+}
+
+/// `fix_on`: the PC of the mesh Fix with… runs on, when the repo isn't a project here.
+fn with_fix_on(mut v: Value, d: &issues::Fetched, i: &issues::Issue, f: &issues::Filters) -> Value {
+    let here = d.sources.iter().find(|s| s.pc.is_empty()).is_some_and(|s| s.projects.iter().any(|r| r.eq_ignore_ascii_case(&i.repo)));
+    if let Some(s) = issues::owner(d, i, f.account.as_deref(), true).filter(|s| !here && !s.pc.is_empty()) {
+        v["fix_on"] = json!(s.name);
+    }
+    v
+}
+
 pub fn issues_page(d: &issues::Fetched, f: &issues::Filters, search: &str, sort: issues::Sort) -> Value {
+    let me = issues::mine(d, f);
     let groups: Vec<Value> = issues::groups(d, f, search, sort)
         .iter()
-        .map(|g| json!({ "key": g.key, "label": g.label, "items": g.items.iter().map(issue_json).collect::<Vec<_>>() }))
+        .map(|g| json!({ "key": g.key, "label": g.label, "items": g.items.iter().map(|i| with_fix_on(issue_json(i, &me), d, i, f)).collect::<Vec<_>>() }))
         .collect();
     let tally = |v: Vec<(String, usize)>| v.iter().map(|(a, n)| json!({ "name": a, "n": n })).collect::<Vec<_>>();
     json!({
-        "viewer": d.viewer,
+        "viewer": f.account.clone().unwrap_or_else(|| d.viewer.clone()),
+        "accounts": issues::accounts(d).iter().map(|(l, pc, n)| json!({ "login": l, "pc": pc, "n": n })).collect::<Vec<_>>(),
+        "notes": issues::notes(d),
         "total": d.items.len(),
         "groups": groups,
         "authors": issues::authors(d).iter().map(|(a, n)| json!({ "login": a, "n": n })).collect::<Vec<_>>(),
@@ -357,12 +492,12 @@ impl App {
                 let (f, sort, search) = issue_filters(call);
                 let refresh = param(call, "refresh") == Some("1");
                 let repos = self.gh_repos();
+                let (me, peers) = self.issue_peers();
                 later(Box::new(move || {
-                    let repos = repos();
                     let hit = cached(&mut cache.lock().unwrap().issues, f.state, refresh);
                     let d = match hit {
                         Some(d) => d,
-                        None => match issues::fetch(f.state, &repos) {
+                        None => match fetch_merged(f.state, refresh, me, peers, || own_issues(&cache, f.state, refresh, repos)) {
                             Ok(d) => {
                                 let d = Arc::new(d);
                                 keep(&mut cache.lock().unwrap().issues, f.state, d.clone());
@@ -374,6 +509,42 @@ impl App {
                     let mut v = issues_page(&d, &f, &search, sort);
                     v["projects"] = projects();
                     ok(v)
+                }))
+            }
+            // Another PC's Issues page asks for this PC's part: its own `gh` login and projects.
+            ("GET", ["mesh", "v1", "issues"]) => {
+                let state = match param(call, "state") {
+                    Some("all") => issues::StateF::All,
+                    Some("closed") => issues::StateF::Closed,
+                    _ => issues::StateF::Open,
+                };
+                let refresh = param(call, "refresh") == Some("1");
+                let repos = self.gh_repos();
+                later(Box::new(move || match own_issues(&cache, state, refresh, repos) {
+                    (Ok(d), projects) => ok(json!({ "login": d.viewer, "projects": projects, "items": d.items.iter().map(issue_mesh_json).collect::<Vec<_>>() })),
+                    (Err(e), projects) => ok(json!({ "login": "", "projects": projects, "error": e })),
+                }))
+            }
+            // An issue as this PC's `gh` sees it (raw `gh issue view` JSON), and close / reopen,
+            // for a PC whose own account can't.
+            ("GET", ["mesh", "v1", "issues", "view"]) => {
+                let Some(url) = url_of("issues") else { return Some(err(400, "url must be a GitHub issue")) };
+                later(Box::new(move || match issuedetail::fetch_raw(&url) {
+                    Ok(v) => ok(v),
+                    Err(e) => err(502, e),
+                }))
+            }
+            ("POST", ["mesh", "v1", "issues", action @ ("close" | "reopen")]) => {
+                let Some(url) = url_of("issues") else { return Some(err(400, "url must be a GitHub issue")) };
+                let action = action.to_string();
+                later(Box::new(move || match prdetail::gh(&["issue", &action, &url]) {
+                    Ok(_) => {
+                        let mut c = cache.lock().unwrap();
+                        expire(&mut c.issues);
+                        expire(&mut c.own_issues);
+                        ok(json!({ "ok": true }))
+                    }
+                    Err(e) => err(502, e),
                 }))
             }
             ("GET", ["v1", "prs", "view"]) => {
@@ -398,7 +569,8 @@ impl App {
             ("GET", ["v1", "issues", "view"]) => {
                 let Some(url) = url_of("issues") else { return Some(err(400, "url must be a GitHub issue")) };
                 let agent = self.agent_label();
-                later(Box::new(move || match issuedetail::fetch(&url) {
+                let via = self.api_issue_peer(&url, param(call, "account"), false);
+                later(Box::new(move || match via.map_or_else(|| issuedetail::fetch(&url), |p| issuedetail::fetch_on(&p.dest(), &url)) {
                     Ok(f) => {
                         let mut v = issue_full_json(&f);
                         v["agent"] = json!(agent);
@@ -421,9 +593,12 @@ impl App {
             ("POST", ["v1", "issues", action @ ("close" | "reopen")]) => {
                 let Some(url) = url_of("issues") else { return Some(err(400, "url must be a GitHub issue")) };
                 let action = action.to_string();
-                later(Box::new(move || match prdetail::gh(&["issue", &action, &url]) {
+                let via = self.api_issue_peer(&url, param(call, "account").or(call.body["account"].as_str()), false);
+                later(Box::new(move || match via.map_or_else(|| prdetail::gh(&["issue", &action, &url]).map(|_| ()), |p| issuedetail::set_open_on(&p.dest(), &url, action == "reopen")) {
                     Ok(_) => {
-                        expire(&mut cache.lock().unwrap().issues);
+                        let mut c = cache.lock().unwrap();
+                        expire(&mut c.issues);
+                        expire(&mut c.own_issues);
                         ok(json!({ "ok": true }))
                     }
                     Err(e) => err(502, e),
@@ -440,10 +615,24 @@ impl App {
             }
             ("POST", ["v1", "issues", "fix"]) => {
                 let Some(url) = url_of("issues") else { return Some(err(400, "url must be a GitHub issue")) };
-                let issue = cache.lock().unwrap().issues.iter().find_map(|(_, _, d)| d.items.iter().find(|i| i.url == url).cloned());
+                let issue = {
+                    let c = cache.lock().unwrap();
+                    c.issues.iter().chain(c.own_issues.iter()).find_map(|(_, _, d)| d.items.iter().find(|i| i.url == url).cloned())
+                };
                 let Some(issue) = issue else { return Some(err(409, "refresh the list first")) };
-                let Some(project) = self.gh_project_of(&issue.repo) else { return Some(err(409, crate::issues::NOT_PROJECT)) };
                 let extra = call.body["extra"].as_str().unwrap_or("").to_string();
+                let Some(project) = self.gh_project_of(&issue.repo) else {
+                    // The project is on another PC of the mesh: the agent runs there.
+                    let Some(peer) = self.api_issue_peer(&url, call.body["account"].as_str(), true) else { return Some(err(409, crate::issues::NOT_PROJECT)) };
+                    let (sender, hub, global, reply) = ((format!("{} via {}", if call.device.is_empty() { "Phone" } else { &call.device }, self.api.hub.mesh.me().name), crate::api::device_id(&call.token)), self.api.hub.clone(), call.global, call.reply.clone());
+                    let home = peer.id.clone();
+                    // The turn runs there with this PC's person's context (meshctx.rs), as a chat started there would.
+                    let ctx_v = self.ctx_for(None);
+                    crate::mesh::forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "issues".into(), "fix".into()], json!({ "url": url, "extra": extra }), vec![], sender, ctx_v, move |r| {
+                        let _ = reply.send(crate::mesh::map_new(&hub, &home, r, global));
+                    });
+                    return None;
+                };
                 Some(self.api_agent_thread(call.global, |app| app.fix_issue(ctx, project, &issue, &extra)))
             }
             _ => Some(err(404, "unknown call")),
@@ -473,6 +662,24 @@ impl App {
 
     /// Runs `start` (it starts and opens a thread) and answers with the new chat; the
     /// desktop stays where it was.
+    /// This PC's name, and the mesh's PCs whose Issues are merged into the page (none while
+    /// the mesh is off).
+    pub fn issue_peers(&self) -> (String, Vec<crate::mesh::Peer>) {
+        let mesh = &self.api.hub.mesh;
+        let peers = if mesh.on.load(std::sync::atomic::Ordering::Relaxed) { mesh.peers.lock().unwrap().values().cloned().collect() } else { vec![] };
+        let me = mesh.me().name;
+        (if me.is_empty() { "This PC".into() } else { me }, peers)
+    }
+
+    /// The PC of the mesh a phone's action on the issue at `url` goes to (see
+    /// `issues::owner`), when it isn't this one and is on.
+    fn api_issue_peer(&self, url: &str, prefer: Option<&str>, project: bool) -> Option<crate::mesh::Peer> {
+        let c = self.api.gh.lock().unwrap();
+        let (d, i) = c.issues.iter().find_map(|(_, _, d)| Some((d, d.items.iter().find(|i| i.url == url)?)))?;
+        let pc = issues::owner(d, i, prefer, project)?.pc.clone();
+        (!pc.is_empty()).then(|| self.api.hub.mesh.peer(&pc)).flatten().filter(|p| p.online)
+    }
+
     fn api_agent_thread(&mut self, global: bool, start: impl FnOnce(&mut App)) -> Reply {
         let before = self.chats.iter().map(|c| c.id).max().unwrap_or(0);
         let (view, focus) = (self.view, self.focus_composer);
@@ -481,7 +688,8 @@ impl App {
         self.focus_composer = focus;
         match self.chats.iter().map(|c| c.id).max().filter(|m| *m > before) {
             Some(id) if global => ok(json!({ "id": self.chat(id).map(|c| c.gid.clone()) })),
-            Some(id) => ok(json!({ "id": id })),
+            // The gid too: a PC that forwarded the call maps it to its copy (mesh::map_new).
+            Some(id) => ok(json!({ "id": id, "gid": self.chat(id).map(|c| c.gid.clone()) })),
             None => err(409, "no account to run the agent with"),
         }
     }

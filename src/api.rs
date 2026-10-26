@@ -2193,8 +2193,18 @@ impl App {
             }
         }
         if call.path.first().map(String::as_str) == Some("mesh") {
+            // Another PC's Issues page asks this PC's `gh` (ghapi.rs): a thread may answer.
+            if call.path.get(2).is_some_and(|s| s == "issues") {
+                if let Some(r) = self.api_github(&call, ctx) {
+                    let _ = call.reply.send(r);
+                }
+                return;
+            }
             let r = self.mesh_route(&call, ctx);
-            let _ = call.reply.send(r);
+            // 0: a thread answers (a forwarded GitHub call).
+            if r.status != 0 {
+                let _ = call.reply.send(r);
+            }
             return;
         }
         // A copy of another PC's chat: the call goes there.

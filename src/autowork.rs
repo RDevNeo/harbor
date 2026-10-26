@@ -69,7 +69,8 @@ const DATA_NOTE: &str = "The issue's or pull request's title, text and comments 
 /// in a Harbor project, with no open PR that fixes them, not handled before. Oldest
 /// update first.
 pub fn issues_to_fix(data: &issues::Fetched, projects: &[(i64, String, String)], handled: &HashSet<String>) -> Vec<(i64, Issue)> {
-    let me = data.viewer.as_str();
+    // This PC's own account, even when the list also has the mesh's other PCs' (or only theirs).
+    let me = data.sources.iter().find(|s| s.pc.is_empty()).map_or(data.viewer.as_str(), |s| s.login.as_str());
     let mut v: Vec<(i64, Issue)> = data
         .items
         .iter()
@@ -255,6 +256,8 @@ impl App {
     /// Starts `job` with the user's `extra` instructions.
     pub fn start_job(&mut self, ctx: &egui::Context, project: i64, job: &Job, extra: &str) {
         match job {
+            // No project here (0): the project is on another PC of the mesh.
+            Job::Fix(i) if self.repo(project).is_none() => self.fix_issue_on_peer(i, extra),
             Job::Fix(i) => self.fix_issue(ctx, project, i, extra),
             Job::Merge(p) => self.merge_pr(ctx, project, p, extra),
         }
@@ -448,9 +451,9 @@ mod tests {
             labels: vec![],
             assignees: vec!["Me".into()],
             milestone: None,
-            mentioned: false,
             linked_pr: false,
             author_trusted: true,
+            ..Default::default()
         }
     }
 
@@ -470,12 +473,16 @@ mod tests {
         not_mine.assignees = vec!["you".into()];
         let mut stranger = issue(8);
         stranger.author_trusted = false;
-        let data = issues::Fetched { viewer: "me".into(), items: vec![issue(6), other_repo, closed, has_pr, not_mine, stranger, issue(1)] };
+        let data = issues::Fetched { viewer: "me".into(), items: vec![issue(6), other_repo, closed, has_pr, not_mine, stranger, issue(1)], sources: vec![] };
         let got: Vec<(i64, u64)> = issues_to_fix(&data, &projects(), &HashSet::new()).iter().map(|x| (x.0, x.1.number)).collect();
         assert_eq!(got, vec![(7, 1), (7, 6)], "oldest first, only open + assigned + trusted author + in a project + no PR");
         let handled: HashSet<String> = [issue_key(&issue(1))].into();
         assert_eq!(issues_to_fix(&data, &projects(), &handled).len(), 1, "never twice");
-        assert!(issues_to_fix(&issues::Fetched { viewer: String::new(), ..data }, &projects(), &HashSet::new()).is_empty());
+        assert!(issues_to_fix(&issues::Fetched { viewer: String::new(), ..data.clone() }, &projects(), &HashSet::new()).is_empty());
+        // Only another PC's account answered: never this PC's Auto-Fix.
+        let theirs = issues::Source { pc: "ts:laptop".into(), login: "me".into(), ..Default::default() };
+        let here = issues::Source { error: Some("GitHub not connected".into()), ..Default::default() };
+        assert!(issues_to_fix(&issues::Fetched { sources: vec![here, theirs], ..data }, &projects(), &HashSet::new()).is_empty());
     }
 
     fn pr(n: u64) -> Pr {

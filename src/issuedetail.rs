@@ -47,6 +47,8 @@ pub struct Detail {
     pub loading: bool,
     pub busy: bool,
     pub error: Option<String>,
+    /// The PC of the mesh whose GitHub account loads and changes it (None: this PC's).
+    pub via: Option<crate::mesh::Dest>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
 }
@@ -54,7 +56,7 @@ pub struct Detail {
 impl Default for Detail {
     fn default() -> Self {
         let (tx, rx) = channel();
-        Detail { full: None, loading: false, busy: false, error: None, tx, rx }
+        Detail { full: None, loading: false, busy: false, error: None, via: None, tx, rx }
     }
 }
 
@@ -63,9 +65,31 @@ fn login(v: &serde_json::Value) -> String {
 }
 
 pub fn fetch(url: &str) -> Result<Full, String> {
+    fetch_raw(url).map(|v| parse(&v))
+}
+
+/// `gh issue view` as JSON (what another PC asks for: `GET /mesh/v1/issues/view`).
+pub fn fetch_raw(url: &str) -> Result<serde_json::Value, String> {
     let out = gh(&["issue", "view", url, "--json", FIELDS])?;
-    let v: serde_json::Value = serde_json::from_slice(&out).map_err(|e| e.to_string())?;
-    Ok(parse(&v))
+    serde_json::from_slice(&out).map_err(|e| e.to_string())
+}
+
+/// The issue as another PC of the mesh sees it, with its own `gh` login.
+pub fn fetch_on(dest: &crate::mesh::Dest, url: &str) -> Result<Full, String> {
+    let path = format!("/mesh/v1/issues/view?url={}", crate::api::url_encode(url));
+    match crate::mesh::http(dest, "GET", &path, None, crate::prs::GH_TIMEOUT)? {
+        (200, v) => Ok(parse(&v)),
+        (s, v) => Err(v["error"].as_str().map_or_else(|| format!("the other PC answered {s}"), String::from)),
+    }
+}
+
+/// Close or reopen the issue on another PC of the mesh.
+pub fn set_open_on(dest: &crate::mesh::Dest, url: &str, open: bool) -> Result<(), String> {
+    let path = format!("/mesh/v1/issues/{}?url={}", if open { "reopen" } else { "close" }, crate::api::url_encode(url));
+    match crate::mesh::http(dest, "POST", &path, Some(("application/json", b"{}")), crate::prs::GH_TIMEOUT)? {
+        (200, _) => Ok(()),
+        (s, v) => Err(v["error"].as_str().map_or_else(|| format!("the other PC answered {s}"), String::from)),
+    }
 }
 
 fn parse(v: &serde_json::Value) -> Full {
@@ -91,9 +115,9 @@ fn parse(v: &serde_json::Value) -> Full {
 impl Detail {
     pub fn load(&mut self, ctx: &egui::Context, url: &str) {
         self.loading = true;
-        let (tx, url, wake) = (self.tx.clone(), url.to_string(), ctx_repaint(ctx));
+        let (tx, url, wake, via) = (self.tx.clone(), url.to_string(), ctx_repaint(ctx), self.via.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Full(fetch(&url)));
+            let _ = tx.send(Msg::Full(via.map_or_else(|| fetch(&url), |d| fetch_on(&d, &url))));
             wake();
         });
     }
@@ -101,9 +125,13 @@ impl Detail {
     /// `gh issue close` / `gh issue reopen`.
     fn set_open(&mut self, ctx: &egui::Context, url: &str, open: bool) {
         self.busy = true;
-        let (tx, url, wake) = (self.tx.clone(), url.to_string(), ctx_repaint(ctx));
+        let (tx, url, wake, via) = (self.tx.clone(), url.to_string(), ctx_repaint(ctx), self.via.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Done(gh(&["issue", if open { "reopen" } else { "close" }, &url]).map(|_| ())));
+            let r = match via {
+                Some(d) => set_open_on(&d, &url, open),
+                None => gh(&["issue", if open { "reopen" } else { "close" }, &url]).map(|_| ()),
+            };
+            let _ = tx.send(Msg::Done(r));
             wake();
         });
     }
@@ -156,7 +184,11 @@ impl App {
     pub fn issue_detail(&mut self, ui: &mut Ui, url: &str) {
         let t = self.theme.t;
         let ctx = ui.ctx().clone();
+        // Loaded and changed with the GitHub account of a PC of the mesh that sees it, when
+        // this PC's doesn't.
+        let via = self.listed_issue(url).and_then(|i| self.issue_peer(&i, false)).map(|p| p.dest());
         let d = self.issues.details.entry(url.to_string()).or_default();
+        d.via = via;
         if d.full.is_none() && !d.loading {
             d.load(&ctx, url);
         }
@@ -185,6 +217,8 @@ impl App {
         let updated = full.as_ref().map(|f| f.updated).or(list.as_ref().map(|i| i.updated)).unwrap_or(0);
         let state = full.as_ref().map(|f| f.state).or(list.as_ref().map(|i| i.state)).unwrap_or(IssueState::Open);
         let project = self.pr_projects().into_iter().find(|p| p.2.eq_ignore_ascii_case(&repo)).map(|p| p.0);
+        // No project here, but another PC of the mesh has it: the agent runs there.
+        let elsewhere = if project.is_none() { list.as_ref().and_then(|i| self.issue_peer(i, true)).map(|p| p.name) } else { None };
 
         let mut act: Option<Act> = None;
         // ---- header
@@ -230,8 +264,12 @@ impl App {
                         act = Some(a);
                     }
                     if state == IssueState::Open {
-                        let tip = if project.is_some() { "Start a thread where an agent fixes it on a branch and opens a PR" } else { crate::issues::NOT_PROJECT };
-                        match self.agent_button(ui, "Fix", project.is_some(), tip) {
+                        let tip = match (&project, &elsewhere) {
+                            (Some(_), _) => "Start a thread where an agent fixes it on a branch and opens a PR".to_string(),
+                            (None, Some(pc)) => format!("Start a thread on {pc}, which has this project, where an agent fixes it and opens a PR"),
+                            (None, None) => crate::issues::NOT_PROJECT.to_string(),
+                        };
+                        match self.agent_button(ui, "Fix", project.is_some() || elsewhere.is_some(), &tip) {
                             Some(Go::Now) => act = Some(Act::Work(false)),
                             Some(Go::Ask) => act = Some(Act::Work(true)),
                             None => {}
@@ -312,13 +350,19 @@ impl App {
                             labels: f.labels.clone(),
                             assignees: f.assignees.clone(),
                             milestone: f.milestone.clone(),
-                            mentioned: false,
                             linked_pr: false,
                             // Started by the user here, not unattended.
                             author_trusted: false,
+                            ..Default::default()
                         })
                     });
-                    if let (Some(id), Some(i)) = (project, item) {
+                    if let (None, Some(_), Some(i)) = (project, &elsewhere, &item) {
+                        if ask {
+                            self.ask_instructions(0, Job::Fix(i.clone()));
+                        } else {
+                            self.fix_issue_on_peer(i, "");
+                        }
+                    } else if let (Some(id), Some(i)) = (project, item) {
                         if ask {
                             self.ask_instructions(id, Job::Fix(i));
                         } else {

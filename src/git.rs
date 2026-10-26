@@ -74,7 +74,14 @@ pub fn status(dir: &Path) -> Option<Status> {
 
 /// git@github.com:a/b.git and https://github.com/a/b.git both become https://github.com/a/b
 fn web_url(u: &str) -> String {
-    let u = u.trim_end_matches(".git");
+    let u = u.trim().trim_end_matches(".git");
+    // ssh://git@host[:port]/owner/repo
+    if let Some(rest) = u.strip_prefix("ssh://") {
+        let rest = rest.split_once('@').map_or(rest, |x| x.1);
+        if let Some((host, path)) = rest.split_once('/') {
+            return format!("https://{}/{path}", host.split(':').next().unwrap_or(host));
+        }
+    }
     if let Some(rest) = u.strip_prefix("git@") {
         if let Some((host, path)) = rest.split_once(':') {
             return format!("https://{host}/{path}");
@@ -128,6 +135,13 @@ pub fn open_url(url: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ssh_remotes_have_web_urls() {
+        for u in ["git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "ssh://git@github.com:22/o/r", "https://github.com/o/r.git"] {
+            assert_eq!(super::web_url(u), "https://github.com/o/r", "{u}");
+        }
+    }
+
     #[test]
     fn status_ignores_repo_fsmonitor() {
         let dir = std::env::temp_dir().join(format!("harbor-fsm-{}", std::process::id()));

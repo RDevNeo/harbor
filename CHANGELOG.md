@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Issues from every PC: the Issues page (desktop and phone) merges the issues of every connected PC
+  of the mesh, each fetched with that PC's own GitHub login and projects, one row per issue. A new
+  Account filter (the desktop's Filters menu, a chip on the phone) shows one login's issues, and
+  Involvement (Assigned / Authored / Mentioned) follows the picked account. With several accounts
+  each row names the ones that see it. Close / Reopen, the issue's details and Fix with… run on a
+  PC whose account sees the issue (Fix with… on one that has the project). A PC that's off or not
+  signed in to GitHub leaves a small note instead of blanking the page.
+
+### Fixed
+- Projects whose remote is an `ssh://git@github.com/…` URL were left out of the Issues and Pull
+  requests pages (and their Open on GitHub links were wrong); `git@github.com:…` remotes and
+  other forms are recognised everywhere too.
+
 ## [0.44.0] - 2026-10-26
 
 ### Added
