@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.48.2] - 2026-10-26
+
 ### Fixed
 - Phone dictation: tapping the mic again stops it and puts in what was said (the last words
   heard when the recogniser's final ones don't come) instead of an error. It keeps listening
@@ -1123,7 +1125,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.48.2...HEAD
+[0.48.2]: https://github.com/RDevNeo/harbor/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/RDevNeo/harbor/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/RDevNeo/harbor/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/RDevNeo/harbor/compare/v0.47.0...v0.47.1
