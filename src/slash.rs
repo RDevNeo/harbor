@@ -538,7 +538,7 @@ impl App {
     }
 
     /// The last reply of a chat that can be forked (the one /fork forks after).
-    fn last_forkable(&self, chat: i64) -> Option<usize> {
+    pub(crate) fn last_forkable(&self, chat: i64) -> Option<usize> {
         let items = self.transcripts.get(&chat).map(|t| &t.items)?;
         crate::fork::forkable(items).iter().rposition(|f| f.is_some())
     }

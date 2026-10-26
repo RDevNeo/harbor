@@ -30,6 +30,7 @@ pub const GROUPS: &[&str] = &["Navigation", "Composer", "Thread", "Panels", "Lis
 
 pub const ACTIONS: &[Action] = &[
     a("new_thread", "New thread", "Navigation", "Ctrl+N", ""),
+    a("palette", "Search everything (command palette)", "Navigation", "Ctrl+K", ""),
     a("settings", "Open settings", "Navigation", "Ctrl+Comma", ""),
     a("toggle_sidebar", "Show or hide the sidebar", "Navigation", "Ctrl+Backslash", ""),
     fixed("pick_model", "Pick model 1–9", "Navigation", "Ctrl+1…9", "!terminalFocus && !dialog"),

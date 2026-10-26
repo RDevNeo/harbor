@@ -2211,6 +2211,15 @@ impl App {
                 Some(c) => ok(self.api_tags(c, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx)),
                 None => err(404, "no such chat"),
             },
+            // The command palette (palette.rs); `chat` is the one the phone has open.
+            ("GET", ["v1", "palette"]) => {
+                let chat = call.query("chat").and_then(|c| self.ref_id(c));
+                ok(self.api_palette(call.query("q").unwrap_or(""), chat))
+            }
+            ("POST", ["v1", "palette", "run"]) => {
+                let chat = call.body["chat"].as_str().map(String::from).or_else(|| call.body["chat"].as_i64().map(|c| c.to_string())).and_then(|c| self.ref_id(&c));
+                self.api_palette_run(&call.body, chat, ctx)
+            }
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
             // The phone's "Updates available" banner: updates the hub's provider CLIs.
             ("POST", ["v1", "providers", "update"]) => {
@@ -2346,6 +2355,18 @@ impl App {
                 }
             }
             ("POST", ["v1", "chats"]) | ("POST", ["v1", "chats", _, "fork"]) => v["id"] = gid(&v["id"]),
+            ("GET", ["v1", "palette"]) => {
+                for s in v["sections"].as_array_mut().into_iter().flatten() {
+                    for it in s["items"].as_array_mut().into_iter().flatten() {
+                        if it["kind"] == "chat" {
+                            it["chat"] = gid(&it["chat"]);
+                        } else if it["kind"] == "new_chat" {
+                            it["project"] = path(&it["project"]);
+                        }
+                    }
+                }
+            }
+            ("POST", ["v1", "palette", "run"]) => v["open"] = gid(&v["open"]),
             ("PATCH", _) | ("POST", ["v1", "chats", _, "slash" | "move"]) => {
                 if v["chat"].is_object() {
                     chat(&mut v["chat"]);

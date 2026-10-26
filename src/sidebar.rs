@@ -318,6 +318,11 @@ impl App {
                 self.toggle_sidebar(&ctx);
             }
             ui.label(egui::RichText::new("Harbor").text_style(crate::theme::ts("heading-16")).color(t.fg()));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if w::btn(ic::SEARCH).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Search everything", "palette")).clicked() {
+                    self.palette_toggle();
+                }
+            });
         });
         ui.add_space(4.0);
 

@@ -151,6 +151,27 @@ fn at_boundary(hay: &str, q: &str) -> bool {
     hay.match_indices(q).any(|(i, _)| i == 0 || hay[..i].ends_with(['-', '_', '.', '/', ' ']))
 }
 
+/// How well `query` matches a name or title (lower is better): exactly, as a prefix, at a
+/// word boundary, anywhere, its letters in order (fewer skipped first). The palette's ranking.
+pub fn text_score(hay: &str, query: &str) -> Option<u32> {
+    let q = query.to_lowercase();
+    if q.is_empty() {
+        return Some(0);
+    }
+    let h = hay.to_lowercase();
+    if h == q {
+        Some(0)
+    } else if h.starts_with(&q) {
+        Some(10)
+    } else if at_boundary(&h, &q) {
+        Some(20)
+    } else if h.contains(&q) {
+        Some(30)
+    } else {
+        in_order(&h, &q).map(|g| 100 + g)
+    }
+}
+
 /// How well `query` matches a project file's path (lower is better): its name exactly,
 /// then as a prefix, at a word boundary, anywhere; then a folder's name, the path, and
 /// the letters in order (in the name before the path). A query with `/` matches the path.

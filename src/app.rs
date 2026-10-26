@@ -140,6 +140,7 @@ pub struct App {
     pub mentions: crate::mentions::State,
     pub slash: crate::slash::State,
     pub tags: crate::tags::State,
+    pub palette: crate::palette::State,
     pub forks: crate::fork::State,
     pub turns: HashMap<i64, (agent::Turn, Instant)>,
     pub unread: HashSet<i64>,
@@ -306,6 +307,7 @@ impl App {
             mentions: Default::default(),
             slash: Default::default(),
             tags: Default::default(),
+            palette: Default::default(),
             forks: Default::default(),
             turns: HashMap::new(),
             unread: HashSet::new(),
@@ -1491,6 +1493,7 @@ impl App {
                 egui::CentralPanel::default().frame(Frame::new().fill(t.bg200)).show(ui, |ui| self.pane_ui(ui, d));
                 self.popups(&ctx);
                 self.dialogs(&ctx);
+                self.palette_ui(&ctx);
                 self.add_project_ui(&ctx);
                 self.route_links(&ctx);
                 crate::images::lightbox(&ctx);
@@ -1540,6 +1543,7 @@ impl App {
 
         self.popups(&ctx);
         self.dialogs(&ctx);
+        self.palette_ui(&ctx);
         self.add_project_ui(&ctx);
         self.route_links(&ctx);
         crate::images::lightbox(&ctx);
@@ -1652,7 +1656,7 @@ impl App {
             };
             (
                 k.take(i, "new_thread"),
-                !term_has_focus && !blocked && self.popup.is_none() && self.slash.open.is_none() && k.pressed(i, "stop_turn"),
+                !term_has_focus && !blocked && self.popup.is_none() && self.slash.open.is_none() && !self.palette.open && k.pressed(i, "stop_turn"),
                 k.take(i, "toggle_terminal"),
                 digit,
                 k.take(i, "toggle_sidebar"),
@@ -1662,6 +1666,9 @@ impl App {
         });
         if sidebar {
             self.toggle_sidebar(ctx);
+        }
+        if ctx.input_mut(|i| self.keys.take(i, "palette")) {
+            self.palette_toggle();
         }
         if browser {
             self.toggle_browser();

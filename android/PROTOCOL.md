@@ -647,6 +647,42 @@ desktop's current one). The answers are those of the chat calls. Only Harbor's `
 `plan` and `default` commands are listed (no chat to fork, settle or clear), and all four are the
 screen's own pickers: `plan` sets the Permission pick to `plan`, `default` back to what it was.
 Ask the PC the screen talks to; another PC's projects aren't its own.
+### `GET /v1/palette?q=&chat=`
+
+The desktop's command palette (Ctrl+K, `src/palette.rs`, since 0.35; older PCs answer `404`: say
+the PC needs an update). `q` is what's typed; `chat` the chat the phone has open, for its actions.
+The PC ranks (every word in the title, the detail or hidden keywords, the title first; projects,
+chats, agents, pages and actions in sections, the sections by their best row) and sends only what
+the phone can open or do. With an empty `q`, the recent picks (from any device) come first, in a
+`recent` section, then each section's first rows (chats by their last activity).
+
+```json
+{"sections": [
+  {"key": "recent", "title": "Recent", "items": [
+    {"id": "chat:12", "kind": "chat", "chat": 12, "title": "Fix the composer", "detail": "harbor", "icon": "message"}]},
+  {"key": "actions", "title": "Actions", "items": [
+    {"id": "act:settle:12", "kind": "action", "title": "Settle this chat", "detail": "Fix the composer", "icon": "archive"},
+    {"id": "new:3", "kind": "new_chat", "project": 3, "title": "New chat in harbor", "detail": "~/Projects/harbor", "icon": "compose"}]},
+  {"key": "pages", "title": "Pages", "items": [
+    {"id": "page:prs", "kind": "page", "page": "prs", "title": "Pull requests", "detail": "GitHub", "icon": "pr"}]}]}
+```
+
+- `kind`: `chat` (open `chat`), `new_chat` (the new-chat screen in `project`, null for none),
+  `page` (`prs` or `issues`), `action` (the call below does it: settle or unsettle the open chat,
+  fork it after its last reply, fast mode on or off).
+- `icon`: `message`, `bot`, `folder`, `compose`, `archive`, `unarchive`, `fork`, `gauge`, `pr`,
+  `issue` (others: a generic one), the desktop's Lucide glyphs.
+- Sections: `recent`, `actions`, `projects`, `chats` (settled ones too), `agents` (sub-agents),
+  `pages`. The desktop also lists devices, Settings sections and window actions; the phone doesn't
+  get those.
+
+### `POST /v1/palette/run`
+
+`{"id": "act:fork:12", "chat": 12}` → `{"ok": true, "open": 31, "gid": "…", "toast": ""}`. Remembers
+the pick for the recent list, and does it when it's an `action`; `open` is a chat to show (a fork),
+`toast` what to say. Send it for every pick (the screens open on the phone): other kinds only count
+as recent. An item that isn't there any more answers `404`; /fork without a finished reply `409`.
+
 ### Pull requests and issues
 
 The desktop's Pull requests and Issues pages, from this PC's GitHub CLI (`gh`, signed in on the

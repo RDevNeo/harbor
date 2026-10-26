@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A command palette: Ctrl+K (rebindable), or the search button in the sidebar's header, opens one
+  search over everything: projects, chats (settled ones too), agents, devices, the Issues and Pull
+  requests pages, Settings sections, and actions (new chat in a project, settle or fork the open
+  chat, fast mode, check for updates, sidebar, terminal, browser). Fuzzy-matched and grouped in
+  sections with icons; with nothing typed, your recent picks come first. Arrows, Enter and Esc.
+- The phone gets the same palette as a search screen (the search button in the chat list; a long
+  press still filters the list): chats, agents, projects, pages and the actions the phone can do,
+  ranked by the PC. Recent picks are shared between the desktop and the phone.
+
 ### Changed
 - Stop all moved into the agent strip over a lead's composer (a stop icon in its corner, desktop
   and phone), and the old "Waiting for N sub-agents to finish" line under the transcript is gone:

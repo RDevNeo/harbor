@@ -53,9 +53,11 @@ final class Sidebar {
         LinearLayout head = Ui.row(a);
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
         head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
-        TextView find = Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> toggleSearch());
+        // Search everything (the desktop's Ctrl+K palette); a long press filters this list instead.
+        TextView find = Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> palette());
+        find.setOnLongClickListener(v -> { toggleSearch(); return true; });
         find.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
-        find.setContentDescription("Search chats");
+        find.setContentDescription("Search everything");
         head.addView(find);
         col.addView(head, Ui.fill());
 
@@ -112,6 +114,12 @@ final class Sidebar {
         boolean on = search.getVisibility() != View.VISIBLE;
         search.setVisibility(on ? View.VISIBLE : View.GONE);
         if (on) search.requestFocus(); else search.setText("");
+    }
+
+    private void palette() {
+        Intent i = new Intent(a, Palette.class).putExtra("hub", a.hub.id);
+        if (current != null) i.putExtra("chat", current);
+        a.startActivity(i);
     }
 
     private void settings() { a.startActivity(new Intent(a, Settings.class).putExtra("hub", a.hub.id)); }
