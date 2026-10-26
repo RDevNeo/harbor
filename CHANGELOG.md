@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-26
+
+### Added
+- Unread dots: a thread that finished while you were elsewhere shows a small blue dot in the sidebar
+  (instead of a green "Done"), on the desktop and in the phone's chat list; opening it on either
+  clears it. Empty lists (no projects, no pull requests or issues, nothing paired) show a proper
+  empty state with what to do next, and the sidebar's Settled group and width follow rengaf.
+
 ## [0.41.0] - 2026-10-26
 
 ### Changed
@@ -927,7 +935,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/RDevNeo/harbor/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/RDevNeo/harbor/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/RDevNeo/harbor/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/RDevNeo/harbor/compare/v0.38.0...v0.39.0
