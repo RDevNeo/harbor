@@ -183,20 +183,18 @@ final class Sidebar {
         }
         chats.sort((x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms")));
         // By project, in the desktop sidebar's order (the hub sends them so), newest first in
-        // each; chats without a project under Threads, as on the desktop; settled chats and the
-        // chats of settled projects fold into Settled at the end.
+        // each; chats without a project under Threads, as on the desktop; settled chats fold
+        // into Settled at the end. Projects never settle (an older hub's project `settled` is
+        // ignored).
         LinkedHashMap<String, List<JSONObject>> groups = new LinkedHashMap<>();
-        Set<String> settledProjects = new HashSet<>();
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
             JSONObject p = pa.optJSONObject(i);
-            if (p == null) continue;
-            if (p.optBoolean("settled")) settledProjects.add(p.optString("id"));
-            else groups.put(p.optString("id"), new ArrayList<>());
+            if (p != null) groups.put(p.optString("id"), new ArrayList<>());
         }
         List<JSONObject> loose = new ArrayList<>(), settled = new ArrayList<>();
         for (JSONObject c : chats) {
             String pid = c.isNull("project_id") ? "" : c.optString("project_id");
-            if (c.optBoolean("settled") || settledProjects.contains(pid)) settled.add(c);
+            if (c.optBoolean("settled")) settled.add(c);
             else if (groups.containsKey(pid)) groups.get(pid).add(c);
             else loose.add(c);
         }

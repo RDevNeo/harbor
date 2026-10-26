@@ -1988,7 +1988,7 @@ impl App {
             self.mesh_index();
         }
         let rest = hash_of(&(
-            self.repos.iter().map(|r| (r.id, &r.name, r.settled)).collect::<Vec<_>>(),
+            self.repos.iter().map(|r| (r.id, &r.name)).collect::<Vec<_>>(),
             self.order_by_activity,
             self.accounts.iter().map(|a| (&a.id, a.logged_in, a.usage.iter().map(|u| (&u.label, (u.percent * 100.0) as i32)).collect::<Vec<_>>())).collect::<Vec<_>>(),
             self.fast,
@@ -2380,7 +2380,7 @@ impl App {
         if self.order_by_activity {
             repos.sort_by_key(|r| std::cmp::Reverse(self.activity(r.id)));
         }
-        let projects: Vec<Value> = repos.iter().map(|r| json!({ "id": r.id, "name": r.name, "path": r.path.to_string_lossy(), "settled": r.settled })).collect();
+        let projects: Vec<Value> = repos.iter().map(|r| json!({ "id": r.id, "name": r.name, "path": r.path.to_string_lossy() })).collect();
         let hub = &self.api.hub;
         let chats: Vec<Value> = self.chats.iter().map(|c| self.chat_json(c)).collect();
         let accounts: Vec<Value> = self

@@ -206,7 +206,7 @@ refetch everything.
   "hub_id": "ts:desk", "hub_fp": "<64 hex>", "hub_addrs": ["10.0.0.12", "fd00::12"], "hub_port": 47930,
   "mesh": true,
   "hubs": [{"id": "ts:desk", "name": "desk", "online": true}, {"id": "ts:laptop", "name": "laptop", "online": false}],
-  "projects": [{"id": 1, "name": "harbor", "path": "/home/user/Projects/harbor", "settled": false}],
+  "projects": [{"id": 1, "name": "harbor", "path": "/home/user/Projects/harbor"}],
   "chats": [{
     "id": 12, "project_id": 1, "title": "Fix the build", "device": "", "account": "claude",
     "model": "claude-opus-5-5", "effort": "high", "access": "full", "fast": false,
@@ -231,8 +231,9 @@ refetch everything.
 }
 ```
 
-- `projects` come in the desktop sidebar's order (by hand, or by last activity when it's set so);
-  `settled` ones sit in its Settled section.
+- `projects` come in the desktop sidebar's order (by hand, or by last activity when it's set so).
+  Projects never settle, only chats do. Older hubs sent a project `settled`; clients ignore it,
+  and current hubs no longer send it.
 - `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, cursor, grok,
   gemini, meta, opencode). An empty effort list: send `""`.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.

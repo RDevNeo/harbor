@@ -14,7 +14,6 @@ pub struct Repo {
     pub name: String,
     /// Manual order in the sidebar.
     pub sort: i64,
-    pub settled: bool,
 }
 
 /// What a chat is in a project's team.
@@ -359,6 +358,16 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
         }
         db.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS chats_gid ON chats(gid);")?;
     }
+    if v < 7 {
+        // Projects no longer settle (only chats do): earlier settled ones come back to the
+        // list. The column stays, unused.
+        db.execute_batch(
+            "BEGIN;
+             UPDATE repos SET settled=0;
+             PRAGMA user_version=7;
+             COMMIT;",
+        )?;
+    }
     Ok(())
 }
 
@@ -415,14 +424,13 @@ impl Store {
     }
 
     pub fn repos(&self) -> Vec<Repo> {
-        let mut st = self.db.prepare("SELECT id, path, name, sort, settled FROM repos ORDER BY sort, name COLLATE NOCASE").unwrap();
+        let mut st = self.db.prepare("SELECT id, path, name, sort FROM repos ORDER BY sort, name COLLATE NOCASE").unwrap();
         st.query_map([], |r| {
             Ok(Repo {
                 id: r.get(0)?,
                 path: PathBuf::from(r.get::<_, String>(1)?),
                 name: r.get(2)?,
                 sort: r.get(3)?,
-                settled: r.get::<_, i64>(4)? != 0,
             })
         })
         .unwrap()
@@ -446,7 +454,7 @@ impl Store {
     }
 
     pub fn save_repo_meta(&self, r: &Repo) {
-        let _ = self.db.execute("UPDATE repos SET sort=?2, settled=?3 WHERE id=?1", params![r.id, r.sort, r.settled as i64]);
+        let _ = self.db.execute("UPDATE repos SET sort=?2 WHERE id=?1", params![r.id, r.sort]);
     }
 
     // ---- timers
@@ -756,6 +764,24 @@ mod tests {
         assert_eq!(s.webhooks().len(), 1);
         s.remove_repo(repo);
         assert!(s.webhooks().is_empty(), "the project's hook tokens must not outlive it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settled_projects_come_back() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-settled-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harbor.db");
+        let s = Store::open_at(&path).unwrap();
+        let repo = s.add_repo(&dir).unwrap();
+        // A project settled by an older Harbor (schema 6).
+        s.db.execute_batch("UPDATE repos SET settled=1; PRAGMA user_version=6;").unwrap();
+        drop(s);
+        let s = Store::open_at(&path).unwrap();
+        let settled: i64 = s.db.query_row("SELECT settled FROM repos WHERE id=?1", [repo], |r| r.get(0)).unwrap();
+        assert_eq!(settled, 0, "projects no longer settle");
+        assert_eq!(s.repos().len(), 1);
+        drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

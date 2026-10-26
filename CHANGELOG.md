@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Projects no longer settle: they always stay in the sidebar's project list, on the desktop and
+  on the phone. Settle / Unsettle and "Settle projects idle for 7 days" are gone for projects;
+  chats still settle into the Settled section. Projects settled before come back on update.
+
 ## [0.27.1] - 2026-10-25
 
 ### Fixed

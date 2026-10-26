@@ -1,6 +1,6 @@
 //! Sidebar: search, view options / add project / new message, the projects
 //! (one thread each, ordered by hand or by last activity), the collapsible
-//! "Settled" section, and the footer (settings, PRs, usage, refresh).
+//! "Settled" section of chats (projects never settle), and the footer (settings, PRs, usage, refresh).
 
 use crate::app::{App, Dialog, Popup, Tab, View, ago};
 use crate::git;
@@ -14,10 +14,6 @@ impl App {
     /// Last activity of a project: its newest chat (lead, subagents or old chats).
     pub fn activity(&self, repo: i64) -> i64 {
         self.chats.iter().filter(|c| c.repo_id == Some(repo)).map(|c| c.updated).max().unwrap_or(0)
-    }
-
-    fn running_in(&self, repo: i64) -> usize {
-        self.chats.iter().filter(|c| c.repo_id == Some(repo) && self.turns.contains_key(&c.id)).count()
     }
 
     /// When a chat or one of its subagents started the turn still running (the earliest),
@@ -86,7 +82,7 @@ impl App {
             x += 24.0;
         }
         let right = if hovering {
-            self.row_actions(ui, rect, &format!("c{}", c.id), c.settled)
+            self.row_actions(ui, rect, &format!("c{}", c.id), Some(c.settled))
         } else {
             let status = self.chat_status(c);
             w::paint_status(ui.painter(), pos2(rect.right() - 8.0, rect.center().y), &status);
@@ -112,24 +108,25 @@ impl App {
         });
     }
 
-    /// Hover actions on the right of a chat or project row: snooze, and Settle /
-    /// Unsettle. `key` is "c<chat>" or "r<project>". Returns the width they take.
-    fn row_actions(&mut self, ui: &mut Ui, rect: Rect, key: &str, settled: bool) -> f32 {
-        let label = if settled { format!("{}  Unsettle", ic::UNARCHIVE) } else { format!("{}  Settle", ic::CHECK) };
-        let sw = w::btn(&label).muted().sm().width(ui);
-        let sr = Rect::from_min_size(pos2(rect.right() - 2.0 - sw, rect.top() + 2.0), Vec2::new(sw, 28.0));
-        let b = w::overlay(ui, sr, |ui| w::btn(&label).muted().sm().show(ui));
-        if b.clicked() {
-            let id: i64 = key[1..].parse().unwrap_or(0);
-            if key.starts_with('c') {
-                self.set_chat_settled(id, !settled);
-            } else {
-                self.set_project_settled(id, !settled);
+    /// Hover actions on the right of a chat or project row: snooze, and for chats Settle /
+    /// Unsettle (`settled` is None for projects, which never settle). `key` is "c<chat>"
+    /// or "r<project>". Returns the width they take.
+    fn row_actions(&mut self, ui: &mut Ui, rect: Rect, key: &str, settled: Option<bool>) -> f32 {
+        let mut used = 0.0;
+        let mut left = rect.right() - 2.0;
+        if let Some(settled) = settled {
+            let label = if settled { format!("{}  Unsettle", ic::UNARCHIVE) } else { format!("{}  Settle", ic::CHECK) };
+            let sw = w::btn(&label).muted().sm().width(ui);
+            let sr = Rect::from_min_size(pos2(left - sw, rect.top() + 2.0), Vec2::new(sw, 28.0));
+            let b = w::overlay(ui, sr, |ui| w::btn(&label).muted().sm().show(ui));
+            if b.clicked() {
+                self.set_chat_settled(key[1..].parse().unwrap_or(0), !settled);
             }
+            used += sw + 4.0;
+            left = sr.left();
         }
-        let mut used = sw + 4.0;
-        if !settled {
-            let cr = Rect::from_min_size(pos2(sr.left() - 28.0, rect.top() + 2.0), Vec2::splat(28.0));
+        if settled != Some(true) {
+            let cr = Rect::from_min_size(pos2(left - 28.0, rect.top() + 2.0), Vec2::splat(28.0));
             let snoozed = self.snoozed.contains_key(key);
             let c = w::overlay(ui, cr, |ui| w::btn(ic::CLOCK).muted().icon_sm().pressed(snoozed).show(ui));
             let c = c.on_hover_text("Snooze");
@@ -309,7 +306,7 @@ impl App {
         ui.add_space(8.0);
 
         let q = self.search.trim().to_lowercase();
-        let mut active: Vec<Repo> = self.repos.iter().filter(|r| (!r.settled && !self.is_snoozed(&format!("r{}", r.id))) || !q.is_empty()).cloned().collect();
+        let mut active: Vec<Repo> = self.repos.iter().filter(|r| !self.is_snoozed(&format!("r{}", r.id)) || !q.is_empty()).cloned().collect();
         if !q.is_empty() {
             active.retain(|r| {
                 r.name.to_lowercase().contains(&q)
@@ -319,10 +316,10 @@ impl App {
         if self.order_by_activity {
             active.sort_by_key(|r| std::cmp::Reverse(self.activity(r.id)));
         }
-        let settled: Vec<Repo> = self.repos.iter().filter(|r| r.settled).cloned().collect();
+        // Only chats settle; projects always stay in the list above.
         let mut settled_chats: Vec<crate::store::Chat> = self.chats.iter().filter(|c| c.settled && c.role == Role::Lead).cloned().collect();
         settled_chats.sort_by_key(|c| std::cmp::Reverse(c.updated));
-        let n_settled = settled.len() + settled_chats.len();
+        let n_settled = settled_chats.len();
 
         let footer_h = 40.0;
         let settled_h = if self.settled_open && n_settled > 0 { (n_settled as f32 * 36.0).min(220.0) } else { 0.0 };
@@ -399,9 +396,6 @@ impl App {
             }
             if self.settled_open {
                 ScrollArea::vertical().id_salt("settled").max_height(settled_h).auto_shrink([false, true]).show(ui, |ui| {
-                    for r in &settled {
-                        self.project_row(ui, r, false);
-                    }
                     for c in &settled_chats {
                         self.thread_row(ui, c, 0.0);
                     }
@@ -555,7 +549,7 @@ impl App {
         
         let mut rx = rx;
         if hovering {
-            let used = self.row_actions(ui, rect, &format!("r{}", r.id), r.settled);
+            let used = self.row_actions(ui, rect, &format!("r{}", r.id), None);
             let nr = Rect::from_min_size(pos2(rect.right() - used - 26.0, rect.top() + 3.0), Vec2::splat(28.0));
             let n = w::overlay(ui, nr, |ui| w::btn(ic::PLUS).muted().icon_sm().show(ui));
             if n.on_hover_text("New chat in this project").clicked() {
@@ -601,24 +595,12 @@ impl App {
                 self.load_icon(&ctx, id, false);
             }
             ui.separator();
-            let settled = self.repo(id).is_some_and(|r| r.settled);
-            if ui.button(if settled { "Unsettle" } else { "Settle" }).clicked() {
-                self.set_project_settled(id, !settled);
-            }
             if ui.button("Remove from Harbor").clicked() {
                 self.dialog = Some(Dialog::RemoveRepo(id));
             }
         });
         ui.add_space(2.0);
         Some(out)
-    }
-
-    pub fn set_project_settled(&mut self, id: i64, settled: bool) {
-        if let Some(r) = self.repos.iter_mut().find(|r| r.id == id) {
-            r.settled = settled;
-            let r = r.clone();
-            self.store.save_repo_meta(&r);
-        }
     }
 
     /// Manual order: moves `dragged` to position `to` among `visible`, renumbering.
@@ -648,16 +630,6 @@ impl App {
         if w::menu_item(ui, ic::ACTIVITY, "Last activity", Some("Most recent first"), self.order_by_activity).clicked() {
             self.order_by_activity = true;
             self.store.set("order_by_activity", "1");
-        }
-        w::separator(ui);
-        if w::menu_item(ui, ic::ARCHIVE, "Settle projects idle for 7 days", None, false).clicked() {
-            let cutoff = crate::store::now() - 7 * 86400;
-            let ids: Vec<i64> =
-                self.repos.iter().filter(|r| !r.settled && self.activity(r.id) < cutoff && self.running_in(r.id) == 0).map(|r| r.id).collect();
-            for id in ids {
-                self.set_project_settled(id, true);
-            }
-            self.popup = None;
         }
     }
 }

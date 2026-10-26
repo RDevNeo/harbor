@@ -35,6 +35,7 @@ pub const EXTERNAL: &str = "\u{e0b9}";
 pub const BRANCH: &str = "\u{e0e2}";
 pub const PLUS: &str = "\u{e13d}";
 pub const TRASH: &str = "\u{e18e}";
+#[allow(dead_code)] // the phone (Ui.I_ARCHIVE) uses it
 pub const ARCHIVE: &str = "\u{e041}";
 pub const UNARCHIVE: &str = "\u{e2cd}";
 pub const LOADER: &str = "\u{e10a}";
