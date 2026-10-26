@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-10-25
+
 ### Fixed
 - The phone's New chat screen has the composer's `@` files, `#` issues and PRs and `/` commands
   too, as the desktop's new-chat composer does (the PC ranks them by the project picked there).
@@ -786,7 +788,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.33.1...HEAD
+[0.33.1]: https://github.com/RDevNeo/harbor/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/RDevNeo/harbor/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/RDevNeo/harbor/compare/v0.31.1...v0.32.0
 [0.31.1]: https://github.com/RDevNeo/harbor/compare/v0.31.0...v0.31.1
