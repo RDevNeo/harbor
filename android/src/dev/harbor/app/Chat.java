@@ -45,6 +45,8 @@ public class Chat extends Base {
     private Render render;
     private Team team;
     private Slash slash;
+    private String usageLabel = "", usageDetail = ""; // the chat's tokens and cost so far (cost.rs)
+    private JSONObject shown;                         // the chat the header shows
     private Tags tags;
 
     /** Items drawn at first; "Show earlier" adds this many more (a long chat would otherwise
@@ -76,6 +78,10 @@ public class Chat extends Base {
         barTitle.setOnClickListener(v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
             if (c != null) Chats.rename(this, hub, c, this::refreshState);
+        });
+        // The desktop header's usage hover: tokens in (cached), out, cost and turns.
+        barSub.setOnClickListener(v -> {
+            if (!usageDetail.isEmpty()) Ui.dialog(this).setTitle("Usage").setMessage(usageDetail).setPositiveButton("Close", null).show();
         });
 
         scroll = new ScrollView(this);
@@ -205,6 +211,7 @@ public class Chat extends Base {
     /** Title, and the chat's fixed settings as one grey line. */
     private void showChat(JSONObject c) {
         if (c == null) return;
+        shown = c;
         String t = c.optString("title");
         barTitle.setText(t.isEmpty() ? "New chat" : t);
         JSONObject st = Hub.states.get(hub.id);
@@ -216,7 +223,9 @@ public class Chat extends Base {
         // A chat that runs on another PC of the mesh: that PC's name.
         String home = c.optString("home_name", "");
         if (st != null && !c.optString("home", "").isEmpty() && !c.optString("home").equals(st.optString("hub_id"))) dev = home;
-        sub(dev.isEmpty() ? acc : dev + " · " + acc, Ui.G700);
+        String line = dev.isEmpty() ? acc : dev + " · " + acc;
+        // The desktop header's usage, dim, after the settings (a tap on the line shows its split).
+        sub(usageLabel.isEmpty() ? line : line + " · " + usageLabel, Ui.G700);
         boolean ro = c.has("writable") && !c.optBoolean("writable", true);
         offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
@@ -324,6 +333,10 @@ public class Chat extends Base {
         if (r.has("typing")) typingLine = Sidebar.typing(r, you());
         if (r.has("running")) running = r.optBoolean("running");
         bars = r.optJSONObject("status");
+        JSONObject u = r.optJSONObject("usage");
+        String label = u == null ? "" : u.optString("label");
+        usageDetail = u == null ? "" : u.optString("detail");
+        if (!label.equals(usageLabel)) { usageLabel = label; showChat(shown); }
         drawBars();
         if (atBottom) toEnd();
     }
@@ -523,6 +536,13 @@ public class Chat extends Base {
             name.setMaxWidth(Ui.dp(120));
             row.addView(name, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
             row.addView(Ui.subtitle(Ui.text(this, "  ·  " + r.optString("doing"), 14, Ui.G700)), Ui.weight());
+            // Its tokens and cost so far, before the time (agentstrip.rs).
+            String usage = r.optString("usage");
+            if (!usage.isEmpty()) {
+                TextView u = Ui.text(this, usage + "  ·", 12, Ui.G700);
+                u.setTypeface(Ui.mono);
+                row.addView(u, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            }
             TextView time = Ui.text(this, "", 12, Ui.G700);
             time.setTypeface(Ui.mono);
             time.setTag(r.optLong("since_ms"));

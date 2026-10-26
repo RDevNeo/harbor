@@ -21,7 +21,8 @@ pub enum Event {
     ThinkingFinal(Option<String>),
     /// Insert or update a tool call by id.
     Tool { id: String, name: String, summary: String, input: String, result: Option<String>, is_error: bool },
-    Result { cost_usd: Option<f64>, duration_ms: u64, turns: u64, input_tokens: u64, output_tokens: u64 },
+    /// `cached`: of the input tokens, those read from or written to the prompt cache.
+    Result { cost_usd: Option<f64>, duration_ms: u64, turns: u64, input_tokens: u64, output_tokens: u64, cached: u64 },
     Error(String),
     Stderr(String),
     Exited { ok: bool },
@@ -767,6 +768,7 @@ fn parse_claude(v: &Value) -> Vec<Event> {
                     + u["cache_read_input_tokens"].as_u64().unwrap_or(0)
                     + u["cache_creation_input_tokens"].as_u64().unwrap_or(0),
                 output_tokens: u["output_tokens"].as_u64().unwrap_or(0),
+                cached: u["cache_read_input_tokens"].as_u64().unwrap_or(0) + u["cache_creation_input_tokens"].as_u64().unwrap_or(0),
             });
             e
         }
@@ -846,6 +848,8 @@ fn parse_codex(v: &Value) -> Vec<Event> {
                 turns: 1,
                 input_tokens: u["input_tokens"].as_u64().unwrap_or(0),
                 output_tokens: u["output_tokens"].as_u64().unwrap_or(0),
+                // Codex counts its cached input inside input_tokens.
+                cached: u["cached_input_tokens"].as_u64().unwrap_or(0),
             }]
         }
         "turn.failed" => vec![Event::Error(s(&v["error"]["message"]))],
@@ -910,6 +914,7 @@ fn parse_cursor(v: &Value) -> Vec<Event> {
                 turns: 1,
                 input_tokens: u["inputTokens"].as_u64().unwrap_or(0) + u["cacheReadTokens"].as_u64().unwrap_or(0),
                 output_tokens: u["outputTokens"].as_u64().unwrap_or(0),
+                cached: u["cacheReadTokens"].as_u64().unwrap_or(0),
             });
             e
         }
@@ -951,6 +956,7 @@ fn parse_gemini(v: &Value) -> Vec<Event> {
                 turns: 1,
                 input_tokens: st["input_tokens"].as_u64().unwrap_or(0),
                 output_tokens: st["output_tokens"].as_u64().unwrap_or(0),
+                cached: st["cached"].as_u64().unwrap_or(0),
             });
             e
         }
@@ -982,7 +988,7 @@ fn parse_muse(v: &Value, st: &mut ParseState) -> Vec<Event> {
             let (i, o) = p["models"].as_array().into_iter().flatten().fold((0, 0), |(i, o), m| {
                 (i + m["input_tokens"].as_u64().unwrap_or(0), o + m["output_tokens"].as_u64().unwrap_or(0))
             });
-            e.push(Event::Result { cost_usd: None, duration_ms: 0, turns: p["calls"].as_u64().unwrap_or(1), input_tokens: i, output_tokens: o });
+            e.push(Event::Result { cost_usd: None, duration_ms: 0, turns: p["calls"].as_u64().unwrap_or(1), input_tokens: i, output_tokens: o, cached: 0 });
         }
         t if t.starts_with("tool.") || t.contains(".tool.") => {
             let id = p["call_id"].as_str().or(p["tool_call_id"].as_str()).or(p["id"].as_str()).unwrap_or("").to_string();
@@ -1035,6 +1041,7 @@ fn parse_opencode(v: &Value, st: &mut ParseState) -> Vec<Event> {
                 turns: 1,
                 input_tokens: t["input"].as_u64().unwrap_or(0) + t["cache"]["read"].as_u64().unwrap_or(0),
                 output_tokens: t["output"].as_u64().unwrap_or(0),
+                cached: t["cache"]["read"].as_u64().unwrap_or(0),
             });
         }
         "error" => e.push(Event::Error(

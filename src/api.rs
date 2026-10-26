@@ -2260,6 +2260,8 @@ impl App {
                 Some(c) => ok(self.api_tags(c, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx)),
                 None => err(404, "no such chat"),
             },
+            // Settings › Usage's breakdown (cost.rs).
+            ("GET", ["v1", "usage"]) => ok(self.api_usage(ctx)),
             // The command palette (palette.rs); `chat` is the one the phone has open.
             ("GET", ["v1", "palette"]) => {
                 let chat = call.query("chat").and_then(|c| self.ref_id(c));
@@ -2708,6 +2710,8 @@ impl App {
             "queued": self.queued_count(chat),
             "typing": self.typing_json(chat),
             "status": self.status_json(chat),
+            // Its tokens and cost so far (cost.rs), for the header; optional.
+            "usage": self.usage_json(chat),
             "items": out,
         })
     }
@@ -2762,6 +2766,7 @@ impl App {
                     "paused": self.paused(c.id).map(|p| p.at.map(crate::limits::when).unwrap_or_else(|| "usage limit".into())),
                     "settled": self.agent_settled(ctx, c),
                     "updated_ms": c.updated * 1000,
+                    "usage": Some(self.chat_usage_known(c.id)).filter(|u| !u.is_empty()).map(|u| u.compact()),
                 })
             })
             .collect();
@@ -3471,8 +3476,8 @@ mod tests {
         assert!(v["input"].as_str().unwrap().len() < CLIP + 100);
         let v = one(Item::Text { text: "# H".into(), at: 0 });
         assert_eq!((v["markdown"].as_str(), v["blocks"][0]["type"].as_str()), (Some("# H"), Some("heading")));
-        let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, at: 0, account: String::new(), model: String::new() });
-        assert_eq!((v["kind"].as_str(), v["text"].as_str()), (Some("footer"), Some("75.0s · 0k in · 0 out")));
+        let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() });
+        assert_eq!((v["kind"].as_str(), v["text"].as_str()), (Some("footer"), Some("75.0s · 0 in · 0 out")));
     }
 
     /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,
@@ -3502,7 +3507,7 @@ mod tests {
         }
         let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
         assert_eq!(shown, ["user", "message", "tool", "text", "footer", "notice", "error"]);
-        assert_eq!(phone[9]["text"], "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634");
+        assert_eq!(phone[9]["text"], "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96");
         assert_eq!(phone[8]["forks_after"], json!([42]));
     }
 }

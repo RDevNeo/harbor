@@ -18,6 +18,29 @@ pub fn section(ui: &mut Ui, title: &str) {
     ui.add_space(6.0);
 }
 
+/// Usage rows in a card: a name, then its tokens and cost, dim, with the whole split on hover.
+fn usage_rows(ui: &mut Ui, rows: Vec<(String, crate::cost::Usage)>) {
+    w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        if rows.is_empty() {
+            Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No turns yet.", "label-13"));
+        }
+        for (i, (name, u)) in rows.iter().enumerate() {
+            if i > 0 {
+                w::separator(ui);
+            }
+            Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    w::text(ui, name, "strong-14");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        w::subtle(ui, u.compact(), "label-13-mono").on_hover_text(u.detail());
+                    });
+                });
+            });
+        }
+    });
+}
+
 /// A settings card: rows split by `w::separator`, flush to its edges.
 pub fn rows(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
@@ -27,27 +50,38 @@ pub fn rows(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     });
 }
 
-/// What Settings › Usage shows: per account (turns, tokens in, out, cost) and tokens per day.
+/// What Settings › Usage shows: per account (turns, tokens in, out, cost), tokens per day, and
+/// per project, per day and per chat (cost.rs's Usage; the agent cards read the last).
 #[derive(Clone, Default, Debug, PartialEq)]
 pub struct Totals {
     pub by_account: BTreeMap<String, (u64, u64, u64, f64)>,
     pub by_day: BTreeMap<i64, u64>,
+    /// The last 14 days.
+    pub days: BTreeMap<i64, crate::cost::Usage>,
+    /// By project name ("" for chats without one).
+    pub by_project: BTreeMap<String, crate::cost::Usage>,
+    pub by_chat: HashMap<i64, crate::cost::Usage>,
 }
 
-/// Sums turn results; `accounts` is each chat's account, for results saved without one.
-pub fn sum_results(results: Vec<(i64, Item)>, accounts: &HashMap<i64, String>, today: i64) -> Totals {
+/// Sums turn results; `chats` is each chat's (account, project name): the account for results
+/// saved without one.
+pub fn sum_results(results: Vec<(i64, Item)>, chats: &HashMap<i64, (String, String)>, today: i64) -> Totals {
     let mut t = Totals::default();
     for (chat, it) in results {
-        if let Item::Result { input_tokens, output_tokens, cost_usd, at, account, .. } = it {
-            let a = if account.is_empty() { accounts.get(&chat).cloned().unwrap_or_default() } else { account };
+        if let Item::Result { input_tokens, output_tokens, cost_usd, at, account, .. } = &it {
+            let (acc, project) = chats.get(&chat).cloned().unwrap_or_default();
+            let a = if account.is_empty() { acc } else { account.clone() };
             let e = t.by_account.entry(a).or_default();
             e.0 += 1;
             e.1 += input_tokens;
             e.2 += output_tokens;
             e.3 += cost_usd;
-            if at > 0 && today - at / 86400 < 14 {
+            if *at > 0 && today - at / 86400 < 14 {
                 *t.by_day.entry(at / 86400).or_default() += input_tokens + output_tokens;
+                t.days.entry(at / 86400).or_default().add(&it);
             }
+            t.by_project.entry(project).or_default().add(&it);
+            t.by_chat.entry(chat).or_default().add(&it);
         }
     }
     t
@@ -64,7 +98,12 @@ pub struct UsageTotals {
 }
 
 impl UsageTotals {
-    fn get(&mut self, ctx: &egui::Context, key: (usize, i64, i64), accounts: HashMap<i64, String>, today: i64) -> &Totals {
+    /// The totals as last summed (without asking again).
+    pub fn last(&self) -> &Totals {
+        &self.totals
+    }
+
+    fn get(&mut self, ctx: &egui::Context, key: (usize, i64, i64), accounts: HashMap<i64, (String, String)>, today: i64) -> &Totals {
         if let Some(t) = self.done.lock().unwrap_or_else(|e| e.into_inner()).take() {
             self.totals = t;
             self.running = false;
@@ -888,10 +927,7 @@ impl App {
         let t = self.theme.t;
         // Totals from every chat's result records, summed on a thread (see `UsageTotals`).
         let today = store::now() / 86400;
-        // A minute's step too, for results saved after the turn's chat update.
-        let key = (self.chats.len(), self.chats.iter().map(|c| c.updated).max().unwrap_or(0), store::now() / 60);
-        let accounts: HashMap<i64, String> = self.chats.iter().map(|c| (c.id, c.account.clone())).collect();
-        let Totals { by_account, by_day } = self.usage_totals.get(ui.ctx(), key, accounts, today).clone();
+        let Totals { by_account, by_day, days, by_project, .. } = self.usage_now(ui.ctx()).clone();
         section(ui, "Accounts");
         w::subtle(ui, "Drag the marker on a bar to cap how much of that limit Harbor uses. At the cap, Harbor treats the account as limited: threads wait for the reset or move to another account.", "label-13");
         ui.add_space(4.0);
@@ -920,6 +956,16 @@ impl App {
             }
             w::subtle(ui, "Tokens (in + out) per day across all providers.", "label-12");
         });
+        section(ui, "By project");
+        let mut projects: Vec<(String, crate::cost::Usage)> = by_project.into_iter().map(|(p, u)| (if p.is_empty() { "No project".to_string() } else { p }, u)).collect();
+        projects.sort_by(|a, b| b.1.cost.total_cmp(&a.1.cost).then(b.1.tokens().cmp(&a.1.tokens())));
+        usage_rows(ui, projects);
+        section(ui, "By day");
+        usage_rows(ui, (0..14).filter_map(|i| {
+            let d = today - i;
+            let name = match i { 0 => "Today".to_string(), 1 => "Yesterday".to_string(), _ => crate::cost::day_label(d) };
+            days.get(&d).map(|u| (name, *u))
+        }).collect());
         section(ui, "By account");
         w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -940,15 +986,25 @@ impl App {
                         ic::account_mark(ui.painter(), r, kind, &badge, &t);
                         w::text(ui, name, "strong-14");
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if *cost > 0.0 {
-                                w::subtle(ui, format!("${cost:.2}"), "label-13-mono");
-                            }
-                            w::subtle(ui, format!("{}k in · {}k out · {turns} turns", tin / 1000, tout / 1000), "label-13-mono");
+                            let u = crate::cost::Usage { turns: *turns, input: *tin, output: *tout, cached: 0, cost: *cost };
+                            w::subtle(ui, u.compact(), "label-13-mono").on_hover_text(u.detail());
                         });
                     });
                 });
             }
         });
+    }
+
+    /// The usage totals (on a thread from the store; again when a turn ends, a chat goes or a
+    /// minute passes): the Usage page's, and the agent cards' and the phone's per chat.
+    pub fn usage_now(&mut self, ctx: &egui::Context) -> &Totals {
+        let today = store::now() / 86400;
+        // A minute's step too, for results saved after the turn's chat update.
+        let key = (self.chats.len(), self.chats.iter().map(|c| c.updated).max().unwrap_or(0), store::now() / 60);
+        let names: HashMap<i64, String> = self.repos.iter().map(|r| (r.id, r.name.clone())).collect();
+        let chats: HashMap<i64, (String, String)> =
+            self.chats.iter().map(|c| (c.id, (c.account.clone(), c.repo_id.and_then(|r| names.get(&r).cloned()).unwrap_or_default()))).collect();
+        self.usage_totals.get(ctx, key, chats, today)
     }
 
     // ------------------------------------------------------------ dialogs
@@ -1100,25 +1156,29 @@ mod tests {
     use super::*;
 
     fn result(account: &str, tin: u64, tout: u64, at: i64) -> Item {
-        Item::Result { cost_usd: 0.5, duration_ms: 0, turns: 1, input_tokens: tin, output_tokens: tout, at, account: account.into(), model: String::new() }
+        Item::Result { cost_usd: 0.5, duration_ms: 0, turns: 1, input_tokens: tin, output_tokens: tout, cached: 0, at, account: account.into(), model: String::new() }
     }
 
     #[test]
     fn usage_sums_results_per_account_and_day() {
         let today = 20_000;
-        let accounts: HashMap<i64, String> = [(1, "claude".to_string()), (2, "codex".to_string())].into();
+        let chats: HashMap<i64, (String, String)> = [(1, ("claude".to_string(), "harbor".to_string())), (2, ("codex".to_string(), String::new()))].into();
         let results = vec![
             (1, result("", 1000, 10, today * 86400)),
             (1, result("claude2", 2000, 20, today * 86400)),
             (2, result("", 3000, 30, (today - 20) * 86400)),
             (2, Item::Error { text: "x".into() }),
         ];
-        let t = sum_results(results, &accounts, today);
+        let t = sum_results(results, &chats, today);
         assert_eq!(t.by_account["claude"], (1, 1000, 10, 0.5));
         assert_eq!(t.by_account["claude2"], (1, 2000, 20, 0.5));
         assert_eq!(t.by_account["codex"], (1, 3000, 30, 0.5));
         // Older than 14 days: in the account totals, not in the chart.
         assert_eq!(t.by_day, [(today, 3030)].into());
+        // By day (with cost), project and chat.
+        assert_eq!((t.days[&today].turns, t.days[&today].tokens()), (2, 3030));
+        assert_eq!((t.by_project["harbor"].turns, t.by_project[""].input), (2, 3000));
+        assert_eq!((t.by_chat[&1].output, t.by_chat[&2].turns), (30, 1));
     }
 
     #[test]

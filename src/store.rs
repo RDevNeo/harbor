@@ -157,8 +157,12 @@ pub enum Item {
         cost_usd: f64,
         duration_ms: u64,
         turns: u64,
+        /// Cached ones included.
         input_tokens: u64,
         output_tokens: u64,
+        /// Of the input tokens, those read from or written to the prompt cache (0 before 0.39).
+        #[serde(default)]
+        cached: u64,
         #[serde(default)]
         at: i64,
         #[serde(default)]

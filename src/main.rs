@@ -56,6 +56,7 @@ mod sidebar;
 mod single;
 mod slash;
 mod tags;
+mod cost;
 mod palette;
 mod store;
 mod surface;

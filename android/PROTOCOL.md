@@ -336,8 +336,17 @@ refetch everything.
 
 ```json
 {"rev": 1761200000200, "count": 31, "running": true, "queued": 1, "typing": [ … ],
- "status": { … }, "items": [ … ]}
+ "status": { … }, "usage": { … }, "items": [ … ]}
 ```
+
+`usage` (optional, since 0.39; null before the chat's first turn ends): its tokens and cost so far,
+as the desktop's header shows them dim after the chat's settings: `label` ("12.4k tok · $0.18"; a
+lead's counts its agents' turns too), `detail` (the header's hover: "12k in (8k cached) · 500 out ·
+$0.18 · 2 turns", and for a lead "With its agents: …" and "This chat alone: …" on two lines),
+`chat` and `team` (null for other chats) with the numbers: `{turns, input, output, cached, cost,
+label, detail}`. `input` counts the cached tokens too; `cost` is the provider's own estimate in
+USD (Claude Code's is the API-equivalent price, also for subscription accounts), 0 when it reports
+none (Codex, Gemini: show tokens only).
 
 The chat **exactly as the desktop draws it**: `items` are the desktop's own cards (one
 projection, `src/view.rs`, that `chat.rs` draws and this call sends), so a phone renders them
@@ -356,7 +365,7 @@ Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the
 | `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable` | `markdown`, `blocks` (below), `images`, `at`, `forkable` |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
-| `footer` | the turn's line, monospace and subtle | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634"), `at` |
+| `footer` | the turn's line, monospace and subtle | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
 | `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
@@ -381,13 +390,14 @@ the desktop shows nothing:
   strip shows the agents and holds Stop all.
 - `limit: {text, can_cancel}`: the usage-limit line (clock icon, `text`), with **Continue now**
   (`POST /v1/chats/{id}/continue`) and, when `can_cancel`, **Cancel** (`POST /v1/chats/{id}/cancel_limit`).
-- `agents: {title, folded, header, rows: [{id, name, doing, task, model, logo, badge, since_ms}]}` (optional,
+- `agents: {title, folded, header, rows: [{id, name, doing, task, model, logo, badge, since_ms, usage}]}` (optional,
   null or missing without running sub-agents; older hubs never send it): the live strip over a
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
   sub-agent: its account mark (the provider logo `logo`, a file in the APK's `assets/logos/`,
   48×48 RGBA when 9216 bytes, else an alpha mask in the text colour; `badge` in its corner),
   `name` in semibold, "  ·  `doing`" ("running tests", "editing src/chat.rs") and the time since
-  `since_ms` on the right ("40s", "2m", "1h 5m"). Tapping a row opens that agent's chat
+  `since_ms` on the right ("40s", "2m", "1h 5m"), after `usage` and "  ·  " when it isn't empty
+  (its tokens and cost so far, "12.4k tok · $0.18"; since 0.39). Tapping a row opens that agent's chat
   (`id`). When `folded` (three or more agents) a header row comes first: the agents' logos
   overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
   only once it is tapped open (a per-screen choice). `header` (default `folded`): draw that
@@ -606,7 +616,7 @@ project's webhooks. For a sub-agent, its lead's team. Read-only.
 {"lead": 12, "project_id": 1, "home": "",
  "agents": [{"id": 15, "name": "worker", "title": "Fix the parser", "account": "Claude · AB",
              "model": "Opus 5.5", "running": true, "started_ms": 1761200000000, "queued": 0,
-             "paused": null, "settled": false, "updated_ms": 1761200000000}],
+             "paused": null, "settled": false, "updated_ms": 1761200000000, "usage": "12.4k tok · $0.18"}],
  "processes": [{"id": 3, "name": "dev", "cmd": "npm run dev", "url": "http://localhost:5173",
                 "started_ms": 1761200000000}],
  "wakeups": [{"id": 4, "at_ms": 1761203600000, "reason": "Check the deploy"}],
@@ -614,6 +624,8 @@ project's webhooks. For a sub-agent, its lead's team. Read-only.
                "public": true, "url": "https://…/hooks/…"}]}
 ```
 
+- `agents[].usage` (since 0.39; null before its first turn ends): its tokens and cost so far, shown
+  after the model like the desktop's agent card.
 - `agents`: working ones first, then the most recently active. `started_ms` is null unless
   `running`; `paused` names when a usage limit lets it go on ("14:00", "usage limit") or is null;
   `settled` agents are the desktop's folded "Settled" group.
@@ -724,6 +736,14 @@ desktop's current one). The answers are those of the chat calls. Only Harbor's `
 `plan` and `default` commands are listed (no chat to fork, settle or clear), and all four are the
 screen's own pickers: `plan` sets the Permission pick to `plan`, `default` back to what it was.
 Ask the PC the screen talks to; another PC's projects aren't its own.
+### `GET /v1/usage`
+
+Settings › Usage's breakdown (since 0.39; older PCs answer `404`): `{"projects": [row], "days":
+[row], "accounts": [row]}`, each `row` `{"name", "label", "detail", "usage": {turns, input, output,
+cached, cost, label, detail}}` (as in `usage` of the items call). `projects` costliest first ("No
+project" for chats without one); `days` the last 14 that had turns, newest first ("Today",
+"Yesterday", "Mon 24 Oct"); `accounts` by account name. All from every chat's turn results.
+
 ### `GET /v1/palette?q=&chat=`
 
 The desktop's command palette (Ctrl+K, `src/palette.rs`, since 0.35; older PCs answer `404`: say

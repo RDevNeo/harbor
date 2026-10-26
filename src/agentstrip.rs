@@ -33,6 +33,8 @@ pub struct Row {
     pub task: String,
     pub doing: String,
     pub secs: u64,
+    /// Its tokens and cost so far ("12.4k tok · $0.18"), "" before its first turn ends.
+    pub usage: String,
 }
 
 /// "3 agents working", "1 agent working  ·  2 queued".
@@ -224,6 +226,7 @@ impl App {
                     task: c.title,
                     name: c.name,
                     secs,
+                    usage: Some(crate::cost::of_items(items)).filter(|u| !u.is_empty()).map(|u| u.compact()).unwrap_or_default(),
                 }
             })
             .collect()
@@ -248,7 +251,7 @@ impl App {
                 json!({
                     "id": r.id, "name": r.name, "doing": r.doing, "task": r.task, "model": r.model,
                     "logo": file, "badge": r.badge,
-                    "since_ms": now_ms - r.secs as i64 * 1000,
+                    "since_ms": now_ms - r.secs as i64 * 1000, "usage": r.usage,
                 })
             })
             .collect();
@@ -350,7 +353,8 @@ impl App {
         if let Some(k) = row.kind {
             ic::account_mark(p, Rect::from_center_size(pos2(r.left() + 16.0, cy), Vec2::splat(18.0)), k, &row.badge, &t);
         }
-        let time = w::truncated(ui, &short_elapsed(row.secs), FontId::monospace(12.0), t.subtle(), 80.0);
+        let time = if row.usage.is_empty() { short_elapsed(row.secs) } else { format!("{}  ·  {}", row.usage, short_elapsed(row.secs)) };
+        let time = w::truncated(ui, &time, FontId::monospace(12.0), t.subtle(), 200.0);
         let right = r.right() - 10.0 - time.size().x;
         let x = r.left() + 34.0;
         let name = w::truncated(ui, &row.name, FontId::new(13.0, crate::theme::medium()), t.fg(), ((right - x) * 0.4).max(30.0));

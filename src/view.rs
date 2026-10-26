@@ -23,7 +23,7 @@ pub enum Card<'a> {
     Text { text: &'a str, at: i64, forkable: bool },
     Thinking { text: &'a str },
     Tool { label: String, summary: &'a str, input: &'a str, result: Option<&'a str>, is_error: bool },
-    /// The line under a finished turn: "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634".
+    /// The line under a finished turn: "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96".
     Footer { text: String, at: i64 },
     /// The top of a fork: back to the reply it came from.
     ForkedFrom { chat: i64, seq: usize },
@@ -109,9 +109,12 @@ pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
 
 /// The footer line of a turn; `who` is "Claude · AB · Opus 5.5 · " for its account and model
 /// ("" when the account is gone).
-pub fn footer(who: &str, cost_usd: f64, duration_ms: u64, input_tokens: u64, output_tokens: u64) -> String {
-    let cost = if cost_usd > 0.0 { format!(" · ${cost_usd:.4}") } else { String::new() };
-    format!("{who}{:.1}s · {}k in · {} out{cost}", duration_ms as f64 / 1000.0, input_tokens / 1000, output_tokens)
+pub fn footer(who: &str, cost_usd: f64, duration_ms: u64, input_tokens: u64, output_tokens: u64, cached: u64) -> String {
+    use crate::cost::{money, short};
+    let cost = money(cost_usd);
+    let cost = if cost.is_empty() { cost } else { format!(" · {cost}") };
+    let cached = if cached > 0 { format!(" ({} cached)", short(cached)) } else { String::new() };
+    format!("{who}{:.1}s · {} in{cached} · {} out{cost}", duration_ms as f64 / 1000.0, short(input_tokens), short(output_tokens))
 }
 
 /// The transcript as cards. `who(account, model)` names a turn's account and model for its
@@ -143,8 +146,8 @@ fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) 
         Item::Text { text, at } => Card::Text { text, at: *at, forkable },
         Item::Thinking { text } => Card::Thinking { text },
         Item::Tool { name, summary, input, result, is_error, .. } => Card::Tool { label: tool_label(name), summary, input, result: result.as_deref(), is_error: *is_error },
-        Item::Result { cost_usd, duration_ms, input_tokens, output_tokens, account, model, at, .. } => {
-            Card::Footer { text: footer(&who(account, model), *cost_usd, *duration_ms, *input_tokens, *output_tokens), at: *at }
+        Item::Result { cost_usd, duration_ms, input_tokens, output_tokens, cached, account, model, at, .. } => {
+            Card::Footer { text: footer(&who(account, model), *cost_usd, *duration_ms, *input_tokens, *output_tokens, *cached), at: *at }
         }
         Item::Notice { icon, detail, .. } if icon == "fork" && detail.starts_with("harbor:chat/") => {
             let (c, n) = detail["harbor:chat/".len()..].split_once('/').unwrap_or_default();
@@ -186,7 +189,7 @@ pub fn images(card: &Card, find: &mut dyn FnMut(&str) -> Vec<String>) -> Vec<Str
 #[cfg(test)]
 pub fn fixture() -> Vec<Item> {
     let tool = |name: &str, result: Option<&str>| Item::Tool { id: name.into(), name: name.into(), summary: "s".into(), input: "{}".into(), result: result.map(String::from), is_error: false };
-    let result = || Item::Result { cost_usd: 3.96342, duration_ms: 4300, turns: 1, input_tokens: 189_400, output_tokens: 304, at: 9, account: "claude".into(), model: "claude-opus-5-5".into() };
+    let result = || Item::Result { cost_usd: 3.96342, duration_ms: 4300, turns: 1, input_tokens: 189_400, output_tokens: 304, cached: 180_000, at: 9, account: "claude".into(), model: "claude-opus-5-5".into() };
     vec![
         Item::User { text: "build it".into(), files: vec!["/tmp/shot.png".into(), "/tmp/notes.txt".into()], at: 1, mentions: vec![], sender: String::new() },
         Item::Thinking { text: "hmm".into() },
@@ -238,7 +241,7 @@ mod tests {
         let cards = project(&items, true, &[(8, 42)], &who);
         let kinds: Vec<&str> = cards.iter().map(|s| kind(&s.card)).collect();
         assert_eq!(kinds, ["user", "hidden", "hidden", "hidden", "hidden", "message", "hidden", "tool", "text", "footer", "notice", "error"]);
-        assert_eq!(cards[9].card, Card::Footer { text: "Claude · AB · Opus 5.5 · 4.3s · 189k in · 304 out · $3.9634".into(), at: 9 });
+        assert_eq!(cards[9].card, Card::Footer { text: "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96".into(), at: 9 });
         assert_eq!(cards[8].forks_after, [42]);
         assert!(matches!(cards[8].card, Card::Text { forkable: true, .. }));
         let Card::User { files, images, .. } = &cards[0].card else { panic!() };
@@ -264,6 +267,7 @@ mod tests {
         assert_eq!(tool_label("mcp__harbor__spawn_agent"), "Spawn agent");
         assert_eq!(tool_label("mcp__github__get_pr"), "github · get_pr");
         assert_eq!(tool_label("Bash"), "Bash");
-        assert_eq!(footer("", 0.0, 1500, 999, 3), "1.5s · 0k in · 3 out");
+        assert_eq!(footer("", 0.0, 1500, 999, 3, 0), "1.5s · 999 in · 3 out");
+        assert_eq!(footer("", 0.004, 1500, 12_400, 3, 12_000), "1.5s · 12.4k in (12k cached) · 3 out · <$0.01");
     }
 }

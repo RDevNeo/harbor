@@ -1167,7 +1167,7 @@ impl App {
                 }
                 tr.pending_text = None;
             }
-            Event::Result { cost_usd, duration_ms, turns, input_tokens, output_tokens } => {
+            Event::Result { cost_usd, duration_ms, turns, input_tokens, output_tokens, cached } => {
                 tr.got_result = true;
                 let duration_ms =
                     if duration_ms == 0 { started_at.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0) } else { duration_ms };
@@ -1177,6 +1177,7 @@ impl App {
                     turns,
                     input_tokens,
                     output_tokens,
+                    cached,
                     at: store::now(),
                     account,
                     model,

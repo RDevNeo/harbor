@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Tokens and cost per turn, thread and agent, on the desktop and the phone. The turn footer now
+  splits out cached input and rounds the cost ("189k in (180k cached) · 304 out · $3.96"); the chat's
+  header shows its total dim ("12.4k tok · $0.18", a lead's with its agents', the split on hover or
+  tap); agent cards in the team panel and rows of the agent strip show each agent's. Settings ›
+  Usage adds By project and By day (tokens and cost); the phone has the same under Settings ›
+  Usage. The cost is the provider's own estimate (Claude Code reports the API-equivalent price,
+  also for subscription accounts); Codex and Gemini report tokens only.
+
 ## [0.38.0] - 2026-10-26
 
 ### Added

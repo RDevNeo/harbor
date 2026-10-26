@@ -66,6 +66,8 @@ public class Settings extends Base {
         app.addView(updateRow, Ui.fill());
         app.addView(Ui.gap(this));
         app.addView(Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this) + " (" + myCode(this) + ")", Ui.FG, null), Ui.fill());
+        app.addView(Ui.gap(this));
+        app.addView(Ui.cardRow(this, Ui.I_GAUGE, "Usage", "Tokens and cost by project and day", Ui.FG, v -> usage()), Ui.fill());
 
         LinearLayout here = card(col);
         here.addView(Ui.cardRow(this, Ui.I_GLOBE, "Address", hub.host + ":" + hub.port, Ui.FG, null), Ui.fill());
@@ -124,6 +126,35 @@ public class Settings extends Base {
     static String shortFp(String fp) {
         if (fp == null || fp.length() < 16) return "?";
         return fp.substring(0, 4) + " " + fp.substring(4, 8) + " " + fp.substring(8, 12) + " " + fp.substring(12, 16);
+    }
+
+    /** The desktop's Settings › Usage breakdown (GET /v1/usage): by project, by day, by account.
+     *  A tap on a row shows its whole split. */
+    private void usage() {
+        Ui.bg(this, () -> hub.get("/v1/usage"), r -> {
+            Sheet s = new Sheet(this, "Usage");
+            String[][] parts = {{"projects", "By project"}, {"days", "By day"}, {"accounts", "By account"}};
+            boolean any = false;
+            for (String[] p : parts) {
+                org.json.JSONArray rows = r.optJSONArray(p[0]);
+                if (rows == null || rows.length() == 0) continue;
+                any = true;
+                TextView h = Ui.text(this, p[1], 13, Ui.G700);
+                h.setPadding(Ui.dp(6), Ui.dp(4), Ui.dp(6), Ui.dp(6));
+                s.body.addView(h);
+                LinearLayout c = s.card();
+                for (int i = 0; i < rows.length(); i++) {
+                    org.json.JSONObject o = rows.optJSONObject(i);
+                    if (o == null) continue;
+                    if (c.getChildCount() > 0) c.addView(Ui.gap(this));
+                    String name = o.optString("name"), detail = o.optString("detail");
+                    c.addView(Ui.cardRow(this, null, name, o.optString("label"), Ui.FG,
+                            v -> Ui.dialog(this).setTitle(name).setMessage(detail).setPositiveButton("Close", null).show()), Ui.fill());
+                }
+            }
+            if (!any) s.body.addView(Ui.text(this, "No turns yet.", 14, Ui.G700));
+            s.show();
+        });
     }
 
     private LinearLayout card(LinearLayout col) {

@@ -351,8 +351,25 @@ impl App {
         let status = w::truncated(ui, &status, FontId::proportional(12.0), col, (rect.width() * 0.45).max(40.0));
         let text_w = rect.width() - 46.0;
         let name = w::truncated(ui, &c.name, FontId::new(14.0, crate::theme::medium()), t.fg(), text_w - status.size().x.max(settle_w - 6.0) - 8.0);
-        let model = w::truncated(ui, &model, FontId::monospace(11.5), t.subtle(), text_w);
+        // Its tokens and cost so far, right of the model (cost.rs).
+        let usage = self.chat_usage(ui.ctx(), c.id);
+        let usage = (!usage.is_empty()).then(|| {
+            // Narrow cards: the cost alone (the tokens when there's none), not a clipped line.
+            let full = w::truncated(ui, &usage.compact(), FontId::monospace(11.5), t.subtle(), f32::INFINITY);
+            let g = if full.size().x <= rect.width() * 0.5 {
+                full
+            } else {
+                let short = crate::cost::money(usage.cost);
+                let short = if short.is_empty() { format!("{} tok", crate::cost::short(usage.tokens())) } else { short };
+                w::truncated(ui, &short, FontId::monospace(11.5), t.subtle(), rect.width() * 0.4)
+            };
+            g
+        });
+        let model = w::truncated(ui, &model, FontId::monospace(11.5), t.subtle(), text_w - usage.as_ref().map_or(0.0, |g| g.size().x + 12.0));
         let p = ui.painter();
+        if let Some(g) = &usage {
+            p.galley(pos2(rect.right() - 10.0 - g.size().x, rect.top() + 29.0), g.clone(), t.subtle());
+        }
         p.galley(pos2(rect.left() + 36.0, rect.top() + 10.0), name, t.fg());
         if settle_w == 0.0 {
             p.galley(pos2(rect.right() - 10.0 - status.size().x, rect.top() + 11.0), status, col);
