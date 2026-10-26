@@ -1,28 +1,37 @@
-//! Messages sent while a turn runs wait in a queue, as in Claude Code.
+//! Messages sent while a turn runs steer it: the agent gets them as soon as it can take
+//! them, with no queue for the user to manage.
 //!
-//! A Claude turn keeps its input open: a queued message is written into it at the
-//! next safe point, when a tool call starts (Claude takes it in once that tool is
-//! done) or, if the turn ends first, right after its result (Claude then runs it
-//! as the next turn in the same process). `--replay-user-messages` echoes each one
-//! as Claude takes it in; only then does it join the transcript. The input closes
-//! after a result when nothing is left to deliver. Providers that take no input
-//! mid-turn get the queue, merged, as the next turn once the current one ends.
+//! Claude keeps its input open during a turn, and a message is written into it at once.
+//! Claude Code takes it in at the next tool boundary, as soon as the running tool calls
+//! are done and before it asks the model again ("The user sent a new message while you
+//! were working"), so it changes the rest of the turn. A reply with no tool call left
+//! (plain text to the end) has no such boundary: the message then runs right after the
+//! result as the next turn of the same process. That is still the fastest steer that
+//! loses nothing: interrupting would cut off a reply that's about to end and restart the
+//! CLI. `--replay-user-messages` echoes each message as Claude takes it in; until then it
+//! shows under the transcript, marked "Steering…", and joins the transcript with the
+//! echo. The input closes after a result when nothing is left to deliver; a message sent
+//! after that (the turn is ending) starts the next turn once it has exited.
 //!
-//! Until written, a queued message can be edited or removed. Esc pulls the queue
-//! back into the composer; a stopped turn returns its undelivered messages there
-//! too. Ctrl+Enter interrupts the turn and sends queue and composer as one turn.
+//! The other CLIs Harbor runs (Codex `exec`, Cursor, Gemini, Grok, OpenCode, Meta) take
+//! one prompt per process and have no way in mid-turn, so a message interrupts the turn
+//! (its output so far stays) and resumes the same session with it, telling the agent it
+//! was interrupted to be steered. A turn that already has its result just ends, and the
+//! message starts the next one.
+//!
+//! A stopped turn hands back to the composer what it hadn't taken in yet.
 
 use crate::agent::Event;
 use crate::app::App;
-use crate::icons as ic;
 use crate::mentions::Mention;
 use crate::store::{self, Item};
-use crate::theme::RADIUS_LG;
+use crate::theme::{self, RADIUS_LG};
 use crate::widgets as w;
-use eframe::egui::{self, Align2, CornerRadius, FontId, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
+use eframe::egui::{self, Align, CornerRadius, Frame, Layout, Margin, RichText, Ui, Vec2};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// A message on its way into the running turn.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Queued {
     pub text: String,
@@ -33,7 +42,7 @@ pub struct Queued {
     /// Where it was written, when not on this PC (`Item::User::sender`).
     #[serde(default)]
     pub sender: String,
-    /// The device that wrote it (its typing doesn't hold it back).
+    /// The device that wrote it.
     #[serde(default)]
     pub device: String,
 }
@@ -65,23 +74,65 @@ pub fn sent_from(sender: &str, device: &str, back: bool) -> String {
     }
 }
 
+/// How a message sent while a turn runs reaches the agent.
+#[derive(Debug, PartialEq)]
+pub enum Route {
+    /// Into the running turn's input (Claude).
+    Write,
+    /// The turn is ending: the message starts the next one.
+    Wait,
+    /// The CLI takes nothing mid-turn: stop it and resume the session with the message.
+    Interrupt,
+}
+
+/// `steerable`: the agent reads input mid-turn; `open`: its input still takes messages;
+/// `finished`: the turn has its result already.
+pub fn route(steerable: bool, open: bool, finished: bool) -> Route {
+    match (steerable, open, finished) {
+        (true, true, _) => Route::Write,
+        (true, false, _) | (false, _, true) => Route::Wait,
+        (false, _, false) => Route::Interrupt,
+    }
+}
+
+/// Whether the transcript's last turn has its result (nothing after the last message).
+pub fn finished(items: &[Item]) -> bool {
+    let since = items.iter().rposition(|it| matches!(it, Item::User { .. })).unwrap_or(0);
+    items[since..].iter().any(|it| matches!(it, Item::Result { .. }))
+}
+
+/// The prompt that resumes an interrupted turn: the agent learns why it stopped.
+pub fn steer_prompt(prompt: &str) -> String {
+    format!("[Harbor interrupted your previous turn so the user could steer you with this message. Continue from where you stopped, following it.]\n\n{prompt}")
+}
+
 #[derive(Default)]
 pub struct State {
     chats: HashMap<i64, Vec<Queued>>,
 }
 
 impl App {
-    /// Called by `send` while the chat's turn runs.
-    pub fn enqueue(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<Mention>) {
+    /// Called by `send_to` while the chat's turn runs: the message steers it.
+    pub fn steer(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<Mention>, ctx: &egui::Context) {
         let (sender, device) = (self.sender.clone(), self.sending_device());
-        self.queue.chats.entry(chat_id).or_default().push(Queued { text, files, mentions, written: false, sender, device });
-        // A tool is running: Claude takes it in when that tool is done.
-        if self.tool_running(chat_id) {
-            self.deliver(chat_id);
+        let q = Queued { text, files, mentions, written: false, sender, device };
+        let Some((turn, _)) = self.turns.get(&chat_id) else { return };
+        let done = self.transcripts.get(&chat_id).is_some_and(|t| finished(&t.items));
+        match route(turn.steerable(), turn.input_open(), done) {
+            Route::Write | Route::Wait => {
+                self.queue.chats.entry(chat_id).or_default().push(q);
+                self.deliver(chat_id);
+            }
+            Route::Interrupt => {
+                let mut q = vec![q];
+                // Anything still waiting goes along (from a Harbor before steering).
+                q.splice(0..0, self.queue.chats.remove(&chat_id).unwrap_or_default());
+                self.interrupt(chat_id, q, ctx);
+            }
         }
     }
 
-    /// The queues, for the next process after a reload.
+    /// The messages on their way, for the next process after a reload.
     pub fn queue_snapshot(&self) -> serde_json::Value {
         serde_json::to_value(&self.queue.chats).unwrap_or_default()
     }
@@ -92,19 +143,13 @@ impl App {
         }
     }
 
-/// Takes a chat's waiting messages out of the queue (a phone's Stop hands them back to it).
+    /// Takes a chat's messages that the agent hasn't taken in (a phone's Stop hands them back to it).
     pub fn take_queue(&mut self, chat_id: i64) -> Vec<Queued> {
         self.queue.chats.remove(&chat_id).unwrap_or_default()
     }
 
     pub fn queued(&self, chat_id: i64) -> &[Queued] {
         self.queue.chats.get(&chat_id).map(|q| q.as_slice()).unwrap_or_default()
-    }
-
-    fn tool_running(&self, chat_id: i64) -> bool {
-        let Some(tr) = self.transcripts.get(&chat_id) else { return false };
-        let since = tr.items.iter().rposition(|it| matches!(it, Item::User { .. })).unwrap_or(0);
-        tr.items[since..].iter().any(|it| matches!(it, Item::Tool { result: None, .. }))
     }
 
     /// Writes the waiting messages into the running turn, if it takes input.
@@ -119,7 +164,7 @@ impl App {
         }
     }
 
-    /// Agent events that move the queue. True when the event is consumed here.
+    /// Agent events that move the messages on their way. True when the event is consumed here.
     pub fn queue_event(&mut self, chat_id: i64, ev: &Event) -> bool {
         match ev {
             Event::Tool { result: None, .. } => self.deliver(chat_id),
@@ -166,17 +211,17 @@ impl App {
         false
     }
 
-    /// After a turn's exit: a stopped turn hands its queue back to the composer;
-    /// otherwise what is left goes out as the next turn.
+    /// After a turn's exit: a stopped turn hands back what it hadn't taken in;
+    /// otherwise that goes out as the next turn.
     pub fn queue_exited(&mut self, chat_id: i64, stopped: bool, ctx: &egui::Context) {
         if self.queued(chat_id).is_empty() {
             return;
         }
         if stopped {
-            self.unqueue(chat_id, ctx);
+            self.hand_back(chat_id, ctx);
             return;
         }
-        // A turn the team started meanwhile takes it, or it waits for that one.
+        // A turn the team started meanwhile takes it.
         if self.turns.contains_key(&chat_id) {
             for q in self.queue.chats.get_mut(&chat_id).into_iter().flatten() {
                 q.written = false;
@@ -185,28 +230,21 @@ impl App {
             return;
         }
         let q = self.queue.chats.remove(&chat_id).unwrap_or_default();
-        self.send_queued(chat_id, q, ctx);
+        self.send_queued(chat_id, q, None, ctx);
     }
 
-    /// Once per frame: an idle chat's queue goes out once nobody else is typing in it (a
-    /// message sent while another device was typing waited for that; see `locked_for`).
+    /// Once per frame: messages left for an idle chat (after a reload, say) go out.
     pub fn queue_drain(&mut self, ctx: &egui::Context) {
-        let ready: Vec<i64> = self
-            .queue
-            .chats
-            .iter()
-            .filter(|(id, q)| !q.is_empty() && !self.turns.contains_key(id) && !self.is_foreign(**id))
-            .filter(|(id, q)| !self.locked_for(**id, &q[0].device))
-            .map(|(id, _)| *id)
-            .collect();
+        let ready: Vec<i64> = self.queue.chats.iter().filter(|(id, q)| !q.is_empty() && !self.turns.contains_key(id) && !self.is_foreign(**id)).map(|(id, _)| *id).collect();
         for id in ready {
             let q = self.queue.chats.remove(&id).unwrap_or_default();
-            self.send_queued(id, q, ctx);
+            self.send_queued(id, q, None, ctx);
         }
     }
 
-    /// Starts one turn from queued messages (merged) and puts them in the transcript.
-    fn send_queued(&mut self, chat_id: i64, q: Vec<Queued>, ctx: &egui::Context) {
+    /// Starts one turn from the messages (merged) and puts them in the transcript;
+    /// `wrap` frames the prompt (an interrupted turn says why).
+    fn send_queued(&mut self, chat_id: i64, q: Vec<Queued>, wrap: Option<fn(&str) -> String>, ctx: &egui::Context) {
         if q.is_empty() {
             return;
         }
@@ -226,124 +264,84 @@ impl App {
                 sender: m.sender,
             });
         }
-        self.start_turn(chat_id, prompts.join("\n\n"), files, ctx);
+        let prompt = prompts.join("\n\n");
+        let prompt = match wrap {
+            Some(f) => f(&prompt),
+            None => prompt,
+        };
+        self.start_turn(chat_id, prompt, files, ctx);
     }
 
-    /// Esc: the queue goes back to the composer (the turn keeps running). False when
-    /// nothing was waiting.
-    pub fn unqueue(&mut self, chat_id: i64, ctx: &egui::Context) -> bool {
-        let q = self.queue.chats.remove(&chat_id).unwrap_or_default();
-        if q.is_empty() {
-            return false;
-        }
-        // Already written ones stay with Claude; only a stopped turn returns them.
-        let (keep, back): (Vec<Queued>, Vec<Queued>) = q.into_iter().partition(|m| m.written && self.turns.contains_key(&chat_id));
-        if !keep.is_empty() {
-            self.queue.chats.insert(chat_id, keep);
-        }
+    /// A stopped turn: what it hadn't taken in goes back to the composer.
+    fn hand_back(&mut self, chat_id: i64, ctx: &egui::Context) {
+        let back = self.queue.chats.remove(&chat_id).unwrap_or_default();
         if back.is_empty() {
-            return false;
+            return;
         }
         let text = back.iter().map(|m| m.text.as_str()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
         let files = back.iter().flat_map(|m| m.files.iter().cloned()).collect();
         let mentions = back.into_iter().flat_map(|m| m.mentions).collect();
         self.restore_draft(chat_id, text, files, mentions, ctx);
-        true
     }
 
-    /// Ctrl+Enter: interrupts the turn (its output stays) and sends the queue plus
-    /// the composer as one new turn.
-    pub fn send_now(&mut self, ctx: &egui::Context) {
-        let key = self.key();
-        if !self.turns.contains_key(&key) {
-            self.send(ctx);
-            return;
-        }
-        let mut q = self.queue.chats.remove(&key).unwrap_or_default();
-        let text = self.drafts.remove(&key).map(|s| s.trim().to_string()).unwrap_or_default();
-        let files = self.files.remove(&key).unwrap_or_default();
-        let mentions = self.mentions.drafts.remove(&key).unwrap_or_default();
-        if !text.is_empty() || !files.is_empty() || !mentions.is_empty() {
-            q.push(Queued { text, files, mentions, written: false, sender: String::new(), device: String::new() });
-        }
-        if q.is_empty() {
-            return;
-        }
+    /// Steers a CLI that takes nothing mid-turn: the turn is stopped (its output stays)
+    /// and the same session resumes with the messages.
+    fn interrupt(&mut self, chat_id: i64, q: Vec<Queued>, ctx: &egui::Context) {
         // Killed and waited for, so the next turn resumes a settled session; its exit
         // event is dropped (it would otherwise end the new turn).
-        if let Some((turn, _)) = self.turns.remove(&key) {
+        if let Some((turn, _)) = self.turns.remove(&chat_id) {
             turn.stop_wait();
-            self.undo_swallow(key);
-            if let Some(tr) = self.transcripts.get_mut(&key) {
-                tr.items.push(Item::Error { text: "Interrupted.".into() });
+            self.undo_swallow(chat_id);
+            if let Some(tr) = self.transcripts.get_mut(&chat_id) {
+                tr.items.push(Item::Error { text: "Interrupted to steer.".into() });
                 tr.pending_text = None;
                 tr.pending_thinking = None;
             }
         }
-        self.send_queued(key, q, ctx);
-        self.focus_composer = true;
+        self.send_queued(chat_id, q, Some(steer_prompt), ctx);
     }
 
-    /// The queued messages under the running turn: dimmed bubbles; on hover, edit
-    /// (back to the composer) and remove, until Claude has them.
-    pub fn queued_bubbles(&mut self, ui: &mut Ui, chat_id: i64) {
-        // A copy: the shared queue as its home PC has it (changed there, shown here).
+    /// The messages the agent hasn't taken in yet, under the running turn: the user's
+    /// own bubbles, marked "Steering…" until they join the transcript.
+    pub fn steering_bubbles(&mut self, ui: &mut Ui, chat_id: i64) {
+        // A copy: as its home PC has them.
         let copy = self.mesh.status.get(&chat_id).map(|r| {
             r.status["queue"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|m| Queued {
-                    text: m["text"].as_str().unwrap_or("").into(),
-                    files: m["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str()).map(PathBuf::from).collect(),
-                    mentions: vec![],
-                    written: m["sending"].as_bool().unwrap_or(false),
-                    sender: String::new(),
-                    device: String::new(),
-                })
+                .map(|m| (m["text"].as_str().unwrap_or("").to_string(), m["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str()).map(str::to_string).collect::<Vec<_>>()))
                 .collect::<Vec<_>>()
         });
-        let shared = copy.is_some();
-        let q = copy.unwrap_or_else(|| self.queued(chat_id).to_vec());
-        if q.is_empty() {
-            return;
-        }
+        let q = copy.unwrap_or_else(|| self.queued(chat_id).iter().map(|m| (m.text.clone(), m.files.iter().map(|f| f.to_string_lossy().into_owned()).collect())).collect());
         let t = self.theme.t;
-        let mut action = None;
-        for (i, m) in q.iter().enumerate() {
-            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                let max = (ui.available_width() * 0.75).max(200.0);
-                let label = if m.written { "Sending" } else { "Queued" };
-                let font = FontId::proportional(14.0);
-                let text = if m.text.is_empty() { format!("{} attachment(s)", m.files.len()) } else { m.text.clone() };
-                let galley = ui.painter().layout(text, font, t.fg().gamma_multiply(0.55), max - 24.0);
-                let size = Vec2::new(galley.size().x + 24.0, galley.size().y + 30.0);
-                let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
-                let p = ui.painter();
-                p.rect(rect, CornerRadius::same(RADIUS_LG), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
-                p.text(pos2(rect.left() + 12.0, rect.top() + 7.0), Align2::LEFT_TOP, label, FontId::proportional(11.5), t.subtle());
-                p.galley(pos2(rect.left() + 12.0, rect.top() + 23.0), galley, t.fg());
-                if resp.hovered() && !m.written && !shared {
-                    let mut x = rect.right() - 26.0;
-                    for (icon, tip, act) in [(ic::X, "Remove", 0), (ic::COMPOSE, "Edit", 1)] {
-                        let br = egui::Rect::from_min_size(pos2(x, rect.top() + 3.0), Vec2::splat(22.0));
-                        if w::overlay(ui, br, |ui| w::btn(icon).muted().icon_xs().show(ui)).on_hover_text(tip).clicked() {
-                            action = Some((i, act));
-                        }
-                        x -= 24.0;
+        for (text, files) in q {
+            let avail = ui.available_width();
+            ui.allocate_ui_with_layout(Vec2::new(avail, 0.0), Layout::right_to_left(Align::Min), |ui| {
+                Frame::new().fill(t.gray(100)).corner_radius(CornerRadius::same(RADIUS_LG)).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                    // Hug the text, as the transcript's bubbles do (chat.rs), at most 80%.
+                    let font = ui.style().text_styles.get(&theme::ts("copy-14")).cloned().unwrap_or_default();
+                    let mut need = text.lines().map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), egui::Color32::WHITE).size().x).fold(0.0, f32::max);
+                    if !files.is_empty() {
+                        need = need.max(220.0);
                     }
-                }
+                    ui.set_max_width((need + 2.0).min(avail * 0.8 - 28.0).max(40.0));
+                    ui.vertical(|ui| {
+                        if !text.is_empty() {
+                            ui.add(egui::Label::new(RichText::new(&text).text_style(theme::ts("copy-14"))).wrap());
+                        }
+                        for f in &files {
+                            let name = std::path::Path::new(f).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                            ui.label(RichText::new(format!("{}  {name}", crate::icons::CLIP)).text_style(theme::ts("label-12")).color(t.subtle()));
+                        }
+                    });
+                });
+            });
+            ui.add_space(-4.0);
+            ui.allocate_ui_with_layout(Vec2::new(avail, 0.0), Layout::right_to_left(Align::Min), |ui| {
+                w::subtle(ui, "Steering…", "label-12");
             });
             ui.add_space(6.0);
-        }
-        if let Some((i, act)) = action {
-            let Some(list) = self.queue.chats.get_mut(&chat_id) else { return };
-            if i < list.len() && !list[i].written {
-                let m = list.remove(i);
-                if act == 1 {
-                    self.restore_draft(chat_id, m.text, m.files, m.mentions, ui.ctx());
-                }
-            }
         }
     }
 }
@@ -364,5 +362,36 @@ mod tests {
         assert!(p.starts_with("/review\n\n[The user sent this"), "{p}");
         let q = Queued { text: "hi".into(), ..q };
         assert!(q.prompt("hi").ends_with("not from this PC.]\n\nhi"));
+    }
+
+    #[test]
+    fn a_message_takes_the_fastest_way_in() {
+        // Claude reads its input mid-turn: written at once, whatever the turn is doing.
+        assert_eq!(route(true, true, false), Route::Write);
+        assert_eq!(route(true, true, true), Route::Write);
+        // Its input closed after the result: the turn is ending, the message starts the next.
+        assert_eq!(route(true, false, true), Route::Wait);
+        // The other CLIs: interrupted and resumed with it, unless their turn is done anyway.
+        assert_eq!(route(false, false, false), Route::Interrupt);
+        assert_eq!(route(false, false, true), Route::Wait);
+    }
+
+    #[test]
+    fn finished_is_the_last_turns_result() {
+        let user = |t: &str| Item::User { text: t.into(), files: vec![], at: 0, mentions: vec![], sender: String::new() };
+        let result = || Item::Result { cost_usd: 0.0, duration_ms: 0, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() };
+        let text = || Item::Text { text: "ok".into(), at: 0 };
+        assert!(!finished(&[]));
+        assert!(!finished(&[user("a"), text()]));
+        assert!(finished(&[user("a"), text(), result()]));
+        // A new message after the result: its turn hasn't finished.
+        assert!(!finished(&[user("a"), result(), user("b"), text()]));
+    }
+
+    #[test]
+    fn an_interrupted_agent_hears_why() {
+        let p = steer_prompt("use tabs");
+        assert!(p.starts_with("[Harbor interrupted your previous turn"), "{p}");
+        assert!(p.ends_with("\n\nuse tabs"));
     }
 }

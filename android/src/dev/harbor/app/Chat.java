@@ -443,17 +443,25 @@ public class Chat extends Base {
         if (queue != null) for (int i = 0; i < queue.length(); i++) {
             JSONObject q = queue.optJSONObject(i);
             if (q == null) continue;
+            // Since 0.49 a message sent while the agent works steers it: the user's own bubble,
+            // "Steering…" under it until the agent takes it in. Older hubs queue it.
+            boolean steering = q.optBoolean("steering");
             LinearLayout w = Ui.col(this);
             w.setGravity(Gravity.END);
-            TextView tag = Ui.text(this, q.optBoolean("sending") ? "Sending" : "Queued", 12, Ui.G700);
-            w.addView(tag);
-            TextView t = Ui.text(this, q.optString("text"), 15, Ui.G900);
-            t.setBackground(Ui.round(Ui.G100, Ui.LINE, 18));
-            t.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
-            t.setMaxWidth(maxBubble());
-            w.addView(t, Ui.wrap());
+            if (!steering) w.addView(Ui.text(this, q.optBoolean("sending") ? "Sending" : "Queued", 12, Ui.G700));
+            LinearLayout bubble = Ui.col(this);
+            bubble.setBackground(steering ? Ui.round(Ui.G100, 0, 20) : Ui.round(Ui.G100, Ui.LINE, 18));
+            bubble.setPadding(Ui.dp(steering ? 16 : 14), Ui.dp(steering ? 11 : 8), Ui.dp(steering ? 16 : 14), Ui.dp(steering ? 11 : 8));
+            String text = q.optString("text");
+            if (!text.isEmpty()) {
+                TextView t = Ui.text(this, text, steering ? 16 : 15, steering ? Ui.FG : Ui.G900);
+                t.setMaxWidth(maxBubble());
+                bubble.addView(t);
+            }
             JSONArray f = q.optJSONArray("files");
-            if (f != null) for (int j = 0; j < f.length(); j++) w.addView(Ui.text(this, "📎 " + f.optString(j), 12, Ui.G700));
+            if (f != null) for (int j = 0; j < f.length(); j++) bubble.addView(Ui.text(this, "📎 " + f.optString(j), 13, Ui.G700));
+            w.addView(bubble, Ui.wrap());
+            if (steering) w.addView(Ui.text(this, "Steering…", 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 4, 2, 0));
             status.addView(w, Ui.margins(Ui.fill(), 36, 4, 0, 4));
         }
         JSONObject waiting = b.optJSONObject("waiting"), working = b.optJSONObject("working"), limit = b.optJSONObject("limit");
@@ -1138,7 +1146,7 @@ public class Chat extends Base {
                 if (!now.isEmpty()) sb.append(sb.length() > 0 ? "\n\n" : "").append(now);
                 composer.setText(sb);
                 composer.setSelection(composer.length());
-                Ui.toast(this, back.length() == 1 ? "The waiting message is back in the composer" : back.length() + " waiting messages are back in the composer");
+                Ui.toast(this, back.length() == 1 ? "The message the agent hadn't taken in is back in the composer" : back.length() + " messages the agent hadn't taken in are back in the composer");
             }
             load(false);
         });

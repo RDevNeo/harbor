@@ -136,11 +136,10 @@ impl App {
         }
     }
 
-    /// The composer's Stop: like Esc, but it stops even with messages queued, and a
-    /// lead with subagents running asks first whether to stop the whole team.
+    /// The composer's Stop: like Esc, but a lead with subagents running asks first
+    /// whether to stop the whole team.
     pub fn stop_pressed(&mut self, chat_id: i64, ctx: &egui::Context) {
-        // Queued messages go back to the composer, and the turn still stops.
-        if !self.unqueue(chat_id, ctx) && self.try_undo(chat_id, ctx) {
+        if self.try_undo(chat_id, ctx) {
             return;
         }
         if self.chat(chat_id).is_some_and(|c| c.role == Role::Lead) && !self.running_subs(chat_id).is_empty() {
@@ -167,7 +166,7 @@ impl App {
         let title = if self.turns.contains_key(&lead) { format!("Stop the main agent and {subs}?") } else { format!("Stop {subs}?") };
         w::text(ui, title, "heading-20");
         ui.add_space(4.0);
-        w::subtle(ui, "Sub-agent queues are cleared; your queued messages come back to the composer. Finished work and transcripts stay.", "copy-14");
+        w::subtle(ui, "Sub-agent queues are cleared; messages the agent hasn't taken in yet come back to the composer. Finished work and transcripts stay.", "copy-14");
         ui.add_space(16.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             if w::btn("Stop all").sm().variant(w::Variant::Destructive).show(ui).clicked() {
@@ -186,9 +185,10 @@ impl App {
 
     /// Undoes the last send if nothing came of it yet; false when there is none.
     fn try_undo(&mut self, chat_id: i64, ctx: &egui::Context) -> bool {
-        // Queued messages come back first; the turn goes on.
-        if self.unqueue(chat_id, ctx) {
-            return true;
+        // Messages steering the turn: undoing would leave them without it; it stops instead
+        // and hands them back.
+        if !self.queued(chat_id).is_empty() {
+            return false;
         }
         // Only Claude turns can be rewound (see above); others just stop.
         let undoable = match (self.undo.started.get(&chat_id), self.turns.get(&chat_id)) {

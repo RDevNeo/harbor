@@ -915,7 +915,7 @@ impl App {
     }
 
     /// A user message for an existing chat (the composer's, or the phone's): a new turn,
-    /// or queued while one runs.
+    /// or it steers the one running.
     pub fn send_to(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<crate::mentions::Mention>, ctx: &egui::Context) {
         // Another PC's chat: its PC runs the turn.
         if self.mesh_send(chat_id, &text, &files, &mentions) {
@@ -926,10 +926,9 @@ impl App {
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
             self.paused.remove(&p);
         }
-        // Busy, or someone on another device is typing in it (one sender at a time): it waits
-        // in the queue and joins the transcript once delivered.
-        if self.turns.contains_key(&chat_id) || self.locked_for(chat_id, &self.sending_device()) {
-            self.enqueue(chat_id, text, files, mentions);
+        // Busy: the message steers the running turn (queue.rs).
+        if self.turns.contains_key(&chat_id) {
+            self.steer(chat_id, text, files, mentions, ctx);
             return;
         }
         let device = self.sending_device();

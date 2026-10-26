@@ -1990,11 +1990,6 @@ impl App {
         forward_lease(&self.api.hub, chat, view, device, kind, label, on);
     }
 
-    /// True when someone other than `device` types in the chat: a message from `device` waits.
-    pub fn locked_for(&self, chat: i64, device: &str) -> bool {
-        self.typers(chat).iter().any(|t| t.device != device)
-    }
-
     /// Who sends the message being handled: the phone, the PC that forwarded it, or this PC.
     pub fn sending_device(&self) -> String {
         if self.sender_device.is_empty() { api::local_device() } else { self.sender_device.clone() }

@@ -1,6 +1,6 @@
 //! Slash commands in the composer, as in T3 Code: typing `/` at the start of a word
 //! opens a menu above the composer with Harbor's own commands (/model, /effort, /plan,
-//! /default, and in a chat /new, /fork, /settle, /clear-queue), the agent's commands and the user's commands and skills, filtered as
+//! /default, and in a chat /new, /fork, /settle), the agent's commands and the user's commands and skills, filtered as
 //! you type. Claude Code expands `/name` itself, so accepting an entry only writes it;
 //! other agents, and Claude on another device for this PC's commands, get the
 //! command's text in the prompt instead (`expand`).
@@ -54,8 +54,6 @@ pub enum Harbor {
     Fork,
     /// The chat marked settled (done).
     Settle,
-    /// The messages waiting for the running turn dropped.
-    ClearQueue,
 }
 
 impl Harbor {
@@ -69,7 +67,6 @@ impl Harbor {
             Harbor::New => "new",
             Harbor::Fork => "fork",
             Harbor::Settle => "settle",
-            Harbor::ClearQueue => "clear-queue",
         }
     }
 }
@@ -329,9 +326,6 @@ pub fn entries(kind: Kind, remote: bool, access: &str, chat: Option<&Chat>, cli:
         if !c.settled {
             out.push(Entry::harbor(Harbor::Settle, "settle", "Mark this chat settled: done, out of the way in the sidebar"));
         }
-        if c.queued {
-            out.push(Entry::harbor(Harbor::ClearQueue, "clear-queue", "Drop the messages waiting for the running turn"));
-        }
     }
     let files = project.iter().map(|l| (l, Scope::Project)).chain(personal.iter().map(|l| (l, Scope::Personal)));
     for e in cli.into_iter().flatten() {
@@ -363,8 +357,6 @@ pub struct Chat {
     /// Its last reply can be forked.
     pub forkable: bool,
     pub settled: bool,
-    /// Messages wait for its running turn.
-    pub queued: bool,
 }
 
 /// The `/word` being typed: the chars from its slash to the end of the word.
@@ -533,7 +525,6 @@ impl App {
         let chat = chat.and_then(|id| self.chat(id)).map(|c| Chat {
             forkable: self.last_forkable(c.id).is_some(),
             settled: c.settled,
-            queued: !self.queued(c.id).is_empty(),
         });
         Target { kind, remote: !device.is_empty(), access: access.to_string(), account, cwd: self.cwd_of(repo), personal, chat }
     }
@@ -599,6 +590,7 @@ impl App {
                 let chat = self.chat(chat).map(|ch| self.chat_json(ch)).unwrap_or_default();
                 return crate::api::ok(serde_json::json!({ "ok": true, "chat": chat }));
             }
+            // From apps before steering (0.49): what the agent hasn't taken in yet.
             Some("clear-queue") => {
                 let n = self.take_queue(chat).len();
                 return crate::api::ok(serde_json::json!({ "ok": true, "dropped": n }));
@@ -793,7 +785,7 @@ impl App {
     }
 
     /// A Harbor command picked in the composer (/model and /effort open their pickers there).
-    pub fn slash_run(&mut self, key: i64, h: Harbor, ctx: &egui::Context) {
+    pub fn slash_run(&mut self, key: i64, h: Harbor) {
         match h {
             Harbor::Plan | Harbor::Default => self.slash_access(key, h),
             Harbor::New => {
@@ -807,10 +799,6 @@ impl App {
                 }
             }
             Harbor::Settle => self.set_chat_settled(key, true),
-            Harbor::ClearQueue => {
-                self.take_queue(key);
-                ctx.request_repaint();
-            }
             Harbor::Model | Harbor::Effort => {}
         }
     }
@@ -1031,10 +1019,10 @@ mod tests {
         let names = |c: Option<&Chat>| entries(Kind::Claude, false, "full", c, None, &[], &[]).iter().map(|e| entry_json(e)["command"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>();
         // The draft: no chat to fork, settle or clear yet.
         assert_eq!(names(None), ["model", "effort", "plan"]);
-        let c = Chat { forkable: true, settled: false, queued: true };
-        assert_eq!(names(Some(&c)), ["model", "effort", "plan", "new", "fork", "settle", "clear-queue"]);
+        let c = Chat { forkable: true, settled: false };
+        assert_eq!(names(Some(&c)), ["model", "effort", "plan", "new", "fork", "settle"]);
         // Nothing to fork after, settled already, nothing waiting.
-        let c = Chat { forkable: false, settled: true, queued: false };
+        let c = Chat { forkable: false, settled: true };
         assert_eq!(names(Some(&c)), ["model", "effort", "plan", "new"]);
     }
 

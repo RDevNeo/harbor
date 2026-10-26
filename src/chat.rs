@@ -816,7 +816,7 @@ impl App {
         if self.popup.is_none() && self.dialog.is_none() && ui.input_mut(|i| self.keys.take(i, "voice")) {
             self.voice_toggle(key, ui.ctx());
         }
-        // While a turn runs, Enter queues the message; Ctrl+Enter interrupts and sends now.
+        // While a turn runs, a message steers it; Ctrl+Enter does the same as Enter.
         let mut now = false;
         if focused && self.popup.is_none() && !crate::images::is_open(ui.ctx()) {
             now = ui.input_mut(|i| self.keys.take(i, "send_now"));
@@ -942,20 +942,17 @@ impl App {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
+                    let empty = draft.trim().is_empty() && self.files.get(&key).is_none_or(|f| f.is_empty()) && self.mentions.drafts.get(&key).is_none_or(|m| m.is_empty());
                     if running.is_some() {
                         if w::round_button(ui, ic::STOP, true).on_hover_text("Stop (Esc)").clicked() {
                             stop = true;
                         }
-                    } else {
-                        let empty = draft.trim().is_empty() && self.files.get(&key).is_none_or(|f| f.is_empty()) && self.mentions.drafts.get(&key).is_none_or(|m| m.is_empty());
-                        // Someone on another device is typing: the message waits for them (one sender at a time).
-                        let tip = match self.others_typing(key).first() {
-                            Some(t) if key != crate::app::DRAFT => format!("Queue (Enter): {} is typing; it goes out when they're done", t.label),
-                            _ => "Send (Enter)".to_string(),
-                        };
-                        if w::round_button(ui, ic::ARROW_UP, !empty).on_hover_text(tip).clicked() {
+                        // Something typed while it works: sending it steers the agent (queue.rs).
+                        if !empty && w::round_button(ui, ic::ARROW_UP, true).on_hover_text("Steer the agent with this (Enter)").clicked() {
                             send = true;
                         }
+                    } else if w::round_button(ui, ic::ARROW_UP, !empty).on_hover_text("Send (Enter)").clicked() {
+                        send = true;
                     }
                     if w::btn(ic::CLIP).muted().icon_sm().show(ui).on_hover_text("Attach files or images (or drop them here)").clicked() {
                         attach = true;
@@ -975,7 +972,7 @@ impl App {
         match slash {
             Some(crate::slash::Harbor::Model) => open = Some((Popup::Model, model_rect)),
             Some(crate::slash::Harbor::Effort) => open = Some((Popup::Effort, effort_rect)),
-            Some(h) => self.slash_run(key, h, ui.ctx()),
+            Some(h) => self.slash_run(key, h),
             None => {}
         }
         if let Some(i) = remove {
@@ -1014,10 +1011,8 @@ impl App {
             ui.memory_mut(|m| m.request_focus(cid));
             self.focus_composer = false;
         }
-        if send {
+        if send || now {
             self.send(ui.ctx());
-        } else if now {
-            self.send_now(ui.ctx());
         }
     }
 

@@ -48,6 +48,17 @@ impl Turn {
         crate::detach::input_open(&self.dir) && crate::detach::write_input(&self.dir, &claude_message(prompt, files))
     }
 
+    /// Whether the agent takes messages while it works: Claude reads its open input
+    /// mid-turn; the other CLIs get one prompt per process.
+    pub fn steerable(&self) -> bool {
+        self.meta.kind == Kind::Claude.label()
+    }
+
+    /// Whether the input still takes messages (closed once a Claude turn is ending).
+    pub fn input_open(&self) -> bool {
+        crate::detach::input_open(&self.dir)
+    }
+
     /// Ends the input: Claude exits once it is done with what it was given.
     pub fn close_input(&self) {
         crate::detach::close_input(&self.dir);

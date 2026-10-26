@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- A message sent while the agent works now steers it instead of waiting in a queue, on the
+  desktop, the phone and from other PCs. Claude gets it at once and takes it in at its next
+  tool call (or right after its reply); Codex, Cursor, Gemini, Grok, OpenCode and Meta, which
+  take no input mid-turn, are interrupted and resume the same session with the message, told
+  why they stopped. The message shows as your own bubble marked "Steering…" until the agent
+  takes it in. The queued bubbles, their edit and remove buttons, Esc to unqueue and
+  `/clear-queue` are gone; Ctrl+Enter does the same as Enter, and a Steer button sits next to
+  Stop when something is typed. A message no longer waits while someone types on another
+  device. Stop still hands back what the agent hadn't taken in.
+
 ## [0.48.2] - 2026-10-26
 
 ### Fixed

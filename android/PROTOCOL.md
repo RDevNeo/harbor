@@ -378,7 +378,7 @@ refetch everything.
 - `usage[].percent`: 0–100 with one decimal (100.0 = that window is used up); `label` names the
   window ("5h", "Weekly", …).
 - `can_start`: only Claude accounts can start a new chat (a new chat is a lead; leads run on Claude).
-- `queued`: messages waiting for the running turn.
+- `queued`: messages sent to the running turn that it hasn't taken in yet (steering, below).
 - `working` (optional, older hubs leave it out: use `running`): the chat is busy as the desktop
   sidebar shows it, its own turn or, for a lead, any of its sub-agents' turns or work queued for
   them. Draw the list's spinner from it; `running` stays the chat's own turn (the composer's Stop).
@@ -441,8 +441,12 @@ notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 `status` is the bars the desktop shows under the transcript; each part is null or empty when
 the desktop shows nothing:
 
-- `queue: [{text, files, sending}]`: messages waiting for the running turn, right-aligned
-  bubbles labelled "Queued" (or "Sending" once handed to the agent).
+- `queue: [{text, files, sending, steering}]`: messages sent while the turn runs that the agent
+  hasn't taken in yet. Since 0.49 a message sent while the agent works steers it (no queue to
+  manage): `steering: true`, drawn as the user's own bubble under the transcript with
+  "Steering…" under it; it joins the items once the agent takes it in. Such entries also carry
+  `sending: true`, so apps before 0.49 label them "Sending". Hubs before 0.49 send no `steering`:
+  right-aligned bubbles labelled "Queued" (or "Sending" once handed to the agent).
 - `working: {since_ms, subagents, text}`: the spinner line while the chat's own turn runs;
   show the time since `since_ms` after `text` ("Working…  ·  1 sub-agent running").
 - `waiting: {agents: [{id, name, title, since_ms}], queued}`: a lead whose own turn is done while
@@ -525,14 +529,15 @@ answers `409` with git's reason and creates nothing. Ignored with a `device`.
 
 ### `POST /v1/chats/{id}/send`
 
-`{"text": "…", "files": [upload ids]}` → `{"ok": true, "queued": false}`. While a turn runs the
-message waits in the queue, as on the desktop (`queued: true`).
+`{"text": "…", "files": [upload ids]}` → `{"ok": true, "queued": false, "steering": false}`. While
+a turn runs the message steers it, as on the desktop (`steering: true`): Claude takes it in at its
+next tool boundary (or right after its reply), other agents are interrupted and resumed with it.
+Hubs before 0.49 queued it instead (`queued: true`); since 0.49 `queued` is always false.
 
 ### `POST /v1/chats/{id}/stop`
 
 → `{"ok": true, "returned": [{"text": "…", "files": [upload ids]}]}`. Stops the running turn
-(if any). Messages that were queued behind it are taken out of the queue and returned, oldest
-first, so the app can put them back in its composer (files that weren't phone uploads are left out).
+(if any). Messages sent to it that it hadn't taken in yet are returned, oldest first, so the app can put them back in its composer (files that weren't phone uploads are left out).
 
 ### `PATCH /v1/chats/{id}`
 
@@ -737,7 +742,8 @@ of a word offers, with the same list, sources, descriptions and hints.
   `/plan` shows only for providers with a read-only mode and becomes `/default` while the chat
   is read only. Since 0.31 Harbor also lists `/effort` (providers with effort levels), `/new`,
   `/fork` (when the chat has a finished reply to fork after), `/settle` (unless it is settled)
-  and `/clear-queue` (while messages wait for the running turn); older PCs don't.
+  and, from 0.31 to 0.48, `/clear-queue` (while messages waited for the running turn); older
+  PCs don't. Since 0.49 there is no queue to clear, and `/clear-queue` isn't listed.
 - `pending`: Claude Code hasn't answered yet; ask again in a second or two for its commands.
 - Matching is the client's, as the desktop does it: case-insensitive on `name`, then `aliases`
   (one step lower), then `description`; exact, prefix, after `-` `_` `:` `/`, anywhere, the
@@ -745,7 +751,7 @@ of a word offers, with the same list, sources, descriptions and hints.
   then by name. After other words only entries with `skill`, and `harbor` and `plugin` ones.
 - Accepting an entry writes `/name ` in place of the word. Send it as typed: the PC expands it
   for agents that don't (the command's text, or the skill's instructions before the message),
-  for messages from any device, queued ones too. Entries with a `command` act instead of being
+  for messages from any device, steering ones too. Entries with a `command` act instead of being
   written: `model` and `effort` open the app's model and effort pickers, `new` the new-chat
   screen in the chat's project; `plan`, `default`, `fork`, `settle` and `clear-queue` are the
   call below. An app that doesn't know a `command` sends it to the call below, which answers
@@ -760,7 +766,8 @@ had before /plan on any device, else the provider's first level), with the rules
 Since 0.31 also: `{"command": "fork"}` forks the chat after its last finished reply, as
 `POST …/fork` does, → `{"ok": true, "id": 12, "gid": "…"}` (`409` without such a reply);
 `{"command": "settle"}` marks it settled → `{"ok": true, "chat": {…}}`; `{"command":
-"clear-queue"}` drops the messages waiting for its running turn → `{"ok": true, "dropped": 2}`.
+"clear-queue"}` (for apps before 0.49) drops the messages the running turn hasn't taken in yet
+→ `{"ok": true, "dropped": 2}`.
 
 ### `GET /v1/chats/{id}/tags?trigger=@&q=`
 
@@ -1057,9 +1064,9 @@ same chats, rendered the same way.
 - `POST /v1/chats` with a `device` that is another hub's id starts the chat on that PC (`409` when
   it's off); the answer's `id` is the copy's id on this hub (null if it hasn't arrived yet: find
   it by `gid` in the next state).
-- One sender at a time: a message sent while another device is typing in the chat waits in the
-  chat's queue (`send` answers `queued: true`) and goes out when they stop typing or send; the
-  queue is the chat PC's and shows in `status.queue` on every hub.
+- A message sent while the chat's turn runs steers it on the chat's PC, whichever device sent it;
+  what the agent hasn't taken in yet shows in `status.queue` on every hub. (Hubs before 0.49 held
+  a message while another device was typing in the chat; since 0.49 nothing waits for typing.)
 - Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't. A client that moves
   between hubs sends `X-Harbor-Ids: global` with every call: answers then name chats by `gid`
   (`id`, `parent`, `forks_after`, `forked_from.chat`, `status.waiting.agents[].id`, the `id` of a
