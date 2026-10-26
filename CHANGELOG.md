@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Devices shows a paired phone online whenever it can reach the PC, not only while Harbor is open
+  on it: the app checks in from the background every 15 minutes (a light Android job with any
+  network; Android may run it later in Doze), authenticated with the pairing's secret but good
+  for nothing else, without the screen lock. "Harbor open" while the app is in front, "online"
+  while its last check-in is under 35 minutes old, else offline with when it was last seen.
+
 ## [0.37.0] - 2026-10-26
 
 ### Added

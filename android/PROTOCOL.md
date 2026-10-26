@@ -179,6 +179,27 @@ the phone's Settings › Sign-in row, each with the hint that a screen lock adds
 - Old hubs refuse `nolock` and re-confirmation (`401`): the app says to update Harbor on the PC
   or set a screen lock. Old apps never send them.
 
+### Background pings (online with the app closed)
+
+From 0.37.1 (optional: older hubs answer `401`, older apps never ping). The app schedules an
+Android JobScheduler job every 15 minutes with any network (`Alive.java`, persisted across
+reboots; Doze and App Standby run it later). It pings one PC, the one calls go to first, then
+the others, until one answers:
+
+`POST /v1/alive` with `Authorization: Bearer <token>` over pinned TLS (factor 1), body
+`{"ts": <unix ms>, "mac": HMAC-SHA256(K_alive, th("harbor-alive-v1", hubFp, phoneFp, token, ts as decimal text, X))}`,
+`K_alive = HKDF("harbor-alive-v1", S_pc, "harbor-alive-v1 key")` (factor 2; the screen lock isn't
+needed, nobody is there to unlock). → `{"ok": true, "every_s": 900}`. `ts` must be within
+10 minutes of the hub's clock and newer than that pairing's last ping (no replays); `X` as in
+sessions when the pairing has binding. Anything wrong is the usual `401`, without counting towards
+the pairing's lock-out. Only two- and three-factor pairings can ping.
+
+The hub records the time and nothing else: no session, no call, no `seen` (that stays "the app
+is open"). Devices shows a phone **Harbor open** while its app calls (within 75 s), **online**
+while its last ping is under 35 minutes old, else offline with "seen X ago" (the newest of
+both). The mesh shares pings (`alive` in `GET /mesh/v1/phones`), so a ping to one PC counts
+on all.
+
 ### Every call
 
 ```
@@ -999,7 +1020,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   secret takes them, one with another secret is `409`. From 0.34.1 also `nolock` (two factors,
   `presence` empty) and `keys_at`: the same secret with newer `keys_at` takes the new factors.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
-- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app}], apk}`: where this PC saw the
+- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk}` (`alive`: unix s of its last background ping, from 0.37.1): where this PC saw the
   phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it
   serves. Each PC asks the others every 15 s: a phone that talks to another PC shows online
   there, "via" that PC. A PC whose peer serves a newer app takes it.

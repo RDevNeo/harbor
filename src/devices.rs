@@ -28,8 +28,11 @@ type Wake = Arc<dyn Fn() + Send + Sync>;
 const PREVIEW_MAX: u64 = 25 << 20;
 /// The most one send to a PC may carry (its listener's upload limit).
 const SEND_MAX: u64 = 200 << 20;
-/// A phone's Harbor app calls every 30 s while it's open: seen this recently, it's online.
-const PHONE_OPEN_SECS: i64 = 75;
+/// A phone's Harbor app calls every 30 s while it's open: seen this recently, it's open.
+pub const PHONE_OPEN_SECS: i64 = 75;
+/// In the background the app pings every 15 minutes (`POST /v1/alive`; Android may run it later
+/// in Doze): pinged this recently, the phone is online (reachable), the app open or not.
+pub const PHONE_ALIVE_SECS: i64 = 35 * 60;
 
 /// ssh's options and destination for a paired PC: one reused connection (Harbor's own socket),
 /// then what remote agents use (`harbor nc`, Settings › Devices' login and key).
@@ -125,12 +128,14 @@ pub struct Device {
     pub factors: u8,
     /// PCs that don't answer: why (mesh::Down::slug: "harbor" isn't running there, the "pc" is off).
     pub down: String,
+    /// Phones: Harbor is open on it right now (online is also true while it only pings).
+    pub open: bool,
 }
 
 impl Device {
     fn from_json(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), factors: v["factors"].as_u64().unwrap_or(0) as u8, down: s("down") }
+        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), factors: v["factors"].as_u64().unwrap_or(0) as u8, down: s("down"), open: v["open"].as_bool().unwrap_or(false) }
     }
 
     pub fn phone(&self) -> bool {
@@ -182,8 +187,11 @@ fn paired() -> Vec<Device> {
         .collect();
     if hub.enabled.load(std::sync::atomic::Ordering::Relaxed) {
         for p in hub.paired_phones() {
-            let online = p.seen > 0 && crate::store::now() - p.seen < PHONE_OPEN_SECS;
-            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen, via: p.via, app: p.app, factors: p.factors, ..Default::default() });
+            let now = crate::store::now();
+            let open = p.seen > 0 && now - p.seen < PHONE_OPEN_SECS;
+            let online = open || (p.alive > 0 && now - p.alive < PHONE_ALIVE_SECS);
+            let seen = p.seen.max(p.alive);
+            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, open, ip: p.ip, seen, via: p.via, app: p.app, factors: p.factors, ..Default::default() });
         }
     }
     v
@@ -661,8 +669,10 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         a => format!("seen {a} ago"),
     };
     bits.push(match (d.phone(), d.online) {
-        (true, true) if !d.via.is_empty() => format!("Harbor open, via {}", d.via),
-        (true, true) => "Harbor open".into(),
+        (true, true) if d.open && !d.via.is_empty() => format!("Harbor open, via {}", d.via),
+        (true, true) if d.open => "Harbor open".into(),
+        // Reachable, the app in the background or closed (its pings, PHONE_ALIVE_SECS).
+        (true, true) if !d.via.is_empty() => format!("online, via {}", d.via),
         (_, true) => "online".into(),
         (false, false) if d.down == "harbor" && d.seen > 0 => format!("Harbor isn't running, {}", ago(d.seen)),
         (false, false) if d.down == "harbor" => "Harbor isn't running".into(),
@@ -1317,7 +1327,7 @@ impl Files {
 
 /// For hot reload: what a device tab needs to come back.
 pub fn device_json(d: &Device) -> Value {
-    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "factors": d.factors, "down": d.down })
+    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "factors": d.factors, "down": d.down, "open": d.open })
 }
 
 pub fn device_from(v: &Value) -> Device {

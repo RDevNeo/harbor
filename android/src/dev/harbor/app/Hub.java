@@ -756,6 +756,49 @@ final class Hub {
         }
     }
 
+    private static long lastAlive;
+
+    /** One background ping (Alive): the PC calls go to first, then the others, until one takes
+     *  it; the mesh tells the rest. Bearer token and the pinned TLS key, plus the pairing
+     *  secret's MAC over the time: no session, so no screen lock. Pairings from before three
+     *  factors have no secret: they show online only while the app is open. */
+    void alive() throws IOException {
+        if (!three()) return;
+        sync();
+        List<String> order = new ArrayList<>();
+        order.add(via());
+        for (String v : endpoints()) if (!order.contains(v)) order.add(v);
+        IOException last = null;
+        for (String v : order) {
+            Ep e = ep(v);
+            String tok = e == null ? token : e.token;
+            byte[] k = null;
+            try {
+                byte[] s = secretFor(e);
+                k = Sec.aliveKey(s);
+                Sec.wipe(s);
+                Net.Http c = connect(v, "POST", "/v1/alive", 15_000, 5_000);
+                byte[] x = binding ? c.exporter() : null;
+                String hubFp = c.seen;
+                if ((binding && x == null) || hubFp == null) { c.close(); continue; }
+                long ts;
+                synchronized (Hub.class) { ts = lastAlive = Math.max(System.currentTimeMillis(), lastAlive + 1); }
+                byte[] mac = Sec.hmac(k, Sec.aliveMsg(hubFp, Net.myFp(), tok, ts, x == null ? new byte[0] : x));
+                c.header("Authorization", "Bearer " + tok);
+                c.header("X-Harbor-Device", deviceName());
+                send(c, new JSONObject().put("ts", ts).put("mac", Sec.hex(mac)));
+                return;
+            } catch (IOException x) {
+                last = x;
+            } catch (JSONException x) {
+                last = new IOException(x);
+            } finally {
+                Sec.wipe(k);
+            }
+        }
+        if (last != null) throw last;
+    }
+
     /** Sends a JSON body on c and reads the JSON answer. */
     private static JSONObject send(Net.Http c, JSONObject body) throws IOException {
         try {

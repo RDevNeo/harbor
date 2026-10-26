@@ -77,6 +77,8 @@ final class Ui {
 
     static void init(Context c) {
         app = c.getApplicationContext();
+        // Background pings, so the PCs see this phone online with the app closed (Alive).
+        Alive.schedule(app);
         density = c.getResources().getDisplayMetrics().density;
         theme(c);
         if (sans != null) return;

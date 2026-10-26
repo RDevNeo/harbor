@@ -224,12 +224,23 @@ impl App {
                             w::text(ui, format!("{}  {label}", ic::SMARTPHONE), "strong-14");
                             // Seen here or on another PC of the mesh, and its app's version.
                             let phone = phones.iter().find(|p| p.group == t.group && !t.group.is_empty());
-                            let mut last = match phone.filter(|p| p.seen > 0) {
+                            let mut last = match phone.filter(|p| p.seen.max(p.alive) > 0) {
                                 Some(p) => {
                                     let via = if p.via.is_empty() { String::new() } else { format!(" via {}", p.via) };
-                                    match crate::app::ago(p.seen).as_str() {
-                                        "now" => format!(" · seen just now{via}"),
-                                        a => format!(" · last seen {a} ago{via}"),
+                                    let now = crate::store::now();
+                                    // Open now, or reachable with the app in the background (its pings).
+                                    if now - p.seen < crate::devices::PHONE_OPEN_SECS {
+                                        format!(" · Harbor open{via}")
+                                    } else if now - p.alive < crate::devices::PHONE_ALIVE_SECS {
+                                        format!(" · online{via}, app in the background (checked in {})", match crate::app::ago(p.alive).as_str() {
+                                            "now" => "just now".to_string(),
+                                            a => format!("{a} ago"),
+                                        })
+                                    } else {
+                                        match crate::app::ago(p.seen.max(p.alive)).as_str() {
+                                            "now" => format!(" · seen just now{via}"),
+                                            a => format!(" · last seen {a} ago{via}"),
+                                        }
                                     }
                                 }
                                 None => String::new(),

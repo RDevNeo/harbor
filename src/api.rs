@@ -278,6 +278,9 @@ pub struct PairedPhone {
     pub app: i64,
     /// Its pairing's factors here (Token::factors): 2 for a phone without a screen lock.
     pub factors: u8,
+    /// When its app last said it's alive from the background (`POST /v1/alive`), here or on
+    /// another PC of the mesh (0: never): reachable, even with the app closed.
+    pub alive: i64,
 }
 
 /// The first app version that picks up what PCs send (`GET /v1/inbox`, 0.17.0).
@@ -290,6 +293,8 @@ pub struct Sighting {
     pub name: String,
     pub seen: i64,
     pub app: i64,
+    /// Its last background ping there (0: none, or a PC before 0.37.1).
+    pub alive: i64,
 }
 
 /// What the listener threads and the UI thread share.
@@ -304,6 +309,9 @@ pub struct Hub {
     pub ips: Mutex<HashMap<String, String>>,
     /// Token → its app's versionCode (see [`PairedPhone::app`]): this session only.
     pub apps: Mutex<HashMap<String, i64>>,
+    /// Token → (unix s, the ping's own ms) of its app's last background ping (`POST /v1/alive`):
+    /// this session only. Each ping's time must be later than the last (no replays).
+    pub alive: Mutex<HashMap<String, (i64, u64)>>,
     /// Peer id → (its name, the phones it saw): the mesh's view of where phones are.
     pub elsewhere: Mutex<HashMap<String, (String, Vec<Sighting>)>>,
     /// What waits for phones' apps to pick it up (Devices › Send).
@@ -332,6 +340,7 @@ impl Hub {
             port: Mutex::new(port),
             tokens: Mutex::new(tokens),
             seen: Mutex::new(HashMap::new()),
+            alive: Mutex::new(HashMap::new()),
             ips: Mutex::new(HashMap::new()),
             apps: Mutex::new(HashMap::new()),
             elsewhere: Mutex::new(HashMap::new()),
@@ -502,15 +511,18 @@ impl Hub {
         let seen = self.seen.lock().unwrap().clone();
         let ips = self.ips.lock().unwrap().clone();
         let apps = self.apps.lock().unwrap().clone();
+        let alive = self.alive.lock().unwrap().clone();
         let mut out: Vec<PairedPhone> = vec![];
         for t in tokens.iter().filter(|t| !t.group.is_empty()) {
             let (named, at) = seen.get(&t.token).cloned().unwrap_or_default();
             let name = if !named.is_empty() { named } else { t.name.clone() };
             let ip = ips.get(&t.token).cloned().unwrap_or_default();
             let app = apps.get(&t.token).copied().unwrap_or(0);
+            let pinged = alive.get(&t.token).map_or(0, |a| a.0);
             match out.iter_mut().find(|p| p.group == t.group) {
                 Some(p) => {
                     p.app = p.app.max(app);
+                    p.alive = p.alive.max(pinged);
                     p.factors = p.factors.max(t.factors());
                     if at > p.seen {
                         p.seen = at;
@@ -522,7 +534,7 @@ impl Hub {
                         p.name = name;
                     }
                 }
-                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), factors: t.factors() }),
+                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), factors: t.factors(), alive: pinged }),
             }
         }
         out
@@ -538,6 +550,14 @@ impl Hub {
             for (pc, sightings) in elsewhere.values() {
                 for s in sightings.iter().filter(|s| s.group == p.group) {
                     p.app = p.app.max(s.app);
+                    // Alive in the background there: online here too, "via" that PC when it's
+                    // the newest word from the phone.
+                    if s.alive > p.alive {
+                        if s.alive > p.seen.max(p.alive) && s.seen <= p.seen {
+                            p.via = pc.clone();
+                        }
+                        p.alive = s.alive;
+                    }
                     if s.seen > p.seen {
                         p.seen = s.seen;
                         p.via = pc.clone();
@@ -1290,7 +1310,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     if let Some(level) = level.filter(|l| *l != Level::Loopback) {
         // Pairing, the upgrade and starting a session: the token, the TLS key and the codes or
         // the session's proofs (phoneauth.rs).
-        if req.method == "POST" && matches!(segs.as_slice(), ["v1", "pair" | "session", _]) {
+        if req.method == "POST" && (matches!(segs.as_slice(), ["v1", "pair" | "session", _]) || segs == ["v1", "alive"]) {
             let Ok(body) = read_body(&mut r, req.len, 16 << 10) else { return send_json(r.get_mut(), 400, &json!({ "error": "bad body" })) };
             let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
             let reply = crate::phoneauth::serve(hub, &peer, peer.x.as_ref(), &req, &segs, &token, level, &body, wake);
@@ -3332,7 +3352,7 @@ mod tests {
         assert_eq!((app("ga"), app("gb"), app("gc")), (18001, APP_INBOX, 0));
         // Another PC saw phone c more recently (with a newer app): online there, via that PC.
         let later = store::now() + 1;
-        hub.elsewhere.lock().unwrap().insert("pc:acer".into(), ("acer".into(), vec![Sighting { group: "gc".into(), name: "A13".into(), seen: later, app: 16002 }, Sighting { group: "zz".into(), name: "not ours".into(), seen: later, app: 1 }]));
+        hub.elsewhere.lock().unwrap().insert("pc:acer".into(), ("acer".into(), vec![Sighting { group: "gc".into(), name: "A13".into(), seen: later, app: 16002, alive: 0 }, Sighting { group: "zz".into(), name: "not ours".into(), seen: later, app: 1, alive: 0 }]));
         let p = hub.paired_phones();
         assert_eq!(p.len(), 3, "only pairings this PC has");
         assert_eq!((p[0].group.as_str(), p[0].seen, p[0].via.as_str(), p[0].name.as_str(), p[0].app), ("gc", later, "acer", "A13", 16002));

@@ -135,6 +135,14 @@ final class Sec {
         return th("harbor-presence-v3", utf8(hubFp), utf8(phoneFp), utf8(token), utf8(sid), presence);
     }
 
+    /** The key of the background pings (POST /v1/alive): from the pairing secret, no presence key. */
+    static byte[] aliveKey(byte[] secret) { return hkdf(utf8("harbor-alive-v1"), secret, "harbor-alive-v1 key"); }
+
+    /** What a background ping's MAC covers: both keys, the token, its time (unix ms), the connection. */
+    static byte[] aliveMsg(String hubFp, String phoneFp, String token, long ts, byte[] x) {
+        return th("harbor-alive-v1", utf8(hubFp), utf8(phoneFp), utf8(token), utf8(Long.toString(ts)), x);
+    }
+
     /** The pairing secret and the 6-digit code both screens show. */
     static Object[] pairKeys(byte[] t, byte[] z) {
         byte[] s = hkdf(t, z, "harbor-pair-v3 secret");

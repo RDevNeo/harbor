@@ -41,6 +41,8 @@ public class SecTest {
         check(Sec.hex(Sec.rekeyMsg("hh", "pp", "tok", four7, new byte[0], true, x8)).equals("76ff425e763a66725ee859afa39a3acf83e72379ec78c23a220775f0a8752aa1"), "rekey proof message");
         check(Sec.hex(Sec.addPresenceMsg("hh", "pp", "tok", "sid", four9)).equals("9b66f1a091d649ccdbd56509decd14e9a881a93ebddb7f0648cae184944d85dd"), "add-presence message");
 
+        check(Sec.hex(Sec.hmac(Sec.aliveKey(fill(6)), Sec.aliveMsg("hh", "pp", "tok", 1700000000123L, x8))).equals("edce0e0a5d43c76eef6683bc40daa39f9382ec6366a8054d3718df151a687599"), "alive ping MAC");
+
         // ECDH: both ends agree, keys travel as 91-byte named-curve SPKI (what the hub parses).
         KeyPair x = Sec.ephemeral(), y = Sec.ephemeral();
         byte[] sx = Sec.spki(x.getPublic()), sy = Sec.spki(y.getPublic());

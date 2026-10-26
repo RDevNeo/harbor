@@ -205,6 +205,23 @@ pub fn add_presence_msg(hub_fp: &str, phone_fp: &str, token: &str, sid: &str, pr
     th("harbor-presence-v3", &[hub_fp.as_bytes(), phone_fp.as_bytes(), token.as_bytes(), sid.as_bytes(), presence])
 }
 
+/// The key of a pairing's background pings (`POST /v1/alive`): from the pairing secret, so a
+/// ping proves factors 1 (the TLS key) and 2 without the presence key, and opens nothing.
+pub fn alive_key(secret: &[u8; 32]) -> [u8; 32] {
+    hkdf(b"harbor-alive-v1", secret, "harbor-alive-v1 key")
+}
+
+/// What a background ping's MAC covers: both keys, the token, the ping's time (unix ms) and the
+/// connection (`X`, with binding).
+pub fn alive_msg(hub_fp: &str, phone_fp: &str, token: &str, ts: u64, x: &[u8]) -> [u8; 32] {
+    th("harbor-alive-v1", &[hub_fp.as_bytes(), phone_fp.as_bytes(), token.as_bytes(), ts.to_string().as_bytes(), x])
+}
+
+/// A ping's time may be this far off the hub's clock.
+const ALIVE_SKEW_MS: u64 = 10 * 60 * 1000;
+/// How often the app pings in the background (Android runs it at most this often, later in Doze).
+pub const ALIVE_EVERY_S: u64 = 900;
+
 /// What the phone's presence key signs when it pairs.
 pub fn pair_presence_msg(hub_fp: &str, phone_fp: &str, token: &str, epk: &[u8], presence: &[u8], binding: bool, x: &[u8]) -> [u8; 32] {
     th("harbor-pair-v3 presence", &[hub_fp.as_bytes(), phone_fp.as_bytes(), token.as_bytes(), epk, presence, flag(binding), x])
@@ -622,6 +639,7 @@ pub fn serve(hub: &Hub, peer: &Peer, x: Option<&[u8; 32]>, req: &Request, segs: 
         ("POST", ["v1", "pair", "finish"], Level::Ticket | Level::Legacy | Level::Session) => pair_finish(hub, phone_fp, token, body),
         ("POST", ["v1", "session", "hello"], Level::Session) => session_hello(hub, phone_fp, token, body, now),
         ("POST", ["v1", "session", "open"], Level::Session) => session_open(hub, phone_fp, &hub_fp, x, token, body, now),
+        ("POST", ["v1", "alive"], Level::Session) => alive(hub, phone_fp, &hub_fp, x, token, body),
         _ => Err("not allowed at this pairing's level"),
     };
     r.unwrap_or_else(|why| {
@@ -839,6 +857,38 @@ fn session_open(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, t
     Ok(reply(200, json!({ "sid": sid, "epoch_ms": epoch_len().as_millis() as u64, "grace_ms": grace().as_millis() as u64, "idle_ms": IDLE.as_millis() as u64, "max_ms": MAX_AGE.as_millis() as u64, "proof": hex(&hub_proof), "factors": factors })))
 }
 
+/// `POST /v1/alive` (bearer token, the phone's TLS key) `{"ts", "mac"}`: the app, in the
+/// background, says it's installed, paired and can reach this PC. Recorded for Devices only:
+/// no session, no call, nothing else. A ping's time must be newer than the last one's.
+fn alive(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, token: &str, body: &Value) -> Result<crate::api::Reply, Why> {
+    let (Some(ts), Some(mac)) = (body["ts"].as_u64(), field(body, "mac")) else { return Err("bad alive ping") };
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    if ts.abs_diff(now_ms) > ALIVE_SKEW_MS {
+        return Err("alive ping out of time");
+    }
+    let (secret, binding) = hub.tokens.lock().unwrap().iter().find(|t| t.token == token && t.secured()).map(|t| (unhex32(&t.secret), t.binding)).ok_or("alive ping for a pairing without a secret")?;
+    let Some(mut secret) = secret else { return Err("alive ping for a pairing without a secret") };
+    if binding && x.is_none() {
+        wipe(&mut secret);
+        return Err("alive ping needs a TLS connection");
+    }
+    let xb: &[u8] = if binding { x.map_or(&[], |x| &x[..]) } else { &[] };
+    let mut k = alive_key(&secret);
+    wipe(&mut secret);
+    let good = same(&hmac32(&k, &alive_msg(hub_fp, phone_fp, token, ts, xb)), &mac);
+    wipe(&mut k);
+    if !good {
+        return Err("bad alive ping MAC");
+    }
+    let mut alive = hub.alive.lock().unwrap();
+    if alive.get(token).is_some_and(|(_, last)| ts <= *last) {
+        return Err("replayed alive ping");
+    }
+    alive.insert(token.to_string(), (crate::store::now(), ts));
+    drop(alive);
+    Ok(reply(200, json!({ "ok": true, "every_s": ALIVE_EVERY_S })))
+}
+
 /// `POST /v1/pair/presence` over a session of a two-factor pairing: the phone has a screen lock
 /// now and adds its presence key (the third factor), signed by that key. Adding a factor takes
 /// nothing more than the session; a pairing that has one already changes it only by
@@ -953,7 +1003,9 @@ pub mod tests {
         assert_eq!(hex(&hub_secret(&[6; 32], "cc")), VEC_HUBSECRET);
         let rk = rekey_msg("hh", "pp", "tok", &[7; 4], &[], true, &[8; 32]);
         let ap = add_presence_msg("hh", "pp", "tok", "sid", &[9; 4]);
-        println!("VEC rekey={} addpresence={}", hex(&rk), hex(&ap));
+        let al = hmac32(&alive_key(&[6; 32]), &alive_msg("hh", "pp", "tok", 1700000000123, &[8; 32]));
+        println!("VEC rekey={} addpresence={} alive={}", hex(&rk), hex(&ap), hex(&al));
+        assert_eq!(hex(&al), VEC_ALIVE);
         assert_eq!(hex(&rk), VEC_REKEY);
         assert_eq!(hex(&ap), VEC_ADDPRESENCE);
     }
@@ -964,6 +1016,7 @@ pub mod tests {
     const VEC_K0: &str = "e6b49459350050f2c0c6ea10a589ec82e565579adc99f05a00ba18fad774146e";
     const VEC_K3: &str = "7c342e37a39cace52b8281c6ea32c3125608190ff09969cfbb5750608ed66f3f";
     const VEC_MAC: &str = "78d83b9c1472be6f7cfabe8d2c59f7a155de2b26ed7c880cd877dc81fe863ad2";
+    const VEC_ALIVE: &str = "edce0e0a5d43c76eef6683bc40daa39f9382ec6366a8054d3718df151a687599";
     const VEC_REKEY: &str = "76ff425e763a66725ee859afa39a3acf83e72379ec78c23a220775f0a8752aa1";
     const VEC_ADDPRESENCE: &str = "9b66f1a091d649ccdbd56509decd14e9a881a93ebddb7f0648cae184944d85dd";
     const VEC_HUBSECRET: &str = "849c6eb3ca9b030f2bb199862c4e88aaa29cf7460dfeb1b09daaca05f9e60571";
@@ -1449,6 +1502,37 @@ pub mod tests {
         assert_eq!(open_session(&hub, &phone, &p, "t1", phone.secret, &phone).status, 200);
         assert_eq!(add(&other, &other.presence_spki()).status, 409);
         assert_eq!(add(&phone, &phone.presence_spki()).status, 200, "the same key again: fine");
+    }
+
+    #[test]
+    fn background_pings_say_alive_and_nothing_else() {
+        let (hub, phone, p) = paired();
+        let hub_fp = crate::tls::my_fp();
+        let x = p.x.unwrap();
+        let now_ms = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let ping = |secret: &[u8; 32], ts: u64, x: &[u8]| {
+            let mac = hmac32(&alive_key(secret), &alive_msg(&hub_fp, &phone.fp, "tok", ts, x));
+            call(&hub, &p, "/v1/alive", "tok", json!({ "ts": ts, "mac": hex(&mac) }))
+        };
+        let t = now_ms();
+        let r = ping(&phone.secret, t, &x);
+        assert_eq!(r.status, 200, "{:?}", r.body);
+        assert!(hub.alive.lock().unwrap().contains_key("tok"));
+        assert_eq!(hub.local_phones()[0].alive, crate::store::now(), "Devices sees it");
+        assert_eq!(ping(&phone.secret, t, &x).status, 401, "a replay");
+        assert_eq!(ping(&phone.secret, t - 1, &x).status, 401, "an older one");
+        assert_eq!(ping(&[0x55; 32], t + 1, &x).status, 401, "without the pairing secret");
+        assert_eq!(ping(&phone.secret, t + 2, &[]).status, 401, "for another connection (binding)");
+        assert_eq!(ping(&phone.secret, t + 20 * 60 * 1000, &x).status, 401, "out of time");
+        assert_eq!(ping(&phone.secret, t + 3, &x).status, 200);
+        // It opens nothing: no session, and no other call with the token.
+        assert_eq!(hub.auth3.status("tok").sessions, 0);
+        assert!(hub.auth3.status("tok").locked.is_none(), "bad pings don't lock the pairing");
+        assert_eq!(call(&hub, &p, "/v1/hubs", "tok", json!({})).status, 401);
+        // A pairing code can't ping.
+        let h2 = hub_with(vec![ticket("t1")]);
+        let mac = hmac32(&alive_key(&[0; 32]), &alive_msg(&hub_fp, &phone.fp, "t1", t, &x));
+        assert_eq!(call(&h2, &p, "/v1/alive", "t1", json!({ "ts": t, "mac": hex(&mac) })).status, 401);
     }
 
     #[test]
