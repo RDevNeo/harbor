@@ -324,6 +324,7 @@ refetch everything.
                 "signed_in": true, "can_start": true, "usage": [{"label": "5h", "percent": 42.0}]}],
   "models":  {"claude": [{"id": "claude-opus-5-5", "label": "Opus 5.5", "more": false}], "codex": […]},
   "efforts": {"claude": [{"id": "high", "label": "High", "desc": ""}], "cursor": []},
+  "default_efforts": {"claude": "high", "cursor": ""},
   "access":  {"claude": [{"id": "full", "label": "Full access", "desc": "…"}]},
   "devices": [{"id": "", "label": "desk", "icon": "monitor", "online": true},
               {"id": "ts:laptop", "label": "laptop", "icon": "laptop", "online": false}],
@@ -348,7 +349,9 @@ refetch everything.
   Projects never settle, only chats do. Older hubs sent a project `settled`; clients ignore it,
   and current hubs no longer send it.
 - `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, cursor, grok,
-  gemini, meta, opencode). An empty effort list: send `""`.
+  gemini, meta, opencode). An empty effort list: send `""`. `default_efforts` (optional, older
+  hubs leave it out) is what an empty `effort` means for each kind (the CLI's own default, e.g.
+  `high`): show a chat's or the defaults' `""` as that level, and pick it for a new chat.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,

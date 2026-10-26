@@ -87,6 +87,7 @@ public class Settings extends Base {
         boolean warn = f == 2 || (f == 3 && !lock);
         View.OnClickListener tap = f == 2 && !lock ? v -> Pair.openLockSettings(this) : f == 3 && !lock ? v -> Pair.offerLock(this, hub) : null;
         LinearLayout sign = Ui.cardRow(this, warn ? Ui.I_LOCK_OPEN : Ui.I_LOCK, "Sign-in", fs, warn ? Ui.AMBER : Ui.FG, tap);
+        Ui.wrapSub(sign, 3);
         if (tap != null) sign.addView(Ui.chevron(this));
         here.addView(sign, Ui.fill());
         here.addView(Ui.gap(this));

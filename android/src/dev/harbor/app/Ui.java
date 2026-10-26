@@ -461,6 +461,19 @@ final class Ui {
         return r;
     }
 
+    /** Lets a cardRow's line under the title wrap to `lines` instead of ending in "…". */
+    static void wrapSub(LinearLayout row, int lines) {
+        for (int i = 0; i < row.getChildCount(); i++) {
+            if (!(row.getChildAt(i) instanceof LinearLayout)) continue;
+            LinearLayout t = (LinearLayout) row.getChildAt(i);
+            if (t.getChildCount() < 2 || !(t.getChildAt(1) instanceof TextView)) return;
+            TextView sub = (TextView) t.getChildAt(1);
+            sub.setSingleLine(false);
+            sub.setMaxLines(lines);
+            return;
+        }
+    }
+
     static View chevron(Context c) {
         TextView t = icon(c, I_RIGHT, 20, G600);
         t.setLayoutParams(margins(new LinearLayout.LayoutParams(dp(24), dp(24)), 8, 0, 0, 0));

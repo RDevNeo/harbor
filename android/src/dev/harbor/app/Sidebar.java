@@ -162,7 +162,8 @@ final class Sidebar {
             icon.setBackground(Ui.round(Ui.G100, 0, 10));
             list.addView(banner(icon, offTitle, offBody, "Try again", true, offRetry, null, null, null), Ui.inset());
         }
-        banners(st);
+        // Their Update buttons need the PC: not while it doesn't answer.
+        if (offTitle == null) banners(st);
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
@@ -352,6 +353,8 @@ final class Sidebar {
      *  list it sent: Harbor not running there, or the PC offline, with when it last answered. */
     void offline(String title, String body, Runnable retry) {
         if (title == null && offTitle == null) return;
+        // "Harbor isn't running on desk. Start it there…" under the title "Harbor isn't running on desk".
+        if (title != null && body != null && body.startsWith(title)) body = body.substring(title.length()).replaceFirst("^[.:]?\\s*", "");
         offTitle = title; offBody = body; offRetry = retry;
         render(st != null ? st : new JSONObject());
     }

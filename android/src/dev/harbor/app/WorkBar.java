@@ -108,7 +108,7 @@ final class WorkBar {
         // Git busy on the PC for its own bar ("Creating worktree…").
         String pend = r.isNull("pending") ? "" : r.optString("pending");
         if (!pend.isEmpty()) { label(ws, Ui.I_LOADER, pend); Ui.main.postDelayed(this::load, 1500); }
-        label(br, null, b.isEmpty() ? "…" : b + (dirty > 0 && !(chat == null && wt) ? "  ·  " + dirty + " changed" : ""));
+        label(br, Ui.I_BRANCH, b.isEmpty() ? "…" : b + (dirty > 0 && !(chat == null && wt) ? "  ·  " + dirty + " changed" : ""));
     }
 
     /** A call to the PC; on failure its reason as a toast, and the chips read again. */

@@ -99,6 +99,7 @@ final class Sheet {
             first = false;
             LinearLayout r = Ui.cardRow(a, null, o.label, o.sub, o.enabled ? Ui.FG : Ui.G600,
                     o.enabled ? v -> { s.dismiss(); chosen.on(o.id); } : null);
+            Ui.wrapSub(r, 3);
             if (o.id.equals(current)) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
             c.addView(r, Ui.fill());
         }

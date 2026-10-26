@@ -2586,11 +2586,15 @@ impl App {
             .collect();
         let mut models = serde_json::Map::new();
         let mut efforts = serde_json::Map::new();
+        // What an empty effort means per provider (the CLI's own default), so the phone shows and
+        // sends that instead of the first level.
+        let mut default_efforts = serde_json::Map::new();
         let mut access = serde_json::Map::new();
         for k in Kind::ALL {
             let ms: Vec<Value> = self.models_for(k).iter().map(|m| json!({ "id": m.id, "label": m.label, "more": m.more })).collect();
             models.insert(kind_slug(k), json!(ms));
             efforts.insert(kind_slug(k), json!(providers::efforts(k).iter().map(|e| json!({ "id": e.0, "label": e.1, "desc": e.2 })).collect::<Vec<_>>()));
+            default_efforts.insert(kind_slug(k), json!(providers::default_effort(k)));
             access.insert(kind_slug(k), json!(providers::access(k).iter().map(|e| json!({ "id": e.0, "label": e.1, "desc": e.2 })).collect::<Vec<_>>()));
         }
         let here = self.api.hub.mesh.me().name;
@@ -2635,6 +2639,7 @@ impl App {
             "accounts": accounts,
             "models": models,
             "efforts": efforts,
+            "default_efforts": default_efforts,
             "access": access,
             "devices": devices,
             "fast": self.fast,

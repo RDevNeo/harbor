@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: an unset effort shows and starts as the provider's default (High for Claude) instead of
+  Low, as on the desktop.
+- Phone: the branch chip under the composer gets its branch icon back after a switch (it kept the
+  loading icon).
+- Phone: lines under options in the workspace and branch sheets wrap instead of being cut off, and
+  so does Settings › Sign-in.
+- Phone: the "Harbor isn't running on <PC>" card no longer repeats its title in the text, and the
+  update banners wait until the PC answers again (their buttons need it).
+
 ## [0.43.0] - 2026-10-26
 
 ### Added

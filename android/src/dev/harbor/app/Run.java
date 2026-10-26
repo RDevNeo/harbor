@@ -98,7 +98,16 @@ final class Run {
     }
 
     String modelLabel() { return model.isEmpty() ? "Default model" : Hub.labelOf(models(), model); }
-    String effortLabel() { return effort.isEmpty() ? "" : Hub.labelOf(efforts(), effort); }
+    String effortLabel() {
+        String e = effort.isEmpty() ? defaultEffort() : effort;
+        return e.isEmpty() ? "" : Hub.labelOf(efforts(), e);
+    }
+
+    /** What an empty effort means on this provider (the PC's `default_efforts`; "" on older PCs). */
+    String defaultEffort() {
+        JSONObject d = st == null ? null : st.optJSONObject("default_efforts");
+        return d == null ? "" : d.optString(kind(), "");
+    }
     String accessLabel() { return Hub.labelOf(accesses(), access); }
     String deviceLabel() { return Hub.labelOf(devices(), device); }
 
@@ -153,7 +162,8 @@ final class Run {
         for (JSONObject o : acc) if (o.optString("id").equals(account)) ok = true;
         if (!ok && !acc.isEmpty()) account = acc.get(0).optString("id");
         model = valid(models(), model);
-        effort = efforts().length() == 0 ? "" : valid(efforts(), effort);
+        // An unset effort is the provider's default, not the first level ("Low").
+        effort = efforts().length() == 0 ? "" : valid(efforts(), effort.isEmpty() ? defaultEffort() : effort);
         access = valid(accesses(), access);
         device = "claude".equals(kind()) ? valid(devices(), device) : "";
         // A PC of the mesh that's off can't take a new chat: back to this one.
