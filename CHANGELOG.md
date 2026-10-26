@@ -5,6 +5,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+
+## [0.34.1] - 2026-10-25
+
 ### Fixed
 - Phones without a screen lock can pair and use Harbor again: they pair with two factors (the
   phone's key and the pairing secret, sessions and rotating keys unchanged) instead of failing on
@@ -816,7 +819,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.34.1...HEAD
+[0.34.1]: https://github.com/RDevNeo/harbor/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/RDevNeo/harbor/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/RDevNeo/harbor/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/RDevNeo/harbor/compare/v0.32.0...v0.33.0
