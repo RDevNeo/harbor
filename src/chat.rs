@@ -120,7 +120,8 @@ impl App {
                 {
                     let ui = &mut right;
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    if w::btn(ic::X).icon_sm().show(ui).on_hover_text("Close Harbor").clicked() {
+                    let close = if self.keep_running() { "Close the window (Harbor keeps running in the background)" } else { "Close Harbor" };
+                    if w::btn(ic::X).icon_sm().show(ui).on_hover_text(close).clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     ui.add_space(4.0);

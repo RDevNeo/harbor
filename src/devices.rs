@@ -121,12 +121,14 @@ pub struct Device {
     pub via: String,
     /// Phones: its app's versionCode (api::PairedPhone::app, 0: unknown, an old app).
     pub app: i64,
+    /// PCs that don't answer: why (mesh::Down::slug: "harbor" isn't running there, the "pc" is off).
+    pub down: String,
 }
 
 impl Device {
     fn from_json(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0) }
+        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), down: s("down") }
     }
 
     pub fn phone(&self) -> bool {
@@ -171,12 +173,15 @@ fn paired() -> Vec<Device> {
     let mesh_on = hub.mesh.on.load(std::sync::atomic::Ordering::Relaxed);
     let mut v: Vec<Device> = crate::remote::paired_pcs(&allowed, &peers)
         .into_iter()
-        .map(|p| Device { seen: peers.get(&p.id).map(|q| q.seen).unwrap_or(0), key: p.id, name: p.name, kind: "pc".into(), online: mesh_on && p.online, ip: p.ip, ..Default::default() })
+        .map(|p| {
+            let down = if mesh_on && !p.online { hub.mesh.down_of(&p.id).map(|d| d.slug().to_string()).unwrap_or_default() } else { String::new() };
+            Device { seen: peers.get(&p.id).map(|q| q.seen).unwrap_or(0), key: p.id, name: p.name, kind: "pc".into(), online: mesh_on && p.online, ip: p.ip, down, ..Default::default() }
+        })
         .collect();
     if hub.enabled.load(std::sync::atomic::Ordering::Relaxed) {
         for p in hub.paired_phones() {
             let online = p.seen > 0 && crate::store::now() - p.seen < PHONE_OPEN_SECS;
-            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen, via: p.via, app: p.app });
+            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, ip: p.ip, seen: p.seen, via: p.via, app: p.app, ..Default::default() });
         }
     }
     v
@@ -657,6 +662,8 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         (true, true) if !d.via.is_empty() => format!("Harbor open, via {}", d.via),
         (true, true) => "Harbor open".into(),
         (_, true) => "online".into(),
+        (false, false) if d.down == "harbor" && d.seen > 0 => format!("Harbor isn't running, {}", ago(d.seen)),
+        (false, false) if d.down == "harbor" => "Harbor isn't running".into(),
         (_, false) if d.seen > 0 => format!("offline, {}", ago(d.seen)),
         _ => "offline".into(),
     });
@@ -1305,7 +1312,7 @@ impl Files {
 
 /// For hot reload: what a device tab needs to come back.
 pub fn device_json(d: &Device) -> Value {
-    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app })
+    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "down": d.down })
 }
 
 pub fn device_from(v: &Value) -> Device {

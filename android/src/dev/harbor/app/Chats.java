@@ -53,12 +53,15 @@ public class Chats extends Base {
         Ui.pool.execute(() -> {
             try {
                 JSONObject st = hub.state();
-                Ui.main.post(() -> { loading = false; if (!isFinishing()) side.render(st); });
+                Ui.main.post(() -> { loading = false; if (!isFinishing()) { side.offline(null, null, null); side.render(st); } });
             } catch (Exception e) {
-                String why = Hub.why(e);
+                String why = hub.whyDown(e);
+                boolean down = Hub.down(e) != null;
+                String title = hub.downTitle(e);
                 Ui.main.post(() -> {
                     loading = false;
-                    if (!isFinishing()) Ui.toast(this, why);
+                    if (isFinishing()) return;
+                    if (down) side.offline(title, why, this::retryNow); else Ui.toast(this, why);
                 });
             }
         });
@@ -73,7 +76,9 @@ public class Chats extends Base {
 
     @Override
     void onOffline(boolean off, String why) {
-        if (off) Ui.toast(this, why); else load();
+        // A card over the last list it sent, not a toast that goes away: the poll keeps trying.
+        if (off) side.offline(hub.downTitle(offlineError), why, this::retryNow);
+        else { side.offline(null, null, null); load(); }
     }
 
     static String kindOf(JSONObject st, String account) {

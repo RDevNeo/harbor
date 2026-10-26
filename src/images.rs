@@ -76,6 +76,11 @@ fn shared(ctx: &egui::Context) -> Shared {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Shared>(Id::NULL.with("images")).clone())
 }
 
+/// Drops every decoded image (a new window's renderer has none of their textures).
+pub fn forget_all(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove_temp::<Shared>(Id::NULL.with("images")));
+}
+
 fn lock(s: &Shared) -> MutexGuard<'_, Cache> {
     s.lock().unwrap_or_else(|e| e.into_inner())
 }

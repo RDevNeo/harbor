@@ -137,7 +137,7 @@ impl Tab {
     /// What the settings search matches besides the name.
     pub fn keywords(self) -> &'static str {
         match self {
-            Tab::General => "restart resume continue order activity sort fast mode recap summary suggestion prompt",
+            Tab::General => "restart resume continue order activity sort fast mode recap summary suggestion prompt background tray autostart login startup quit close",
             Tab::Appearance => "theme dark light omarchy colours colors",
             Tab::Keybindings => "shortcuts keyboard keys hotkeys",
             Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
@@ -255,6 +255,9 @@ impl App {
             self.store.set("fast_mode", b(fast));
         }
         ui.add_space(12.0);
+        section(ui, "Background");
+        self.background_rows(ui);
+        ui.add_space(12.0);
         section(ui, "Recaps and suggestions");
         self.recap_rows(ui);
         ui.add_space(12.0);
@@ -263,6 +266,38 @@ impl App {
         ui.add_space(12.0);
         section(ui, "Updates");
         self.updates_rows(ui);
+    }
+
+    /// Keep running when the window closes, start at login, quit completely (background.rs).
+    fn background_rows(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let mut keep = self.keep_running();
+        let mut login = crate::background::autostart();
+        rows(ui, |ui| {
+            w::setting_row(
+                ui,
+                "Keep running in the background when the window is closed",
+                "Phones and your other PCs keep reaching this PC, and the queue, automatic work, wake-ups and webhooks go on. Run Harbor again (or use its tray icon) to open the window.",
+                |ui| w::toggle(ui, &mut keep),
+            );
+            w::separator(ui);
+            w::setting_row(ui, "Start Harbor when I log in", "Starts in the background, without a window, so this PC is reachable as soon as you log in.", |ui| w::toggle(ui, &mut login));
+            w::separator(ui);
+            let tray = if crate::tray::active() { "Also in the tray icon's menu." } else { "No tray was found on this desktop, so quit from here." };
+            w::setting_row(ui, "Quit Harbor completely", &format!("Stops everything: phones and other PCs can't reach this PC until Harbor runs again. Running agent turns finish on their own. {tray}"), |ui| {
+                if w::btn("Quit Harbor").sm().outline().show(ui).clicked() {
+                    crate::background::quit(&ctx);
+                }
+            });
+        });
+        if keep != self.keep_running() {
+            self.set_keep_running(keep);
+        }
+        if login != crate::background::autostart() {
+            if let Err(e) = crate::background::set_autostart(login) {
+                crate::picker::show_toast(&ctx, format!("Couldn't change the login item: {e}"));
+            }
+        }
     }
 
     /// Version, Updates (Ask me / Automatically), Check now / Install / Restore previous.

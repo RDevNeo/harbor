@@ -5,6 +5,23 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Harbor keeps running in the background when its window is closed, so phones and other PCs keep
+  reaching this PC, and the queue, automatic work, wake-ups, webhooks and update checks go on
+  (Settings › General › Background, on by default; it's the same process, idle without a window).
+  Running `harbor` again, or the tray icon, opens the window; the tray menu (and Settings) has
+  Quit Harbor completely. The first close explains this in a desktop notification. Updates set to
+  install automatically restart into the new version in the background; "Ask me" sends a
+  notification once.
+- Tray icon (StatusNotifierItem: waybar, KDE, GNOME's AppIndicator extension…) with Open Harbor and
+  Quit Harbor completely. Without a tray host it simply isn't there.
+- "Start Harbor when I log in" (Settings › General): an autostart entry that starts it without a
+  window (`harbor --background`).
+- When a PC doesn't answer, the other PCs' Devices and the phone say why: "Harbor isn't running"
+  (the PC refused the connection) or "offline" (no answer), with when it was last seen. The phone
+  shows a card with Try again over the chat list instead of a passing error, names the PC it
+  moved away from when it fails over, and its PC list says the same.
+
 ## [0.33.1] - 2026-10-25
 
 ### Fixed

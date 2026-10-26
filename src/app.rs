@@ -1348,6 +1348,17 @@ impl eframe::App for App {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.tick(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        self.draw(ui, frame);
+    }
+}
+
+impl App {
+    /// Everything but drawing: also runs with no window (background.rs).
+    pub fn tick(&mut self, ctx: &egui::Context) {
         self.auto_tick(ctx);
         self.drop_idle_transcripts();
         while let Ok((id, ev)) = self.rx.try_recv() {
@@ -1394,6 +1405,7 @@ impl eframe::App for App {
                 control::Incoming::Hook(h) => self.handle_hook(h, ctx),
                 control::Incoming::Api(call) => self.handle_api(call, ctx),
                 control::Incoming::Mesh(m) => self.handle_mesh(m),
+                control::Incoming::Focus { .. } if crate::background::hidden() => crate::background::show(ctx),
                 control::Incoming::Focus { raised } => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -1411,7 +1423,8 @@ impl eframe::App for App {
         }
         crate::update::tick(self.auto_update(), ctx);
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
-        if !dropped.is_empty() && !crate::devices::claims_drop(ctx) {
+        // (With no window the input is the last window's: nothing was dropped.)
+        if !dropped.is_empty() && !crate::background::hidden() && !crate::devices::claims_drop(ctx) {
             let key = self.key();
             self.files.entry(key).or_default().extend(dropped);
         }
@@ -1432,9 +1445,17 @@ impl eframe::App for App {
         self.api_tick();
         self.typing_repaint(ctx);
         self.maybe_reload(ctx);
+        // The tray's Open while the window is up: bring it to the front.
+        if crate::background::take_show() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            if !crate::single::raise() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Critical));
+            }
+        }
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn draw(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.theme.refresh(&ctx);
         ctx.data_mut(|d| d.insert_temp(Id::NULL, TokensCell(self.theme.t)));

@@ -150,6 +150,36 @@ pub struct Shared {
     pub seen: Mutex<HashMap<String, Seen>>,
     /// Addresses learned for allowed keys (calls from them, `HARBOR_MESH_PEERS`, Tailscale).
     pub hints: Mutex<HashMap<String, Vec<String>>>,
+    /// Why a peer (by id) doesn't answer: `Down::Harbor` (its PC refused the connection, so
+    /// Harbor isn't running there) or `Down::Pc` (no answer at all: off, asleep, out of reach).
+    pub down: Mutex<HashMap<String, Down>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Down {
+    Harbor,
+    Pc,
+}
+
+impl Down {
+    /// On the wire (`/v1/hubs`, Devices): "harbor" or "pc".
+    pub fn slug(self) -> &'static str {
+        match self {
+            Down::Harbor => "harbor",
+            Down::Pc => "pc",
+        }
+    }
+
+    /// From the errors of trying each address: one refused means the PC is up without Harbor.
+    pub fn of(errors: &[String]) -> Down {
+        if errors.iter().any(|e| e.contains("refused") || e.contains("os error 111")) { Down::Harbor } else { Down::Pc }
+    }
+}
+
+impl Shared {
+    pub fn down_of(&self, id: &str) -> Option<Down> {
+        self.down.lock().unwrap().get(id).copied()
+    }
 }
 
 /// A Tailscale node: its stable ID (`nXXXX…CNTRL`), MagicDNS label, user and whether it's tagged.
@@ -1120,7 +1150,11 @@ pub fn hubs(hub: &api::Hub, token: &str, secrets: Option<&serde_json::Map<String
             let (ips, port) = ips_and_port(&all);
             let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.iter().find(|i| i.parse::<std::net::IpAddr>().is_ok())).cloned().unwrap_or_default();
             let provision = three && tok.is_none() && p.online && p.phones;
-            out.push(json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok, "provision": provision }));
+            let mut e = json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok, "provision": provision, "seen": p.seen });
+            if let Some(d) = hub.mesh.down_of(&p.id).filter(|_| !p.online) {
+                e["down"] = json!(d.slug());
+            }
+            out.push(e);
         }
     }
     json!({ "hubs": out })
@@ -1278,11 +1312,29 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
         };
         let fp = dests.first().map(|d| d.fp.clone()).unwrap_or_default();
         let at = std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), port).to_string();
+        let mut direct_errors = vec![];
         for d in dests.into_iter().chain(relays.into_iter().map(|r| Dest { addr: at.clone(), fp: fp.clone(), via: Some(Box::new(r)) })) {
             answer = http(&d, "GET", "/mesh/v1/hello", None, Duration::from_secs(8));
             if answer.is_ok() {
                 dest = d;
                 break;
+            }
+            if let (None, Err(e)) = (&d.via, &answer) {
+                direct_errors.push(e.clone());
+            }
+        }
+        // Why it doesn't answer, for Devices and phones (shown only while it's offline).
+        if let Some(id) = &known {
+            let now = if answer.is_ok() { None } else { Some(Down::of(&direct_errors)) };
+            let mut down = shared.down.lock().unwrap();
+            if down.get(id).copied() != now {
+                match now {
+                    Some(d) => down.insert(id.clone(), d),
+                    None => down.remove(id),
+                };
+                drop(down);
+                let _ = tx.send(crate::control::Incoming::Mesh(Msg::Peer));
+                wake();
             }
         }
         let hello = match answer {
@@ -2869,6 +2921,14 @@ fn map_new(hub: &api::Hub, home: &str, mut r: Reply, global: bool) -> Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn why_a_peer_is_down() {
+        assert_eq!(Down::of(&["Connection refused (os error 111)".into()]), Down::Harbor);
+        assert_eq!(Down::of(&["connection timed out".into(), "Connection refused (os error 111)".into()]), Down::Harbor, "one address answered: the PC is up");
+        assert_eq!(Down::of(&["connection timed out".into(), "No route to host (os error 113)".into()]), Down::Pc);
+        assert_eq!(Down::of(&[]), Down::Pc);
+    }
 
     #[test]
     fn identity_from_tailscale() {

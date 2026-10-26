@@ -164,7 +164,10 @@ impl App {
     /// cap blocks that no longer apply (the cap was raised, the window reset) and
     /// continues what waited on them, and sends warnings.
     pub fn check_caps(&mut self, ctx: &egui::Context) {
-        let now_t = ctx.input(|i| i.time);
+        // A process clock, not egui's input time: that one stands still with no window and starts
+        // over with each new one (background.rs).
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let now_t = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() + 1.0;
         if now_t - self.limits.ctl.last_check < CHECK_EVERY && self.limits.ctl.last_check > 0.0 {
             return;
         }

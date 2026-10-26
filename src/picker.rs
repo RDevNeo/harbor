@@ -79,6 +79,12 @@ fn fail(msg: String) -> Vec<PathBuf> {
     Vec::new()
 }
 
+/// Shows a message in the same toast, for a few seconds.
+pub fn show_toast(ctx: &egui::Context, msg: String) {
+    CTX.lock().unwrap().get_or_insert_with(|| ctx.clone());
+    let _ = fail(msg);
+}
+
 /// Shows the last picker error for a few seconds; called every frame.
 pub fn toast(ctx: &egui::Context, t: &crate::theme::Tokens) {
     CTX.lock().unwrap().get_or_insert_with(|| ctx.clone());

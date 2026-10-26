@@ -148,7 +148,7 @@ impl App {
         &self.panes[d.idx()]
     }
 
-    fn pane_mut(&mut self, d: Dock) -> &mut Pane {
+    pub(crate) fn pane_mut(&mut self, d: Dock) -> &mut Pane {
         &mut self.panes[d.idx()]
     }
 

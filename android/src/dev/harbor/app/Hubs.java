@@ -116,7 +116,7 @@ public class Hubs extends Base {
                 s = "Harbor " + st.optString("version") + " · " + (via.isEmpty() ? h.host : "via " + via);
                 color = Ui.GREEN;
             } catch (Exception e) {
-                s = Hub.why(e);
+                s = h.whyDown(e);
                 color = Ui.RED;
             }
             final String fs = s; final int fc = color;

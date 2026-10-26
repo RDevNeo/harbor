@@ -776,6 +776,21 @@ phone paired once can talk to any of them (three-factor pairings: only through
 or whose phone access is off (`phones: false`: it would drop the phone; forget it until it's on).
 Removing the phone in Settings › Phones on any PC removes its tokens on all of them.
 
+Since 0.34 (optional, older hubs leave them out) each other PC also has `seen` (unix seconds of
+its last answer to this PC, 0: never) and, while `online` is false, `down`: `"harbor"` when its PC
+refused the connection (the PC is up, Harbor isn't running there) or `"pc"` when nothing answered
+(off, asleep, out of reach).
+
+### When a PC doesn't answer
+
+Harbor keeps running in the background when its window is closed (0.34, on by default), so a PC
+normally answers while it's on. When it doesn't, the app tells apart what it can from its own
+connection attempt: refused (`ECONNREFUSED`) = "Harbor isn't running on <PC>", a connect timeout
+or no route = "<PC> is offline", each with when that PC last answered this phone (kept by the
+app). The home screen shows it as a card with Try again over the last list the PC sent; the
+long-poll keeps retrying (1–10 s apart) and the card goes when the PC answers. Connects time out
+after 3 s (8 s with a single address), so nothing waits longer than a long-poll (25 s).
+
 ### Failover
 
 The app keeps the hubs' addresses and tokens (encrypted, like the pairing) and sends every call to

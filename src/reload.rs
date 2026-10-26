@@ -158,7 +158,8 @@ impl App {
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
         // Agent turns run detached and are picked up again, so they don't hold it back.
-        if focused && !self.hold_reload {
+        // With no window nobody is interrupted: it restarts at once, still in the background.
+        if (focused || crate::background::hidden()) && !self.hold_reload {
             self.reload_now();
         }
     }
@@ -190,7 +191,11 @@ impl App {
             self.drop_surfaces(d);
         }
         let Some(exe) = crate::update::self_exe() else { return };
-        let args: Vec<String> = std::env::args().skip(1).collect();
+        // The new image opens a window only if this one has one (background.rs).
+        let mut args: Vec<String> = std::env::args().skip(1).filter(|a| a != crate::background::FLAG).collect();
+        if crate::background::hidden() {
+            args.push(crate::background::FLAG.into());
+        }
         // Development hooks describe the first launch only.
         let err = std::process::Command::new(&exe).args(args).env_remove("HARBOR_VIEW").env_remove("HARBOR_POINTER").env(crate::single::RELOADED_PID, std::process::id().to_string()).exec();
         eprintln!("harbor: reload failed: {err}");

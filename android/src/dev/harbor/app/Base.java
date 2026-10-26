@@ -315,10 +315,24 @@ abstract class Base extends Activity {
     /** The hub stopped answering (true) or answers again (false). */
     void onOffline(boolean off, String why) { }
 
+    /** Why the hub stopped answering (for a title: Hub.downTitle), null while it answers. */
+    Throwable offlineError;
+    private volatile String lastWhy;
+
+    /** "Try again" on an offline card: ask now instead of waiting for the next retry. */
+    void retryNow() {
+        if (hub == null || isFinishing()) return;
+        Net.Http c = polling;
+        if (c != null) Ui.pool.execute(c::close);
+        startPolling();
+        refresh();
+    }
+
     /** Calls now go to another PC of the mesh (the one before stopped answering). */
     void onMoved() {
         String n = hub.viaName();
-        Ui.toast(this, "Connected through " + (n.isEmpty() ? hub.label() : n));
+        String w = hub.movedWhy;
+        Ui.toast(this, (w != null ? w + ". " : "") + "Connected through " + (n.isEmpty() ? hub.label() : n));
     }
 
     @Override
@@ -380,7 +394,8 @@ abstract class Base extends Activity {
                     boolean sc = r.optBoolean("state_changed");
                     // Something one of the PCs sent this phone waits there (Devices › Send).
                     if (r.optInt("inbox") > 0) Inbox.poke(h, now);
-                    if (fails > 0) Ui.main.post(() -> { if (my == gen) { offline = false; onOffline(false, null); } });
+                    if (fails > 0) Ui.main.post(() -> { if (my == gen) { offline = false; offlineError = null; onOffline(false, null); } });
+                    lastWhy = null;
                     fails = 0;
                     // The first answer only tells the revision; the screen loaded on resume already,
                     // unless it missed something while paused (rev moved on).
@@ -402,8 +417,14 @@ abstract class Base extends Activity {
                     if (!(e instanceof Hub.ApiError)) h.failed();
                     if (connected && e instanceof java.net.SocketTimeoutException && fails == 0) { fails = 0; continue; }
                     fails++;
-                    final String why = Hub.why(e);
-                    if (fails == 1) Ui.main.post(() -> { if (my == gen) { offline = true; onOffline(true, why); } });
+                    // Said again when it changes (the connection dropped, then the PC refuses:
+                    // Harbor was quit there).
+                    final String why = h.whyDown(e);
+                    final Throwable err = e;
+                    if (fails == 1 || !why.equals(lastWhy)) {
+                        lastWhy = why;
+                        Ui.main.post(() -> { if (my == gen) { offline = true; offlineError = err; onOffline(true, why); } });
+                    }
                     try { Thread.sleep(Math.min(10_000, 1000L * fails)); } catch (InterruptedException ignored) { }
                 }
             }

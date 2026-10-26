@@ -8,6 +8,7 @@ mod api;
 mod browser;
 mod app;
 mod autowork;
+mod background;
 mod bridge;
 mod chat;
 mod clipboard;
@@ -62,6 +63,7 @@ mod teamui;
 mod terminal;
 mod theme;
 mod tls;
+mod tray;
 mod undo;
 mod usage_ctl;
 mod update;
@@ -101,9 +103,13 @@ fn main() -> eframe::Result {
         detach::run(&args[2..]);
         return Ok(());
     }
-    // One window per session: a second launch brings the running Harbor to the front.
+    let background = args.iter().any(|a| a == background::FLAG);
+    // One Harbor per session: a second launch brings the running Harbor to the front (or opens
+    // its window, when it runs in the background).
     if !single::acquire() {
-        if single::focus_running() {
+        if background {
+            // Autostart while it already runs: nothing to do.
+        } else if single::focus_running() {
             eprintln!("harbor: already running, brought it to the front");
         } else {
             eprintln!("harbor: already running, but it didn't answer on {}", control::socket_path().display());
@@ -113,23 +119,61 @@ fn main() -> eframe::Result {
     if let Some(born) = born {
         procs::reap_inherited(born);
     }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Harbor")
-            .with_app_id("harbor")
-            .with_inner_size([1180.0, 780.0])
-            .with_min_inner_size([640.0, 420.0]),
-        // Ctrl+C/X/V go through src/clipboard.rs (wl-clipboard on Wayland) instead.
-        clipboard_shortcuts: false,
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Harbor",
-        options,
-        Box::new(|cc| {
-            theme::install_fonts(&cc.egui_ctx);
-            cc.egui_ctx.add_plugin(clipboard::Plugin);
-            Ok(Box::new(app::App::new(&cc.egui_ctx)))
-        }),
-    )
+    // One context and one App for the whole process: windows come and go (background.rs).
+    let ctx = egui::Context::default();
+    ctx.set_embed_viewports(false);
+    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(2).unwrap_or(std::num::NonZeroUsize::MIN));
+    theme::install_fonts(&ctx);
+    ctx.add_plugin(clipboard::Plugin);
+    let mut app = app::App::new(&ctx);
+    tray::start(&ctx);
+    let mut hidden = background;
+    let mut closed = false;
+    loop {
+        if hidden && !background::run_hidden(&mut app, &ctx, closed) {
+            break;
+        }
+        let options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_title("Harbor")
+                .with_app_id("harbor")
+                .with_inner_size([1180.0, 780.0])
+                .with_min_inner_size([640.0, 420.0]),
+            // Ctrl+C/X/V go through src/clipboard.rs (wl-clipboard on Wayland) instead.
+            clipboard_shortcuts: false,
+            ..Default::default()
+        };
+        let shown = &mut app;
+        eframe::run_native_ext(
+            "Harbor",
+            options,
+            Some(ctx.clone()),
+            Box::new(move |cc| {
+                shown.window_opened(&cc.egui_ctx);
+                Ok(Box::new(Window(shown)))
+            }),
+        )?;
+        if background::quitting() || !app.keep_running() {
+            break;
+        }
+        (hidden, closed) = (true, true);
+    }
+    Ok(())
+}
+
+/// The window's view of the App, which outlives it.
+struct Window<'a>(&'a mut app::App);
+
+impl eframe::App for Window<'_> {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        eframe::App::raw_input_hook(self.0, ctx, raw);
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        eframe::App::logic(self.0, ctx, frame);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        eframe::App::ui(self.0, ui, frame);
+    }
 }

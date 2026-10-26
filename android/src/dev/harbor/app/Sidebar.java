@@ -149,6 +149,11 @@ final class Sidebar {
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
 
+        if (offTitle != null) {
+            TextView icon = Ui.icon(a, Ui.I_MONITOR, 18, Ui.RED);
+            icon.setBackground(Ui.round(Ui.G100, 0, 10));
+            list.addView(banner(icon, offTitle, offBody, "Try again", true, offRetry, null, null, null), Ui.inset());
+        }
         banners(st);
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
@@ -317,13 +322,30 @@ final class Sidebar {
         }
         if (btns.getChildCount() > 0) col.addView(btns);
         card.addView(col, Ui.weight());
-        TextView x = Ui.iconButton(a, Ui.I_X, Ui.G700, v -> onClose.run());
-        x.setContentDescription("Dismiss");
-        card.addView(x, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        if (onClose != null) {
+            TextView x = Ui.iconButton(a, Ui.I_X, Ui.G700, v -> onClose.run());
+            x.setContentDescription("Dismiss");
+            card.addView(x, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        } else {
+            card.setPadding(Ui.dp(12), Ui.dp(12), Ui.dp(12), Ui.dp(12));
+        }
         LinearLayout wrap = Ui.col(a);
         wrap.setPadding(0, Ui.dp(4), 0, Ui.dp(6));
         wrap.addView(card, Ui.fill());
         return wrap;
+    }
+
+    // ---- the hub doesn't answer ----
+
+    private String offTitle, offBody;
+    private Runnable offRetry;
+
+    /** Shows (title non-null) or clears the card saying the PC doesn't answer, over the last
+     *  list it sent: Harbor not running there, or the PC offline, with when it last answered. */
+    void offline(String title, String body, Runnable retry) {
+        if (title == null && offTitle == null) return;
+        offTitle = title; offBody = body; offRetry = retry;
+        render(st != null ? st : new JSONObject());
     }
 
     private void divider() {

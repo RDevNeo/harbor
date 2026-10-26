@@ -23,7 +23,7 @@ pub struct State {
     /// Devices whose picked image was just copied in (by the file chooser's thread).
     picked: Arc<Mutex<Vec<String>>>,
     /// Their images, by device id, decoded on a thread (set None: the file didn't decode).
-    icons: HashMap<String, Arc<std::sync::OnceLock<Option<egui::TextureHandle>>>>,
+    pub(crate) icons: HashMap<String, Arc<std::sync::OnceLock<Option<egui::TextureHandle>>>>,
 }
 
 /// A device's mark: its image or glyph, with a dot when its online state is known.

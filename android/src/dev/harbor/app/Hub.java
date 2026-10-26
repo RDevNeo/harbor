@@ -115,6 +115,73 @@ final class Hub {
 
     private void good(String v) {
         synchronized (bad) { bad.remove(id + "/" + v); }
+        answered(id);
+    }
+
+    // ---- when a PC last answered, and why it doesn't ----
+
+    /** Per hub id: when one of its PCs last answered (kept across restarts, written at most
+     *  once a minute). */
+    private static final Map<String, Long> answeredAt = new HashMap<>();
+
+    private static void answered(String id) {
+        long now = System.currentTimeMillis();
+        Long was;
+        synchronized (answeredAt) { was = answeredAt.put(id, now); }
+        if ((was == null || now - was > 60_000) && Ui.app != null) prefs(Ui.app).edit().putLong("seen-" + id, now).apply();
+    }
+
+    /** When this hub last answered (ms), 0: never seen. */
+    long lastAnswer() {
+        synchronized (answeredAt) {
+            Long t = answeredAt.get(id);
+            if (t != null) return t;
+        }
+        return Ui.app == null ? 0 : prefs(Ui.app).getLong("seen-" + id, 0);
+    }
+
+    /** Why nothing answered: "harbor" (the PC refused the connection: it's up, Harbor isn't
+     *  running there), "pc" (no answer at all: off, asleep, another network), null: something
+     *  else (an error from Harbor itself, a pairing problem). */
+    static String down(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ApiError || t instanceof Net.Refused || t instanceof Net.WrongKey) return null;
+            String m = String.valueOf(t.getMessage());
+            if (t instanceof ConnectException && (m.contains("ECONNREFUSED") || m.toLowerCase(java.util.Locale.ROOT).contains("refused"))) return "harbor";
+            if (t instanceof ConnectException || t instanceof java.net.NoRouteToHostException || t instanceof UnknownHostException
+                    || (t instanceof SocketTimeoutException && m.contains("connect"))) return "pc";
+        }
+        return null;
+    }
+
+    /** What to tell the user when this hub doesn't answer: Harbor not running on the PC, or the
+     *  PC out of reach, with when it last answered; else why(e). */
+    String whyDown(Throwable e) {
+        String d = down(e);
+        if (d == null) return why(e);
+        long t = lastAnswer();
+        String seen = t > 0 ? " Last answered " + (Ui.ago(t).equals("now") ? "just now." : Ui.ago(t) + " ago.") : "";
+        if ("harbor".equals(d)) return "Harbor isn't running on " + label() + ". Start it there (it can keep running in the background)." + seen;
+        return label() + " is offline or out of reach." + seen;
+    }
+
+    /** Why the PC calls went to before stopped answering, once another PC answered instead
+     *  ("Harbor isn't running on desk"): said with the move. Null: not known. */
+    volatile String movedWhy;
+
+    private String downNote(String v, Throwable e) {
+        Ep ep = ep(v);
+        String n = ep == null ? label() : ep.label();
+        String d = down(e);
+        return "harbor".equals(d) ? "Harbor isn't running on " + n : "pc".equals(d) ? n + " is offline" : null;
+    }
+
+    /** A short title for the offline state ("Harbor isn't running on desk" / "desk is offline"). */
+    String downTitle(Throwable e) {
+        String d = down(e);
+        if ("harbor".equals(d)) return "Harbor isn't running on " + label();
+        if ("pc".equals(d)) return label() + " is offline";
+        return "Can't reach " + label();
     }
 
     /** Last /v1/state per hub id, so screens open with something while they refresh. */
@@ -440,6 +507,7 @@ final class Hub {
                     c.header("X-Harbor-Ids", "global");
                 }
                 c.header("Accept", "application/json");
+                if (v.equals(cur)) movedWhy = null;
                 setVia(v);
                 return c;
             } catch (NoV6 x) {
@@ -447,6 +515,7 @@ final class Hub {
                 last = (IOException) x.getCause();
             } catch (IOException x) {
                 last = x;
+                if (v.equals(cur)) movedWhy = downNote(v, x);
             }
         }
         if (noV6 && !(last instanceof ApiError) && !(last instanceof Net.WrongKey) && !(last instanceof Net.Refused))
