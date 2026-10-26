@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Every PC's files for every chat (#77): while the mesh has other PCs, agents get `machines` tools
+  (list, bash, read, write, edit, glob, grep, github) that work on any PC by name, whichever PC the
+  chat runs on. Each PC's owner chooses per PC what chats from there may do (Settings › Devices, the
+  menu next to each PC): nothing, read their Harbor projects (the default), edit them, or everything
+  (shell, any file, GitHub). The phone's Settings › People and memory shows and changes the same.
+- GitHub through the PC a chat is driven from: such a chat can run `gh` on that PC with its owner's
+  Harbor GitHub sign-in, so the issues and pull requests it makes are theirs (Settings › Devices ›
+  My chats on other PCs may use my GitHub here, on by default; without full access it takes no
+  file paths there).
+
 ## [0.45.0] - 2026-10-26
 
 ### Added

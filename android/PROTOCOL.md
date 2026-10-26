@@ -967,6 +967,12 @@ account's full name and Harbor's GitHub sign-in) and whether a chat driven from 
 on another PC takes this PC's instructions and memory (`send_context`). `PATCH` takes any of
 `owner`, `github`, `send_context` and answers like `GET`. Older hubs answer `404`: hide the row.
 
+From 0.45 (shared files, `src/machines.rs`): each other PC in `pcs` has `share` (`off`, `read`,
+`edit` or `full`: what chats running on that PC may do with this PC's files, shell and GitHub)
+and `share_label`; `levels` lists the choices (`[{id, label, about}]`); `me.share_github` says
+whether chats this PC drives on other PCs may run `gh` here with its GitHub sign-in. `PATCH` also
+takes `share_github` and `share: {pc, level}`.
+
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
@@ -1145,6 +1151,18 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   that context in an overlay profile instead of the home PC owner's (also when `ctx` is
   missing: an older caller, nothing loads), until someone at the home PC or its phones writes in
   it. The home PC's GitHub and app sign-ins are off for it unless both say the same `github`.
+- `GET /mesh/v1/share` (0.45) → `{level, github, projects: [{name, path}], home}`: what this PC
+  lets the caller's chats do here (`level` as in `/v1/people`; `projects` empty when `off`; `home`
+  only with `full`; `github`: chats it commands may use this PC's GitHub sign-in).
+- `POST /mesh/v1/tool` `{tool, args, project, chat, memory_id}` (0.45) → `{ok, content}`: one call
+  of the `machines` tools for an agent on the caller (`tool`: `bash`, `read`, `write`, `edit`,
+  `glob`, `grep` with workspace.rs's arguments, or `github` `{args: [gh's arguments], cwd?}`;
+  `content` is MCP tool content). Checked against what this PC shares with the caller: `read`
+  allows read/glob/grep and `edit` also write/edit, both only inside this PC's Harbor projects
+  (symlinks resolved); `full` allows everything as this PC's user. `github` needs `full`, or the
+  share-GitHub setting on and a `memory_id` this PC sent in a `ctx` (a chat it commands).
+  Relative paths and the shell start in the project named `project` here, else home (`full`) or
+  the first project. A refusal is `{ok: false}` with the reason as text.
 - `POST /mesh/v1/memory` `{id, files: {name: text | null}}` (0.44): memory an agent saved (null:
   removed) in a chat this PC commanded, sent back by the PC it ran on. Written only into the
   memory folder `id` was handed out for (in a `ctx`, valid 30 days), flat `*.md` names only;

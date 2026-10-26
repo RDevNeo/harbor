@@ -798,8 +798,11 @@ fn token_var(id: &str) -> String {
 /// Claude Code's `--mcp-config` file for a turn (used with `--strict-mcp-config`): the
 /// local servers that are on, the signed-in apps and `extra` (Harbor's team server).
 /// Written 0600 into Harbor's store, since it holds tokens.
-pub fn claude_config(chat_id: i64, extra: Option<(&str, Value)>, apps: bool) -> PathBuf {
-    let mut m = claude_servers(extra);
+pub fn claude_config(chat_id: i64, extra: Vec<(&str, Value)>, apps: bool) -> PathBuf {
+    let mut m = claude_servers(None);
+    for (k, v) in extra {
+        m.insert(k.into(), v);
+    }
     // A chat commanded from another PC doesn't get this PC's owner's sign-ins (meshctx.rs).
     if !apps {
         m.retain(|k, _| app(k).is_none());

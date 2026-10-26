@@ -34,6 +34,7 @@ mod mcp;
 mod mcpshim;
 mod mesh;
 mod meshctx;
+mod machines;
 mod movechat;
 mod notices;
 mod notify;

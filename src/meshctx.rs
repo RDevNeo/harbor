@@ -117,7 +117,9 @@ pub fn outgoing(s: &Store, project: Option<&Path>) -> Value {
     }
     let p = profile();
     let settings: Value = std::fs::read_to_string(p.join("settings.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    let dir = project.map(|pr| memory_dir(&p, pr));
+    // A chat without a project runs in home there: its memory is home's here.
+    let home = store::home();
+    let dir = Some(memory_dir(&p, project.unwrap_or(&home)));
     let memory = dir.as_deref().map(read_memory).unwrap_or_default();
     let id = dir.as_deref().and_then(|d| register(s, d)).unwrap_or_default();
     json!({
@@ -144,6 +146,14 @@ fn register(s: &Store, dir: &Path) -> Option<String> {
     m.insert(id.clone(), json!({ "dir": d, "at": now }));
     s.set(MEM_KEY, &Value::Object(m).to_string());
     Some(id)
+}
+
+/// The memory ids handed out and still good: a call showing one is for a chat this PC
+/// commanded (machines.rs lets those use its GitHub login).
+pub fn issued_ids(s: &Store) -> std::collections::HashSet<String> {
+    let m: Map<String, Value> = s.get(MEM_KEY).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let now = store::now();
+    m.into_iter().filter(|(_, v)| now - v["at"].as_i64().unwrap_or(0) < MEM_TTL).map(|(k, _)| k).collect()
 }
 
 /// `POST /mesh/v1/memory` `{id, files: {name: text | null}}` from the PC a chat ran on:
@@ -494,6 +504,7 @@ pub fn people_note(pcs: &[Pc]) -> String {
         let state = if p.me { " (this PC, where you run)" } else if p.online { "" } else { " (offline)" };
         s.push_str(&format!("\n- {}{state}: {}", p.name, parts.join("; ")));
     }
+    s.push_str("\nThe files, shell and GitHub of the other PCs are reachable with the mcp__machines__* tools (pass `machine`; `list` shows what each PC's owner allows this chat there).");
     s
 }
 
@@ -540,6 +551,18 @@ impl crate::app::App {
         let pcs = self.mesh_pcs();
         let me = pcs.first().map(|p| p.name.clone()).unwrap_or_default();
         let mut c = crate::agent::Context { note: people_note(&pcs), ..Default::default() };
+        // Every PC's files (machines.rs) while there are other PCs; the chat's mode limits them.
+        if pcs.len() > 1 {
+            let lead = chat.role == crate::store::Role::Lead;
+            let guest = self.guest_of(chat);
+            c.machines = Some(crate::machines::Grant {
+                chat: chat.gid.clone(),
+                project: chat.repo_id.and_then(|r| self.repo(r)).map(|r| r.name.clone()).unwrap_or_default(),
+                tools: crate::workspace::for_access(&chat.access, lead),
+                commander: guest.map(|g| g.peer.clone()).unwrap_or_default(),
+                memory_id: guest.map(|g| g.memory_id.clone()).unwrap_or_default(),
+            });
+        }
         if let Some(g) = self.guest_of(chat) {
             let host = github(&self.store);
             let same = !g.github.is_empty() && g.github.eq_ignore_ascii_case(&host);
@@ -572,7 +595,8 @@ impl crate::app::App {
         let mut name = self.store.get(OWNER_KEY).unwrap_or_default();
         let mut gh = self.store.get(GITHUB_KEY).unwrap_or_default();
         let mut send = self.store.get(SEND_KEY).as_deref() != Some("0");
-        let before = (name.clone(), gh.clone(), send);
+        let mut github_out = crate::machines::github_on(&self.store);
+        let before = (name.clone(), gh.clone(), send, github_out);
         let pcs = self.mesh_pcs();
         rows(ui, |ui| {
             w::setting_row(ui, "Your name", "How this PC's owner shows to agents and to your other PCs (who is who). Empty: your account's full name.", |ui| {
@@ -589,6 +613,13 @@ impl crate::app::App {
                 "A chat you drive from here that runs on another PC uses your global CLAUDE.md, your memory of its project and your language settings instead of that PC owner's, and memory it saves comes back here. Off: it runs with no user instructions or memory at all.",
                 |ui| w::toggle(ui, &mut send),
             );
+            w::separator(ui);
+            w::setting_row(
+                ui,
+                "My chats on other PCs may use my GitHub here",
+                "A chat you drive from here that runs on another PC can run gh on this PC with Harbor's GitHub sign-in, so its issues and pull requests are yours. Off: only PCs you let do everything (Its chats may, above) get it.",
+                |ui| w::toggle(ui, &mut github_out),
+            );
             if pcs.len() > 1 {
                 for p in &pcs {
                     w::separator(ui);
@@ -597,11 +628,13 @@ impl crate::app::App {
                 }
             }
         });
-        if (name.clone(), gh.clone(), send) != before {
+        if (name.clone(), gh.clone(), send, github_out) != before {
             self.store.set(OWNER_KEY, &name);
             self.store.set(GITHUB_KEY, &gh);
             self.store.set(SEND_KEY, if send { "1" } else { "0" });
+            self.store.set(crate::machines::GITHUB_KEY, if github_out { "1" } else { "0" });
             *self.api.hub.mesh.about.lock().unwrap() = about(&self.store);
+            self.share_publish();
         }
     }
 
@@ -611,14 +644,22 @@ impl crate::app::App {
             "pcs": self.mesh_pcs().iter().map(|p| {
                 let mut v = serde_json::to_value(p).unwrap_or_default();
                 v["line"] = json!(pc_line(p));
+                // What its chats may do here (machines.rs); not for this PC itself.
+                if !p.me {
+                    let l = crate::machines::level_for(&self.store, &p.id);
+                    v["share"] = json!(l.slug());
+                    v["share_label"] = json!(crate::machines::short(l));
+                }
                 v
             }).collect::<Vec<_>>(),
+            "levels": crate::machines::Level::ALL.iter().map(|l| json!({ "id": l.slug(), "label": l.label(), "about": crate::machines::about_level(*l) })).collect::<Vec<_>>(),
             "me": {
                 "owner": self.store.get(OWNER_KEY).unwrap_or_default(),
                 "owner_hint": full_name(),
                 "github": self.store.get(GITHUB_KEY).unwrap_or_default(),
                 "github_hint": crate::mcp::github_user().unwrap_or_default(),
                 "send_context": self.store.get(SEND_KEY).as_deref() != Some("0"),
+                "share_github": crate::machines::github_on(&self.store),
             },
         })
     }
@@ -634,6 +675,16 @@ impl crate::app::App {
         if let Some(b) = body["send_context"].as_bool() {
             self.store.set(SEND_KEY, if b { "1" } else { "0" });
         }
+        if let Some(b) = body["share_github"].as_bool() {
+            self.store.set(crate::machines::GITHUB_KEY, if b { "1" } else { "0" });
+        }
+        // `{share: {pc, level}}`: what that PC's chats may do here (machines.rs).
+        if let (Some(pc), Some(l)) = (body["share"]["pc"].as_str(), body["share"]["level"].as_str().and_then(crate::machines::Level::parse)) {
+            if self.api.hub.mesh.peer(pc).is_some() {
+                crate::machines::set_level(&self.store, pc, l);
+            }
+        }
+        self.share_publish();
         *self.api.hub.mesh.about.lock().unwrap() = about(&self.store);
     }
 

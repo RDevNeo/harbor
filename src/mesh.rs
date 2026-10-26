@@ -406,6 +406,8 @@ pub struct Local {
     in_call: bool,
     /// Meanwhile: the calling PC (id, name) and the `ctx` it sent (meshctx.rs).
     pub call_ctx: Option<(String, String, Value)>,
+    /// Settings › Devices: the PC whose "its chats may" menu is open, and where.
+    pub share_menu: Option<(String, eframe::egui::Rect)>,
     /// Leases sent for copies: (chat, viewing) → (on, kind, when), to send renewals sparingly.
     leases: HashMap<(i64, bool), (bool, String, Instant)>,
     /// The chat this PC last said it has open: (chat, focused, when).
@@ -873,6 +875,9 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             }
             ok(json!({ "ok": true }))
         }
+        // Every PC's files (machines.rs): what this PC shares with the caller, and one tool call.
+        ("GET", ["mesh", "v1", "share"]) => crate::machines::serve_share(&peer),
+        ("POST", ["mesh", "v1", "tool"]) => crate::machines::serve_tool(&peer, &read_json(r, req.len)),
         ("POST", ["mesh", "v1", "revoke"]) => {
             let body = read_json(r, req.len);
             let groups: Vec<String> = body["groups"].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(String::from)).collect();
@@ -2005,6 +2010,7 @@ impl App {
             self.mesh.reread = Some(Instant::now());
             *self.api.hub.mesh.allowed.lock().unwrap() = load_allowed(&self.store);
             *self.api.hub.mesh.about.lock().unwrap() = crate::meshctx::about(&self.store);
+            self.share_publish();
             let on = self.store.get("mesh_enabled").as_deref() == Some("1");
             if on != self.api.hub.mesh.on.load(Ordering::Relaxed) {
                 self.mesh_set_enabled(on, ctx);
@@ -2578,10 +2584,19 @@ impl App {
     }
 
     /// A phone's message through this PC: its name for "from …", its device id for the typing lock.
+    /// What this PC shares with other PCs' chats, for the listener threads (machines.rs).
+    pub fn share_publish(&self) {
+        let projects = self.repos.iter().filter(|r| r.path.is_dir()).map(|r| (r.name.clone(), r.path.clone())).collect();
+        crate::machines::publish(&self.store, projects);
+    }
+
     /// This PC's instructions and memory for a call that may start a turn on another PC, with
     /// the memory of `repo` as this PC has it (meshctx.rs).
     pub fn ctx_for(&self, repo: Option<i64>) -> Value {
-        crate::meshctx::outgoing(&self.store, repo.and_then(|r| self.repo(r)).map(|r| r.path.as_path()))
+        let ctx = crate::meshctx::outgoing(&self.store, repo.and_then(|r| self.repo(r)).map(|r| r.path.as_path()));
+        // Its memory id may be new: the listener threads know it at once (machines.rs).
+        self.share_publish();
+        ctx
     }
 
     fn phone_name(&self, call: &Call) -> (String, String) {
@@ -2717,6 +2732,8 @@ impl App {
         let mut enable_here = false;
         let phones_here = self.api.hub.enabled.load(Ordering::Relaxed);
         let mut fix_firewall = false;
+        let shares = crate::machines::levels(&self.store);
+        let mut share_click: Option<(String, eframe::egui::Rect)> = None;
         rows(ui, |ui| {
             w::setting_row(
                 ui,
@@ -2788,7 +2805,19 @@ impl App {
                             n => desc.push_str(&format!(" · {n} chats copied here")),
                         }
                     }
+                    if let Some(p) = peer.filter(|p| !p.owner.is_empty()) {
+                        desc.push_str(&format!(" · owner {}", p.owner));
+                    }
                     w::setting_row(ui, &format!("{}  {name}", crate::icons::MONITOR), &desc, |ui| {
+                        // What its chats may do with this PC's files (machines.rs).
+                        if let Some(p) = peer {
+                            let l = shares.get(&p.id).copied().unwrap_or(crate::machines::DEFAULT);
+                            let open = self.mesh.share_menu.as_ref().is_some_and(|(id, _)| *id == p.id);
+                            let r = w::trigger(ui, w::Lead::Icon(crate::icons::FOLDER), crate::machines::short(l), open).tip("What chats from this PC may do with this PC's files, shell and GitHub");
+                            if r.clicked() {
+                                share_click = Some((p.id.clone(), r.rect));
+                            }
+                        }
                         // Peers given by hand (tests) have nothing to allow.
                         let real = !key.contains(':');
                         if real && listed && w::btn("Remove").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
@@ -2820,6 +2849,30 @@ impl App {
         });
         if let Some((key, name, allow)) = change {
             self.mesh_allow(&key, &name, allow);
+        }
+        if let Some((id, rect)) = share_click {
+            self.mesh.share_menu = if self.mesh.share_menu.as_ref().is_some_and(|(o, _)| *o == id) { None } else { Some((id, rect)) };
+        }
+        if let Some((id, anchor)) = self.mesh.share_menu.clone() {
+            let t = w::tokens(ui);
+            let cur = shares.get(&id).copied().unwrap_or(crate::machines::DEFAULT);
+            let (pick, close) = w::popover(&ctx, "share-level", anchor, 330.0, false, &t, |ui| {
+                w::menu_label(ui, "Its chats may");
+                let mut pick = None;
+                for l in crate::machines::Level::ALL {
+                    if w::menu_item(ui, "", l.label(), Some(crate::machines::about_level(l)), l == cur).clicked() {
+                        pick = Some(l);
+                    }
+                }
+                pick
+            });
+            if let Some(l) = pick {
+                crate::machines::set_level(&self.store, &id, l);
+                self.share_publish();
+            }
+            if pick.is_some() || close {
+                self.mesh.share_menu = None;
+            }
         }
         if fix_firewall {
             self.open_firewall(&ctx);

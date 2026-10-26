@@ -149,6 +149,8 @@ pub struct Context {
     pub signed_in: bool,
     /// Told to the agent (who is who, whose chat it is).
     pub note: String,
+    /// Every PC's files (machines.rs), while the mesh has other PCs. Claude turns only.
+    pub machines: Option<crate::machines::Grant>,
 }
 
 /// Set in a guest turn's environment for its runner (detach.rs), which takes them out again:
@@ -386,11 +388,20 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                 match &spec.remote {
                     None => {
                         let apps = overlay.is_none() || spec.context.signed_in;
-                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::mcp::claude_config(spec.chat_id, harbor, apps));
+                        let mut extra: Vec<(&str, Value)> = harbor.into_iter().collect();
+                        // Every PC's files through the bridge (machines.rs), on a grant of its own.
+                        if let Some(m) = &spec.context.machines {
+                            let g = crate::bridge::Grant { token: crate::bridge::token()?, chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers: Default::default(), commands: false, workspace: vec![], machines: Some(m.clone()) };
+                            if let Some(port) = crate::bridge::grant(g.clone()) {
+                                extra.push((crate::machines::NAME, serde_json::json!({ "type": "http", "url": format!("http://127.0.0.1:{port}/{}/{}", g.token, crate::machines::NAME) })));
+                                grant = Some(g);
+                            }
+                        }
+                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::mcp::claude_config(spec.chat_id, extra, apps));
                     }
                     Some(r) => {
                         let servers = if r.bridge { crate::mcp::claude_servers(harbor) } else { harbor.map(|(k, v)| (k.to_string(), v)).into_iter().collect() };
-                        let g = crate::bridge::Grant { token: crate::bridge::token()?, chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers, commands: r.commands && spec.access != "plan", workspace: workspace.clone() };
+                        let g = crate::bridge::Grant { token: crate::bridge::token()?, chat_id: spec.chat_id, cwd: spec.cwd.clone(), servers, commands: r.commands && spec.access != "plan", workspace: workspace.clone(), machines: spec.context.machines.clone() };
                         // The config holds the grant's token: it goes on stdin, not on a command line.
                         cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::remote::MCP_CONFIG_ARG);
                         remote_mcp = Some(crate::bridge::remote_config(&g, remote_port).to_string());

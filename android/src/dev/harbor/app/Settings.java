@@ -294,6 +294,13 @@ public class Settings extends Base {
         you.addView(Ui.cardRow(this, Ui.I_BRAIN, "Send my instructions and memory", send
                 ? "On: a chat you drive from this PC that runs on another PC uses your CLAUDE.md, memory and language there, and what it learns comes back"
                 : "Off: such chats run with no user instructions or memory", Ui.FG, v -> patchPeople("send_context", !send)), Ui.fill());
+        if (m.has("share_github")) {
+            boolean ghOut = m.optBoolean("share_github", true);
+            you.addView(Ui.gap(this));
+            you.addView(Ui.cardRow(this, Ui.I_GLOBE, "My chats on other PCs may use my GitHub here", ghOut
+                    ? "On: they can run gh on this PC with Harbor's GitHub sign-in, so their issues and PRs are yours"
+                    : "Off: only PCs allowed everything get it", Ui.FG, v -> patchPeople("share_github", !ghOut)), Ui.fill());
+        }
         org.json.JSONArray pcs = r.optJSONArray("pcs");
         if (pcs != null && pcs.length() > 1) {
             TextView h = Ui.text(this, "Who is who", 13, Ui.G700);
@@ -305,10 +312,35 @@ public class Settings extends Base {
                 if (p == null) continue;
                 if (c.getChildCount() > 0) c.addView(Ui.gap(this));
                 String title = p.optString("name") + (p.optBoolean("self") ? " (this PC)" : "");
-                c.addView(Ui.cardRow(this, Ui.I_MONITOR, title, p.optString("line"), p.optBoolean("online", true) ? Ui.FG : Ui.G700, null), Ui.fill());
+                // Other PCs (hubs from 0.45): what their chats may do with this PC's files; tap to change.
+                String share = p.optString("share", "");
+                String sub = p.optString("line") + (share.isEmpty() ? "" : "\nIts chats here: " + p.optString("share_label"));
+                View.OnClickListener tap = share.isEmpty() ? null : v -> pickShare(p.optString("id"), p.optString("name"), share, r.optJSONArray("levels"));
+                LinearLayout row = Ui.cardRow(this, Ui.I_MONITOR, title, sub, p.optBoolean("online", true) ? Ui.FG : Ui.G700, tap);
+                if (tap != null) row.addView(Ui.chevron(this));
+                c.addView(row, Ui.fill());
             }
         }
         s.show();
+    }
+
+    private void pickShare(String pc, String name, String now, org.json.JSONArray levels) {
+        if (levels == null) return;
+        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
+        for (int i = 0; i < levels.length(); i++) {
+            JSONObject l = levels.optJSONObject(i);
+            if (l != null) o.add(new Sheet.Option(l.optString("id"), l.optString("label"), l.optString("about"), true));
+        }
+        Sheet.pick(this, "Chats from " + name + " may", "What an agent in a chat that runs on " + name + " may do with this PC's files, shell and GitHub.", o, now, l -> {
+            Ui.bg(this, () -> {
+                JSONObject s = new JSONObject();
+                s.put("pc", pc);
+                s.put("level", l);
+                JSONObject b = new JSONObject();
+                b.put("share", s);
+                return hub.call("PATCH", "/v1/people", b);
+            }, this::showPeople);
+        });
     }
 
     private void editPerson(String title, String key, String now, String hint) {

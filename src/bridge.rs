@@ -44,6 +44,10 @@ pub struct Grant {
     /// workspace.rs tools offered (empty: the agent works on the device's files).
     #[serde(default)]
     pub workspace: Vec<String>,
+    /// The `machines` server (machines.rs: every PC's files), while the mesh has other PCs.
+    /// Local turns get a grant just for it.
+    #[serde(default)]
+    pub machines: Option<crate::machines::Grant>,
 }
 
 /// A stdio server's process, and the `initialize` it got (replayed if it restarts).
@@ -165,7 +169,8 @@ pub fn end(dir: &Path) {
 /// http servers at the forwarded port.
 pub fn remote_config(g: &Grant, remote_port: u16) -> Value {
     let mut m = Map::new();
-    for name in g.servers.keys().map(String::as_str).chain([ORIGIN]) {
+    let machines = g.machines.as_ref().map(|_| crate::machines::NAME);
+    for name in g.servers.keys().map(String::as_str).chain([ORIGIN]).chain(machines) {
         m.insert(name.into(), json!({ "type": "http", "url": format!("http://127.0.0.1:{remote_port}/{}/{}", g.token, enc(name)) }));
     }
     json!({ "mcpServers": m })
@@ -232,7 +237,8 @@ fn handle(s: TcpStream) {
         let mut grants = GRANTS.lock().unwrap();
         grants.get_mut(token).and_then(|live| {
             let def = live.grant.servers.get(server).cloned();
-            (server == ORIGIN || def.is_some()).then(|| (live.grant.clone(), def, live.slots.entry(server.to_string()).or_default().clone()))
+            let mine = server == ORIGIN || server == crate::machines::NAME && live.grant.machines.is_some();
+            (mine || def.is_some()).then(|| (live.grant.clone(), def, live.slots.entry(server.to_string()).or_default().clone()))
         })
     };
     let Some((grant, def, slot)) = found else {
@@ -259,6 +265,7 @@ fn handle(s: TcpStream) {
     };
     let one = |m: &Value| -> Option<Value> {
         match &def {
+            None if server == crate::machines::NAME => crate::machines::mcp(grant.machines.as_ref()?, &grant.cwd, grant.chat_id, m),
             None => origin(&grant, m),
             Some(d) if kind.as_deref() == Some("stdio") => stdio(&grant, d, &slot, m),
             Some(_) => m.get("id").map(|id| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "Harbor's bridge only carries stdio and http servers" } })),
@@ -666,7 +673,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let fwd = format!("127.0.0.1:20001:127.0.0.1:{p}");
         std::fs::write(dir.join("cmd.json"), json!({ "args": ["ssh", "-R", fwd, "host"] }).to_string()).unwrap();
-        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers: Map::new(), commands: true, workspace: vec![] };
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers: Map::new(), commands: true, workspace: vec![], machines: None };
         save(&dir, &g);
         resume(&dir);
         assert!(!GRANTS.lock().unwrap().contains_key(&g.token));
@@ -684,7 +691,7 @@ mod tests {
         let echo = r#"while read -r l; do id=$(printf '%s' "$l" | sed -n 's/.*"id":\([0-9]*\).*/\1/p'); [ -n "$id" ] && printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n' "$id"; done"#;
         let mut servers = Map::new();
         servers.insert("echo".into(), json!({ "type": "stdio", "command": "sh", "args": ["-c", echo] }));
-        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: true, workspace: vec![] };
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: true, workspace: vec![], machines: None };
         let port = grant(g.clone()).unwrap();
         let (code, body) = post(port, &format!("/{}/echo", g.token), r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#);
         assert_eq!(code, 200);
@@ -722,7 +729,7 @@ mod tests {
 
     #[test]
     fn bounds_requests() {
-        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers: Map::new(), commands: false, workspace: vec![] };
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers: Map::new(), commands: false, workspace: vec![], machines: None };
         let port = grant(g.clone()).unwrap();
         // A chunk size alone allocates nothing: unknown token first, then too large.
         let huge = b"POST /nope/origin HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n100000000000\r\n";
