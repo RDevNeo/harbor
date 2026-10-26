@@ -130,6 +130,13 @@ impl App {
         let locked = matches!(self.view, View::Chat(id) if self.chat(id).is_some_and(|c| c.started));
         let net = remote::tailnet(ctx);
         let devs: Vec<(Host, Option<bool>)> = remote::devices(&self.remote, &net).into_iter().filter(|(h, _)| !h.hidden || h.id == sel.device).collect();
+        // SSH hosts get their online dot (and OS) from one test per session.
+        for (h, _) in &devs {
+            remote::test_once(&self.remote, h, ctx);
+        }
+        if remote::adopt_os(&mut self.remote) {
+            remote::save(&self.store, &self.remote);
+        }
         let texs: Vec<Option<TextureId>> = devs.iter().map(|(h, _)| self.device_tex(ctx, h)).collect();
         let me = remote::hostname();
         // PCs running Harbor with chats shared (mesh.rs): a chat picked there starts in that Harbor.
@@ -220,10 +227,15 @@ impl App {
         }
         let project = chat.repo_id.and_then(|r| self.repo(r)).map(|r| r.path.clone());
         let dir = remote::remote_dir(&h, project.as_deref());
+        // Not known yet (a device added before Harbor asked): POSIX this time, and asked now.
+        if h.os.is_empty() {
+            remote::test_once(&self.remote, &h, ctx);
+        }
+        let os = if h.os.is_empty() { String::new() } else { format!("It runs {}. ", remote::os_label(&h.os)) };
         // Read only stays read only: no commands on this PC either.
         let commands = h.commands && chat.access != "plan";
         let note = format!(
-            "You run on the device '{}', started over SSH by Harbor on '{}', in {dir}. The user talks to you through Harbor, usually at that PC; a message written on a phone or another PC says where it came from. {}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. {}",
+            "You run on the device '{}', started over SSH by Harbor on '{}', in {dir}. {os}The user talks to you through Harbor, usually at that PC; a message written on a phone or another PC says where it came from. {}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. {}",
             h.label(),
             remote::hostname(),
             if h.device_files { "Files, shell, git and builds are that device's. " } else { "" },
@@ -236,6 +248,7 @@ impl App {
         Ok(Some(crate::agent::Remote {
             ssh: remote::ssh_opts(&self.remote, &h),
             host: h.host.clone(),
+            family: remote::family(&h.os),
             dir,
             setup: remote::profile_setup(account.config_dir.as_deref()),
             bridge: h.bridge,
@@ -282,7 +295,11 @@ impl App {
 
         ui.add_space(12.0);
         section(ui, "Devices");
+        remote::adopt_os(&mut self.remote);
         let devs = remote::devices(&self.remote, &net);
+        for (h, _) in &devs {
+            remote::test_once(&self.remote, h, &ctx);
+        }
         w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -308,30 +325,37 @@ impl App {
                 w::input(ui, &mut st.add_user, "user (optional)", true, 130.0);
                 let ok = !st.add_host.trim().is_empty();
                 if w::btn(&format!("{}  Add", ic::PLUS)).sm().primary().enabled(ok).show(ui).clicked() {
-                    let n = (1..).find(|n| !self.remote.devices.iter().any(|d| d.id == format!("ssh:{n}"))).unwrap_or(1);
                     let st = &mut self.devices_ui;
-                    let h = Host {
-                        id: format!("ssh:{n}"),
-                        name: st.add_name.trim().into(),
-                        host: st.add_host.trim().into(),
-                        user: st.add_user.trim().into(),
-                        bridge: true,
-                        ..Default::default()
-                    };
+                    let (name, host, user) = (st.add_name.trim().to_string(), st.add_host.trim().to_string(), st.add_user.trim().to_string());
                     st.add_name.clear();
                     st.add_host.clear();
                     st.add_user.clear();
-                    st.open = Some(h.id.clone());
-                    remote::test(&self.remote, &h, &ctx);
-                    self.remote.devices.push(h);
+                    self.add_ssh_device(&ctx, name, host, user, 0);
                 }
             });
+            // PCs to add in one click: ~/.ssh/config's hosts and those announcing ssh here.
+            let offers: Vec<remote::Nearby> = remote::nearby(&ctx).into_iter().filter(|n| !remote::is_device(n, &devs)).collect();
+            if !offers.is_empty() {
+                ui.add_space(10.0);
+                w::subtle(ui, "On your network and in ~/.ssh/config", "label-12");
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                    for n in offers {
+                        let tip = format!("Add {} ({}) and test it", n.host, n.source);
+                        if w::btn(&format!("{}  {}", ic::PLUS, n.name)).sm().outline().show(ui).on_hover_text(tip).clicked() {
+                            let name = if n.name == n.host { String::new() } else { n.name.clone() };
+                            self.add_ssh_device(&ctx, name, n.host.clone(), n.user.clone(), n.port);
+                        }
+                    }
+                });
+            }
         });
 
         ui.add_space(12.0);
         w::subtle(
             ui,
-            "A chat picks its device in the composer and stays on it. The agent works in that PC's folder (a project's path is mirrored there unless the device sets a folder) as the chat's Claude account (its login is sent along; the device's own login is used only when the account isn't signed in on this PC), and pushes through its own git. The device needs Claude Code and key-based ssh; nothing else is installed on it.",
+            "A chat picks its device in the composer and stays on it. The agent works in that PC's folder (a project's path is mirrored there unless the device sets a folder) as the chat's Claude account (its login is sent along; the device's own login is used only when the account isn't signed in on this PC), and pushes through its own git. Any PC works: Linux, macOS (Remote Login on) or Windows (OpenSSH Server on), with or without Harbor. It needs Claude Code and key-based ssh; nothing else is installed on it, and Tailscale is optional.",
             "label-12",
         );
         ui.add_space(4.0);
@@ -343,6 +367,15 @@ impl App {
         if self.remote != before {
             remote::save(&self.store, &self.remote);
         }
+    }
+
+    /// Adds a device by SSH (Settings › Devices), opens its settings and tests it.
+    fn add_ssh_device(&mut self, ctx: &egui::Context, name: String, host: String, user: String, port: u16) {
+        let n = (1..).find(|n| !self.remote.devices.iter().any(|d| d.id == format!("ssh:{n}"))).unwrap_or(1);
+        let h = Host { id: format!("ssh:{n}"), name, host, user, port, bridge: true, ..Default::default() };
+        self.devices_ui.open = Some(h.id.clone());
+        remote::test(&self.remote, &h, ctx);
+        self.remote.devices.push(h);
     }
 
     /// Adds or replaces a device in the settings.
@@ -379,7 +412,7 @@ impl App {
                             w::badge(ui, "Hidden", Tone::Amber);
                         }
                     });
-                    let os = if h.os.is_empty() { String::new() } else { format!(" · {}", h.os) };
+                    let os = if h.os.is_empty() { String::new() } else { format!(" · {}", remote::os_label(&h.os)) };
                     let user = remote::login(&self.remote, h).map(|(u, _)| format!("{u}@")).unwrap_or_default();
                     w::subtle(ui, format!("{user}{}{os}", h.host), "label-13");
                     if let Some(p) = &probe {

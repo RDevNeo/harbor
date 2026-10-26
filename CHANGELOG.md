@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Any PC can be a device that runs a chat's agent: Linux, macOS or Windows (OpenSSH Server), with or
+  without Harbor and without Tailscale. Harbor finds each device's OS on its first connection and
+  starts Claude Code there in the right shell (sh, or PowerShell on Windows, the prompt sent on stdin);
+  the Test button shows the OS, and SSH hosts get their online dot by themselves.
+- Settings › Devices offers your `~/.ssh/config` hosts and the PCs announcing ssh on your network
+  (mDNS, through avahi) as one-click adds. The phone's device picker lists them like any device.
+
+### Changed
+- Devices that were Tailscale peers (not paired PCs) move to the `~/.ssh/config` alias of the same
+  machine when there is one, with their chats, so they keep working with Tailscale off.
+
 ## [0.35.0] - 2026-10-25
 
 ### Added

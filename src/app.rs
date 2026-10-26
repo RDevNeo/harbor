@@ -385,6 +385,17 @@ impl App {
         };
         app.keys = crate::keys::Keys::load(&app.store);
         app.remote = crate::remote::load(&app.store);
+        // Devices that were Tailscale peers move onto plain ssh, their chats with them.
+        let moved = crate::remote::migrate_here(&mut app.remote, &crate::mesh::load_allowed(&app.store));
+        if !moved.is_empty() {
+            crate::remote::save(&app.store, &app.remote);
+            for c in app.chats.iter_mut().filter(|c| !c.foreign()) {
+                if let Some((_, to)) = moved.iter().find(|(from, _)| *from == c.device) {
+                    c.device = to.clone();
+                    app.store.save_chat(c);
+                }
+            }
+        }
         app.timers = app.store.timers();
         app.webhooks = app.store.webhooks();
         app.sync_tokens();

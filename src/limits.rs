@@ -663,7 +663,7 @@ impl App {
             return Ok(()); // nothing to carry (or the provider keeps one store)
         }
         // A chat on another device keeps its session there: the next turn finds it in
-        // the device's folders (agent.rs `session_here`), whichever account it runs as.
+        // the device's folders (remote.rs `Setup::Session`), whichever account it runs as.
         if !chat.device.is_empty() {
             return Ok(());
         }

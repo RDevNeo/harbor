@@ -140,9 +140,11 @@ pub struct Remote {
     /// ssh's options and destination.
     pub ssh: Vec<String>,
     pub host: String,
-    /// The folder there, and shell lines run before the agent starts.
+    /// How its shell is spoken to (remote.rs).
+    pub family: crate::remote::Family,
+    /// The folder there, and what runs before the agent starts.
     pub dir: String,
-    pub setup: Vec<String>,
+    pub setup: Vec<crate::remote::Setup>,
     /// This PC's MCP servers and apps through the bridge (Harbor's team tools always go).
     pub bridge: bool,
     /// `run_command` on this PC.
@@ -490,41 +492,33 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
         let mut setup = vec![];
         let mut lines = String::new();
         if let Some(t) = &r.token {
-            setup.push(crate::remote::token_setup());
+            setup.push(crate::remote::Setup::Token);
             lines.push_str(&format!("{t}\n"));
         }
         if let Some(c) = &remote_mcp {
-            setup.push(crate::remote::mcp_setup());
+            setup.push(crate::remote::Setup::Mcp);
             lines.push_str(&format!("{c}\n"));
-        }
-        if !lines.is_empty() {
-            stdin = Some(format!("{lines}{}", stdin.unwrap_or_default()));
         }
         setup.extend(r.setup.iter().cloned());
         if spec.resume {
-            setup.push(session_here(&spec.session_id));
+            setup.push(crate::remote::Setup::Session(spec.session_id.clone()));
+        }
+        let launch = crate::remote::launch(r.family, &r.dir, &setup, &argv);
+        // (Windows: the script itself goes first.)
+        let lines = format!("{}{lines}", launch.input);
+        if !lines.is_empty() {
+            stdin = Some(format!("{lines}{}", stdin.unwrap_or_default()));
         }
         let mut ssh = Command::new("ssh");
         ssh.args(&r.ssh)
             .args(["-o", "ExitOnForwardFailure=yes", "-R", &format!("127.0.0.1:{remote_port}:127.0.0.1:{port}")])
             .arg(&r.host)
-            .arg(crate::remote::remote_command(&r.dir, &setup, &argv));
+            .arg(launch.command);
         ssh.current_dir(if spec.cwd.is_dir() { spec.cwd.clone() } else { crate::store::home() });
         ssh.env("PATH", crate::providers::child_path());
         cmd = ssh;
     }
     Ok((cmd, stdin, grant))
-}
-
-/// A shell line for the device: Claude Code resumes only sessions of the folder it runs
-/// in, so one started in another folder there (the chat moved between this PC's files
-/// and the device's) is copied to this one's first. The same for one in another Claude
-/// profile there (~/.claude2…): the chat switched account, and the profile with it.
-fn session_here(id: &str) -> String {
-    let f = crate::remote::quote(&format!("{id}.jsonl"));
-    format!(
-        "c=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects\"; d=\"$c/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')\"; [ -e \"$d\"/{f} ] || {{ s=$(ls \"$c\"/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] || s=$(ls \"$HOME\"/.claude*/projects/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] && mkdir -p \"$d\" && cp \"$s\" \"$d\"/; }}"
-    )
 }
 
 /// The chat on screen (0: none), set by the UI each frame: its events repaint at once,
@@ -1062,7 +1056,7 @@ mod tests {
         std::fs::create_dir_all(cfg.join("projects/-elsewhere")).unwrap();
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(cfg.join("projects/-elsewhere/abc.jsonl"), "{}").unwrap();
-        let st = Command::new("sh").arg("-c").arg(session_here("abc")).current_dir(&work).env("CLAUDE_CONFIG_DIR", &cfg).status().unwrap();
+        let st = Command::new("sh").arg("-c").arg(crate::remote::sh_setup(&crate::remote::Setup::Session("abc".into()))).current_dir(&work).env("CLAUDE_CONFIG_DIR", &cfg).status().unwrap();
         assert!(st.success());
         let slug: String = work.canonicalize().unwrap().to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
         assert!(cfg.join("projects").join(slug).join("abc.jsonl").is_file());
@@ -1139,6 +1133,7 @@ mod tests {
         let remote = |token: Option<&str>| Remote {
             ssh: vec!["-o".into(), "BatchMode=yes".into()],
             host: "box".into(),
+            family: crate::remote::Family::Posix,
             dir: "~".into(),
             setup: crate::remote::profile_setup(account.config_dir.as_deref()),
             bridge: false,
@@ -1209,7 +1204,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: host.host.clone(), dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: host.host.clone(), family: crate::remote::Family::Posix, dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
             trusted: true,
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
@@ -1275,7 +1270,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: host.host.clone(), dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: host.host.clone(), family: crate::remote::Family::Posix, dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
             trusted: true,
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
@@ -1325,7 +1320,10 @@ mod tests {
     fn remote_turn_reads_here() {
         let account = crate::providers::discover().into_iter().find(|a| a.id == "claude").expect("a claude account");
         let dest = std::env::var("HARBOR_TEST_DEVICE").unwrap_or_else(|_| "127.0.0.1".into());
-        let host = crate::remote::Host { id: "ssh:1".into(), host: dest.clone(), ..Default::default() };
+        let mut host = crate::remote::Host { id: "ssh:1".into(), host: dest.clone(), ..Default::default() };
+        // Any OS: what the device says it runs, as the Test button finds it.
+        host.os = crate::remote::detect(&crate::remote::Config::default(), &host);
+        println!("{dest}: {}", host.os);
         let mut ssh = crate::remote::ssh_opts(&crate::remote::Config::default(), &host);
         if dest == "127.0.0.1" {
             ssh.extend(["-o".into(), "UserKnownHostsFile=/tmp/harbor-dev-kh".into()]);
@@ -1334,6 +1332,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("harbor-ws-ro-{}", &secret[..8]));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("note.txt"), format!("the word is {}\n", &secret[..10])).unwrap();
+        let token = crate::oauth::token(account.config_dir.as_deref());
         let spec = TurnSpec {
             chat_id: 999_997,
             cwd: dir.clone(),
@@ -1348,7 +1347,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: dest, dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: dest, family: crate::remote::family(&host.os), dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token, note: "You run on a test device.".into() }),
             trusted: true,
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();

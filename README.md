@@ -100,10 +100,26 @@ and a file browser over ssh (through `harbor nc`, with Settings › Devices' log
 
 ### Running agents on another PC
 
-Settings › Devices lists the PCs paired with this one (and, while Tailscale is installed, its other PCs)
-and SSH hosts you add, with
-a name, icon, user/key/port, the folder agents start in and a Test button. The composer's device menu
-("This PC" by default) pins a new chat to one of them; a started chat stays where its session is.
+Any PC with an SSH server and Claude Code can be a device: Linux, macOS or Windows, with or without
+Harbor, no Tailscale needed. Settings › Devices lists the SSH hosts you add (by name, IP or
+`~/.ssh/config` alias; your `~/.ssh/config` hosts and the PCs announcing ssh on your network over mDNS,
+via `avahi-browse` when it's installed, are offered as one-click adds), the PCs paired with this one
+and, while Tailscale is installed, its other PCs, with a name, icon, user/key/port, the folder agents
+start in and a Test button. The composer's device menu ("This PC" by default) pins a new chat to one of
+them; a started chat stays where its session is.
+
+- Harbor finds each device's OS on its first connection (the Test button, or the first time it's
+  shown) and keeps it: Linux, macOS and BSD get a POSIX `sh` script; Windows (OpenSSH Server, with cmd
+  or PowerShell as its shell) gets a fixed `powershell -EncodedCommand` line that reads its script from
+  stdin, so no prompt length hits cmd's 8191-character limit. Claude Code is found on the login shell's
+  PATH or where its installers put it (`~/.local/bin`, Homebrew, npm, bun, mise, volta; on Windows
+  `%USERPROFILE%\.local\bin\claude.exe`, `%APPDATA%\npm`, scoop, winget).
+- On a new device: macOS, System Settings › General › Sharing › Remote Login; Windows, Settings ›
+  System › Optional features › OpenSSH Server, then `Start-Service sshd` (and
+  `Set-Service sshd -StartupType Automatic`); put this PC's public key in `~/.ssh/authorized_keys`
+  (Windows admins: `C:\ProgramData\ssh\administrators_authorized_keys`), install Claude Code there.
+- Devices added as Tailscale peers before (not paired PCs) move onto an `~/.ssh/config` alias of the
+  same machine when there is one (its `HostName` or name is the peer's machine name), chats and all.
 
 - ssh reaches a paired PC through `harbor nc` (its ProxyCommand): the PC's address on your network,
   or a stream through another paired PC that reaches it.
@@ -128,7 +144,8 @@ a name, icon, user/key/port, the folder agents start in and a Test button. The c
   go into the system prompt, and the chat's access applies: read only gets read/glob/grep, auto-edit adds
   write/edit, full adds bash. Off: everything runs on the device, in its mirrored copy of the project.
 - Limits: Claude Code only (other CLIs stay local; their subagents of a remote lead run here); tested with
-  Linux devices (macOS should work, untested); a turn ends if the connection drops; `start_process` still starts processes
+  Linux and macOS devices, Windows only with PowerShell 7 running the generated scripts (not yet on a real
+  Windows PC); a turn ends if the connection drops; `start_process` still starts processes
   on this PC; with the device's own files, non-image attachments are paths on this PC; server-initiated MCP streams (sampling,
   notifications) aren't carried; the per-turn token is visible in the device's process list, so treat the
   device's other local users as trusted.
