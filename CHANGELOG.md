@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-26
+
+### Added
+- A keyboard-shortcut cheat sheet: Ctrl+/ anywhere (or ? outside a text field) lists every
+  shortcut with the keys it has now, with a filter and a way to change them.
+- Density: Settings › Appearance › Comfortable or Compact (shorter rows in the sidebar, menus and
+  settings, less space between messages). The phone has its own Density in its Settings.
+
+### Changed
+- Dialogs follow rengaf (two widths, a close button, a darker backdrop); Theme, Updates and the
+  voice language are segmented tabs; settings controls line up with the top of their title.
+
 ## [0.42.2] - 2026-10-26
 
 ### Fixed
@@ -948,7 +960,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.42.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/RDevNeo/harbor/compare/v0.42.2...v0.43.0
 [0.42.2]: https://github.com/RDevNeo/harbor/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/RDevNeo/harbor/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/RDevNeo/harbor/compare/v0.41.0...v0.42.0
