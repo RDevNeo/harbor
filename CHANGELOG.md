@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Chats driven from another PC run as that PC's person (#79): a message or new chat sent from one PC
+  to a chat that runs on another carries the sender's global `CLAUDE.md`, their auto-memory of the
+  project and their language settings, and the host runs the turn in an overlay profile with them
+  instead of its own owner's instructions and memory. Memory the agent saves goes back to the PC that
+  sent it. The host's GitHub and app sign-ins stay off for someone else's chat (unless both PCs say
+  the same GitHub login). SSH devices likewise no longer load the device's own instructions and memory
+  for this PC's chats. A notice in the chat says whose context it runs with, on the desktop and the
+  phone. Settings › Devices › Send my instructions and memory turns it off.
+- Who is who across the mesh (#78): each PC says its owner and GitHub login (Settings › Devices ›
+  People and memory, guessed from the account and Harbor's GitHub sign-in), and every agent is told
+  which PC, phones and accounts belong to whom. The phone's Settings › People and memory shows the
+  same list and edits this PC's entries.
+
 ## [0.43.2] - 2026-10-26
 
 ### Fixed

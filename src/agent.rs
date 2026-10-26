@@ -134,7 +134,28 @@ pub struct TurnSpec {
     /// The user trusts the project's own agent config (Claude Code's project settings and
     /// hooks, Cursor's workspace): off for a cloned project until they say so.
     pub trusted: bool,
+    /// Whose user context it runs with, and what it's told about the mesh (meshctx.rs).
+    pub context: Context,
 }
+
+/// A turn's user context (meshctx.rs); the default: this PC's own.
+#[derive(Default, Clone)]
+pub struct Context {
+    /// A chat commanded from another PC: the overlay profile (`CLAUDE_CONFIG_DIR`) holding
+    /// that PC's instructions and memory. Local Claude turns only.
+    pub overlay: Option<PathBuf>,
+    /// With an overlay: this PC's GitHub and app sign-ins stay on (the commanding PC's owner
+    /// has the same GitHub login).
+    pub signed_in: bool,
+    /// Told to the agent (who is who, whose chat it is).
+    pub note: String,
+}
+
+/// Set in a guest turn's environment for its runner (detach.rs), which takes them out again:
+/// the account's config dir to read the login from (passed as `CLAUDE_CODE_OAUTH_TOKEN`, so it
+/// never lands in the turn's files), and "0" when this PC's sign-ins are off for it.
+pub const GUEST_LOGIN: &str = "HARBOR_GUEST_LOGIN";
+pub const GUEST_APPS: &str = "HARBOR_GUEST_APPS";
 
 /// Where a remote turn runs (see remote.rs); Claude Code only.
 pub struct Remote {
@@ -265,6 +286,7 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
             effort: spec.effort.clone(),
             access: spec.access.clone(),
             remote: None,
+            context: spec.context.clone(),
             ..*spec
         };
         &owned
@@ -281,6 +303,15 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
             Some(v) => cmd.env(k, v),
             None => cmd.env_remove(k),
         };
+    }
+    // Commanded from another PC: that PC's person's profile, this account's login (meshctx.rs).
+    let overlay = spec.context.overlay.as_ref().filter(|_| a.kind == Kind::Claude && spec.remote.is_none());
+    if let Some(o) = overlay {
+        cmd.env("CLAUDE_CONFIG_DIR", o);
+        cmd.env(GUEST_LOGIN, a.config_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default());
+        if !spec.context.signed_in {
+            cmd.env(GUEST_APPS, "0");
+        }
     }
     let images: Vec<&PathBuf> = spec.files.iter().filter(|p| is_image(p)).collect();
     let others: Vec<&PathBuf> = spec.files.iter().filter(|p| !is_image(p)).collect();
@@ -341,6 +372,9 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                     cmd.arg(format!("--disallowedTools={}", crate::workspace::REPLACED));
                     note = format!("{note}\n\n{}", crate::workspace::note(&workspace, &spec.cwd)).trim().to_string();
                 }
+                if !spec.context.note.is_empty() {
+                    note = format!("{note}\n\n{}", spec.context.note).trim().to_string();
+                }
                 match (&spec.team, note.as_str()) {
                     (Some(t), "") => cmd.args(["--append-system-prompt", &t.system]),
                     (Some(t), n) => cmd.args(["--append-system-prompt", &format!("{}\n\n{n}", t.system)]),
@@ -351,7 +385,8 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                 let harbor = spec.team.as_ref().map(|t| ("harbor", t.mcp_entry(spec.chat_id)));
                 match &spec.remote {
                     None => {
-                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::mcp::claude_config(spec.chat_id, harbor));
+                        let apps = overlay.is_none() || spec.context.signed_in;
+                        cmd.arg("--strict-mcp-config").arg("--mcp-config").arg(crate::mcp::claude_config(spec.chat_id, harbor, apps));
                     }
                     Some(r) => {
                         let servers = if r.bridge { crate::mcp::claude_servers(harbor) } else { harbor.map(|(k, v)| (k.to_string(), v)).into_iter().collect() };
@@ -1103,6 +1138,7 @@ mod tests {
                 base: 0,
                 remote: None,
                 trusted,
+                context: Default::default(),
             };
             let (cmd, _, _) = build(&spec).unwrap();
             cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>()
@@ -1165,6 +1201,7 @@ mod tests {
             base: 0,
             remote: Some(remote(token)),
             trusted: true,
+            context: Default::default(),
         };
         let (cmd, input, grant) = build(&spec(Some("sk-ant-oat01-secret"))).unwrap();
         crate::bridge::revoke(&grant.unwrap().token);
@@ -1213,6 +1250,7 @@ mod tests {
             base: 0,
             remote: Some(Remote { ssh, host: host.host.clone(), family: crate::remote::Family::Posix, dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
             trusted: true,
+            context: Default::default(),
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();
@@ -1279,6 +1317,7 @@ mod tests {
             base: 0,
             remote: Some(Remote { ssh, host: host.host.clone(), family: crate::remote::Family::Posix, dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
             trusted: true,
+            context: Default::default(),
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();
@@ -1356,6 +1395,7 @@ mod tests {
             base: 0,
             remote: Some(Remote { ssh, host: dest, family: crate::remote::family(&host.os), dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token, note: "You run on a test device.".into() }),
             trusted: true,
+            context: Default::default(),
         };
         let (mut cmd, input, grant) = build(&spec).unwrap();
         let grant = grant.unwrap();

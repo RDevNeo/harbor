@@ -106,6 +106,11 @@ pub struct Peer {
     /// Reached through another PC (relay.rs), when it doesn't answer directly.
     #[serde(skip)]
     pub via: Option<Box<Dest>>,
+    /// Its owner and GitHub login, as it says (meshctx.rs; empty before 0.44).
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub github: String,
 }
 
 impl Peer {
@@ -154,6 +159,8 @@ pub struct Shared {
     /// Why a peer (by id) doesn't answer: `Down::Harbor` (its PC refused the connection, so
     /// Harbor isn't running there) or `Down::Pc` (no answer at all: off, asleep, out of reach).
     pub down: Mutex<HashMap<String, Down>>,
+    /// This PC's `{owner, github}` (meshctx.rs), refreshed by the UI thread.
+    pub about: Mutex<Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -397,6 +404,8 @@ pub struct Local {
     pub open_when: Option<(String, i64, Instant)>,
     /// True while a peer's forwarded call runs (it never goes on to a third PC).
     in_call: bool,
+    /// Meanwhile: the calling PC (id, name) and the `ctx` it sent (meshctx.rs).
+    pub call_ctx: Option<(String, String, Value)>,
     /// Leases sent for copies: (chat, viewing) → (on, kind, when), to send renewals sparingly.
     leases: HashMap<(i64, bool), (bool, String, Instant)>,
     /// The chat this PC last said it has open: (chat, focused, when).
@@ -522,7 +531,9 @@ fn who(shared: &Shared, p: &api::Peer, req: &api::Request) -> Result<(String, Op
     match &p.via {
         api::Via::Loopback => {
             if std::env::var("HARBOR_MESH_LOOPBACK").as_deref() == Ok("1") {
-                Ok(("loopback".to_string(), None))
+                // (Test instances: who they say they are, so each has its own id as over TLS.)
+                let id = says("x-harbor-id");
+                Ok((if id.is_empty() { "loopback".to_string() } else { id }, None))
             } else {
                 Err(())
             }
@@ -641,6 +652,13 @@ fn phones_loop(hub: Arc<api::Hub>) {
                 .filter(|s| !s.group.is_empty())
                 .collect();
             seen.insert(p.id.clone(), (p.name.clone(), sightings));
+            // Who owns it (0.44): it may change while the link stays up.
+            if let (Some(o), Some(g)) = (v["owner"].as_str(), v["github"].as_str()) {
+                if let Some(x) = hub.mesh.peers.lock().unwrap().get_mut(&p.id) {
+                    x.owner = o.chars().take(80).collect();
+                    x.github = g.chars().take(60).collect();
+                }
+            }
             // Its notifications, for the phones that ask this PC (a peer before 0.40: 404).
             let since = notes_at.get(&p.id).copied().unwrap_or(0);
             if let Ok((200, v)) = http(&p.dest(), "GET", &format!("/mesh/v1/notes?since={since}"), None, Duration::from_secs(8)) {
@@ -824,7 +842,8 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
         // Where this PC saw the phones (Devices on the others), and the phone app it serves.
         ("GET", ["mesh", "v1", "phones"]) => {
             let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0 || p.alive > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive })).collect();
-            ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c) }))
+            let about = shared.about.lock().unwrap().clone();
+            ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c), "owner": about["owner"], "github": about["github"] }))
         }
         ("POST", ["mesh", "v1", "upload"]) => {
             let q = api::Request { query: vec![("name".into(), req.query("name").unwrap_or("file").into())], ..req.clone() };
@@ -1474,6 +1493,8 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             // Peers from before 0.12.2 don't say: as before, taken as on.
             p.phones = hello["phones"].as_bool().unwrap_or(true);
             p.version = hello["version"].as_str().unwrap_or("").to_string();
+            p.owner = hello["owner"].as_str().unwrap_or("").chars().take(80).collect();
+            p.github = hello["github"].as_str().unwrap_or("").chars().take(60).collect();
             p.accounts = hello["accounts"]
                 .as_array()
                 .into_iter()
@@ -1564,7 +1585,7 @@ fn sync(hub: &api::Hub, dest: &Dest, id: &str, epoch: u64, still: &dyn Fn() -> b
 
 /// A call forwarded to a chat's home PC, on a thread of its own: its files go first (as
 /// uploads there), then the call. `done` gets the answer, or a 503 when the PC is off.
-pub fn forward(dest: Dest, name: String, method: &str, path: Vec<String>, mut body: Value, files: Vec<PathBuf>, sender: (String, String), done: impl FnOnce(Reply) + Send + 'static) {
+pub fn forward(dest: Dest, name: String, method: &str, path: Vec<String>, mut body: Value, files: Vec<PathBuf>, sender: (String, String), ctx: Value, done: impl FnOnce(Reply) + Send + 'static) {
     let method = method.to_string();
     let (sender, device) = sender;
     std::thread::spawn(move || {
@@ -1582,7 +1603,11 @@ pub fn forward(dest: Dest, name: String, method: &str, path: Vec<String>, mut bo
         if !files.is_empty() {
             body["files"] = json!(ids);
         }
-        let call = json!({ "method": method, "path": path, "body": body, "sender": sender, "device": device });
+        let mut call = json!({ "method": method, "path": path, "body": body, "sender": sender, "device": device });
+        // Whose instructions and memory a turn it starts runs with (meshctx.rs).
+        if !ctx.is_null() {
+            call["ctx"] = ctx;
+        }
         let data = serde_json::to_vec(&call).unwrap_or_default();
         match http(&dest, "POST", "/mesh/v1/call", Some(("application/json", &data)), CALL_WAIT) {
             Ok((status, body)) => done(Reply { status, body }),
@@ -1979,6 +2004,7 @@ impl App {
         if self.mesh.reread.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
             self.mesh.reread = Some(Instant::now());
             *self.api.hub.mesh.allowed.lock().unwrap() = load_allowed(&self.store);
+            *self.api.hub.mesh.about.lock().unwrap() = crate::meshctx::about(&self.store);
             let on = self.store.get("mesh_enabled").as_deref() == Some("1");
             if on != self.api.hub.mesh.on.load(Ordering::Relaxed) {
                 self.mesh_set_enabled(on, ctx);
@@ -2237,7 +2263,8 @@ impl App {
                 let revoked = self.api.hub.revoked.lock().unwrap().clone();
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
                 let port = *self.api.hub.port.lock().unwrap();
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port }))
+                let about = crate::meshctx::about(&self.store);
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"] }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");
@@ -2274,7 +2301,10 @@ impl App {
                 self.sender = if sender.is_empty() { self.shared().name_of(&call.device) } else { sender };
                 self.sender_device = call.body["device"].as_str().unwrap_or("").chars().take(60).collect();
                 self.mesh.in_call = true;
+                // A turn this starts runs with the caller's instructions and memory (meshctx.rs).
+                self.mesh.call_ctx = Some((call.device.clone(), self.shared().name_of(&call.device), call.body["ctx"].clone()));
                 let mut r = self.api_route(&inner, ctx);
+                self.mesh.call_ctx = None;
                 self.mesh.in_call = false;
                 self.sender.clear();
                 self.sender_device.clear();
@@ -2284,6 +2314,11 @@ impl App {
                 }
                 r
             }
+            // Memory an agent saved in a chat this PC commanded on another PC (meshctx.rs).
+            ("POST", ["mesh", "v1", "memory"]) => match crate::meshctx::accept_memory(&self.store, &call.body) {
+                Ok(n) => ok(json!({ "ok": true, "changed": n })),
+                Err(e) => err(404, e),
+            },
             // Settings › Devices on another PC: "Enable" next to this PC's "phone access off".
             ("POST", ["mesh", "v1", "phones"]) => {
                 self.api_set_enabled(true, ctx);
@@ -2385,7 +2420,8 @@ impl App {
         let mut path = vec!["v1".to_string(), "chats".to_string(), c.home_id.to_string()];
         path.extend(tail.iter().map(|s| s.to_string()));
         let tx = self.inc_tx.clone();
-        forward(peer.dest(), name, method, path, body, files, (self.shared().me().name, api::local_device()), move |reply| {
+        let ctx = if starts_turn(method, tail) { self.ctx_for(c.repo_id) } else { Value::Null };
+        forward(peer.dest(), name, method, path, body, files, (self.shared().me().name, api::local_device()), ctx, move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat, what, reply, restore }));
         });
         true
@@ -2437,7 +2473,8 @@ impl App {
             "device": "", "text": text,
         });
         let tx = self.inc_tx.clone();
-        forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], body, files.to_vec(), (self.shared().me().name, api::local_device()), move |reply| {
+        let ctx = self.ctx_for(self.draft.repo);
+        forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], body, files.to_vec(), (self.shared().me().name, api::local_device()), ctx, move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat: crate::app::DRAFT, what: "start the chat", reply, restore }));
         });
         true
@@ -2468,6 +2505,7 @@ impl App {
                 v => v.as_i64().and_then(|r| self.repo(r)),
             };
             body["project"] = repo.map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() })).unwrap_or(Value::Null);
+            let ctx = self.ctx_for(repo.map(|r| r.id));
             if let Some(o) = body.as_object_mut() {
                 o.remove("project_id");
             }
@@ -2476,7 +2514,7 @@ impl App {
             let shared = self.api.hub.clone();
             let reply = call.reply.clone();
             let home = peer.id.clone();
-            forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], strip_files(body), files, sender, move |r| {
+            forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], strip_files(body), files, sender, ctx, move |r| {
                 let _ = reply.send(map_new(&shared, &home, r, global));
             });
             return None;
@@ -2505,7 +2543,8 @@ impl App {
         let repo_path = repo.and_then(|r| self.repo(r)).map(|r| r.path.to_string_lossy().into_owned());
         let parent_gid = parent.and_then(|p| self.chat(p)).map(|p| p.gid.clone());
         let fork = p.get(3) == Some(&"fork");
-        forward(peer.dest(), name, &call.method, path, strip_files(call.body.clone()), files, sender, move |mut r| {
+        let ctx = if starts_turn(&call.method, &p[3..]) { self.ctx_for(repo) } else { Value::Null };
+        forward(peer.dest(), name, &call.method, path, strip_files(call.body.clone()), files, sender, ctx, move |mut r| {
             if fork {
                 r = map_new(&shared, &home, r, global);
             }
@@ -2534,6 +2573,12 @@ impl App {
     }
 
     /// A phone's message through this PC: its name for "from …", its device id for the typing lock.
+    /// This PC's instructions and memory for a call that may start a turn on another PC, with
+    /// the memory of `repo` as this PC has it (meshctx.rs).
+    fn ctx_for(&self, repo: Option<i64>) -> Value {
+        crate::meshctx::outgoing(&self.store, repo.and_then(|r| self.repo(r)).map(|r| r.path.as_path()))
+    }
+
     fn phone_name(&self, call: &Call) -> (String, String) {
         let me = self.shared().me().name;
         let phone = if call.device.is_empty() { "Phone".to_string() } else { call.device.clone() };
@@ -2795,6 +2840,7 @@ impl App {
         if on {
             self.outside_section(ui);
         }
+        self.people_ui(ui);
         ui.add_space(12.0);
     }
 
@@ -2916,6 +2962,12 @@ impl App {
             self.mesh.pair.code.clear();
         }
     }
+}
+
+/// A forwarded call about a chat (`tail` after `/v1/chats/{id}`) that may start a turn: it
+/// carries this PC's instructions and memory (meshctx.rs).
+fn starts_turn(method: &str, tail: &[&str]) -> bool {
+    method == "POST" && matches!(tail.first(), Some(&"send") | Some(&"continue") | Some(&"slash"))
 }
 
 /// A phone's call about a chat (`/v1/chats/{id}/…`) that the chat's home PC answers for a

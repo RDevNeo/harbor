@@ -308,8 +308,19 @@ pub fn run(args: &[String]) {
             _ => continue,
         };
     }
+    // A chat commanded from another PC (meshctx.rs): the account's login comes in as a token,
+    // read here so it stays out of cmd.json, and this PC's sign-ins may be off.
+    let var = |k: &str| spec["env"].as_array().into_iter().flatten().find(|kv| kv[0] == k).and_then(|kv| kv[1].as_str().map(String::from));
+    let signed_in = var(crate::agent::GUEST_APPS).as_deref() != Some("0");
+    if let Some(login) = var(crate::agent::GUEST_LOGIN) {
+        cmd.env_remove(crate::agent::GUEST_LOGIN).env_remove(crate::agent::GUEST_APPS);
+        let dir = (!login.is_empty()).then(|| PathBuf::from(login));
+        if let Some(t) = crate::oauth::token(dir.as_deref()) {
+            cmd.env("CLAUDE_CODE_OAUTH_TOKEN", t);
+        }
+    }
     if spec["agent_env"].as_bool() == Some(true) {
-        for (k, v) in crate::mcp::agent_env_now() {
+        for (k, v) in crate::mcp::agent_env_as(signed_in) {
             match v {
                 Some(v) => cmd.env(k, v),
                 None => cmd.env_remove(k),

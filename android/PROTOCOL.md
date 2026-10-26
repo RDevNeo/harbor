@@ -928,6 +928,24 @@ DISMISSED, or PENDING for a requested review; check `state` pass / fail / pendin
   → `{"id": <chat>}`. `409` when the repo isn't a project, or the item isn't in a list this PC
   fetched for phones (fetch the list first).
 
+### `GET /v1/people`, `PATCH /v1/people` (0.44)
+
+Settings › People and memory, as the desktop's Settings › Devices shows it (`src/meshctx.rs`):
+
+```json
+{"pcs": [{"id": "pc:desk", "name": "desk", "self": true, "online": true, "owner": "Sam",
+          "github": "sam-gh", "phones": ["Pixel"], "accounts": ["Claude · SG"],
+          "line": "Sam · GitHub sam-gh · phones: Pixel · Claude · SG"}],
+ "me": {"owner": "", "owner_hint": "Sam Doe", "github": "", "github_hint": "sam-gh",
+        "send_context": true}}
+```
+
+`pcs`: this PC first, then the mesh's other PCs; `line` is the row's subtitle, made on the hub.
+`me`: what this PC says about its owner (`owner`/`github` empty: the hints are used, the PC
+account's full name and Harbor's GitHub sign-in) and whether a chat driven from this PC that runs
+on another PC takes this PC's instructions and memory (`send_context`). `PATCH` takes any of
+`owner`, `github`, `send_context` and answers like `GET`. Older hubs answer `404`: hide the row.
+
 ### `GET /v1/inbox`, `GET /v1/inbox/{id}`, `POST /v1/inbox/{id}/done`
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
@@ -1079,9 +1097,9 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   names it): the two swap keys, which go into their allowed entries. From then on that PC gets
   only `hello` and `enroll` in plain HTTP; everything else needs TLS with its key. `409` when
   another key is already on file for it (pair again).
-- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port}`
+- `GET /mesh/v1/hello` → `{id, name, version, epoch, accounts: [{id, short, kind}], revoked: [groups], phones, fp, addrs, port, owner, github}`
   (`phones`: its phone access is on; also in each chats answer; `fp`, `addrs`, `port`: its key
-  and addresses).
+  and addresses; from 0.44 `owner` and `github`: who owns the PC, for the who is who).
   `epoch` is the hub's start revision: revisions compare only within one epoch.
 - `GET /mesh/v1/events?since=<rev>&epoch=<epoch>` → `{epoch, rev}` as soon as one of this PC's
   own chats changed after `since` (or one was deleted), or after 20 s. Another `epoch`: start over.
@@ -1094,9 +1112,22 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   `since_ms`, `queued`, `status` (as in items), `forks: [[seq, id]]`.
 - `GET /mesh/v1/chats/{id}/items?since=<rev>&epoch=<epoch>` → `{epoch, rev, count, items: [{seq, item}]}`:
   raw transcript items (the database's JSON) changed after `since`; cut the copy to `count`.
-- `POST /mesh/v1/call` `{method, path, body, sender}`: a phone API call (`path` like
+- `POST /mesh/v1/call` `{method, path, body, sender, ctx?}`: a phone API call (`path` like
   `["v1","chats","12","send"]`, ids of the home PC) run as if made there; `sender` is stored on
   a message it sends. A new chat's answer carries `home` (the PC's id).
+  From 0.44 a call that may start a turn (`POST /v1/chats`, `…/send`, `…/continue`, `…/slash`)
+  carries `ctx`, the calling PC's person's context: `{v: 1, instructions, memory: {name: text},
+  memory_id, settings, owner, github}` (their global CLAUDE.md, the auto-memory of the chat's
+  project on that PC, and only `language`, `outputStyle`, `alwaysThinkingEnabled`,
+  `includeCoAuthoredBy`, `attribution`, `autoMemoryEnabled` of their settings), or
+  `{v: 1, off: true, owner, github}` when they don't send it. The chat's turns then run with
+  that context in an overlay profile instead of the home PC owner's (also when `ctx` is
+  missing: an older caller, nothing loads), until someone at the home PC or its phones writes in
+  it. The home PC's GitHub and app sign-ins are off for it unless both say the same `github`.
+- `POST /mesh/v1/memory` `{id, files: {name: text | null}}` (0.44): memory an agent saved (null:
+  removed) in a chat this PC commanded, sent back by the PC it ran on. Written only into the
+  memory folder `id` was handed out for (in a `ctx`, valid 30 days), flat `*.md` names only;
+  `404` for an unknown id.
 - `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
 - `POST /mesh/v1/lease` `{chat, view, device, kind, label, on}`: someone types in (`view: false`)
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
@@ -1109,7 +1140,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   secret takes them, one with another secret is `409`. From 0.34.1 also `nolock` (two factors,
   `presence` empty) and `keys_at`: the same secret with newer `keys_at` takes the new factors.
 - `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
-- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk}` (`alive`: unix s of its last background ping, from 0.37.1): where this PC saw the
+- `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk, owner, github}` (`alive`: unix s of its last background ping, from 0.37.1; `owner`, `github` from 0.44, as in `hello`): where this PC saw the
   phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it
   serves. Each PC asks the others every 15 s: a phone that talks to another PC shows online
   there, "via" that PC. A PC whose peer serves a newer app takes it.

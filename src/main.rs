@@ -33,6 +33,7 @@ mod logos;
 mod mcp;
 mod mcpshim;
 mod mesh;
+mod meshctx;
 mod movechat;
 mod notices;
 mod notify;

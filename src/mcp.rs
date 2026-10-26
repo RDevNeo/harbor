@@ -744,12 +744,18 @@ pub fn agent_env() -> Vec<(String, Option<String>)> {
 /// [`agent_env`] without starting the token refresher: for a turn's runner, which sets
 /// it itself so the tokens never land in the turn's `cmd.json`.
 pub fn agent_env_now() -> Vec<(String, Option<String>)> {
+    agent_env_as(true)
+}
+
+/// [`agent_env_now`]; `signed_in` false: as if nothing were signed in (a chat commanded from
+/// another PC, whose person isn't this PC's owner: meshctx.rs).
+pub fn agent_env_as(signed_in: bool) -> Vec<(String, Option<String>)> {
     let mut v: Vec<(String, Option<String>)> = vec![];
     for k in ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "CONVEX_DEPLOY_KEY", "VERCEL_TOKEN"] {
         v.push((k.into(), None));
     }
     let mut set = |k: &str, val: String| v.push((k.into(), Some(val)));
-    let gh = gh_token().is_some();
+    let gh = signed_in && gh_token().is_some();
     set("GH_CONFIG_DIR", (if gh { gh_dir() } else { gh_out_dir() }).to_string_lossy().into_owned());
     set("GIT_TERMINAL_PROMPT", "0".into());
     // Command-line scope comes last, so the empty helper resets the user's helpers, and
@@ -774,9 +780,9 @@ pub fn agent_env_now() -> Vec<(String, Option<String>)> {
         set(&format!("GIT_CONFIG_VALUE_{i}"), val);
     }
     // Set even when signed out: an invalid token wins over ~/.convex and the keyring.
-    set("CONVEX_OVERRIDE_ACCESS_TOKEN", convex_token().unwrap_or_else(|| "sign-in-to-convex-in-harbor".into()));
-    set("SUPABASE_ACCESS_TOKEN", token("supabase").unwrap_or_else(|| "sign-in-to-supabase-in-harbor".into()));
-    for a in APPS.iter().filter(|a| matches!(a.mcp, Transport::Http(_))) {
+    set("CONVEX_OVERRIDE_ACCESS_TOKEN", convex_token().filter(|_| signed_in).unwrap_or_else(|| "sign-in-to-convex-in-harbor".into()));
+    set("SUPABASE_ACCESS_TOKEN", token("supabase").filter(|_| signed_in).unwrap_or_else(|| "sign-in-to-supabase-in-harbor".into()));
+    for a in APPS.iter().filter(|a| signed_in && matches!(a.mcp, Transport::Http(_))) {
         if let Some(t) = token(a.id) {
             set(&token_var(a.id), t);
         }
@@ -792,8 +798,12 @@ fn token_var(id: &str) -> String {
 /// Claude Code's `--mcp-config` file for a turn (used with `--strict-mcp-config`): the
 /// local servers that are on, the signed-in apps and `extra` (Harbor's team server).
 /// Written 0600 into Harbor's store, since it holds tokens.
-pub fn claude_config(chat_id: i64, extra: Option<(&str, Value)>) -> PathBuf {
-    let m = claude_servers(extra);
+pub fn claude_config(chat_id: i64, extra: Option<(&str, Value)>, apps: bool) -> PathBuf {
+    let mut m = claude_servers(extra);
+    // A chat commanded from another PC doesn't get this PC's owner's sign-ins (meshctx.rs).
+    if !apps {
+        m.retain(|k, _| app(k).is_none());
+    }
     let p = private_dir(dir().join("run")).join(format!("claude-{chat_id}.json"));
     let _ = write_private(&p, &json!({ "mcpServers": m }).to_string());
     p

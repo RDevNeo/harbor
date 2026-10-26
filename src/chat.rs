@@ -588,6 +588,7 @@ impl App {
                         "clock" => ic::CLOCK,
                         "restart" => ic::ROTATE_CW,
                         "folder" => ic::FOLDER,
+                        "users" => ic::USERS,
                         _ => ic::CIRCLE_CHECK,
                     };
                     // The pill never grows past the column (a long agent report widened the whole

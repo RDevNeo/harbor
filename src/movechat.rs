@@ -47,7 +47,18 @@ pub fn session_copies(config: &Option<PathBuf>, sid: &str) -> Vec<PathBuf> {
 /// Makes session `sid` resumable in `cwd`: its newest copy is put in the folder's place
 /// unless that one is already the newest. False if there's no copy at all.
 pub fn ensure_session(config: &Option<PathBuf>, sid: &str, cwd: &Path) -> std::io::Result<bool> {
-    let Some(src) = session_copies(config, sid).into_iter().next() else { return Ok(false) };
+    ensure_session_in(config, &[], sid, cwd)
+}
+
+/// [`ensure_session`], also taking the newest copy from the profiles `also` (meshctx.rs: a
+/// chat commanded from another PC runs in an overlay profile, and back here afterwards).
+pub fn ensure_session_in(config: &Option<PathBuf>, also: &[PathBuf], sid: &str, cwd: &Path) -> std::io::Result<bool> {
+    let mut copies: Vec<PathBuf> = session_copies(config, sid);
+    for p in also {
+        copies.extend(session_copies(&Some(p.clone()), sid));
+    }
+    copies.sort_by_key(|p| std::cmp::Reverse(modified(p)));
+    let Some(src) = copies.into_iter().next() else { return Ok(false) };
     let dir = session_dir(config, cwd);
     let dst = dir.join(format!("{sid}.jsonl"));
     if src == dst || modified(&dst).is_some_and(|d| modified(&src).is_some_and(|s| d >= s)) {

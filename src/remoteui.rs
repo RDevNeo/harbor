@@ -243,18 +243,29 @@ impl App {
                 (false, _) => "",
             }
         );
+        // The account's login as of now (refreshed if it's about to expire).
+        let token = crate::oauth::token(account.config_dir.as_deref());
+        // With this PC's login the device's own profile (its user's instructions and memory)
+        // is swapped for an empty one, and this PC's person's go in the note (meshctx.rs).
+        // A chat commanded from another PC gets neither: its instructions are on that PC.
+        let (setup, note) = match &token {
+            Some(_) => {
+                let mine = if self.guest_of(chat).is_some() { String::new() } else { crate::meshctx::device_note(project.as_deref(), !h.device_files) };
+                (vec![remote::Setup::Guest(crate::meshctx::device_profile(&self.api.hub.mesh.me().id))], format!("{}\n\n{mine}", note.trim_end()))
+            }
+            None => (remote::profile_setup(account.config_dir.as_deref()), note),
+        };
         Ok(Some(crate::agent::Remote {
             ssh: remote::ssh_opts(&self.remote, &h),
             host: h.host.clone(),
             family: remote::family(&h.os),
             dir,
-            setup: remote::profile_setup(account.config_dir.as_deref()),
+            setup,
             bridge: h.bridge,
             commands,
             workspace: !h.device_files,
-            // The account's login as of now (refreshed if it's about to expire).
-            token: crate::oauth::token(account.config_dir.as_deref()),
-            note: note.trim_end().to_string(),
+            token,
+            note: note.trim().to_string(),
         }))
     }
 

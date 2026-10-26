@@ -260,6 +260,8 @@ pub struct App {
     pub sender_device: String,
     /// Copies of other PCs' chats and calls forwarded to them (mesh.rs).
     pub mesh: crate::mesh::Local,
+    /// This PC's chats commanded from another PC: they run with its context (meshctx.rs).
+    pub guests: HashMap<i64, crate::meshctx::Guest>,
 }
 
 impl App {
@@ -270,6 +272,7 @@ impl App {
         let (tx, rx) = channel();
         let (bg_tx, bg_rx) = channel();
         let (inc_tx, inc_rx) = channel();
+        let guests = crate::meshctx::load_guests(&store);
         let (proc_tx, proc_rx) = channel();
         let accounts = providers::discover();
         let mut models = HashMap::new();
@@ -397,6 +400,7 @@ impl App {
             usage_totals: Default::default(),
             sender: String::new(),
             sender_device: String::new(),
+            guests,
             mesh: Default::default(),
         };
         app.keys = crate::keys::Keys::load(&app.store);
@@ -912,6 +916,8 @@ impl App {
         if self.mesh_send(chat_id, &text, &files, &mentions) {
             return;
         }
+        // Whose instructions and memory its turns run with: the PC that sent it (meshctx.rs).
+        self.ctx_adopt(chat_id);
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
             self.paused.remove(&p);
         }
@@ -1011,8 +1017,14 @@ impl App {
             }
         }
         // Claude resumes sessions of its folder only: a moved chat's is brought over (movechat.rs).
+        let context = self.turn_context(&chat, remote.is_some());
         if remote.is_none() && account.kind == Kind::Claude && chat.started && !chat.session_id.is_empty() {
-            let _ = crate::movechat::ensure_session(&account.config_dir, &chat.session_id, &self.chat_cwd(&chat));
+            // (Also from the profiles of chats commanded from other PCs: the session may have
+            // been written there, or here while it's one of those now.)
+            let dst = context.overlay.clone().or_else(|| account.config_dir.clone());
+            let mut also = crate::meshctx::overlays();
+            also.push(account.config_dir.clone().unwrap_or_else(crate::meshctx::profile));
+            let _ = crate::movechat::ensure_session_in(&dst, &also, &chat.session_id, &self.chat_cwd(&chat));
         }
         let spec = agent::TurnSpec {
             chat_id,
@@ -1030,6 +1042,7 @@ impl App {
             base: self.transcripts.get(&chat_id).map_or(0, |t| t.items.len()),
             remote,
             trusted: self.trusted(chat.repo_id),
+            context,
         };
         let wake = turn_wake(ctx, chat_id);
         let tr = self.transcripts.get_mut(&chat_id).unwrap();
@@ -1247,6 +1260,7 @@ impl App {
                 if let Some(r) = self.chat(id).and_then(|c| c.repo_id) {
                     self.refresh_git(r);
                 }
+                self.ctx_after_turn(id);
                 self.after_turn(id, stopped, ctx);
             }
         }

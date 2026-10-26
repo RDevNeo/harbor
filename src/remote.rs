@@ -782,6 +782,11 @@ pub enum Setup {
     /// A Claude profile (~/.claude2…, relative to home) used there too when the device has
     /// it, so its settings and sessions there stay with the account.
     Profile(String),
+    /// An empty profile (relative to home) instead of the device's own, so its user's
+    /// instructions, memory and settings don't load for this PC's chats (meshctx.rs); the
+    /// device's auto-memory is off too (this PC's comes in the system prompt). Only with
+    /// [`Setup::Token`]: the profile holds no login.
+    Guest(String),
     /// Claude Code resumes only sessions of the folder it runs in, so this session, started
     /// in another folder there (the chat moved between this PC's files and the device's) or
     /// in another Claude profile there (the chat switched account), is copied to this one's.
@@ -840,10 +845,14 @@ pub fn sh_setup(s: &Setup) -> String {
             let p = format!("\"$HOME\"/{}", quote(rel));
             format!("[ -d {p} ] && export CLAUDE_CONFIG_DIR={p}")
         }
+        Setup::Guest(rel) => {
+            let p = format!("\"$HOME\"/{}", quote(rel));
+            format!("mkdir -p {p} && chmod 700 {p} && export CLAUDE_CONFIG_DIR={p} CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
+        }
         Setup::Session(id) => {
             let f = quote(&format!("{id}.jsonl"));
             format!(
-                "c=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects\"; d=\"$c/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')\"; [ -e \"$d\"/{f} ] || {{ s=$(ls \"$c\"/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] || s=$(ls \"$HOME\"/.claude*/projects/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] && mkdir -p \"$d\" && cp \"$s\" \"$d\"/; }}"
+                "c=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}/projects\"; d=\"$c/$(pwd -P | sed 's/[^A-Za-z0-9]/-/g')\"; [ -e \"$d\"/{f} ] || {{ s=$(ls \"$c\"/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] || s=$(ls \"$HOME\"/.claude*/projects/*/{f} \"$HOME\"/.local/state/harbor/guests/*/projects/*/{f} 2>/dev/null | head -n1); [ -n \"$s\" ] && mkdir -p \"$d\" && cp \"$s\" \"$d\"/; }}"
             )
         }
         Setup::Sh(l) => l.clone(),
@@ -962,6 +971,7 @@ fn ps_setup(s: &Setup) -> String {
         // The user's temp folder is theirs alone (its ACL), as mktemp's file is on POSIX.
         Setup::Mcp => "$HarborMcp=[IO.Path]::GetTempFileName();$HarborClean+=$HarborMcp;[IO.File]::WriteAllText($HarborMcp,(HarborLine)+\"`n\");$env:HARBOR_MCP_CONFIG=$HarborMcp".into(),
         Setup::Profile(rel) => format!("$p=Join-Path $HOME {};if(Test-Path -LiteralPath $p -PathType Container){{$env:CLAUDE_CONFIG_DIR=$p}}", ps_quote(rel)),
+        Setup::Guest(rel) => format!("$p=Join-Path $HOME {};New-Item -ItemType Directory -Force -Path $p|Out-Null;$env:CLAUDE_CONFIG_DIR=$p;$env:CLAUDE_CODE_DISABLE_AUTO_MEMORY='1'", ps_quote(rel)),
         Setup::Session(id) => {
             let f = ps_quote(&format!("{id}.jsonl"));
             format!(

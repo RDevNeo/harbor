@@ -99,6 +99,20 @@ public class Settings extends Base {
         rn.addView(Ui.chevron(this));
         here.addView(rn, Ui.fill());
 
+        // Who is who across the PCs, and whose instructions a chat run on another PC uses
+        // (GET/PATCH /v1/people, hubs from 0.44; hidden on older ones).
+        LinearLayout people = card(col);
+        people.setVisibility(View.GONE);
+        LinearLayout pr = Ui.cardRow(this, Ui.I_USERS, "People and memory", "Who is who, and your instructions on other PCs", Ui.FG, v -> people());
+        pr.addView(Ui.chevron(this));
+        people.addView(pr, Ui.fill());
+        Ui.pool.execute(() -> {
+            try {
+                hub.get("/v1/people");
+                runOnUiThread(() -> people.setVisibility(View.VISIBLE));
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+
         LinearLayout look = card(col);
         LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
         cm.addView(Ui.chevron(this));
@@ -251,6 +265,65 @@ public class Settings extends Base {
             if (!any) s.body.addView(Ui.text(this, "No turns yet.", 14, Ui.G700));
             s.show();
         });
+    }
+
+    private Sheet peopleSheet;
+
+    /** The desktop's Settings › Devices › People and memory: this PC's owner, GitHub login and
+     *  whether their instructions and memory go with their chats on other PCs, then every PC. */
+    private void people() {
+        Ui.bg(this, () -> hub.get("/v1/people"), this::showPeople);
+    }
+
+    private void showPeople(JSONObject r) {
+        if (peopleSheet != null) peopleSheet.dialog.dismiss();
+        Sheet s = new Sheet(this, "People and memory");
+        peopleSheet = s;
+        JSONObject me = r.optJSONObject("me");
+        if (me == null) me = new JSONObject();
+        final JSONObject m = me;
+        LinearLayout you = s.card();
+        String owner = m.optString("owner"), gh = m.optString("github");
+        you.addView(Ui.cardRow(this, Ui.I_USER, "Your name", owner.isEmpty() ? m.optString("owner_hint", "Not set") + " (from the PC's account)" : owner, Ui.FG,
+                v -> editPerson("Your name", "owner", owner, m.optString("owner_hint"))), Ui.fill());
+        you.addView(Ui.gap(this));
+        you.addView(Ui.cardRow(this, Ui.I_GLOBE, "Your GitHub login", gh.isEmpty() ? (m.optString("github_hint").isEmpty() ? "Not set" : m.optString("github_hint") + " (Harbor's sign-in)") : gh, Ui.FG,
+                v -> editPerson("Your GitHub login", "github", gh, m.optString("github_hint"))), Ui.fill());
+        you.addView(Ui.gap(this));
+        boolean send = m.optBoolean("send_context", true);
+        you.addView(Ui.cardRow(this, Ui.I_BRAIN, "Send my instructions and memory", send
+                ? "On: a chat you drive from this PC that runs on another PC uses your CLAUDE.md, memory and language there, and what it learns comes back"
+                : "Off: such chats run with no user instructions or memory", Ui.FG, v -> patchPeople("send_context", !send)), Ui.fill());
+        org.json.JSONArray pcs = r.optJSONArray("pcs");
+        if (pcs != null && pcs.length() > 1) {
+            TextView h = Ui.text(this, "Who is who", 13, Ui.G700);
+            h.setPadding(Ui.dp(6), Ui.dp(10), Ui.dp(6), Ui.dp(6));
+            s.body.addView(h);
+            LinearLayout c = s.card();
+            for (int i = 0; i < pcs.length(); i++) {
+                JSONObject p = pcs.optJSONObject(i);
+                if (p == null) continue;
+                if (c.getChildCount() > 0) c.addView(Ui.gap(this));
+                String title = p.optString("name") + (p.optBoolean("self") ? " (this PC)" : "");
+                c.addView(Ui.cardRow(this, Ui.I_MONITOR, title, p.optString("line"), p.optBoolean("online", true) ? Ui.FG : Ui.G700, null), Ui.fill());
+            }
+        }
+        s.show();
+    }
+
+    private void editPerson(String title, String key, String now, String hint) {
+        EditText in = Ui.input(this, hint.isEmpty() ? "" : hint, false);
+        in.setText(now);
+        Ui.dialog(this).setTitle(title).setView(in).setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (d, w) -> patchPeople(key, in.getText().toString().trim())).show();
+    }
+
+    private void patchPeople(String key, Object value) {
+        Ui.bg(this, () -> {
+            JSONObject b = new JSONObject();
+            b.put(key, value);
+            return hub.call("PATCH", "/v1/people", b);
+        }, this::showPeople);
     }
 
     private LinearLayout card(LinearLayout col) {

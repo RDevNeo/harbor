@@ -2265,6 +2265,12 @@ impl App {
             },
             // Settings › Usage's breakdown (cost.rs).
             ("GET", ["v1", "usage"]) => ok(self.api_usage(ctx)),
+            // Who is who across the mesh, and whose instructions travel (meshctx.rs).
+            ("GET", ["v1", "people"]) => ok(self.api_people()),
+            ("PATCH", ["v1", "people"]) => {
+                self.api_people_set(&call.body);
+                ok(self.api_people())
+            }
             // The command palette (palette.rs); `chat` is the one the phone has open.
             ("GET", ["v1", "palette"]) => {
                 let chat = call.query("chat").and_then(|c| self.ref_id(c));
