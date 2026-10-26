@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-10-26
+
+### Added
+- Voice input, on the desktop and the phone. Desktop: a mic in the composer (or Ctrl+Shift+Space,
+  rebindable) records from the default input, shows a level meter and the time, and transcribes
+  on this PC with whisper.cpp into the composer at the cursor, to edit before sending (it never
+  sends by itself). Settings › Voice downloads a speech model (tiny 77 MB, base 147 MB, small
+  487 MB), sets the language (detect, English, Portuguese) and says how to install whisper.cpp
+  when it's missing. Phone: the composer's mic listens with the phone's own recogniser (on the
+  phone where it can), with a meter, the time and the words as they come; phones without one
+  send the recording to the PC to transcribe. Settings › Dictation language on the phone.
+
 ## [0.37.2] - 2026-10-26
 
 ### Fixed
@@ -881,7 +893,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.37.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/RDevNeo/harbor/compare/v0.37.2...v0.38.0
 [0.37.2]: https://github.com/RDevNeo/harbor/compare/v0.37.1...v0.37.2
 [0.37.1]: https://github.com/RDevNeo/harbor/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/RDevNeo/harbor/compare/v0.36.0...v0.37.0
