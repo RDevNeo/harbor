@@ -47,6 +47,8 @@ final class Ui {
     static int BG, BG2, CARD, LINE, G100, G200, G300, G400, G500, G600, G700, G900, FG, INK, ON_INK;
     static int BLUE, RED, RED_BG, GREEN, AMBER;
     static boolean dark;
+    /** Settings › Density: Compact takes shorter rows (the desktop's own setting, kept per device). */
+    static boolean compact;
     static int themeGen; // bumped when Color mode changes: open screens redraw on resume
 
     // Lucide glyphs in assets/fonts/lucide.ttf (a subset: the code points of src/icons.rs).
@@ -104,6 +106,7 @@ final class Ui {
     }
 
     static void theme(Context c) {
+        compact = "compact".equals(prefs(c).getString("density", "comfortable"));
         String m = mode(c);
         dark = "dark".equals(m) || ("system".equals(m)
                 && (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES);
@@ -350,8 +353,8 @@ final class Ui {
      *  (a status dot, a count) can be added to it. */
     static LinearLayout listRow(Context c, String glyph, int glyphColor, CharSequence title, int titleColor) {
         LinearLayout r = row(c);
-        r.setMinimumHeight(dp(40));
-        r.setPadding(dp(12), dp(8), dp(12), dp(8));
+        r.setMinimumHeight(dp(compact ? 34 : 40));
+        r.setPadding(dp(12), dp(compact ? 5 : 8), dp(12), dp(compact ? 5 : 8));
         r.addView(icon(c, glyph, 18, glyphColor), margins(new LinearLayout.LayoutParams(dp(20), dp(20)), 0, 0, 14, 0));
         r.addView(subtitle(text(c, title, 15, titleColor)), weight());
         return r;
@@ -435,7 +438,7 @@ final class Ui {
      *  optional subtitle, clickable when on isn't null. Trailing views can be added to it. */
     static LinearLayout cardRow(Context c, Object glyph, CharSequence title, CharSequence sub, int titleColor, View.OnClickListener on) {
         LinearLayout r = row(c);
-        r.setMinimumHeight(dp(64));
+        r.setMinimumHeight(dp(compact ? 52 : 64));
         r.setPadding(dp(18), dp(12), dp(16), dp(12));
         if (on != null) r.setBackground(press(0, 0, 0));
         if (glyph != null) {

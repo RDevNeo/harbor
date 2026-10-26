@@ -86,6 +86,8 @@ pub enum Dialog {
     StopAll(i64),
     /// Instructions the user adds before a Fix / Merge agent starts.
     Instructions { project: i64, job: crate::autowork::Job, text: String },
+    /// The keyboard shortcuts cheat sheet (`?`), with its filter.
+    Shortcuts { query: String },
 }
 
 pub enum Bg {
@@ -449,6 +451,7 @@ impl App {
             app.debug_view(ctx, &v);
         }
         app.voice_load();
+        crate::theme::set_compact(app.store.get("density").as_deref() == Some("compact"));
         app.load_cursor_models();
         app.load_snoozed();
         app
@@ -1721,6 +1724,11 @@ impl App {
         });
         if sidebar {
             self.toggle_sidebar(ctx);
+        }
+        // Ctrl+/ anywhere, or `?` with no text field focused: the cheat sheet.
+        let sheet = ctx.input_mut(|i| self.keys.take(i, "shortcuts")) || (!ctx.egui_wants_keyboard_input() && ctx.input_mut(|i| self.keys.take(i, "shortcuts_q")));
+        if !blocked && self.popup.is_none() && sheet {
+            self.dialog = Some(Dialog::Shortcuts { query: String::new() });
         }
         if ctx.input_mut(|i| self.keys.take(i, "palette")) {
             self.palette_toggle();

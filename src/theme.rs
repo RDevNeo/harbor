@@ -82,6 +82,22 @@ impl Tokens {
     }
 }
 
+/// Settings › Appearance › Density: Compact takes rengaf's next size down for rows (kv `density`).
+static COMPACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn compact() -> bool {
+    COMPACT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_compact(on: bool) {
+    COMPACT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A list row's height: rengaf's sidebar row (h-8), or h-7 when compact.
+pub fn row_h() -> f32 {
+    if compact() { 28.0 } else { 32.0 }
+}
+
 pub const RADIUS_MD: u8 = 6; // controls: buttons, inputs, menu items
 pub const RADIUS_LG: u8 = 8; // cards, tables, popovers
 pub const RADIUS_XL: u8 = 12; // dialogs, sheets

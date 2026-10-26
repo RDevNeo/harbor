@@ -540,11 +540,10 @@ impl App {
         section(ui, "Language");
         rows(ui, |ui| {
             w::setting_row(ui, "Spoken language", "Detect works for either; picking yours is a little faster and surer.", |ui| {
-                for (code, label) in LANGS.iter().rev() {
-                    let short = if *code == "auto" { "Detect" } else { label };
-                    if w::btn(short).sm().outline().pressed(lang == *code).show(ui).clicked() {
-                        self.voice_set(Some(code), None);
-                    }
+                let labels: Vec<&str> = LANGS.iter().map(|(code, label)| if *code == "auto" { "Detect" } else { *label }).collect();
+                let cur = LANGS.iter().position(|l| l.0 == lang).unwrap_or(0);
+                if let Some(i) = w::tabs(ui, &labels, cur) {
+                    self.voice_set(Some(LANGS[i].0), None);
                 }
             });
         });

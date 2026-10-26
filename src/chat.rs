@@ -363,7 +363,7 @@ impl App {
         let t = self.theme.t;
         let forks = self.forks_of(id);
         let Some(tr) = self.transcripts.get(&id) else { return };
-        ui.spacing_mut().item_spacing.y = 12.0;
+        ui.spacing_mut().item_spacing.y = if crate::theme::compact() { 8.0 } else { 12.0 };
         let width = ui.available_width();
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
         // The same cards the phone gets (view.rs): what's hidden, footers, dividers.

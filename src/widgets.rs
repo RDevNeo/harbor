@@ -215,7 +215,7 @@ pub fn menu_row(ui: &mut Ui, active: bool, icon: &str, label: &str, right: Optio
 /// right and `right` paints into it.
 fn menu_row_with(ui: &mut Ui, active: bool, icon: &str, label: &str, right_w: f32, right: impl FnOnce(&egui::Painter, Rect)) -> Response {
     let t = tokens(ui);
-    let h = 32.0;
+    let h = theme::row_h();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click());
     if !ui.is_rect_visible(rect) {
         return resp;
@@ -636,23 +636,24 @@ pub fn menu_item(ui: &mut Ui, icon: &str, label: &str, desc: Option<&str>, check
     let t = tokens(ui);
     // rengaf DropdownMenuItem: rounded-sm, px-2 py-1.5, text 14 regular, gap 8, icon 16 muted,
     // focus/hover bg-accent (gray-200).
-    let h = if desc.is_some() { 44.0 } else { 32.0 };
+    let h = if desc.is_some() { 44.0 } else { 32.0 } - if theme::compact() { 4.0 } else { 0.0 };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click());
+    let top = rect.top() - if theme::compact() { 2.0 } else { 0.0 };
     let p = ui.painter();
     if resp.hovered() && ui.is_enabled() {
         p.rect_filled(rect, CornerRadius::same(4), t.accent());
     }
     let mut x = rect.left() + 8.0;
     if !icon.is_empty() {
-        crate::icons::glyph(p, egui::pos2(x + 8.0, rect.top() + 16.0), icon, 16.0, t.subtle());
+        crate::icons::glyph(p, egui::pos2(x + 8.0, top + 16.0), icon, 16.0, t.subtle());
         x += 24.0;
     }
-    p.text(egui::pos2(x, rect.top() + 7.0), Align2::LEFT_TOP, label, FontId::proportional(14.0), t.fg());
+    p.text(egui::pos2(x, top + 7.0), Align2::LEFT_TOP, label, FontId::proportional(14.0), t.fg());
     if let Some(d) = desc {
-        p.text(egui::pos2(x, rect.top() + 25.0), Align2::LEFT_TOP, d, FontId::proportional(12.0), t.subtle());
+        p.text(egui::pos2(x, top + 25.0), Align2::LEFT_TOP, d, FontId::proportional(12.0), t.subtle());
     }
     if checked {
-        crate::icons::glyph(p, egui::pos2(rect.right() - 16.0, rect.top() + 16.0), crate::icons::CHECK, 16.0, t.fg());
+        crate::icons::glyph(p, egui::pos2(rect.right() - 16.0, top + 16.0), crate::icons::CHECK, 16.0, t.fg());
     }
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
@@ -775,6 +776,39 @@ pub fn overlay<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R 
     add(&mut child)
 }
 
+// ---------------------------------------------------------------- Tabs
+
+/// rengaf's Tabs as a segmented control: a muted list (gray-100, rounded-lg, 3px padding,
+/// h-9) of triggers (rounded-md, 14 medium); the active one is raised (light: background;
+/// dark: input/30 with a border). Returns the index clicked.
+pub fn tabs(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
+    let t = tokens(ui);
+    let font = FontId::new(14.0, theme::medium());
+    let gs: Vec<_> = labels.iter().map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), t.fg())).collect();
+    let widths: Vec<f32> = gs.iter().map(|g| g.size().x + 20.0).collect();
+    let total: f32 = widths.iter().sum::<f32>() + 6.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(total, 36.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS_LG), t.gray(100));
+    let mut x = rect.left() + 3.0;
+    let mut out = None;
+    for (i, (g, w)) in gs.into_iter().zip(widths).enumerate() {
+        let r = Rect::from_min_size(egui::pos2(x, rect.top() + 3.0), Vec2::new(w, rect.height() - 6.0));
+        let resp = ui.interact(r, ui.scope_id().with(("tabs", i, labels[i])), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
+        let active = i == selected;
+        if active {
+            let (fill, stroke) = if t.dark { (mix(t.bg100, t.border(), 0.3), Stroke::new(1.0, t.border())) } else { (t.bg100, Stroke::NONE) };
+            ui.painter().rect(r, CornerRadius::same(RADIUS_MD), fill, stroke, StrokeKind::Inside);
+        }
+        let fg = if active || resp.hovered() { t.fg() } else { t.subtle() };
+        ui.painter().galley(r.center() - g.size() / 2.0, g, fg);
+        if resp.clicked() && !active {
+            out = Some(i);
+        }
+        x += w;
+    }
+    out
+}
+
 // ---------------------------------------------------------------- Empty state
 
 /// rengaf's Empty: a 40px muted tile with the icon, a heading-16 title, a copy-14 subtle line,
@@ -867,7 +901,7 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
 pub fn setting_row<R>(ui: &mut Ui, title: &str, desc: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
     let t = tokens(ui);
     Frame::new()
-        .inner_margin(Margin::symmetric(16, 12))
+        .inner_margin(Margin::symmetric(16, if theme::compact() { 8 } else { 12 }))
         .show(ui, |ui| {
             let full = ui.available_width();
             let top = ui.cursor().min;
@@ -884,7 +918,8 @@ pub fn setting_row<R>(ui: &mut Ui, title: &str, desc: &str, control: impl FnOnce
                 .response
                 .rect;
             let slot = Rect::from_min_max(egui::pos2(top.x + lw + 12.0, top.y), egui::pos2(top.x + full, left.bottom().max(top.y + 24.0)));
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            // rengaf: a control beside a title sits flush with its top (items-start).
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(egui::Layout::right_to_left(egui::Align::Min)));
             let r = control(&mut child);
             let extra = child.min_rect().bottom() - left.bottom();
             if extra > 0.0 {

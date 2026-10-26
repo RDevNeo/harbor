@@ -392,7 +392,7 @@ final class Sidebar {
 
     private View nav(String glyph, String title, String value, int color, View.OnClickListener on) {
         LinearLayout r = Ui.listRow(a, glyph, color, title, color);
-        r.setMinimumHeight(Ui.dp(44));
+        r.setMinimumHeight(Ui.dp(Ui.compact ? 36 : 44));
         r.setBackground(Ui.press(0, 0, 12));
         if (value != null) {
             TextView s = Ui.subtitle(Ui.text(a, value, 13, Ui.G600));

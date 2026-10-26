@@ -69,7 +69,7 @@ impl App {
     /// (or Unsettle) take the status's place.
     fn thread_row(&mut self, ui: &mut Ui, c: &crate::store::Chat, indent: f32) {
         let t = self.theme.t;
-        let rect = Rect::from_min_size(ui.cursor().min + Vec2::new(indent, 0.0), Vec2::new(ui.available_width() - indent, 32.0));
+        let rect = Rect::from_min_size(ui.cursor().min + Vec2::new(indent, 0.0), Vec2::new(ui.available_width() - indent, crate::theme::row_h()));
         let hovering = ui.rect_contains_pointer(rect);
         let resp = ui.allocate_rect(rect, Sense::click());
         let active = self.view == View::Chat(c.id);
@@ -154,7 +154,7 @@ impl App {
         if let Some(settled) = settled {
             let label = if settled { format!("{}  Unsettle", ic::UNARCHIVE) } else { format!("{}  Settle", ic::CHECK) };
             let sw = w::btn(&label).muted().xs().width(ui);
-            let sr = Rect::from_min_size(pos2(left - sw, rect.top() + 2.0), Vec2::new(sw, 28.0));
+            let sr = Rect::from_min_size(pos2(left - sw, rect.center().y - 14.0), Vec2::new(sw, 28.0));
             let b = w::overlay(ui, sr, |ui| w::btn(&label).muted().xs().show(ui));
             if b.clicked() {
                 self.set_chat_settled(key[1..].parse().unwrap_or(0), !settled);
@@ -163,7 +163,7 @@ impl App {
             left = sr.left();
         }
         if settled != Some(true) {
-            let cr = Rect::from_min_size(pos2(left - 28.0, rect.top() + 2.0), Vec2::splat(28.0));
+            let cr = Rect::from_min_size(pos2(left - 28.0, rect.center().y - 14.0), Vec2::splat(28.0));
             let snoozed = self.snoozed.contains_key(key);
             let c = w::overlay(ui, cr, |ui| w::btn(ic::CLOCK).muted().icon_xs().pressed(snoozed).show(ui));
             let c = c.tip("Snooze");
@@ -424,7 +424,7 @@ impl App {
 
         // ---- Settled (N) ─────── ^
         if n_settled > 0 {
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), crate::theme::row_h()), Sense::click());
             let p = ui.painter();
             // rengaf SidebarGroupLabel (h-8 px-2, 12 medium at 70%) with a SidebarMenuBadge count.
             let fg = if resp.hovered() { t.fg() } else { w::alpha(t.fg(), 0.7) };
@@ -536,7 +536,7 @@ impl App {
     /// of the row stays a normal click target). Returns the row's response.
     fn project_row(&mut self, ui: &mut Ui, r: &Repo, grip: bool) -> Option<egui::Response> {
         let t = self.theme.t;
-        let rect = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), 34.0));
+        let rect = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), crate::theme::row_h() + 2.0));
         let hovering = ui.rect_contains_pointer(rect);
         let resp = ui.allocate_rect(rect, Sense::click());
         let mut dragging = false;
@@ -598,7 +598,7 @@ impl App {
         let mut rx = rx;
         if hovering {
             let used = self.row_actions(ui, rect, &format!("r{}", r.id), None);
-            let nr = Rect::from_min_size(pos2(rect.right() - used - 26.0, rect.top() + 3.0), Vec2::splat(28.0));
+            let nr = Rect::from_min_size(pos2(rect.right() - used - 26.0, rect.center().y - 14.0), Vec2::splat(28.0));
             let n = w::overlay(ui, nr, |ui| w::btn(ic::PLUS).muted().icon_xs().show(ui));
             if n.tip("New chat in this project").clicked() {
                 self.new_draft(Some(r.id));

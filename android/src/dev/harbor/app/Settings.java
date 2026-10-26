@@ -102,6 +102,10 @@ public class Settings extends Base {
         LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
         cm.addView(Ui.chevron(this));
         look.addView(cm, Ui.fill());
+        look.addView(Ui.gap(this));
+        LinearLayout dn = Ui.cardRow(this, Ui.I_LAYERS, "Density", Ui.compact ? "Compact" : "Comfortable", Ui.FG, v -> density());
+        dn.addView(Ui.chevron(this));
+        look.addView(dn, Ui.fill());
 
         // Dictation in the composer (Voice): the language it listens for, on this phone.
         LinearLayout dict = card(col);
@@ -259,6 +263,17 @@ public class Settings extends Base {
         for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "what the phone's recogniser uses by default" : "", true));
         Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. Phones without a recogniser of their own send the recording to the PC, which transcribes it with whisper.cpp.", o, Voice.lang(this), l -> {
             Ui.prefs(this).edit().putString("voice_lang", l).apply();
+            recreate();
+        });
+    }
+
+    private void density() {
+        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
+        o.add(new Sheet.Option("comfortable", "Comfortable", "", true));
+        o.add(new Sheet.Option("compact", "Compact", "shorter rows in lists and settings", true));
+        Sheet.pick(this, "Density", "On this phone only, like the desktop's Settings › Appearance › Density.", o, Ui.compact ? "compact" : "comfortable", d -> {
+            Ui.prefs(this).edit().putString("density", d).apply();
+            Ui.themeGen++;
             recreate();
         });
     }

@@ -10,7 +10,7 @@ use crate::providers::Kind;
 use crate::store::{self, Item};
 use crate::theme::{self, Mode};
 use crate::widgets::{self as w, Tone};
-use eframe::egui::{self, Align, CornerRadius, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
+use eframe::egui::{self, Align, Color32, CornerRadius, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
 use std::collections::{BTreeMap, HashMap};
 
 pub fn section(ui: &mut Ui, title: &str) {
@@ -185,8 +185,8 @@ impl Tab {
         match self {
             Tab::General => "restart resume continue order activity sort fast mode recap summary suggestion prompt background tray autostart login startup quit close",
             Tab::Notifications => "notify notifications alerts popups desktop phone quiet hours away finished needs input ci checks limit offline",
-            Tab::Appearance => "theme dark light omarchy colours colors",
-            Tab::Keybindings => "shortcuts keyboard keys hotkeys",
+            Tab::Appearance => "theme dark light omarchy colours colors density compact comfortable",
+            Tab::Keybindings => "shortcuts keyboard keys hotkeys cheat sheet",
             Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
             Tab::Limits => "usage limits quota caps cap percent warn tokens cost weekly wait switch accounts notify history",
             Tab::Integrations => "apps mcp servers sign in tools",
@@ -352,6 +352,60 @@ impl App {
         }
     }
 
+    /// The cheat sheet (`?`): every shortcut with the keys it has now, filterable.
+    fn shortcuts_dialog(&mut self, ui: &mut Ui, query: &mut String, close: &mut bool) {
+        use crate::keys::{ACTIONS, GROUPS};
+        let t = self.theme.t;
+        w::text(ui, "Keyboard shortcuts", "heading-20");
+        ui.add_space(16.0);
+        let r = Frame::new().stroke(Stroke::new(1.0, t.border())).corner_radius(CornerRadius::same(theme::RADIUS_MD)).show(ui, |ui| {
+            w::search_field(ui, query, "Search shortcuts", Some(Id::NULL.with("shortcuts-search")), ui.available_width())
+        });
+        if !r.inner.has_focus() && !r.inner.lost_focus() {
+            r.inner.request_focus();
+        }
+        let q = query.trim().to_lowercase();
+        ui.add_space(8.0);
+        ScrollArea::vertical().max_height(ui.ctx().content_rect().height() * 0.55).auto_shrink([false, true]).show(ui, |ui| {
+            let mut any = false;
+            for g in GROUPS {
+                let acts: Vec<_> = ACTIONS
+                    .iter()
+                    .filter(|a| a.group == *g)
+                    .filter(|a| q.is_empty() || [a.label, a.group, &crate::keys::label(&self.keys.get(a.id))].iter().any(|s| s.to_lowercase().contains(&q)))
+                    .collect();
+                if acts.is_empty() {
+                    continue;
+                }
+                any = true;
+                ui.add_space(8.0);
+                w::subtle(ui, *g, "label-12");
+                ui.add_space(4.0);
+                for a in acts {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::hover());
+                    ui.painter().text(pos2(rect.left(), rect.center().y), egui::Align2::LEFT_CENTER, a.label, egui::FontId::proportional(14.0), t.fg());
+                    let keys = crate::keys::label(&self.keys.get(a.id));
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(Layout::right_to_left(Align::Center)));
+                    w::kbd_combo(&mut child, &keys);
+                }
+            }
+            if !any {
+                ui.add_space(8.0);
+                w::subtle(ui, format!("No shortcut matches “{}”.", query.trim()), "copy-14");
+            }
+        });
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            w::subtle(ui, format!("{} anywhere, or ? outside a text field, shows this.", crate::keys::label(&self.keys.get("shortcuts"))), "label-13");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if w::btn("Change them…").outline().show(ui).clicked() {
+                    self.open(View::Settings(Tab::Keybindings));
+                    *close = true;
+                }
+            });
+        });
+    }
+
     /// Version, Updates (Ask me / Automatically), Check now / Install / Restore previous.
     fn updates_rows(&mut self, ui: &mut Ui) {
         use crate::update::{self as up, State};
@@ -390,11 +444,8 @@ impl App {
                 "Updates",
                 "Ask me: an Update button appears at the top when a new version or build is out; clicking it installs it and reloads Harbor in place, without losing your place. Automatically: new versions are downloaded, their signature checked, and swapped in when the window is focused.",
                 |ui| {
-                    // Right to left: shows as "Ask me | Automatically".
-                    for (on, l) in [(true, "Automatically"), (false, "Ask me")] {
-                        if w::btn(l).sm().outline().pressed(auto == on).show(ui).clicked() {
-                            auto = on;
-                        }
+                    if let Some(i) = w::tabs(ui, &["Ask me", "Automatically"], usize::from(auto)) {
+                        auto = i == 1;
                     }
                 },
             );
@@ -764,16 +815,26 @@ impl App {
 
     fn appearance_tab(&mut self, ui: &mut Ui) {
         section(ui, "Theme");
-        ui.horizontal(|ui| {
-            for (m, icon, l) in [(Mode::System, ic::SUN_MOON, "Follow Omarchy"), (Mode::Light, ic::SUN, "Light"), (Mode::Dark, ic::MOON, "Dark")] {
-                if w::btn(&format!("{icon}  {l}")).sm().outline().pressed(self.theme.mode == m).show(ui).clicked() {
-                    self.theme.set_mode(m, ui.ctx());
-                    self.store.set("theme", m.as_str());
-                }
-            }
-        });
+        let modes = [(Mode::System, ic::SUN_MOON, "Follow Omarchy"), (Mode::Light, ic::SUN, "Light"), (Mode::Dark, ic::MOON, "Dark")];
+        let density = usize::from(theme::compact());
+        let labels: Vec<String> = modes.iter().map(|(_, icon, l)| format!("{icon}  {l}")).collect();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let cur = modes.iter().position(|(m, ..)| *m == self.theme.mode).unwrap_or(0);
+        if let Some(i) = w::tabs(ui, &refs, cur) {
+            let m = modes[i].0;
+            self.theme.set_mode(m, ui.ctx());
+            self.store.set("theme", m.as_str());
+        }
         ui.add_space(6.0);
         w::subtle(ui, "Colours and type are the rengaf design system (Geist).", "label-13");
+        ui.add_space(24.0);
+        section(ui, "Density");
+        if let Some(i) = w::tabs(ui, &["Comfortable", "Compact"], density) {
+            theme::set_compact(i == 1);
+            self.store.set("density", if i == 1 { "compact" } else { "comfortable" });
+        }
+        ui.add_space(6.0);
+        w::subtle(ui, "Compact fits more on screen: shorter rows in the sidebar, menus and settings, and less space between messages. On this PC only.", "label-13");
     }
 
     fn integrations_tab(&mut self, ui: &mut Ui) {
@@ -1021,7 +1082,14 @@ impl App {
         let mut close = false;
         let mut start = false;
         let t = self.theme.t;
+        // rengaf Dialog: md (448) for confirms, lg (512) for forms and lists; black/50 backdrop.
+        let width = match &dialog {
+            Dialog::Rename { .. } | Dialog::Instructions { .. } | Dialog::Shortcuts { .. } => 512.0,
+            _ => 448.0,
+        };
+        let mut x_clicked = false;
         let modal = egui::Modal::new(Id::NULL.with("dialog"))
+            .backdrop_color(Color32::from_black_alpha(128))
             .frame(
                 Frame::new()
                     .fill(t.bg100)
@@ -1031,7 +1099,13 @@ impl App {
                     .shadow(ctx.global_style().visuals.window_shadow),
             )
             .show(ctx, |ui| {
-                ui.set_width(480.0);
+                ui.set_width(width);
+                // The close button, top right (rengaf DialogClose).
+                let xr = Rect::from_min_size(pos2(ui.max_rect().right() - 12.0, ui.max_rect().top() - 8.0), Vec2::splat(28.0));
+                let x = ui.interact(xr, Id::NULL.with("dialog-x"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                let col = if x.hovered() { t.fg() } else { w::alpha(t.fg(), 0.7) };
+                crate::icons::glyph(ui.painter(), xr.center(), ic::X, 16.0, col);
+                x_clicked = x.clicked();
                 match &mut dialog {
                     Dialog::Rename { chat, title } => {
                         w::text(ui, "Rename chat", "heading-20");
@@ -1085,6 +1159,7 @@ impl App {
                         });
                     }
                     Dialog::StopAll(id) => self.stop_all_dialog(ui, *id, &mut close),
+                    Dialog::Shortcuts { query } => self.shortcuts_dialog(ui, query, &mut close),
                     Dialog::Instructions { job, text, .. } => start = self.instructions_dialog(ui, job, text, &mut close),
                     Dialog::RemoveRepo(id) => {
                         w::text(ui, "Remove project?", "heading-20");
@@ -1122,7 +1197,7 @@ impl App {
                     }
                 }
             });
-        if modal.should_close() {
+        if modal.should_close() || x_clicked {
             close = true;
         }
         if start {

@@ -32,6 +32,8 @@ pub const ACTIONS: &[Action] = &[
     a("new_thread", "New thread", "Navigation", "Ctrl+N", ""),
     a("palette", "Search everything (command palette)", "Navigation", "Ctrl+K", ""),
     a("settings", "Open settings", "Navigation", "Ctrl+Comma", ""),
+    a("shortcuts", "Show the keyboard shortcuts", "Navigation", "Ctrl+Slash", ""),
+    fixed("shortcuts_q", "Show the keyboard shortcuts (outside a text field)", "Navigation", "Shift+Questionmark", "!textFocus"),
     a("toggle_sidebar", "Show or hide the sidebar", "Navigation", "Ctrl+Backslash", ""),
     fixed("pick_model", "Pick model 1–9", "Navigation", "Ctrl+1…9", "!terminalFocus && !dialog"),
     a("send", "Send", "Composer", "Enter", "composerFocus"),
@@ -100,6 +102,10 @@ impl Combo {
 
     /// Shown form, key caps split on '+' ("Ctrl+`").
     pub fn label(&self) -> String {
+        // "?" is Shift plus a key on most layouts: shown as the one character it types.
+        if self.key == Key::Questionmark && self.shift && !self.ctrl && !self.alt {
+            return "?".into();
+        }
         format!("{}{}", self.mods(), key_label(self.key))
     }
 
@@ -116,6 +122,7 @@ fn key_label(k: Key) -> &'static str {
         Key::Comma => ",",
         Key::Period => ".",
         Key::Slash => "/",
+        Key::Questionmark => "?",
         Key::Semicolon => ";",
         Key::Quote => "'",
         Key::Minus => "-",
