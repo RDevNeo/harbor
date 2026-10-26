@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.42.2] - 2026-10-26
+
 ### Fixed
 - Tab on a grayed prompt suggestion fills it in and keeps typing in the composer: focus no longer
   jumps out of the input box.
@@ -946,7 +948,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.42.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.42.2...HEAD
+[0.42.2]: https://github.com/RDevNeo/harbor/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/RDevNeo/harbor/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/RDevNeo/harbor/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/RDevNeo/harbor/compare/v0.40.0...v0.41.0
