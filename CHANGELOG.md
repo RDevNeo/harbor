@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.46.4] - 2026-10-26
+
 ### Fixed
 - A lead chat shows as working while any of its sub-agents run or have work queued, on the phone
   too (its chat list spinner); the API gives it as `working`.
@@ -1065,7 +1067,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.46.3...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.46.4...HEAD
+[0.46.4]: https://github.com/RDevNeo/harbor/compare/v0.46.3...v0.46.4
 [0.46.3]: https://github.com/RDevNeo/harbor/compare/v0.46.2...v0.46.3
 [0.46.2]: https://github.com/RDevNeo/harbor/compare/v0.46.1...v0.46.2
 [0.46.1]: https://github.com/RDevNeo/harbor/compare/v0.46.0...v0.46.1
