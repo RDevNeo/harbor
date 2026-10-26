@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-26
+
 ### Added
 - Voice input works out of the box: whisper.cpp is now built into Harbor, so dictation no longer
   needs a separate whisper.cpp install. With no speech model yet, the first dictation downloads
@@ -1186,7 +1188,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/RDevNeo/harbor/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/RDevNeo/harbor/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/RDevNeo/harbor/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/RDevNeo/harbor/compare/v0.49.0...v0.50.0
