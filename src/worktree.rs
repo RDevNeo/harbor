@@ -276,6 +276,18 @@ impl App {
         self.store.get(&format!("worktree:{id}")).filter(|p| !p.is_empty()).map(PathBuf::from)
     }
 
+    /// The repository a chat's commit pills are looked up in (commits.rs): where it works, when
+    /// it has a project on this PC. A copy of another PC's chat uses this PC's clone, if any.
+    pub fn commit_dir(&self, chat: i64) -> Option<PathBuf> {
+        let c = self.chat(chat)?;
+        if !c.device.is_empty() {
+            return None;
+        }
+        let repo = self.repo(c.repo_id?)?.path.clone();
+        let dir = if c.foreign() { repo } else { self.worktree_of(c).filter(|w| w.is_dir()).unwrap_or(repo) };
+        dir.is_dir().then_some(dir)
+    }
+
     /// Where a chat's agent works: its worktree, else its project (or home).
     pub fn chat_cwd(&self, c: &Chat) -> PathBuf {
         self.worktree_of(c).unwrap_or_else(|| self.cwd_of(c.repo_id))

@@ -3139,7 +3139,7 @@ fn for_home(method: &str, p: &[&str]) -> bool {
         return false;
     }
     // A copy doesn't move from here (movechat.rs says so).
-    (matches!(method, "POST" | "PATCH" | "DELETE") && p.get(3) != Some(&"move")) || (method == "GET" && p.get(3) == Some(&"slash"))
+    (matches!(method, "POST" | "PATCH" | "DELETE") && p.get(3) != Some(&"move")) || (method == "GET" && matches!(p.get(3), Some(&"slash" | &"commit")))
 }
 
 /// The upload files of a phone's body, as files here.
@@ -3307,7 +3307,7 @@ mod tests {
 
     #[test]
     fn a_copys_home_answers_writes_and_its_slash_menu() {
-        for (method, path) in [("POST", "v1/chats/7/send"), ("PATCH", "v1/chats/7"), ("DELETE", "v1/chats/7"), ("POST", "v1/chats/7/slash"), ("GET", "v1/chats/7/slash")] {
+        for (method, path) in [("POST", "v1/chats/7/send"), ("PATCH", "v1/chats/7"), ("DELETE", "v1/chats/7"), ("POST", "v1/chats/7/slash"), ("GET", "v1/chats/7/slash"), ("GET", "v1/chats/7/commit/35cbb88")] {
             assert!(for_home(method, &path.split('/').collect::<Vec<_>>()), "{method} {path}");
         }
         for (method, path) in [("GET", "v1/chats/7/items"), ("GET", "v1/chats/7/team"), ("GET", "v1/state"), ("POST", "v1/chats"), ("POST", "v1/upload")] {

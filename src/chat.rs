@@ -371,6 +371,10 @@ impl App {
         // The same cards the phone gets (view.rs): what's hidden, footers, dividers.
         let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
         let cards = crate::view::project(&tr.items, lead, &forks, &who);
+        // Commit hashes in replies become pills once git says they're commits (commits.rs).
+        // (Its project is looked up once, and only when a reply may name one.)
+        let mut commit_dir: Option<Option<std::path::PathBuf>> = None;
+        let commit_wake = self.chat_waker(id);
         let mut action: Option<MsgAction> = None;
         for shown in &cards {
             let i = shown.seq;
@@ -470,6 +474,11 @@ impl App {
                     }
                 }
                 Card::Text { text, at, forkable } => {
+                    let stripped = crate::media::strip_refs(text);
+                    let md = linkify(&stripped);
+                    let dir = if crate::commits::maybe(&md) { commit_dir.get_or_insert_with(|| self.commit_dir(id)).clone() } else { None };
+                    let commits = crate::commits::of_text(dir.as_deref(), &md, commit_wake.clone());
+                    let md = crate::commits::pills_md(&md, &commits);
                     // The transcript's 12px item spacing pushes list text below its
                     // number/bullet; markdown gets its own tighter spacing.
                     let r = ui
@@ -488,7 +497,19 @@ impl App {
                             // Its own id scope: egui_commonmark numbers tables from 0 in every
                             // viewer, so two messages' tables shared an id and their grids and
                             // scroll bars overwrote each other's state, repainting every frame.
-                            ui.push_id(("md", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, &linkify(&crate::media::strip_refs(text))))
+                            for c in commits.values() {
+                                self.md.add_link_hook(format!("{}{}", crate::commits::SCHEME, c.sha));
+                            }
+                            let from = ui.ctx().graphics(|g| g.get(ui.layer_id()).map_or(0, |l| l.next_idx().0));
+                            ui.push_id(("md", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, &md));
+                            crate::commits::paint_pills(ui, from, &commits, &t);
+                            for c in commits.values() {
+                                let hook = format!("{}{}", crate::commits::SCHEME, c.sha);
+                                if self.md.get_link_hook(&hook) == Some(true) {
+                                    action = Some(MsgAction::Commit(c.sha.clone()));
+                                }
+                                self.md.remove_link_hook(&hook);
+                            }
                         })
                         .response
                         .rect;
@@ -703,6 +724,10 @@ impl App {
         }
         match action {
             Some(MsgAction::Copy(text)) => ui.ctx().copy_text(text),
+            Some(MsgAction::Commit(sha)) => {
+                let ctx = ui.ctx().clone();
+                self.open_commit(id, &sha, &ctx);
+            }
             Some(MsgAction::OpenUrl(url)) => self.open_browser(Some(url)),
             Some(MsgAction::Open(chat)) => {
                 if self.chat(chat).is_some() {
@@ -1523,6 +1548,8 @@ enum MsgAction {
     Open(i64),
     /// Open another thread and point at its item.
     OpenAt(i64, usize),
+    /// A commit pill: its card.
+    Commit(String),
 }
 
 /// A row under a message, visible only while the message (or the row) is hovered:

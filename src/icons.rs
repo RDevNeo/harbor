@@ -95,6 +95,7 @@ pub const PR_OPEN: &str = "\u{e555}";
 pub const PR_DRAFT: &str = "\u{e35b}";
 pub const PR_CLOSED: &str = "\u{e35a}";
 pub const GIT_MERGE: &str = "\u{e0e4}";
+pub const GIT_COMMIT: &str = "\u{e0e3}";
 pub const PEN_LINE: &str = "\u{e130}";
 pub const LAYERS: &str = "\u{e529}";
 pub const USER_ROUND: &str = "\u{e468}";

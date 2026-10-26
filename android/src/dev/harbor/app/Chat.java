@@ -869,7 +869,7 @@ public class Chat extends Base {
                 String md = it.optString("markdown");
                 boolean forkable = it.optBoolean("forkable");
                 View.OnLongClickListener lp = v -> { itemMenu(it, md, forkable); return true; };
-                Render r = new Render(this, lp);
+                Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info));
                 View body = r.text(it);
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);

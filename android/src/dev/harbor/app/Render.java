@@ -26,6 +26,18 @@ import org.json.JSONObject;
 final class Render {
     private final Context c;
     private final View.OnLongClickListener longPress;
+    /** Commit pills (spans with `commit`, PROTOCOL.md): the item's `commits` and what a tap does. */
+    private JSONObject commits;
+    private Commits onCommit;
+
+    interface Commits { void open(String sha, JSONObject commit); }
+
+    /** Draws commit spans as pills that open `on`; without it they stay text. */
+    Render commits(JSONObject commits, Commits on) {
+        this.commits = commits;
+        this.onCommit = on;
+        return this;
+    }
 
     Render(Context c, View.OnLongClickListener longPress) {
         this.c = c;
@@ -101,7 +113,7 @@ final class Render {
 
     private TextView links(TextView t) {
         CharSequence s = t.getText();
-        if (s instanceof Spanned && ((Spanned) s).getSpans(0, s.length(), URLSpan.class).length > 0)
+        if (s instanceof Spanned && ((Spanned) s).getSpans(0, s.length(), android.text.style.ClickableSpan.class).length > 0)
             t.setMovementMethod(LinkMovementMethod.getInstance());
         t.setOnLongClickListener(longPress);
         return t;
@@ -114,6 +126,11 @@ final class Render {
             JSONObject s = spans.optJSONObject(i);
             if (s == null) continue;
             String text = s.optString("text");
+            String sha = s.optString("commit", "");
+            if (!sha.isEmpty() && onCommit != null) {
+                pill(sb, sha);
+                continue;
+            }
             int a = sb.length();
             sb.append(text);
             int z = sb.length();
@@ -134,6 +151,83 @@ final class Render {
             }
         }
         return sb;
+    }
+
+    /** A commit pill: the short id (what a copy of the text gets), drawn as a chip with the
+     *  git-commit glyph, tappable. */
+    private void pill(SpannableStringBuilder sb, String sha) {
+        JSONObject info = commits == null ? null : commits.optJSONObject(sha);
+        // As the desktop: git's short id, at least 7 characters.
+        int n = Math.max(7, info == null ? 0 : info.optString("short").length());
+        String shortId = sha.substring(0, Math.min(n, sha.length()));
+        int a = sb.length();
+        sb.append(shortId);
+        int z = sb.length();
+        sb.setSpan(new Pill(shortId), a, z, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        final JSONObject fi = info;
+        final Commits on = onCommit;
+        sb.setSpan(new android.text.style.ClickableSpan() {
+            @Override public void onClick(View w) { on.open(sha, fi); }
+            @Override public void updateDrawState(android.text.TextPaint p) { }
+        }, a, z, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
+
+    /** The chip behind a commit pill: soft fill, hairline border, glyph and mono short id. */
+    static final class Pill extends android.text.style.ReplacementSpan {
+        private final String label;
+        Pill(String label) { this.label = label; }
+
+        private float pad() { return Ui.dp(6); }
+        private float gap() { return Ui.dp(4); }
+
+        private float measure(android.graphics.Paint p, Typeface tf, String s, float size) {
+            Typeface old = p.getTypeface();
+            float oldSize = p.getTextSize();
+            p.setTypeface(tf);
+            p.setTextSize(size);
+            float w = p.measureText(s);
+            p.setTypeface(old);
+            p.setTextSize(oldSize);
+            return w;
+        }
+
+        @Override public int getSize(android.graphics.Paint p, CharSequence text, int start, int end, android.graphics.Paint.FontMetricsInt fm) {
+            if (fm != null) p.getFontMetricsInt(fm);
+            float sz = p.getTextSize() * 0.88f;
+            return Math.round(pad() + measure(p, Ui.icons, Ui.I_COMMIT, sz) + gap() + measure(p, Ui.mono, label, sz) + pad() + Ui.dp(2));
+        }
+
+        @Override public void draw(android.graphics.Canvas c, CharSequence text, int start, int end, float x, int top, int y, int bottom, android.graphics.Paint p) {
+            float sz = p.getTextSize() * 0.88f;
+            float iw = measure(p, Ui.icons, Ui.I_COMMIT, sz), lw = measure(p, Ui.mono, label, sz);
+            android.graphics.Paint.FontMetrics m = p.getFontMetrics();
+            float x0 = x + Ui.dp(1), w = pad() + iw + gap() + lw + pad();
+            android.graphics.RectF r = new android.graphics.RectF(x0, y + m.ascent * 0.92f, x0 + w, y + m.descent * 0.95f + Ui.dp(1));
+            int oldColor = p.getColor();
+            Typeface oldTf = p.getTypeface();
+            float oldSize = p.getTextSize();
+            android.graphics.Paint.Style oldStyle = p.getStyle();
+            float rad = Ui.dp(7);
+            p.setStyle(android.graphics.Paint.Style.FILL);
+            p.setColor(Ui.G100);
+            c.drawRoundRect(r, rad, rad, p);
+            p.setStyle(android.graphics.Paint.Style.STROKE);
+            p.setStrokeWidth(Ui.dp(1));
+            p.setColor(Ui.LINE);
+            c.drawRoundRect(r, rad, rad, p);
+            p.setStyle(android.graphics.Paint.Style.FILL);
+            p.setTextSize(sz);
+            p.setTypeface(Ui.icons);
+            p.setColor(Ui.G700);
+            c.drawText(Ui.I_COMMIT, x0 + pad(), y, p);
+            p.setTypeface(Ui.mono);
+            p.setColor(Ui.FG);
+            c.drawText(label, x0 + pad() + iw + gap(), y, p);
+            p.setColor(oldColor);
+            p.setTypeface(oldTf);
+            p.setTextSize(oldSize);
+            p.setStyle(oldStyle);
+        }
     }
 
     /** Only web links are tappable: a reply is agent output, which can be steered by what the

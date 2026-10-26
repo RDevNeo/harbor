@@ -1085,6 +1085,8 @@ impl App {
         // rengaf Dialog: md (448) for confirms, lg (512) for forms and lists; black/50 backdrop.
         let width = match &dialog {
             Dialog::Rename { .. } | Dialog::Instructions { .. } | Dialog::Shortcuts { .. } => 512.0,
+            // Wider while it shows the diff.
+            Dialog::Commit(c) => if c.showing_diff() { 760.0 } else { 512.0 },
             _ => 448.0,
         };
         let mut x_clicked = false;
@@ -1160,6 +1162,7 @@ impl App {
                     }
                     Dialog::StopAll(id) => self.stop_all_dialog(ui, *id, &mut close),
                     Dialog::Shortcuts { query } => self.shortcuts_dialog(ui, query, &mut close),
+                    Dialog::Commit(card) => self.commit_dialog(ui, card, &mut close),
                     Dialog::Instructions { job, text, .. } => start = self.instructions_dialog(ui, job, text, &mut close),
                     Dialog::RemoveRepo(id) => {
                         w::text(ui, "Remove project?", "heading-20");

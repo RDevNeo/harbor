@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Commit pills: a commit hash in an agent's reply (bare or in inline code) shows as a clickable
+  chip with the git-commit icon and the short id instead of raw hex, on the desktop and the
+  phone. Only hashes git confirms as commits of the chat's project become pills, so colours,
+  fingerprints and the like stay text, and code blocks are left alone. The desktop shows the
+  subject on hover. Clicking a pill on the desktop (or tapping it on the phone, as a bottom sheet)
+  opens the commit's card: subject, message, author, date and changed files with their +/− counts,
+  plus Open on GitHub, Copy SHA and Show diff.
+
 ## [0.51.0] - 2026-10-26
 
 ### Added

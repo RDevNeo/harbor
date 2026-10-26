@@ -1,5 +1,6 @@
 package dev.harbor.app;
 
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -498,25 +499,30 @@ public class GhItem extends Base {
             });
             return;
         }
-        JSONArray lines = diff.optJSONArray("lines");
-        if (lines == null || lines.length() == 0) { body.addView(Ui.text(this, "No changes.", 14, Ui.G700), Ui.margins(Ui.fill(), 0, 12, 0, 0)); return; }
+        diffInto(this, body, diff.optJSONArray("lines"), diff.optBoolean("clipped"));
+    }
+
+    /** A diff from the hub's line model (`t`: file, hunk, add, del, ctx): one block per file,
+     *  its name and counts, then its lines scrolling sideways. A PR's Code tab, a commit's sheet. */
+    static void diffInto(Context c, LinearLayout body, JSONArray lines, boolean clipped) {
+        if (lines == null || lines.length() == 0) { body.addView(Ui.text(c, "No changes.", 14, Ui.G700), Ui.margins(Ui.fill(), 0, 12, 0, 0)); return; }
         // One block per file: its name and counts, then its lines (scrolling sideways).
         SpannableStringBuilder s = null;
         for (int i = 0; i <= lines.length(); i++) {
             JSONObject l = i < lines.length() ? lines.optJSONObject(i) : null;
             String t = l == null ? "file" : l.optString("t");
             if ("file".equals(t)) {
-                if (s != null) body.addView(codeBox(s), Ui.margins(Ui.fill(), 0, 0, 0, 12));
+                if (s != null) body.addView(codeBox(c, s), Ui.margins(Ui.fill(), 0, 0, 0, 12));
                 if (l == null) break;
-                LinearLayout fh = Ui.row(this);
-                fh.addView(Ui.icon(this, Ui.I_FILE, 13, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
-                TextView name = Ui.subtitle(Ui.bold(this, l.optString("text"), 13, Ui.FG));
+                LinearLayout fh = Ui.row(c);
+                fh.addView(Ui.icon(c, Ui.I_FILE, 13, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
+                TextView name = Ui.subtitle(Ui.bold(c, l.optString("text"), 13, Ui.FG));
                 fh.addView(name, Ui.margins(Ui.weight(), 6, 0, 6, 0));
                 SpannableStringBuilder n = new SpannableStringBuilder();
                 span(n, "+" + l.optInt("adds"), Ui.GREEN);
                 n.append(" ");
                 span(n, "−" + l.optInt("dels"), Ui.RED);
-                TextView cnt = Ui.text(this, n, 12, Ui.G700);
+                TextView cnt = Ui.text(c, n, 12, Ui.G700);
                 cnt.setTypeface(Ui.mono);
                 fh.addView(cnt);
                 body.addView(fh, Ui.margins(Ui.fill(), 0, 6, 0, 4));
@@ -540,7 +546,7 @@ public class GhItem extends Base {
             if ("hunk".equals(t)) s.setSpan(new ForegroundColorSpan(Ui.BLUE), a, z, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             else if ("ctx".equals(t)) s.setSpan(new ForegroundColorSpan(Ui.G700), a, z, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
-        if (diff.optBoolean("clipped")) body.addView(Ui.text(this, "The diff is longer: open it on GitHub for the rest.", 13, Ui.G700));
+        if (clipped) body.addView(Ui.text(c, "The diff is longer: open it on GitHub for the rest.", 13, Ui.G700));
     }
 
     /** A diff line's colour across the whole width, not just under its text. */
@@ -556,18 +562,18 @@ public class GhItem extends Base {
         }
     }
 
-    private View codeBox(SpannableStringBuilder s) {
-        HorizontalScrollView h = new HorizontalScrollView(this);
+    private static View codeBox(Context c, SpannableStringBuilder s) {
+        HorizontalScrollView h = new HorizontalScrollView(c);
         h.setHorizontalScrollBarEnabled(false);
         h.setBackground(Ui.round(Ui.CARD, Ui.LINE, 10));
         if (s.length() > 0 && s.charAt(s.length() - 1) == '\n') s.delete(s.length() - 1, s.length());
-        TextView t = Ui.text(this, s, 12, Ui.FG);
+        TextView t = Ui.text(c, s, 12, Ui.FG);
         t.setTypeface(Ui.mono, Typeface.NORMAL);
         t.setLineSpacing(0, 1.05f);
         t.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(10), Ui.dp(8));
         t.setTextIsSelectable(true);
         // As wide as the box at least, so a line's colour reaches its edge.
-        t.setMinWidth(getResources().getDisplayMetrics().widthPixels - Ui.dp(42));
+        t.setMinWidth(c.getResources().getDisplayMetrics().widthPixels - Ui.dp(42));
         h.addView(t);
         return h;
     }

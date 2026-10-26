@@ -1722,6 +1722,9 @@ pub struct Span {
     pub strike: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// A commit of the chat's project (commits.rs): the full sha; the item's `commits` has it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -1800,6 +1803,7 @@ impl Conv {
             code,
             strike: self.strike > 0,
             link: self.links.last().cloned(),
+            commit: None,
         };
         match spans.last_mut() {
             Some(l) if Span { text: String::new(), ..l.clone() } == Span { text: String::new(), ..s.clone() } => l.text.push_str(&s.text),
@@ -1987,7 +1991,8 @@ fn with_chat(mut v: Value, chat: String) -> Value {
     v
 }
 
-pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<crate::media::Media>) -> Value {
+/// `commits`: the commits a reply names (commits.rs), drawn as pills.
+pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<crate::media::Media>, commits: &HashMap<String, crate::commits::Commit>) -> Value {
     use crate::view::Card;
     let all = crate::view::media(&s.card, find);
     // Every image, as older phones draw them (a strip); newer ones draw `media` large and the
@@ -2001,7 +2006,15 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
             "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet() })).collect::<Vec<_>>(), "at": at,
             "sender": sender,
         }),
-        Card::Text { text, at, forkable } => json!({ "markdown": text, "blocks": blocks(&crate::media::strip_refs(text)), "images": images, "at": at, "forkable": forkable }),
+        Card::Text { text, at, forkable } => {
+            let mut b = blocks(&crate::media::strip_refs(text));
+            crate::commits::mark(&mut b, commits);
+            let mut v = json!({ "markdown": text, "blocks": b, "images": images, "at": at, "forkable": forkable });
+            if !commits.is_empty() {
+                v["commits"] = crate::commits::wire(commits);
+            }
+            v
+        }
         Card::Thinking { text } => json!({ "text": text }),
         Card::Tool { label, summary, input, result, is_error } => json!({
             "label": label, "summary": summary, "input": clipped(input),
@@ -2325,6 +2338,10 @@ impl App {
             if let Some(r) = self.api_github(&call, ctx) {
                 let _ = call.reply.send(r);
             }
+            return;
+        }
+        // A commit pill's card (commits.rs): git runs on a thread, which answers.
+        if self.commit_api(&call) {
             return;
         }
         // Workspace and branch calls: git runs on threads (worktree.rs), which may answer later.
@@ -2877,14 +2894,28 @@ impl App {
         let gid = self.chat(chat).map(|c| c.gid.clone()).unwrap_or_default();
         // Where relative media paths in its replies start.
         let cwd = self.chat(chat).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c));
+        let (dir, wake) = (self.commit_dir(chat), self.chat_waker(chat));
         let revs = self.api.items.entry(chat).or_default();
         let fresh = self.api.looked.get(&chat) == Some(&now) && revs.len() == items.len();
+        // Commits a reply names (commits.rs): looked up on threads; the chat changes once known.
+        let commits_of = |c: &crate::view::Shown| match &c.card {
+            crate::view::Card::Text { text, .. } => crate::commits::of_text(dir.as_deref(), text, wake.clone()),
+            _ => Default::default(),
+        };
         // An item's version includes how it shows: hidden later (a lead's turn delegating),
-        // forkable once its turn ends, a fork made from it.
+        // forkable once its turn ends, a fork made from it, the commits it names.
         let hashes: Vec<u64> = if fresh {
             vec![]
         } else {
-            items.iter().zip(&cards).map(|(it, c)| hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after))).collect()
+            items
+                .iter()
+                .zip(&cards)
+                .map(|(it, c)| {
+                    let mut shas: Vec<String> = commits_of(c).values().map(|c| c.sha.clone()).collect();
+                    shas.sort();
+                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas))
+                })
+                .collect()
         };
         if !fresh {
             self.api.looked.insert(chat, now);
@@ -2904,7 +2935,7 @@ impl App {
         let out: Vec<Value> = cards
             .iter()
             .filter(|c| revs[c.seq].1 > since)
-            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut |t| crate::media::find(t, cwd.as_deref())), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
+            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut |t| crate::media::find(t, cwd.as_deref()), &commits_of(c)), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
             .collect();
         json!({
             "rev": self.api.hub.rev(),
@@ -3685,7 +3716,7 @@ mod tests {
         let one = |it: Item| {
             let items = vec![it];
             let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
-            card_json(&cards[0], 9, &mut |_| vec![])
+            card_json(&cards[0], 9, &mut |_| vec![], &HashMap::new())
         };
         let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![], sender: String::new() });
         assert_eq!((v["kind"].as_str(), v["seq"].as_u64(), v["rev"].as_u64()), (Some("user"), Some(0), Some(9)));
@@ -3706,7 +3737,7 @@ mod tests {
         let items = vec![Item::Text { text: "See ![Chart](out/c.png) and the run\n\n![](/v/run.mp4)\nAlso /tmp/x.png".into(), at: 1 }];
         let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
         let m = |path: &str, caption: &str, video: bool, shown: bool| Media { path: path.into(), caption: caption.into(), video, shown, url: None };
-        let v = card_json(&cards[0], 3, &mut |_| vec![m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)]);
+        let v = card_json(&cards[0], 3, &mut |_| vec![m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)], &HashMap::new());
         let v = with_chat(v, "g1".into());
         assert_eq!(v["media"], json!([
             { "name": "c.png", "caption": "Chart", "kind": "image", "url": "/v1/image?path=%2Fp%2Fout%2Fc.png&max=512&chat=g1" },
@@ -3720,7 +3751,7 @@ mod tests {
         // No media: no field.
         let plain = vec![Item::Text { text: "hi".into(), at: 1 }];
         let cards = crate::view::project(&plain, false, &[], &|_: &str, _: &str| String::new());
-        assert!(card_json(&cards[0], 1, &mut |_| vec![]).get("media").is_none());
+        assert!(card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new()).get("media").is_none());
     }
 
     /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,
@@ -3733,7 +3764,7 @@ mod tests {
         let forks = [(8, 42)];
         // What chat.rs draws: these cards, skipping the hidden ones.
         let desktop = project(&items, true, &forks, &who);
-        let phone: Vec<Value> = desktop.iter().map(|c| card_json(c, 1, &mut |_| vec![])).collect();
+        let phone: Vec<Value> = desktop.iter().map(|c| card_json(c, 1, &mut |_| vec![], &HashMap::new())).collect();
         assert_eq!(phone.len(), items.len(), "one card per item, so seq stays the item's index");
         for (d, p) in desktop.iter().zip(&phone) {
             assert_eq!(p["kind"].as_str(), Some(kind(&d.card)));

@@ -88,6 +88,8 @@ pub enum Dialog {
     Instructions { project: i64, job: crate::autowork::Job, text: String },
     /// The keyboard shortcuts cheat sheet (`?`), with its filter.
     Shortcuts { query: String },
+    /// A commit pill's card (commits.rs).
+    Commit(Box<crate::commits::Card>),
 }
 
 pub enum Bg {
@@ -569,6 +571,16 @@ impl App {
         match self.view {
             View::Chat(c) => self.chat(c).and_then(|c| c.repo_id),
             _ => self.draft.repo,
+        }
+    }
+
+    /// Wakes whatever shows `chat` once a background lookup has its answer (commits.rs): this
+    /// window and the phones (the chat's revision moves, so they fetch it again).
+    pub fn chat_waker(&self, chat: i64) -> impl Fn() + Send + Clone + 'static {
+        let (ctx, hub) = (self.ctx.clone(), self.api.hub.clone());
+        move || {
+            hub.touch(Some(chat), false);
+            ctx.request_repaint();
         }
     }
 

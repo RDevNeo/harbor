@@ -911,48 +911,60 @@ impl App {
             Frame::new().inner_margin(Margin::same(20)).show(ui, |ui| w::subtle(ui, "No changes.", "label-14"));
             return;
         }
-        let row_h = 18.0;
-        let mono = FontId::new(12.5, egui::FontFamily::Monospace);
-        ScrollArea::both().id_salt(("pr-code", url)).auto_shrink([false, false]).show_rows(ui, row_h, lines.len(), |ui, range| {
-            for l in &lines[range] {
-                let width = ui.available_width().max(600.0);
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
-                let p = ui.painter();
-                let x = rect.left() + 16.0;
-                let y = rect.center().y;
-                let text = |s: &str, c: Color32| {
-                    p.text(pos2(x + 14.0, y), egui::Align2::LEFT_CENTER, s.replace('\t', "    "), mono.clone(), c);
-                };
-                match l {
-                    Line::File { path, adds, dels } => {
-                        p.rect_filled(rect, CornerRadius::ZERO, t.gray(100));
-                        p.hline(rect.x_range(), rect.top(), Stroke::new(1.0, t.border()));
-                        ic::glyph(p, pos2(x + 4.0, y), ic::FILE, 14.0, t.subtle());
-                        let g = p.layout_no_wrap(path.clone(), FontId::new(13.0, theme::medium()), t.fg());
-                        let gw = g.size().x;
-                        p.galley(pos2(x + 16.0, y - g.size().y / 2.0), g, t.fg());
-                        p.text(pos2(x + 26.0 + gw, y), egui::Align2::LEFT_CENTER, format!("+{adds}"), mono.clone(), t.green(900));
-                        p.text(pos2(x + 26.0 + gw + 12.0 + 8.0 * (adds.to_string().len() as f32 + 1.0), y), egui::Align2::LEFT_CENTER, format!("-{dels}"), mono.clone(), t.red(900));
-                    }
-                    Line::Hunk(h) => {
-                        p.rect_filled(rect, CornerRadius::ZERO, alpha(t.blue(700), 0.10));
-                        text(h, t.blue(900));
-                    }
-                    Line::Add(s) => {
-                        p.rect_filled(rect, CornerRadius::ZERO, alpha(t.green(700), 0.14));
-                        p.text(pos2(x, y), egui::Align2::LEFT_CENTER, "+", mono.clone(), t.green(900));
-                        text(s, t.fg());
-                    }
-                    Line::Del(s) => {
-                        p.rect_filled(rect, CornerRadius::ZERO, alpha(t.red(700), 0.14));
-                        p.text(pos2(x, y), egui::Align2::LEFT_CENTER, "-", mono.clone(), t.red(900));
-                        text(s, t.fg());
-                    }
-                    Line::Ctx(s) => text(s, t.subtle()),
-                }
-            }
-        });
+        diff_rows(ui, &t, Id::NULL.with(("pr-code", url)), &lines, false);
     }
+}
+
+/// A diff, line by line (a PR's Code tab, a commit's card). `fit`: shrinks to its rows, up to
+/// 40% of the window.
+pub fn diff_rows(ui: &mut Ui, t: &theme::Tokens, id_salt: Id, lines: &[Line], fit: bool) {
+    let row_h = 18.0;
+    let mono = FontId::new(12.5, egui::FontFamily::Monospace);
+    // In a dialog: as tall as its rows, up to the dialog's room.
+    let shrink = [false, fit];
+    let mut area = ScrollArea::both().id_salt(id_salt).auto_shrink(shrink);
+    if fit {
+        area = area.max_height(ui.ctx().content_rect().height() * 0.4);
+    }
+    area.show_rows(ui, row_h, lines.len(), |ui, range| {
+        for l in &lines[range] {
+            let width = ui.available_width().max(600.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
+            let p = ui.painter();
+            let x = rect.left() + 16.0;
+            let y = rect.center().y;
+            let text = |s: &str, c: Color32| {
+                p.text(pos2(x + 14.0, y), egui::Align2::LEFT_CENTER, s.replace('\t', "    "), mono.clone(), c);
+            };
+            match l {
+                Line::File { path, adds, dels } => {
+                    p.rect_filled(rect, CornerRadius::ZERO, t.gray(100));
+                    p.hline(rect.x_range(), rect.top(), Stroke::new(1.0, t.border()));
+                    ic::glyph(p, pos2(x + 4.0, y), ic::FILE, 14.0, t.subtle());
+                    let g = p.layout_no_wrap(path.clone(), FontId::new(13.0, theme::medium()), t.fg());
+                    let gw = g.size().x;
+                    p.galley(pos2(x + 16.0, y - g.size().y / 2.0), g, t.fg());
+                    p.text(pos2(x + 26.0 + gw, y), egui::Align2::LEFT_CENTER, format!("+{adds}"), mono.clone(), t.green(900));
+                    p.text(pos2(x + 26.0 + gw + 12.0 + 8.0 * (adds.to_string().len() as f32 + 1.0), y), egui::Align2::LEFT_CENTER, format!("-{dels}"), mono.clone(), t.red(900));
+                }
+                Line::Hunk(h) => {
+                    p.rect_filled(rect, CornerRadius::ZERO, alpha(t.blue(700), 0.10));
+                    text(h, t.blue(900));
+                }
+                Line::Add(s) => {
+                    p.rect_filled(rect, CornerRadius::ZERO, alpha(t.green(700), 0.14));
+                    p.text(pos2(x, y), egui::Align2::LEFT_CENTER, "+", mono.clone(), t.green(900));
+                    text(s, t.fg());
+                }
+                Line::Del(s) => {
+                    p.rect_filled(rect, CornerRadius::ZERO, alpha(t.red(700), 0.14));
+                    p.text(pos2(x, y), egui::Align2::LEFT_CENTER, "-", mono.clone(), t.red(900));
+                    text(s, t.fg());
+                }
+                Line::Ctx(s) => text(s, t.subtle()),
+            }
+        }
+    });
 }
 
 #[derive(Clone, Copy, PartialEq)]

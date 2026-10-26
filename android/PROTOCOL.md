@@ -427,7 +427,7 @@ Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the
 |---|---|---|
 | `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
 | `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" under it when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text}]`, `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise) |
-| `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable` | `markdown`, `blocks` (below), `images`, `at`, `forkable` |
+| `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable`; commit pills in its spans (below) | `markdown`, `blocks` (below), `images`, `at`, `forkable`, `commits` (optional, 0.52) |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
 | `footer` | the turn's line, monospace and subtle | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
@@ -512,8 +512,45 @@ A list of blocks, each with a `type`:
 - `rule` `{}`
 - `table` `{rows: [[spans]]}`: rows of cells, each cell a list of spans; the first row is the header
 
-A span is `{text, bold?, italic?, code?, strike?, link?}`; flags are left out when false and
-`link` when there is none. Task list markers arrive as "☑ " / "☐ " text. Raw HTML stays as text.
+A span is `{text, bold?, italic?, code?, strike?, link?, commit?}`; flags are left out when false and
+`link` / `commit` when there is none. Task list markers arrive as "☑ " / "☐ " text. Raw HTML stays as text.
+
+#### Commit pills (0.52)
+
+A commit hash in a reply (7–40 lowercase hex digits with at least one digit and one letter,
+standing alone in the text or alone in inline code) that the hub verified as a commit of the
+chat's project comes as a span of its own with `commit`: the full sha. Fenced and indented code
+blocks, link texts and URLs are left alone; lookalikes (colours, UUID parts, fingerprints, paths)
+are never pills, since only `git cat-file` decides. The card then has `commits`:
+`{"<full sha>": {sha, short, subject, author, at}}` (`at`: author date, unix s).
+
+Draw the span as the desktop's pill: a small rounded chip with the Lucide git-commit glyph
+(U+E0E3) and the short id (`short`, at least 7 characters, monospace) instead of `text`. Tapping it
+opens the commit card (below). The span's `text` is still the token as written, so an app that
+ignores `commit` shows what it always did. The hub looks commits up off the UI thread: a reply
+may come first without them and again with a higher `rev` once git has answered. A copy of
+another PC's chat only gets pills where this PC has a clone of its project.
+
+### `GET /v1/chats/{id}/commit/{sha}[?diff=1]` (0.52)
+
+A commit pill's card, read from git on the chat's PC (forwarded there for a copy):
+
+```json
+{"sha": "35cbb88a…", "short": "35cbb88", "subject": "0.47.1", "author": "A. Person", "at": 1761460000,
+ "email": "a@example.com", "body": "…", "url": "https://github.com/o/r/commit/35cbb88a…",
+ "files": [{"path": "src/x.rs", "adds": 2, "dels": 1}, {"path": "logo.png", "adds": null, "dels": null}],
+ "more_files": 0}
+```
+
+`url` is null unless the project has a GitHub remote (built from origin, else another remote; no
+credentials). `adds`/`dels` are null for a binary file; at most 300 files are listed, `more_files`
+counts the rest. A merge lists what it brought in (first parent). With `diff=1` the answer also
+has `lines` and `clipped`, as `GET /v1/prs/diff`. `404` with `error` for an unknown commit or a
+chat without a project on that PC.
+
+The phone draws it as a bottom sheet: the subject as the title, the glyph, short id, author and
+age, the message, "N files changed +A −D" over the file list, then **Open on GitHub** (when
+`url`), **Copy SHA** and **Show diff** (the `diff=1` lines, drawn like a PR's Code tab).
 
 ### `GET /v1/events?since=<rev>`
 
