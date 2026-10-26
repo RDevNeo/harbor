@@ -864,7 +864,7 @@ impl App {
             }
             let input = w::composer(ui, cid, &mut draft, ghost.as_deref().unwrap_or("Ask for changes, send follow-ups, or attach images"), 3);
             if ghost.is_some() && draft.is_empty() {
-                crate::recap::tab_tag(ui, input.rect);
+                crate::recap::tab_tag(ui, cid, input.rect);
             }
             ui.add_space(10.0);
             // Narrow composers (T3 Code's compact footer): effort and access go

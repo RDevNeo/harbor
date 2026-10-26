@@ -721,7 +721,11 @@ pub fn tint_hint(ui: &Ui, id: egui::Id) {
 }
 
 /// The "⇥ Tab" tag at the right end of the composer's first line while the suggestion shows.
-pub fn tab_tag(ui: &Ui, text_rect: Rect) {
+/// Also keeps Tab (and the arrows) from moving focus next frame, as the slash and tag menus
+/// do: egui picks the focus move before `accept_keys` sees the key, by the filter the focused
+/// widget left last frame, and the composer's TextEdit resets it each frame.
+pub fn tab_tag(ui: &Ui, id: egui::Id, text_rect: Rect) {
+    ui.memory_mut(|m| m.set_focus_lock_filter(id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: false }));
     let t = crate::widgets::tokens(ui);
     let font = egui::FontId::new(12.0, egui::FontFamily::Proportional);
     let galley = ui.painter().layout_no_wrap("\u{21e5} Tab".into(), font, t.gray(800));

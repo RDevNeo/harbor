@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Tab on a grayed prompt suggestion fills it in and keeps typing in the composer: focus no longer
+  jumps out of the input box.
+
 ## [0.42.1] - 2026-10-26
 
 ### Fixed
