@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- `install.sh` no longer writes the launcher into a data directory outside `$HOME`: with `HOME` overridden
+  but `XDG_DATA_HOME` still pointing at the real session, the real launcher got an `Exec=` into the
+  temporary home. It now falls back to `$HOME/.local/share` and says so (#76).
+
 ## [0.42.0] - 2026-10-26
 
 ### Added

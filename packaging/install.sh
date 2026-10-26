@@ -47,11 +47,19 @@ done
 LIB="$HOME/.local/lib/harbor"
 BIN="$HOME/.local/bin"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+# The launcher's Exec= points into $HOME, so the data dir must live there too (a test run with a
+# temporary HOME must not write into the real session's data dir).
+case "$DATA/" in
+  "$HOME"/*) ;;
+  *) say_note="XDG_DATA_HOME ($DATA) is outside HOME; using $HOME/.local/share"
+     DATA="$HOME/.local/share" ;;
+esac
 APPS="$DATA/applications"
 ICONS="$DATA/icons/hicolor"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'harbor install: %s\n' "$*" >&2; exit 1; }
+[ -z "${say_note:-}" ] || say "note: $say_note"
 
 refresh_menus() {
   command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$APPS" 2>/dev/null || true
