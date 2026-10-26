@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-26
+
 ### Added
 - Commit pills: a commit hash in an agent's reply (bare or in inline code) shows as a clickable
   chip with the git-commit icon and the short id instead of raw hex, on the desktop and the
@@ -1173,7 +1175,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/RDevNeo/harbor/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/RDevNeo/harbor/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/RDevNeo/harbor/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/RDevNeo/harbor/compare/v0.48.2...v0.49.0
