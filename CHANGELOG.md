@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone dictation: tapping the mic again stops it and puts in what was said (the last words
+  heard when the recogniser's final ones don't come) instead of an error. It keeps listening
+  through pauses until you tap stop (about 15 s without words ends it), never opens the
+  system's dictation pop-up, and a phone whose recogniser fails falls back to its other
+  recogniser, then to the PC's whisper.cpp. Leaving the chat keeps what was heard in the draft.
+
 ## [0.48.1] - 2026-10-26
 
 ### Fixed

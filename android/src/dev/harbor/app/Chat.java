@@ -1185,6 +1185,6 @@ public class Chat extends Base {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (!comp.result(req, res, data)) attach.result(req, res, data);
+        attach.result(req, res, data);
     }
 }

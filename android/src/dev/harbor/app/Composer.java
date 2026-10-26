@@ -4,11 +4,9 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.speech.RecognizerIntent;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.TypedValue;
@@ -35,8 +33,6 @@ import java.util.List;
  *  mic (speech to text) and the round send button, which turns into Stop while a turn runs and
  *  nothing is typed. An image pasted into the text is attached (Edit). */
 final class Composer {
-    static final int SPEAK = 43;
-
     final LinearLayout view;
     final Edit edit;
     final TextView pill;
@@ -105,7 +101,7 @@ final class Composer {
         FrameLayout slot = new FrameLayout(a);
         slot.addView(pill, new FrameLayout.LayoutParams(-2, Ui.dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
         row.addView(slot, Ui.margins(new LinearLayout.LayoutParams(0, Ui.dp(44), 1), 8, 0, 0, 0));
-        mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> { if (voice != null) voice.toggle(); else speak(); });
+        mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> { if (voice != null) voice.toggle(); });
         mic.setContentDescription("Dictate");
         row.addView(mic, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
         send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 44, v -> {
@@ -256,30 +252,6 @@ final class Composer {
                 return rest == null ? null : new ContentInfo.Builder(payload).setClip(rest).build();
             });
         }
-    }
-
-    // ---- speech to text (the phone's own recogniser) ----
-
-    private void speak() {
-        try {
-            a.startActivityForResult(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM), SPEAK);
-        } catch (Exception e) {
-            Ui.toast(a, "No speech recogniser on this phone");
-        }
-    }
-
-    /** Call from onActivityResult; true when it was ours. */
-    boolean result(int req, int res, Intent data) {
-        if (req != SPEAK) return false;
-        if (res != Activity.RESULT_OK || data == null) return true;
-        ArrayList<String> said = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-        if (said == null || said.isEmpty()) return true;
-        String now = edit.getText().toString();
-        String add = said.get(0);
-        edit.setText(now.isEmpty() || now.endsWith(" ") || now.endsWith("\n") ? now + add : now + " " + add);
-        edit.setSelection(edit.length());
-        return true;
     }
 
     /** The "Add to session" sheet: Camera / Photos / Files tiles, then the run settings. */
