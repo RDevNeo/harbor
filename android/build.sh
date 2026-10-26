@@ -66,6 +66,9 @@ java -cp "$W/classes:$W/test" dev.harbor.app.SecTest
 # And the slash menu's matching (the desktop's rules, src/slash.rs).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/SlashTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.SlashTest
+# And the composer's @ and # tags (src/tags.rs).
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/TagTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.TagTest
 # So is the QR scanner's decoding of a camera frame.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/QrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.QrTest "$HERE/test/pair-qr.png"

@@ -220,6 +220,12 @@ final class Run {
         pickList(a, "Model", models(), model, "model", ch);
     }
 
+    /** The effort picker alone (the slash menu's /effort). */
+    void pickEffort(Activity a, Changed ch) {
+        if (!can("effort") || efforts().length() == 0) { Ui.toast(a, "The effort can't change now: " + why("effort")); return; }
+        pickList(a, "Effort", efforts(), effort, "effort", ch);
+    }
+
     private void pickList(Activity a, String title, JSONArray list, String cur, String field, Changed ch) {
         List<Sheet.Option> o = new ArrayList<>();
         for (int i = 0; i < list.length(); i++) {

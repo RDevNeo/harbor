@@ -1,6 +1,6 @@
 //! Slash commands in the composer, as in T3 Code: typing `/` at the start of a word
-//! opens a menu above the composer with Harbor's own commands (/model, /plan,
-//! /default), the agent's commands and the user's commands and skills, filtered as
+//! opens a menu above the composer with Harbor's own commands (/model, /effort, /plan,
+//! /default, and in a chat /new, /fork, /settle, /clear-queue), the agent's commands and the user's commands and skills, filtered as
 //! you type. Claude Code expands `/name` itself, so accepting an entry only writes it;
 //! other agents, and Claude on another device for this PC's commands, get the
 //! command's text in the prompt instead (`expand`).
@@ -46,6 +46,31 @@ pub enum Harbor {
     Model,
     Plan,
     Default,
+    Effort,
+    /// A new chat in the chat's project.
+    New,
+    /// The chat forked after its last reply.
+    Fork,
+    /// The chat marked settled (done).
+    Settle,
+    /// The messages waiting for the running turn dropped.
+    ClearQueue,
+}
+
+impl Harbor {
+    /// Its name on the wire (the phone's `command`).
+    pub fn wire(self) -> &'static str {
+        match self {
+            Harbor::Model => "model",
+            Harbor::Plan => "plan",
+            Harbor::Default => "default",
+            Harbor::Effort => "effort",
+            Harbor::New => "new",
+            Harbor::Fork => "fork",
+            Harbor::Settle => "settle",
+            Harbor::ClearQueue => "clear-queue",
+        }
+    }
 }
 
 /// Where an entry comes from: its badge, and its rank among equal matches.
@@ -285,12 +310,27 @@ struct Probe {
 /// What the menu offers. `cli`: Claude Code's own list (None for other agents, or
 /// until it answers); `remote`: Claude runs on another device, which has the built-in
 /// commands but not this PC's plugins, and gets this PC's files inlined.
-pub fn entries(kind: Kind, remote: bool, access: &str, cli: Option<&[Entry]>, project: &[Local], personal: &[Local]) -> Vec<Entry> {
+pub fn entries(kind: Kind, remote: bool, access: &str, chat: Option<&Chat>, cli: Option<&[Entry]>, project: &[Local], personal: &[Local]) -> Vec<Entry> {
     let mut out = vec![Entry::harbor(Harbor::Model, "model", "Switch the model for this chat")];
+    if !providers::efforts(kind).is_empty() {
+        out.push(Entry::harbor(Harbor::Effort, "effort", "Change how hard the agent thinks"));
+    }
     if access == "plan" {
         out.push(Entry::harbor(Harbor::Default, "default", "Switch this chat back from read only"));
     } else if providers::access(kind).iter().any(|a| a.0 == "plan") {
         out.push(Entry::harbor(Harbor::Plan, "plan", "Switch this chat to read only: it reads and plans, changes nothing"));
+    }
+    if let Some(c) = chat {
+        out.push(Entry::harbor(Harbor::New, "new", "Start a new chat in this project"));
+        if c.forkable {
+            out.push(Entry::harbor(Harbor::Fork, "fork", "Fork this chat after its last reply into a new chat"));
+        }
+        if !c.settled {
+            out.push(Entry::harbor(Harbor::Settle, "settle", "Mark this chat settled: done, out of the way in the sidebar"));
+        }
+        if c.queued {
+            out.push(Entry::harbor(Harbor::ClearQueue, "clear-queue", "Drop the messages waiting for the running turn"));
+        }
     }
     let files = project.iter().map(|l| (l, Scope::Project)).chain(personal.iter().map(|l| (l, Scope::Personal)));
     for e in cli.into_iter().flatten() {
@@ -314,6 +354,16 @@ pub fn entries(kind: Kind, remote: bool, access: &str, cli: Option<&[Entry]>, pr
         }
     }
     out
+}
+
+/// What the menu knows of an existing chat (the draft has none).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Chat {
+    /// Its last reply can be forked.
+    pub forkable: bool,
+    pub settled: bool,
+    /// Messages wait for its running turn.
+    pub queued: bool,
 }
 
 /// The `/word` being typed: the chars from its slash to the end of the word.
@@ -430,6 +480,7 @@ struct Target {
     account: Option<Account>,
     cwd: PathBuf,
     personal: PathBuf,
+    chat: Option<Chat>,
 }
 
 /// The user's own `.claude` folder for an account: a Claude account's config dir, else ~/.claude.
@@ -454,9 +505,7 @@ fn access_after(h: Harbor, kind: Kind, before: Option<String>) -> String {
 /// An entry as the phone API sends it (android/PROTOCOL.md, `GET /v1/chats/{id}/slash`).
 pub fn entry_json(e: &Entry) -> Value {
     let (source, command) = match e.scope {
-        Scope::Harbor(Harbor::Model) => ("harbor", Some("model")),
-        Scope::Harbor(Harbor::Plan) => ("harbor", Some("plan")),
-        Scope::Harbor(Harbor::Default) => ("harbor", Some("default")),
+        Scope::Harbor(h) => ("harbor", Some(h.wire())),
         Scope::Project => ("project", None),
         Scope::Personal => ("personal", None),
         Scope::Builtin => ("builtin", None),
@@ -471,14 +520,27 @@ pub fn entry_json(e: &Entry) -> Value {
 impl App {
     fn slash_target(&self) -> Target {
         let sel = self.sel();
-        self.target_for(&sel.account, &sel.device, &sel.access, self.current_repo())
+        let key = self.key();
+        let chat = (key != crate::app::DRAFT).then_some(key);
+        self.target_for(&sel.account, &sel.device, &sel.access, self.current_repo(), chat)
     }
 
-    fn target_for(&self, account: &str, device: &str, access: &str, repo: Option<i64>) -> Target {
+    fn target_for(&self, account: &str, device: &str, access: &str, repo: Option<i64>, chat: Option<i64>) -> Target {
         let account = self.account(account).cloned();
         let kind = account.as_ref().map(|a| a.kind).unwrap_or(Kind::Claude);
         let personal = personal_dir(account.as_ref());
-        Target { kind, remote: !device.is_empty(), access: access.to_string(), account, cwd: self.cwd_of(repo), personal }
+        let chat = chat.and_then(|id| self.chat(id)).map(|c| Chat {
+            forkable: self.last_forkable(c.id).is_some(),
+            settled: c.settled,
+            queued: !self.queued(c.id).is_empty(),
+        });
+        Target { kind, remote: !device.is_empty(), access: access.to_string(), account, cwd: self.cwd_of(repo), personal, chat }
+    }
+
+    /// The last reply of a chat that can be forked (the one /fork forks after).
+    fn last_forkable(&self, chat: i64) -> Option<usize> {
+        let items = self.transcripts.get(&chat).map(|t| &t.items)?;
+        crate::fork::forkable(items).iter().rposition(|f| f.is_some())
     }
 
     /// `GET /v1/chats/{id}/slash`: the menu's list for a chat, as the desktop's composer has
@@ -486,7 +548,7 @@ impl App {
     /// is old; `pending` while Claude Code hasn't answered yet (ask again in a moment).
     pub fn api_slash(&mut self, chat: i64, ctx: &egui::Context) -> Value {
         let Some(c) = self.chat(chat) else { return serde_json::json!({ "entries": [], "pending": false }) };
-        let t = self.target_for(&c.account, &c.device, &c.access, c.repo_id);
+        let t = self.target_for(&c.account, &c.device, &c.access, c.repo_id, Some(chat));
         self.slash_refresh(&t, ctx, true);
         let pending = t.account.as_ref().filter(|a| a.kind == Kind::Claude && a.installed()).is_some_and(|a| {
             self.slash.cli.lock().unwrap().get(&(a.id.clone(), t.cwd.clone())).is_some_and(|p| p.entries.is_none() && p.at.elapsed() < PROBE_TIMEOUT)
@@ -495,13 +557,41 @@ impl App {
         serde_json::json!({ "entries": entries, "pending": pending })
     }
 
-    /// `POST /v1/chats/{id}/slash` `{"command": "plan"|"default"}`: the menu's /plan and
-    /// /default for a chat, as the desktop's composer does them (one /default for both).
+    /// `POST /v1/chats/{id}/slash` `{"command": "plan"|"default"|"fork"|"settle"|"clear-queue"}`:
+    /// the menu's commands that act on the PC, as the desktop's composer does them (one
+    /// /default for both). /model, /effort and /new are pickers the phone shows itself.
     pub fn api_slash_command(&mut self, chat: i64, body: &Value, ctx: &egui::Context) -> crate::api::Reply {
         let h = match body["command"].as_str() {
             Some("plan") => Harbor::Plan,
             Some("default") => Harbor::Default,
-            _ => return crate::api::err(400, "command is plan or default"),
+            Some("fork") => {
+                if !self.transcripts.contains_key(&chat) {
+                    let items = self.store.items(chat);
+                    self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
+                }
+                let Some(seq) = self.last_forkable(chat) else { return crate::api::err(409, "this chat has no finished reply to fork after") };
+                // fork_from opens the new chat; the desktop stays where it was.
+                let before = self.chats.iter().map(|c| c.id).max().unwrap_or(0);
+                let (view, focus) = (self.view, self.focus_composer);
+                self.fork_from(chat, seq);
+                self.view = view;
+                self.focus_composer = focus;
+                return match self.chats.iter().map(|c| c.id).max().filter(|m| *m > before) {
+                    Some(id) => crate::api::ok(serde_json::json!({ "ok": true, "id": id, "gid": self.chat(id).map(|c| c.gid.clone()).unwrap_or_default() })),
+                    None => crate::api::err(500, "the fork failed"),
+                };
+            }
+            Some("settle") => {
+                self.set_chat_settled(chat, true);
+                let chat = self.chat(chat).map(|ch| self.chat_json(ch)).unwrap_or_default();
+                return crate::api::ok(serde_json::json!({ "ok": true, "chat": chat }));
+            }
+            Some("clear-queue") => {
+                let n = self.take_queue(chat).len();
+                return crate::api::ok(serde_json::json!({ "ok": true, "dropped": n }));
+            }
+            Some(c @ ("model" | "effort" | "new")) => return crate::api::err(400, format!("/{c} is picked on the phone: update Harbor there")),
+            _ => return crate::api::err(400, "command is plan, default, fork, settle or clear-queue"),
         };
         let Some(c) = self.chat(chat).cloned() else { return crate::api::err(404, "no such chat") };
         let kind = self.account(&c.account).map(|a| a.kind).unwrap_or(Kind::Claude);
@@ -554,7 +644,7 @@ impl App {
         let personal = self.slash.files.get(&t.personal).unwrap_or(&none);
         let cli = self.slash.cli.lock().unwrap();
         let list = t.account.as_ref().filter(|_| t.kind == Kind::Claude).and_then(|a| cli.get(&(a.id.clone(), t.cwd.clone()))).and_then(|p| p.entries.as_deref());
-        entries(t.kind, t.remote, &t.access, list, project, personal)
+        entries(t.kind, t.remote, &t.access, t.chat.as_ref(), list, project, personal)
     }
 
     /// Before the composer's text field: the open menu takes its keys (arrows, Enter
@@ -689,8 +779,31 @@ impl App {
         self.slash_accept(&ctx, cid, draft, &w, &e)
     }
 
+    /// A Harbor command picked in the composer (/model and /effort open their pickers there).
+    pub fn slash_run(&mut self, key: i64, h: Harbor, ctx: &egui::Context) {
+        match h {
+            Harbor::Plan | Harbor::Default => self.slash_access(key, h),
+            Harbor::New => {
+                let repo = self.chat(key).and_then(|c| c.repo_id);
+                self.new_draft(repo);
+                self.focus_composer = true;
+            }
+            Harbor::Fork => {
+                if let Some(seq) = self.last_forkable(key) {
+                    self.fork_from(key, seq);
+                }
+            }
+            Harbor::Settle => self.set_chat_settled(key, true),
+            Harbor::ClearQueue => {
+                self.take_queue(key);
+                ctx.request_repaint();
+            }
+            Harbor::Model | Harbor::Effort => {}
+        }
+    }
+
     /// /plan and /default: the composer's access.
-    pub fn slash_access(&mut self, key: i64, h: Harbor) {
+    fn slash_access(&mut self, key: i64, h: Harbor) {
         let s = self.sel();
         let kind = self.account(&s.account).map(|a| a.kind).unwrap_or(Kind::Claude);
         let before = match h {
@@ -707,15 +820,17 @@ impl App {
     /// The text a chat's agent gets for the user's `text`: as is for Claude Code here,
     /// which expands slash commands itself; with this PC's commands and skills put in
     /// for other agents and for Claude on another device.
+    /// The files and issues tagged with `@` and `#` follow it (tags.rs).
     pub fn slash_prompt(&self, chat_id: i64, text: &str) -> String {
         let Some(chat) = self.chat(chat_id) else { return text.to_string() };
+        let tags = self.tags_prompt(chat_id, text);
         let account = self.account(&chat.account);
         if !expands(account.map(|a| a.kind), &chat.device) || !text.contains('/') {
-            return text.to_string();
+            return format!("{text}{tags}");
         }
         let mut locals = scan(&self.cwd_of(chat.repo_id).join(".claude"));
         locals.extend(scan(&personal_dir(account)));
-        expand(text, &locals)
+        format!("{}{tags}", expand(text, &locals))
     }
 }
 
@@ -823,11 +938,12 @@ mod tests {
         let project = [local("proj", false, "P")];
         let names = |v: &[Entry]| v.iter().map(|e| (e.name.clone(), e.scope, e.skill)).collect::<Vec<_>>();
         // Claude here: its list, the user's files marked, newer files added; /clear hidden.
-        let v = entries(Kind::Claude, false, "full", Some(&cli), &project, &personal);
+        let v = entries(Kind::Claude, false, "full", None, Some(&cli), &project, &personal);
         assert_eq!(
             names(&v),
             [
                 ("model".into(), Scope::Harbor(Harbor::Model), false),
+                ("effort".into(), Scope::Harbor(Harbor::Effort), false),
                 ("plan".into(), Scope::Harbor(Harbor::Plan), false),
                 ("compact".into(), Scope::Builtin, false),
                 ("vercel:deploy".into(), Scope::Plugin, false),
@@ -837,22 +953,22 @@ mod tests {
             ]
         );
         // On another device: built-ins, and this PC's files (inlined), no plugins.
-        let v = entries(Kind::Claude, true, "plan", Some(&cli), &project, &personal);
-        assert_eq!(v.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["model", "default", "compact", "proj", "mine", "fresh"]);
+        let v = entries(Kind::Claude, true, "plan", None, Some(&cli), &project, &personal);
+        assert_eq!(v.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["model", "effort", "default", "compact", "proj", "mine", "fresh"]);
         // Other agents: the files only; no /plan where there's no read-only mode.
-        let v = entries(Kind::OpenCode, false, "full", None, &project, &personal);
+        let v = entries(Kind::OpenCode, false, "full", None, None, &project, &personal);
         assert_eq!(v.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["model", "proj", "mine", "fresh"]);
     }
 
     #[test]
     fn ranks_and_filters() {
         let personal = [local("code-review", true, ""), local("review-pr", false, ""), local("deploy", false, "")];
-        let all = entries(Kind::Codex, false, "full", None, &[], &personal);
+        let all = entries(Kind::Codex, false, "full", None, None, &[], &personal);
         let find = |text: &str| search(&all, &word(text, text.chars().count()).unwrap()).iter().map(|e| e.name.clone()).collect::<Vec<_>>();
         assert_eq!(find("/review"), ["review-pr", "code-review"]);
         assert_eq!(find("/dpl"), ["deploy"]);
         assert_eq!(find("/zzz"), Vec::<String>::new());
-        assert_eq!(find("/"), ["model", "plan", "code-review", "deploy", "review-pr"]);
+        assert_eq!(find("/"), ["model", "plan", "effort", "code-review", "deploy", "review-pr"]);
         // After other words: no commands, only skills (and Harbor's).
         assert_eq!(find("look at /rev"), ["code-review"]);
         // Descriptions match too, after names.
@@ -878,21 +994,35 @@ mod tests {
             Entry { name: "compact".into(), aliases: vec!["c".into()], description: "Free up context".into(), hint: "<instructions>".into(), scope: Scope::Builtin, skill: false },
             Entry { name: "vercel:deploy".into(), aliases: vec![], description: "(vercel) Deploy".into(), hint: String::new(), scope: Scope::Plugin, skill: false },
         ];
-        let v: Vec<Value> = entries(Kind::Claude, false, "full", Some(&cli), &[local("proj", false, "P")], &[local("mine", true, "M")]).iter().map(entry_json).collect();
+        let v: Vec<Value> = entries(Kind::Claude, false, "full", None, Some(&cli), &[local("proj", false, "P")], &[local("mine", true, "M")]).iter().map(entry_json).collect();
         let row = |i: usize| (v[i]["name"].as_str().unwrap(), v[i]["source"].as_str().unwrap(), v[i]["badge"].as_str().unwrap(), v[i]["skill"].as_bool().unwrap());
         assert_eq!(row(0), ("model", "harbor", "Harbor", false));
         assert_eq!(v[0]["command"], "model");
-        assert_eq!(row(1), ("plan", "harbor", "Harbor", false));
-        assert_eq!(v[1]["command"], "plan");
-        assert_eq!(row(2), ("compact", "builtin", "Built-in", false));
-        assert_eq!((v[2]["hint"].as_str(), v[2]["aliases"].clone(), v[2]["command"].clone()), (Some("<instructions>"), serde_json::json!(["c"]), Value::Null));
-        assert_eq!(row(3), ("vercel:deploy", "plugin", "Plugin", false));
-        assert_eq!(row(4), ("proj", "project", "Project command", false));
-        assert_eq!(row(5), ("mine", "personal", "Personal skill", true));
-        assert_eq!(v[5]["description"], "mine does things");
+        assert_eq!(row(1), ("effort", "harbor", "Harbor", false));
+        assert_eq!(v[1]["command"], "effort");
+        assert_eq!(row(2), ("plan", "harbor", "Harbor", false));
+        assert_eq!(v[2]["command"], "plan");
+        assert_eq!(row(3), ("compact", "builtin", "Built-in", false));
+        assert_eq!((v[3]["hint"].as_str(), v[3]["aliases"].clone(), v[3]["command"].clone()), (Some("<instructions>"), serde_json::json!(["c"]), Value::Null));
+        assert_eq!(row(4), ("vercel:deploy", "plugin", "Plugin", false));
+        assert_eq!(row(5), ("proj", "project", "Project command", false));
+        assert_eq!(row(6), ("mine", "personal", "Personal skill", true));
+        assert_eq!(v[6]["description"], "mine does things");
         // A chat in read-only mode gets /default instead of /plan.
-        let v = entries(Kind::Claude, false, "plan", None, &[], &[]);
-        assert_eq!(entry_json(&v[1])["command"], "default");
+        let v = entries(Kind::Claude, false, "plan", None, None, &[], &[]);
+        assert_eq!(entry_json(&v[2])["command"], "default");
+    }
+
+    #[test]
+    fn a_chats_own_commands() {
+        let names = |c: Option<&Chat>| entries(Kind::Claude, false, "full", c, None, &[], &[]).iter().map(|e| entry_json(e)["command"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>();
+        // The draft: no chat to fork, settle or clear yet.
+        assert_eq!(names(None), ["model", "effort", "plan"]);
+        let c = Chat { forkable: true, settled: false, queued: true };
+        assert_eq!(names(Some(&c)), ["model", "effort", "plan", "new", "fork", "settle", "clear-queue"]);
+        // Nothing to fork after, settled already, nothing waiting.
+        let c = Chat { forkable: false, settled: true, queued: false };
+        assert_eq!(names(Some(&c)), ["model", "effort", "plan", "new"]);
     }
 
     #[test]

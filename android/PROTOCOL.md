@@ -513,7 +513,9 @@ of a word offers, with the same list, sources, descriptions and hints.
   (asked once per account and project, cached; commands that do nothing in Harbor are left out)
   plus the user's files; for other agents, and Claude on another device, Harbor's and the files.
   `/plan` shows only for providers with a read-only mode and becomes `/default` while the chat
-  is read only.
+  is read only. Since 0.31 Harbor also lists `/effort` (providers with effort levels), `/new`,
+  `/fork` (when the chat has a finished reply to fork after), `/settle` (unless it is settled)
+  and `/clear-queue` (while messages wait for the running turn); older PCs don't.
 - `pending`: Claude Code hasn't answered yet; ask again in a second or two for its commands.
 - Matching is the client's, as the desktop does it: case-insensitive on `name`, then `aliases`
   (one step lower), then `description`; exact, prefix, after `-` `_` `:` `/`, anywhere, the
@@ -522,13 +524,54 @@ of a word offers, with the same list, sources, descriptions and hints.
 - Accepting an entry writes `/name ` in place of the word. Send it as typed: the PC expands it
   for agents that don't (the command's text, or the skill's instructions before the message),
   for messages from any device, queued ones too. Entries with a `command` act instead of being
-  written: `model` opens the model picker; `plan` and `default` are the call below.
+  written: `model` and `effort` open the app's model and effort pickers, `new` the new-chat
+  screen in the chat's project; `plan`, `default`, `fork`, `settle` and `clear-queue` are the
+  call below. An app that doesn't know a `command` sends it to the call below, which answers
+  `400` with a message to show for `model`, `effort` and `new`.
 
 ### `POST /v1/chats/{id}/slash`
 
 `{"command": "plan"}` or `{"command": "default"}` → `{"ok": true, "chat": {…as in /v1/state…}}`.
 The menu's /plan (the chat becomes read only, `access: "plan"`) and /default (back to the access it
 had before /plan on any device, else the provider's first level), with the rules of `PATCH`.
+
+Since 0.31 also: `{"command": "fork"}` forks the chat after its last finished reply, as
+`POST …/fork` does, → `{"ok": true, "id": 12, "gid": "…"}` (`409` without such a reply);
+`{"command": "settle"}` marks it settled → `{"ok": true, "chat": {…}}`; `{"command":
+"clear-queue"}` drops the messages waiting for its running turn → `{"ok": true, "dropped": 2}`.
+
+### `GET /v1/chats/{id}/tags?trigger=@&q=`
+
+The desktop composer's `@` and `#` menu for this chat (`src/tags.rs`, since 0.31; older PCs answer
+`404`: show no menu). `trigger` is `@` (the project's files: git's tracked and untracked-not-ignored
+ones) or `#` (the project's GitHub issues and pull requests, the latest 100 of each, from the PC's
+`gh`); `q` is what follows the trigger up to the cursor. The PC ranks them as the desktop does
+(file name exactly, prefix, at a word boundary, anywhere, a folder, the path, the letters in
+order; issues by number, then title, open before closed) and sends at most 50, best first.
+
+```json
+{"pending": false,
+ "items": [{"kind": "file", "insert": "@src/components/creators/creator-profile-dialog.tsx",
+            "path": "src/components/creators/creator-profile-dialog.tsx",
+            "name": "creator-profile-dialog.tsx", "dir": "src/components/creators", "icon": "tsx"},
+           {"kind": "issue", "insert": "#12", "number": 12, "title": "Composer tagging",
+            "state": "open", "url": "https://github.com/o/r/issues/12"},
+           {"kind": "pr", "insert": "#15", "number": 15, "title": "Tag files", "state": "draft",
+            "url": "https://github.com/o/r/pull/15"}]}
+```
+
+- The tag is the word at the cursor that starts with `@` or `#` (at the start, after a space or an
+  opening bracket or quote; not `##` or `@@`). Accepting a row writes its `insert` and a space in
+  place of the word. Ask again as the query changes; don't rank on the phone.
+- `icon` (files): `ts`, `tsx`, `js`, `rs`, `json`, `md`, `image`, `shell`, `code` or `file`, drawn
+  with the desktop's Lucide glyph and colour. `state` (issues): `open` / `closed`; (PRs): `open`,
+  `draft`, `closed`, `merged`.
+- `pending`: the PC is still listing the files or asking GitHub; ask again in a second.
+- A chat without a project has no files, and one whose project has no GitHub remote no issues:
+  `items` is empty.
+- Send the text as typed: the PC adds a short list of what was tagged after the message for the
+  agent (each `@path` that exists in the project with its full path, each `#123` with its kind,
+  title, state and URL), for messages from any device, queued ones too.
 
 For a copy of another PC's chat, both calls are answered by its home PC, where its files and
 agent are. A PC with a Harbor before 0.23 answers both with `404`: the app then asks the chat's

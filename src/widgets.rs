@@ -445,8 +445,12 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
         .min_scrolled_height(max)
         .auto_shrink([false, true])
         .show(ui, |ui| {
+            // `@file` and `#123` tags show highlighted (tags.rs).
+            let font = egui::FontSelection::from(theme::ts("copy-14")).resolve(ui.style());
+            let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| crate::tags::layout(ui, buf.as_str(), wrap, font.clone());
             let out = TextEdit::multiline(text)
                 .id(id)
+                .layouter(&mut layouter)
                 .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
                 .font(theme::ts("copy-14"))
                 .desired_rows(rows)

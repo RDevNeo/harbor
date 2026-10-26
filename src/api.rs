@@ -2154,6 +2154,11 @@ impl App {
                 Some(c) => ok(self.api_slash(c, ctx)),
                 None => err(404, "no such chat"),
             },
+            // The composer's `@` files and `#` issues and PRs (tags.rs).
+            ("GET", ["v1", "chats", c, "tags"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) => ok(self.api_tags(c, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx)),
+                None => err(404, "no such chat"),
+            },
             ("POST", ["v1", "chats"]) => self.api_create(&call.body, ctx),
             // The phone's "Updates available" banner: updates the hub's provider CLIs.
             ("POST", ["v1", "providers", "update"]) => {
@@ -2290,6 +2295,10 @@ impl App {
             ("PATCH", _) | ("POST", ["v1", "chats", _, "slash"]) => {
                 if v["chat"].is_object() {
                     chat(&mut v["chat"]);
+                }
+                // /fork's new chat.
+                if v["id"].is_i64() {
+                    v["id"] = gid(&v["id"]);
                 }
             }
             _ => {}

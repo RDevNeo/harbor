@@ -52,6 +52,7 @@ mod remoteui;
 mod sidebar;
 mod single;
 mod slash;
+mod tags;
 mod store;
 mod surface;
 mod team;

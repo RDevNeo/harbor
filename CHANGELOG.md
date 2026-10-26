@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Tagging in the composer, on the desktop and the phone. `@` lists the project's files (tracked and
+  untracked-not-ignored) with a file-type icon, the name and its dimmed folder, fuzzy-matched as you
+  type; `#` lists the project's GitHub issues and pull requests by number and title. Arrow keys and
+  Enter or Tab pick, Esc closes, a click or tap works too. The picked `@path` or `#123` shows
+  highlighted in the text, and the agent gets each tagged file's full path and each issue's or PR's
+  title, state and URL with the message. The phone gets the same lists, ranked by the PC.
+- More Harbor commands in the `/` menu, on both: `/effort`, and in a chat `/new`, `/fork` (after the
+  last reply), `/settle` and `/clear-queue` (while messages wait).
+
 ## [0.30.0] - 2026-10-25
 
 ### Added

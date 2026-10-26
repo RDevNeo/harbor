@@ -44,6 +44,7 @@ public class Chat extends Base {
     private Render render;
     private Team team;
     private Slash slash;
+    private Tags tags;
 
     /** Items drawn at first; "Show earlier" adds this many more (a long chat would otherwise
      *  keep thousands of views alive and slow down every update). */
@@ -99,6 +100,12 @@ public class Chat extends Base {
         composer = comp.edit;
         slash = new Slash(this, hub, chatId, comp.edit, this::harbor);
         stage.addView(slash.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
+        // `@` files and `#` issues and PRs share the composer's cursor and Back with the slash menu.
+        tags = new Tags(this, hub, chatId, comp.edit);
+        stage.addView(tags.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
+        comp.edit.onSelection = () -> { slash.update(); tags.update(); };
+        comp.edit.backOpen = () -> slash.open() || tags.open();
+        comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         comp.onSend = this::send;
         comp.onStop = this::stop;
@@ -560,11 +567,39 @@ public class Chat extends Base {
         });
     }
 
-    /** The slash menu's Harbor commands: /model opens the model picker; /plan and /default
-     *  switch the chat to read only and back on the PC, as its composer does. */
+    /** The slash menu's Harbor commands: /model and /effort open their pickers, /new a new chat
+     *  in the project; /plan, /default, /fork, /settle and /clear-queue act on the PC, as its
+     *  composer does them. */
     private void harbor(String command) {
         if ("model".equals(command)) {
             if (run != null) run.pickModel(this, this::change);
+            return;
+        }
+        if ("effort".equals(command)) {
+            if (run != null) run.pickEffort(this, this::change);
+            return;
+        }
+        if ("new".equals(command)) {
+            Intent i = new Intent(this, NewChat.class).putExtra("hub", hub.id);
+            if (run != null && !run.project.isEmpty()) i.putExtra("project", run.project);
+            startActivity(i);
+            return;
+        }
+        if ("fork".equals(command) || "settle".equals(command) || "clear-queue".equals(command)) {
+            Ui.bg(this, () -> slash.call("POST", "/v1/chats/" + chatId + "/slash", new JSONObject().put("command", command)), r -> {
+                if ("fork".equals(command)) {
+                    // Its id on the PC that forked it: by the state's ids when that's another PC.
+                    if (slash.elsewhere() || r.optString("id").isEmpty()) { refreshState(); Ui.toast(this, "Forked: the new chat is in the list"); }
+                    else open(this, hub, r.optString("id"));
+                } else if ("settle".equals(command)) {
+                    refreshState();
+                    Ui.toast(this, "Settled");
+                } else {
+                    int n = r.optInt("dropped");
+                    Ui.toast(this, n == 1 ? "Dropped 1 waiting message" : "Dropped " + n + " waiting messages");
+                    refreshState();
+                }
+            });
             return;
         }
         // To the PC that gave the menu (the one calls go to may not have it).
@@ -585,7 +620,7 @@ public class Chat extends Base {
 
     @Override
     public void onBackPressed() {
-        if (!drawerOpen() && !rightOpen() && slash != null && slash.back()) return;
+        if (!drawerOpen() && !rightOpen() && slash != null && (slash.back() || tags.back())) return;
         super.onBackPressed();
     }
 

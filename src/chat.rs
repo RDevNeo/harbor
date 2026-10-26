@@ -773,6 +773,9 @@ impl App {
         }
         // The slash menu takes its keys first: Enter accepts its entry instead of sending.
         let mut slash = if focused { self.slash_keys(ui, key, cid, &mut draft) } else { None };
+        if focused {
+            self.tags_keys(ui, key, cid, &mut draft);
+        }
         // While a turn runs, Enter queues the message; Ctrl+Enter interrupts and sends now.
         let mut now = false;
         if focused && self.popup.is_none() && !crate::images::is_open(ui.ctx()) {
@@ -795,6 +798,7 @@ impl App {
         let mut unmention: Option<usize> = None;
         let mut point: Option<usize> = None;
         let mut model_rect = Rect::NOTHING;
+        let mut effort_rect = Rect::NOTHING;
         let shown = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
             // Mentioned messages; a click shows the message in the chat.
@@ -862,6 +866,7 @@ impl App {
                     };
                     let r = w::trigger(ui, w::Lead::Icon(ic::BRAIN), if compact { "" } else { &label }, self.popup == Some(Popup::Effort));
                     let r = if compact { r.on_hover_text(&label) } else { r };
+                    effort_rect = r.rect;
                     if r.clicked() {
                         open = Some((Popup::Effort, r.rect));
                     } else if self.popup == Some(Popup::Effort) {
@@ -915,10 +920,12 @@ impl App {
         if let Some(h) = self.slash_menu(ui, key, cid, &mut draft, focused, shown.response.rect) {
             slash = Some(h);
         }
+        self.tags_menu(ui, key, cid, &mut draft, focused, shown.response.rect);
         self.drafts.insert(key, draft);
         match slash {
             Some(crate::slash::Harbor::Model) => open = Some((Popup::Model, model_rect)),
-            Some(h) => self.slash_access(key, h),
+            Some(crate::slash::Harbor::Effort) => open = Some((Popup::Effort, effort_rect)),
+            Some(h) => self.slash_run(key, h, ui.ctx()),
             None => {}
         }
         if let Some(i) = remove {
