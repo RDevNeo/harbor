@@ -140,29 +140,49 @@ jobs:
         with:
           path: art
       - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
-      # The licence reports (~3 min) only change with the dependencies or the template.
+      # The licence reports (~1-3 min) only change with the dependencies or the template, so the
+      # cache key leaves out Harbor's own version (every release bumps it in Cargo.lock). A miss
+      # falls back to the latest older report (restore-keys) until a fresh one is made.
+      - name: Licence cache key
+        id: lickey
+        run: |
+          strip() { sed '/^name = "harbor[^"]*"$/{n;d}' "$1"; }
+          h=$( (strip Cargo.lock; strip browser/Cargo.lock; cat packaging/about.toml packaging/about.hbs) | sha256sum | cut -c1-32)
+          echo "key=lic-$h" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v6
         id: lic
         with:
           path: lic
-          key: lic-${{ hashFiles('Cargo.lock', 'browser/Cargo.lock', 'packaging/about.toml', 'packaging/about.hbs') }}
+          key: ${{ steps.lickey.outputs.key }}
+          restore-keys: lic-
       - uses: taiki-e/install-action@v2
         if: steps.lic.outputs.cache-hit != 'true'
+        timeout-minutes: 3
+        continue-on-error: true
         with:
           tool: cargo-about
+      # Never stalls a release (v0.35.0 hung here for 25 min): the crates are fetched under a
+      # timeout, the reports are made offline (--frozen: no crates.io or other lookups), and a
+      # failure keeps the restored older report, or none (Assemble does without).
       - name: Third-party licences
         id: about
         if: steps.lic.outputs.cache-hit != 'true'
+        timeout-minutes: 14
         continue-on-error: true
         run: |
-          mkdir -p lic
-          cargo about generate -c packaging/about.toml packaging/about.hbs -o lic/harbor.html
-          (cd browser && cargo about generate -c ../packaging/about.toml ../packaging/about.hbs -o ../lic/harbor-browser.html)
+          set -eu
+          fetch() { for i in 1 2; do timeout 120 cargo fetch --locked "$@" && return 0; sleep 5; done; return 1; }
+          fetch
+          (cd browser && fetch)
+          mkdir -p lic.new
+          timeout 240 cargo about generate --frozen -c packaging/about.toml packaging/about.hbs -o lic.new/harbor.html
+          (cd browser && timeout 420 cargo about generate --frozen -c ../packaging/about.toml ../packaging/about.hbs -o ../lic.new/harbor-browser.html)
+          rm -rf lic && mv lic.new lic
       - uses: actions/cache/save@v6
         if: steps.lic.outputs.cache-hit != 'true' && steps.about.outcome == 'success'
         with:
           path: lic
-          key: ${{ steps.lic.outputs.cache-primary-key }}
+          key: ${{ steps.lickey.outputs.key }}
       - name: Assemble
         run: |
           set -eu
