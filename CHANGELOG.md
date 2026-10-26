@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-25
+
 ### Changed
 - Projects no longer settle: they always stay in the sidebar's project list, on the desktop and
   on the phone. Settle / Unsettle and "Settle projects idle for 7 days" are gone for projects;
@@ -716,7 +718,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.27.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/RDevNeo/harbor/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/RDevNeo/harbor/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/RDevNeo/harbor/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/RDevNeo/harbor/compare/v0.26.0...v0.26.1
