@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-25
+
 ### Added
 - Two separate update pop-ups, on the desktop (top right) and the phone (banners in the chat list).
   Providers: "Updates available: 2 providers. Codex and Claude can be updated", with Update, which
@@ -736,7 +738,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/RDevNeo/harbor/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/RDevNeo/harbor/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/RDevNeo/harbor/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/RDevNeo/harbor/compare/v0.27.0...v0.27.1
