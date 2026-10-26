@@ -170,11 +170,11 @@ impl App {
         w::subtle(ui, "Sub-agent queues are cleared; your queued messages come back to the composer. Finished work and transcripts stay.", "copy-14");
         ui.add_space(16.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if w::btn("Stop all").variant(w::Variant::Destructive).show(ui).clicked() {
+            if w::btn("Stop all").sm().variant(w::Variant::Destructive).show(ui).clicked() {
                 self.stop_all(lead);
                 *close = true;
             }
-            if w::btn("Cancel").outline().show(ui).clicked() {
+            if w::btn("Cancel").sm().outline().show(ui).clicked() {
                 *close = true;
             }
         });

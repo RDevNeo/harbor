@@ -6,6 +6,7 @@
 //! toolbar, menus, rows and the list/panel split are shared with prs.rs and
 //! listdetail.rs.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Bg, View};
 use crate::chat::centered;
 use crate::icons as ic;
@@ -1030,7 +1031,7 @@ impl App {
                     }
                     ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (id, name, repo) in projects {
-                            if menu_row(ui, ic::FOLDER_GIT, name, None, false, cur == Some(*id), false).on_hover_text(repo).clicked() {
+                            if menu_row(ui, ic::FOLDER_GIT, name, None, false, cur == Some(*id), false).tip(repo).clicked() {
                                 pick = Some(Some(*id));
                             }
                         }
@@ -1065,8 +1066,8 @@ fn row(ui: &mut Ui, i: &Issue, avatar: Option<&egui::TextureHandle>, selected: b
     let (icon, col, tip) = state_icon(i.state, &t);
     let top = inner.top() + 19.0;
     let icon_r = Rect::from_center_size(pos2(inner.left() + 26.0, top + 1.0), Vec2::splat(18.0));
-    ic::glyph(&painter, icon_r.center(), icon, 17.0, col);
-    ui.interact(icon_r, ui.scope_id().with(("issue-state", &i.url)), Sense::hover()).on_hover_text(tip);
+    ic::glyph(&painter, icon_r.center(), icon, 16.0, col);
+    ui.interact(icon_r, ui.scope_id().with(("issue-state", &i.url)), Sense::hover()).tip(tip);
 
     // right column: comments, then age
     let right = inner.right() - 12.0;

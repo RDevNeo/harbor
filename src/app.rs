@@ -1,3 +1,4 @@
+use crate::widgets::Tip as _;
 use crate::agent::{self, Event};
 use crate::control;
 use crate::git;
@@ -1533,7 +1534,7 @@ impl App {
         } else if !matches!(self.view, View::Draft | View::Chat(_) | View::Settings(_)) {
             // Pages without the top bar still need a way back to the sidebar.
             egui::Area::new(Id::NULL.with("sidebar-reopen")).fixed_pos(egui::pos2(10.0, 10.0)).order(egui::Order::Foreground).show(&ctx, |ui| {
-                if crate::widgets::btn(crate::icons::PANEL_LEFT).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
+                if crate::widgets::btn(crate::icons::PANEL_LEFT).muted().icon_xs().show(ui).tip(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
                     self.toggle_sidebar(&ctx);
                 }
             });

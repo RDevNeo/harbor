@@ -11,6 +11,7 @@
 //! The `.claude/commands` and `.claude/skills` files (personal and the project's) fill
 //! in until it answers, tell skills apart, and are what other agents get.
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use crate::icons as ic;
 use crate::providers::{self, Account, Kind};
@@ -779,7 +780,7 @@ impl App {
                             }
                             row(ui, rect, e, i == sel);
                             let usage = if e.hint.is_empty() { format!("/{}", e.name) } else { format!("/{} {}", e.name, e.hint) };
-                            resp.on_hover_text(format!("{usage}\n\n{}", e.description));
+                            resp.tip(format!("{usage}\n\n{}", e.description));
                         }
                     });
                 });

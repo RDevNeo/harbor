@@ -346,7 +346,7 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     for p in PRESETS {
                         let label = if p == 100 { "Unlimited".to_string() } else { format!("{p}%") };
-                        if w::btn(&label).sm().muted().pressed(cap == p || (p == 100 && cap >= 100)).show(ui).clicked() {
+                        if w::btn(&label).xs().muted().pressed(cap == p || (p == 100 && cap >= 100)).show(ui).clicked() {
                             self.set_cap(&a.id, &x.key, p);
                         }
                     }

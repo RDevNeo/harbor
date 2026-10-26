@@ -1,6 +1,7 @@
 //! Full-page views: Settings (providers, integrations, appearance), Usage,
 //! plus the modal dialogs. Pull requests live in prs.rs.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, CONTENT_W, Dialog, Tab, View, ago};
 use crate::chat::centered;
 use crate::icons as ic;
@@ -33,7 +34,7 @@ fn usage_rows(ui: &mut Ui, rows: Vec<(String, crate::cost::Usage)>) {
                 ui.horizontal(|ui| {
                     w::text(ui, name, "strong-14");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        w::subtle(ui, u.compact(), "label-13-mono").on_hover_text(u.detail());
+                        w::subtle(ui, u.compact(), "label-13-mono").tip(u.detail());
                     });
                 });
             });
@@ -226,7 +227,7 @@ impl App {
                 ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 30.0), Layout::left_to_right(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     if !self.sidebar_docked(ui.ctx()) {
-                        if w::btn(ic::PANEL_LEFT).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
+                        if w::btn(ic::PANEL_LEFT).muted().icon_xs().show(ui).tip(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
                             let ctx = ui.ctx().clone();
                             self.toggle_sidebar(&ctx);
                         }
@@ -514,11 +515,11 @@ impl App {
             if caps.hovered() {
                 ui.painter().rect_stroke(caps.rect.expand(3.0), CornerRadius::same(6), Stroke::new(1.0, t.gray(600)), egui::StrokeKind::Inside);
             }
-            if caps.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Change").clicked() {
+            if caps.on_hover_cursor(egui::CursorIcon::PointingHand).tip("Change").clicked() {
                 self.keys.capture = Some(a.id);
                 self.keys.refused = None;
             }
-            if custom && w::btn(ic::ROTATE_CW).muted().icon_sm().show(ui).on_hover_text(format!("Back to {}", crate::keys::label(a.default))).clicked() {
+            if custom && w::btn(ic::ROTATE_CW).muted().icon_xs().show(ui).tip(format!("Back to {}", crate::keys::label(a.default))).clicked() {
                 self.keys.reset(&self.store, a.id);
             }
         });
@@ -765,7 +766,7 @@ impl App {
         section(ui, "Theme");
         ui.horizontal(|ui| {
             for (m, icon, l) in [(Mode::System, ic::SUN_MOON, "Follow Omarchy"), (Mode::Light, ic::SUN, "Light"), (Mode::Dark, ic::MOON, "Dark")] {
-                if w::btn(&format!("{icon}  {l}")).outline().pressed(self.theme.mode == m).show(ui).clicked() {
+                if w::btn(&format!("{icon}  {l}")).sm().outline().pressed(self.theme.mode == m).show(ui).clicked() {
                     self.theme.set_mode(m, ui.ctx());
                     self.store.set("theme", m.as_str());
                 }
@@ -798,7 +799,7 @@ impl App {
             let Some(err) = mcp::error(a.id) else { continue };
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("{}  {}: {err}", ic::ALERT, a.label)).text_style(theme::ts("label-13")).color(t.red(900)));
-                if w::btn(ic::X).muted().icon_sm().show(ui).clicked() {
+                if w::btn(ic::X).muted().icon_xs().show(ui).clicked() {
                     mcp::dismiss(a.id);
                 }
             });
@@ -886,7 +887,7 @@ impl App {
                         }
                     }
                     if let Some(url) = &p.url {
-                        if w::btn(&format!("{}  Open page", ic::EXTERNAL)).sm().ghost().show(ui).on_hover_text("Open the sign-in page again").clicked() {
+                        if w::btn(&format!("{}  Open page", ic::EXTERNAL)).sm().ghost().show(ui).tip("Open the sign-in page again").clicked() {
                             crate::git::open_url(url);
                         }
                     }
@@ -898,7 +899,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let mcp::Auth::Key { get, .. } = a.auth {
-                        if w::btn(ic::EXTERNAL).muted().icon_sm().show(ui).on_hover_text("Get a key").clicked() {
+                        if w::btn(ic::EXTERNAL).muted().icon_xs().show(ui).tip("Get a key").clicked() {
                             crate::git::open_url(get);
                         }
                     }
@@ -1154,7 +1155,7 @@ fn mcp_chip(ui: &mut Ui, label: &str, found: bool, off: bool, t: &crate::theme::
         (true, true) => "Off for agents · click to turn on",
         (true, false) => "On for agents · click to turn off",
     };
-    resp.on_hover_text(hint)
+    resp.tip(hint)
 }
 
 #[cfg(test)]

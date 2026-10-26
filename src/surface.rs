@@ -2,6 +2,7 @@
 //! host browsers, terminals and devices (the list, a device's screen, its files) as tabs. A pane can be maximized; an
 //! empty one shows "Open a surface".
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use crate::browser::{self, Browser};
 use crate::devices;
@@ -397,7 +398,7 @@ impl App {
         Frame::new().inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                if w::btn(ic::PLUS).muted().icon_sm().show(ui).on_hover_text("Open a surface").clicked() {
+                if w::btn(ic::PLUS).muted().icon_xs().show(ui).tip("Open a surface").clicked() {
                     let p = self.pane_mut(d);
                     p.surfaces.push(Surface::Chooser);
                     p.active = p.surfaces.len() - 1;
@@ -418,12 +419,12 @@ impl App {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Close panel").clicked() {
+                    if w::btn(ic::X).muted().icon_xs().show(ui).tip("Close panel").clicked() {
                         self.hide_pane(d);
                     }
                     let max = self.surface_max == Some(d);
                     let (icon, tip) = if max { (ic::MINIMIZE, "Restore") } else { (ic::MAXIMIZE, "Maximize") };
-                    if w::btn(icon).muted().icon_sm().show(ui).on_hover_text(tip).clicked() {
+                    if w::btn(icon).muted().icon_xs().show(ui).tip(tip).clicked() {
                         self.surface_max = if max { None } else { Some(d) };
                     }
                 });
@@ -542,7 +543,7 @@ impl App {
                         ui.painter().rect_filled(cr, CornerRadius::same(4), t.gray(200));
                     }
                     ic::glyph(ui.painter(), cr.center(), ic::DOWN, 14.0, t.subtle());
-                    if c.on_hover_text("Dev servers and recent pages").clicked() {
+                    if c.tip("Dev servers and recent pages").clicked() {
                         self.surface_menu = if self.surface_menu.is_some() { None } else { Some((d, cr)) };
                     } else if resp.clicked() {
                         pick = Some(k);
@@ -631,7 +632,7 @@ fn tab(ui: &mut Ui, icon: &str, title: &str, active: bool, d: Dock) -> TabClick 
         if x.hovered() {
             ui.painter().rect_filled(xr, CornerRadius::same(4), t.gray(300));
         }
-        ic::glyph(ui.painter(), xr.center(), ic::X, 12.0, t.subtle());
+        ic::glyph(ui.painter(), xr.center(), ic::X, 14.0, t.subtle());
     }
     if x.clicked() {
         TabClick::Close

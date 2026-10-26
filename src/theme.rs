@@ -71,11 +71,14 @@ impl Tokens {
     pub fn accent(&self) -> Color32 { self.gray(200) }
     pub fn destructive(&self) -> Color32 { self.red(800) }
 
-    fn shadow_menu(&self) -> Shadow {
-        Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(if self.dark { 90 } else { 22 }) }
+    /// rengaf's menu shadow (`0 4 8 -4 #0000000a, 0 16 24 -8 #0000000f`): barely there, in dark too,
+    /// where the border does the work. One egui shadow approximates the pair.
+    pub fn shadow_menu(&self) -> Shadow {
+        Shadow { offset: [0, 8], blur: 20, spread: 0, color: Color32::from_black_alpha(if self.dark { 40 } else { 16 }) }
     }
-    fn shadow_modal(&self) -> Shadow {
-        Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(if self.dark { 110 } else { 28 }) }
+    /// The modal shadow (`0 8 16 -4 #0000000a, 0 24 32 -8 #0000000f`).
+    pub fn shadow_modal(&self) -> Shadow {
+        Shadow { offset: [0, 12], blur: 28, spread: 0, color: Color32::from_black_alpha(if self.dark { 56 } else { 20 }) }
     }
 }
 
@@ -144,6 +147,27 @@ pub fn ts(name: &str) -> TextStyle {
     TextStyle::Name(name.into())
 }
 
+/// The rest of a rengaf preset that a font size doesn't carry: its line height (px) and
+/// tracking (px, from em). `widgets::text`/`subtle` apply them.
+pub fn preset_metrics(name: &str) -> (Option<f32>, f32) {
+    let (lh, em) = match name {
+        "heading-32" => (40.0, -0.04),
+        "heading-24" => (32.0, -0.04),
+        "heading-20" => (26.0, -0.02),
+        "heading-16" => (24.0, -0.02),
+        "heading-14" => (20.0, -0.02),
+        "copy-16" => (24.0, 0.0),
+        "copy-14" | "label-14" | "strong-14" | "button-14" => (20.0, 0.0),
+        "copy-13" | "copy-13-mono" => (18.0, 0.0),
+        "label-13" => (16.0, 0.0),
+        "label-12" | "label-12-mono" | "button-12" => (16.0, 0.0),
+        "label-16" => (20.0, 0.0),
+        _ => return (None, 0.0),
+    };
+    let size = name.rsplit('-').find_map(|p| p.parse::<f32>().ok()).unwrap_or(14.0);
+    (Some(lh), em * size)
+}
+
 fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
     use FontFamily::{Monospace, Proportional};
     let mut m = std::collections::BTreeMap::new();
@@ -166,6 +190,10 @@ fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
         ("label-13-mono", 13.0, Monospace),
         ("label-12-mono", 12.0, Monospace),
         ("copy-14", 14.0, Proportional),
+        ("copy-13", 13.0, Proportional),
+        ("copy-16", 16.0, Proportional),
+        ("label-16", 16.0, Proportional),
+        ("button-16", 16.0, medium()),
         ("copy-13-mono", 13.0, Monospace),
         ("strong-14", 14.0, medium()),
     ] {
@@ -311,8 +339,19 @@ impl Theme {
             s.spacing.window_margin = Margin::same(24);
             s.spacing.menu_margin = Margin::same(4);
             s.spacing.combo_width = 140.0;
-            s.spacing.scroll.bar_width = 6.0;
+            // rengaf ScrollArea: a 10px track whose thumb is the border colour, rounded-full.
+            s.spacing.scroll.bar_width = 8.0;
             s.spacing.scroll.floating = true;
+            // The thumb is the text colour, faded to about the border's (gray-400) while the
+            // pointer is over the area, and to gray-600 while it's on the bar.
+            s.spacing.scroll.foreground_color = true;
+            s.spacing.scroll.dormant_handle_opacity = 0.0;
+            s.spacing.scroll.active_handle_opacity = 0.22;
+            s.spacing.scroll.interact_handle_opacity = 0.45;
+            s.spacing.scroll.dormant_background_opacity = 0.0;
+            s.spacing.scroll.active_background_opacity = 0.0;
+            s.spacing.scroll.interact_background_opacity = 0.0;
+            s.spacing.tooltip_width = 280.0;
             s.interaction.selectable_labels = true;
         });
     }

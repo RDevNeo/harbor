@@ -8,6 +8,7 @@
 //! Phones without a recogniser of their own send their recording here (`POST
 //! /v1/transcribe`, api.rs), and it's transcribed the same way.
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use eframe::egui;
 use std::io::Read;
@@ -419,7 +420,7 @@ impl App {
         let hint = self.key_hint("Dictate", "voice");
         if let Some((level, secs)) = recording {
             // Stop, then the meter and the time, right to left.
-            let r = crate::widgets::round_button(ui, ic_stop(), true).on_hover_text(self.key_hint("Stop and transcribe", "voice"));
+            let r = crate::widgets::round_button(ui, ic_stop(), true).tip(self.key_hint("Stop and transcribe", "voice"));
             if r.clicked() {
                 self.voice_toggle(key, ui.ctx());
             }
@@ -440,7 +441,7 @@ impl App {
             Some(why) => why,
             None => hint,
         };
-        if crate::widgets::btn(crate::icons::MIC).muted().icon().show(ui).on_hover_text(tip).clicked() {
+        if crate::widgets::btn(crate::icons::MIC).muted().icon_sm().show(ui).tip(tip).clicked() {
             self.voice_toggle(key, ui.ctx());
         }
     }

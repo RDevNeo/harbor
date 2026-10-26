@@ -327,7 +327,7 @@ impl App {
                     let mut x = rect.right() - 26.0;
                     for (icon, tip, act) in [(ic::X, "Remove", 0), (ic::COMPOSE, "Edit", 1)] {
                         let br = egui::Rect::from_min_size(pos2(x, rect.top() + 3.0), Vec2::splat(22.0));
-                        if w::overlay(ui, br, |ui| w::btn(icon).muted().icon_sm().show(ui)).on_hover_text(tip).clicked() {
+                        if w::overlay(ui, br, |ui| w::btn(icon).muted().icon_xs().show(ui)).on_hover_text(tip).clicked() {
                             action = Some((i, act));
                         }
                         x -= 24.0;

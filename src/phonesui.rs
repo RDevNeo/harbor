@@ -1,6 +1,7 @@
 //! Settings › Phones: turns the phone API (api.rs) on, pairs Harbor for Android with a QR
 //! code, lists the paired phones (revocable) and offers the app itself.
 
+use crate::widgets::Tip as _;
 use crate::api::{self, Token, url_encode};
 use crate::app::App;
 use crate::icons as ic;
@@ -21,7 +22,7 @@ fn copy_line(ui: &mut Ui, text: &str) {
         let t = crate::widgets::tokens(ui);
         let g = w::truncated(ui, text, egui::FontId::new(12.0, egui::FontFamily::Monospace), t.fg(), ui.available_width() - 40.0);
         ui.label(g);
-        if w::btn(ic::COPY).muted().icon_sm().show(ui).on_hover_text("Copy").clicked() {
+        if w::btn(ic::COPY).muted().icon_xs().show(ui).tip("Copy").clicked() {
             ui.ctx().copy_text(text.to_string());
         }
     });
@@ -145,7 +146,7 @@ impl App {
             ui.add_space(6.0);
         }
         if self.api.ui.pairing.is_none() {
-            let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).primary().show(ui);
+            let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).sm().primary().show(ui);
             if let Some(token) = b.clicked().then(api::new_token).and_then(|t| t.map_err(|e| eprintln!("harbor: no key for a phone: {e}")).ok()) {
                 let mut tokens = hub.tokens.lock().unwrap();
                 // A pairing code: good for pairing only, for 10 minutes, once.

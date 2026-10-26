@@ -16,6 +16,7 @@
 //! to overwrite uncommitted changes; the menu warns about them first) or creates one. For a
 //! new chat headed for a new worktree it picks the worktree's base instead.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Popup, View};
 use crate::store::{self, Chat, Role};
 use eframe::egui::{self, Align, Layout, ScrollArea, Ui};
@@ -573,7 +574,7 @@ impl App {
                 (None, false) => ("Current checkout".to_string(), format!("Runs in the project's checkout, {}", info.repo.display())),
             };
             let icon = if info.worktree.is_some() || info.new_worktree { crate::icons::FOLDER_GIT } else { crate::icons::FOLDER };
-            let r = w_small(ui, icon, &label, self.popup == Some(Popup::Workspace), &t).on_hover_text(tip);
+            let r = w_small(ui, icon, &label, self.popup == Some(Popup::Workspace), &t).tip(tip);
             if r.clicked() {
                 open = Some((Popup::Workspace, r.rect));
             } else if self.popup == Some(Popup::Workspace) {
@@ -598,7 +599,7 @@ impl App {
                     Some(h) => (h.label(), "Switch or create a branch".to_string()),
                     None => ("…".to_string(), "Reading the branch…".to_string()),
                 };
-                let r = w_small(ui, crate::icons::BRANCH, &label, self.popup == Some(Popup::Branch), &t).on_hover_text(tip);
+                let r = w_small(ui, crate::icons::BRANCH, &label, self.popup == Some(Popup::Branch), &t).tip(tip);
                 if r.clicked() {
                     open = Some((Popup::Branch, r.rect));
                 } else if self.popup == Some(Popup::Branch) {
@@ -631,7 +632,7 @@ impl App {
         let error = self.ws.error.clone();
         let (pick, close) = crate::widgets::popover(ctx, "workspace", self.popup_anchor, 320.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            crate::widgets::subtle(ui, "  Workspace", "label-12");
+            crate::widgets::menu_label(ui, "Workspace");
             let mut pick: Option<bool> = None;
             match (target, &info.worktree) {
                 (Target::Draft(_), _) => {
@@ -645,7 +646,7 @@ impl App {
                 (Target::Chat(_), Some(w)) => {
                     let name = w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     crate::widgets::menu_item(ui, crate::icons::FOLDER_GIT, &name, Some(&crate::app::tilde(w)), true)
-                        .on_hover_text("A thread stays in its worktree. It's removed with the thread, unless it has uncommitted changes.");
+                        .tip("A thread stays in its worktree. It's removed with the thread, unless it has uncommitted changes.");
                 }
                 (Target::Chat(_), None) => {
                     crate::widgets::menu_item(ui, crate::icons::FOLDER, "Current checkout", Some(&crate::app::tilde(&info.repo)), true);
@@ -760,9 +761,7 @@ impl App {
                     });
                     let q = query.trim();
                     if !info.new_worktree && !q.is_empty() && !b.local.iter().any(|l| l == q) {
-                        ui.add_space(4.0);
-                        crate::widgets::separator(ui);
-                        ui.add_space(4.0);
+                        crate::widgets::menu_separator(ui);
                         let r = ui.add_enabled_ui(!locked, |ui| crate::widgets::menu_item(ui, crate::icons::PLUS, &format!("Create branch “{q}”"), Some("From where it is now, and switch to it"), false)).inner;
                         if r.clicked() {
                             pick = Some(Err(q.to_string()));

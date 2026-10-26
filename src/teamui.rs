@@ -2,6 +2,7 @@
 //! webhooks and chats from before projects had a single thread. Idle agents
 //! settle into a collapsed "Settled (N)" group at the bottom, as in the sidebar.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Tab, View, ago};
 use crate::icons as ic;
 use crate::store::{self, Chat, Role};
@@ -76,7 +77,7 @@ impl App {
                         ui.set_width(ui.available_width());
                         w::text(ui, format!("{}  Automatic turns paused", ic::ALERT), "strong-14");
                         w::subtle(ui, "More than 60 in the last hour. Queued events are kept.", "label-12");
-                        if w::btn(&format!("{}  Resume", ic::PLAY)).sm().show(ui).clicked() {
+                        if w::btn(&format!("{}  Resume", ic::PLAY)).xs().show(ui).clicked() {
                             self.paused.remove(&project);
                             self.auto_turns.remove(&project);
                             let ids: Vec<i64> = self.chats.iter().filter(|c| c.repo_id == Some(project)).map(|c| c.id).collect();
@@ -128,14 +129,14 @@ impl App {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(ic::ALARM).size(15.0).color(t.subtle()));
-                        w::text(ui, local_hm(tm.at), "heading-16").on_hover_text(format!("in {}", until(tm.at)));
+                        w::text(ui, local_hm(tm.at), "heading-16").tip(format!("in {}", until(tm.at)));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Cancel").clicked() {
+                            if w::btn(ic::X).muted().icon_xs().show(ui).tip("Cancel").clicked() {
                                 self.store.delete_timer(tm.id);
                                 self.timers.retain(|x| x.id != tm.id);
                             }
-                            if w::btn(ic::PLAY).muted().icon_sm().show(ui).on_hover_text("Wake now").clicked() {
+                            if w::btn(ic::PLAY).muted().icon_xs().show(ui).tip("Wake now").clicked() {
                                 if let Some(x) = self.timers.iter_mut().find(|x| x.id == tm.id) {
                                     x.at = store::now();
                                 }
@@ -167,13 +168,13 @@ impl App {
                         w::badge(ui, if public.is_some() { "Public" } else { "Local" }, if public.is_some() { Tone::Green } else { Tone::Gray });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            if w::btn(ic::TRASH).muted().icon_sm().show(ui).on_hover_text("Delete").clicked() {
+                            if w::btn(ic::TRASH).muted().icon_xs().show(ui).tip("Delete").clicked() {
                                 self.store.delete_webhook(h.id);
                                 self.webhooks = self.store.webhooks();
                                 self.sync_tokens();
                             }
                             let url = public.clone().unwrap_or(local.clone());
-                            if w::btn(ic::COPY).muted().icon_sm().show(ui).on_hover_text(format!("Copy {url}")).clicked() {
+                            if w::btn(ic::COPY).muted().icon_xs().show(ui).tip(format!("Copy {url}")).clicked() {
                                 ui.ctx().copy_text(url);
                             }
                         });
@@ -186,7 +187,7 @@ impl App {
                 });
             }
             if !hooks.is_empty() && self.funnel.is_none() && crate::hookcert::public_base().is_none() {
-                if w::btn("Enable public URLs…").sm().variant(w::Variant::Ghost).show(ui).clicked() {
+                if w::btn("Enable public URLs…").xs().variant(w::Variant::Ghost).show(ui).clicked() {
                     self.open(View::Settings(Tab::Webhooks));
                 }
             }
@@ -229,7 +230,7 @@ impl App {
             p.hline(x0..=x1, rect.center().y, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.gray(500) }));
         }
         ic::glyph(p, pos2(rect.right() - 10.0, rect.center().y), if marks.open { ic::DOWN } else { ic::UP }, 14.0, t.subtle());
-        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("Agents idle for {} min or more", SETTLE_AFTER / 60)).clicked() {
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).tip(format!("Agents idle for {} min or more", SETTLE_AFTER / 60)).clicked() {
             marks.open = !marks.open;
             marks.save(ui.ctx(), &self.store);
         }
@@ -274,13 +275,13 @@ impl App {
                 w::text(ui, &name, "strong-14");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    if w::btn(if open { ic::UP } else { ic::DOWN }).muted().icon_sm().show(ui).on_hover_text("Output").clicked() {
+                    if w::btn(if open { ic::UP } else { ic::DOWN }).muted().icon_xs().show(ui).tip("Output").clicked() {
                         action = Some("logs");
                     }
-                    if w::btn(ic::STOP).muted().icon_sm().show(ui).on_hover_text("Stop").clicked() {
+                    if w::btn(ic::STOP).muted().icon_xs().show(ui).tip("Stop").clicked() {
                         action = Some("stop");
                     }
-                    if url.is_some() && w::btn(ic::GLOBE).muted().icon_sm().show(ui).on_hover_text("Open in Harbor's browser").clicked() {
+                    if url.is_some() && w::btn(ic::GLOBE).muted().icon_xs().show(ui).tip("Open in Harbor's browser").clicked() {
                         action = Some("open");
                     }
                 });
@@ -288,7 +289,7 @@ impl App {
             if let Some(u) = &url {
                 w::subtle(ui, u, "label-12-mono");
             }
-            let g = w::truncated(ui, &cmd, FontId::monospace(11.5), t.subtle(), ui.available_width());
+            let g = w::truncated(ui, &cmd, FontId::monospace(12.0), t.subtle(), ui.available_width());
             ui.label(g);
             if open {
                 w::well(ui).show(ui, |ui| {
@@ -346,7 +347,7 @@ impl App {
         // as in the sidebar.
         let hovered = ui.rect_contains_pointer(rect);
         let label = if settled { format!("{}  Unsettle", ic::UNARCHIVE) } else { format!("{}  Settle", ic::CHECK) };
-        let settle_w = if hovered && running.is_none() && paused.is_none() { w::btn(&label).muted().sm().width(ui) } else { 0.0 };
+        let settle_w = if hovered && running.is_none() && paused.is_none() { w::btn(&label).muted().xs().width(ui) } else { 0.0 };
         // Every line truncates to its room, so narrow cards never overlap.
         let status = w::truncated(ui, &status, FontId::proportional(12.0), col, (rect.width() * 0.45).max(40.0));
         let text_w = rect.width() - 46.0;
@@ -355,17 +356,17 @@ impl App {
         let usage = self.chat_usage(ui.ctx(), c.id);
         let usage = (!usage.is_empty()).then(|| {
             // Narrow cards: the cost alone (the tokens when there's none), not a clipped line.
-            let full = w::truncated(ui, &usage.compact(), FontId::monospace(11.5), t.subtle(), f32::INFINITY);
+            let full = w::truncated(ui, &usage.compact(), FontId::monospace(12.0), t.subtle(), f32::INFINITY);
             let g = if full.size().x <= rect.width() * 0.5 {
                 full
             } else {
                 let short = crate::cost::money(usage.cost);
                 let short = if short.is_empty() { format!("{} tok", crate::cost::short(usage.tokens())) } else { short };
-                w::truncated(ui, &short, FontId::monospace(11.5), t.subtle(), rect.width() * 0.4)
+                w::truncated(ui, &short, FontId::monospace(12.0), t.subtle(), rect.width() * 0.4)
             };
             g
         });
-        let model = w::truncated(ui, &model, FontId::monospace(11.5), t.subtle(), text_w - usage.as_ref().map_or(0.0, |g| g.size().x + 12.0));
+        let model = w::truncated(ui, &model, FontId::monospace(12.0), t.subtle(), text_w - usage.as_ref().map_or(0.0, |g| g.size().x + 12.0));
         let p = ui.painter();
         if let Some(g) = &usage {
             p.galley(pos2(rect.right() - 10.0 - g.size().x, rect.top() + 29.0), g.clone(), t.subtle());
@@ -380,7 +381,7 @@ impl App {
         if settle_w > 0.0 {
             let sr = Rect::from_min_size(pos2(rect.right() - 4.0 - settle_w, rect.top() + 4.0), Vec2::new(settle_w, 28.0));
             let tip = if settled { "Back to the active agents" } else { "Move to Settled" };
-            if w::overlay(ui, sr, |ui| w::btn(&label).muted().sm().show(ui)).on_hover_text(tip).clicked() {
+            if w::overlay(ui, sr, |ui| w::btn(&label).muted().xs().show(ui)).tip(tip).clicked() {
                 let ctx = ui.ctx().clone();
                 self.set_agent_settled(&ctx, c.id, !settled);
                 return;
@@ -388,13 +389,13 @@ impl App {
         }
         if resp.hovered() && running.is_some() {
             let br = Rect::from_min_size(pos2(rect.right() - 34.0, rect.top() + 26.0), Vec2::splat(26.0));
-            if w::overlay(ui, br, |ui| w::btn(ic::STOP).muted().icon_sm().show(ui)).on_hover_text("Stop").clicked() {
+            if w::overlay(ui, br, |ui| w::btn(ic::STOP).muted().icon_xs().show(ui)).tip("Stop").clicked() {
                 self.pending.remove(&c.id);
                 self.stop(c.id);
                 return;
             }
         }
-        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&c.title);
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).tip(&c.title);
         if resp.clicked() {
             self.open(View::Chat(c.id));
         }

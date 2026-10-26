@@ -507,10 +507,10 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(ic::CLOCK).size(14.0).color(t.amber(900)));
             w::subtle(ui, text, "label-13");
-            if w::btn("Continue now").sm().show(ui).clicked() {
+            if w::btn("Continue now").primary().xs().show(ui).clicked() {
                 act = 1;
             }
-            if cancel && w::btn("Cancel").sm().muted().show(ui).clicked() {
+            if cancel && w::btn("Cancel").xs().muted().show(ui).clicked() {
                 act = 2;
             }
             // Always offered: continue on another account of the same provider.

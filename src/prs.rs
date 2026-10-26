@@ -3,6 +3,7 @@
 //! the GitHub CLI and grouped (Authored / Review requested / Others). Search
 //! (with `label:` and friends), sort and filters run on the fetched list.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Bg, View};
 use crate::chat::centered;
 use crate::icons as ic;
@@ -862,7 +863,7 @@ pub fn list_title(ui: &mut Ui, title: &str, docked: bool, panel: bool, split: &c
             ui.add_space(12.0);
             ui.spacing_mut().item_spacing.x = 6.0;
             if !panel {
-                close = w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Close").clicked();
+                close = w::btn(ic::X).muted().icon_xs().show(ui).tip("Close").clicked();
                 act = crate::listdetail::toggle_btn(ui, split);
             }
         });
@@ -904,7 +905,7 @@ pub fn toolbar(ui: &mut Ui, search: &mut String, hint: &str, id: Id, active: usi
                     ui.set_width(search_w - 10.0);
                     w::search_field(ui, search, hint, Some(id), search_w - 18.0);
                 });
-            let r = tool_btn(ui, ic::ARROW_DOWN_UP, "Sort", None, open == Some(Tool::Sort)).on_hover_text("Sort the list");
+            let r = tool_btn(ui, ic::ARROW_DOWN_UP, "Sort", None, open == Some(Tool::Sort)).tip("Sort the list");
             if r.clicked() {
                 hit = Some((Tool::Sort, r.rect));
             }
@@ -912,11 +913,11 @@ pub fn toolbar(ui: &mut Ui, search: &mut String, hint: &str, id: Id, active: usi
             if r.clicked() {
                 hit = Some((Tool::Filters, r.rect));
             }
-            let r = tool_btn(ui, "github", "", None, open == Some(Tool::Provider)).on_hover_text("Filter by provider");
+            let r = tool_btn(ui, "github", "", None, open == Some(Tool::Provider)).tip("Filter by provider");
             if r.clicked() {
                 hit = Some((Tool::Provider, r.rect));
             }
-            let r = tool_btn(ui, if loading { "" } else { ic::REFRESH }, "", None, false).on_hover_text("Refresh");
+            let r = tool_btn(ui, if loading { "" } else { ic::REFRESH }, "", None, false).tip("Refresh");
             if loading {
                 // Steps (and repaints) at the spinner's own pace; the fetch wakes the UI when done.
                 w::spinner(ui.painter(), r.rect.center(), 6.5, t.subtle());
@@ -1003,7 +1004,7 @@ pub fn menu_row(ui: &mut Ui, icon: &str, label: &str, value: Option<&str>, chevr
     }
     let mut x = rect.left() + 8.0;
     if !icon.is_empty() {
-        ic::glyph(p, pos2(x + 8.0, rect.center().y), icon, 15.0, t.subtle());
+        ic::glyph(p, pos2(x + 8.0, rect.center().y), icon, 16.0, t.subtle());
         x += 26.0;
     }
     let mut right = rect.right() - 8.0;
@@ -1531,7 +1532,7 @@ impl App {
                     }
                     ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (id, name, repo) in projects {
-                            let r = menu_row(ui, ic::FOLDER_GIT, name, None, false, cur == Some(*id), false).on_hover_text(repo);
+                            let r = menu_row(ui, ic::FOLDER_GIT, name, None, false, cur == Some(*id), false).tip(repo);
                             if r.clicked() {
                                 pick = Some(Some(*id));
                             }
@@ -1573,7 +1574,7 @@ pub fn section(ui: &mut Ui, icon: &str, label: &str, n: usize) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
     let p = ui.painter();
     let y = rect.center().y;
-    ic::glyph(p, pos2(rect.left() + 26.0, y), icon, 15.0, t.gray(800));
+    ic::glyph(p, pos2(rect.left() + 26.0, y), icon, 16.0, t.gray(800));
     let g = p.layout_no_wrap(label.into(), FontId::proportional(14.0), t.gray(800));
     let x = rect.left() + 42.0;
     let gw = g.size().x;
@@ -1614,8 +1615,8 @@ fn row(ui: &mut Ui, p: &Pr, avatar: Option<&egui::TextureHandle>, selected: bool
     let (icon, col, tip) = state_icon(p, &t);
     let top = inner.top() + 19.0;
     let icon_r = Rect::from_center_size(pos2(inner.left() + 26.0, top + 1.0), Vec2::splat(18.0));
-    ic::glyph(&painter, icon_r.center(), icon, 17.0, col);
-    ui.interact(icon_r, ui.scope_id().with(("pr-state", &p.url)), Sense::hover()).on_hover_text(tip);
+    ic::glyph(&painter, icon_r.center(), icon, 16.0, col);
+    ui.interact(icon_r, ui.scope_id().with(("pr-state", &p.url)), Sense::hover()).tip(tip);
 
     // right column
     let right = inner.right() - 12.0;
@@ -1654,8 +1655,8 @@ fn row(ui: &mut Ui, p: &Pr, avatar: Option<&egui::TextureHandle>, selected: bool
     };
     for (g, c, tip) in [check, review].into_iter().flatten() {
         let r = Rect::from_center_size(pos2(ix, top), Vec2::splat(16.0));
-        ic::glyph(&painter, r.center(), g, 15.0, c);
-        ui.interact(r, ui.scope_id().with((tip, &p.url)), Sense::hover()).on_hover_text(tip);
+        ic::glyph(&painter, r.center(), g, 16.0, c);
+        ui.interact(r, ui.scope_id().with((tip, &p.url)), Sense::hover()).tip(tip);
         ix += 20.0;
     }
 
@@ -1678,10 +1679,10 @@ pub fn row_meta(painter: &egui::Painter, at: egui::Pos2, limit: f32, avatar: Opt
     painter.galley(pos2(x, line2 - repo.size().y / 2.0), repo, t.gray(800));
     x += rw + 10.0;
     for (i, (name, rgb)) in labels.iter().enumerate() {
-        let g = painter.layout_no_wrap(name.clone(), FontId::proportional(11.5), t.fg());
+        let g = painter.layout_no_wrap(name.clone(), FontId::proportional(12.0), t.fg());
         let w_ = g.size().x + 22.0;
         if x + w_ > limit {
-            let more = painter.layout_no_wrap(format!("+{}", labels.len() - i), FontId::proportional(11.5), t.subtle());
+            let more = painter.layout_no_wrap(format!("+{}", labels.len() - i), FontId::proportional(12.0), t.subtle());
             painter.galley(pos2(x, line2 - more.size().y / 2.0), more, t.subtle());
             break;
         }

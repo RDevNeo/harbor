@@ -9,6 +9,7 @@
 //!   through `harbor nc` (relay.rs) with Settings › Devices' login, like remote agents. Image
 //!   files preview inside Harbor (crate::images).
 
+use crate::widgets::Tip as _;
 use crate::icons as ic;
 use crate::theme::{RADIUS_MD, Tokens};
 use crate::widgets as w;
@@ -569,11 +570,11 @@ impl List {
                 if w::menu_item(ui, ic::CLIP, "Text to clipboard", None, false).clicked() {
                     text = true;
                 }
-                if w::menu_item(ui, ic::FILE, "File", None, false).on_hover_text("Lands in its Downloads").clicked() {
+                if w::menu_item(ui, ic::FILE, "File", None, false).tip("Lands in its Downloads").clicked() {
                     pick = Some(Pick::Files);
                 }
                 let opens = if d.phone() { "Saved to its Pictures and opened in its photo app" } else { "Saved to its Downloads and opened there" };
-                if w::menu_item(ui, ic::IMAGE, "Image", None, false).on_hover_text(opens).clicked() {
+                if w::menu_item(ui, ic::IMAGE, "Image", None, false).tip(opens).clicked() {
                     pick = Some(Pick::Images);
                 }
                 if w::menu_item(ui, ic::FILE_IMAGE, "Image to clipboard", None, false).clicked() {
@@ -619,7 +620,7 @@ impl List {
                 ui.horizontal(|ui| {
                     w::subtle(ui, "Ctrl+Enter", "label-12");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if w::btn("Send").primary().sm().enabled(!text.is_empty()).show(ui).clicked() || (enter && !text.is_empty()) {
+                        if w::btn("Send").primary().xs().enabled(!text.is_empty()).show(ui).clicked() || (enter && !text.is_empty()) {
                             go = true;
                         }
                     });
@@ -707,8 +708,8 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
             if r.hovered() {
                 p.rect_filled(br, CornerRadius::same(RADIUS_MD), t.gray(300));
             }
-            ic::glyph(&p, br.center(), icon, 15.0, if r.hovered() { t.fg() } else { t.subtle() });
-            if r.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+            ic::glyph(&p, br.center(), icon, 16.0, if r.hovered() { t.fg() } else { t.subtle() });
+            if r.on_hover_cursor(CursorIcon::PointingHand).tip(tip).clicked() {
                 out = Some(match k {
                     0 => RowAction::Send(br),
                     1 => RowAction::Do(Action::Files(d.clone())),
@@ -760,7 +761,7 @@ fn transfers_ui(ui: &mut Ui, t: &Tokens, transfers: &Arc<Mutex<Vec<Transfer>>>) 
     ui.horizontal(|ui| {
         w::subtle(ui, "Transfers", "label-12");
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if list.iter().any(|x| x.done || x.error.is_some()) && w::btn("Clear").ghost().sm().show(ui).clicked() {
+            if list.iter().any(|x| x.done || x.error.is_some()) && w::btn("Clear").ghost().xs().show(ui).clicked() {
                 transfers.lock().unwrap().retain(|x| !x.done && x.error.is_none());
             }
         });
@@ -1150,17 +1151,17 @@ impl Files {
         egui::Frame::new().inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                if w::btn(ic::ARROW_LEFT).muted().icon_sm().enabled(!self.history.is_empty()).show(ui).on_hover_text("Back").clicked() {
+                if w::btn(ic::ARROW_LEFT).muted().icon_xs().enabled(!self.history.is_empty()).show(ui).tip("Back").clicked() {
                     if let Some(p) = self.history.pop() {
                         self.list(p);
                     }
                 }
-                if w::btn(ic::CORNER_LEFT_UP).muted().icon_sm().enabled(self.path != "/").show(ui).on_hover_text("Up").clicked() {
+                if w::btn(ic::CORNER_LEFT_UP).muted().icon_xs().enabled(self.path != "/").show(ui).tip("Up").clicked() {
                     if let Some(p) = self.parent() {
                         self.go(p);
                     }
                 }
-                if w::btn(ic::HOUSE).muted().icon_sm().show(ui).on_hover_text("Home").clicked() {
+                if w::btn(ic::HOUSE).muted().icon_xs().show(ui).tip("Home").clicked() {
                     self.go("~".into());
                 }
                 ui.add_space(6.0);
@@ -1184,11 +1185,11 @@ impl Files {
                     self.go(p);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if w::btn(ic::REFRESH).muted().icon_sm().enabled(!self.loading).show(ui).on_hover_text("Refresh").clicked() {
+                    if w::btn(ic::REFRESH).muted().icon_xs().enabled(!self.loading).show(ui).tip("Refresh").clicked() {
                         let p = self.path.clone();
                         self.list(p);
                     }
-                    if w::btn(ic::UPLOAD).muted().icon_sm().show(ui).on_hover_text("Upload files here").clicked() {
+                    if w::btn(ic::UPLOAD).muted().icon_xs().show(ui).tip("Upload files here").clicked() {
                         let (picked, wake) = (self.picked.clone(), self.wake.clone());
                         std::thread::spawn(move || {
                             let files = crate::picker::pick(crate::picker::Opts { title: "Upload files", multiple: true, ..Default::default() });
@@ -1197,7 +1198,7 @@ impl Files {
                         });
                     }
                     let (icon, tip) = if self.show_hidden { (ic::EYE, "Hide hidden files") } else { (ic::EYE_OFF, "Show hidden files") };
-                    if w::btn(icon).muted().icon_sm().pressed(self.show_hidden).show(ui).on_hover_text(tip).clicked() {
+                    if w::btn(icon).muted().icon_xs().pressed(self.show_hidden).show(ui).tip(tip).clicked() {
                         self.show_hidden = !self.show_hidden;
                     }
                 });
@@ -1268,7 +1269,7 @@ impl Files {
                             }
                             None => {
                                 let icon = if e.dir { ic::FOLDER } else if image { ic::FILE_IMAGE } else { ic::FILE };
-                                ic::glyph(&p, lead.center(), icon, 15.0, if e.dir { t.blue(900) } else { t.subtle() });
+                                ic::glyph(&p, lead.center(), icon, 16.0, if e.dir { t.blue(900) } else { t.subtle() });
                             }
                         }
                         let meta = if e.dir { String::new() } else { human(e.size) };
@@ -1286,7 +1287,7 @@ impl Files {
                                 p.rect_filled(dl, CornerRadius::same(RADIUS_MD), t.gray(300));
                             }
                             ic::glyph(&p, dl.center(), ic::DOWNLOAD, 14.0, if r.hovered() { t.fg() } else { t.subtle() });
-                            if r.on_hover_text("Download to Downloads").clicked() {
+                            if r.tip("Download to Downloads").clicked() {
                                 fetch = Some((remote.clone(), e.size));
                             }
                         }

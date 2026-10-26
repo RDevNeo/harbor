@@ -2,6 +2,7 @@
 //! (one thread each, ordered by hand or by last activity), the collapsible
 //! "Settled" section of chats (projects never settle), and the footer (settings, PRs, usage, refresh).
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Dialog, Popup, Tab, View, ago};
 use crate::git;
 use crate::icons as ic;
@@ -152,9 +153,9 @@ impl App {
         let mut left = rect.right() - 2.0;
         if let Some(settled) = settled {
             let label = if settled { format!("{}  Unsettle", ic::UNARCHIVE) } else { format!("{}  Settle", ic::CHECK) };
-            let sw = w::btn(&label).muted().sm().width(ui);
+            let sw = w::btn(&label).muted().xs().width(ui);
             let sr = Rect::from_min_size(pos2(left - sw, rect.top() + 2.0), Vec2::new(sw, 28.0));
-            let b = w::overlay(ui, sr, |ui| w::btn(&label).muted().sm().show(ui));
+            let b = w::overlay(ui, sr, |ui| w::btn(&label).muted().xs().show(ui));
             if b.clicked() {
                 self.set_chat_settled(key[1..].parse().unwrap_or(0), !settled);
             }
@@ -164,8 +165,8 @@ impl App {
         if settled != Some(true) {
             let cr = Rect::from_min_size(pos2(left - 28.0, rect.top() + 2.0), Vec2::splat(28.0));
             let snoozed = self.snoozed.contains_key(key);
-            let c = w::overlay(ui, cr, |ui| w::btn(ic::CLOCK).muted().icon_sm().pressed(snoozed).show(ui));
-            let c = c.on_hover_text("Snooze");
+            let c = w::overlay(ui, cr, |ui| w::btn(ic::CLOCK).muted().icon_xs().pressed(snoozed).show(ui));
+            let c = c.tip("Snooze");
             if c.clicked() {
                 self.snooze_for = key.to_string();
                 self.popup = Some(Popup::Snooze);
@@ -313,13 +314,13 @@ impl App {
         // ---- header: collapse button and the name
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if w::btn(ic::PANEL_LEFT_CLOSE).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Hide sidebar", "toggle_sidebar")).clicked() {
+            if w::btn(ic::PANEL_LEFT_CLOSE).muted().icon_xs().show(ui).tip(self.key_hint("Hide sidebar", "toggle_sidebar")).clicked() {
                 let ctx = ui.ctx().clone();
                 self.toggle_sidebar(&ctx);
             }
             ui.label(egui::RichText::new("Harbor").text_style(crate::theme::ts("heading-16")).color(t.fg()));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if w::btn(ic::SEARCH).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Search everything", "palette")).clicked() {
+                if w::btn(ic::SEARCH).muted().icon_xs().show(ui).tip(self.key_hint("Search everything", "palette")).clicked() {
                     self.palette_toggle();
                 }
             });
@@ -332,15 +333,15 @@ impl App {
             ui.spacing_mut().item_spacing.x = 2.0;
             let wdt = ui.available_width() - 3.0 * 30.0;
             w::search_field(ui, &mut self.search, "Search", None, wdt);
-            let f = w::btn(ic::FILTER).muted().icon_sm().pressed(self.popup == Some(Popup::Filter)).show(ui).on_hover_text("Order and view");
+            let f = w::btn(ic::FILTER).muted().icon_xs().pressed(self.popup == Some(Popup::Filter)).show(ui).tip("Order and view");
             if f.clicked() {
                 self.popup = if self.popup == Some(Popup::Filter) { None } else { Some(Popup::Filter) };
                 self.popup_anchor = f.rect;
             }
-            if w::btn(ic::FOLDER_PLUS).muted().icon_sm().show(ui).on_hover_text("Add project").clicked() {
+            if w::btn(ic::FOLDER_PLUS).muted().icon_xs().show(ui).tip("Add project").clicked() {
                 self.open_add_project();
             }
-            if w::btn(ic::COMPOSE).muted().icon_sm().show(ui).on_hover_text(self.key_hint("New thread", "new_thread")).clicked() {
+            if w::btn(ic::COMPOSE).muted().icon_xs().show(ui).tip(self.key_hint("New thread", "new_thread")).clicked() {
                 self.new_draft(None);
             }
         });
@@ -374,7 +375,7 @@ impl App {
                 ui.add_space(12.0);
                 ui.vertical_centered(|ui| {
                     w::subtle(ui, if q.is_empty() { "No projects yet" } else { "No match" }, "label-13");
-                    if q.is_empty() && w::btn(&format!("{}  Add project", ic::FOLDER_PLUS)).sm().outline().show(ui).clicked() {
+                    if q.is_empty() && w::btn(&format!("{}  Add project", ic::FOLDER_PLUS)).xs().outline().show(ui).clicked() {
                         self.open_add_project();
                     }
                 });
@@ -451,7 +452,7 @@ impl App {
                 let v = self.view;
                 // A list page (T3 Code style): Back takes its place, like Esc.
                 if matches!(v, View::Prs | View::Issues) {
-                    if w::btn(&format!("{}  Back", ic::ARROW_LEFT)).muted().sm().show(ui).on_hover_text("Back (Esc)").clicked() {
+                    if w::btn(&format!("{}  Back", ic::ARROW_LEFT)).muted().xs().show(ui).tip("Back (Esc)").clicked() {
                         if v == View::Prs {
                             self.close_prs();
                         } else {
@@ -459,18 +460,18 @@ impl App {
                         }
                     }
                 } else {
-                    if w::btn(ic::SETTINGS).muted().icon_sm().pressed(matches!(v, View::Settings(_))).show(ui).on_hover_text(self.key_hint("Settings", "settings")).clicked() {
+                    if w::btn(ic::SETTINGS).muted().icon_xs().pressed(matches!(v, View::Settings(_))).show(ui).tip(self.key_hint("Settings", "settings")).clicked() {
                         self.open(View::Settings(Tab::General));
                     }
-                    if w::btn(ic::PULL).muted().icon_sm().show(ui).on_hover_text("Pull requests").clicked() {
+                    if w::btn(ic::PULL).muted().icon_xs().show(ui).tip("Pull requests").clicked() {
                         self.open_prs(None);
                     }
-                    if w::btn(ic::CIRCLE_DOT).muted().icon_sm().show(ui).on_hover_text("Issues").clicked() {
+                    if w::btn(ic::CIRCLE_DOT).muted().icon_xs().show(ui).tip("Issues").clicked() {
                         self.open_issues(None);
                     }
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if w::btn(ic::REFRESH).muted().icon_sm().show(ui).on_hover_text("Refresh providers, projects and git").clicked() {
+                    if w::btn(ic::REFRESH).muted().icon_xs().show(ui).tip("Refresh providers, projects and git").clicked() {
                         self.refresh_all();
                     }
                     let n = self.turns.len();
@@ -490,7 +491,7 @@ impl App {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if w::btn(ic::PANEL_LEFT_CLOSE).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Hide sidebar", "toggle_sidebar")).clicked() {
+            if w::btn(ic::PANEL_LEFT_CLOSE).muted().icon_xs().show(ui).tip(self.key_hint("Hide sidebar", "toggle_sidebar")).clicked() {
                 let ctx = ui.ctx().clone();
                 self.toggle_sidebar(&ctx);
             }
@@ -564,7 +565,7 @@ impl App {
                 let ir = Rect::from_center_size(icon_at, Vec2::splat(16.0));
                 egui::Image::new(&tex).corner_radius(4).paint_at(ui, ir);
             }
-            _ if grip && (hovering || dragging) => ic::glyph(p, icon_at, ic::GRIP, 15.0, if selected { t.fg() } else { t.subtle() }),
+            _ if grip && (hovering || dragging) => ic::glyph(p, icon_at, ic::GRIP, 16.0, if selected { t.fg() } else { t.subtle() }),
             _ => {
                 // No icon: the project's initial on a tinted rounded square.
                 let ir = Rect::from_center_size(icon_at, Vec2::splat(16.0));
@@ -592,8 +593,8 @@ impl App {
         if hovering {
             let used = self.row_actions(ui, rect, &format!("r{}", r.id), None);
             let nr = Rect::from_min_size(pos2(rect.right() - used - 26.0, rect.top() + 3.0), Vec2::splat(28.0));
-            let n = w::overlay(ui, nr, |ui| w::btn(ic::PLUS).muted().icon_sm().show(ui));
-            if n.on_hover_text("New chat in this project").clicked() {
+            let n = w::overlay(ui, nr, |ui| w::btn(ic::PLUS).muted().icon_xs().show(ui));
+            if n.tip("New chat in this project").clicked() {
                 self.new_draft(Some(r.id));
                 return None;
             }
@@ -608,7 +609,7 @@ impl App {
         let path = r.path.clone();
         let id = r.id;
         let out = resp.clone();
-        resp.on_hover_text(crate::app::tilde(&path)).context_menu(|ui| {
+        resp.tip(crate::app::tilde(&path)).context_menu(|ui| {
             if ui.button(format!("{}  Open terminal", ic::TERMINAL)).clicked() {
                 let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 self.open_terminal(&ctx, &name, path.clone(), vec![], vec![]);

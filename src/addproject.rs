@@ -396,7 +396,7 @@ impl App {
                 Frame::new().inner_margin(Margin { left: 12, right: 16, top: 10, bottom: 10 }).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        let b = w::btn(ic::ARROW_LEFT).muted().icon_sm().enabled(ap.step != Step::Sources).show(ui);
+                        let b = w::btn(ic::ARROW_LEFT).muted().icon_xs().enabled(ap.step != Step::Sources).show(ui);
                         if b.clicked() {
                             ap.go(Step::Sources);
                         }
@@ -492,7 +492,7 @@ impl App {
                 p.hline(fr.x_range(), fr.top(), Stroke::new(1.0, t.border()));
                 let mut x = fr.left() + 16.0;
                 for (k, l) in [("↑ ↓", "Navigate"), ("Enter", "Select"), ("Backspace", "Back"), ("Esc", "Close")] {
-                    let kg = p.layout_no_wrap(k.into(), FontId::new(11.5, egui::FontFamily::Monospace), t.subtle());
+                    let kg = p.layout_no_wrap(k.into(), FontId::new(12.0, egui::FontFamily::Monospace), t.subtle());
                     let kr = Rect::from_min_size(pos2(x, fr.center().y - 10.0), Vec2::new(kg.size().x + 10.0, 20.0));
                     p.rect(kr, CornerRadius::same(4), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
                     p.galley(pos2(kr.left() + 5.0, kr.center().y - kg.size().y / 2.0), kg, t.subtle());
@@ -576,7 +576,7 @@ fn dir_row(ui: &mut Ui, t: &crate::theme::Tokens, row: &Row, selected: bool) -> 
 /// Outlined "Add" button with the Ctrl+Enter chip inside it.
 fn add_button(ui: &mut Ui, t: &crate::theme::Tokens) -> egui::Response {
     let lg = ui.painter().layout_no_wrap("Add".into(), FontId::new(13.0, crate::theme::medium()), t.fg());
-    let kg = ui.painter().layout_no_wrap("Ctrl Enter".into(), FontId::new(11.0, egui::FontFamily::Monospace), t.subtle());
+    let kg = ui.painter().layout_no_wrap("Ctrl Enter".into(), FontId::new(12.0, egui::FontFamily::Monospace), t.subtle());
     let kw = kg.size().x + 10.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(10.0 + lg.size().x + 8.0 + kw + 5.0, 28.0), Sense::click());
     let p = ui.painter();

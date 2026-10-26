@@ -1,6 +1,7 @@
 //! Chat screens: the draft ("What should we work on?"), the transcript, the
 //! composer (model · effort · access, attach, send) and its pickers.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, CHAT_MIN_W, CONTENT_W, Picker, Popup, Sel, TEAM_W, View, clip, tilde};
 use crate::icons as ic;
 use crate::providers::{self, Kind};
@@ -90,7 +91,7 @@ impl App {
                     ui.painter().hline(x..=(x + 3.0).min(rect.right()), y, Stroke::new(1.0, col));
                     x += 6.0;
                 }
-                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Choose the project the agent works in").clicked() {
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).tip("Choose the project the agent works in").clicked() {
                     self.popup = if self.popup == Some(Popup::Project) { None } else { Some(Popup::Project) };
                     self.popup_anchor = rect;
                 }
@@ -121,7 +122,7 @@ impl App {
                     let ui = &mut right;
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let close = if self.keep_running() { "Close the window (Harbor keeps running in the background)" } else { "Close Harbor" };
-                    if w::btn(ic::X).icon_sm().show(ui).on_hover_text(close).clicked() {
+                    if w::btn(ic::X).ghost().icon_xs().show(ui).tip(close).clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     ui.add_space(4.0);
@@ -136,7 +137,7 @@ impl App {
                         // Icon-only when the bar is narrow.
                         let label = if row.width() < 560.0 { ic::REFRESH.to_string() } else { format!("{}  {text}", ic::REFRESH) };
                         let installing = matches!(offer, State::Installing(_)) || (self.reload_asked && !matches!(offer, State::Available(_)));
-                        if w::btn(&label).sm().primary().enabled(!installing).show(ui).on_hover_text(tip).clicked() {
+                        if w::btn(&label).xs().primary().enabled(!installing).show(ui).tip(tip).clicked() {
                             let ctx = ui.ctx().clone();
                             self.update_clicked(&ctx);
                         }
@@ -144,21 +145,21 @@ impl App {
                     }
                     use crate::surface::Dock;
                     let right_on = self.pane_showing(Dock::Right);
-                    if w::btn(ic::PANEL_RIGHT).muted().icon_sm().pressed(right_on).show(ui).on_hover_text("Right panel").clicked() {
+                    if w::btn(ic::PANEL_RIGHT).muted().icon_xs().pressed(right_on).show(ui).tip("Right panel").clicked() {
                         self.toggle_dock(Dock::Right);
                     }
                     let bottom_on = self.pane_showing(Dock::Bottom);
-                    if w::btn(ic::PANEL_BOTTOM).muted().icon_sm().pressed(bottom_on).show(ui).on_hover_text("Bottom panel").clicked() {
+                    if w::btn(ic::PANEL_BOTTOM).muted().icon_xs().pressed(bottom_on).show(ui).tip("Bottom panel").clicked() {
                         self.toggle_dock(Dock::Bottom);
                     }
                     let lead = chat.is_some_and(|c| c.role == Role::Lead);
                     if w::btn(ic::SQUARE_MENU)
                         .muted()
-                        .icon_sm()
+                        .icon_xs()
                         .enabled(lead)
                         .pressed(lead && self.team_showing())
                         .show(ui)
-                        .on_hover_text("Team: agents, processes, wake-ups, webhooks")
+                        .tip("Team: agents, processes, wake-ups, webhooks")
                         .clicked()
                     {
                         self.toggle_team();
@@ -170,7 +171,7 @@ impl App {
                         if row.width() >= 640.0 {
                             if let Some((label, tip)) = self.usage_line(ui.ctx(), c.id) {
                                 ui.add_space(6.0);
-                                ui.label(RichText::new(label).text_style(theme::ts("label-13-mono")).color(t.gray(800))).on_hover_text(tip);
+                                ui.label(RichText::new(label).text_style(theme::ts("label-13-mono")).color(t.gray(800))).tip(tip);
                             }
                         }
                     }
@@ -182,7 +183,7 @@ impl App {
                     let ui = &mut left;
                     ui.spacing_mut().item_spacing.x = 6.0;
                     if !self.sidebar_docked(ui.ctx()) {
-                        if w::btn(ic::PANEL_LEFT).muted().icon_sm().show(ui).on_hover_text(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
+                        if w::btn(ic::PANEL_LEFT).muted().icon_xs().show(ui).tip(self.key_hint("Show sidebar", "toggle_sidebar")).clicked() {
                             let ctx = ui.ctx().clone();
                             self.toggle_sidebar(&ctx);
                         }
@@ -251,13 +252,13 @@ impl App {
                             Role::Sub => {
                                 let parent = c.parent.and_then(|l| self.chat(l)).map(|l| l.title.clone()).unwrap_or_else(|| "Lead".into());
                                 let pw = rest(ui) * 0.5;
-                                if crumb(ui, "", &parent, false, pw).on_hover_text(&parent).clicked() {
+                                if crumb(ui, "", &parent, false, pw).tip(&parent).clicked() {
                                     if let Some(l) = c.parent {
                                         self.open(View::Chat(l));
                                     }
                                 }
                                 sep(ui);
-                                crumb(ui, "", &c.name, true, rest(ui)).on_hover_text(&c.title);
+                                crumb(ui, "", &c.name, true, rest(ui)).tip(&c.title);
                             }
                             Role::Chat => {
                                 crumb(ui, "", &c.title, true, rest(ui));
@@ -438,7 +439,7 @@ impl App {
                                     for f in files {
                                         let name = std::path::Path::new(f).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                                         ui.label(RichText::new(format!("{}  {name}", ic::CLIP)).text_style(theme::ts("label-12")).color(t.subtle()))
-                                            .on_hover_text(*f);
+                                            .tip(*f);
                                     }
                                 });
                             })
@@ -608,7 +609,7 @@ impl App {
                     }
                     if let Some(url) = url {
                         // A process's URL: open it in Harbor's browser.
-                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open in Harbor's browser").clicked() {
+                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).tip("Open in Harbor's browser").clicked() {
                             action = Some(MsgAction::OpenUrl(url.to_string()));
                         }
                     } else if !detail.is_empty() {
@@ -720,7 +721,7 @@ impl App {
                 ui.horizontal(|ui| {
                     w::subtle(ui, "Cloned project: agents ignore its own agent settings and hooks until you trust it.", "label-13");
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if w::btn("Trust project").sm().show(ui).clicked() {
+                        if w::btn("Trust project").primary().xs().show(ui).clicked() {
                             self.set_trusted(repo, true);
                         }
                     });
@@ -745,7 +746,7 @@ impl App {
                             w::subtle(ui, "This is an earlier chat, kept read-only. Start a new chat in the project to continue.", "label-14");
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if let Some(repo) = c.repo_id {
-                                    if w::btn(&format!("{}  New chat", ic::COMPOSE)).sm().primary().show(ui).clicked() {
+                                    if w::btn(&format!("{}  New chat", ic::COMPOSE)).xs().primary().show(ui).clicked() {
                                         self.new_draft(Some(repo));
                                     }
                                 }
@@ -937,7 +938,7 @@ impl App {
                             send = true;
                         }
                     }
-                    if w::btn(ic::CLIP).muted().icon().show(ui).on_hover_text("Attach files or images (or drop them here)").clicked() {
+                    if w::btn(ic::CLIP).muted().icon_sm().show(ui).on_hover_text("Attach files or images (or drop them here)").clicked() {
                         attach = true;
                     }
                     // Dictation (voice.rs): the mic, or the meter and time while it records.
@@ -1226,7 +1227,7 @@ impl App {
                 ui.painter().rect_filled(r, CornerRadius::same(RADIUS_MD), if active { t.gray(200) } else { t.gray(100) });
             }
             ic::glyph(ui.painter(), r.center(), ic::STAR, 18.0, t.amber(900));
-            if resp.on_hover_text("Favourites").clicked() {
+            if resp.tip("Favourites").clicked() {
                 self.picker.rail = None;
                 self.picker.more = false;
             }
@@ -1263,7 +1264,7 @@ impl App {
                 if a.logged_in == Some(false) {
                     tip.push_str("\nNot signed in — Settings › Providers");
                 }
-                if resp.on_hover_text(tip).clicked() {
+                if resp.tip(tip).clicked() {
                     self.picker.rail = Some(a.id.clone());
                     self.picker.more = false;
                     self.picker.hover = 0;
@@ -1363,7 +1364,7 @@ impl App {
                         } else {
                             ic::glyph(ui.painter(), sr.center(), ic::STAR, 15.0, scol);
                         }
-                        if sresp.on_hover_text(if fav { "Unfavourite" } else { "Favourite" }).clicked() {
+                        if sresp.tip(if fav { "Unfavourite" } else { "Favourite" }).clicked() {
                             star = Some((r.account.clone(), r.model.clone()));
                         } else if resp.clicked() && r.enabled {
                             pick = Some((r.account.clone(), r.model.clone()));
@@ -1372,7 +1373,7 @@ impl App {
                             w::kbd(ui, pos2(sr.left() - 10.0, rect.center().y), &format!("Ctrl+{}", i + 1), hl);
                         }
                         if !r.enabled {
-                            resp.on_hover_text("Start a new chat to switch provider");
+                            resp.tip("Start a new chat to switch provider");
                         }
                     }
                     if let Some((label, n)) = &more {
@@ -1488,14 +1489,14 @@ fn hover_actions(ui: &mut Ui, msg: Rect, right: bool, at: i64, buttons: &[(&str,
     if right {
         // Right to left: buttons first (rightmost), then the time.
         for (i, (icon, tip)) in buttons.iter().enumerate().rev() {
-            if w::btn(icon).muted().icon_sm().show(&mut child).on_hover_text(*tip).clicked() {
+            if w::btn(icon).muted().icon_xs().show(&mut child).tip(*tip).clicked() {
                 clicked = Some(i);
             }
         }
         draw_time(&mut child);
     } else {
         for (i, (icon, tip)) in buttons.iter().enumerate() {
-            if w::btn(icon).muted().icon_sm().show(&mut child).on_hover_text(*tip).clicked() {
+            if w::btn(icon).muted().icon_xs().show(&mut child).tip(*tip).clicked() {
                 clicked = Some(i);
             }
         }

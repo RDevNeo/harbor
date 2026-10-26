@@ -11,6 +11,7 @@
 //! - `open(ctx, key)`, `open_gallery(ctx, keys, index)` (← → to browse),
 //!   `lightbox(ctx)` (once per frame, after the rest), `is_open(ctx)`.
 
+use crate::widgets::Tip as _;
 use crate::icons as ic;
 use crate::theme::RADIUS_MD;
 use crate::widgets as w;
@@ -276,7 +277,7 @@ fn thumb_in(ui: &mut Ui, key: &str, size: Vec2, group: &[String]) -> Response {
         }
         ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.border() }), StrokeKind::Inside);
     }
-    let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tip);
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(tip);
     if resp.clicked() {
         match group.iter().position(|k| k == key) {
             Some(i) => open_gallery(ui.ctx(), group.to_vec(), i),
@@ -295,7 +296,7 @@ pub fn attachment(ui: &mut Ui, key: &str, size: Vec2) -> bool {
     let p = ui.painter();
     p.circle_filled(xr.center(), 9.0, Color32::from_black_alpha(if x.hovered() { 220 } else { 160 }));
     ic::glyph(p, xr.center(), ic::X, 11.0, Color32::WHITE);
-    x.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Remove").clicked()
+    x.on_hover_cursor(CursorIcon::PointingHand).tip("Remove").clicked()
 }
 
 // ---------------------------------------------------------------- lightbox
@@ -417,14 +418,14 @@ pub fn lightbox(ctx: &egui::Context) {
         let bar = Rect::from_min_max(pos2(screen.right() - 340.0, screen.top() + 12.0), pos2(screen.right() - 12.0, screen.top() + 44.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar).layout(egui::Layout::right_to_left(egui::Align::Center)));
         child.spacing_mut().item_spacing.x = 6.0;
-        if w::btn(ic::X).icon_sm().show(&mut child).on_hover_text("Close (Esc)").clicked() {
+        if w::btn(ic::X).secondary().icon_xs().show(&mut child).tip("Close (Esc)").clicked() {
             shut = true;
         }
-        if Path::new(&key).is_absolute() && w::btn(&format!("{}  Copy path", ic::COPY)).sm().show(&mut child).clicked() {
+        if Path::new(&key).is_absolute() && w::btn(&format!("{}  Copy path", ic::COPY)).secondary().xs().show(&mut child).clicked() {
             ctx.copy_text(key.clone());
         }
         // Copy image (also Ctrl+C): the encoded bytes go to the system clipboard as PNG.
-        let copy = w::btn(&format!("{}  Copy image", ic::IMAGE)).sm().show(&mut child).clicked()
+        let copy = w::btn(&format!("{}  Copy image", ic::IMAGE)).secondary().xs().show(&mut child).clicked()
             || ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
         if copy {
             let bytes = lock(&s).bytes.get(&key).map(|b| b.to_vec()).or_else(|| std::fs::read(&key).ok());
@@ -437,7 +438,7 @@ pub fn lightbox(ctx: &egui::Context) {
                 let x = if dx > 0.0 { screen.left() + dx } else { screen.right() + dx };
                 let r = Rect::from_center_size(pos2(x, room.center().y), Vec2::splat(32.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
-                if w::btn(glyph).icon().show(&mut child).on_hover_text(tip).clicked() {
+                if w::btn(glyph).secondary().icon_sm().show(&mut child).tip(tip).clicked() {
                     go = Some(to);
                 }
             }

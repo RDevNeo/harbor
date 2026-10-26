@@ -32,6 +32,7 @@
 //!
 //! Settings stay local to each PC and never travel. The wire format is in android/PROTOCOL.md.
 
+use crate::widgets::Tip as _;
 use crate::api::{self, Call, Reply, err, ok};
 use crate::app::App;
 use crate::store::{self, Chat, Item, Role};
@@ -2619,7 +2620,7 @@ impl App {
             let col = if away { t.subtle().gamma_multiply(0.6) } else { t.subtle() };
             let text = eframe::egui::RichText::new(format!("{}  {}", crate::icons::MONITOR, v.label)).text_style(crate::theme::ts("label-12")).color(col);
             let tip = if away { format!("Open on {} (not in front)", v.label) } else { format!("Open on {}", v.label) };
-            ui.label(text).on_hover_text(tip);
+            ui.label(text).tip(tip);
         }
         if let Some(soonest) = viewers.iter().map(|v| v.until).min() {
             ui.ctx().request_repaint_after(soonest.saturating_duration_since(Instant::now()) + Duration::from_millis(50));
@@ -2675,7 +2676,7 @@ impl App {
             );
             w::separator(ui);
             w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), &format!("Key {}", crate::tls::short(&my_fp)), |ui| {
-                if w::btn(crate::icons::COPY).muted().icon_sm().show(ui).on_hover_text("Copy this PC's full key").clicked() {
+                if w::btn(crate::icons::COPY).muted().icon_xs().show(ui).tip("Copy this PC's full key").clicked() {
                     ui.ctx().copy_text(my_fp.clone());
                 }
                 if on && !phones_here && w::btn("Enable phone access").sm().outline().show(ui).clicked() {

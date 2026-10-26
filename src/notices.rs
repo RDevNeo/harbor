@@ -55,17 +55,17 @@ fn toast(ctx: &egui::Context, t: &Tokens, id: &str, y: f32, icon: impl FnOnce(&e
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             if let Some((label, enabled)) = primary {
-                                if w::btn(label).sm().primary().enabled(enabled).show(ui).clicked() {
+                                if w::btn(label).xs().primary().enabled(enabled).show(ui).clicked() {
                                     click = Click::Primary;
                                 }
                             }
-                            if w::btn(secondary).sm().ghost().show(ui).clicked() {
+                            if w::btn(secondary).xs().ghost().show(ui).clicked() {
                                 click = Click::Secondary;
                             }
                         });
                     });
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                        if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text("Dismiss").clicked() {
+                        if w::btn(ic::X).muted().icon_xs().show(ui).on_hover_text("Dismiss").clicked() {
                             click = Click::Close;
                         }
                     });

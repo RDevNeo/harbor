@@ -287,7 +287,7 @@ impl App {
         let mut open_chat = None;
         // Stop all, in the top row's corner: as the old waiting bar's, it asks first.
         let sr = Rect::from_min_size(pos2(rect.right() - 4.0 - STOP_W, y), Vec2::new(STOP_W - 2.0, ROW_H));
-        if w::overlay(ui, sr, |ui| w::btn(ic::STOP).muted().icon_sm().show(ui)).on_hover_text("Stop all: every running sub-agent, and clear their queues").clicked() {
+        if w::overlay(ui, sr, |ui| w::btn(ic::STOP).muted().icon_xs().show(ui)).on_hover_text("Stop all: every running sub-agent, and clear their queues").clicked() {
             self.dialog = Some(crate::app::Dialog::StopAll(lead));
         }
         let row_w = width - 8.0 - STOP_W;

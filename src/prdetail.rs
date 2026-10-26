@@ -5,6 +5,7 @@
 //! Actions: Ready for review, Check out, and a ⋯ menu (refresh, review with an
 //! agent, open, copy link / number / checkout command).
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use crate::autowork::{Go, Job};
 use crate::icons as ic;
@@ -407,7 +408,7 @@ pub fn field(ui: &mut Ui, icon: &str, name: &str, add: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.set_min_height(28.0);
         let (r, _) = ui.allocate_exact_size(Vec2::new(120.0, 20.0), Sense::hover());
-        ic::glyph(ui.painter(), pos2(r.left() + 8.0, r.center().y), icon, 15.0, t.subtle());
+        ic::glyph(ui.painter(), pos2(r.left() + 8.0, r.center().y), icon, 16.0, t.subtle());
         ui.painter().text(pos2(r.left() + 24.0, r.center().y), egui::Align2::LEFT_CENTER, name, FontId::proportional(14.0), t.subtle());
         add(ui);
     });
@@ -478,7 +479,7 @@ impl App {
                 let r = ui
                     .add(egui::Label::new(RichText::new(format!("{} #{number}  {}", repo.to_lowercase(), ic::EXTERNAL)).text_style(theme::ts("label-14")).color(t.subtle())).sense(Sense::click()))
                     .on_hover_cursor(CursorIcon::PointingHand)
-                    .on_hover_text("Open on GitHub");
+                    .tip("Open on GitHub");
                 if r.clicked() {
                     act = Some(Act::OpenWeb);
                 }
@@ -494,7 +495,7 @@ impl App {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    let more = w::btn("⋯").muted().icon_sm().show(ui).on_hover_text("More actions");
+                    let more = w::btn("⋯").muted().icon_xs().show(ui).tip("More actions");
                     egui::Popup::menu(&more).show(|ui| {
                         ui.set_min_width(220.0);
                         if ui.button(format!("{}  Refresh", ic::REFRESH)).clicked() {
@@ -534,13 +535,13 @@ impl App {
                             None => {}
                         }
                         let tip = if project.is_some() { "Check out this branch in a terminal (gh pr checkout)" } else { "Add this repo as a project to check it out here" };
-                        if w::btn(&format!("{}  Check out", ic::BRANCH)).sm().outline().enabled(project.is_some()).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                        if w::btn(&format!("{}  Check out", ic::BRANCH)).xs().outline().enabled(project.is_some()).show(ui).tip(tip).on_disabled_hover_text(tip).clicked() {
                             act = Some(Act::Checkout);
                         }
                     }
                     if open && draft {
                         let label = if busy { "Marking ready…".to_string() } else { format!("{}  Ready for review", ic::PR_OPEN) };
-                        if w::btn(&label).sm().primary().enabled(!busy).show(ui).on_hover_text("Mark this draft ready for review (gh pr ready)").clicked() {
+                        if w::btn(&label).xs().primary().enabled(!busy).show(ui).tip("Mark this draft ready for review (gh pr ready)").clicked() {
                             act = Some(Act::Ready);
                         }
                     }
@@ -561,7 +562,7 @@ impl App {
                     let r = ui
                         .add(egui::Label::new(RichText::new(&checkout).text_style(theme::ts("label-12-mono")).color(t.subtle())).sense(Sense::click()))
                         .on_hover_cursor(CursorIcon::PointingHand)
-                        .on_hover_text("Copy");
+                        .tip("Copy");
                     if r.clicked() {
                         act = Some(Act::CopyCheckout);
                     }
@@ -573,13 +574,13 @@ impl App {
                     let base_col = if f.conflicting { t.amber(900) } else { t.subtle() };
                     ui.label(RichText::new(&f.base).text_style(theme::ts("label-12-mono")).color(base_col));
                     if f.conflicting {
-                        ui.label(RichText::new(ic::ALERT).size(13.0).color(t.amber(900))).on_hover_text("Has conflicts with the base branch");
+                        ui.label(RichText::new(ic::ALERT).size(13.0).color(t.amber(900))).tip("Has conflicts with the base branch");
                     }
                     ui.label(RichText::new(ic::ARROW_LEFT).size(12.0).color(t.gray(700)));
                     let r = ui
                         .add(egui::Label::new(RichText::new(&f.head).text_style(theme::ts("label-12-mono")).color(t.subtle())).sense(Sense::click()))
                         .on_hover_cursor(CursorIcon::PointingHand)
-                        .on_hover_text("Copy branch name");
+                        .tip("Copy branch name");
                     if r.clicked() {
                         ui.ctx().copy_text(f.head.clone());
                     }
@@ -724,7 +725,7 @@ impl App {
                         let tex = self.prs.avatars.get(who).and_then(|a| a.clone());
                         paint_avatar(ui.painter(), r.center(), 8.0, tex.as_ref(), who, &t);
                         ui.label(RichText::new(who).text_style(theme::ts("label-14")).color(t.fg()));
-                        ui.label(RichText::new(icon).size(13.0).color(col)).on_hover_text(what);
+                        ui.label(RichText::new(icon).size(13.0).color(col)).tip(what);
                         ui.add_space(6.0);
                     }
                 });
@@ -749,10 +750,10 @@ impl App {
                     }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if w::btn(&format!("{}  Open in Web", ic::EXTERNAL)).sm().outline().show(ui).clicked() {
+                        if w::btn(&format!("{}  Open in Web", ic::EXTERNAL)).xs().outline().show(ui).clicked() {
                             *act = Some(Act::OpenWeb);
                         }
-                        if w::btn(&format!("{}  Open in Harbor's browser", ic::GLOBE)).sm().outline().show(ui).clicked() {
+                        if w::btn(&format!("{}  Open in Harbor's browser", ic::GLOBE)).xs().outline().show(ui).clicked() {
                             *act = Some(Act::OpenPane);
                         }
                     });
@@ -778,7 +779,7 @@ impl App {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(icon).size(14.0).color(col));
                             let r = ui.add(egui::Label::new(RichText::new(&c.name).text_style(theme::ts("label-14")).color(t.fg())).sense(Sense::click()));
-                            if !c.url.is_empty() && r.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Open the run").clicked() {
+                            if !c.url.is_empty() && r.on_hover_cursor(CursorIcon::PointingHand).tip("Open the run").clicked() {
                                 crate::git::open_url(&c.url);
                             }
                         });
@@ -926,7 +927,7 @@ impl App {
                     Line::File { path, adds, dels } => {
                         p.rect_filled(rect, CornerRadius::ZERO, t.gray(100));
                         p.hline(rect.x_range(), rect.top(), Stroke::new(1.0, t.border()));
-                        ic::glyph(p, pos2(x + 4.0, y), ic::FILE, 13.0, t.subtle());
+                        ic::glyph(p, pos2(x + 4.0, y), ic::FILE, 14.0, t.subtle());
                         let g = p.layout_no_wrap(path.clone(), FontId::new(13.0, theme::medium()), t.fg());
                         let gw = g.size().x;
                         p.galley(pos2(x + 16.0, y - g.size().y / 2.0), g, t.fg());

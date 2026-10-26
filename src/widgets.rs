@@ -40,12 +40,34 @@ pub enum Variant {
     GhostDestructive,
 }
 
+/// rengaf's button sizes (button-variants.ts): height, text and icon go together.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Size {
-    Default, // h-8
-    Sm,      // h-7, button-12
-    Icon,    // square h-8
-    IconSm,  // square h-7
+    Default, // h-9 (36), button-14, px-4: page actions, forms, dialogs
+    Sm,      // h-8 (32), button-14, px-3: toolbars, card headers, secondary actions
+    Xs,      // h-7 (28), button-12, px-2.5: table rows, dense toolbars
+    #[allow(dead_code)]
+    Icon,    // size-9 (36)
+    IconSm,  // size-8 (32)
+    IconXs,  // size-7 (28)
+}
+
+impl Size {
+    /// (height, text font, horizontal padding, icon glyph size)
+    fn metrics(self) -> (f32, FontId, f32, f32) {
+        match self {
+            Size::Default => (36.0, FontId::new(14.0, theme::medium()), 16.0, 16.0),
+            Size::Sm => (32.0, FontId::new(14.0, theme::medium()), 12.0, 16.0),
+            Size::Xs => (28.0, FontId::new(12.0, theme::medium()), 10.0, 14.0),
+            Size::Icon => (36.0, FontId::new(16.0, theme::medium()), 0.0, 16.0),
+            Size::IconSm => (32.0, FontId::new(16.0, theme::medium()), 0.0, 16.0),
+            Size::IconXs => (28.0, FontId::new(14.0, theme::medium()), 0.0, 14.0),
+        }
+    }
+
+    fn square(self) -> bool {
+        matches!(self, Size::Icon | Size::IconSm | Size::IconXs)
+    }
 }
 
 pub struct Btn<'a> {
@@ -58,7 +80,8 @@ pub struct Btn<'a> {
 }
 
 pub fn btn(text: &str) -> Btn<'_> {
-    Btn { text, variant: Variant::Secondary, size: Size::Default, enabled: true, pressed: false, full_width: false }
+    // rengaf: neutral actions are outline; primary is the one main action of a view.
+    Btn { text, variant: Variant::Outline, size: Size::Default, enabled: true, pressed: false, full_width: false }
 }
 
 impl<'a> Btn<'a> {
@@ -69,37 +92,36 @@ impl<'a> Btn<'a> {
     pub fn muted(self) -> Self { self.variant(Variant::GhostMuted) }
     pub fn size(mut self, s: Size) -> Self { self.size = s; self }
     pub fn sm(self) -> Self { self.size(Size::Sm) }
+    pub fn xs(self) -> Self { self.size(Size::Xs) }
+    #[allow(dead_code)]
     pub fn icon(self) -> Self { self.size(Size::Icon) }
     pub fn icon_sm(self) -> Self { self.size(Size::IconSm) }
+    pub fn icon_xs(self) -> Self { self.size(Size::IconXs) }
+    pub fn secondary(self) -> Self { self.variant(Variant::Secondary) }
     pub fn enabled(mut self, e: bool) -> Self { self.enabled = e; self }
     /// aria-pressed: ghost buttons show the accent fill.
     pub fn pressed(mut self, p: bool) -> Self { self.pressed = p; self }
 
     /// Width `show` will take (for placing the button before drawing it).
     pub fn width(&self, ui: &Ui) -> f32 {
-        let (h, font, pad) = match self.size {
-            Size::Default => (32.0, FontId::new(14.0, theme::medium()), 12.0),
-            Size::Sm => (28.0, FontId::new(12.0, theme::medium()), 10.0),
-            Size::Icon => (32.0, FontId::new(15.0, theme::medium()), 0.0),
-            Size::IconSm => (28.0, FontId::new(13.0, theme::medium()), 0.0),
-        };
-        match self.size {
-            Size::Icon | Size::IconSm => h,
-            _ => ui.painter().layout_no_wrap(self.text.to_string(), font, Color32::PLACEHOLDER).size().x + pad * 2.0,
+        let (h, font, pad, _) = self.size.metrics();
+        if self.size.square() {
+            h
+        } else {
+            ui.painter().layout_no_wrap(self.text.to_string(), font, Color32::PLACEHOLDER).size().x + pad * 2.0
         }
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
         let t = tokens(ui);
-        let (h, font, pad) = match self.size {
-            Size::Default => (32.0, FontId::new(14.0, theme::medium()), 12.0),
-            Size::Sm => (28.0, FontId::new(12.0, theme::medium()), 10.0),
-            Size::Icon => (32.0, FontId::new(15.0, theme::medium()), 0.0),
-            Size::IconSm => (28.0, FontId::new(13.0, theme::medium()), 0.0),
-        };
+        let (h, mut font, pad, icon) = self.size.metrics();
+        // An icon-only button draws its glyph at the size's icon step.
+        if self.size.square() {
+            font = FontId::new(icon, font.family);
+        }
         let galley = ui.painter().layout_no_wrap(self.text.to_string(), font, Color32::PLACEHOLDER);
         let w = match self.size {
-            Size::Icon | Size::IconSm => h,
+            _ if self.size.square() => h,
             _ if self.full_width => ui.available_width(),
             _ => galley.size().x + pad * 2.0,
         };
@@ -121,7 +143,9 @@ impl<'a> Btn<'a> {
                 (f, t.fg(), clear)
             }
             Variant::Outline => {
-                let f = if hover || self.pressed { t.accent() } else { t.bg100 };
+                // Dark: bg-input/30 over the page, border in input (rengaf's outline).
+                let rest = if t.dark { mix(t.bg100, t.border(), 0.3) } else { t.bg100 };
+                let f = if hover || self.pressed { if t.dark { mix(t.bg100, t.border(), 0.5) } else { t.accent() } } else { rest };
                 (f, t.fg(), t.border())
             }
             Variant::Ghost => {
@@ -368,28 +392,49 @@ pub fn well(ui: &Ui) -> Frame {
         .inner_margin(Margin::symmetric(12, 10))
 }
 
+/// Badge tones (badge-variants.ts): the "-subtle" recipe (bg 200, border 400, text 900; gray:
+/// text 1000), Muted (gray-100, no border), and the solid 800 fills.
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub enum Tone {
     Gray,
     Blue,
     Green,
     Amber,
-    #[allow(dead_code)]
     Red,
+    Muted,
+    BlueSolid,
+    GreenSolid,
+    AmberSolid,
+    RedSolid,
 }
 
+impl Tone {
+    /// (fill, border, text)
+    pub fn colors(self, t: &Tokens) -> (Color32, Color32, Color32) {
+        let clear = Color32::TRANSPARENT;
+        match self {
+            Tone::Gray => (t.gray(200), t.gray(400), t.gray(1000)),
+            Tone::Blue => (t.blue(200), t.blue(400), t.blue(900)),
+            Tone::Green => (t.green(200), t.green(400), t.green(900)),
+            Tone::Amber => (t.amber(200), t.amber(400), t.amber(900)),
+            Tone::Red => (t.red(200), t.red(400), t.red(900)),
+            Tone::Muted => (t.gray(100), clear, t.gray(900)),
+            Tone::BlueSolid => (t.blue(800), clear, Color32::WHITE),
+            Tone::GreenSolid => (t.green(800), clear, Color32::WHITE),
+            Tone::AmberSolid => (t.amber(800), clear, if t.dark { t.bg100 } else { t.gray(1000) }),
+            Tone::RedSolid => (t.red(800), clear, Color32::WHITE),
+        }
+    }
+}
+
+/// `Badge`: rounded-full, px-2 py-0.5, label-12 medium, a 1px border.
 pub fn badge(ui: &mut Ui, text: &str, tone: Tone) -> Response {
     let t = tokens(ui);
-    let (bg, fg) = match tone {
-        Tone::Gray => (t.gray(200), t.gray(1000)),
-        Tone::Blue => (t.blue(200), t.blue(900)),
-        Tone::Green => (t.green(200), t.green(900)),
-        Tone::Amber => (t.amber(200), t.amber(900)),
-        Tone::Red => (t.red(200), t.red(900)),
-    };
+    let (bg, border, fg) = tone.colors(&t);
     let g = ui.painter().layout_no_wrap(text.into(), FontId::new(12.0, theme::medium()), fg);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 16.0, 20.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), bg);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 18.0, 22.0), Sense::hover());
+    ui.painter().rect(rect, CornerRadius::same(11), bg, Stroke::new(1.0, border), StrokeKind::Inside);
     ui.painter().galley(rect.center() - g.size() / 2.0, g, fg);
     resp
 }
@@ -489,11 +534,21 @@ pub fn composer_growth(ctx: &egui::Context, id: egui::Id) -> f32 {
 /// Text that reads as "Subtle" (gray-900) in the given preset.
 pub fn subtle(ui: &mut Ui, text: impl Into<String>, preset: &str) -> Response {
     let t = tokens(ui);
-    ui.label(egui::RichText::new(text.into()).text_style(theme::ts(preset)).color(t.subtle()))
+    ui.label(rich(text, preset).color(t.subtle()))
 }
 
 pub fn text(ui: &mut Ui, text: impl Into<String>, preset: &str) -> Response {
-    ui.label(egui::RichText::new(text.into()).text_style(theme::ts(preset)))
+    ui.label(rich(text, preset))
+}
+
+/// Text in a rengaf preset: its size and weight, line height and tracking.
+pub fn rich(text: impl Into<String>, preset: &str) -> egui::RichText {
+    let (line, track) = theme::preset_metrics(preset);
+    let mut r = egui::RichText::new(text.into()).text_style(theme::ts(preset)).line_height(line);
+    if track != 0.0 {
+        r = r.extra_letter_spacing(track);
+    }
+    r
 }
 
 pub fn separator(ui: &mut Ui) {
@@ -504,14 +559,29 @@ pub fn separator(ui: &mut Ui) {
 
 // ---------------------------------------------------------------- Popover / menus
 
-/// Popover surface: bg-popover, border, rounded-xl, menu shadow.
+/// Popover surface: bg-popover, border, rounded-lg (rengaf's rules), p-1, the menu shadow.
 pub fn popover_frame(t: &Tokens) -> Frame {
     Frame::new()
         .fill(t.bg100)
         .stroke(Stroke::new(1.0, t.border()))
-        .corner_radius(CornerRadius::same(crate::theme::RADIUS_XL))
-        .inner_margin(Margin::same(6))
-        .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(if t.dark { 120 } else { 30 }) })
+        .corner_radius(CornerRadius::same(RADIUS_LG))
+        .inner_margin(Margin::same(4))
+        .shadow(t.shadow_menu())
+}
+
+/// A menu's section label (DropdownMenuLabel): px-2 py-1.5, 12 subtle.
+pub fn menu_label(ui: &mut Ui, text: &str) {
+    let t = tokens(ui);
+    let g = ui.painter().layout_no_wrap(text.trim().to_string(), FontId::proportional(12.0), t.subtle());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover());
+    ui.painter().galley(egui::pos2(rect.left() + 8.0, rect.center().y - g.size().y / 2.0), g, t.subtle());
+}
+
+/// A menu's separator: full bleed across the popover's padding, my-1.
+pub fn menu_separator(ui: &mut Ui) {
+    let t = tokens(ui);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 9.0), Sense::hover());
+    ui.painter().hline((rect.left() - 4.0)..=(rect.right() + 4.0), rect.center().y, Stroke::new(1.0, t.border()));
 }
 
 /// Shows a floating popover anchored to `anchor`, above it when `above`.
@@ -554,23 +624,25 @@ pub fn popover<R>(
 /// A row in a menu: optional icon, label, optional description, check mark.
 pub fn menu_item(ui: &mut Ui, icon: &str, label: &str, desc: Option<&str>, checked: bool) -> Response {
     let t = tokens(ui);
+    // rengaf DropdownMenuItem: rounded-sm, px-2 py-1.5, text 14 regular, gap 8, icon 16 muted,
+    // focus/hover bg-accent (gray-200).
     let h = if desc.is_some() { 44.0 } else { 32.0 };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click());
     let p = ui.painter();
-    if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(RADIUS_MD), t.gray(100));
+    if resp.hovered() && ui.is_enabled() {
+        p.rect_filled(rect, CornerRadius::same(4), t.accent());
     }
-    let mut x = rect.left() + 10.0;
+    let mut x = rect.left() + 8.0;
     if !icon.is_empty() {
-        crate::icons::glyph(p, egui::pos2(x + 7.0, rect.top() + 16.0), icon, 15.0, t.subtle());
+        crate::icons::glyph(p, egui::pos2(x + 8.0, rect.top() + 16.0), icon, 16.0, t.subtle());
         x += 24.0;
     }
-    p.text(egui::pos2(x, rect.top() + if desc.is_some() { 7.0 } else { 7.0 }), Align2::LEFT_TOP, label, FontId::new(14.0, theme::medium()), t.fg());
+    p.text(egui::pos2(x, rect.top() + 7.0), Align2::LEFT_TOP, label, FontId::proportional(14.0), t.fg());
     if let Some(d) = desc {
         p.text(egui::pos2(x, rect.top() + 25.0), Align2::LEFT_TOP, d, FontId::proportional(12.0), t.subtle());
     }
     if checked {
-        crate::icons::glyph(p, egui::pos2(rect.right() - 16.0, rect.top() + 16.0), crate::icons::CHECK, 15.0, t.fg());
+        crate::icons::glyph(p, egui::pos2(rect.right() - 16.0, rect.top() + 16.0), crate::icons::CHECK, 16.0, t.fg());
     }
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
@@ -631,7 +703,7 @@ pub fn kbd(ui: &Ui, pos: egui::Pos2, text: &str, strong: bool) {
     let g = ui.painter().layout_no_wrap(text.into(), FontId::new(12.0, egui::FontFamily::Monospace), t.subtle());
     let r = Rect::from_min_size(pos - Vec2::new(g.size().x + 12.0, g.size().y / 2.0 + 3.0), g.size() + Vec2::new(12.0, 6.0));
     if strong {
-        ui.painter().rect(r, CornerRadius::same(4), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
+        key_cap(ui.painter(), r, &t);
     }
     ui.painter().galley(r.min + Vec2::new(6.0, 3.0), g, t.subtle());
 }
@@ -682,7 +754,7 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, id: Option<egui:
         te = te.id(id);
     }
     let r = te.show(ui).response.response;
-    crate::icons::glyph(ui.painter(), egui::pos2(r.rect.left() + 11.0, r.rect.center().y), crate::icons::SEARCH, 15.0, t.subtle());
+    crate::icons::glyph(ui.painter(), egui::pos2(r.rect.left() + 11.0, r.rect.center().y), crate::icons::SEARCH, 16.0, t.subtle());
     r
 }
 
@@ -693,26 +765,59 @@ pub fn overlay<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R 
     add(&mut child)
 }
 
+// ---------------------------------------------------------------- Tooltip
+
+/// rengaf's Tooltip (inverted: bg-foreground text-background, rounded-md, px-3 py-1.5,
+/// text-xs) in place of egui's default, which looks like a popover.
+pub trait Tip {
+    fn tip(self, text: impl Into<String>) -> Self;
+}
+
+impl Tip for Response {
+    fn tip(self, text: impl Into<String>) -> Self {
+        let text = text.into();
+        if text.is_empty() {
+            return self;
+        }
+        self.on_hover_ui(move |ui| tip_body(ui, &text))
+    }
+}
+
+/// The tooltip's text, painted over egui's own popup frame (whose margin is `menu_margin`, 4).
+pub fn tip_body(ui: &mut Ui, text: &str) {
+    let t = tokens(ui);
+    let (fill, fg) = (t.gray(1000), t.bg100);
+    let galley = ui.painter().layout(text.to_string(), FontId::proportional(12.0), fg, 280.0);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + Vec2::new(16.0, 4.0), Sense::hover());
+    let frame = rect.expand(5.0);
+    ui.painter().with_clip_rect(frame.expand(1.0)).rect_filled(frame, CornerRadius::same(RADIUS_MD), fill);
+    ui.painter().galley(rect.min + Vec2::new(8.0, 2.0), galley, fg);
+}
+
 // ---------------------------------------------------------------- Settings
 
-/// `Switch`: a pill, blue when on, whose knob slides across.
+/// `Switch`: a pill, gray-1000 when on, whose knob slides across.
 pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     let t = tokens(ui);
-    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(36.0, 20.0), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(32.0, 20.0), Sense::click());
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, ui.is_enabled(), *on, ""));
+    // rengaf Switch: h-[1.15rem] w-8; on bg-primary (gray-1000), off bg-input (gray-400); a
+    // size-4 thumb in background, which in dark is the foreground while off.
+    let rect = Rect::from_center_size(rect.center(), Vec2::new(32.0, 18.0));
     let k = ui.ctx().animate_bool_with_time(resp.id, *on, 0.12);
-    let a = if ui.is_enabled() { 1.0 } else { 0.45 };
+    let a = if ui.is_enabled() { 1.0 } else { 0.5 };
     let off = if resp.hovered() { t.gray(500) } else { t.gray(400) };
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(10), alpha(mix(off, t.blue(700), k), a));
-    let x = egui::lerp((rect.left() + 10.0)..=(rect.right() - 10.0), k);
-    p.circle_filled(egui::pos2(x, rect.center().y), 8.0, alpha(Color32::WHITE, a));
+    p.rect_filled(rect, CornerRadius::same(9), alpha(mix(off, t.primary(), k), a));
+    let x = egui::lerp((rect.left() + 9.0)..=(rect.right() - 9.0), k);
+    let thumb_off = if t.dark { t.fg() } else { t.bg100 };
+    p.circle_filled(egui::pos2(x, rect.center().y), 8.0, alpha(mix(thumb_off, t.on_primary(), k), a));
     if resp.has_focus() {
-        focus_ring(ui, rect, 8);
+        focus_ring(ui, rect, 9);
     }
     if ui.is_enabled() { resp.on_hover_cursor(CursorIcon::PointingHand) } else { resp }
 }
@@ -732,9 +837,9 @@ pub fn setting_row<R>(ui: &mut Ui, title: &str, desc: &str, control: impl FnOnce
                 .allocate_ui_with_layout(Vec2::new(lw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(lw);
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.label(egui::RichText::new(title).text_style(theme::ts("strong-14")).color(t.fg()));
+                    ui.label(rich(title, "strong-14").color(t.fg()));
                     if !desc.is_empty() {
-                        ui.add(egui::Label::new(egui::RichText::new(desc).text_style(theme::ts("label-13")).color(t.subtle())).wrap());
+                        ui.add(egui::Label::new(rich(desc, "copy-13").color(t.subtle())).wrap());
                     }
                 })
                 .response
@@ -750,6 +855,12 @@ pub fn setting_row<R>(ui: &mut Ui, title: &str, desc: &str, control: impl FnOnce
             r
         })
         .inner
+}
+
+/// A key cap (rengaf's kbd): rounded-sm, a border with a 2px bottom edge.
+fn key_cap(p: &egui::Painter, r: Rect, t: &Tokens) {
+    p.rect(r, CornerRadius::same(4), t.border(), Stroke::NONE, StrokeKind::Inside);
+    p.rect(Rect::from_min_max(r.min + Vec2::splat(1.0), r.max - Vec2::new(1.0, 2.0)), CornerRadius::same(3), t.gray(100), Stroke::NONE, StrokeKind::Inside);
 }
 
 /// A shortcut as key caps ("Ctrl+Shift+F" → Ctrl, Shift, F), styled as `kbd`.
@@ -768,8 +879,8 @@ pub fn kbd_combo(ui: &mut Ui, combo: &str) -> Response {
     for g in gs {
         let cw = g.size().x.max(8.0) + 12.0;
         let r = Rect::from_min_size(egui::pos2(x, rect.top()), Vec2::new(cw, h));
-        ui.painter().rect(r, CornerRadius::same(4), t.gray(100), Stroke::new(1.0, t.border()), StrokeKind::Inside);
-        ui.painter().galley(r.center() - g.size() / 2.0, g, t.subtle());
+        key_cap(ui.painter(), r, &t);
+        ui.painter().galley(r.center() - g.size() / 2.0 - Vec2::new(0.0, 1.0), g, t.subtle());
         x += cw + 4.0;
     }
     resp

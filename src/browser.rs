@@ -2,6 +2,7 @@
 //! process, started when the panel opens and killed when it closes, so Harbor
 //! itself stays small. Frames arrive through a private folder in RAM (`store::run_dir`); input goes back as JSON.
 
+use crate::widgets::Tip as _;
 use crate::icons as ic;
 use crate::theme::Tokens;
 use crate::widgets as w;
@@ -197,14 +198,14 @@ impl Browser {
         Frame::new().inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                if w::btn(ic::ARROW_LEFT).muted().icon_sm().enabled(self.back).show(ui).on_hover_text("Back").clicked() {
+                if w::btn(ic::ARROW_LEFT).muted().icon_xs().enabled(self.back).show(ui).tip("Back").clicked() {
                     self.send(json!({ "t": "back" }));
                 }
-                if w::btn(ic::ARROW_RIGHT).muted().icon_sm().enabled(self.forward).show(ui).on_hover_text("Forward").clicked() {
+                if w::btn(ic::ARROW_RIGHT).muted().icon_xs().enabled(self.forward).show(ui).tip("Forward").clicked() {
                     self.send(json!({ "t": "forward" }));
                 }
                 let (icon, tip) = if self.loading { (ic::X, "Loading…") } else { (ic::ROTATE_CW, "Reload") };
-                if w::btn(icon).muted().icon_sm().show(ui).on_hover_text(tip).clicked() {
+                if w::btn(icon).muted().icon_xs().show(ui).tip(tip).clicked() {
                     self.send(json!({ "t": "reload" }));
                 }
                 let wdt = ui.available_width() - 64.0;
@@ -215,7 +216,7 @@ impl Browser {
                     self.load(&u);
                 }
                 // (the page picks this URL: only a web page goes to xdg-open)
-                if w::btn(ic::EXTERNAL).muted().icon_sm().enabled(web(&self.url)).show(ui).on_hover_text("Open in my browser").clicked() {
+                if w::btn(ic::EXTERNAL).muted().icon_xs().enabled(web(&self.url)).show(ui).tip("Open in my browser").clicked() {
                     action = Some(Action::External(self.url.clone()));
                 }
             });
@@ -253,7 +254,7 @@ impl Browser {
                 let local = host.starts_with("localhost") || host.starts_with("127.");
                 w::subtle(ui, if local { "Nothing is running there." } else { "The site didn't respond." }, "label-13");
                 ui.add_space(10.0);
-                if w::btn(&format!("{}  Retry", ic::ROTATE_CW)).outline().show(ui).clicked() {
+                if w::btn(&format!("{}  Retry", ic::ROTATE_CW)).sm().outline().show(ui).clicked() {
                     self.send(json!({ "t": "reload" }));
                 }
                 if !servers.is_empty() {
@@ -261,7 +262,7 @@ impl Browser {
                     w::subtle(ui, "Running on this machine", "label-12");
                     for s in servers {
                         let label = s.trim_start_matches("http://").trim_end_matches('/');
-                        if w::btn(&format!("{}  {label}", ic::GLOBE)).sm().variant(w::Variant::Ghost).show(ui).clicked() {
+                        if w::btn(&format!("{}  {label}", ic::GLOBE)).xs().variant(w::Variant::Ghost).show(ui).clicked() {
                             action = Some(Action::Load(s.clone()));
                         }
                     }
@@ -394,10 +395,10 @@ pub fn missing_ui(ui: &mut Ui, t: &Tokens) -> (bool, bool) {
                 (true, false) => format!("{}  Install engine", ic::DOWNLOAD),
                 _ => format!("{}  Build engine", ic::HAMMER),
             };
-            if w::btn(&label).primary().enabled(!working).show(ui).clicked() {
+            if w::btn(&label).sm().primary().enabled(!working).show(ui).clicked() {
                 build = true;
             }
-            if w::btn("Close").outline().show(ui).clicked() {
+            if w::btn("Close").sm().outline().show(ui).clicked() {
                 close = true;
             }
         });

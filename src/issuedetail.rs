@@ -4,6 +4,7 @@
 //! Actions: Close / Reopen, Fix with <provider> (an agent thread in the project), and a
 //! ⋯ menu (refresh, open, copy link / number).
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use crate::autowork::{Go, Job};
 use crate::icons as ic;
@@ -193,13 +194,13 @@ impl App {
                 let r = ui
                     .add(egui::Label::new(RichText::new(format!("{} #{number}  {}", repo.to_lowercase(), ic::EXTERNAL)).text_style(theme::ts("label-14")).color(t.subtle())).sense(Sense::click()))
                     .on_hover_cursor(CursorIcon::PointingHand)
-                    .on_hover_text("Open on GitHub");
+                    .tip("Open on GitHub");
                 if r.clicked() {
                     act = Some(Act::OpenWeb);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    let more = w::btn("⋯").muted().icon_sm().show(ui).on_hover_text("More actions");
+                    let more = w::btn("⋯").muted().icon_xs().show(ui).tip("More actions");
                     egui::Popup::menu(&more).show(|ui| {
                         ui.set_min_width(200.0);
                         if ui.button(format!("{}  Refresh", ic::REFRESH)).clicked() {
@@ -225,7 +226,7 @@ impl App {
                         (format!("{}  Reopen", ic::CIRCLE_DOT), Act::Reopen, "Reopen the issue (gh issue reopen)")
                     };
                     let label = if busy { "Saving…".to_string() } else { label };
-                    if w::btn(&label).sm().outline().enabled(!busy).show(ui).on_hover_text(tip).clicked() {
+                    if w::btn(&label).xs().outline().enabled(!busy).show(ui).tip(tip).clicked() {
                         act = Some(a);
                     }
                     if state == IssueState::Open {
@@ -377,10 +378,10 @@ impl App {
                     }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if w::btn(&format!("{}  Open in Web", ic::EXTERNAL)).sm().outline().show(ui).clicked() {
+                        if w::btn(&format!("{}  Open in Web", ic::EXTERNAL)).xs().outline().show(ui).clicked() {
                             *act = Some(Act::OpenWeb);
                         }
-                        if w::btn(&format!("{}  Open in Harbor's browser", ic::GLOBE)).sm().outline().show(ui).clicked() {
+                        if w::btn(&format!("{}  Open in Harbor's browser", ic::GLOBE)).xs().outline().show(ui).clicked() {
                             *act = Some(Act::OpenPane);
                         }
                     });

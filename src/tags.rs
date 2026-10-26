@@ -8,6 +8,7 @@
 //! The phone asks the same lists, ranked here, with `GET /v1/chats/{id}/tags`
 //! (android/PROTOCOL.md).
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use crate::icons as ic;
 use crate::slash;
@@ -690,8 +691,8 @@ impl App {
                             }
                             row(ui, rect, r, i == sel);
                             match r {
-                                Row::File(p) => resp.on_hover_text(p),
-                                Row::Ref(x) => resp.on_hover_text(format!("#{} {}\n{}", x.number, x.title, x.url)),
+                                Row::File(p) => resp.tip(p),
+                                Row::Ref(x) => resp.tip(format!("#{} {}\n{}", x.number, x.title, x.url)),
                             };
                         }
                     });

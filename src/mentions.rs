@@ -3,6 +3,7 @@
 //! wait as chips above the composer; on send they go to the agent as quoted blocks
 //! before your text, and the transcript shows them as chips on your message.
 
+use crate::widgets::Tip as _;
 use crate::app::App;
 use crate::icons as ic;
 use crate::store::{Item, Role};
@@ -174,12 +175,12 @@ pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
             ui.painter().rect_filled(xr, CornerRadius::same(4), t.gray(300));
         }
         ic::glyph(ui.painter(), xr.center(), ic::X, 12.0, t.subtle());
-        if x.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Remove").clicked() {
+        if x.on_hover_cursor(CursorIcon::PointingHand).tip("Remove").clicked() {
             click = Click::Remove;
         }
     }
     let tip: String = m.text.chars().take(300).collect();
-    if resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(format!("{tip}\n\nClick to see it in the chat")).clicked() && matches!(click, Click::None) {
+    if resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{tip}\n\nClick to see it in the chat")).clicked() && matches!(click, Click::None) {
         click = Click::Open;
     }
     click
@@ -196,5 +197,5 @@ pub fn hover_button(ui: &mut Ui, rect: Rect, outside: bool) -> bool {
     if !ui.rect_contains_pointer(rect.union(b)) {
         return false;
     }
-    w::overlay(ui, b, |ui| w::btn("@").muted().icon_sm().show(ui).on_hover_text("Mention in your next message").clicked())
+    w::overlay(ui, b, |ui| w::btn("@").muted().icon_xs().show(ui).tip("Mention in your next message").clicked())
 }

@@ -8,6 +8,7 @@
 //! and once per PR head commit (remembered in the store), at most
 //! [`MAX_AUTO`] at a time.
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Sel, View};
 use crate::icons as ic;
 use crate::issues::{self, Issue, IssueState};
@@ -289,11 +290,11 @@ impl App {
             w::subtle(ui, "Ctrl+Enter", "label-12");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let ready = !text.trim().is_empty();
-                if w::btn("Start").primary().enabled(ready).show(ui).clicked() || (enter && ready) {
+                if w::btn("Start").sm().primary().enabled(ready).show(ui).clicked() || (enter && ready) {
                     go = true;
                     *close = true;
                 }
-                if w::btn("Cancel").outline().show(ui).clicked() {
+                if w::btn("Cancel").sm().outline().show(ui).clicked() {
                     *close = true;
                 }
             });
@@ -309,7 +310,7 @@ impl App {
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             // Right-to-left layouts: the ▾ goes first so it lands on the right.
-            let more = w::btn(ic::DOWN).sm().primary().show(ui).on_hover_text("Pick the provider, or add instructions");
+            let more = w::btn(ic::DOWN).xs().primary().show(ui).tip("Pick the provider, or add instructions");
             let cur = self.agent_account().map(|a| a.id);
             let accounts: Vec<_> = self.accounts.iter().filter(|a| a.installed()).cloned().collect();
             let mut pick = None;
@@ -330,7 +331,7 @@ impl App {
             if let Some(id) = pick {
                 self.store.set("gh_agent_account", &id);
             }
-            if w::btn(&label).sm().primary().enabled(enabled).show(ui).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+            if w::btn(&label).xs().primary().enabled(enabled).show(ui).tip(tip).on_disabled_hover_text(tip).clicked() {
                 go = Some(Go::Now);
             }
         });

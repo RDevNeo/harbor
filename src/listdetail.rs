@@ -8,6 +8,7 @@
 //! [`header`] for the panel's tab strip and controls, [`shortcuts`] for the
 //! keys, and [`MenuKeys`] to drive their dropdown menus from the keyboard.
 
+use crate::widgets::Tip as _;
 use crate::icons as ic;
 use crate::theme::{self, RADIUS_MD};
 use crate::widgets::{self as w, alpha};
@@ -231,15 +232,15 @@ pub fn header(ui: &mut Ui, s: &Split, label: impl Fn(&str) -> (&'static str, Str
             ui.add_space(12.0);
             ui.spacing_mut().item_spacing.x = 6.0;
             if let Some(h) = close_hint {
-                if w::btn(ic::X).muted().icon_sm().show(ui).on_hover_text(h).clicked() {
+                if w::btn(ic::X).muted().icon_xs().show(ui).tip(h).clicked() {
                     close_page = true;
                 }
             }
-            if w::btn(ic::PANEL_RIGHT).muted().icon_sm().pressed(true).show(ui).on_hover_text("Hide the panel (Ctrl+Alt+B)").clicked() {
+            if w::btn(ic::PANEL_RIGHT).muted().icon_xs().pressed(true).show(ui).tip("Hide the panel (Ctrl+Alt+B)").clicked() {
                 act = Some(TabAct::Toggle);
             }
             let (icon, tip) = if s.max { (ic::MINIMIZE, "Show the list again") } else { (ic::MAXIMIZE, "Maximize the panel") };
-            if w::btn(icon).muted().icon_sm().pressed(s.max).show(ui).on_hover_text(tip).clicked() {
+            if w::btn(icon).muted().icon_xs().pressed(s.max).show(ui).tip(tip).clicked() {
                 act = Some(TabAct::Maximize);
             }
         });
@@ -254,7 +255,7 @@ pub fn header(ui: &mut Ui, s: &Split, label: impl Fn(&str) -> (&'static str, Str
 pub fn toggle_btn(ui: &mut Ui, s: &Split) -> Option<TabAct> {
     let has = !s.tabs.is_empty();
     let tip = if has { "Show the panel (Ctrl+Alt+B)" } else { "Open an item first" };
-    w::btn(ic::PANEL_RIGHT).muted().icon_sm().enabled(has).show(ui).on_hover_text(tip).clicked().then_some(TabAct::Toggle)
+    w::btn(ic::PANEL_RIGHT).muted().icon_xs().enabled(has).show(ui).tip(tip).clicked().then_some(TabAct::Toggle)
 }
 
 fn tab(ui: &mut Ui, i: usize, icon: &str, text: &str, active: bool, n: usize) -> Option<TabAct> {
@@ -278,7 +279,7 @@ fn tab(ui: &mut Ui, i: usize, icon: &str, text: &str, active: bool, n: usize) ->
         if x.hovered() {
             p.rect_filled(xr, CornerRadius::same(4), t.gray(300));
         }
-        ic::glyph(p, xr.center(), ic::X, 12.0, t.subtle());
+        ic::glyph(p, xr.center(), ic::X, 14.0, t.subtle());
     }
     let mut act = None;
     if x.clicked() {

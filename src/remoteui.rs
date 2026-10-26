@@ -1,6 +1,7 @@
 //! Devices in the UI: the composer's "runs on" picker and Settings › Devices
 //! (your paired PCs, SSH defaults, every device's name, icon, folder and bridge).
 
+use crate::widgets::Tip as _;
 use crate::app::{App, Popup, Sel, Tab, View};
 use crate::icons as ic;
 use crate::pages::{rows, section};
@@ -57,7 +58,7 @@ fn device_row(ui: &mut Ui, mark: impl Fn(&Painter, Rect, Color32), label: &str, 
     p.text(pos2(x + 24.0, rect.top() + 7.0), Align2::LEFT_TOP, label, FontId::new(14.0, theme::medium()), w::alpha(t.fg(), a));
     p.text(pos2(x + 24.0, rect.top() + 25.0), Align2::LEFT_TOP, desc, FontId::proportional(12.0), w::alpha(t.subtle(), a));
     if checked {
-        ic::glyph(p, pos2(rect.right() - 16.0, rect.top() + 16.0), ic::CHECK, 15.0, t.fg());
+        ic::glyph(p, pos2(rect.right() - 16.0, rect.top() + 16.0), ic::CHECK, 16.0, t.fg());
     }
     if enabled { resp.on_hover_cursor(CursorIcon::PointingHand) } else { resp }
 }
@@ -118,7 +119,7 @@ impl App {
             None if sel.device.is_empty() => "Runs on this PC".into(),
             None => "This chat's device was removed in Settings › Devices".into(),
         };
-        r.on_hover_text(tip)
+        r.tip(tip)
     }
 
     /// The device menu above the composer; returns whether it should close.
@@ -144,8 +145,7 @@ impl App {
         let only_hubs: Vec<crate::mesh::Peer> = hubs.iter().filter(|p| !devs.iter().any(|(h, _)| h.id == p.id)).cloned().collect();
         let (pick, close) = w::popover(ctx, "device", self.popup_anchor, 300.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            w::subtle(ui, "  Runs on", "label-12");
-            ui.add_space(4.0);
+            w::menu_label(ui, "Runs on");
             let mut pick: Option<Option<String>> = None;
             let here = sel.device.is_empty();
             let r = device_row(ui, |p, r, fg| paint_mark(p, r, ic::HOUSE, None, None, fg, &t), "This PC", &me, here, !locked || here);
@@ -166,7 +166,7 @@ impl App {
                         None => where_(h, *online),
                     };
                     let r = device_row(ui, |p, r, fg| paint_mark(p, r, glyph, *tex, *online, fg, &t), h.label(), &desc, current, ok);
-                    let r = if locked && !current { r.on_hover_text("A started chat stays on the device it started on. Start a new chat to use another.") } else { r };
+                    let r = if locked && !current { r.tip("A started chat stays on the device it started on. Start a new chat to use another.") } else { r };
                     if r.clicked() {
                         pick = Some(Some(h.id.clone()));
                     }
@@ -185,9 +185,7 @@ impl App {
                 w::subtle(ui, "  No other PCs yet: pair one in Settings › Devices, or add one by SSH.", "label-12");
                 ui.add_space(4.0);
             }
-            ui.add_space(4.0);
-            w::separator(ui);
-            ui.add_space(4.0);
+            w::menu_separator(ui);
             if w::menu_item(ui, ic::SETTINGS, "Manage devices…", None, false).clicked() {
                 pick = Some(None);
             }
@@ -343,7 +341,7 @@ impl App {
                     ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
                     for n in offers {
                         let tip = format!("Add {} ({}) and test it", n.host, n.source);
-                        if w::btn(&format!("{}  {}", ic::PLUS, n.name)).sm().outline().show(ui).on_hover_text(tip).clicked() {
+                        if w::btn(&format!("{}  {}", ic::PLUS, n.name)).sm().outline().show(ui).tip(tip).clicked() {
                             let name = if n.name == n.host { String::new() } else { n.name.clone() };
                             self.add_ssh_device(&ctx, name, n.host.clone(), n.user.clone(), n.port);
                         }
@@ -504,7 +502,7 @@ impl App {
                     e.icon.clear();
                 }
                 for (name, g) in remote::ICONS {
-                    if w::btn(g).muted().icon_sm().pressed(e.icon == *name).show(ui).on_hover_text(*name).clicked() {
+                    if w::btn(g).muted().icon_xs().pressed(e.icon == *name).show(ui).tip(*name).clicked() {
                         e.icon = name.to_string();
                     }
                 }
@@ -530,15 +528,15 @@ impl App {
                 w::toggle(ui, &mut shown);
                 w::text(ui, "In the composer", "label-13");
                 ui.add_space(12.0);
-                w::toggle(ui, &mut e.bridge).on_hover_text("This PC's MCP servers and signed-in apps, through the ssh connection");
+                w::toggle(ui, &mut e.bridge).tip("This PC's MCP servers and signed-in apps, through the ssh connection");
                 w::text(ui, "MCP bridge", "label-13");
                 ui.add_space(12.0);
-                w::toggle(ui, &mut e.commands).on_hover_text("A run_command tool: the agent there can run shell commands on this PC");
+                w::toggle(ui, &mut e.commands).tip("A run_command tool: the agent there can run shell commands on this PC");
                 w::text(ui, "Commands on this PC", "label-13");
             });
             let mut here = !e.device_files;
             ui.horizontal(|ui| {
-                w::toggle(ui, &mut here).on_hover_text("The agent there edits, builds and commits this PC's project: its shell, git and file tools run here (in the chat's mode). Off: it works on the device's own copy");
+                w::toggle(ui, &mut here).tip("The agent there edits, builds and commits this PC's project: its shell, git and file tools run here (in the chat's mode). Off: it works on the device's own copy");
                 w::text(ui, "Work on this PC's files (shell, git and files run here)", "label-13");
             });
             e.device_files = !here;
