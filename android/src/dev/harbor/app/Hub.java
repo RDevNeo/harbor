@@ -762,7 +762,11 @@ final class Hub {
      *  it; the mesh tells the rest. Bearer token and the pinned TLS key, plus the pairing
      *  secret's MAC over the time: no session, so no screen lock. Pairings from before three
      *  factors have no secret: they show online only while the app is open. */
-    void alive() throws IOException {
+    void alive() throws IOException { alive(0); }
+
+    /** A ping that also takes PC's notifications (Notes), waiting up to waitMs for one
+     *  (Listen's instant mode, the short burst after leaving the app); 0: answer at once. */
+    void alive(int waitMs) throws IOException {
         if (!three()) return;
         sync();
         List<String> order = new ArrayList<>();
@@ -777,7 +781,7 @@ final class Hub {
                 byte[] s = secretFor(e);
                 k = Sec.aliveKey(s);
                 Sec.wipe(s);
-                Net.Http c = connect(v, "POST", "/v1/alive", 15_000, 5_000);
+                Net.Http c = connect(v, "POST", "/v1/alive", 15_000 + waitMs, 5_000);
                 byte[] x = binding ? c.exporter() : null;
                 String hubFp = c.seen;
                 if ((binding && x == null) || hubFp == null) { c.close(); continue; }
@@ -786,7 +790,9 @@ final class Hub {
                 byte[] mac = Sec.hmac(k, Sec.aliveMsg(hubFp, Net.myFp(), tok, ts, x == null ? new byte[0] : x));
                 c.header("Authorization", "Bearer " + tok);
                 c.header("X-Harbor-Device", deviceName());
-                send(c, new JSONObject().put("ts", ts).put("mac", Sec.hex(mac)));
+                JSONObject r = send(c, new JSONObject().put("ts", ts).put("mac", Sec.hex(mac))
+                        .put("since", Ui.app == null ? 0 : Notes.since(Ui.app, this, v)).put("wait_ms", waitMs));
+                if (Ui.app != null) Notes.take(Ui.app, this, v, r);
                 return;
             } catch (IOException x) {
                 last = x;

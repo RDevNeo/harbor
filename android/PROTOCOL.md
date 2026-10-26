@@ -200,6 +200,53 @@ while its last ping is under 35 minutes old, else offline with "seen X ago" (the
 both). The mesh shares pings (`alive` in `GET /mesh/v1/phones`), so a ping to one PC counts
 on all.
 
+### Notifications
+
+From 0.40 (optional: older hubs ignore `since` and answer without `notes`). The hub keeps a
+short list of notes (a day, 200 at most; `src/notify.rs`) for what matters:
+
+| `kind` | when | key |
+|---|---|---|
+| `input` | a lead chat's turn ends with a question, or a chat waits for you after a usage limit (`act: "continue"`) | `chat:<gid>` |
+| `done` | a lead chat's turn ends (once its sub-agents are done), or stops with an error | `chat:<gid>` |
+| `agent` | a sub-agent's turn ends (apps show it only when asked) | `chat:<gid>` |
+| `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` |
+| `limit` | an account hits its usage limit or cap, or a limit resets and work continues | `limit:<account>` |
+| `pc` | another PC of the mesh stops answering, or answers again | `pc:<id>` |
+| `test` | Settings › Notifications › Send a test on the PC | `test` |
+
+A note: `{id, at, kind, key, title, body, chat?, url?, act?, count, away, reply, from?}`.
+Notes with one `key` within 90 s are one: the newer replaces the older with `count` summed (and
+an `input` stays `input`), so the phone keeps **one Android notification per key** and updates
+it. `away`: the user wasn't at that PC (its window not in front, or unused for 2 minutes), for
+"only when I'm away from the PC". `reply`: the chat takes a reply. `from`: the PC of the mesh it
+happened on (each PC fetches the others' own notes, `GET /mesh/v1/notes?since=`, every 15 s, so
+asking one PC is enough; `pc` notes stay local).
+
+Phones take them with the background ping (`POST /v1/alive`, [above](#background-pings-online-with-the-app-closed)):
+add `"since": <last id taken from that PC>` (0: none yet: the answer has no notes, only `last`, so
+nothing old is shown) and optionally `"wait_ms"` (at most 240000: the hub answers as soon as a
+note comes). The answer adds `{"notes": [...], "last": <id>}`. Ids grow per PC and start at its
+start time in ms, so a restarted hub's ids are higher; a `since` from the future gets every kept
+note. This read needs factors 1 and 2 only (no session, no screen lock): what a lock-screen
+notification would show anyway. Acting on a note goes through a normal session.
+
+The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
+- the 15-minute ping job takes notes; for 8 minutes after the user leaves the app a one-off job
+  long-polls (`wait_ms` 60000), when an answer is most likely; **Instant notifications** (off by
+  default) runs a minimised foreground service that keeps a 240 s long-poll open (seconds instead
+  of minutes, a silent ongoing notification, a little battery);
+- shows nothing while Harbor is in front; filters by the phone's own choices (kinds, quiet hours,
+  only when away), Android channels per kind;
+- actions: tap opens the chat (or the PR's `url`), **Reply** (RemoteInput) sends
+  `POST /v1/chats/{gid}/send {"text"}` over a session (three factors: Android unlocks the phone
+  first, Android 12+), **Continue** sends `POST /v1/chats/{gid}/continue`. Harbor runs agents
+  without permission prompts, so there is no approve/deny.
+
+The desktop shows its own notes with notify-send (click opens the chat) only while Harbor's window
+isn't in front, per Settings › Notifications (kinds, "only when I'm away", quiet hours); a key
+pops up at most every 30 s, else its notification is replaced quietly.
+
 ### Every call
 
 ```

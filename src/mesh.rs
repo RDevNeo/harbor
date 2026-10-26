@@ -614,6 +614,8 @@ const PHONES_EVERY: Duration = Duration::from_secs(15);
 /// newer one: a phone whose app only asks the PC it talks to then finds the update there.
 fn phones_loop(hub: Arc<api::Hub>) {
     let mut tried: HashMap<String, (i64, Instant)> = HashMap::new();
+    // Per peer: the last of its notifications taken (notify.rs).
+    let mut notes_at: HashMap<String, u64> = HashMap::new();
     loop {
         std::thread::sleep(PHONES_EVERY);
         if !hub.mesh.on.load(Ordering::SeqCst) {
@@ -638,6 +640,17 @@ fn phones_loop(hub: Arc<api::Hub>) {
                 .filter(|s| !s.group.is_empty())
                 .collect();
             seen.insert(p.id.clone(), (p.name.clone(), sightings));
+            // Its notifications, for the phones that ask this PC (a peer before 0.40: 404).
+            let since = notes_at.get(&p.id).copied().unwrap_or(0);
+            if let Ok((200, v)) = http(&p.dest(), "GET", &format!("/mesh/v1/notes?since={since}"), None, Duration::from_secs(8)) {
+                let notes: Vec<crate::notify::Note> = serde_json::from_value(v["notes"].clone()).unwrap_or_default();
+                if since > 0 && !notes.is_empty() {
+                    hub.notes.relay(&p.name, notes);
+                }
+                if let Some(last) = v["last"].as_u64() {
+                    notes_at.insert(p.id.clone(), last);
+                }
+            }
             let theirs = v["apk"].as_i64().unwrap_or(0);
             let mine = crate::update::apk().map_or(0, |(_, c)| c);
             // A newer app there: fetched once per version and PC (again after 10 minutes on failure).
@@ -799,6 +812,13 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
                 // Only copies changed (another PC's chats): nothing this peer needs from here.
                 at = rev;
             }
+        }
+        // This PC's notifications since `since` (notify.rs), so a phone that asks any PC hears
+        // of every PC's chats. 0: only the newest id.
+        ("GET", ["mesh", "v1", "notes"]) => {
+            let since = req.query("since").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let (notes, last) = if since == 0 { (vec![], hub.notes.last()) } else { hub.notes.own_since(since) };
+            ok(crate::notify::wire(&notes, last))
         }
         // Where this PC saw the phones (Devices on the others), and the phone app it serves.
         ("GET", ["mesh", "v1", "phones"]) => {
@@ -1997,6 +2017,7 @@ impl App {
         match m {
             Msg::Peer => {
                 let peers = self.shared().peers.lock().unwrap().clone();
+                self.note_peers(&peers);
                 self.store.set(PEERS_KEY, &serde_json::to_string(&peers).unwrap_or_default());
                 // Copies turn read-only or writable: phones see it in the state.
                 let ids: Vec<i64> = self.chats.iter().filter(|c| c.foreign()).map(|c| c.id).collect();

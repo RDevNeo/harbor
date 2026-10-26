@@ -331,6 +331,8 @@ pub struct Hub {
     pub revoked: Mutex<Vec<String>>,
     /// Phones' sessions, handshakes and pairings waiting for a confirmation (phoneauth.rs).
     pub auth3: crate::phoneauth::State,
+    /// Notifications for phones and this desktop (notify.rs).
+    pub notes: crate::notify::Notes,
 }
 
 impl Hub {
@@ -355,6 +357,7 @@ impl Hub {
             tokens_dirty: AtomicBool::new(false),
             revoked: Mutex::new(vec![]),
             auth3: Default::default(),
+            notes: Default::default(),
         }
     }
 

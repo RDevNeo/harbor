@@ -1,6 +1,7 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -43,6 +44,13 @@ abstract class Base extends Activity {
         myTheme = Ui.themeGen;
         String id = getIntent().getStringExtra("hub");
         if (id != null) hub = Hub.get(this, id);
+        // Notifications (Notes): Android 13 asks once, when a PC is paired; Instant per setting.
+        boolean paired = hub != null || !Hub.all(this).isEmpty();
+        if (paired && Build.VERSION.SDK_INT >= 33 && !Notes.allowed(this) && !Notes.prefs(this).getBoolean("asked", false)) {
+            Notes.prefs(this).edit().putBoolean("asked", true).apply();
+            requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 42);
+        }
+        if (paired) Listen.apply(this);
     }
 
     /** True (and finishes) when the screen needs a hub that was unpaired meanwhile. */
@@ -340,6 +348,7 @@ abstract class Base extends Activity {
         super.onResume();
         resumed++;
         Inbox.resumed(this);
+        Alive.calm(this);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
     }
@@ -349,6 +358,8 @@ abstract class Base extends Activity {
         super.onPause();
         resumed--;
         Inbox.paused(this);
+        // Left the app (not just another of its screens): listen a few minutes for answers.
+        Ui.main.postDelayed(() -> { if (resumed <= 0 && !Hub.all(getApplicationContext()).isEmpty()) Alive.burst(getApplicationContext()); }, 2_000);
         gen++;
         Net.Http c = polling;
         if (c != null) Ui.pool.execute(c::close);

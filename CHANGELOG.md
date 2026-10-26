@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Notifications for what matters, on the desktop and the phone: an agent needs you (a lead chat
+  asks you something, or waits after a usage limit), a lead chat finished (sub-agents too if you
+  want), checks failed on one of your PRs, a usage limit was hit or came back, another PC went
+  offline. One notification per chat, updated instead of piling up. The phone gets them even with
+  the app closed, with no Google push service: within about 15 minutes, within a minute for a while
+  after you leave the app, or within seconds with the optional Instant notifications (a silent
+  ongoing notification, a little more battery). Reply from the notification goes straight into the
+  chat (three-factor phones unlock first), Continue resumes a chat after a limit, tap opens it. The
+  desktop shows them only while Harbor's window isn't in front; click opens the chat. Settings ›
+  Notifications on both: which events, quiet hours, only when you're away from the PC.
+
 ## [0.39.0] - 2026-10-26
 
 ### Added

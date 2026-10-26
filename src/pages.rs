@@ -123,11 +123,12 @@ impl UsageTotals {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 10] = [Tab::General, Tab::Appearance, Tab::Keybindings, Tab::Voice, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
+    pub const ALL: [Tab; 11] = [Tab::General, Tab::Notifications, Tab::Appearance, Tab::Keybindings, Tab::Voice, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::General => "General",
+            Tab::Notifications => "Notifications",
             Tab::Appearance => "Appearance",
             Tab::Keybindings => "Keybindings",
             Tab::Providers => "Providers",
@@ -143,6 +144,7 @@ impl Tab {
     pub fn icon(self) -> &'static str {
         match self {
             Tab::General => ic::SLIDERS,
+            Tab::Notifications => ic::BELL,
             Tab::Appearance => ic::PALETTE,
             Tab::Keybindings => ic::KEYBOARD,
             Tab::Providers => ic::BOT,
@@ -159,6 +161,7 @@ impl Tab {
     pub fn slug(self) -> &'static str {
         match self {
             Tab::General => "general",
+            Tab::Notifications => "notifications",
             Tab::Appearance => "appearance",
             Tab::Keybindings => "keybindings",
             Tab::Providers => "providers",
@@ -180,6 +183,7 @@ impl Tab {
     pub fn keywords(self) -> &'static str {
         match self {
             Tab::General => "restart resume continue order activity sort fast mode recap summary suggestion prompt background tray autostart login startup quit close",
+            Tab::Notifications => "notify notifications alerts popups desktop phone quiet hours away finished needs input ci checks limit offline",
             Tab::Appearance => "theme dark light omarchy colours colors",
             Tab::Keybindings => "shortcuts keyboard keys hotkeys",
             Tab::Providers => "accounts claude codex cursor gemini sign in login models default",
@@ -195,6 +199,7 @@ impl Tab {
     fn desc(self) -> &'static str {
         match self {
             Tab::General => "How threads behave.",
+            Tab::Notifications => "What Harbor tells you about while you're elsewhere, on this desktop and on your phones.",
             Tab::Appearance => "How Harbor looks.",
             Tab::Keybindings => "Harbor's keyboard shortcuts. Changes apply at once.",
             Tab::Providers => "",
@@ -246,6 +251,7 @@ impl App {
                 ui.add_space(20.0);
                 match tab {
                     Tab::General => self.general_tab(ui),
+                    Tab::Notifications => self.notifications_tab(ui),
                     Tab::Appearance => self.appearance_tab(ui),
                     Tab::Keybindings => self.keybindings_tab(ui),
                     Tab::Providers => self.providers_tab(ui),

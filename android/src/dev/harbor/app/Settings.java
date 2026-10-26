@@ -109,6 +109,10 @@ public class Settings extends Base {
         dl.addView(Ui.chevron(this));
         dict.addView(dl, Ui.fill());
 
+        // Notifications (Notes): what the PCs tell this phone about, and when.
+        LinearLayout nt = card(col);
+        notifyRows(nt);
+
         LinearLayout more = card(col);
         LinearLayout pair = Ui.cardRow(this, Ui.I_PLUS, "Pair another PC", "Settings › Phones › Pair a phone on that PC", Ui.FG,
                 v -> startActivity(new Intent(this, Hubs.class).putExtra("pair", true)));
@@ -120,6 +124,93 @@ public class Settings extends Base {
         TextView note = Ui.text(this, "Unpairing forgets the token on this phone. Revoke it on the PC in Settings › Phones.", 13, Ui.G700);
         note.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
         col.addView(note);
+    }
+
+    private void notifyRows(LinearLayout nt) {
+        nt.removeAllViews();
+        if (!Notes.allowed(this)) {
+            LinearLayout al = Ui.cardRow(this, Ui.I_BELL_OFF, "Allow notifications", "Android blocks Harbor's notifications: tap to allow them", Ui.AMBER, v -> {
+                if (Build.VERSION.SDK_INT >= 33) requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 42);
+                else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
+            });
+            al.addView(Ui.chevron(this));
+            nt.addView(al, Ui.fill());
+            nt.addView(Ui.gap(this));
+        }
+        int on = 0;
+        for (String k : Notes.KINDS) if (Notes.on(this, k)) on++;
+        LinearLayout kinds = Ui.cardRow(this, Ui.I_BELL, "Notify me when", on + " of " + Notes.KINDS.length + " on", Ui.FG, v -> pickKinds(nt));
+        kinds.addView(Ui.chevron(this));
+        nt.addView(kinds, Ui.fill());
+        nt.addView(Ui.gap(this));
+        nt.addView(Ui.cardRow(this, Ui.I_MONITOR, "Only when I'm away from the PC", Notes.awayOnly(this) ? "On: not while you're using Harbor on that PC" : "Off", Ui.FG, v -> {
+            Notes.prefs(this).edit().putBoolean("away", !Notes.awayOnly(this)).apply();
+            notifyRows(nt);
+        }), Ui.fill());
+        nt.addView(Ui.gap(this));
+        int qa = Notes.quietFrom(this), qb = Notes.quietTo(this);
+        LinearLayout quiet = Ui.cardRow(this, Ui.I_MOON, "Quiet hours", qa < 0 ? "Off" : Notes.hm(qa) + " – " + Notes.hm(qb), Ui.FG, v -> pickQuiet(nt));
+        quiet.addView(Ui.chevron(this));
+        nt.addView(quiet, Ui.fill());
+        nt.addView(Ui.gap(this));
+        boolean inst = Notes.instant(this);
+        nt.addView(Ui.cardRow(this, Ui.I_ACTIVITY, "Instant notifications", inst
+                ? "On: within seconds, with a silent notification while it listens (a little more battery)"
+                : "Off: within about 15 minutes, and within a minute for a while after you leave the app", Ui.FG, v -> toggleInstant(nt)), Ui.fill());
+    }
+
+    private void pickKinds(LinearLayout nt) {
+        boolean[] on = new boolean[Notes.KINDS.length];
+        for (int i = 0; i < on.length; i++) on[i] = Notes.on(this, Notes.KINDS[i]);
+        Ui.dialog(this).setTitle("Notify me when")
+                .setMultiChoiceItems(Notes.LABELS, on, (d, i, v) -> on[i] = v)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("OK", (d, w) -> {
+                    for (int i = 0; i < on.length; i++) Notes.set(this, Notes.KINDS[i], on[i]);
+                    notifyRows(nt);
+                }).show();
+    }
+
+    private void pickQuiet(LinearLayout nt) {
+        Ui.dialog(this).setTitle("Quiet hours").setItems(new String[] { "Off", "Set the hours…" }, (d, w) -> {
+            if (w == 0) {
+                Notes.prefs(this).edit().putInt("qfrom", -1).putInt("qto", -1).apply();
+                notifyRows(nt);
+                return;
+            }
+            int a = Notes.quietFrom(this) < 0 ? 22 * 60 : Notes.quietFrom(this), b = Notes.quietTo(this) < 0 ? 7 * 60 : Notes.quietTo(this);
+            new android.app.TimePickerDialog(this, (t1, h1, m1) -> new android.app.TimePickerDialog(this, (t2, h2, m2) -> {
+                Notes.prefs(this).edit().putInt("qfrom", h1 * 60 + m1).putInt("qto", h2 * 60 + m2).apply();
+                notifyRows(nt);
+            }, b / 60, b % 60, true) { { setTitle("Until"); } }.show(), a / 60, a % 60, true) { { setTitle("Quiet from"); } }.show();
+        }).show();
+    }
+
+    private void toggleInstant(LinearLayout nt) {
+        if (Notes.instant(this)) {
+            Notes.prefs(this).edit().putBoolean("instant", false).apply();
+            Listen.apply(this);
+            notifyRows(nt);
+            return;
+        }
+        Ui.dialog(this).setTitle("Instant notifications")
+                .setMessage("Harbor keeps one connection open to your PC, so notifications arrive within seconds even with the app closed. "
+                        + "Android shows a silent notification while it listens, and it uses a little more battery (a wake-up every few minutes).\n\n"
+                        + "If your phone still delays it, set Harbor's battery use to Unrestricted in Android's app settings.\n\n"
+                        + "Without it, notifications come within about 15 minutes (later when the phone sleeps deeply), "
+                        + "and within a minute for a while after you leave the app.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Turn on", (d, w) -> {
+                    Notes.prefs(this).edit().putBoolean("instant", true).apply();
+                    Listen.apply(this);
+                    notifyRows(nt);
+                }).show();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(code, perms, res);
+        if (code == 42) recreate();
     }
 
     /** "ab12 cd34 ef56 7890": the first 64 bits, as the PC shows a key. */

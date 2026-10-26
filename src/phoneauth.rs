@@ -219,6 +219,8 @@ pub fn alive_msg(hub_fp: &str, phone_fp: &str, token: &str, ts: u64, x: &[u8]) -
 
 /// A ping's time may be this far off the hub's clock.
 const ALIVE_SKEW_MS: u64 = 10 * 60 * 1000;
+/// The longest a ping waits for a notification (under the usual 5-minute NAT idle timeout).
+pub const ALIVE_WAIT_MS: u64 = 240_000;
 /// How often the app pings in the background (Android runs it at most this often, later in Doze).
 pub const ALIVE_EVERY_S: u64 = 900;
 
@@ -886,7 +888,19 @@ fn alive(hub: &Hub, phone_fp: &str, hub_fp: &str, x: Option<&[u8; 32]>, token: &
     }
     alive.insert(token.to_string(), (crate::store::now(), ts));
     drop(alive);
-    Ok(reply(200, json!({ "ok": true, "every_s": ALIVE_EVERY_S })))
+    let mut out = json!({ "ok": true, "every_s": ALIVE_EVERY_S });
+    // Notifications (notify.rs): what happened since the last one the phone saw, waiting up to
+    // `wait_ms` for one (its instant mode). 0: none yet, it starts from now.
+    if let Some(since) = body["since"].as_u64() {
+        let (notes, last) = if since == 0 {
+            (vec![], hub.notes.last())
+        } else {
+            hub.notes.wait(since, Duration::from_millis(body["wait_ms"].as_u64().unwrap_or(0).min(ALIVE_WAIT_MS)))
+        };
+        out["notes"] = json!(notes);
+        out["last"] = json!(last);
+    }
+    Ok(reply(200, out))
 }
 
 /// `POST /v1/pair/presence` over a session of a two-factor pairing: the phone has a screen lock
@@ -1529,6 +1543,19 @@ pub mod tests {
         assert_eq!(hub.auth3.status("tok").sessions, 0);
         assert!(hub.auth3.status("tok").locked.is_none(), "bad pings don't lock the pairing");
         assert_eq!(call(&hub, &p, "/v1/hubs", "tok", json!({})).status, 401);
+        // With `since` it brings the notes (notify.rs): 0 starts from now.
+        let pingn = |ts: u64, since: u64| {
+            let mac = hmac32(&alive_key(&phone.secret), &alive_msg(&hub_fp, &phone.fp, "tok", ts, &x));
+            call(&hub, &p, "/v1/alive", "tok", json!({ "ts": ts, "mac": hex(&mac), "since": since }))
+        };
+        hub.notes.push(crate::notify::Note { kind: "done".into(), key: "chat:g".into(), title: "old".into(), ..Default::default() });
+        let r = pingn(t + 10, 0);
+        assert_eq!(r.body["notes"].as_array().map(|a| a.len()), Some(0), "nothing from before");
+        let last = r.body["last"].as_u64().unwrap();
+        hub.notes.push(crate::notify::Note { kind: "input".into(), key: "chat:g".into(), title: "api needs you".into(), ..Default::default() });
+        let r = pingn(t + 11, last);
+        assert_eq!(r.body["notes"][0]["title"], "api needs you");
+        assert_eq!(pingn(t + 12, r.body["last"].as_u64().unwrap()).body["notes"].as_array().map(|a| a.len()), Some(0));
         // A pairing code can't ping.
         let h2 = hub_with(vec![ticket("t1")]);
         let mac = hmac32(&alive_key(&[0; 32]), &alive_msg(&hub_fp, &phone.fp, "t1", t, &x));

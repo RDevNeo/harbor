@@ -47,6 +47,7 @@ pub enum View {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab {
     General,
+    Notifications,
     Appearance,
     Keybindings,
     Providers,
@@ -1211,6 +1212,11 @@ impl App {
                 }
                 tr.pending_text = None;
                 tr.pending_thinking = None;
+                // The reply, for a notification (notify.rs).
+                let said = tr.items.iter().rev().find_map(|i| match i {
+                    Item::Text { text, .. } => Some(text.clone()),
+                    _ => None,
+                });
                 let visible = self.view == View::Chat(id) && ctx.input(|i| i.viewport().focused.unwrap_or(true));
                 // Subagents work behind the lead: only the lead's replies notify, and only once
                 // its subagents finished too (the last one's report wakes the lead again).
@@ -1223,11 +1229,11 @@ impl App {
                     } else {
                         self.failed.remove(&id);
                     }
-                    let title = self.chat(id).map(|c| c.title.clone()).unwrap_or_default();
-                    // Waited on a thread so finished notifiers don't linger as zombies.
-                    std::thread::spawn(move || {
-                        let _ = std::process::Command::new("notify-send").args(["-a", "Harbor", "Agent finished", &title]).status();
-                    });
+                }
+                // Notifications (notify.rs): the lead once its team is done (asking you something
+                // counts as needing you), sub-agents as their own kind (off unless asked for).
+                if !resumes && !stopped && (sub || !team_busy) {
+                    self.note_turn(id, sub, failed, said.as_deref().unwrap_or(""));
                 }
                 if let Some(c) = self.chat_mut(id) {
                     c.updated = store::now();
@@ -1484,6 +1490,7 @@ impl App {
         agent::SHOWN_CHAT.store(shown, std::sync::atomic::Ordering::Relaxed);
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         agent::FOCUSED.store(focused && !hidden, std::sync::atomic::Ordering::Relaxed);
+        self.notify_tick(ctx, focused && !hidden && !crate::background::hidden());
         self.wake_snoozed(ctx);
         self.mesh_tick(ctx);
         self.ws_poll(ctx);

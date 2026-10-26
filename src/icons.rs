@@ -47,6 +47,7 @@ pub const CIRCLE_X: &str = "\u{e084}";
 pub const BOT: &str = "\u{e1bb}";
 pub const WEBHOOK: &str = "\u{e374}";
 pub const ALARM: &str = "\u{e03a}";
+pub const BELL: &str = "\u{e059}";
 pub const CLOCK: &str = "\u{e087}";
 pub const USERS: &str = "\u{e1a4}";
 pub const GRIP: &str = "\u{e0eb}";

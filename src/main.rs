@@ -35,6 +35,7 @@ mod mcpshim;
 mod mesh;
 mod movechat;
 mod notices;
+mod notify;
 mod oauth;
 mod pages;
 mod phoneauth;

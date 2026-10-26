@@ -314,6 +314,9 @@ impl App {
             None => format!("Hit the {label} limit · resets {} · waiting for you", when(block.until)),
         };
         self.notice(chat_id, "clock", &text, said);
+        // Notifications: waiting for you needs you; continuing on its own is just news.
+        let waits = self.paused(chat_id).is_some_and(|p| p.at.is_none());
+        self.note_limit(chat_id, &chat.account, waits, &text);
         // Other chats already waiting on this account move to the new time.
         let others: Vec<i64> = self.limits.paused.iter().filter(|(id, p)| **id != chat_id && p.account == chat.account).map(|(id, _)| *id).collect();
         for id in others {
@@ -346,9 +349,6 @@ impl App {
             block.until + 60 + (chat_id * 7919).rem_euclid(45) + n * 8 + lead
         });
         let timer = at.map(|at| self.store.add_limit_timer(chat_id, at, &chat.account));
-        if at.is_none() && !self.limits.paused.contains_key(&chat_id) {
-            notify("Usage limit", &format!("{} waits until {}: continue it from Harbor.", chat.title, when(block.until)));
-        }
         self.limits.paused.insert(chat_id, Paused { account: chat.account.clone(), resume, at, timer });
         self.limits_sync_pending();
     }
@@ -459,9 +459,7 @@ impl App {
         }
         let text = if self.limits.ctl.lifting { "Under your cap again · continuing" } else { "Usage limit reset · continuing" };
         self.notice(chat_id, "clock", text, "");
-        if self.limit_settings().3 {
-            notify("Work resumed", &format!("{} continues after the usage limit.", chat.title));
-        }
+        self.note_resumed(chat_id, &p.account, text);
         // Not counted against the hourly cap on automatic turns.
         self.start_turn(chat_id, parts.join("\n\n---\n\n"), vec![], ctx);
     }

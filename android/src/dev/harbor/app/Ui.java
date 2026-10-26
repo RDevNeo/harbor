@@ -60,7 +60,7 @@ final class Ui {
             I_SLIDERS = "", I_USER = "", I_MOON = "", I_SUN_MOON = "",
             I_PLUG = "", I_TRASH = "", I_UPLOAD = "", I_GAUGE = "",
             I_LAYERS = "", I_SPARKLES = "", I_LINK = "", I_PEN = "",
-            I_TERMINAL = "", I_GLOBE = "", I_BOT = "", I_CLOCK = "",
+            I_TERMINAL = "", I_GLOBE = "", I_BOT = "", I_CLOCK = "", I_BELL = "", I_BELL_OFF = "",
             I_CIRCLE_CHECK = "", I_CIRCLE_X = "", I_WEBHOOK = "", I_ACTIVITY = "",
             I_ROTATE = "", I_UP_CHEVRON = "",
             I_PANEL_RIGHT = "\ue431", I_PR_OPEN = "\ue555", I_PR_DRAFT = "\ue35b", I_PR_CLOSED = "\ue35a",

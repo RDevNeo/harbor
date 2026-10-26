@@ -788,6 +788,7 @@ impl App {
         }
         if let Ok(f) = &r {
             self.fetch_avatars(f.items.iter().map(|p| (p.author.clone(), p.avatar.clone())));
+            self.note_checks(f);
         }
         self.prs.data = Some(r.map(std::sync::Arc::new));
     }

@@ -182,9 +182,14 @@ impl App {
                     let until = wdw.resets_at.filter(|r| *r > now).unwrap_or(now + 30 * 60);
                     self.cap_block(&id, kind_of(&wdw.key), cap, until, wdw.resets_at.is_some());
                     let name = self.account(&id).map(account_name).unwrap_or_else(|| id.clone());
-                    crate::limits::notify(
-                        "Usage cap reached",
-                        &format!("Harbor paused {name} at your {cap}% cap of the {} limit, until {}.", wdw.label.to_lowercase(), crate::limits::when(until)),
+                    crate::notify::post(
+                        &self.api.hub,
+                        "limit",
+                        format!("limit:{id}"),
+                        "Usage cap reached".into(),
+                        format!("Harbor paused {name} at your {cap}% cap of the {} limit, until {}.", wdw.label.to_lowercase(), crate::limits::when(until)),
+                        String::new(),
+                        false,
                     );
                 }
                 None if cap_block => {
