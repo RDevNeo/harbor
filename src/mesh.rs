@@ -119,6 +119,9 @@ pub struct Peer {
     /// Its Harbor's version and updates (`update::info` there; null before 0.51).
     #[serde(skip)]
     pub update: Value,
+    /// It takes chats moved from other PCs (movepc.rs; hello `moves`, false before it).
+    #[serde(skip)]
+    pub moves: bool,
 }
 
 impl Peer {
@@ -944,26 +947,41 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             wake();
             ok(json!({ "ok": true }))
         }
+        // A chat handed over from its home PC (movepc.rs): it may fetch a branch first, and it's
+        // taken only within the deadline stamped here, by this PC's own clock.
+        ("POST", ["mesh", "v1", "adopt"]) => {
+            let mut body = read_json(r, req.len);
+            if body.is_object() {
+                body["deadline_ms"] = json!(crate::movepc::deadline_ms());
+            }
+            to_ui(req, &segs, body, peer, tx, wake, crate::movepc::SERVE_WAIT)
+        }
         _ => {
             let body = read_json(r, req.len);
-            let (rtx, rrx) = channel();
-            let call = Call {
-                method: req.method.clone(),
-                path: segs.iter().map(|s| s.to_string()).collect(),
-                query: req.query.clone(),
-                body,
-                token: String::new(),
-                device: peer,
-                reply: rtx,
-                global: false,
-            };
-            if tx.send(crate::control::Incoming::Api(call)).is_err() {
-                return err(503, "Harbor is closing");
-            }
-            wake();
-            rrx.recv_timeout(CALL_WAIT).unwrap_or_else(|_| err(503, "Harbor did not answer in time"))
+            to_ui(req, &segs, body, peer, tx, wake, CALL_WAIT)
         }
     }
+}
+
+/// A peer's call answered on the UI thread (`App::mesh_route`), within `wait`.
+#[allow(clippy::too_many_arguments)]
+fn to_ui(req: &api::Request, segs: &[&str], body: Value, peer: String, tx: &Sender<crate::control::Incoming>, wake: &(impl Fn() + Send + Sync), wait: Duration) -> Reply {
+    let (rtx, rrx) = channel();
+    let call = Call {
+        method: req.method.clone(),
+        path: segs.iter().map(|s| s.to_string()).collect(),
+        query: req.query.clone(),
+        body,
+        token: String::new(),
+        device: peer,
+        reply: rtx,
+        global: false,
+    };
+    if tx.send(crate::control::Incoming::Api(call)).is_err() {
+        return err(503, "Harbor is closing");
+    }
+    wake();
+    rrx.recv_timeout(wait).unwrap_or_else(|_| err(503, "Harbor did not answer in time"))
 }
 
 fn read_json(r: &mut impl Read, len: usize) -> Value {
@@ -1567,6 +1585,7 @@ fn worker(hub: Arc<api::Hub>, target: Target, tx: Sender<crate::control::Incomin
             p.github = hello["github"].as_str().unwrap_or("").chars().take(60).collect();
             p.owner_suggested = hello["owner_suggested"].as_bool().unwrap_or(false);
             p.update = hello.get("update").cloned().unwrap_or(Value::Null);
+            p.moves = hello["moves"].as_u64().is_some_and(|v| v >= crate::movepc::VERSION);
             p.accounts = hello["accounts"]
                 .as_array()
                 .into_iter()
@@ -1917,6 +1936,7 @@ impl App {
         }
         *self.shared().peers.lock().unwrap() = peers;
         self.mesh_index();
+        self.move_pc_load();
         // Who this PC is (its Tailscale name), off the UI thread.
         let hub = self.api.hub.clone();
         std::thread::spawn(move || {
@@ -2118,7 +2138,7 @@ impl App {
         }
     }
 
-    pub fn handle_mesh(&mut self, m: Msg) {
+    pub fn handle_mesh(&mut self, m: Msg, ctx: &eframe::egui::Context) {
         match m {
             Msg::Peer => {
                 let peers = self.shared().peers.lock().unwrap().clone();
@@ -2132,6 +2152,8 @@ impl App {
                 self.api.hub.touch(None, true);
             }
             Msg::Chats { peer, epoch, body, reply } => {
+                // A chat handed to this peer whose answer was lost: its list settles it first.
+                self.move_pc_reconcile(&peer, &body, ctx);
                 let wants = self.mesh_apply_chats(&peer, epoch, &body);
                 let _ = reply.send(wants);
             }
@@ -2340,7 +2362,7 @@ impl App {
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
                 let port = *self.api.hub.port.lock().unwrap();
                 let about = crate::meshctx::about(&self.store);
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"], "update": crate::update::info() }))
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"], "update": crate::update::info(), "moves": crate::movepc::VERSION }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");
@@ -2400,6 +2422,10 @@ impl App {
                 Ok(n) => ok(json!({ "ok": true, "changed": n })),
                 Err(e) => err(404, e),
             },
+            // A chat moving here from its home PC (movepc.rs): can it come, and the handoff
+            // (answered from a thread).
+            ("POST", ["mesh", "v1", "adopt", "check"]) => self.move_pc_check(&call.device, &call.body),
+            ("POST", ["mesh", "v1", "adopt"]) => self.move_pc_adopt(call, ctx),
             // Settings › Devices on another PC: "Enable" next to this PC's "phone access off".
             ("POST", ["mesh", "v1", "phones"]) => {
                 self.api_set_enabled(true, ctx);
@@ -2526,6 +2552,11 @@ impl App {
         self.mesh_forward(chat, "fork the chat", "POST", &["fork"], json!({ "seq": seq }), vec![], None)
     }
 
+    /// "Move to PC…" for a copy: its home PC hands it over (movepc.rs).
+    pub fn mesh_move_pc(&mut self, chat: i64, pc: &str) -> bool {
+        self.mesh_forward(chat, "move the chat", "POST", &["move_pc"], json!({ "pc": pc }), vec![], None)
+    }
+
     pub fn mesh_delete(&mut self, chat: i64) -> bool {
         self.mesh_forward(chat, "delete the chat", "DELETE", &[], Value::Null, vec![], None)
     }
@@ -2611,6 +2642,11 @@ impl App {
         let name = self.shared().name_of(&c.home);
         if !peer.online {
             let _ = call.reply.send(err(409, format!("{name} is off: this chat is read-only until it's back")));
+            return None;
+        }
+        // "Move to PC…" is its home's to do; a home before it would only say "unknown call".
+        if matches!(p.get(3), Some(&"move_pc" | &"move_targets")) && !peer.moves {
+            let _ = call.reply.send(err(409, format!("{name} runs an older Harbor that can't move chats: update it first")));
             return None;
         }
         let mut path = vec!["v1".to_string(), "chats".to_string(), c.home_id.to_string()];
@@ -3184,7 +3220,7 @@ fn for_home(method: &str, p: &[&str]) -> bool {
         return false;
     }
     // A copy doesn't move from here (movechat.rs says so).
-    (matches!(method, "POST" | "PATCH" | "DELETE") && p.get(3) != Some(&"move")) || (method == "GET" && matches!(p.get(3), Some(&"slash" | &"commit")))
+    (matches!(method, "POST" | "PATCH" | "DELETE") && p.get(3) != Some(&"move")) || (method == "GET" && matches!(p.get(3), Some(&"slash" | &"commit" | &"move_targets")))
 }
 
 /// The upload files of a phone's body, as files here.

@@ -1060,6 +1060,7 @@ public class Chat extends Base {
             case "process": glyph = Ui.I_ACTIVITY; break;
             case "restart": glyph = Ui.I_ROTATE; break;
             case "users": glyph = Ui.I_USERS; break;
+            case "monitor": glyph = Ui.I_MONITOR; break;
             default: glyph = Ui.I_CIRCLE_CHECK;
         }
         boolean expandable = !detail.isEmpty() && url.isEmpty();

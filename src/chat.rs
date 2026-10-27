@@ -694,6 +694,7 @@ impl App {
                         "restart" => ic::ROTATE_CW,
                         "folder" => ic::FOLDER,
                         "users" => ic::USERS,
+                        "monitor" => ic::MONITOR,
                         _ => ic::CIRCLE_CHECK,
                     };
                     // The pill never grows past the column (a long agent report widened the whole

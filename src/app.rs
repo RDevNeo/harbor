@@ -270,6 +270,8 @@ pub struct App {
     pub sender_device: String,
     /// Copies of other PCs' chats and calls forwarded to them (mesh.rs).
     pub mesh: crate::mesh::Local,
+    /// "Move to PC…": chats being handed to another PC or taken from one (movepc.rs).
+    pub movepc: crate::movepc::Local,
     /// This PC's chats commanded from another PC: they run with its context (meshctx.rs).
     pub guests: HashMap<i64, crate::meshctx::Guest>,
 }
@@ -416,6 +418,7 @@ impl App {
             sender_device: String::new(),
             guests,
             mesh: Default::default(),
+            movepc: Default::default(),
         };
         app.keys = crate::keys::Keys::load(&app.store);
         app.remote = crate::remote::load(&app.store);
@@ -940,6 +943,12 @@ impl App {
         if self.mesh_send(chat_id, &text, &files, &mentions) {
             return;
         }
+        // Being handed to another PC (movepc.rs): it goes there, or here if the move fails.
+        if self.moving_to(chat_id).is_some() {
+            self.movepc.held.entry(chat_id).or_default().push((text, files, mentions));
+            self.api_touch(chat_id);
+            return;
+        }
         // Whose instructions and memory its turns run with: the PC that sent it (meshctx.rs).
         self.ctx_adopt(chat_id);
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
@@ -995,7 +1004,7 @@ impl App {
         }
         // One turn per chat. A runner still going for it, even one this Harbor lost
         // track of, holds the session: the prompt waits for that turn instead.
-        if self.turns.contains_key(&chat_id) || self.adopt_runner(chat_id, ctx) {
+        if self.turns.contains_key(&chat_id) || self.moving_to(chat_id).is_some() || self.adopt_runner(chat_id, ctx) {
             let mut p = prompt;
             for f in &files {
                 p.push_str(&format!("\n(attached: {})", f.display()));
@@ -1501,7 +1510,7 @@ impl App {
                 control::Incoming::Tool(call) => self.handle_tool(call, ctx),
                 control::Incoming::Hook(h) => self.handle_hook(h, ctx),
                 control::Incoming::Api(call) => self.handle_api(call, ctx),
-                control::Incoming::Mesh(m) => self.handle_mesh(m),
+                control::Incoming::Mesh(m) => self.handle_mesh(m, ctx),
                 control::Incoming::Focus { .. } if crate::background::hidden() => crate::background::show(ctx),
                 control::Incoming::Focus { raised } => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));

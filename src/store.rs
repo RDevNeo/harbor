@@ -646,6 +646,11 @@ impl Store {
         );
     }
 
+    /// Which PC owns a chat ("" and 0: this one), after it moved between PCs (movepc.rs).
+    pub fn set_home(&self, id: i64, home: &str, home_id: i64) {
+        let _ = self.db.execute("UPDATE chats SET home=?2, home_id=?3 WHERE id=?1", params![id, home, home_id]);
+    }
+
     pub fn delete_chat(&self, id: i64) {
         let _ = self.db.execute("DELETE FROM chats WHERE id=?1", [id]);
         // Ids can be reused: a new chat with this one must not look saved.

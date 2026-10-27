@@ -659,7 +659,7 @@ impl App {
     }
 
     /// Highest utilization seen for the account (0–1), per window: weekly, 5-hour.
-    fn usage_of(&self, account: &str) -> (f64, f64) {
+    pub(crate) fn usage_of(&self, account: &str) -> (f64, f64) {
         let mut weekly = 0.0f64;
         let mut five = 0.0f64;
         for (k, u, _) in self.limits.quota.get(account).into_iter().flatten() {

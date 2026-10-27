@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Move to PC: a finished chat can move to another PC of your mesh and go on there, with its
+  sub-agents and their Claude sessions. Right-click a chat in the sidebar › "Move to PC…" on the
+  desktop, or long-press it › "Move to PC…" on the phone; PCs that can't take it are greyed out
+  with the reason. The other PC needs the project (matched by its git remote, then its name) and
+  a Claude account; the chat must have no uncommitted changes where it works, and a chat in its
+  own worktree has its branch pushed and checked out there. Claude chats only for now.
+
 ## [0.60.0] - 2026-10-27
 
 ### Added
