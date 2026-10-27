@@ -10,18 +10,19 @@ impl App {
     /// Nothing when the chat's own turn is idle. While shown, the spinner asks for its own
     /// next step (see `w::repaint_in`).
     pub fn status_line(&mut self, ui: &mut Ui, id: i64) {
-        self.steering_bubbles(ui, id);
+        self.queued_bubbles(ui, id);
         self.limit_line(ui, id);
         let own = self.turns.get(&id).map(|(_, s)| s.elapsed().as_secs());
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
         let subs = if lead { self.running_subs(id) } else { vec![] };
         if let Some(secs) = own {
+            let queued = self.queued(id).iter().any(|q| !q.written);
             ui.horizontal(|ui| {
                 // Harbor's spinner steps at 4 fps; egui's would repaint every frame.
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
                 w::spinner(ui.painter(), r.center(), 6.5, ui.visuals().strong_text_color());
                 let also = subs_running(subs.len());
-                w::subtle(ui, format!("Working… {}{also}  ·  Esc to stop", w::elapsed(secs)), "label-13");
+                w::subtle(ui, format!("Working… {}{also}  ·  {}", w::elapsed(secs), if queued { "Ctrl+Enter to send now  ·  Esc to edit queued" } else { "Esc to stop" }), "label-13");
             });
         }
         // Waiting only for sub-agents: the agent strip over the composer shows them (agentstrip.rs).
