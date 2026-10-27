@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-10-27
+
 ### Added
 - Projects without Git: Add project › New project now also offers **Create “name” without Git**,
   a plain folder in ~/Projects with no repository and no GitHub, just to keep chats organized.
@@ -1442,7 +1444,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.64.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.65.0...HEAD
+[0.65.0]: https://github.com/RDevNeo/harbor/compare/v0.64.1...v0.65.0
 [0.64.1]: https://github.com/RDevNeo/harbor/compare/v0.64.0...v0.64.1
 [0.64.0]: https://github.com/RDevNeo/harbor/compare/v0.63.1...v0.64.0
 [0.63.1]: https://github.com/RDevNeo/harbor/compare/v0.63.0...v0.63.1
