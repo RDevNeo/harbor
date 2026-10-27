@@ -25,7 +25,7 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
   PCs and phones: send them text, images and files).
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
   integrations, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
-- **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex presets plus custom
+- **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex, Gmail presets plus custom
   servers, managed through `claude mcp` so the terminal CLI sees the same config.
 
 ## Install

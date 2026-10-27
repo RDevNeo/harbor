@@ -48,6 +48,8 @@ fn mark_for(name: &str) -> Option<Mark> {
         mask!("figma", 0xF24E1E)
     } else if has("stripe") {
         mask!("stripe", 0x635BFF)
+    } else if has("gmail") {
+        mask!("gmail", 0xEA4335)
     } else if has("playwright") {
         Mark::Glyph(ic::DRAMA, Some(0x2EAD33))
     } else if has("context7") {
