@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.55.1] - 2026-10-27
+
 ### Fixed
 - Phone: an automatic update that can't install by itself no longer just fails quietly. Google
   Play Protect refuses background installs of builds it hasn't scanned yet
@@ -1270,7 +1272,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.1...HEAD
+[0.55.1]: https://github.com/RDevNeo/harbor/compare/v0.55.0...v0.55.1
 [0.55.0]: https://github.com/RDevNeo/harbor/compare/v0.54.1...v0.55.0
 [0.54.1]: https://github.com/RDevNeo/harbor/compare/v0.54.0...v0.54.1
 [0.54.0]: https://github.com/RDevNeo/harbor/compare/v0.53.1...v0.54.0
