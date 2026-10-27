@@ -82,6 +82,8 @@ final class Voice {
     private final java.util.List<float[]> held = new java.util.ArrayList<>();
     /** PC failures in a row: after two, the phone's model takes the rest of the dictation. */
     private volatile int hubFails;
+    /** The PC answered a phrase this dictation (its model is loaded now). */
+    private volatile boolean warm;
     private volatile String problem;
     /** A problem was shown this dictation (once is enough). */
     private boolean told;
@@ -146,6 +148,8 @@ final class Voice {
 
     private void show(boolean on) {
         strip.setVisibility(on ? View.VISIBLE : View.GONE);
+        // The screen going off would pause the chat and end the dictation.
+        edit.setKeepScreenOn(on);
         if (on) { started = System.currentTimeMillis(); said.setText("Listening…"); tick(); }
         if (onState != null) onState.run();
     }
@@ -177,6 +181,7 @@ final class Voice {
         recorded = false;
         busy = true;
         hubFails = 0;
+        warm = false;
         problem = null;
         told = false;
         info = null;
@@ -291,7 +296,11 @@ final class Voice {
         if (!local) {
             final byte[] w = wav(samples);
             final boolean raw = info != null;
-            final long budget = 6000 + samples.length / 16;
+            // A PC that still has to load its model (GET /v1/voice: not "loaded") gets longer
+            // for the first phrase.
+            JSONObject i = info;
+            boolean cold = i != null && !"loaded".equals(i.optString("model_state")) && !warm;
+            final long budget = 6000 + samples.length / 16 + (cold ? 20_000 : 0);
             Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on " + host() + "…"); });
             Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, langParam(a), raw, (int) budget + 2000));
             try {
@@ -299,6 +308,7 @@ final class Voice {
                 text = j.optString("text", "").trim();
                 where = j.optString("host", host());
                 hubFails = 0;
+                warm = true;
             } catch (TimeoutException e) {
                 f.cancel(true);
                 hubFails++;
