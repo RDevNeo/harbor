@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.59.2] - 2026-10-27
+
 ### Changed
 - The usage line under each agent turn ("Claude · Opus 5.5 · 6.3s · 158k in · 358 out · $0.85")
   no longer shows in the chat, on the desktop and the phone. Tokens and cost stay in the chat's
@@ -1350,7 +1352,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.59.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.59.2...HEAD
+[0.59.2]: https://github.com/RDevNeo/harbor/compare/v0.59.1...v0.59.2
 [0.59.1]: https://github.com/RDevNeo/harbor/compare/v0.59.0...v0.59.1
 [0.59.0]: https://github.com/RDevNeo/harbor/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/RDevNeo/harbor/compare/v0.57.1...v0.58.0
