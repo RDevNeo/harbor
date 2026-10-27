@@ -271,8 +271,12 @@ pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
 pub fn draft(ui: &mut Ui, chat: i64, m: &mut Mention, focus: &mut Option<egui::Id>) -> Click {
     let t = w::tokens(ui);
     let id = note_id(chat, m);
-    if *focus == Some(id) {
-        ui.memory_mut(|x| x.request_focus(id));
+    // Focus wanted here (a selection was just mentioned): the button acted on the press,
+    // and egui takes focus away from a field when a click ends outside it, so the release
+    // on that button would undo a request made in between. Asked again after the field
+    // is laid out, every frame until the click is over and the field has it.
+    let wanted = *focus == Some(id);
+    if wanted && ui.memory(|x| x.has_focus(id)) && ui.input(|i| !i.pointer.any_down() && !i.pointer.any_released()) {
         *focus = None;
     }
     let enter = ui.memory(|x| x.has_focus(id)) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -301,6 +305,10 @@ pub fn draft(ui: &mut Ui, chat: i64, m: &mut Mention, focus: &mut Option<egui::I
                 );
             });
         });
+    if wanted && focus.is_some() {
+        ui.memory_mut(|x| x.request_focus(id));
+        ui.ctx().request_repaint();
+    }
     if enter {
         click = Click::Done;
     }
@@ -308,7 +316,7 @@ pub fn draft(ui: &mut Ui, chat: i64, m: &mut Mention, focus: &mut Option<egui::I
 }
 
 /// The note box of mention `m` in the chat's composer.
-fn note_id(chat: i64, m: &Mention) -> egui::Id {
+pub fn note_id(chat: i64, m: &Mention) -> egui::Id {
     egui::Id::NULL.with(("mention-note", chat, m.item, m.excerpt, &m.text))
 }
 

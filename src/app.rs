@@ -1390,7 +1390,7 @@ pub fn clip(s: &str, n: usize) -> String {
 
 impl eframe::App for App {
     /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|down|up|wheel[,secs]]
-    /// places the pointer there and optionally clicks once after `secs` (default 1; `down`
+    /// places the pointer there and optionally clicks once after `secs` (default 1, fractions ok; `down`
     /// then `up` at another step drags, e.g. to select text); more
     /// steps joined by ';' follow at their own `secs` (since start).
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -1410,16 +1410,16 @@ impl eframe::App for App {
         let Ok(spec) = std::env::var("HARBOR_POINTER") else { return };
         let start = START.get_or_init(Instant::now);
         // Steps "x,y[,action[,secs]]" joined by ';': the pointer moves to each at its time.
-        let steps: Vec<(egui::Pos2, &str, u64)> = spec
+        let steps: Vec<(egui::Pos2, &str, f64)> = spec
             .split(';')
             .filter_map(|s| {
                 let parts: Vec<&str> = s.split(',').collect();
                 let (x, y) = (parts.first()?.trim().parse().ok()?, parts.get(1)?.trim().parse().ok()?);
-                Some((egui::pos2(x, y), parts.get(2).copied().unwrap_or(""), parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(1)))
+                Some((egui::pos2(x, y), parts.get(2).copied().unwrap_or(""), parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(1.0)))
             })
             .collect();
         let Some(first) = steps.first() else { return };
-        let due = steps.iter().take_while(|s| start.elapsed() > Duration::from_secs(s.2)).count();
+        let due = steps.iter().take_while(|s| start.elapsed() > Duration::from_secs_f64(s.2)).count();
         let pos = steps.get(due.max(1) - 1).map_or(first.0, |s| s.0);
         raw.events.push(egui::Event::PointerMoved(pos));
         let done = DONE.load(std::sync::atomic::Ordering::Relaxed);
@@ -1440,7 +1440,7 @@ impl eframe::App for App {
         }
         // Later steps come on their own, without other input.
         if steps.len() > due {
-            ctx.request_repaint_after(Duration::from_millis(200));
+            ctx.request_repaint_after(Duration::from_millis(50));
         }
     }
 

@@ -386,7 +386,7 @@ impl App {
         let mut action: Option<MsgAction> = None;
         // Text selected in a message: which one (the drag started there), and its
         // "Mention selection" button (mentions.rs).
-        let (pressed, press_at) = ui.input(|x| (x.pointer.primary_pressed(), x.pointer.press_origin()));
+        let (pressed, press_at) = ui.input(|x| (x.pointer.primary_pressed(), x.pointer.press_origin().or(x.pointer.interact_pos())));
         if pressed {
             self.mentions.press = None;
         }
@@ -1141,6 +1141,15 @@ impl App {
         if stop {
             if let View::Chat(id) = self.view {
                 self.stop_pressed(id, ui.ctx());
+            }
+        }
+        // A mention's note box being focused (mentions::draft) wins over the composer,
+        // while that mention is still in this composer.
+        if let Some(f) = self.mentions.focus_note {
+            if self.mentions.drafts.get(&key).is_some_and(|ms| ms.iter().any(|m| crate::mentions::note_id(key, m) == f)) {
+                self.focus_composer = false;
+            } else {
+                self.mentions.focus_note = None;
             }
         }
         if self.focus_composer && self.dialog.is_none() && self.popup.is_none() && !self.term_focus_pending() {

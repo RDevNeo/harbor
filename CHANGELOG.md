@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- After "Mention selection" the cursor now really lands in that excerpt's note box (also for
+  a second excerpt while another is waiting). Before, releasing the mouse on the button took
+  focus away from the note box again, so what you typed didn't go into the note.
+
 ## [0.59.0] - 2026-10-27
 
 ### Added
