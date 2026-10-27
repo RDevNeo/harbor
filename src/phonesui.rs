@@ -447,8 +447,9 @@ impl App {
     }
 
     /// A frame when the next typing lease runs out, so the sidebar's ✎ goes on time.
+    /// Also when this PC's own held-back draft is due (`local_typing`).
     pub fn typing_repaint(&self, ctx: &egui::Context) {
-        if let Some(e) = self.api.hub.next_typing_expiry() {
+        if let Some(e) = self.api.hub.next_typing_expiry().into_iter().chain(self.api.draft_due).min() {
             ctx.request_repaint_after(e.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
         }
     }
@@ -459,22 +460,56 @@ impl App {
         self.typers(chat).into_iter().filter(|t| t.device != me).collect()
     }
 
-    /// "✎ Galaxy A13 is typing…" above the composer while another device writes in this chat.
+    /// Above the composer while another device writes in this chat: "✎ Galaxy A13: <their
+    /// draft>" for clients that send it (its end, at most two lines), else "✎ Galaxy A13 is
+    /// typing…".
     pub fn typing_line(&self, ui: &mut Ui, chat: i64) {
         let who = self.others_typing(chat);
         let Some(soonest) = who.iter().map(|t| t.until).min() else { return };
-        let names: Vec<&str> = who.iter().map(|t| t.label.as_str()).collect();
-        let text = match names.as_slice() {
-            [one] => format!("{}  {one} is typing…", ic::PEN_LINE),
-            [a, b] => format!("{}  {a} and {b} are typing…", ic::PEN_LINE),
-            _ => format!("{}  {} people are typing…", ic::PEN_LINE, names.len()),
-        };
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            w::subtle(ui, text, "label-12");
-        });
+        let mut lines = vec![];
+        for t in who.iter().filter(|t| !api::draft_line(&t.text).is_empty()) {
+            let head = format!("{}  {}: ", ic::PEN_LINE, t.label);
+            lines.push(fit_two_rows(ui, &head, &api::draft_line(&t.text)));
+        }
+        let names: Vec<&str> = who.iter().filter(|t| api::draft_line(&t.text).is_empty()).map(|t| t.label.as_str()).collect();
+        match names.as_slice() {
+            [] => {}
+            [one] => lines.push(format!("{}  {one} is typing…", ic::PEN_LINE)),
+            [a, b] => lines.push(format!("{}  {a} and {b} are typing…", ic::PEN_LINE)),
+            _ => lines.push(format!("{}  {} people are typing…", ic::PEN_LINE, names.len())),
+        }
+        for text in lines {
+            egui::Frame::NONE.inner_margin(Margin { left: 6, ..Margin::ZERO }).show(ui, |ui| {
+                ui.add(egui::Label::new(w::rich(text, "label-12").color(w::tokens(ui).subtle())).wrap());
+            });
+        }
         ui.add_space(4.0);
         // The line goes when the lease runs out, even if nothing else repaints.
         ui.ctx().request_repaint_after(soonest.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
     }
+}
+
+/// `head` and as much of the end of `draft` as fits in two rows of the line's width, "…" in
+/// front when it's cut.
+fn fit_two_rows(ui: &Ui, head: &str, draft: &str) -> String {
+    let width = (ui.available_width() - 6.0).max(40.0);
+    let font = crate::theme::ts("label-12").resolve(ui.style());
+    let rows = |s: &str| ui.painter().layout(s.to_string(), font.clone(), egui::Color32::WHITE, width).rows.len();
+    let full = format!("{head}{draft}");
+    if rows(&full) <= 2 {
+        return full;
+    }
+    let chars: Vec<char> = draft.chars().collect();
+    let cut = |from: usize| format!("{head}…{}", chars[from..].iter().collect::<String>());
+    // The fewest characters dropped from the front that fit.
+    let (mut lo, mut hi) = (1, chars.len());
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if rows(&cut(mid)) <= 2 {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    cut(lo)
 }

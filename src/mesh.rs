@@ -417,7 +417,7 @@ pub struct Local {
     /// Settings › Devices › Update: peer id → (the version it ran, when asked).
     pub updating: HashMap<String, (String, Instant)>,
     /// Leases sent for copies: (chat, viewing) → (on, kind, when), to send renewals sparingly.
-    leases: HashMap<(i64, bool), (bool, String, Instant)>,
+    leases: HashMap<(i64, bool), (bool, String, u64, Instant)>,
     /// The chat this PC last said it has open: (chat, focused, when).
     viewing: Option<(i64, bool, Instant)>,
     /// When kv `mesh_allowed`/`mesh_enabled` were last read (they may change from a terminal).
@@ -925,7 +925,7 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             let changed = if b["view"].as_bool() == Some(true) {
                 hub.set_viewing(chat, &s("device"), &s("label"), s("kind") != "away", on)
             } else {
-                hub.set_typing(chat, &s("device"), &s("kind"), &s("label"), on)
+                hub.set_typing(chat, &s("device"), &s("kind"), &s("label"), on, b["text"].as_str())
             };
             if changed {
                 wake();
@@ -1179,10 +1179,15 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
 
 /// A typing or viewing lease for a copy goes to its home PC (on a thread). False when the
 /// chat is this PC's own.
-pub fn forward_lease(hub: &api::Hub, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool) -> bool {
+#[allow(clippy::too_many_arguments)]
+pub fn forward_lease(hub: &api::Hub, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool, text: Option<&str>) -> bool {
     let Some((home, hid)) = hub.mesh.homes.lock().unwrap().get(&chat).cloned() else { return false };
     let Some(p) = hub.mesh.peer(&home).filter(|p| p.online) else { return true };
-    let body = serde_json::to_vec(&json!({ "chat": hid, "view": view, "device": device, "kind": kind, "label": label, "on": on })).unwrap_or_default();
+    let mut body = json!({ "chat": hid, "view": view, "device": device, "kind": kind, "label": label, "on": on });
+    if let Some(t) = text {
+        body["text"] = json!(t);
+    }
+    let body = serde_json::to_vec(&body).unwrap_or_default();
     std::thread::spawn(move || {
         let _ = http(&p.dest(), "POST", "/mesh/v1/lease", Some(("application/json", &body)), Duration::from_secs(5));
     });
@@ -2009,23 +2014,26 @@ impl App {
 
     /// A typing or viewing lease of this PC (or a phone through it): kept here for this PC's
     /// chats, sent to the home PC for copies (renewals at most every few seconds).
-    pub fn set_lease(&mut self, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_lease(&mut self, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool, text: Option<&str>) {
         if !self.is_foreign(chat) {
             if view {
                 self.api.hub.set_viewing(chat, device, label, kind != "away", on);
             } else {
-                self.api.hub.set_typing(chat, device, kind, label, on);
+                self.api.hub.set_typing(chat, device, kind, label, on, text);
             }
             return;
         }
         let key = (chat, view);
         let every = if view { Duration::from_secs(5) } else { Duration::from_millis(2500) };
-        let same = self.mesh.leases.get(&key).is_some_and(|(o, k, at)| *o == on && k == kind && at.elapsed() < every);
+        // A new draft goes out at once (the caller debounces it).
+        let th = api::hash_of(&text);
+        let same = self.mesh.leases.get(&key).is_some_and(|(o, k, h, at)| *o == on && k == kind && *h == th && at.elapsed() < every);
         if same {
             return;
         }
-        self.mesh.leases.insert(key, (on, kind.to_string(), Instant::now()));
-        forward_lease(&self.api.hub, chat, view, device, kind, label, on);
+        self.mesh.leases.insert(key, (on, kind.to_string(), th, Instant::now()));
+        forward_lease(&self.api.hub, chat, view, device, kind, label, on, text);
     }
 
     /// True when someone other than `device` types in the chat: a message from `device` waits.
@@ -2051,13 +2059,13 @@ impl App {
         let me = api::local_device();
         let name = self.shared().me().name;
         if let Some((old, _, _)) = self.mesh.viewing.filter(|(o, _, _)| Some(*o) != open) {
-            self.set_lease(old, true, &me, "away", &name, false);
+            self.set_lease(old, true, &me, "away", &name, false, None);
             self.mesh.viewing = None;
         }
         let Some(id) = open else { return };
         let due = self.mesh.viewing.is_none_or(|(_, f, at)| f != focused || at.elapsed() >= Duration::from_secs(5));
         if due {
-            self.set_lease(id, true, &me, if focused { "focused" } else { "away" }, &name, true);
+            self.set_lease(id, true, &me, if focused { "focused" } else { "away" }, &name, true, None);
             self.mesh.viewing = Some((id, focused, Instant::now()));
         }
     }
@@ -2285,11 +2293,9 @@ impl App {
             m[k].as_array()
                 .into_iter()
                 .flatten()
-                .map(|t| api::Typer {
-                    device: t["device"].as_str().unwrap_or("").into(),
-                    kind: t["kind"].as_str().unwrap_or("").into(),
-                    label: t["label"].as_str().unwrap_or("").into(),
-                    until: Instant::now() + ttl,
+                .map(|t| {
+                    let s = |k: &str| t[k].as_str().unwrap_or("");
+                    api::Typer::new(s("device"), s("kind"), s("label"), &api::preview_tail(s("text")), Instant::now() + ttl)
                 })
                 .collect()
         };

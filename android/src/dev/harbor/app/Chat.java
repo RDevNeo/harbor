@@ -37,7 +37,9 @@ public class Chat extends Base {
     private Attach attach;
     private Run run;
     private long typedAt;           // last typing ping
-    private String typingLine;      // "Desk is typing…" from the hub, or null
+    private String sentDraft;       // the draft that ping carried
+    private final Runnable draftPing = this::pingDraft;
+    private java.util.List<String[]> typingLines = new java.util.ArrayList<>(); // who else types, and what (Sidebar.typingLines)
     private JSONObject bars;        // the items reply's "status": queue, working, waiting, limit
     private TextView workingText;   // "Working… · 12s", ticking
     private Boolean stripOpen;      // the agent strip unfolded (null: the hub's default)
@@ -248,7 +250,7 @@ public class Chat extends Base {
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
-        typingLine = Sidebar.typing(c, st == null ? "" : st.optString("you", ""));
+        typingLines = Sidebar.typingLines(c, st == null ? "" : st.optString("you", ""));
         drawBars();
     }
 
@@ -347,7 +349,7 @@ public class Chat extends Base {
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
         earlierButton();
         if (items.isEmpty()) { hintView = emptyView(); content.addView(hintView); }
-        if (r.has("typing")) typingLine = Sidebar.typing(r, you());
+        if (r.has("typing")) typingLines = Sidebar.typingLines(r, you());
         if (r.has("running")) running = r.optBoolean("running");
         bars = r.optJSONObject("status");
         JSONObject u = r.optJSONObject("usage");
@@ -503,9 +505,15 @@ public class Chat extends Base {
             if (targets != null && targets.length() > 0) acts.addView(small("Continue on…", () -> continueOn(targets)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
         }
-        if (typingLine != null) {
-            TextView t = Ui.subtitle(Ui.text(this, typingLine, 14, Ui.BLUE));
+        for (String[] l : typingLines) {
+            if (l[1] == null) {
+                status.addView(Ui.subtitle(Ui.text(this, l[0], 14, Ui.BLUE)), Ui.margins(Ui.fill(), 0, 4, 0, 4));
+                continue;
+            }
+            TextView t = Ui.text(this, l[0] + l[1], 14, Ui.BLUE);
+            t.setMaxLines(2);
             status.addView(t, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+            t.post(() -> fitTwoLines(t, l[0], l[1]));
         }
         strip(b.optJSONObject("agents"));
         // The hub's recap over the composer, its suggestion in the empty composer (Recap.java).
@@ -762,21 +770,61 @@ public class Chat extends Base {
         }
     }
 
-    /** At most one "typing" ping every 3 s while the user types; the hub expires it after 6 s. */
+    /** `head` and as much of the end of `draft` as fits in two lines, "…" in front when it's cut
+     *  (TextView only ellipsizes the start of a single line). */
+    private static void fitTwoLines(TextView t, String head, String draft) {
+        int w = t.getWidth() - t.getPaddingLeft() - t.getPaddingRight();
+        if (w <= 0) return;
+        java.util.function.IntPredicate fits = from -> {
+            String s = from == 0 ? head + draft : head + "…" + draft.substring(from);
+            return android.text.StaticLayout.Builder.obtain(s, 0, s.length(), t.getPaint(), w).build().getLineCount() <= 2;
+        };
+        if (fits.test(0)) return;
+        int lo = 1, hi = draft.length();
+        while (lo < hi) {
+            int mid = (lo + hi) / 2;
+            if (fits.test(mid)) hi = mid; else lo = mid + 1;
+        }
+        // Not inside a surrogate pair.
+        if (lo < draft.length() && Character.isLowSurrogate(draft.charAt(lo))) lo++;
+        t.setText(head + "…" + draft.substring(lo));
+    }
+
+    /** The draft goes to the hub at most every 400 ms while it changes (the last one always
+     *  goes), and every 3 s anyway while the user types; the hub expires it after 6 s. An
+     *  emptied composer stops at once. */
     private void typed() {
+        Ui.main.removeCallbacks(draftPing);
+        if (composer.getText().toString().trim().isEmpty()) { typing(false); return; }
+        long wait = typedAt + 400 - System.currentTimeMillis();
+        if (wait <= 0) pingDraft();
+        else Ui.main.postDelayed(draftPing, wait);
+    }
+
+    private void pingDraft() {
+        if (composer == null || gone) return;
+        String d = composer.getText().toString().trim();
         long now = System.currentTimeMillis();
-        if (now - typedAt < 3000) return;
+        if (d.isEmpty() || d.equals(sentDraft) && now - typedAt < 3000) return;
         typedAt = now;
+        sentDraft = d;
         typing(true);
     }
 
     private void typing(boolean on) {
+        if (!on) Ui.main.removeCallbacks(draftPing);
         if (!on && typedAt == 0) return;
-        if (!on) typedAt = 0;
+        if (!on) { typedAt = 0; sentDraft = null; }
         Hub h = hub;
         String id = chatId;
+        // The end of the draft, as much as the hub keeps (PROTOCOL.md "Typing").
+        String d = on && sentDraft != null ? sentDraft.substring(Math.max(0, sentDraft.length() - 500)) : null;
         Ui.pool.execute(() -> {
-            try { h.call("POST", "/v1/chats/" + id + "/typing", new JSONObject().put("typing", on).put("kind", "phone")); } catch (Exception ignored) { }
+            try {
+                JSONObject b = new JSONObject().put("typing", on).put("kind", "phone");
+                if (d != null) b.put("text", d);
+                h.call("POST", "/v1/chats/" + id + "/typing", b);
+            } catch (Exception ignored) { }
         });
     }
 

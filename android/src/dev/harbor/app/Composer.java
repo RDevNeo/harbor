@@ -118,7 +118,7 @@ final class Composer {
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
             @Override public void afterTextChanged(Editable e) {
                 refresh();
-                if (e.length() > 0 && onType != null) onType.run();
+                if (onType != null) onType.run();
             }
         });
         refresh();

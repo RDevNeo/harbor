@@ -150,11 +150,19 @@ impl Revs {
     /// Drops typers whose lease ran out; true when any did (their chats are marked).
     fn prune(&mut self, now: Instant) -> bool {
         let mut gone = vec![];
+        // A draft held back by the debounce is due: announce it now.
+        for (chat, v) in self.typing.iter_mut() {
+            for t in v.iter_mut().filter(|t| t.held && t.quiet.is_some_and(|q| q <= now)) {
+                t.held = false;
+                t.quiet = Some(now + PREVIEW_GAP);
+                gone.push(*chat);
+            }
+        }
         for map in [&mut self.typing, &mut self.viewing] {
             for (chat, v) in map.iter_mut() {
                 let n = v.len();
                 v.retain(|t| t.until > now);
-                if v.len() != n {
+                if v.len() != n && !gone.contains(chat) {
                     gone.push(*chat);
                 }
             }
@@ -167,7 +175,8 @@ impl Revs {
     }
 
     fn next_expiry(&self) -> Option<Instant> {
-        self.typing.values().chain(self.viewing.values()).flatten().map(|t| t.until).min()
+        let held = self.typing.values().flatten().filter(|t| t.held).filter_map(|t| t.quiet);
+        self.typing.values().chain(self.viewing.values()).flatten().map(|t| t.until).chain(held).min()
     }
 }
 
@@ -180,12 +189,39 @@ pub struct Typer {
     pub kind: String,
     pub label: String,
     pub until: Instant,
+    /// What they have in their composer (the last [`PREVIEW_CHARS`]), "" when unknown.
+    pub text: String,
+    /// A draft change isn't announced again before this (the debounce, see [`PREVIEW_GAP`]).
+    pub quiet: Option<Instant>,
+    /// A draft change waits for `quiet` to be announced.
+    pub held: bool,
+}
+
+impl Typer {
+    pub fn new(device: &str, kind: &str, label: &str, text: &str, until: Instant) -> Typer {
+        Typer { device: device.into(), kind: kind.into(), label: label.into(), until, text: text.into(), quiet: None, held: false }
+    }
 }
 
 /// How long one typing signal lasts (clients renew it every ~3 s).
 pub const TYPING_TTL: Duration = Duration::from_secs(6);
 /// How long a PC's "this chat is open here" lasts (renewed every few seconds while open).
 pub const VIEWING_TTL: Duration = Duration::from_secs(15);
+/// Draft previews wake the long-polls at most this often per typer.
+pub const PREVIEW_GAP: Duration = Duration::from_millis(400);
+/// How much of a draft a typing report keeps: its end, where the cursor usually is.
+pub const PREVIEW_CHARS: usize = 500;
+
+/// A draft as its preview line shows it: whitespace and line breaks as single spaces.
+pub fn draft_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The end of a draft, at most [`PREVIEW_CHARS`] long.
+pub fn preview_tail(text: &str) -> String {
+    let n = text.chars().count();
+    text.chars().skip(n.saturating_sub(PREVIEW_CHARS)).collect()
+}
 
 /// A client's device id: stable per token, without giving the token away.
 pub fn device_id(token: &str) -> String {
@@ -398,14 +434,16 @@ impl Hub {
     }
 
     /// Someone starts, keeps or stops typing in `chat`. Starting and stopping wake the
-    /// long-polls; a renewal only extends the lease. True when anything visible changed.
-    pub fn set_typing(&self, chat: i64, device: &str, kind: &str, label: &str, on: bool) -> bool {
-        self.lease(false, chat, device, kind, label, on)
+    /// long-polls; a renewal only extends the lease. `text` is their draft (`None`: an older
+    /// client, the draft isn't known); a new draft wakes the long-polls at most every
+    /// [`PREVIEW_GAP`]. True when anything visible changed now.
+    pub fn set_typing(&self, chat: i64, device: &str, kind: &str, label: &str, on: bool, text: Option<&str>) -> bool {
+        self.lease(false, chat, device, kind, label, on, text.map(preview_tail).as_deref())
     }
 
     /// A PC has `chat` open (`focused`: its window is in front), or closed it.
     pub fn set_viewing(&self, chat: i64, device: &str, label: &str, focused: bool, on: bool) -> bool {
-        self.lease(true, chat, device, if focused { "focused" } else { "away" }, label, on)
+        self.lease(true, chat, device, if focused { "focused" } else { "away" }, label, on, None)
     }
 
     /// Which PCs have `chat` open now.
@@ -414,7 +452,8 @@ impl Hub {
         self.revs.lock().unwrap().viewing.get(&chat).map(|v| v.iter().filter(|t| t.until > now).cloned().collect()).unwrap_or_default()
     }
 
-    fn lease(&self, view: bool, chat: i64, device: &str, kind: &str, label: &str, on: bool) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    fn lease(&self, view: bool, chat: i64, device: &str, kind: &str, label: &str, on: bool, text: Option<&str>) -> bool {
         let now = Instant::now();
         let ttl = if view { VIEWING_TTL } else { TYPING_TTL };
         let mut r = self.revs.lock().unwrap();
@@ -430,9 +469,20 @@ impl Hub {
                     v[i].kind = kind.into();
                     changed = true;
                 }
+                if let Some(text) = text.filter(|t| *t != v[i].text) {
+                    v[i].text = text.into();
+                    if v[i].quiet.is_some_and(|q| q > now) {
+                        v[i].held = true;
+                    } else {
+                        v[i].quiet = Some(now + PREVIEW_GAP);
+                        changed = true;
+                    }
+                }
             }
             (None, true) => {
-                v.push(Typer { device: device.into(), kind: kind.into(), label: label.into(), until: now + ttl });
+                let mut t = Typer::new(device, kind, label, text.unwrap_or(""), now + ttl);
+                t.quiet = Some(now + PREVIEW_GAP);
+                v.push(t);
                 changed = true;
             }
             (Some(i), false) => {
@@ -711,8 +761,11 @@ pub struct Local {
     /// Chat → hash of what `/v1/state` says about it; plus the projects/accounts part.
     chats: HashMap<i64, u64>,
     rest: u64,
-    /// The open chat and a hash of its draft at the last frame (this PC typing).
+    /// The open chat and a hash of its draft as last reported (this PC typing).
     draft: Option<(i64, u64)>,
+    /// When the draft was last reported, and when a newer one is due (the debounce).
+    draft_sent: Option<Instant>,
+    pub draft_due: Option<Instant>,
     /// Lead → hash of its team panel (`/v1/chats/{id}/team`), for leads with a team.
     teams: HashMap<i64, u64>,
     /// The pull requests and issues fetched for phones (ghapi.rs).
@@ -729,7 +782,7 @@ pub struct PhonesUi {
 
 impl Local {
     pub fn new(hub: Arc<Hub>) -> Self {
-        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, teams: HashMap::new(), gh: Default::default(), ui: Default::default() }
+        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, draft_sent: None, draft_due: None, teams: HashMap::new(), gh: Default::default(), ui: Default::default() }
     }
 }
 
@@ -1410,9 +1463,11 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         ("POST", ["v1", "chats", c, "typing"]) => {
             let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(w, 404, &json!({ "error": "no such chat" })) };
-            let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let body: Value = read_body(&mut r, req.len, 16 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
             let w = r.get_mut();
             let on = body["typing"].as_bool().unwrap_or(true);
+            // The draft (0.55): left out by older clients, who still show as "is typing…".
+            let text = body["text"].as_str().map(preview_tail);
             let kind = if body["kind"].as_str() == Some("pc") { "pc" } else { "phone" };
             let label = if !device.is_empty() {
                 device.clone()
@@ -1420,10 +1475,10 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| if kind == "pc" { "A PC".into() } else { "Phone".into() })
             };
             // Another PC's chat: its PC keeps who types in it (mesh.rs).
-            if crate::mesh::forward_lease(hub, chat, false, &device_id(&token), kind, &label, on) {
+            if crate::mesh::forward_lease(hub, chat, false, &device_id(&token), kind, &label, on, text.as_deref()) {
                 return send_json(w, 200, &json!({ "ok": true }));
             }
-            if hub.set_typing(chat, &device_id(&token), kind, &label, on) {
+            if hub.set_typing(chat, &device_id(&token), kind, &label, on, text.as_deref()) {
                 wake(); // this PC's window shows it
             }
             send_json(w, 200, &json!({ "ok": true }));
@@ -2073,7 +2128,7 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
     v
 }
 
-fn hash_of(v: &impl Hash) -> u64 {
+pub(crate) fn hash_of(v: &impl Hash) -> u64 {
     let mut h = DefaultHasher::new();
     v.hash(&mut h);
     h.finish()
@@ -2286,27 +2341,38 @@ impl App {
         parts.into_iter().map(|(k, h)| (k, h.finish())).collect()
     }
 
-    /// This PC's composer as a typer: an edit to an open chat's draft renews the lease, an
-    /// emptied draft (sent or cleared) ends it.
+    /// This PC's composer as a typer: an edit to an open chat's draft renews the lease and
+    /// carries the draft (at most every [`PREVIEW_GAP`]), an emptied draft (sent or cleared)
+    /// ends it.
     fn local_typing(&mut self) {
         let crate::app::View::Chat(id) = self.view else { return };
         let draft = self.drafts.get(&id).map(|d| d.trim().to_string()).unwrap_or_default();
         let h = hash_of(&draft);
         if self.api.draft == Some((id, h)) {
+            self.api.draft_due = None;
             return;
         }
-        let was = self.api.draft.replace((id, h));
+        let was = self.api.draft;
         let me = local_device();
         if let Some((old, _)) = was.filter(|(old, _)| *old != id) {
-            self.set_lease(old, false, &me, "pc", "", false);
+            self.set_lease(old, false, &me, "pc", "", false, None);
         }
         // The first look at a chat isn't typing (a draft left from earlier).
         if was.is_none_or(|(old, _)| old != id) {
+            self.api.draft = Some((id, h));
             return;
         }
+        // Keys in a burst: the draft goes out once the gap has passed (`typing_repaint` wakes then).
+        if let Some(at) = self.api.draft_sent.filter(|at| !draft.is_empty() && at.elapsed() < PREVIEW_GAP) {
+            self.api.draft_due = Some(at + PREVIEW_GAP);
+            return;
+        }
+        self.api.draft = Some((id, h));
+        self.api.draft_sent = Some(Instant::now());
+        self.api.draft_due = None;
         let name = self.api.hub.mesh.me().name;
         let label = if name.is_empty() { crate::remote::hostname() } else { name };
-        self.set_lease(id, false, &me, "pc", &label, !draft.is_empty());
+        self.set_lease(id, false, &me, "pc", &label, !draft.is_empty(), Some(&draft));
     }
 
     pub fn queued_count(&self, id: i64) -> usize {
@@ -2688,7 +2754,16 @@ impl App {
 
     /// Who is typing in a chat, as the wire says it.
     pub fn typing_json(&self, chat: i64) -> Vec<Value> {
-        self.typers(chat).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect()
+        self.typers(chat)
+            .into_iter()
+            .map(|t| {
+                let mut v = json!({ "device": t.device, "kind": t.kind, "label": t.label });
+                if !t.text.is_empty() {
+                    v["text"] = json!(t.text);
+                }
+                v
+            })
+            .collect()
     }
 
     /// The accounts a chat may switch to: a started chat stays on its provider, a lead on Claude.
@@ -3100,6 +3175,10 @@ impl App {
             return err(400, "nothing to send");
         }
         let before = self.queued(chat).len();
+        // Sent: the sender's draft preview goes (its client ends the lease too).
+        if !self.sender_device.is_empty() {
+            self.api.hub.set_typing(chat, &self.sender_device, "", "", false, None);
+        }
         let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
         self.send_to(chat, text, files, mentions, ctx);
         ok(json!({ "ok": true, "queued": self.queued(chat).len() > before }))
@@ -3380,17 +3459,17 @@ mod tests {
     fn typing_leases() {
         let hub = Arc::new(Hub::new(vec![], DEFAULT_PORT));
         let r0 = hub.rev();
-        assert!(hub.set_typing(5, "tok:1", "phone", "Galaxy", true), "starting is a change");
+        assert!(hub.set_typing(5, "tok:1", "phone", "Galaxy", true, None), "starting is a change");
         assert_eq!(hub.typing(5).iter().map(|t| (t.device.as_str(), t.kind.as_str(), t.label.as_str())).collect::<Vec<_>>(), [("tok:1", "phone", "Galaxy")]);
         let (_, chats, state) = hub.wait(r0, Duration::ZERO);
         assert_eq!((chats, state), (vec![5], true));
         let r1 = hub.rev();
-        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true), "a renewal only extends the lease");
+        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true, None), "a renewal only extends the lease");
         assert_eq!(hub.rev(), r1);
-        assert!(hub.set_typing(5, "pc:desk", "pc", "desk", true));
+        assert!(hub.set_typing(5, "pc:desk", "pc", "desk", true, None));
         assert_eq!(hub.typing(5).len(), 2);
-        assert!(hub.set_typing(5, "tok:1", "phone", "", false), "stopping is a change");
-        assert!(!hub.set_typing(5, "tok:1", "phone", "", false));
+        assert!(hub.set_typing(5, "tok:1", "phone", "", false, None), "stopping is a change");
+        assert!(!hub.set_typing(5, "tok:1", "phone", "", false, None));
         assert_eq!(hub.typing(5).len(), 1);
         assert!(hub.typing(6).is_empty());
         // A lease that runs out wakes a waiting long-poll without anyone calling in.
@@ -3411,6 +3490,46 @@ mod tests {
         assert_eq!(device_id("abc"), device_id("abc"));
         assert_ne!(device_id("abc"), device_id("abd"));
         assert!(device_id("abc").starts_with("tok:") && device_id("abc").len() == 12);
+    }
+
+    #[test]
+    fn typing_drafts() {
+        let hub = Arc::new(Hub::new(vec![], DEFAULT_PORT));
+        assert!(hub.set_typing(5, "tok:1", "phone", "Galaxy", true, Some("Hel")), "starting is a change");
+        assert_eq!(hub.typing(5)[0].text, "Hel");
+        // Within the gap a new draft is kept but held back: no wake-up per key.
+        let r1 = hub.rev();
+        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true, Some("Hell")));
+        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true, Some("Hello")));
+        assert_eq!(hub.rev(), r1);
+        assert_eq!(hub.typing(5)[0].text, "Hello", "readers see the newest draft");
+        // The held draft is announced once the gap has passed, without anyone calling in.
+        let due = hub.next_typing_expiry().unwrap();
+        assert!(due <= Instant::now() + PREVIEW_GAP);
+        let t = Instant::now();
+        let (rev, chats, _) = hub.wait(r1, Duration::from_secs(5));
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        assert!(rev > r1);
+        assert_eq!(chats, vec![5]);
+        assert!(!hub.revs.lock().unwrap().typing[&5][0].held);
+        // After the gap a change wakes at once; the same draft (a heartbeat) doesn't.
+        hub.revs.lock().unwrap().typing.get_mut(&5).unwrap()[0].quiet = None;
+        assert!(hub.set_typing(5, "tok:1", "phone", "Galaxy", true, Some("Hello!")));
+        hub.revs.lock().unwrap().typing.get_mut(&5).unwrap()[0].quiet = None;
+        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true, Some("Hello!")));
+        // An older client (no text) keeps the draft it had; stopping drops it.
+        assert!(!hub.set_typing(5, "tok:1", "phone", "Galaxy", true, None));
+        assert_eq!(hub.typing(5)[0].text, "Hello!");
+        assert!(hub.set_typing(5, "tok:1", "phone", "", false, None));
+        assert!(hub.typing(5).is_empty());
+        assert!(hub.set_typing(5, "tok:1", "phone", "Galaxy", true, None));
+        assert_eq!(hub.typing(5)[0].text, "", "a new lease starts without the old draft");
+        // Only the end of a long draft is kept.
+        let long = format!("{}é", "a".repeat(PREVIEW_CHARS + 20));
+        assert!(hub.set_typing(6, "tok:2", "phone", "Pixel", true, Some(&long)));
+        let kept = &hub.typing(6)[0].text;
+        assert_eq!(kept.chars().count(), PREVIEW_CHARS);
+        assert!(kept.ends_with('é'));
     }
 
     fn account(id: &str, kind: Kind) -> providers::Account {
@@ -3556,6 +3675,11 @@ mod tests {
         assert_eq!(st, 200);
         let t = hub.typing(4);
         assert_eq!((t[0].label.as_str(), t[0].kind.as_str(), t[0].device.clone()), ("Pixel", "phone", device_id("tok")));
+        assert_eq!(t[0].text, "", "a client without drafts");
+        hub.revs.lock().unwrap().typing.get_mut(&4).unwrap()[0].quiet = None;
+        let body = r#"{"typing":true,"text":"fix the build"}"#;
+        call(port, &format!("POST /v1/chats/4/typing HTTP/1.1\r\nAuthorization: Bearer tok\r\nContent-Length: {}\r\n\r\n{body}", body.len()));
+        assert_eq!(hub.typing(4)[0].text, "fix the build");
         let body = r#"{"typing":false}"#;
         call(port, &format!("POST /v1/chats/4/typing HTTP/1.1\r\nAuthorization: Bearer tok\r\nContent-Length: {}\r\n\r\n{body}", body.len()));
         assert!(hub.typing(4).is_empty());
