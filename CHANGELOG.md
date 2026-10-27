@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-10-27
+
 ### Added
 - Mention a piece of a message: select text in any message of a chat (yours or the agent's) and
   a "Mention selection" button appears by it. The chip holds just that excerpt, in quotes, and
@@ -1300,7 +1302,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.3...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/RDevNeo/harbor/compare/v0.55.3...v0.56.0
 [0.55.3]: https://github.com/RDevNeo/harbor/compare/v0.55.2...v0.55.3
 [0.55.2]: https://github.com/RDevNeo/harbor/compare/v0.55.1...v0.55.2
 [0.55.1]: https://github.com/RDevNeo/harbor/compare/v0.55.0...v0.55.1
