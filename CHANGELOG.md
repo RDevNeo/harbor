@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.57.1] - 2026-10-27
+
+### Changed
+- Esc leaves Settings and goes back to where you were (the chat or page you opened it from),
+  like its Back button. An open menu, dialog, or a key being set in Keybindings still takes Esc
+  first, and in a text field Esc only leaves the field. Desktop only: the phone's Back already
+  does this.
+
 ## [0.57.0] - 2026-10-27
 
 ### Added
@@ -1311,7 +1319,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.57.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.57.1...HEAD
+[0.57.1]: https://github.com/RDevNeo/harbor/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/RDevNeo/harbor/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/RDevNeo/harbor/compare/v0.55.3...v0.56.0
 [0.55.3]: https://github.com/RDevNeo/harbor/compare/v0.55.2...v0.55.3
