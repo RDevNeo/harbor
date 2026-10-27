@@ -1115,7 +1115,8 @@ on another PC takes this PC's instructions and memory (`send_context`). `PATCH` 
 
 From 0.45 (shared files, `src/machines.rs`): each other PC in `pcs` has `share` (`off`, `read`,
 `edit` or `full`: what chats running on that PC may do with this PC's files, shell and GitHub)
-and `share_label`; `levels` lists the choices (`[{id, label, about}]`); `me.share_github` says
+and `share_label` (since 0.55.3 a PC nobody chose a level for is `full`; before, `read`; an
+explicit choice is stored and kept); `levels` lists the choices (`[{id, label, about}]`); `me.share_github` says
 whether chats this PC drives on other PCs may run `gh` here with its GitHub sign-in. `PATCH` also
 takes `share_github` and `share: {pc, level}`.
 

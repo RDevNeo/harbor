@@ -5,6 +5,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Paired PCs share everything by default (shell, any file, GitHub); lower it per PC in Devices.
+
 ### Fixed
 - A chat shared from another PC now shows its images on this PC's desktop: a picture you attach
   to such a chat (and anything its agent shows) is fetched from the PC the chat runs on, instead
