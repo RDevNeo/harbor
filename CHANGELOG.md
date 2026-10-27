@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-10-27
+
 ### Added
 - A chat that works in its own worktree now says so everywhere, on the desktop and the phone: a
   "Worktree · harbor/a1b2c3" chip next to the chat's title (its live branch; a click or tap
@@ -1466,7 +1468,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.65.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.66.0...HEAD
+[0.66.0]: https://github.com/RDevNeo/harbor/compare/v0.65.1...v0.66.0
 [0.65.1]: https://github.com/RDevNeo/harbor/compare/v0.65.0...v0.65.1
 [0.65.0]: https://github.com/RDevNeo/harbor/compare/v0.64.1...v0.65.0
 [0.64.1]: https://github.com/RDevNeo/harbor/compare/v0.64.0...v0.64.1
