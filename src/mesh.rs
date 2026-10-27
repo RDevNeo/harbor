@@ -459,6 +459,8 @@ pub struct Remote {
     pub viewing: Vec<api::Typer>,
     /// Its shared composer draft.
     pub draft: Option<api::SharedDraft>,
+    /// The name of its worktree there, when it runs in one (worktree.rs).
+    pub worktree: Option<String>,
 }
 
 /// Messages from the peer workers to the UI thread.
@@ -2360,7 +2362,17 @@ impl App {
         let (typing, viewing) = (leases("typing", api::TYPING_TTL), leases("viewing", api::VIEWING_TTL));
         self.mesh.status.insert(
             id,
-            Remote { running: m["running"].as_bool().unwrap_or(false), since_ms: m["since_ms"].as_i64(), queued: m["queued"].as_u64().unwrap_or(0) as usize, status, forks, typing, viewing, draft: api::SharedDraft::from_json(&m["draft"]) },
+            Remote {
+                running: m["running"].as_bool().unwrap_or(false),
+                since_ms: m["since_ms"].as_i64(),
+                queued: m["queued"].as_u64().unwrap_or(0) as usize,
+                status,
+                forks,
+                typing,
+                viewing,
+                draft: api::SharedDraft::from_json(&m["draft"]),
+                worktree: m["worktree"].as_str().filter(|w| !w.is_empty()).map(String::from),
+            },
         );
         self.api_touch(id);
         Some(id)
@@ -2514,6 +2526,8 @@ impl App {
             "typing": self.typing_json(c.id),
             "draft": self.shared_draft(c.id).map(|d| d.json()),
             "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
+            // Its worktree's name, when it runs in one (optional, 0.66).
+            "worktree": self.worktree_marker(c).map(|m| m.name),
         })
     }
 

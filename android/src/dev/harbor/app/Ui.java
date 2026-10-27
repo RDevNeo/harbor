@@ -69,7 +69,8 @@ final class Ui {
             I_MERGE = "\ue0e4", I_CIRCLE_DOT = "\ue345", I_CIRCLE_SLASH = "\ue402", I_CIRCLE_DASHED = "\ue4b0",
             I_TAG = "\ue17f", I_BRANCH = "\ue0e2", I_EXTERNAL = "\ue0b9", I_FILTER = "\ue460", I_REFRESH = "\ue145",
             I_SORT = "\ue046", I_MILESTONE = "\ue298", I_USERS = "\ue1a4",
-            I_FILE_CODE = "\ue0c3", I_FILE_BRACES = "\ue36b", I_FILE_TEXT = "\ue0cc", I_COMMIT = "\ue0e3";
+            I_FILE_CODE = "\ue0c3", I_FILE_BRACES = "\ue36b", I_FILE_TEXT = "\ue0cc", I_COMMIT = "\ue0e3",
+            I_FOLDER_GIT = "\ue40a";
 
     static Typeface sans, semi, mono, icons, serif, serifBold;
     static final Handler main = new Handler(Looper.getMainLooper());

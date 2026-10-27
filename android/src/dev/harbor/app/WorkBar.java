@@ -24,15 +24,14 @@ final class WorkBar {
     final LinearLayout view;
     private final Activity a;
     private final Hub hub;
-    /** Lucide folder-git (src/icons.rs FOLDER_GIT), in the same font. */
-    static final String I_FOLDER_GIT = "\ue40a";
     private final LinearLayout ws, br;
     /** The chat it's for; null: a new chat (then `project`, `worktree` and `base` are its picks). */
     String chat;
     String project = "";
     boolean worktree;
     String base = "";
-    private JSONObject info;
+    private JSONObject info, marker;
+    private LinearLayout head;
     private int gen;
 
     WorkBar(Activity a, Hub hub) {
@@ -97,11 +96,11 @@ final class WorkBar {
 
     private void show(JSONObject r) {
         info = r;
-        if (r == null || !r.optBoolean("git")) { view.setVisibility(View.GONE); return; }
+        if (r == null || !r.optBoolean("git")) { view.setVisibility(View.GONE); showHead(); return; }
         view.setVisibility(View.VISIBLE);
         boolean wt = "worktree".equals(r.optString("mode"));
         String name = r.isNull("name") ? "" : r.optString("name");
-        label(ws, wt ? I_FOLDER_GIT : Ui.I_FOLDER, !name.isEmpty() ? name : wt ? "New worktree" : "Current checkout");
+        label(ws, wt ? Ui.I_FOLDER_GIT : Ui.I_FOLDER, !name.isEmpty() ? "Worktree · " + name : wt ? "New worktree" : "Current checkout");
         String b = r.optString("branch");
         if (chat == null && wt) b = "from " + r.optString("base");
         int dirty = r.optInt("dirty");
@@ -109,6 +108,63 @@ final class WorkBar {
         String pend = r.isNull("pending") ? "" : r.optString("pending");
         if (!pend.isEmpty()) { label(ws, Ui.I_LOADER, pend); Ui.main.postDelayed(this::load, 1500); }
         label(br, Ui.I_BRANCH, b.isEmpty() ? "…" : b + (dirty > 0 && !(chat == null && wt) ? "  ·  " + dirty + " changed" : ""));
+        showHead();
+    }
+
+    // ---- the header's chip ----
+
+    /** The chip under the screen's title (Chat, NewChat), the desktop header's: that the chat
+     *  works in a worktree of its own and on which branch (a new chat: that it will), so it's
+     *  never mistaken for the checkout. A tap opens the workspace sheet. */
+    LinearLayout header() {
+        head = Ui.row(a);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(Ui.dp(9), Ui.dp(2), Ui.dp(10), Ui.dp(2));
+        head.setBackground(Ui.press(Ui.G100, Ui.LINE, 11));
+        head.addView(Ui.icon(a, Ui.I_FOLDER_GIT, 13, Ui.BLUE), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
+        TextView t = Ui.text(a, "", 12, Ui.FG);
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        head.addView(t, Ui.margins(new LinearLayout.LayoutParams(-2, -2), 5, 0, 0, 0));
+        head.setOnClickListener(v -> {
+            if (info != null && info.optBoolean("git")) pickWorkspace();
+            else if (marker != null) Ui.toast(a, "Runs in its own worktree, " + marker.optString("name") + ", on the PC it runs on");
+        });
+        head.setVisibility(View.GONE);
+        return head;
+    }
+
+    /** The chat's "worktree" from the hub's state (null: none, or a hub older than 0.66). */
+    void marker(JSONObject w) {
+        marker = w;
+        showHead();
+    }
+
+    private void showHead() {
+        if (head == null) return;
+        boolean git = info != null && info.optBoolean("git");
+        boolean wt = git && "worktree".equals(info.optString("mode"));
+        String pend = info == null || info.isNull("pending") ? "" : info.optString("pending");
+        String text = null;
+        int glyph = Ui.BLUE;
+        if (chat == null) {
+            if (wt) {
+                String from = info.optString("base");
+                text = !pend.isEmpty() ? pend : from.isEmpty() ? "New worktree" : "New worktree · from " + from;
+                glyph = Ui.G700;
+            }
+        } else if (marker != null && marker.optBoolean("gone")) {
+            text = "Worktree gone";
+            glyph = Ui.RED;
+        } else if (marker != null || wt) {
+            String b = wt ? info.optString("branch") : "";
+            String n = marker != null ? marker.optString("name") : info.isNull("name") ? "" : info.optString("name");
+            text = "Worktree · " + (b.isEmpty() ? n : b);
+        }
+        head.setVisibility(text == null ? View.GONE : View.VISIBLE);
+        if (text == null) return;
+        ((TextView) head.getChildAt(0)).setTextColor(glyph);
+        ((TextView) head.getChildAt(1)).setText(text);
     }
 
     /** A call to the PC; on failure its reason as a toast, and the chips read again. */
@@ -127,6 +183,7 @@ final class WorkBar {
     void pending(boolean branch, String what) {
         view.setVisibility(View.VISIBLE);
         label(branch ? br : ws, Ui.I_LOADER, what);
+        if (!branch && chat == null && head != null && head.getVisibility() == View.VISIBLE) ((TextView) head.getChildAt(1)).setText(what);
     }
 
     // ---- where it works ----

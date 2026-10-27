@@ -408,6 +408,15 @@ refetch everything.
   Every `{id}` in a path may be the `gid` instead; keep it to find the chat again on another hub.
 - `home` / `home_name`: the PC the chat runs on (its peer id, its name). `writable`: false while
   that PC is off: show the chat read-only with "<home_name> is off" (writes answer `409`).
+- `worktree` (optional, 0.66; null or missing: it runs in the project's checkout, or an older
+  hub): the chat runs in a git worktree of its own (sub-agents: their lead's), `{"name":
+  "app-a1b2c3", "path": "/home/sam/.local/share/harbor/worktrees/app-a1b2c3" | null, "gone":
+  false}`. `path` is null for another PC's chat (its home PC only says the name); `gone`: the
+  folder was removed outside Harbor (its turns refuse to start). The desktop marks such a chat's
+  sidebar row with the folder-git glyph (`U+E40A`, red when gone) and shows a chip next to the
+  chat's title, "Worktree · <branch>" (the branch from `GET /v1/workspace`, else the name;
+  "Worktree gone"; a new chat headed for one: "New worktree · from <base>"); the phone does the
+  same in its list and under its title. Tapping the chip opens the workspace sheet.
 
 ### `GET /v1/chats/{id}/items?since=<rev>`
 
@@ -454,7 +463,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | `footer` | nothing since 0.59.2: the end of a turn comes as `hidden` (its usage stays in Usage). Older hubs send its line here; draw nothing | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
 | `chat_link` (0.57) | a divider "`text` · Open chat" linking to another chat: at the top of a chat an agent opened with its `open_chat` tool ("Opened by the agent of “Fix login”"), and in the chat that opened it ("Opened “Docs pass”"). Tap: open `chat`; while `chat` is null (that chat hasn't reached this hub yet) draw just the text | `text`, `chat` (this hub's id, or the gid with `X-Harbor-Ids: global`; null when it isn't here), `gid` |
-| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
 | `media` (0.50) | an image or video an agent showed with its `show_media` tool, drawn like a `text` card's `media` | `media` (one entry; absent when the file can't be shown), `caption`, `pending` (the call hasn't answered yet), `images` |
@@ -756,8 +765,8 @@ with its picks) →
 `git: false` (and nothing else): no chips (no project, not a git repo such as a project made
 "without Git" on the desktop, another PC's chat, a chat on another device). Chats in a project
 without Git work like any other; only the workspace/branch chips, commit pills and `#` issue tags
-have nothing to show there (`@` lists the folder's files from disk since 0.65). `mode` is `worktree` for a chat in its worktree (`name`, `path` its folder) and
-for New chat with `worktree=1` (`base`: the branch it would start from). `branch` reads
+have nothing to show there (`@` lists the folder's files from disk since 0.65). `mode` is `worktree` for a chat in its worktree (`name`, `path` its folder; the
+chip reads "Worktree · <name>" since 0.66) and for New chat with `worktree=1` (`base`: the branch it would start from). `branch` reads
 `detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
 a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
 switched now (an agent is working there), null when it can. `pending` (0.37.2, optional): what git is

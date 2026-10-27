@@ -534,6 +534,13 @@ final class Sidebar {
         boolean settled = c.optBoolean("settled");
         LinearLayout r = Ui.listRow(a, Ui.I_CHAT, Ui.G700, title.isEmpty() ? "New chat" : title, settled ? Ui.G700 : Ui.FG);
         r.setBackground(id.equals(current) ? Ui.press(Ui.G100, 0, 12) : Ui.press(0, 0, 12));
+        // Runs in a worktree of its own (the desktop row's folder-git mark).
+        JSONObject wt = c.optJSONObject("worktree");
+        if (wt != null) {
+            TextView m = Ui.icon(a, Ui.I_FOLDER_GIT, 14, wt.optBoolean("gone") ? Ui.RED : Ui.G700);
+            m.setContentDescription("Worktree " + wt.optString("name"));
+            r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        }
         boolean typing = typing(c, you) != null;
         int q = Hub.queued(c);
         if (typing) {

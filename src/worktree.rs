@@ -147,12 +147,8 @@ pub fn root() -> PathBuf {
     store::data_dir().join("worktrees")
 }
 
-/// Makes a worktree of `repo` on a new branch `harbor/<id>` from `base` (a branch, or "" for
-/// the checkout's HEAD). Returns its folder.
-pub fn add(repo: &Path, base: &str) -> Result<PathBuf, String> {
-    add_in(&root(), repo, base)
-}
-
+/// Makes a worktree of `repo` in `root` on a new branch `harbor/<id>` from `base` (a branch,
+/// or "" for the checkout's HEAD). Returns its folder.
 fn add_in(root: &Path, repo: &Path, base: &str) -> Result<PathBuf, String> {
     let project: String = repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into()).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect();
     let mut last = String::new();
@@ -177,7 +173,47 @@ fn add_in(root: &Path, repo: &Path, base: &str) -> Result<PathBuf, String> {
     Err(format!("couldn't make a worktree: {last}"))
 }
 
-/// Removes a worktree made by `add`, unless it has uncommitted changes (Err says so). Its
+/// A worktree just made: its folder, its branch and the branch it started from.
+#[derive(Clone, Debug)]
+pub struct Made {
+    pub dir: PathBuf,
+    pub branch: String,
+    pub base: String,
+}
+
+impl Made {
+    pub fn name(&self) -> String {
+        self.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+
+    /// The chat's line about it: "Working in a new worktree · harbor-a1b2c3 on branch
+    /// harbor/a1b2c3 (from main)", and its detail.
+    fn notice(&self, what: &str) -> (String, String) {
+        let from = if self.base.is_empty() { String::new() } else { format!(" (from {})", self.base) };
+        let text = format!("{what} · {} on branch {}{from}", self.name(), self.branch);
+        let detail = format!(
+            "Folder: {}\nBranch: {}{from}\nIts own folder and branch, so parallel agents don't collide. It's removed with the thread, unless it has uncommitted changes.",
+            crate::app::tilde(&self.dir),
+            self.branch
+        );
+        (text, detail)
+    }
+}
+
+/// Makes a worktree of `repo` on a new branch `harbor/<id>` from `base` (a branch, or "" for
+/// the checkout's HEAD), in Harbor's data folder; with what the chat's line says about it.
+pub fn make(repo: &Path, base: &str) -> Result<Made, String> {
+    make_in(&root(), repo, base)
+}
+
+fn make_in(root: &Path, repo: &Path, base: &str) -> Result<Made, String> {
+    let dir = add_in(root, repo, base)?;
+    let branch = head(&dir).map(|h| h.label()).unwrap_or_default();
+    let base = if base.is_empty() { head(repo).map(|h| h.label()).unwrap_or_default() } else { base.to_string() };
+    Ok(Made { dir, branch, base })
+}
+
+/// Removes a worktree made by `make`, unless it has uncommitted changes (Err says so). Its
 /// branch goes too when everything on it is merged somewhere (`git branch -d`).
 pub fn remove(repo: &Path, dir: &Path) -> Result<(), String> {
     if !dir.is_dir() {
@@ -222,13 +258,26 @@ pub struct State {
     pub query: String,
     /// The last git error, shown in the menus until the next action.
     pub error: Option<String>,
+    /// The workspace menu was opened from the header's chip (it opens under it), not the bar.
+    pub from_header: bool,
 }
 
 impl Default for State {
     fn default() -> Self {
         let (done_tx, done_rx) = channel();
-        Self { draft: DraftWs::default(), done_tx, done_rx, busy: None, heads: Default::default(), menu: None, query: String::new(), error: None }
+        Self { draft: DraftWs::default(), done_tx, done_rx, busy: None, heads: Default::default(), menu: None, query: String::new(), error: None, from_header: false }
     }
+}
+
+/// What a chat's header and sidebar row say about its worktree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Marker {
+    /// The folder's name ("harbor-a1b2c3").
+    pub name: String,
+    /// Its folder; None for another PC's chat (its home PC only says the name).
+    pub path: Option<PathBuf>,
+    /// The folder isn't there anymore (removed outside Harbor).
+    pub gone: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -274,6 +323,18 @@ impl App {
     pub fn worktree_of(&self, c: &Chat) -> Option<PathBuf> {
         let id = if c.role == Role::Sub { c.parent? } else { c.id };
         self.store.get(&format!("worktree:{id}")).filter(|p| !p.is_empty()).map(PathBuf::from)
+    }
+
+    /// Whether a chat runs in a worktree, for its header chip and sidebar row (and the phone's):
+    /// this PC's chats from kv, another PC's as its home PC says.
+    pub fn worktree_marker(&self, c: &Chat) -> Option<Marker> {
+        if c.foreign() {
+            let name = self.mesh.status.get(&c.id)?.worktree.clone()?;
+            return Some(Marker { name, path: None, gone: false });
+        }
+        let w = self.worktree_of(c)?;
+        let name = w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        Some(Marker { name, gone: !w.is_dir(), path: Some(w) })
     }
 
     /// The repository a chat's commit pills are looked up in (commits.rs): where it works, when
@@ -408,12 +469,12 @@ impl App {
             return;
         }
         self.ws.busy = Some((Side::Workspace, "Creating worktree…".into()));
-        self.ws_spawn(ctx, move || add(&repo, &base), move |app, r, ctx| {
+        self.ws_spawn(ctx, move || make(&repo, &base), move |app, r, ctx| {
             app.ws.busy = None;
             match r {
-                Ok(dir) => {
+                Ok(made) => {
                     let id = app.new_thread(held.repo, &held.text);
-                    app.ws_attach(id, Some(dir));
+                    app.ws_attach(id, Some(made));
                     // Still on the new chat: follow it there.
                     if app.view == View::Draft {
                         app.view = View::Chat(id);
@@ -439,12 +500,12 @@ impl App {
         self.mentions.drafts.entry(key).or_default().extend(held.mentions);
     }
 
-    /// Records a new chat's worktree (from `ws_for_new_chat`).
-    pub fn ws_attach(&mut self, chat_id: i64, dir: Option<PathBuf>) {
-        if let Some(d) = dir {
-            self.store.set(&format!("worktree:{chat_id}"), &d.to_string_lossy());
-            let name = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            self.notice(chat_id, "folder", &format!("Works in a new worktree, {name}"), &d.to_string_lossy());
+    /// Records a new chat's worktree, with a line in the chat that says where it works.
+    pub fn ws_attach(&mut self, chat_id: i64, made: Option<Made>) {
+        if let Some(m) = made {
+            self.store.set(&format!("worktree:{chat_id}"), &m.dir.to_string_lossy());
+            let (text, detail) = m.notice("Working in a new worktree");
+            self.notice(chat_id, "worktree", &text, &detail);
         }
     }
 
@@ -462,13 +523,13 @@ impl App {
         }
         self.ws.busy = Some((Side::Workspace, "Creating worktree…".into()));
         let repo = info.repo.clone();
-        self.ws_spawn(ctx, move || add(&repo, ""), move |app, r, ctx| {
+        self.ws_spawn(ctx, move || make(&repo, ""), move |app, r, ctx| {
             app.ws.busy = None;
-            let r = r.and_then(|dir| match app.ws_moved(chat_id, &info.repo, &dir) {
-                Ok(()) => Ok(dir),
+            let r = r.and_then(|made| match app.ws_moved(chat_id, &made) {
+                Ok(()) => Ok(made.dir),
                 Err(e) => {
                     // It started meanwhile, or a session didn't copy: the new worktree goes again.
-                    let (repo, d) = (info.repo.clone(), dir.clone());
+                    let (repo, d) = (info.repo.clone(), made.dir);
                     app.ws_spawn(ctx, move || remove(&repo, &d), |_, _, _| {});
                     Err(e)
                 }
@@ -478,21 +539,21 @@ impl App {
     }
 
     /// The chat (and its sub-agents) moves into the worktree just made, if it still may.
-    fn ws_moved(&mut self, chat_id: i64, _repo: &Path, dir: &Path) -> Result<(), String> {
+    fn ws_moved(&mut self, chat_id: i64, made: &Made) -> Result<(), String> {
         let ids = self.movable(chat_id)?;
         for id in &ids {
             let Some(c) = self.chat(*id).cloned() else { continue };
             let Some(acc) = self.account(&c.account).cloned() else { continue };
             if acc.kind == crate::providers::Kind::Claude && c.started && !c.session_id.is_empty() {
-                if let Err(e) = crate::movechat::ensure_session(&acc.config_dir, &c.session_id, dir) {
+                if let Err(e) = crate::movechat::ensure_session(&acc.config_dir, &c.session_id, &made.dir) {
                     return Err(format!("couldn't copy {}'s session: {e}", c.name));
                 }
             }
             crate::workspace::forget(*id);
         }
-        self.store.set(&format!("worktree:{chat_id}"), &dir.to_string_lossy());
-        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        self.notice(chat_id, "folder", &format!("Moved to a new worktree, {name}"), &dir.to_string_lossy());
+        self.store.set(&format!("worktree:{chat_id}"), &made.dir.to_string_lossy());
+        let (text, detail) = made.notice("Moved to a new worktree");
+        self.notice(chat_id, "worktree", &text, &detail);
         Ok(())
     }
 
@@ -579,17 +640,17 @@ impl App {
             } else {
             let (label, tip) = match (&info.worktree, info.new_worktree) {
                 (Some(w), _) => (
-                    w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    format!("Worktree · {}", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
                     format!("Runs in its own worktree, {}. It's removed with the thread, unless it has uncommitted changes.", w.display()),
                 ),
                 (None, true) => ("New worktree".to_string(), "The first message makes a worktree of its own (own folder and branch), so parallel agents don't collide.".to_string()),
                 (None, false) => ("Current checkout".to_string(), format!("Runs in the project's checkout, {}", info.repo.display())),
             };
             let icon = if info.worktree.is_some() || info.new_worktree { crate::icons::FOLDER_GIT } else { crate::icons::FOLDER };
-            let r = w_small(ui, icon, &label, self.popup == Some(Popup::Workspace), &t).tip(tip);
+            let r = w_small(ui, icon, &label, self.popup == Some(Popup::Workspace) && !self.ws.from_header, &t).tip(tip);
             if r.clicked() {
                 open = Some((Popup::Workspace, r.rect));
-            } else if self.popup == Some(Popup::Workspace) {
+            } else if self.popup == Some(Popup::Workspace) && !self.ws.from_header {
                 self.popup_anchor = r.rect;
             }
             }
@@ -620,20 +681,81 @@ impl App {
             });
         });
         if let Some((p, rect)) = open {
-            if self.popup == Some(p) {
-                self.popup = None;
-            } else {
-                self.popup = Some(p);
+            self.ws_open(p, rect, false, info.dir.clone(), &ctx);
+        }
+    }
+
+    /// A click on a trigger of the bar or the header's chip (`from_header`): opens its menu
+    /// there, or closes it when it's open there already.
+    fn ws_open(&mut self, p: Popup, rect: egui::Rect, from_header: bool, dir: PathBuf, ctx: &egui::Context) {
+        if self.popup == Some(p) && (p != Popup::Workspace || self.ws.from_header == from_header) {
+            self.popup = None;
+            return;
+        }
+        self.popup = Some(p);
+        self.popup_anchor = rect;
+        self.ws.from_header = from_header && p == Popup::Workspace;
+        // The click that opened it isn't a click outside it.
+        self.picker.just_opened = true;
+        self.ws.error = None;
+        self.ws.query.clear();
+        if p == Popup::Branch {
+            self.ws_load_branches(dir, ctx);
+        }
+    }
+
+    /// The header's chip, next to the chat's title: that the chat works in a worktree and on
+    /// which branch (a new chat: that it will), so it's never mistaken for the checkout. Opens
+    /// the workspace menu under it. `max_w`: its room; None when there's nothing to say.
+    pub fn worktree_chip(&mut self, ui: &mut Ui, chat: Option<&Chat>, max_w: f32) -> Option<egui::Response> {
+        let (label, tone, tip, dir) = self.chip_facts(chat, ui.ctx())?;
+        let t = self.theme.t;
+        let (bg, border, fg) = tone.colors(&t);
+        let font = egui::FontId::new(12.0, crate::theme::medium());
+        let text = format!("{}  {label}", crate::icons::FOLDER_GIT);
+        let g = crate::widgets::truncated(ui, &text, font, fg, (max_w - 20.0).max(24.0));
+        let (rect, r) = ui.allocate_exact_size(egui::vec2(g.size().x + 20.0, 22.0), egui::Sense::click());
+        let open = self.popup == Some(Popup::Workspace) && self.ws.from_header;
+        let edge = if r.hovered() || open { fg } else { border };
+        ui.painter().rect(rect, egui::CornerRadius::same(11), bg, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+        ui.painter().galley(egui::pos2(rect.left() + 10.0, rect.center().y - g.size().y / 2.0), g, fg);
+        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
+        if let Some(dir) = dir {
+            if r.clicked() {
+                let ctx = ui.ctx().clone();
+                self.ws_open(Popup::Workspace, rect, true, dir, &ctx);
+            } else if open {
                 self.popup_anchor = rect;
-                // The click that opened it isn't a click outside it.
-                self.picker.just_opened = true;
-                self.ws.error = None;
-                self.ws.query.clear();
-                if p == Popup::Branch {
-                    self.ws_load_branches(info.dir.clone(), &ctx);
-                }
             }
         }
+        Some(r)
+    }
+
+    /// The chip's label, tone and tip, and the folder its menu is for (None: no menu here,
+    /// another PC's chat).
+    fn chip_facts(&self, chat: Option<&Chat>, ctx: &egui::Context) -> Option<(String, crate::widgets::Tone, String, Option<PathBuf>)> {
+        use crate::widgets::Tone;
+        let Some(c) = chat else {
+            // A new chat headed for a new worktree.
+            let info = self.ws_info(Target::Draft(self.draft.repo)).filter(|i| i.new_worktree && self.draft.sel.device.is_empty())?;
+            if let Some((Side::Workspace, what)) = &self.ws.busy {
+                return Some((what.clone(), Tone::Gray, "Making the new chat's worktree".into(), Some(info.dir)));
+            }
+            let base = if info.base.is_empty() { self.ws_head(&info.dir, ctx).map(|h| h.label()).unwrap_or_default() } else { info.base.clone() };
+            let label = if base.is_empty() { "New worktree".to_string() } else { format!("New worktree · from {base}") };
+            return Some((label, Tone::Gray, "The first message makes this chat a worktree of its own (own folder and branch), so parallel agents don't collide.".into(), Some(info.dir)));
+        };
+        let m = self.worktree_marker(c)?;
+        let Some(path) = m.path else {
+            let home = self.home_name(c);
+            return Some((format!("Worktree · {}", m.name), Tone::Blue, format!("Runs in its own worktree on {home}, {}", m.name), None));
+        };
+        if m.gone {
+            return Some(("Worktree gone".into(), Tone::Red, format!("This thread's worktree ({}) isn't there anymore. Start a new chat in the project to go on.", path.display()), Some(path)));
+        }
+        let branch = self.ws_head(&path, ctx).map(|h| h.label()).unwrap_or_default();
+        let label = if branch.is_empty() { format!("Worktree · {}", m.name) } else { format!("Worktree · {branch}") };
+        Some((label, Tone::Blue, format!("Runs in its own worktree, {} (not the project's checkout). It's removed with the thread, unless it has uncommitted changes.", path.display()), Some(path)))
     }
 
     /// The workspace menu (Popup::Workspace). True: close it.
@@ -642,7 +764,8 @@ impl App {
         let target = self.ws_target();
         let Some(info) = self.ws_info(target) else { return true };
         let error = self.ws.error.clone();
-        let (pick, close) = crate::widgets::popover(ctx, "workspace", self.popup_anchor, 320.0, true, &t, |ui| {
+        // Over the bar, or under the header's chip.
+        let (pick, close) = crate::widgets::popover(ctx, "workspace", self.popup_anchor, 320.0, !self.ws.from_header, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             crate::widgets::menu_label(ui, "Workspace");
             let mut pick: Option<bool> = None;
@@ -938,13 +1061,14 @@ impl App {
                 let base = call.body["base"].as_str().unwrap_or("").to_string();
                 let call = call.clone();
                 let repo_dir = info.repo.clone();
-                self.ws_spawn(ctx, move || add(&repo_dir, &base), move |app, r, ctx| {
+                self.ws_spawn(ctx, move || make(&repo_dir, &base), move |app, r, ctx| {
                     let reply = match r {
                         Err(e) => err(409, e),
-                        Ok(dir) => {
+                        Ok(made) => {
                             app.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
                             app.sender_device = crate::api::device_id(&call.token);
-                            let mut r = app.api_create_in(&call.body, ctx, Some(dir.clone()));
+                            let dir = made.dir.clone();
+                            let mut r = app.api_create_in(&call.body, ctx, Some(made));
                             app.sender.clear();
                             app.sender_device.clear();
                             if r.status >= 300 {
@@ -1059,6 +1183,23 @@ mod tests {
         let e = remove(&d, &wt).unwrap_err();
         assert!(e.contains("1 uncommitted change"), "{e}");
         assert!(wt.exists());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_new_worktree_says_its_branch_and_base() {
+        let d = repo("made");
+        let root = d.with_extension("wts");
+        // From the checkout's branch (""): that's its base.
+        let m = make_in(&root, &d, "").unwrap();
+        let id = m.name().rsplit('-').next().unwrap().to_string();
+        assert_eq!((m.branch.clone(), m.base.as_str()), (format!("harbor/{id}"), "main"));
+        let (text, detail) = m.notice("Working in a new worktree");
+        assert_eq!(text, format!("Working in a new worktree · {} on branch harbor/{id} (from main)", m.name()));
+        assert!(detail.contains(&format!("Branch: harbor/{id} (from main)")), "{detail}");
+        let m = make_in(&root, &d, "feature/login").unwrap();
+        assert_eq!(m.base, "feature/login");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&d);
     }

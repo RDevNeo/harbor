@@ -71,6 +71,7 @@ public class NewChat extends Base {
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
         // Under the composer: Current checkout or New worktree, and the branch (WorkBar).
         work = new WorkBar(this, hub);
+        addHeaderChip(work);
         LinearLayout below = Ui.col(this);
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());

@@ -147,6 +147,7 @@ public class Chat extends Base {
         // The composer, and under it where the agent works and its branch (WorkBar).
         work = new WorkBar(this, hub);
         work.chat = chatId;
+        addHeaderChip(work);
         LinearLayout below = Ui.col(this);
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
@@ -259,6 +260,7 @@ public class Chat extends Base {
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));
+        work.marker(c.optJSONObject("worktree"));
         applyDraft(c.optJSONObject("draft"));
         drawBars();
     }
@@ -1176,6 +1178,7 @@ public class Chat extends Base {
             case "users": glyph = Ui.I_USERS; break;
             case "monitor": glyph = Ui.I_MONITOR; break;
             case "folder": glyph = Ui.I_FOLDER; break;
+            case "worktree": glyph = Ui.I_FOLDER_GIT; break;
             default: glyph = Ui.I_CIRCLE_CHECK;
         }
         boolean expandable = !detail.isEmpty() && url.isEmpty();

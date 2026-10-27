@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A chat that works in its own worktree now says so everywhere, on the desktop and the phone: a
+  "Worktree · harbor/a1b2c3" chip next to the chat's title (its live branch; a click or tap
+  opens the Workspace menu; red "Worktree gone" when the folder was removed), a folder-git mark
+  on its row in the sidebar and the phone's chat list, and a line in the chat when the worktree
+  is made: "Working in a new worktree · harbor-a1b2c3 on branch harbor/a1b2c3 (from main)" (or
+  "Moved to a new worktree · …"). A new chat with New worktree picked shows "New worktree ·
+  from main" in its header until the first message makes it. The header no longer shows the
+  checkout's branch for a chat that works elsewhere. Another PC's copy of the chat shows the
+  chip and mark too. Hub API: optional `worktree` on every chat, notice icon `worktree`.
+
+### Changed
+- The bar under the composer reads "Worktree · harbor-a1b2c3" instead of only the folder's name.
+
 ## [0.65.1] - 2026-10-27
 
 ### Fixed

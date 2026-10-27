@@ -3217,6 +3217,9 @@ impl App {
             // ("" this PC); and where it's moving to, while it is (both optional, 0.63).
             "device_why": self.device_why(c),
             "moving_to": self.moving_to(c.id),
+            // It runs in a worktree of its own (worktree.rs): the folder's name, its path (null
+            // for another PC's chat) and whether it's gone (optional, 0.66).
+            "worktree": self.worktree_marker(c).map(|m| json!({ "name": m.name, "path": m.path.map(|p| p.to_string_lossy().into_owned()), "gone": m.gone })),
         })
     }
 
@@ -3643,7 +3646,7 @@ impl App {
     }
 
     /// `POST /v1/chats`, in worktree `wt` (made by worktree.rs) when given.
-    pub(crate) fn api_create_in(&mut self, body: &Value, ctx: &egui::Context, wt: Option<PathBuf>) -> Reply {
+    pub(crate) fn api_create_in(&mut self, body: &Value, ctx: &egui::Context, wt: Option<crate::worktree::Made>) -> Reply {
         let repo = match self.api_create_repo(body) {
             Ok(r) => r,
             Err(r) => return r,

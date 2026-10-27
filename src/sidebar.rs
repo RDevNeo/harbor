@@ -132,10 +132,21 @@ impl App {
             w::paint_status(ui.painter(), pos2(rect.right() - 8.0, rect.center().y), &status);
             w::status_width(ui, &status) + 16.0
         };
+        // A chat in its own worktree: its folder-git mark after the title (worktree.rs).
+        let wt = self.worktree_marker(c);
+        let mark_w = if wt.is_some() { 20.0 } else { 0.0 };
         let font = FontId::new(14.0, if active { crate::theme::medium() } else { egui::FontFamily::Proportional });
-        let g = w::truncated(ui, &c.title, font, t.fg(), (rect.right() - right - x).max(10.0));
+        let g = w::truncated(ui, &c.title, font, t.fg(), (rect.right() - right - x - mark_w).max(10.0));
+        let title_w = g.size().x;
         ui.painter().galley(pos2(x, rect.center().y - g.size().y / 2.0), g, t.fg());
-        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let mut resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if let Some(m) = &wt {
+            let at = pos2(x + title_w + 6.0 + 7.0, rect.center().y);
+            ic::glyph(ui.painter(), at, ic::FOLDER_GIT, 13.0, if m.gone { t.red(900) } else if active { t.fg() } else { t.subtle() });
+            if ui.rect_contains_pointer(Rect::from_center_size(at, Vec2::splat(16.0))) {
+                resp = resp.on_hover_text(if m.gone { format!("Its worktree, {}, is gone", m.name) } else { format!("Runs in its own worktree, {}", m.name) });
+            }
+        }
         if resp.clicked() {
             self.open(View::Chat(c.id));
         }

@@ -94,6 +94,14 @@ abstract class Base extends Activity {
         return page;
     }
 
+    /** The workspace chip under the title (WorkBar.header): the chat works in a worktree. */
+    void addHeaderChip(WorkBar w) {
+        LinearLayout.LayoutParams lp = Ui.wrap();
+        lp.gravity = Gravity.CENTER_HORIZONTAL;
+        lp.topMargin = Ui.dp(3);
+        ((LinearLayout) barTitle.getParent()).addView(w.header(), lp);
+    }
+
     void sub(String s, int color) {
         barSub.setText(s);
         barSub.setTextColor(color);
