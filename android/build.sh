@@ -51,12 +51,35 @@ cp "$ROOT/assets/fonts/"{Geist-Regular,Geist-SemiBold,GeistMono-Regular,lucide}.
 mkdir -p "$W/assets/logos"
 cp "$ROOT/assets/logos/"p-*.{a8,rgba} "$W/assets/logos/"
 
+# Dictation on the phone (Voice, Asr): sherpa-onnx's JNI library (onnxruntime linked in) and
+# Silero VAD's model, pinned by SHA-256 and cached between builds. ANDROID_ABIS picks the ABIs
+# packaged (default arm64-v8a; add x86_64 for the emulator). See third_party/sherpa-onnx/NOTICE.
+SHERPA=2.0.1
+SHERPA_SHA=fe1c9ceffd86770218a1d4bba6b410d6f726b2b8dda6a5488499b05250b53aea
+VAD_SHA=9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+DEPS=${HARBOR_ANDROID_DEPS:-${XDG_CACHE_HOME:-$HOME/.cache}/harbor-android-deps}
+mkdir -p "$DEPS"
+fetch() { # url sha256 file
+  if [ -f "$3" ] && echo "$2  $3" | sha256sum -c --quiet >/dev/null 2>&1; then return; fi
+  curl -fsSL --retry 3 "$1" -o "$3.part"
+  echo "$2  $3.part" | sha256sum -c --quiet >/dev/null 2>&1 || { echo "checksum mismatch: $1" >&2; rm -f "$3.part"; exit 1; }
+  mv "$3.part" "$3"
+}
+fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$SHERPA/sherpa-onnx-v$SHERPA-android-static-link-onnxruntime.tar.bz2" \
+  "$SHERPA_SHA" "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2"
+fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" "$VAD_SHA" "$DEPS/silero_vad.onnx"
+cp "$DEPS/silero_vad.onnx" "$W/assets/"
+for abi in ${ANDROID_ABIS:-arm64-v8a}; do
+  mkdir -p "$W/lib/$abi"
+  tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$W/lib/$abi" --strip-components=3 "./jniLibs/$abi/libsherpa-onnx-jni.so"
+done
+
 "$BT/aapt2" compile --dir "$HERE/res" -o "$W/res.zip"
 "$BT/aapt2" link -I "$JAR" --manifest "$HERE/AndroidManifest.xml" -o "$W/base.apk" "$W/res.zip" \
   -A "$W/assets" --java "$W/gen" --min-sdk-version 26 --target-sdk-version 34 \
   --version-code "$CODE" --version-name "$VER"
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR" -d "$W/classes" \
-  $(find "$HERE/src" "$HERE/third_party/zxing/src" "$W/gen" -name '*.java')
+  $(find "$HERE/src" "$HERE/third_party/zxing/src" "$HERE/third_party/sherpa-onnx/src" "$W/gen" -name '*.java')
 # Net's connection rules are plain Java: check them on this JVM before packaging.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.AddrTest
@@ -69,9 +92,6 @@ java -cp "$W/classes:$W/test" dev.harbor.app.SlashTest
 # And the composer's @ and # tags (src/tags.rs).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/TagTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.TagTest
-# And dictation's phrase rules (Voice).
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/PhrasesTest.java"
-java -cp "$W/classes:$W/test" dev.harbor.app.PhrasesTest
 # And when an automatic update may install (Quiet).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/UpdateTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.UpdateTest
@@ -80,6 +100,7 @@ javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "
 java -cp "$W/classes:$W/test" dev.harbor.app.QrTest "$HERE/test/pair-qr.png"
 "$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class')
 (cd "$W" && zip -qj base.apk classes.dex)
+(cd "$W" && zip -qr base.apk lib)
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
 "$BT/apksigner" sign --ks "$KEY" --ks-pass "$KSPASS" --ks-key-alias "$ALIAS" --out "$OUT" "$W/aligned.apk"
 rm -f "$OUT.idsig"

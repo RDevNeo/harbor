@@ -3,42 +3,53 @@ package dev.harbor.app;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
-import android.os.Build;
-import android.os.Bundle;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
+import android.os.SystemClock;
+import android.text.Editable;
+import android.text.Spanned;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import java.io.ByteArrayOutputStream;
-import java.util.ArrayList;
+import com.k2fsa.sherpa.onnx.SpeechSegment;
+import com.k2fsa.sherpa.onnx.Vad;
 
-/** Dictation in the composer, the desktop's mic (src/voice.rs). The phone's own recogniser
- *  (SpeechRecognizer, on-device where the phone has it) listens in place, with a level meter and
- *  the time, until the mic is tapped again: the recogniser ends a segment at a pause, so each one
- *  is kept and the same recogniser listens again at once (a new one when it fails or goes quiet,
- *  then the phone's other recogniser). Pauses don't end it; a minute without words does. Tapping
- *  stop puts in what was heard
- *  (the last partial words when the final ones don't come). The words go in at the cursor, to
- *  edit before sending. Never the system's dictation popup. A phone without a recogniser, or
- *  whose recogniser fails before hearing anything, records (16 kHz WAV) and the PC transcribes
- *  it with whisper.cpp (POST /v1/transcribe). Asks for the microphone the first time. Never
- *  sends anything by itself. */
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/** Dictation in the composer, the desktop's mic (src/voice.rs). The phone records (16 kHz mono)
+ *  and Silero VAD (Asr) cuts it into phrases at pauses; each phrase goes to the hub
+ *  (POST /v1/transcribe, the hub picks the PC that transcribes) and its words appear in the text
+ *  while you talk, in order, where the cursor was. When the PC doesn't answer within a few
+ *  seconds, fails, or is still downloading its model, the phone's own offline model (Asr) takes
+ *  the phrase. It listens until the mic is tapped again (a minute without speech also ends it);
+ *  then, if the hub's "Clean up dictation" is on, the words are cleaned up there once
+ *  (POST /v1/voice/cleanup) and replace what was dictated, unless it was edited meanwhile. A
+ *  phone whose ABI the APK has no sherpa-onnx library for records the whole dictation for the PC.
+ *  Asks for the microphone the first time. Never sends anything by itself. Log tag: HarborVoice. */
 final class Voice {
     static final int PERMISSION = 44;
     /** (code, label): the language setting (Settings › Dictation), kept on this phone. */
     static final String[][] LANGS = {{"auto", "The phone's language"}, {"en", "English"}, {"pt", "Portuguese"}};
+    private static final String TAG = Asr.TAG;
+    /** Listening ends after this long without speech. */
+    private static final long IDLE_MS = 60_000;
 
     private final Activity a;
     private final Hub hub;
@@ -49,28 +60,27 @@ final class Voice {
     private final Meter meter;
     Runnable onState;
 
-    private SpeechRecognizer sr;
-    /** A recogniser session (over its restarts); `stopping` once the user tapped stop. */
-    private boolean listening, stopping, onDevice;
-    /** Segments heard so far, and the current segment's latest partial words. */
-    private final StringBuilder heard = new StringBuilder();
-    /** Phrases of the current segment already kept (see restarted()). */
-    private final ArrayList<String> seg = new ArrayList<>();
-    private String partial = "";
-    /** Bumped per session, so late timers and callbacks of an old one do nothing. */
-    private int gen;
-    /** When words last came, a segment began, the recogniser last said anything (the level comes
-     *  ~10 times a second), its end of speech (0: none since the segment began). */
-    private long lastWords, opened, lastEvent, endOfSpeech, lastTap;
-    /** Failed segments in a row with no words in between: they escalate (see failed()). */
-    private int fails, levels;
-    private static final String TAG = "HarborVoice";
-    /** Listening ends after this long without words. */
-    private static final long IDLE_MS = 60_000;
-    private AudioRecord rec;
+    /** Recording (until stop), then finishing (phrases still out, then the cleanup). */
     private volatile boolean recording;
-    private long started;
     private boolean busy;
+    private long started, lastTap;
+    /** Bumped per dictation: late work of an old one does nothing. */
+    private volatile int gen;
+    /** Phrases sent and not back yet; the dictation is done when the recording ended and this is 0. */
+    private final AtomicInteger out = new AtomicInteger();
+    private boolean recorded;
+    /** Phrases are transcribed one at a time, in order (shared by every composer). */
+    private static final ExecutorService work = Executors.newSingleThreadExecutor();
+    /** GET /v1/voice at the start (null: an older hub, or unreachable). */
+    private volatile JSONObject info;
+    /** PC failures in a row: after two, the phone's model takes the rest of the dictation. */
+    private volatile int hubFails;
+    private volatile String problem;
+    /** A problem was shown this dictation (once is enough). */
+    private boolean told;
+    /** Where the words go: grows with each phrase. And what was dictated, for the cleanup. */
+    private Object mark;
+    private final StringBuilder dictated = new StringBuilder();
 
     Voice(Activity a, Hub hub, EditText edit) {
         this.a = a;
@@ -94,7 +104,7 @@ final class Voice {
         strip.setVisibility(View.GONE);
     }
 
-    boolean active() { return recording || listening || busy; }
+    boolean active() { return recording || busy; }
 
     static String lang(Context c) { return Ui.prefs(c).getString("voice_lang", "auto"); }
 
@@ -104,14 +114,15 @@ final class Voice {
         return LANGS[0][1];
     }
 
-    /** The mic button: start, or stop (and transcribe). */
+    private static String langParam(Context c) { String l = lang(c); return "auto".equals(l) ? "" : l; }
+
+    /** The mic button: start, or stop (the last phrase is still transcribed). */
     void toggle() {
-        long now = android.os.SystemClock.uptimeMillis();
+        long now = SystemClock.uptimeMillis();
         if (now - lastTap < 400) return;
         lastTap = now;
+        if (recording) { stop(); return; }
         if (busy) return;
-        if (listening) { stop(); return; }
-        if (recording) { stopRecording(); return; }
         if (a.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             a.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, PERMISSION);
             return;
@@ -124,12 +135,6 @@ final class Voice {
         if (req != PERMISSION) return;
         if (granted.length > 0 && granted[0] == PackageManager.PERMISSION_GRANTED) start();
         else Ui.toast(a, "Dictation needs the microphone: allow it in the phone's settings for Harbor");
-    }
-
-    private void start() {
-        boolean onDevice = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(a);
-        if (onDevice || SpeechRecognizer.isRecognitionAvailable(a)) listen(onDevice);
-        else record();
     }
 
     private void show(boolean on) {
@@ -145,311 +150,264 @@ final class Voice {
         Ui.main.postDelayed(this::tick, 250);
     }
 
-    // ---- the phone's recogniser ----
+    private void log(String m) { Log.d(TAG, "[" + gen + "] " + m); }
 
-    private void listen(boolean device) {
-        gen++;
-        listening = true;
-        stopping = false;
-        heard.setLength(0);
-        partial = "";
-        fails = 0;
-        lastWords = now();
-        show(true);
-        log("start, on-device " + device);
-        if (create(device)) begin();
-        watch(gen);
-    }
+    // ---- recording ----
 
-    private static long now() { return android.os.SystemClock.uptimeMillis(); }
-
-    private void log(String m) { android.util.Log.d(TAG, "[" + gen + "] " + m); }
-
-    /** A new recogniser (the old one let go); false when the phone gives none. */
-    private boolean create(boolean device) {
-        drop();
-        onDevice = device;
-        SpeechRecognizer r = null;
+    private void start() {
+        final AudioRecord r;
         try {
-            r = device && Build.VERSION.SDK_INT >= 31 ? SpeechRecognizer.createOnDeviceSpeechRecognizer(a) : SpeechRecognizer.createSpeechRecognizer(a);
-        } catch (Exception e) { log("create failed: " + e); }
-        if (r == null) { failed(-1); return false; }
-        sr = r;
-        r.setRecognitionListener(new Listener(r));
-        return true;
-    }
-
-    /** The next segment, on the current recogniser. */
-    private void begin() {
-        if (!listening || sr == null) return;
-        opened = lastEvent = now();
-        endOfSpeech = 0;
-        levels = 0;
-        seg.clear();
-        try { sr.startListening(intent()); log("listening"); }
-        catch (Exception e) { log("startListening threw " + e); failed(-2); }
-    }
-
-    private Intent intent() {
-        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, a.getPackageName())
-                // Ints: Google's recognition service ignores a long. Most recognisers end a
-                // segment sooner anyway; the next one starts at once.
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000)
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000);
-        String l = lang(a);
-        if ("en".equals(l)) i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US");
-        else if ("pt".equals(l)) i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR");
-        return i;
-    }
-
-    private final class Listener implements RecognitionListener {
-        private final SpeechRecognizer r;
-
-        Listener(SpeechRecognizer r) { this.r = r; }
-
-        /** Callbacks of a recogniser that was already let go are dropped. */
-        private boolean mine(String what) {
-            if (r != sr) { log("stale " + what); return false; }
-            lastEvent = now();
-            return true;
-        }
-
-        @Override public void onReadyForSpeech(Bundle b) { if (mine("ready")) log("ready"); }
-        @Override public void onBeginningOfSpeech() { if (mine("speech")) { endOfSpeech = 0; log("speech begins"); } }
-        @Override public void onRmsChanged(float db) {
-            if (r != sr) return;
-            lastEvent = now();
-            levels++;
-            meter.set(Math.max(0f, Math.min(1f, (db + 2f) / 12f)));
-        }
-        @Override public void onBufferReceived(byte[] b) { }
-        @Override public void onEndOfSpeech() { if (mine("end")) { endOfSpeech = now(); log("end of speech"); } }
-        @Override public void onPartialResults(Bundle b) {
-            if (!mine("partial")) return;
-            String t = best(b);
-            if (t.isEmpty()) return;
-            if (!t.equals(partial)) android.util.Log.v(TAG, "partial \"" + t + "\"");
-            // Some recognisers (Google's speech services) keep one session through pauses and
-            // start the partial words over after each, with no final words for the earlier
-            // ones: keep the phrase that ended.
-            if (Phrases.restarted(partial, t)) { log("phrase kept: " + partial); seg.add(partial); commit(partial); }
-            partial = t;
-            lastWords = now();
-            fails = 0;
-            showSaid();
-        }
-        @Override public void onResults(Bundle b) {
-            if (!mine("results")) return;
-            String t = best(b);
-            log("results \"" + t + "\" (partial \"" + partial + "\", " + levels + " levels)");
-            if (!t.isEmpty() || !partial.isEmpty()) { lastWords = now(); fails = 0; }
-            commit(t.isEmpty() ? partial : Phrases.unkept(seg, t));
-            next();
-        }
-        @Override public void onError(int error) {
-            if (!mine("error " + error)) return;
-            log("error " + error + " after " + (now() - opened) + " ms, " + levels + " levels" + (stopping ? " (stopping)" : ""));
-            commit(partial);
-            if (stopping) { finish(true); return; }
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                finish(true);
-                Ui.toast(a, "Dictation needs the microphone");
-                return;
-            }
-            // A segment that heard nothing but silence ends like this: listen again.
-            boolean silence = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
-                    && now() - opened > 1500;
-            if (silence) next();
-            else failed(error);
-        }
-        @Override public void onEvent(int t, Bundle b) { }
-    }
-
-    private static String best(Bundle b) {
-        ArrayList<String> r = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-        return r == null || r.isEmpty() || r.get(0) == null ? "" : r.get(0).trim();
-    }
-
-    private void commit(String t) {
-        partial = "";
-        if (t == null || t.trim().isEmpty()) return;
-        if (heard.length() > 0) heard.append(' ');
-        heard.append(t.trim());
-        showSaid();
-    }
-
-    private void showSaid() {
-        String t = (heard + " " + partial).trim();
-        said.setText(t.isEmpty() ? "Listening…" : t);
-    }
-
-    /** A segment ended: the user's stop finishes; otherwise the same recogniser listens again
-     *  (posted, so it isn't restarted from inside its own callback). */
-    private void next() {
-        if (!listening) return;
-        if (stopping) { finish(true); return; }
-        final int g = gen;
-        final SpeechRecognizer r = sr;
-        Ui.main.post(() -> { if (listening && !stopping && g == gen && r == sr) begin(); });
-    }
-
-    /** The recogniser failed (busy, disconnected, a language it lacks, no recogniser at all):
-     *  try again on it, then on a new one, then on the phone's other recogniser. When none
-     *  works: what was heard goes in, or with nothing heard the PC transcribes a recording. */
-    private void failed(int error) {
-        if (!listening) return;
-        if (stopping) { finish(true); return; }
-        fails++;
-        log("failed " + error + ", " + fails + " in a row");
-        final int g = gen;
-        Runnable again;
-        if (fails == 1 && sr != null) again = this::begin;
-        else if (fails <= 3) {
-            boolean other = fails == 3 && onDevice && SpeechRecognizer.isRecognitionAvailable(a);
-            boolean device = other ? false : onDevice;
-            again = () -> { if (create(device)) begin(); };
-        } else if (fails <= 5 && !onDevice && SpeechRecognizer.isRecognitionAvailable(a)) {
-            again = () -> { if (create(false)) begin(); };
-        } else {
-            if (heard.length() > 0) {
-                finish(true);
-                Ui.toast(a, "Dictation stopped: the phone's recogniser failed (error " + error + ")");
-            } else {
-                listening = false;
-                gen++;
-                drop();
-                record();
-            }
-            return;
-        }
-        Ui.main.postDelayed(() -> { if (listening && !stopping && g == gen) again.run(); }, 250L * fails);
-    }
-
-    /** Once a second while listening: a recogniser that went quiet (nothing from it for 15 s, or
-     *  no end of its segment 10 s after the speech ended) is replaced, and a long time without
-     *  words ends the session. Recognisers end a silent segment themselves within ~5-10 s. */
-    private void watch(final int g) {
-        Ui.main.postDelayed(() -> {
-            if (!listening || g != gen) return;
-            long t = now();
-            if (!stopping && t - lastWords > IDLE_MS) { log("idle, ending"); finish(false); return; }
-            if (!stopping && sr != null) {
-                boolean stuck = (endOfSpeech > 0 && t - endOfSpeech > 10000) || t - lastEvent > 15000;
-                if (stuck) {
-                    log("recogniser went quiet, a new one");
-                    commit(partial);
-                    if (create(onDevice)) begin();
-                }
-            }
-            watch(g);
-        }, 1000);
-    }
-
-    /** The user's stop: the recogniser gets ~1.5 s to give its final words, then the last
-     *  partial ones go in. */
-    private void stop() {
-        if (stopping) return;
-        stopping = true;
-        log("user stop");
-        if (sr == null) { commit(partial); finish(true); return; }
-        try { sr.stopListening(); } catch (Exception e) { commit(partial); finish(true); return; }
-        final int g = gen;
-        Ui.main.postDelayed(() -> { if (listening && g == gen) { log("no final words, keeping the partial ones"); commit(partial); finish(true); } }, 1500);
-    }
-
-    private void drop() {
-        SpeechRecognizer r = sr;
-        sr = null;
-        if (r != null) { try { r.cancel(); } catch (Exception ignored) { } try { r.destroy(); } catch (Exception ignored) { } }
-    }
-
-    /** End of the session: what was heard goes in; nothing heard is a quiet word unless the user
-     *  stopped it. */
-    private void finish(boolean user) {
-        if (!listening) return;
-        log("finish, " + heard.length() + " chars");
-        listening = false;
-        stopping = false;
-        gen++;
-        drop();
-        String t = heard.toString().trim();
-        heard.setLength(0);
-        partial = "";
-        show(false);
-        if (!t.isEmpty()) insert(t);
-        else if (!user && !a.isFinishing()) Ui.toast(a, "Didn't catch any words");
-    }
-
-    /** Leaving the screen: stop listening and keep what was heard (it goes into the draft). */
-    void cancel() {
-        if (listening) { commit(partial); finish(true); }
-        recording = false;
-        strip.setVisibility(View.GONE);
-    }
-
-    // ---- no recogniser: record, the PC transcribes ----
-
-    private void record() {
-        int rate = 16000;
-        int min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        try {
-            rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, 6400));
-            rec.startRecording();
+            int min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            r = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, 16000));
+            r.startRecording();
         } catch (Exception e) {
             Ui.toast(a, "Couldn't record: " + e.getMessage());
-            rec = null;
             return;
         }
+        gen++;
+        final int g = gen;
         recording = true;
+        recorded = false;
+        busy = true;
+        hubFails = 0;
+        problem = null;
+        told = false;
+        info = null;
+        out.set(0);
+        dictated.setLength(0);
+        // The words go where the cursor is, and grow from there.
+        Editable e = edit.getText();
+        int at = edit.getSelectionStart();
+        if (at < 0 || at > e.length()) at = e.length();
+        if (mark != null) e.removeSpan(mark);
+        mark = new Object();
+        e.setSpan(mark, at, at, Spanned.SPAN_MARK_POINT);
         show(true);
-        said.setText("Recording · the PC transcribes it");
-        final AudioRecord r = rec;
+        final boolean phrases = Asr.available();
+        log("start, phrases " + phrases + ", offline model " + (Asr.ready(a) ? "ready" : "none"));
         Ui.pool.execute(() -> {
-            ByteArrayOutputStream pcm = new ByteArrayOutputStream();
-            byte[] buf = new byte[3200];
-            long limit = 16000L * 2 * 600;
-            while (recording) {
-                int n = r.read(buf, 0, buf.length);
-                if (n <= 0) continue;
-                if (pcm.size() < limit) pcm.write(buf, 0, n);
-                double sum = 0;
-                for (int i = 0; i + 1 < n; i += 2) { short v = (short) ((buf[i] & 0xff) | (buf[i + 1] << 8)); sum += (v / 32768.0) * (v / 32768.0); }
-                final float level = (float) Math.min(1.0, Math.sqrt(sum / Math.max(1, n / 2)) * 6);
-                Ui.main.post(() -> meter.set(level));
+            try { info = hub.call("GET", "/v1/voice", null, 5000); log("hub voice " + info); }
+            catch (Exception ex) { log("no /v1/voice: " + ex.getMessage()); }
+        });
+        Ui.pool.execute(() -> listen(r, g, phrases));
+    }
+
+    /** The recording thread: levels for the meter, phrases out of the VAD as they end. */
+    private void listen(AudioRecord r, int g, boolean phrases) {
+        Vad vad = null;
+        if (phrases) {
+            try { vad = Asr.vad(a); } catch (Throwable t) { log("no VAD: " + t); }
+        }
+        ByteArrayOutputStream whole = vad == null ? new ByteArrayOutputStream() : null;
+        short[] buf = new short[512];
+        float[] f = new float[512];
+        long lastSpeech = SystemClock.uptimeMillis();
+        while (recording && g == gen) {
+            int n = r.read(buf, 0, buf.length);
+            if (n < 0) { log("read error " + n); break; }
+            if (n == 0) continue;
+            double sum = 0;
+            for (int i = 0; i < n; i++) { f[i] = buf[i] / 32768f; sum += f[i] * f[i]; }
+            final float level = (float) Math.min(1.0, Math.sqrt(sum / n) * 6);
+            Ui.main.post(() -> meter.set(level));
+            if (vad != null) {
+                vad.acceptWaveform(n == f.length ? f : java.util.Arrays.copyOf(f, n));
+                if (vad.isSpeechDetected()) lastSpeech = SystemClock.uptimeMillis();
+                drain(vad, g);
+            } else if (whole.size() < 16000 * 2 * 600) {
+                for (int i = 0; i < n; i++) { whole.write(buf[i] & 0xff); whole.write((buf[i] >> 8) & 0xff); }
+                if (level > 0.08f) lastSpeech = SystemClock.uptimeMillis();
             }
-            try { r.stop(); } catch (Exception ignored) { }
-            r.release();
-            byte[] wav = wav(pcm.toByteArray(), 16000);
-            Ui.main.post(() -> transcribe(wav));
+            if (SystemClock.uptimeMillis() - lastSpeech > IDLE_MS) { log("a minute without speech"); Ui.main.post(() -> { if (g == gen) stop(); }); break; }
+        }
+        try { r.stop(); } catch (Exception ignored) { }
+        r.release();
+        if (vad != null) {
+            vad.flush();
+            drain(vad, g);
+            vad.release();
+        } else if (whole.size() > 16000) {
+            final byte[] pcm = whole.toByteArray();
+            out.incrementAndGet();
+            work.execute(() -> phrase(pcmFloat(pcm), g));
+        }
+        Ui.main.post(() -> { if (g == gen) { recorded = true; maybeDone(); } });
+    }
+
+    private void drain(Vad vad, int g) {
+        while (!vad.empty()) {
+            SpeechSegment s = vad.front();
+            vad.pop();
+            final float[] samples = s.getSamples();
+            log("phrase " + samples.length * 1000 / 16000 + " ms");
+            out.incrementAndGet();
+            work.execute(() -> phrase(samples, g));
+        }
+    }
+
+    /** The user's stop (or a minute of silence): the last phrase is still transcribed. */
+    private void stop() {
+        if (!recording) return;
+        log("stop");
+        recording = false;
+        said.setText("Finishing…");
+    }
+
+    /** Leaving the screen: stop listening; what was said still goes in (and into the draft). */
+    void cancel() {
+        if (recording) stop();
+    }
+
+    // ---- transcribing, one phrase at a time ----
+
+    /** On `work`, in order: the PC first, the phone's own model when the PC can't. */
+    private void phrase(float[] samples, int g) {
+        String text = null, where = null;
+        boolean local = hubFails >= 2 && Asr.ready(a);
+        if (!local) {
+            final byte[] w = wav(samples);
+            final boolean raw = info != null;
+            final long budget = 6000 + samples.length / 16;
+            Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on " + host() + "…"); });
+            Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, langParam(a), raw, (int) budget + 2000));
+            try {
+                JSONObject j = f.get(budget, TimeUnit.MILLISECONDS);
+                text = j.optString("text", "").trim();
+                where = j.optString("host", host());
+                hubFails = 0;
+            } catch (TimeoutException e) {
+                f.cancel(true);
+                hubFails++;
+                problem = "The PC took too long to answer.";
+                log("PC timed out");
+            } catch (ExecutionException e) {
+                Throwable c = e.getCause();
+                if (c instanceof Hub.ApiError && ((Hub.ApiError) c).code == 409) problem = c.getMessage();
+                else { hubFails++; problem = Hub.why(c); }
+                log("PC failed: " + c);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+        if (text == null) {
+            Ui.main.post(() -> { if (g == gen && !recording) said.setText("Transcribing on this phone…"); });
+            text = Asr.transcribe(a, samples, langParam(a));
+            where = "this phone";
+            if (text == null) log("offline model not ready");
+        }
+        final String t = text, from = where;
+        log("phrase → " + (t == null ? "nothing" : "\"" + t + "\" on " + from));
+        Ui.main.post(() -> {
+            if (t != null && !t.isEmpty()) {
+                put(t);
+                if (g == gen && recording) said.setText(t);
+            } else if (t == null && problem != null && g == gen && !told) {
+                Ui.toast(a, Asr.available() && !Asr.ready(a) ? problem + " The offline model isn't on this phone yet." : problem);
+                told = true;
+            }
+            out.decrementAndGet();
+            if (g == gen) maybeDone();
         });
     }
 
-    private void stopRecording() {
-        recording = false;
-        busy = true;
-        said.setText("Transcribing on " + hub.label() + "…");
+    private String host() {
+        JSONObject i = info;
+        String h = i == null ? "" : i.optString("host", "");
+        return h.isEmpty() ? hub.label() : h;
     }
 
-    private void transcribe(byte[] wav) {
-        if (wav.length < 44 + 16000 / 2) { busy = false; show(false); Ui.toast(a, "Nothing was recorded"); return; }
-        String l = lang(a);
+    /** All phrases back after the recording ended: the cleanup, then done. */
+    private void maybeDone() {
+        if (recording || !recorded || out.get() > 0 || !busy) return;
+        final int g = gen;
+        final String text = dictated.toString().trim();
+        work.execute(Asr::free);
+        // The first dictation asks for the offline model (on Wi-Fi, in the background).
+        if (Asr.available() && !Asr.wanted(a) && !Asr.ready(a)) Asr.want(a);
+        JSONObject i = info;
+        if (text.isEmpty() || i == null || !i.optBoolean("cleanup")) { done(text.isEmpty()); return; }
+        said.setText("Cleaning up on " + host() + "…");
         Ui.pool.execute(() -> {
-            String text = null, err = null;
-            try { text = hub.transcribe(wav, "auto".equals(l) ? "" : l); } catch (Exception e) { err = Hub.why(e); }
-            final String t = text, e = err;
+            String clean = null;
+            try {
+                JSONObject j = new JSONObject().put("text", text);
+                clean = hub.call("POST", "/v1/voice/cleanup", j, 30_000).optString("text", "").trim();
+            } catch (Exception e) { log("cleanup failed: " + e.getMessage()); }
+            final String c = clean;
             Ui.main.post(() -> {
-                busy = false;
-                show(false);
-                if (a.isFinishing()) return;
-                if (e != null) Ui.toast(a, e);
-                else if (t == null || t.trim().isEmpty()) Ui.toast(a, "Didn't catch any words");
-                else insert(t);
+                if (g != gen) return;
+                if (c != null && !c.isEmpty()) replace(text, c);
+                done(false);
             });
         });
+    }
+
+    private void done(boolean nothing) {
+        log("done" + (nothing ? ", no words" : ""));
+        busy = false;
+        show(false);
+        if (nothing && !told && !a.isFinishing()) Ui.toast(a, "Didn't catch any words");
+        problem = null;
+    }
+
+    // ---- into the text ----
+
+    /** A phrase at the end of what was dictated, spaced from the words around it. */
+    private void put(String text) {
+        Editable e = edit.getText();
+        int at = mark == null ? -1 : e.getSpanEnd(mark);
+        if (at < 0) {
+            at = e.length();
+            mark = new Object();
+            e.setSpan(mark, at, at, Spanned.SPAN_MARK_POINT);
+        }
+        boolean before = at > 0 && !Character.isWhitespace(e.charAt(at - 1));
+        boolean after = at < e.length() && !Character.isWhitespace(e.charAt(at));
+        e.insert(at, (before ? " " : "") + text + (after ? " " : ""));
+        edit.setSelection(Math.min(e.length(), at + (before ? 1 : 0) + text.length()));
+        if (dictated.length() > 0) dictated.append(' ');
+        dictated.append(text);
+    }
+
+    /** The cleaned-up words in place of the dictated ones, if they weren't edited meanwhile. */
+    private void replace(String was, String clean) {
+        Editable e = edit.getText();
+        int s = mark == null ? -1 : e.getSpanStart(mark), t = mark == null ? -1 : e.getSpanEnd(mark);
+        if (s < 0 || t < s) return;
+        String cur = e.subSequence(s, t).toString();
+        if (!cur.trim().equals(was)) { log("edited meanwhile: no cleanup"); return; }
+        int lead = cur.length() - cur.replaceAll("^\\s+", "").length();
+        int trail = cur.length() - cur.replaceAll("\\s+$", "").length();
+        e.replace(s + lead, t - trail, clean);
+        edit.setSelection(Math.min(e.length(), s + lead + clean.length()));
+        log("cleaned up");
+    }
+
+    /** {new text, cursor}: `text` put in at `at`, a space before it after a word, after it before one. */
+    static String[] insertSpaced(String s, int at, String text) {
+        boolean before = at > 0 && !Character.isWhitespace(s.charAt(at - 1));
+        boolean after = at < s.length() && !Character.isWhitespace(s.charAt(at));
+        String ins = (before ? " " : "") + text + (after ? " " : "");
+        return new String[]{s.substring(0, at) + ins + s.substring(at), String.valueOf(at + ins.length() - (after ? 1 : 0))};
+    }
+
+    // ---- audio ----
+
+    private static float[] pcmFloat(byte[] pcm) {
+        float[] f = new float[pcm.length / 2];
+        for (int i = 0; i < f.length; i++) f[i] = (short) ((pcm[2 * i] & 0xff) | (pcm[2 * i + 1] << 8)) / 32768f;
+        return f;
+    }
+
+    /** 16-bit PCM WAV, mono 16 kHz: what /v1/transcribe takes. */
+    static byte[] wav(float[] samples) {
+        byte[] pcm = new byte[samples.length * 2];
+        for (int i = 0; i < samples.length; i++) {
+            int v = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32768f)));
+            pcm[2 * i] = (byte) v;
+            pcm[2 * i + 1] = (byte) (v >> 8);
+        }
+        return wav(pcm, 16000);
     }
 
     static byte[] wav(byte[] pcm, int rate) {
@@ -464,29 +422,6 @@ final class Voice {
 
     private static void le32(ByteArrayOutputStream o, int v) { for (int i = 0; i < 4; i++) o.write((v >> (8 * i)) & 0xff); }
     private static void le16(ByteArrayOutputStream o, int v) { o.write(v & 0xff); o.write((v >> 8) & 0xff); }
-
-    // ---- into the text ----
-
-    /** At the cursor, spaced from the words around it (as the desktop does). */
-    private void insert(String text) {
-        String t = text.trim();
-        if (t.isEmpty()) return;
-        String s = edit.getText().toString();
-        int at = edit.getSelectionStart();
-        if (at < 0 || at > s.length()) at = s.length();
-        String[] r = insertSpaced(s, at, t);
-        edit.setText(r[0]);
-        edit.setSelection(Integer.parseInt(r[1]));
-        edit.requestFocus();
-    }
-
-    /** {new text, cursor}: `text` put in at `at`, a space before it after a word, after it before one. */
-    static String[] insertSpaced(String s, int at, String text) {
-        boolean before = at > 0 && !Character.isWhitespace(s.charAt(at - 1));
-        boolean after = at < s.length() && !Character.isWhitespace(s.charAt(at));
-        String ins = (before ? " " : "") + text + (after ? " " : "");
-        return new String[]{s.substring(0, at) + ins + s.substring(at), String.valueOf(at + ins.length() - (after ? 1 : 0))};
-    }
 
     /** Five bars rising with the level, the middle ones highest. */
     static final class Meter extends View {

@@ -1,0 +1,9 @@
+sherpa-onnx (https://github.com/k2-fsa/sherpa-onnx), v2.0.1, Apache License 2.0 (LICENSE).
+Copyright (c) Xiaomi Corporation and the sherpa-onnx contributors.
+
+src/: the Java API classes (sherpa-onnx/java-api) for the offline recognizer and the voice
+activity detector, unchanged except LibraryLoader.java, which loads the library with
+System.loadLibrary. android/build.sh adds the matching JNI library
+(sherpa-onnx-v2.0.1-android-static-link-onnxruntime.tar.bz2, onnxruntime linked in, MIT) and
+Silero VAD's model (silero_vad.onnx, MIT, https://github.com/snakers4/silero-vad), both
+checked against pinned SHA-256 sums.

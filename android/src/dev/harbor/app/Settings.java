@@ -129,11 +129,25 @@ public class Settings extends Base {
         dn.addView(Ui.chevron(this));
         look.addView(dn, Ui.fill());
 
-        // Dictation in the composer (Voice): the language it listens for, on this phone.
+        // Dictation in the composer (Voice): the language it listens for (on this phone), the
+        // hub's cleanup (GET /v1/voice, PUT /v1/voice/settings; hidden on hubs without them) and
+        // this phone's offline model (Asr).
         LinearLayout dict = card(col);
         LinearLayout dl = Ui.cardRow(this, Ui.I_GLOBE, "Dictation language", Voice.langLabel(this), Ui.FG, v -> voiceLang());
         dl.addView(Ui.chevron(this));
         dict.addView(dl, Ui.fill());
+        cleanRow = Ui.col(this);
+        cleanRow.setVisibility(View.GONE);
+        dict.addView(cleanRow, Ui.fill());
+        modelRow = Ui.col(this);
+        dict.addView(modelRow, Ui.fill());
+        modelRows();
+        Ui.pool.execute(() -> {
+            try {
+                org.json.JSONObject v = hub.call("GET", "/v1/voice", null, 8000);
+                runOnUiThread(() -> { cleanup = v.optBoolean("cleanup"); voiceHost = v.optString("host", hub.label()); cleanRows(); });
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
 
         // Notifications (Notes): what the PCs tell this phone about, and when.
         LinearLayout nt = card(col);
@@ -472,10 +486,63 @@ public class Settings extends Base {
         return c;
     }
 
+    private LinearLayout cleanRow, modelRow;
+    private Boolean cleanup;
+    private String voiceHost;
+
+    /** "Clean up dictation": the hub's setting, mirrored. */
+    private void cleanRows() {
+        cleanRow.removeAllViews();
+        if (cleanup == null) return;
+        cleanRow.setVisibility(View.VISIBLE);
+        cleanRow.addView(Ui.gap(this));
+        LinearLayout r = Ui.cardRow(this, Ui.I_SPARKLES, "Clean up dictation", cleanup
+                ? "On: when you stop, " + voiceHost + " tidies the words (punctuation, filler words)"
+                : "Off: the words go in as heard", Ui.FG, v -> toggleCleanup());
+        Ui.wrapSub(r, 2);
+        cleanRow.addView(r, Ui.fill());
+    }
+
+    private void toggleCleanup() {
+        boolean want = !cleanup;
+        Ui.pool.execute(() -> {
+            try {
+                hub.call("PUT", "/v1/voice/settings", new org.json.JSONObject().put("cleanup", want));
+                runOnUiThread(() -> { cleanup = want; cleanRows(); });
+            } catch (Exception e) {
+                runOnUiThread(() -> Ui.toast(this, Hub.why(e)));
+            }
+        });
+    }
+
+    /** "Offline dictation": the phone's own model (Asr), refreshed while it downloads. */
+    private void modelRows() {
+        modelRow.removeAllViews();
+        if (!Asr.available()) return;
+        Asr.Model m = Asr.pick(this);
+        modelRow.addView(Ui.gap(this));
+        LinearLayout r = Ui.cardRow(this, Ui.I_DOWNLOAD, "Offline dictation", m.name + " · " + m.mb() + " · " + Asr.state(this), Ui.FG, v -> model());
+        Ui.wrapSub(r, 3);
+        modelRow.addView(r, Ui.fill());
+        if (Asr.progress >= 0 || Asr.wanted(this) && !Asr.ready(this)) modelRow.postDelayed(() -> { if (!isFinishing()) modelRows(); }, 1000);
+    }
+
+    private void model() {
+        Asr.Model m = Asr.pick(this);
+        boolean ready = Asr.ready(this), wanted = Asr.wanted(this);
+        android.app.AlertDialog.Builder d = Ui.dialog(this).setTitle("Offline dictation")
+                .setMessage("When the PC can't transcribe (no network, or it doesn't answer), this phone does it with "
+                        + m.name + " (" + m.mb() + ", picked for this phone's memory). It downloads on Wi-Fi only, and takes memory only while you dictate.")
+                .setNegativeButton("Close", null);
+        if (ready || wanted) d.setPositiveButton(ready ? "Remove" : "Stop download", (x, w) -> { Asr.remove(this); modelRows(); });
+        else d.setPositiveButton("Download on Wi-Fi", (x, w) -> { Asr.want(this); modelRows(); });
+        d.show();
+    }
+
     private void voiceLang() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "what the phone's recogniser uses by default" : "", true));
-        Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. Phones without a recogniser of their own send the recording to the PC, which transcribes it with whisper.cpp.", o, Voice.lang(this), l -> {
+        for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "found from what you say" : "", true));
+        Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. The PC transcribes what you say, or this phone's offline model when the PC can't.", o, Voice.lang(this), l -> {
             Ui.prefs(this).edit().putString("voice_lang", l).apply();
             recreate();
         });

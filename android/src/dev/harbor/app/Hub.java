@@ -1117,14 +1117,15 @@ final class Hub {
         }
     }
 
-    /** POST /v1/transcribe: a recording (WAV, 16 kHz mono) for the PC's whisper.cpp, when this
-     *  phone has no recogniser of its own (Voice). Returns the text. */
-    String transcribe(byte[] wav, String lang) throws IOException {
-        Net.Http c = open("POST", "/v1/transcribe?lang=" + URLEncoder.encode(lang == null ? "" : lang, "UTF-8"), 180_000);
+    /** POST /v1/transcribe: a phrase or a whole dictation (WAV, 16 kHz mono) for the PC the hub
+     *  picks (Voice). `cleanup=0`: the raw words, cleaned up once at the end instead. →
+     *  {text, raw?, host?}; 409 (ApiError) while the PC's model downloads. */
+    JSONObject transcribe(byte[] wav, String lang, boolean raw, int timeout) throws IOException {
+        Net.Http c = open("POST", "/v1/transcribe?lang=" + URLEncoder.encode(lang == null ? "" : lang, "UTF-8") + (raw ? "&cleanup=0" : ""), timeout);
         try {
             c.header("Content-Type", "audio/wav");
             try (OutputStream o = c.body(wav.length)) { o.write(wav); }
-            return reply(c).optString("text");
+            return reply(c);
         } finally {
             c.close();
         }

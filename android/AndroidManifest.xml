@@ -27,12 +27,6 @@
          transcribes; asked for the first time the mic is tapped -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
-    <!-- Android 11+: the recogniser service must be visible to find it -->
-    <queries>
-        <intent>
-            <action android:name="android.speech.RecognitionService" />
-        </intent>
-    </queries>
     <!-- Instant notifications (Listen, off by default): a silent foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -74,6 +68,9 @@
         </receiver>
         <!-- Tells the PCs every 15 minutes that this phone is reachable (Devices: online) -->
         <service android:name=".Alive" android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+        <!-- Downloads dictation's offline model on Wi-Fi, resuming across runs (Asr) -->
+        <service android:name=".ModelJob" android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
         <!-- A notification's Reply and Continue (Notes) -->
         <receiver android:name=".NoteAction" android:exported="false" />

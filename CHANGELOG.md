@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Phone dictation no longer uses Google's speech services. The phone records and cuts what you say
+  into phrases at pauses (Silero VAD, on the phone); each phrase goes to your PC, which
+  transcribes it, so the words appear while you talk and pauses never stop it. Tapping stop puts
+  in the last phrase, and with "Clean up dictation" on the PC tidies the whole text once.
+  Settings › Dictation on the phone mirrors that switch.
+- Offline dictation on the phone: when the PC can't be reached or doesn't answer within a few
+  seconds, the phone transcribes the phrase itself with sherpa-onnx (Parakeet TDT 0.6B v3 on
+  phones with 6 GB of memory or more, Whisper small or base on others). The model downloads on
+  Wi-Fi after the first dictation (Settings › Dictation › Offline dictation shows its progress,
+  and removes it), and takes memory only while you dictate. The app is ~9 MB bigger for it.
+
 ## [0.54.0] - 2026-10-26
 
 ### Added
