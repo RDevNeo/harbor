@@ -932,7 +932,9 @@ impl App {
                     Ok(r) => r,
                     Err(r) => return Some(Some(r)),
                 };
-                let Some(info) = self.ws_info(Target::Draft(repo)) else { return Some(Some(err(409, "a worktree needs a git project"))) };
+                // A project without Git has no worktrees: the chat starts in its folder, as the
+                // desktop does (a phone may still hold "New worktree" from another project).
+                let Some(info) = self.ws_info(Target::Draft(repo)) else { return None };
                 let base = call.body["base"].as_str().unwrap_or("").to_string();
                 let call = call.clone();
                 let repo_dir = info.repo.clone();

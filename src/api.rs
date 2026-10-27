@@ -3613,6 +3613,9 @@ impl App {
                         self.repos = self.store.repos();
                         Some(id)
                     }
+                    None if remote.is_empty() => {
+                        return Err(err(409, format!("{name} isn't a project on {} and has no Git remote to clone there: add its folder to Harbor on that PC first", crate::remote::hostname())));
+                    }
                     None => return Err(err(409, format!("{name} isn't a project on {} yet", crate::remote::hostname()))),
                 }
             }

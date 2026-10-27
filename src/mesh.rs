@@ -1986,6 +1986,12 @@ impl App {
         }
         let owner = self.chats.iter().find(|c| c.repo_id == Some(r.id) && c.foreign()).map(|c| self.shared().name_of(&c.home));
         Some(match owner {
+            // A project without Git (or without a remote) can't be cloned.
+            Some(o) if r.remote.is_empty() => format!(
+                "{}'s folder ({}) isn't on this PC: it's on {o}, and it has no Git remote to clone. Start the chat with {o} as its device, or pick the folder that holds it here.",
+                r.name,
+                r.path.display()
+            ),
             Some(o) => format!(
                 "{}'s folder ({}) isn't on this PC: it's on {o}. Start the chat with {o} as its device, or clone the project here.",
                 r.name,

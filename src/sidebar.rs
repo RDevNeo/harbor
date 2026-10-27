@@ -649,14 +649,16 @@ impl App {
         let id = r.id;
         let out = resp.clone();
         resp.tip(crate::app::tilde(&path)).context_menu(|ui| {
+            // A project without a GitHub remote (a plain folder, another host) has none of these.
+            let github = self.pr_projects().iter().any(|p| p.0 == id);
             if ui.button(format!("{}  Open terminal", ic::TERMINAL)).clicked() {
                 let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 self.open_terminal(&ctx, &name, path.clone(), vec![], vec![]);
             }
-            if ui.button(format!("{}  Pull requests", ic::PULL)).clicked() {
+            if github && ui.button(format!("{}  Pull requests", ic::PULL)).clicked() {
                 self.open_prs(Some(id));
             }
-            if ui.button(format!("{}  Issues", ic::CIRCLE_DOT)).clicked() {
+            if github && ui.button(format!("{}  Issues", ic::CIRCLE_DOT)).clicked() {
                 self.open_issues(Some(id));
             }
             if let Some(Some(url)) = self.git.get(&id).map(|s| s.as_ref().and_then(|s| s.remote.clone())) {

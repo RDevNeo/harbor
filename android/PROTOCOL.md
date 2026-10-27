@@ -517,7 +517,7 @@ the desktop shows nothing:
   instead of the usual placeholder colour, with a small "⇥ Use" chip in the composer's row (the
   desktop's Tab / →): tapping it puts the text into the composer (it doesn't send). Typing
   anything hides both. Gone once the next turn starts.
-- `folder: {text, cloning, owner: {id, name}|null, suggested}` (optional, from 0.62; null or
+- `folder: {text, cloning, owner: {id, name}|null, suggested, action, action_note}` (optional, from 0.62; null or
   missing otherwise, older hubs never send it): the chat's project isn't on its PC (a project
   another PC of the mesh shares). The desktop draws a line under the transcript: a folder icon
   (a spinner while `cloning`) and `text`, then, unless `cloning`, **Clone here** and, with an
@@ -530,7 +530,10 @@ the desktop shows nothing:
     → `{"ok": true}`; `409` with the reason (already there, already cloning, not a full path).
     A folder that already holds a clone of the project is used as it is; an empty or new one
     gets the clone; one with other files gets it in a subfolder named after the project. The
-    message that was waiting runs once it's there.
+    message that was waiting runs once it's there. `action` (optional, from 0.65; default "Clone
+    here") names the chip and the dialog, `action_note` the dialog's text: a project without a git
+    remote (made without Git) reads **Use a folder here**, and the path must be a folder that
+    already holds its files (nothing can be cloned).
   - **Run on …** → `POST /v1/chats/{id}/run_on` → `{"id": <new chat>}`: the chat's waiting (else
     last) message starts a chat in the project on the owner PC, with the same run settings;
     open that chat (`id` null: not copied yet, find it in the next state by its gid). This chat
@@ -615,7 +618,9 @@ usage; the update banners). A typing lease running out is a change too (its chat
 project). With no `text` and no `files` the chat is created idle. `fast` sets the hub-wide flag.
 Since 0.37 (optional): `"worktree": true, "base": "<branch>"` starts it in a new git worktree of
 the project made from `base` ("" or missing: the checkout's branch); a hub that can't make it
-answers `409` with git's reason and creates nothing. Ignored with a `device`.
+answers `409` with git's reason and creates nothing. Ignored with a `device`, and since 0.65 in a
+project without Git (`GET /v1/workspace` says `git: false`: a plain folder): the chat starts in
+the folder (older hubs answer `409`).
 Since 0.57 (optional): `"title": "…"` names it in the sidebar (default: the text's first line), and
 `"opened_from": {"gid", "title"}` (sent by a hub whose agent opened the chat on this PC with
 `open_chat`) puts a `chat_link` card back to that chat at its top. Phones don't need either.
@@ -748,8 +753,10 @@ with its picks) →
  "branch": "main", "dirty": 2, "base": "", "can_move": true, "move_why": null, "branch_lock": null}
 ```
 
-`git: false` (and nothing else): no chips (no project, not a git repo, another PC's chat, a chat on
-another device). `mode` is `worktree` for a chat in its worktree (`name`, `path` its folder) and
+`git: false` (and nothing else): no chips (no project, not a git repo such as a project made
+"without Git" on the desktop, another PC's chat, a chat on another device). Chats in a project
+without Git work like any other; only the workspace/branch chips, commit pills and `#` issue tags
+have nothing to show there (`@` lists the folder's files from disk since 0.65). `mode` is `worktree` for a chat in its worktree (`name`, `path` its folder) and
 for New chat with `worktree=1` (`base`: the branch it would start from). `branch` reads
 `detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
 a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
@@ -996,7 +1003,8 @@ Since 0.31 also: `{"command": "fork"}` forks the chat after its last finished re
 
 The desktop composer's `@` and `#` menu for this chat (`src/tags.rs`, since 0.31; older PCs answer
 `404`: show no menu). `trigger` is `@` (the project's files: git's tracked and untracked-not-ignored
-ones) or `#` (the project's GitHub issues and pull requests, the latest 100 of each, from the PC's
+ones; in a project without Git, since 0.65, the folder's files on disk without hidden ones,
+`node_modules`, `target` and other build folders) or `#` (the project's GitHub issues and pull requests, the latest 100 of each, from the PC's
 `gh`); `q` is what follows the trigger up to the cursor. The PC ranks them as the desktop does
 (file name exactly, prefix, at a word boundary, anywhere, a folder, the path, the letters in
 order; issues by number, then title, open before closed) and sends at most 50, best first.

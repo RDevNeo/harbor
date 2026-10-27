@@ -1,5 +1,5 @@
-//! "Add project" palette (T3 style): pick a source (new repository, local folder,
-//! Git URL, GitHub repository), then search inside it. Arrows move, Enter picks, Backspace on
+//! "Add project" palette (T3 style): pick a source (new project, with or without Git, local
+//! folder, Git URL, GitHub repository), then search inside it. Arrows move, Enter picks, Backspace on
 //! an empty search goes back, Esc closes. Pointing at a row only highlights it;
 //! only the keys and the header buttons act.
 //!
@@ -101,7 +101,8 @@ enum Act {
     Add(PathBuf),
     /// Browse this directory.
     Enter(PathBuf),
-    Create(String),
+    /// A new folder in ~/Projects: a Git repository (`git init`) or a plain folder.
+    Create { name: String, git: bool },
     Clone { url: String, name: String },
 }
 
@@ -200,7 +201,7 @@ impl App {
         match ap.step {
             Step::Sources => {
                 for (icon, title, detail, act) in [
-                    (g(ic::FOLDER), "New project", "Start a new Git repository from a name", Act::Step(Step::New)),
+                    (g(ic::FOLDER), "New project", "A new folder from a name, with or without Git", Act::Step(Step::New)),
                     (g(ic::FOLDER_PLUS), "Local folder", "Browse a folder on disk", Act::Step(Step::Local)),
                     (g(ic::LINK), "Git URL", "Clone from a remote URL", Act::Step(Step::Url)),
                     (Icon::Logo("github"), "GitHub repository", "Clone GitHub owner/repo", Act::Step(Step::GitHub)),
@@ -213,7 +214,8 @@ impl App {
             Step::New => {
                 if !q.is_empty() {
                     let dir = projects_dir().join(q);
-                    v.push(row(g(ic::FOLDER), format!("Create “{q}”"), format!("git init in {}", tilde(&dir)), Act::Create(q.into())));
+                    v.push(row(g(ic::FOLDER_GIT), format!("Create “{q}”"), format!("git init in {}", tilde(&dir)), Act::Create { name: q.into(), git: true }));
+                    v.push(row(g(ic::FOLDER), format!("Create “{q}” without Git"), format!("Plain folder in {}, no Git or GitHub", tilde(&dir)), Act::Create { name: q.into(), git: false }));
                 }
             }
             Step::Local => {
@@ -296,15 +298,18 @@ impl App {
                 Ok(()) => self.add_project = None,
                 Err(e) => self.add_project.as_mut().unwrap().error = Some(e),
             },
-            Act::Create(name) => {
+            Act::Create { name, git } => {
                 let dir = projects_dir().join(&name);
                 let r = if dir.exists() {
                     Err(format!("{} already exists", tilde(&dir)))
                 } else {
-                    std::fs::create_dir_all(&dir)
-                        .map_err(|e| e.to_string())
-                        .and_then(|_| std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().map_err(|e| e.to_string()))
-                        .and_then(|s| if s.success() { Ok(()) } else { Err("git init failed".into()) })
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|_| {
+                        if !git {
+                            return Ok(());
+                        }
+                        let s = std::process::Command::new("git").arg("init").arg("-q").arg(&dir).status().map_err(|e| e.to_string())?;
+                        if s.success() { Ok(()) } else { Err("git init failed".into()) }
+                    })
                 };
                 match r.and_then(|_| self.add_project_path(&dir)) {
                     Ok(()) => self.add_project = None,

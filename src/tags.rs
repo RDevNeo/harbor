@@ -1,6 +1,6 @@
 //! `@` and `#` tags in the composer, as in T3 Code and Codex: typing `@` at the start of
 //! a word opens a menu above the composer with the project's files (git's tracked and
-//! untracked-not-ignored ones), `#` its GitHub issues and pull requests, fuzzy-matched as
+//! untracked-not-ignored ones; a folder without Git, what's on disk), `#` its GitHub issues and pull requests, fuzzy-matched as
 //! you type. Picking one writes `@path` or `#123` into the text, drawn as a highlighted
 //! token; when the message goes out the agent gets a short list of what was tagged (the
 //! file's full path, the issue's title and URL) after it (`App::tags_prompt`).
@@ -343,8 +343,8 @@ fn split(path: &str) -> (&str, &str) {
 
 // ---------------------------------------------------------------- listing
 
-/// A project's files: git's tracked and untracked-not-ignored ones; None when it isn't a
-/// git checkout (or git fails).
+/// A project's files: git's tracked and untracked-not-ignored ones; in a folder without Git,
+/// what's on disk (`walk`). None when it can't be read.
 fn list_files(cwd: &Path) -> Option<Vec<String>> {
     let out = Command::new("git")
         .arg("-C")
@@ -352,15 +352,47 @@ fn list_files(cwd: &Path) -> Option<Vec<String>> {
         .args(["-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard"])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
+        .output();
+    let Some(out) = out.ok().filter(|o| o.status.success()) else { return walk(cwd) };
     let mut v: Vec<String> = out.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).collect();
     v.sort();
     v.dedup();
     v.truncate(MAX_FILES);
+    Some(v)
+}
+
+/// Folders a plain project's listing skips, besides hidden ones: dependencies and builds.
+const SKIP_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "__pycache__", "venv"];
+
+/// A folder's files without Git, breadth first (shallow ones first when it's huge): hidden
+/// entries, symlinks and `SKIP_DIRS` left out, paths relative to `cwd` with `/`.
+fn walk(cwd: &Path) -> Option<Vec<String>> {
+    let mut v = vec![];
+    let mut dirs = std::collections::VecDeque::from([PathBuf::new()]);
+    std::fs::read_dir(cwd).ok()?;
+    while let Some(rel) = dirs.pop_front() {
+        let Ok(rd) = std::fs::read_dir(cwd.join(&rel)) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(ft) = e.file_type() else { continue };
+            if name.starts_with('.') || ft.is_symlink() {
+                continue;
+            }
+            let path = rel.join(&name);
+            if ft.is_dir() {
+                if !SKIP_DIRS.contains(&name.as_str()) {
+                    dirs.push_back(path);
+                }
+            } else if ft.is_file() {
+                v.push(path.to_string_lossy().replace('\\', "/"));
+                if v.len() >= MAX_FILES {
+                    dirs.clear();
+                    break;
+                }
+            }
+        }
+    }
+    v.sort();
     Some(v)
 }
 
@@ -839,6 +871,21 @@ mod tests {
         assert_eq!(find("tag"), [120, 12, 7]);
         assert_eq!(find("rlnts"), [3]);
         assert_eq!(find(""), [120, 12, 7, 3]);
+    }
+
+    #[test]
+    fn lists_a_folder_without_git() {
+        let d = std::env::temp_dir().join(format!("harbor-tags-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for f in ["notes.md", "docs/plan.md", "docs/old/a.txt", ".hidden/x", "node_modules/p/i.js", ".env"] {
+            let p = d.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "x").unwrap();
+        }
+        let files = list_files(&d).unwrap();
+        assert_eq!(files, vec!["docs/old/a.txt", "docs/plan.md", "notes.md"]);
+        assert!(list_files(&d.join("missing")).is_none());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

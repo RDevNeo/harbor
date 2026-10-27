@@ -538,7 +538,10 @@ public class Chat extends Base {
             status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
             if (!cloning) {
                 LinearLayout acts = Ui.row(this);
-                acts.addView(small("Clone here", () -> cloneHere(folder.optString("suggested", ""))));
+                // Hubs from 0.65 name the action: "Use a folder here" for a project without Git.
+                String action = folder.optString("action", "Clone here");
+                String note = folder.optString("action_note", "The project is cloned into this folder on the PC, or used from it when it's already there.");
+                acts.addView(small(action, () -> cloneHere(folder.optString("suggested", ""), action, note)));
                 JSONObject owner = folder.optJSONObject("owner");
                 if (owner != null) acts.addView(small("Run on " + owner.optString("name"), this::runOnOwner), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
                 status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
@@ -708,17 +711,17 @@ public class Chat extends Base {
         });
     }
 
-    /** The folder line's Clone here: where on the PC (the hub suggests the owner's place under
-     *  this PC's home; a folder that already holds the project is used as it is). */
-    private void cloneHere(String suggested) {
+    /** The folder line's Clone here (or Use a folder here): where on the PC (the hub suggests the
+     *  owner's place under this PC's home; a folder that already holds the project is used as it is). */
+    private void cloneHere(String suggested, String action, String note) {
         EditText e = Ui.input(this, "Folder on the PC", false);
         e.setText(suggested);
         FrameLayout f = new FrameLayout(this);
         f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
         f.addView(e);
-        Ui.dialog(this).setTitle("Clone here").setMessage("The project is cloned into this folder on the PC, or used from it when it's already there.")
+        Ui.dialog(this).setTitle(action).setMessage(note)
                 .setView(f).setNegativeButton("Cancel", null)
-                .setPositiveButton("Clone", (d, w) -> {
+                .setPositiveButton(action.startsWith("Clone") ? "Clone" : "Use it", (d, w) -> {
                     String p = e.getText().toString().trim();
                     if (p.isEmpty()) return;
                     Ui.bg(this, () -> folderCall("clone", new JSONObject().put("path", p)), r -> load(false));

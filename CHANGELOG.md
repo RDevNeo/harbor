@@ -5,6 +5,22 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Projects without Git: Add project › New project now also offers **Create “name” without Git**,
+  a plain folder in ~/Projects with no repository and no GitHub, just to keep chats organized.
+  Chats in it work as anywhere else on the desktop and the phone; Git-only parts stay out of the
+  way: no workspace/branch bar, no Pull requests/Issues in the project's menu, and a phone that
+  still has "New worktree" picked starts the chat in the folder instead of failing. `@` in the
+  composer now lists the files of a folder without Git too (from disk, hidden folders and
+  node_modules/target left out).
+
+### Changed
+- A project without a Git remote that another PC shares no longer offers to clone what can't be
+  cloned: the line under the chat says so and offers **Use a folder here** (pick the folder that
+  holds it; the waiting message then runs there) or Run on its PC, on the desktop and the
+  phone. Starting a chat with such a project on another PC, or moving one there, says plainly
+  that its folder must be added to Harbor there first.
+
 ## [0.64.1] - 2026-10-27
 
 ### Fixed

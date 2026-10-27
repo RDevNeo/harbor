@@ -727,8 +727,11 @@ impl App {
         }
         let s = |k: &str| p[k].as_str().unwrap_or("").to_string();
         let repo = match_project(&self.move_candidates(), &s("remote"), &s("folder"), &s("name")).ok_or_else(|| {
-            let what = if s("remote").is_empty() { s("name") } else { format!("{} ({})", s("name"), s("remote")) };
-            format!("{me} has no project for {what}: clone it there and add it to Harbor first")
+            if s("remote").is_empty() {
+                // A folder without Git: nothing to clone, only its files to copy.
+                return format!("{me} has no project named {}: copy its folder there and add it to Harbor first", s("name"));
+            }
+            format!("{me} has no project for {} ({}): clone it there and add it to Harbor first", s("name"), s("remote"))
         })?;
         if body["worktree"].is_object() && crate::worktree::head(&self.repo(repo).map(|r| r.dir().to_path_buf()).unwrap_or_default()).is_none() {
             return Err(format!("{me}'s copy of the project isn't a git checkout"));

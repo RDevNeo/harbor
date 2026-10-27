@@ -180,7 +180,7 @@ fn fetch_into(remote: &str, picked: &Path, name: &str) -> Result<PathBuf, String
         return if picked.is_dir() && !is_empty_dir(picked) {
             Ok(picked.to_path_buf())
         } else {
-            Err("this project's git remote isn't known here: pick the folder that holds it".into())
+            Err(format!("{} doesn't hold its files (it has no Git remote to clone): pick the folder that does", crate::app::tilde(picked)))
         };
     }
     if crate::git::origin(picked).is_some_and(|o| same(&o, remote)) {
@@ -196,23 +196,44 @@ fn fetch_into(remote: &str, picked: &Path, name: &str) -> Result<PathBuf, String
 pub struct Line {
     pub text: String,
     pub cloning: bool,
+    /// The project has a git remote to clone; without one (a plain folder) the action only
+    /// picks the folder that holds it here (`fetch_into`).
+    pub cloneable: bool,
     /// The PC that has the project: (peer id, its name).
     pub owner: Option<(String, String)>,
     /// Where Clone here starts (the phone's suggested path).
     pub suggested: PathBuf,
 }
 
+impl Line {
+    /// Its action's label and what it does: Clone here, or the project's folder here.
+    pub fn action(&self) -> (&'static str, &'static str) {
+        if self.cloneable {
+            ("Clone here", "The project is cloned into this folder on the PC, or used from it when it's already there.")
+        } else {
+            ("Use a folder here", "The project has no Git remote to clone: give the folder on the PC that holds its files.")
+        }
+    }
+}
+
 impl App {
     /// A chat's turn is about to start without its project's folder: when another project here
     /// has the same remote, its folder becomes this one's (and the turn goes on: false); else,
     /// with a remote known, the turn waits for a clone (true). False also when nothing can be
-    /// done (no remote, a lost worktree): the caller says why.
+    /// done (no remote: the message is kept for Use a folder here; a lost worktree): the caller
+    /// says why.
     pub fn clone_for_turn(&mut self, chat: &Chat, prompt: &str, files: &[PathBuf]) -> bool {
         if self.worktree_of(chat).is_some_and(|w| !w.is_dir()) {
             return false;
         }
         let Some(r) = chat.repo_id.and_then(|id| self.repo(id)).cloned() else { return false };
-        if r.dir().is_dir() || r.remote.is_empty() {
+        if r.dir().is_dir() {
+            return false;
+        }
+        if r.remote.is_empty() {
+            // Nothing to clone (a project without Git): the message waits for the folder line's
+            // Use a folder here (or Run on <owner>), while the caller says why it can't run.
+            self.clones.held.entry(r.id).or_default().push((chat.id, prompt.to_string(), files.to_vec()));
             return false;
         }
         let found = find_clone(self.repos.iter().filter(|o| o.id != r.id).map(|o| (o.dir(), o.remote.as_str())), &r.remote);
@@ -252,8 +273,12 @@ impl App {
 
     fn clone_start(&mut self, repo: i64, chat: i64, at: PathBuf, work: impl FnOnce(&str) -> Result<PathBuf, String> + Send + 'static) {
         let Some(r) = self.repo(repo).cloned() else { return };
-        let what = if r.remote.is_empty() { r.name.clone() } else { r.remote.clone() };
-        self.notice(chat, "folder", &format!("Cloning {}…", r.name), &format!("{what} into {}", crate::app::tilde(&at)));
+        if r.remote.is_empty() {
+            // Nothing to clone: only the folder the user picked is looked at (fetch_into).
+            self.notice(chat, "folder", &format!("Looking for {} in {}…", r.name, crate::app::tilde(&at)), "");
+        } else {
+            self.notice(chat, "folder", &format!("Cloning {}…", r.name), &format!("{} into {}", r.remote, crate::app::tilde(&at)));
+        }
         self.clones.running.insert(repo, at);
         self.api_touch(chat);
         let (tx, ctx) = (self.bg_tx.clone(), self.ctx.clone());
@@ -291,6 +316,7 @@ impl App {
             }
             Err(e) => {
                 self.clones.failed.insert(repo, e.clone());
+                let failed = if self.repo(repo).is_some_and(|r| r.remote.is_empty()) { "That folder can't be used" } else { "Cloning it here failed" };
                 let chats: Vec<i64> = held.iter().map(|h| h.0).collect();
                 // Kept for Clone here / Run on: they still want to run.
                 self.clones.held.insert(repo, held);
@@ -301,7 +327,7 @@ impl App {
                     }
                     let why = self.chat(chat).cloned().and_then(|c| self.missing_folder(&c)).unwrap_or_default();
                     if let Some(t) = self.transcripts.get_mut(&chat) {
-                        t.items.push(Item::Error { text: format!("{why}\nCloning it here failed: {e}") });
+                        t.items.push(Item::Error { text: format!("{why}\n{failed}: {e}") });
                     }
                     self.persist(chat);
                 }
@@ -329,15 +355,19 @@ impl App {
         }
         let cloning = self.clones.running.get(&r.id);
         let owner = self.project_owner(r.id);
+        let cloneable = !r.remote.is_empty();
         let text = match (cloning, self.clones.failed.get(&r.id)) {
-            (Some(at), _) => format!("Cloning {} into {}…", r.name, crate::app::tilde(at)),
-            (None, Some(e)) => format!("{} isn't on this PC and couldn't be cloned: {e}", r.name),
+            (Some(at), _) if cloneable => format!("Cloning {} into {}…", r.name, crate::app::tilde(at)),
+            (Some(at), _) => format!("Looking for {} in {}…", r.name, crate::app::tilde(at)),
+            (None, Some(e)) if cloneable => format!("{} isn't on this PC and couldn't be cloned: {e}", r.name),
+            (None, Some(e)) => format!("{} isn't on this PC: {e}", r.name),
             (None, None) => match &owner {
-                Some((_, o)) => format!("{} isn't on this PC: it's on {o}.", r.name),
+                Some((_, o)) if cloneable => format!("{} isn't on this PC: it's on {o}.", r.name),
+                Some((_, o)) => format!("{} isn't on this PC: it's on {o}, without Git to clone it.", r.name),
                 None => format!("{}'s folder ({}) isn't on this PC.", r.name, crate::app::tilde(&r.path)),
             },
         };
-        Some(Line { text, cloning: cloning.is_some(), owner, suggested: home_relative(&r.path, &crate::store::home(), &r.name) })
+        Some(Line { text, cloning: cloning.is_some(), cloneable, owner, suggested: home_relative(&r.path, &crate::store::home(), &r.name) })
     }
 
     /// The PC a project of this list belongs to: the home of its chats from other PCs.
@@ -349,11 +379,15 @@ impl App {
     /// `status.folder` for the phone (PROTOCOL.md).
     pub fn folder_json(&self, chat: i64) -> Value {
         match self.folder_line(chat) {
-            Some(l) => json!({
-                "text": l.text, "cloning": l.cloning,
-                "owner": l.owner.map(|(id, name)| json!({ "id": id, "name": name })),
-                "suggested": l.suggested.to_string_lossy(),
-            }),
+            Some(l) => {
+                let (action, note) = l.action();
+                json!({
+                    "text": l.text, "cloning": l.cloning,
+                    "owner": l.owner.map(|(id, name)| json!({ "id": id, "name": name })),
+                    "suggested": l.suggested.to_string_lossy(),
+                    "action": action, "action_note": note,
+                })
+            }
             None => Value::Null,
         }
     }
@@ -361,7 +395,7 @@ impl App {
     /// Desktop: the folder line, after the limit line.
     pub fn folder_ui(&mut self, ui: &mut egui::Ui, chat: i64) {
         use crate::icons as ic;
-        use crate::widgets as w;
+        use crate::widgets::{self as w, Tip as _};
         let Some(line) = self.folder_line(chat) else { return };
         let t = self.theme.t;
         let mut act = 0;
@@ -374,7 +408,8 @@ impl App {
             }
             w::subtle(ui, &line.text, "label-13");
             if !line.cloning {
-                if w::btn("Clone here").primary().xs().show(ui).clicked() {
+                let (action, note) = line.action();
+                if w::btn(action).primary().xs().show(ui).tip(note).clicked() {
                     act = 1;
                 }
                 if let Some((_, o)) = &line.owner {
@@ -389,7 +424,8 @@ impl App {
                 let (tx, ctx) = (self.bg_tx.clone(), ui.ctx().clone());
                 let start = line.suggested.parent().map(Path::to_path_buf).filter(|p| p.is_dir()).unwrap_or_else(crate::store::home);
                 std::thread::spawn(move || {
-                    let picked = crate::picker::pick(crate::picker::Opts { title: "Clone the project into…", dir: Some(&start), directory: true, ..Default::default() });
+                    let title = if line.cloneable { "Clone the project into…" } else { "The project's folder on this PC" };
+                    let picked = crate::picker::pick(crate::picker::Opts { title, dir: Some(&start), directory: true, ..Default::default() });
                     if let Some(p) = picked.into_iter().next() {
                         let _ = tx.send(Bg::ClonePicked(chat, p));
                         ctx.request_repaint();
