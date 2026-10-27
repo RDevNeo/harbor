@@ -359,7 +359,9 @@ refetch everything.
   lists all its unsettled leads, newest first, as siblings; `threads` are leads with no project
   (or a project the hub doesn't have); `settled` holds every settled lead. Sub-agents and
   snoozed chats are in none of them; a `snoozed` project shows only while searching. Without
-  `tree`, group `chats` by `project_id` and `settled` as before.
+  `tree`, group `chats` by `project_id` and `settled` as before. With `X-Harbor-Ids: global`
+  its chats are gids and its projects paths from 0.64.1; hubs 0.55.2 to 0.64.0 left this hub's
+  ids there, so when `tree` places none of the chats, ignore it and group as without it.
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
@@ -1347,8 +1349,8 @@ same chats, rendered the same way.
   queue is the chat PC's and shows in `status.queue` on every hub.
 - Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't. A client that moves
   between hubs sends `X-Harbor-Ids: global` with every call: answers then name chats by `gid`
-  (`id`, `parent`, `forks_after`, `forked_from.chat`, `chat_link.chat`, `status.waiting.agents[].id`, the `id` of a
-  new chat or fork, `changed_chats`) and projects by their path (`projects[].id`, `project_id`,
+  (`id`, `parent`, `tree`'s chats, `forks_after`, `forked_from.chat`, `chat_link.chat`, `status.waiting.agents[].id`, the `id` of a
+  new chat or fork, `changed_chats`) and projects by their path (`projects[].id`, `project_id`, `tree.projects[].id`,
   `defaults.project_id`); `project_id` in `POST /v1/chats` may be a path too.
 
 ### `GET /v1/hubs`

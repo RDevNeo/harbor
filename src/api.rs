@@ -2990,6 +2990,20 @@ impl App {
                     chat(c);
                 }
                 v["defaults"]["project_id"] = path(&v["defaults"]["project_id"]);
+                // The sidebar placement names the same chats and projects.
+                if let Some(t) = v.get_mut("tree") {
+                    for pr in t.get_mut("projects").and_then(|p| p.as_array_mut()).into_iter().flatten() {
+                        pr["id"] = path(&pr["id"]);
+                        for x in pr.get_mut("chats").and_then(|c| c.as_array_mut()).into_iter().flatten() {
+                            *x = gid(x);
+                        }
+                    }
+                    for k in ["threads", "settled"] {
+                        for x in t.get_mut(k).and_then(|c| c.as_array_mut()).into_iter().flatten() {
+                            *x = gid(x);
+                        }
+                    }
+                }
             }
             ("GET", ["v1", "chats", _, "items"]) => {
                 for it in v["items"].as_array_mut().into_iter().flatten() {

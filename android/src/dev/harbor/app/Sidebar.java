@@ -213,6 +213,9 @@ final class Sidebar {
         LinkedHashMap<String, List<JSONObject>> groups = new LinkedHashMap<>();
         List<JSONObject> loose = new ArrayList<>(), settled = new ArrayList<>();
         JSONObject tree = st.optJSONObject("tree");
+        // Hubs 0.55.2 to 0.64.0 send it with their own ids though the chats come by gid: none
+        // match, so it's grouped here instead.
+        if (tree != null && !placesAny(tree, byId)) tree = null;
         if (tree != null) {
             // The desktop sidebar's own placement (newer hubs): the same chats in the same
             // places, snoozed ones left out as there.
@@ -436,10 +439,24 @@ final class Sidebar {
     private static List<JSONObject> pick(Map<String, JSONObject> byId, JSONArray ids) {
         List<JSONObject> out = new ArrayList<>();
         if (ids != null) for (int i = 0; i < ids.length(); i++) {
-            JSONObject c = byId.get(String.valueOf(ids.optLong(i)));
+            JSONObject c = byId.get(ids.optString(i));
             if (c != null) out.add(c);
         }
         return out;
+    }
+
+    /** Whether `tree` places any chat of `byId` (it names them as the chats do). */
+    private static boolean placesAny(JSONObject tree, Map<String, JSONObject> byId) {
+        List<JSONArray> lists = new ArrayList<>();
+        JSONArray tp = tree.optJSONArray("projects");
+        for (int i = 0; tp != null && i < tp.length(); i++) {
+            JSONObject p = tp.optJSONObject(i);
+            if (p != null) lists.add(p.optJSONArray("chats"));
+        }
+        lists.add(tree.optJSONArray("threads"));
+        lists.add(tree.optJSONArray("settled"));
+        for (JSONArray l : lists) if (!pick(byId, l).isEmpty()) return true;
+        return false;
     }
 
     /** Projects folded on this phone, per PC ("" is Threads). */

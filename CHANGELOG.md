@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: the chat list (the drawer and the Chats screen) is back. Since 0.55.2 the hub sent the
+  sidebar's placement with its own chat ids while the phone names chats by their global id, so
+  no chat matched and the list stayed empty under Settings. The hub now sends the placement by
+  global id too, and the app groups the chats itself when a PC still runs an older Harbor.
+
 ## [0.64.0] - 2026-10-27
 
 ### Changed
