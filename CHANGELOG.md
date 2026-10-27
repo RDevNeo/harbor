@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Shared composer draft: who's writing ("✎ Pixel 9") now has its own row in the desktop
+  composer instead of being drawn over its top edge (it collided with a mentioned message),
+  and another device's draft no longer leaves your cursor at the start: a cursor at the end
+  of the text stays at the end.
+
 ## [0.65.0] - 2026-10-27
 
 ### Added

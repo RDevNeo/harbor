@@ -2649,6 +2649,16 @@ impl App {
                 Apply::Now => {}
             }
             self.api.applied.insert(chat, d.rev);
+            // A cursor at the end of the old text stays at the end of the new one (else where it was).
+            let old = self.drafts.get(&chat).map_or(0, |t| t.chars().count());
+            let cid = egui::Id::NULL.with(("composer", chat));
+            if let Some(mut st) = egui::text_edit::TextEditState::load(&self.ctx, cid) {
+                let at = st.cursor.char_range().map(|r| r.primary.index.0);
+                let n = d.text.chars().count();
+                let to = if at.is_none_or(|a| a >= old) { n } else { at.unwrap_or(n).min(n) };
+                st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(to))));
+                st.store(&self.ctx, cid);
+            }
             if d.text.is_empty() {
                 self.drafts.remove(&chat);
             } else {

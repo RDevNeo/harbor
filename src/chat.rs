@@ -973,9 +973,9 @@ impl App {
         let shown = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
             if let Some((label, until)) = &typing {
-                let r = ui.max_rect();
-                let font = crate::theme::ts("label-12").resolve(ui.style());
-                ui.painter().text(egui::pos2(r.right(), r.top() - 12.0), egui::Align2::RIGHT_TOP, label, font, t.subtle());
+                // Its own row, right-aligned, over the mentions, files and text.
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| w::subtle(ui, label, "label-12"));
+                ui.add_space(4.0);
                 ui.ctx().request_repaint_after(until.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
             }
             // Mentioned messages, each with a box for a note about it; a click on
