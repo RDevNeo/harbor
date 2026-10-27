@@ -2,6 +2,12 @@
 //! result, a subagent's report) can be mentioned in the next message. Mentions
 //! wait as chips above the composer; on send they go to the agent as quoted blocks
 //! before your text, and the transcript shows them as chips on your message.
+//!
+//! A piece of a message can be mentioned too: select text in the transcript and a
+//! "Mention selection" button appears by it. The chip then holds just that excerpt,
+//! still pointing at its message. egui reports a finished label selection as
+//! `OutputCommand::TextSelectionSettled` (the text egui would copy); [`Selection`]
+//! catches it, and the transcript ties it to the message the drag started in.
 
 use crate::widgets::Tip as _;
 use crate::app::App;
@@ -30,6 +36,52 @@ pub struct Mention {
     /// Its full length in characters (more than `text` holds when cut).
     #[serde(default)]
     pub len: usize,
+    /// `text` is a part of the message the user selected, not all of it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub excerpt: bool,
+}
+
+/// Text selected in a message, waiting for its "Mention selection" button.
+pub struct Selected {
+    pub chat: i64,
+    pub item: usize,
+    pub text: String,
+    /// Where the button goes, from the item's top left (set once the item is drawn).
+    pub offset: Option<Vec2>,
+}
+
+/// egui plugin keeping the text of the last settled label selection (a drag released,
+/// a double click, shift+arrows done). The transcript takes it each frame.
+#[derive(Default)]
+pub struct Selection {
+    settled: Option<String>,
+}
+
+impl egui::plugin::Plugin for Selection {
+    fn debug_name(&self) -> &'static str {
+        "harbor-selection"
+    }
+
+    fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
+        // Left in the output: egui-winit also puts it in the PRIMARY selection.
+        for c in &output.platform_output.commands {
+            if let egui::OutputCommand::TextSelectionSettled(t) = c {
+                self.settled = Some(t.clone());
+                // The next frame shows its button, even with the mouse at rest.
+                ctx.request_repaint();
+            }
+        }
+    }
+}
+
+/// The selection settled since the last call, if any.
+pub fn take_settled(ctx: &egui::Context) -> Option<String> {
+    ctx.with_plugin(|s: &mut Selection| s.settled.take()).flatten()
+}
+
+/// Is some label text selected right now?
+pub fn has_selection(ctx: &egui::Context) -> bool {
+    ctx.with_plugin(|s: &mut egui::text_selection::LabelSelectionState| s.has_selection()).unwrap_or(false)
 }
 
 #[derive(Default)]
@@ -38,6 +90,10 @@ pub struct State {
     pub drafts: HashMap<i64, Vec<Mention>>,
     /// The message being pointed at: chat, item, start time, scroll still due.
     pub flash: Option<(i64, usize, f64, bool)>,
+    /// The message (chat, item) the latest press in a transcript landed on.
+    pub press: Option<(i64, usize)>,
+    /// Selected text that can be mentioned.
+    pub selected: Option<Selected>,
 }
 
 impl State {
@@ -70,6 +126,29 @@ impl Mention {
     pub fn snippet(&self) -> &str {
         self.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("")
     }
+
+    /// The same message and text (excerpts of one message are told apart by their text).
+    fn same(&self, other: &Mention) -> bool {
+        self.item == other.item && self.excerpt == other.excerpt && (!self.excerpt || self.text == other.text)
+    }
+}
+
+/// Adds `m` to `list` unless it's already there.
+pub fn add(list: &mut Vec<Mention>, m: Mention) {
+    if !list.iter().any(|x| x.same(&m)) {
+        list.push(m);
+    }
+}
+
+/// Text with its whitespace runs folded to one space, to compare a selection with a message.
+fn folded(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `m` holding only `text` (cut at `MAX_CHARS`).
+fn excerpt(m: Mention, text: &str) -> Mention {
+    let len = text.chars().count();
+    Mention { text: text.chars().take(MAX_CHARS).collect(), len, excerpt: true, ..m }
 }
 
 /// The quoted blocks that go before the user's text.
@@ -77,7 +156,11 @@ pub fn prompt(ms: &[Mention]) -> String {
     let mut out = String::new();
     for m in ms {
         let when = if m.at > 0 { format!(", {}", crate::team::clock(m.at)) } else { String::new() };
-        out.push_str(&format!("> [mentioned message from {}{when}]\n", m.from));
+        if m.excerpt {
+            out.push_str(&format!("> [excerpt of a message from {}{when}]\n", m.from));
+        } else {
+            out.push_str(&format!("> [mentioned message from {}{when}]\n", m.from));
+        }
         for l in m.text.lines() {
             out.push_str("> ");
             out.push_str(l);
@@ -126,16 +209,26 @@ impl App {
         };
         let len = text.chars().count();
         let text = if len > MAX_CHARS { text.chars().take(MAX_CHARS).collect() } else { text };
-        Some(Mention { item: i, from, at, text, len })
+        Some(Mention { item: i, from, at, text, len, excerpt: false })
     }
 
     /// Adds a mention of item `i` to the chat's composer (once).
     pub fn mention(&mut self, chat_id: i64, i: usize) {
         let Some(m) = self.mention_of(chat_id, i) else { return };
-        let list = self.mentions.drafts.entry(chat_id).or_default();
-        if !list.iter().any(|x| x.item == m.item) {
-            list.push(m);
+        add(self.mentions.drafts.entry(chat_id).or_default(), m);
+        self.focus_composer = true;
+    }
+
+    /// Adds a mention of just `text`, selected in item `i`. A selection of the
+    /// whole message is a mention of the message.
+    pub fn mention_excerpt(&mut self, chat_id: i64, i: usize, text: &str) {
+        let Some(m) = self.mention_of(chat_id, i) else { return };
+        let text = text.trim();
+        if text.is_empty() {
+            return;
         }
+        let m = if m.len <= MAX_CHARS && folded(text) == folded(&m.text) { m } else { excerpt(m, text) };
+        add(self.mentions.drafts.entry(chat_id).or_default(), m);
         self.focus_composer = true;
     }
 
@@ -157,7 +250,9 @@ pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
     let t = w::tokens(ui);
     let from = ui.painter().layout_no_wrap(m.from.clone(), FontId::new(12.5, theme::medium()), t.fg());
     let room = (ui.available_width() - from.size().x - if removable { 70.0 } else { 46.0 }).clamp(40.0, 220.0);
-    let snip = w::truncated(ui, m.snippet(), FontId::proportional(12.5), t.subtle(), room);
+    // An excerpt reads as a quote: “…”.
+    let snippet = if m.excerpt { format!("\u{201c}{}\u{201d}", m.snippet()) } else { m.snippet().to_string() };
+    let snip = w::truncated(ui, &snippet, FontId::proportional(12.5), t.subtle(), room);
     let x_w = if removable { 22.0 } else { 0.0 };
     let width = 24.0 + from.size().x + 8.0 + snip.size().x + 10.0 + x_w;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
@@ -170,7 +265,7 @@ pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
     let mut click = Click::None;
     if removable {
         let xr = Rect::from_center_size(pos2(rect.right() - 13.0, rect.center().y), Vec2::splat(18.0));
-        let x = ui.interact(xr, ui.scope_id().with(("unmention", m.item)), Sense::click());
+        let x = ui.interact(xr, resp.id.with("unmention"), Sense::click());
         if x.hovered() {
             ui.painter().rect_filled(xr, CornerRadius::same(4), t.gray(300));
         }
@@ -180,7 +275,8 @@ pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
         }
     }
     let tip: String = m.text.chars().take(300).collect();
-    if resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{tip}\n\nClick to see it in the chat")).clicked() && matches!(click, Click::None) {
+    let what = if m.excerpt { "Excerpt. Click to see its message in the chat" } else { "Click to see it in the chat" };
+    if resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{tip}\n\n{what}")).clicked() && matches!(click, Click::None) {
         click = Click::Open;
     }
     click
@@ -198,4 +294,49 @@ pub fn hover_button(ui: &mut Ui, rect: Rect, outside: bool) -> bool {
         return false;
     }
     w::overlay(ui, b, |ui| w::btn("@").muted().icon_xs().show(ui).tip("Mention in your next message").clicked())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn whole(item: usize, text: &str) -> Mention {
+        Mention { item, from: "Claude".into(), at: 0, text: text.into(), len: text.chars().count(), excerpt: false }
+    }
+
+    #[test]
+    fn old_mentions_load_as_whole_messages() {
+        let m: Mention = serde_json::from_str(r#"{"item":3,"from":"you","text":"hi"}"#).unwrap();
+        assert!(!m.excerpt);
+        // And whole ones are saved as before, without the new field.
+        assert!(!serde_json::to_string(&whole(1, "x")).unwrap().contains("excerpt"));
+    }
+
+    #[test]
+    fn an_excerpt_is_quoted_alone() {
+        let m = excerpt(whole(2, "First line.\nThe part that matters.\nLast line."), "The part that matters.");
+        assert!(m.excerpt);
+        assert_eq!(prompt(&[m]), "> [excerpt of a message from Claude]\n> The part that matters.\n\n");
+        assert_eq!(prompt(&[whole(2, "a\nb")]), "> [mentioned message from Claude]\n> a\n> b\n\n");
+    }
+
+    #[test]
+    fn long_excerpts_are_cut() {
+        let long = "x".repeat(MAX_CHARS + 10);
+        let m = excerpt(whole(0, &long), &long);
+        assert_eq!(m.text.chars().count(), MAX_CHARS);
+        assert!(prompt(&[m]).contains(&format!("(truncated: the first {MAX_CHARS} of {} characters)", MAX_CHARS + 10)));
+    }
+
+    #[test]
+    fn excerpts_of_one_message_add_once_each() {
+        let mut list = vec![];
+        add(&mut list, whole(1, "a b c"));
+        add(&mut list, whole(1, "a b c"));
+        add(&mut list, excerpt(whole(1, "a b c"), "b"));
+        add(&mut list, excerpt(whole(1, "a b c"), "b"));
+        add(&mut list, excerpt(whole(1, "a b c"), "c"));
+        assert_eq!(list.len(), 3);
+        assert_eq!(folded(" a\n  b\tc "), "a b c");
+    }
 }

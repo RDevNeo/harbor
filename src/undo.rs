@@ -292,9 +292,7 @@ impl App {
         }
         let mut m = mentions;
         for x in self.mentions.drafts.remove(&chat_id).unwrap_or_default() {
-            if !m.iter().any(|y| y.item == x.item) {
-                m.push(x);
-            }
+            crate::mentions::add(&mut m, x);
         }
         if !m.is_empty() {
             self.mentions.drafts.insert(chat_id, m);

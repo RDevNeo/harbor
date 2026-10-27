@@ -864,7 +864,8 @@ public class Chat extends Base {
                 if (mentions != null) for (int i = 0; i < mentions.length(); i++) {
                     JSONObject m = mentions.optJSONObject(i);
                     if (m == null) continue;
-                    TextView chip = Ui.subtitle(Ui.text(this, m.optString("from") + ": " + m.optString("text"), 13, Ui.G900));
+                    String said = m.optBoolean("excerpt") ? "\u201c" + m.optString("text") + "\u201d" : m.optString("text");
+                    TextView chip = Ui.subtitle(Ui.text(this, m.optString("from") + ": " + said, 13, Ui.G900));
                     chip.setBackground(Ui.round(Ui.CARD, Ui.LINE, 12));
                     chip.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(10), Ui.dp(4));
                     chip.setMaxWidth(maxBubble());

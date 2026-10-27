@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Mention a piece of a message: select text in any message of a chat (yours or the agent's) and
+  a "Mention selection" button appears by it. The chip holds just that excerpt, in quotes, and
+  still points at its message (click it to see the message); the agent gets only the excerpt,
+  quoted as "excerpt of a message from …". The phone shows excerpt chips in quotes too.
+
 ## [0.55.3] - 2026-10-27
 
 ### Changed

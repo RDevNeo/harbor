@@ -141,6 +141,7 @@ fn main() -> eframe::Result {
     ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(2).unwrap_or(std::num::NonZeroUsize::MIN));
     theme::install_fonts(&ctx);
     ctx.add_plugin(clipboard::Plugin);
+    ctx.add_plugin(mentions::Selection::default());
     let mut app = app::App::new(&ctx);
     tray::start(&ctx);
     let mut hidden = background;

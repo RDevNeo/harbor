@@ -1386,8 +1386,9 @@ pub fn clip(s: &str, n: usize) -> String {
 // ================================================================== frame
 
 impl eframe::App for App {
-    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|wheel[,secs]]
-    /// places the pointer there and optionally clicks once after `secs` (default 1); more
+    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|down|up|wheel[,secs]]
+    /// places the pointer there and optionally clicks once after `secs` (default 1; `down`
+    /// then `up` at another step drags, e.g. to select text); more
     /// steps joined by ';' follow at their own `secs` (since start).
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         // A keybinding being set takes every key first: no clipboard key, shortcut or text field sees it.
@@ -1430,6 +1431,7 @@ impl eframe::App for App {
                         raw.events.push(egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() });
                     }
                 }
+                "down" | "up" => raw.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: action == "down", modifiers: Default::default() }),
                 _ => {}
             }
         }

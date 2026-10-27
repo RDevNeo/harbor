@@ -381,6 +381,21 @@ impl App {
         let mut commit_dir: Option<Option<std::path::PathBuf>> = None;
         let commit_wake = self.chat_waker(id);
         let mut action: Option<MsgAction> = None;
+        // Text selected in a message: which one (the drag started there), and its
+        // "Mention selection" button (mentions.rs).
+        let (pressed, press_at) = ui.input(|x| (x.pointer.primary_pressed(), x.pointer.press_origin()));
+        if pressed {
+            self.mentions.press = None;
+        }
+        if let Some(text) = crate::mentions::take_settled(ui.ctx()) {
+            self.mentions.selected = match self.mentions.press {
+                Some((c, item)) if c == id => Some(crate::mentions::Selected { chat: c, item, text, offset: None }),
+                _ => None,
+            };
+        }
+        if !crate::mentions::has_selection(ui.ctx()) || self.mentions.selected.as_ref().is_some_and(|s| s.chat != id) {
+            self.mentions.selected = None;
+        }
         for shown in &cards {
             let i = shown.seq;
             let item = &tr.items[i];
@@ -724,6 +739,18 @@ impl App {
             }
             // A mention chip was clicked: this item scrolls into view and lights up.
             let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=(ui.cursor().top() - 12.0).max(top));
+            if pressed && press_at.is_some_and(|p| rect.contains(p)) {
+                self.mentions.press = Some((id, i));
+            }
+            if let Some(sel) = self.mentions.selected.as_mut().filter(|s| s.item == i) {
+                if sel.offset.is_none() {
+                    // Just settled: the pointer is where the drag ended.
+                    sel.offset = Some(ui.input(|x| x.pointer.latest_pos()).map_or(Vec2::ZERO, |p| p - rect.min));
+                }
+                if mention_selection_button(ui, rect, sel.offset.unwrap_or_default()) {
+                    action = Some(MsgAction::MentionExcerpt(i, sel.text.clone()));
+                }
+            }
             self.mentions.flash(ui, id, i, rect);
             ui.data_mut(|d| d.insert_temp(height_key, (width, ui.cursor().top() - top)));
         }
@@ -753,6 +780,11 @@ impl App {
             }
             Some(MsgAction::Fork(upto)) => self.fork_from(id, upto),
             Some(MsgAction::Mention(i)) => self.mention(id, i),
+            Some(MsgAction::MentionExcerpt(i, text)) => {
+                self.mentions.selected = None;
+                ui.ctx().with_plugin(|s: &mut egui::text_selection::LabelSelectionState| s.clear_selection());
+                self.mention_excerpt(id, i, &text);
+            }
             Some(MsgAction::Point(i)) => self.point_at(ui.ctx(), id, i),
             None => {}
         }
@@ -1552,6 +1584,8 @@ enum MsgAction {
     Fork(usize),
     /// Mention item i in the next message.
     Mention(usize),
+    /// Mention this text, selected in item i.
+    MentionExcerpt(usize, String),
     /// Scroll to item i and highlight it.
     Point(usize),
     /// Open another thread (a fork).
@@ -1564,6 +1598,29 @@ enum MsgAction {
 
 /// A row under a message, visible only while the message (or the row) is hovered:
 /// time plus icon buttons, aligned like the message. Returns the clicked button.
+/// The "Mention selection" button, floating above where a text selection in the
+/// message at `item` ended (`at`, from its top left). True when pressed: it acts on
+/// the press, as that press also ends egui's selection.
+fn mention_selection_button(ui: &mut Ui, item: Rect, at: Vec2) -> bool {
+    let label = format!("{}  Mention selection", ic::AT_SIGN);
+    let b = w::btn(&label).xs();
+    let size = Vec2::new(b.width(ui), 28.0);
+    let clip = ui.clip_rect();
+    let anchor = item.min + at;
+    let x = (anchor.x - size.x / 2.0).clamp(item.left(), (item.right() - size.x).max(item.left()));
+    let y = if anchor.y - size.y - 10.0 >= clip.top() { anchor.y - size.y - 10.0 } else { anchor.y + 14.0 };
+    let r = Rect::from_min_size(egui::pos2(x, y), size);
+    if !clip.intersects(r) {
+        return false;
+    }
+    let shown = egui::Area::new(Id::NULL.with("mention-selection"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(r.min)
+        .constrain_to(clip)
+        .show(ui.ctx(), |ui| b.show(ui).on_hover_cursor(egui::CursorIcon::PointingHand));
+    shown.inner.contains_pointer() && ui.input(|x| x.pointer.primary_pressed())
+}
+
 fn hover_actions(ui: &mut Ui, msg: Rect, right: bool, at: i64, buttons: &[(&str, &str)]) -> Option<usize> {
     ui.add_space(-8.0);
     let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
