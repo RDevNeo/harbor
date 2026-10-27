@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Another PC in your mesh now gets "Everything" (shell, any file, your GitHub login) on this PC
+  until you pick a level for it, instead of "Read my projects". Pick one per PC under Your PCs.
+
 ## [0.66.0] - 2026-10-27
 
 ### Added
