@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-10-27
+
 ### Added
 - Runs on, after the first message: a started Claude chat can switch where it runs from the
   composer's "Runs on" picker (desktop) or the Device row of its run settings (phone): this PC,
@@ -1394,7 +1396,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.63.0...HEAD
+[0.63.0]: https://github.com/RDevNeo/harbor/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/RDevNeo/harbor/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/RDevNeo/harbor/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/RDevNeo/harbor/compare/v0.59.2...v0.60.0
