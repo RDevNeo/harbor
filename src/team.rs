@@ -74,9 +74,10 @@ impl App {
         self.chats.iter().filter(|c| c.role == Role::Lead && c.repo_id == Some(repo)).max_by_key(|c| c.updated).map(|c| c.id)
     }
 
-    /// A project's main chat: the first one. Clicking the project opens it.
+    /// The chat clicking a project opens: its newest unsettled one. It still has its own row
+    /// under the project, like the project's other chats (sidebar.rs `tree`).
     pub fn main_thread(&self, repo: i64) -> Option<i64> {
-        self.chats.iter().filter(|c| c.role == Role::Lead && c.repo_id == Some(repo) && !c.settled).map(|c| c.id).min()
+        self.chats.iter().filter(|c| c.role == Role::Lead && c.repo_id == Some(repo) && !c.settled).max_by_key(|c| (c.updated, c.id)).map(|c| c.id)
     }
 
     /// The chats of a project (or the project-less ones), newest first. Each is a

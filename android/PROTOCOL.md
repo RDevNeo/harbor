@@ -353,6 +353,13 @@ refetch everything.
   hubs leave it out) is what an empty `effort` means for each kind (the CLI's own default, e.g.
   `high`): show a chat's or the defaults' `""` as that level, and pick it for a new chat.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
+- `tree` (optional, older hubs leave it out): where the desktop sidebar places each chat, so the
+  list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed": false,
+  "chats": [14, 12]}], "threads": [9], "settled": [3]}`, chat ids in display order. Each project
+  lists all its unsettled leads, newest first, as siblings; `threads` are leads with no project
+  (or a project the hub doesn't have); `settled` holds every settled lead. Sub-agents and
+  snoozed chats are in none of them; a `snoozed` project shows only while searching. Without
+  `tree`, group `chats` by `project_id` and `settled` as before.
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
