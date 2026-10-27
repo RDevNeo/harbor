@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-10-26
+
 ### Added
 - Dictation now transcribes with NVIDIA Parakeet TDT 0.6B v3 (25 European languages, detects
   the language itself), built into Harbor through sherpa-onnx: faster and more accurate than
@@ -1258,7 +1260,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.54.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/RDevNeo/harbor/compare/v0.54.1...v0.55.0
 [0.54.1]: https://github.com/RDevNeo/harbor/compare/v0.54.0...v0.54.1
 [0.54.0]: https://github.com/RDevNeo/harbor/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/RDevNeo/harbor/compare/v0.53.0...v0.53.1
