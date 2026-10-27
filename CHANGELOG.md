@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-10-27
+
 ### Added
 - Gmail app: sign in to Gmail under Settings › Integrations › Apps with your own Google OAuth
   client (Desktop app; the card says how to create one) and the agents Harbor starts can search,
@@ -1360,7 +1362,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.59.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/RDevNeo/harbor/compare/v0.59.2...v0.60.0
 [0.59.2]: https://github.com/RDevNeo/harbor/compare/v0.59.1...v0.59.2
 [0.59.1]: https://github.com/RDevNeo/harbor/compare/v0.59.0...v0.59.1
 [0.59.0]: https://github.com/RDevNeo/harbor/compare/v0.58.0...v0.59.0
