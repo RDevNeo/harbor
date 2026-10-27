@@ -220,6 +220,11 @@ impl App {
     /// One settings page; the sidebar lists the pages (`settings_nav`).
     pub fn settings(&mut self, ui: &mut Ui, tab: Tab) {
         let t = self.theme.t;
+        // Esc leaves Settings, unless something open on it takes the key first (a menu, a
+        // dialog, a key being set) or a text field had focus (Esc only blurs it).
+        let ctx = ui.ctx().clone();
+        let typing = ctx.text_edit_focused();
+        let calm = self.popup.is_none() && self.dialog.is_none() && self.keys.capture.is_none() && !w::popover_open(&ctx) && !egui::Popup::is_any_open(&ctx);
         egui::Panel::top("settings_bar")
             .frame(Frame::new().inner_margin(Margin { left: 18, right: 10, top: 8, bottom: 8 }).fill(t.bg100))
             .show_separator_line(false)
@@ -266,6 +271,9 @@ impl App {
                 ui.add_space(40.0);
             });
         });
+        if calm && self.dialog.is_none() && !w::popover_open(&ctx) && crate::listdetail::esc_leaves(&ctx, typing) {
+            self.leave_settings();
+        }
     }
 
     /// Back from Settings: to the view it was opened from.

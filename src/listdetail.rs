@@ -513,6 +513,37 @@ pub fn row_key(ui: &Ui, resp: &mut egui::Response) -> bool {
 mod tests {
     use super::*;
 
+    fn esc() -> egui::RawInput {
+        let key = egui::Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        egui::RawInput { events: vec![key], ..Default::default() }
+    }
+
+    /// One frame of `ctx` (its texture deltas handled, as the app does).
+    fn frame(ctx: &egui::Context, input: egui::RawInput, f: impl FnMut(&mut Ui)) {
+        ctx.run_ui(input, f).textures_delta.clear();
+    }
+
+    #[test]
+    fn esc_leaves_a_page_unless_a_field_or_popover_takes_it() {
+        let ctx = egui::Context::default();
+        let mut got = vec![];
+        frame(&ctx, esc(), |ui| got.push(esc_leaves(ui.ctx(), false)));
+        frame(&ctx, esc(), |ui| got.push(esc_leaves(ui.ctx(), true)));
+        frame(&ctx, Default::default(), |ui| got.push(esc_leaves(ui.ctx(), false)));
+        assert_eq!(got, [true, false, false], "Esc leaves; in a text field it only blurs; no Esc, no leaving");
+        // A popover drawn this frame or the last keeps the page (Settings' check).
+        let t = crate::theme::Theme::new(crate::theme::Mode::Dark).t;
+        let mut open = vec![];
+        frame(&ctx, Default::default(), |ui| {
+            let r = Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(10.0, 10.0));
+            crate::widgets::popover(ui.ctx(), "t", r, 100.0, false, &t, |_| ());
+            open.push(crate::widgets::popover_open(ui.ctx()));
+        });
+        frame(&ctx, Default::default(), |ui| open.push(crate::widgets::popover_open(ui.ctx())));
+        frame(&ctx, Default::default(), |ui| open.push(crate::widgets::popover_open(ui.ctx())));
+        assert_eq!(open, [true, true, false]);
+    }
+
     #[test]
     fn tabs_open_switch_and_close() {
         let mut s = Split::default();

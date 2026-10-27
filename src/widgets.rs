@@ -594,6 +594,12 @@ pub fn menu_separator(ui: &mut Ui) {
     ui.painter().hline((rect.left() - 4.0)..=(rect.right() + 4.0), rect.center().y, Stroke::new(1.0, t.border()));
 }
 
+/// True when a [`popover`] was drawn this frame or the last (its Esc closes it, not the page).
+pub fn popover_open(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::NULL.with("popover-drawn"))).is_some_and(|f| f + 1 >= now)
+}
+
 /// Shows a floating popover anchored to `anchor`, above it when `above`.
 /// Returns the popover rect and whether it should close (outside click or Esc).
 pub fn popover<R>(
@@ -605,6 +611,8 @@ pub fn popover<R>(
     t: &Tokens,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> (R, bool) {
+    let now = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::NULL.with("popover-drawn"), now));
     let (pivot, pos) = if above {
         (Align2::LEFT_BOTTOM, anchor.left_top() - Vec2::new(0.0, 6.0))
     } else {
