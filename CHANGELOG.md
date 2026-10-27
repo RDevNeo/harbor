@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-10-27
+
+### Changed
+- One shared composer per chat: what someone types on another device now appears inside your
+  composer, on the desktop and the phone, as if you were typing it: the text, attached images
+  (with their thumbnails) and files, and mentioned messages. Whoever edits takes over and their
+  draft goes out the same way (last writer wins; a composer edited in the last second isn't
+  overwritten). Sending from any device, or emptying the composer, empties it everywhere. A
+  small "✎ Galaxy A13" in the composer's corner says who's writing; the line above the composer
+  is gone. The draft stays in the composer after they stop typing. A message sent while someone
+  else was typing no longer waits for them. Chats on another PC share text and mentions, while
+  their files stay on each device. Hub API: `draft` on `POST /v1/chats/{id}/typing` and on every
+  chat.
+
 ## [0.63.1] - 2026-10-27
 
 ### Fixed
@@ -1404,7 +1418,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.63.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/RDevNeo/harbor/compare/v0.63.1...v0.64.0
 [0.63.1]: https://github.com/RDevNeo/harbor/compare/v0.63.0...v0.63.1
 [0.63.0]: https://github.com/RDevNeo/harbor/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/RDevNeo/harbor/compare/v0.61.0...v0.62.0
