@@ -397,6 +397,7 @@ refetch everything.
 - `you`: this client's own device id, as it appears in `typing` (hide yourself with it).
 - `typing`: who is writing in the chat now (see [Typing](#typing)); for another PC's chat, as
   that PC keeps it (typing in a copy is passed on to its PC).
+- `draft`: the chat's shared composer draft (0.64, see [Shared draft](#shared-draft-064)), or `null`.
 - `viewing`: the other PCs of the mesh that have the chat open: `[{device, kind, label}]`, `kind`
   `focused` or `away` (their window isn't in front).
 - `switchable` / `allowed_accounts`: which run settings `PATCH /v1/chats/{id}` may change now,
@@ -674,31 +675,52 @@ meanwhile follow the chat.
 
 ### `POST /v1/chats/{id}/typing`
 
-`{"typing"?: true, "kind"?: "phone", "text"?: "draft"}` → `{"ok": true}`.
+`{"typing"?: true, "kind"?: "phone", "draft"?: {"text", "files", "mentions"}, "text"?: "…"}` →
+`{"ok": true}`.
 
 #### Typing
 
 Send `typing: true` every ~3 s while the composer has fresh input, and `typing: false` when the
-message is sent or the composer is cleared. A lease lasts 6 s after the last `true`.
-
-Draft preview (0.56): `text` is the composer's current text (trimmed); the hub keeps its last
-500 characters. Send it with each `typing: true`, and send a new one when the draft changes,
-at most every ~400 ms (the last change always goes). The hub keeps it with the lease and drops
-it when the lease runs out, on `typing: false` and when that device sends a message. A report
-without `text` (older clients) keeps the lease's draft as it was; such clients show as "is
-typing…". A new draft wakes the long-polls (the chat is in `changed_chats`) at most every
-400 ms per device; heartbeats with the same draft don't. `kind` is
+message is sent or the composer is cleared. A lease lasts 6 s after the last `true`. `kind` is
 `phone` (default) or `pc` (another PC acting as a client). The label shown is the
 `X-Harbor-Device` header, else the name saved for the token, else "Phone" / "A PC".
 
 Every chat's `typing` lists `{device, kind, label, text?}`: API clients as `tok:<8 hex>`
 (stable per token; compare with `you`), and the hub's own desktop composer as `pc:<hostname>`
-(kind `pc`, label the hostname, `text` its draft) while someone types there. `text` is there
-when the device sent a non-empty draft. The desktop shows the others above its composer, never
-yourself: "✎ Galaxy A13: <draft>" for each one with a `text` (whitespace and line breaks as
-single spaces, at most two lines; when longer, its end with "…" in front), then "✎ Galaxy A13
-is typing…" ("A and B are typing…", "3 people are typing…") for those without; and a ✎ on the
-sidebar row. The phone draws the same lines above its composer.
+(kind `pc`, label the hostname) while someone types there. `text` is the end of their draft (last
+500 characters), for 0.56–0.63 clients. Clients show who else types as a small "✎ Galaxy A13" in
+the composer's corner (never yourself), and a ✎ on the sidebar row.
+
+#### Shared draft (0.64)
+
+A chat has one composer draft, the same on every device: what anyone types (text, attached
+files, mentioned messages) shows up in everyone's composer as if they had typed it.
+
+- Send it as `draft` `{text, files, mentions}` with each typing report: `text` the composer's
+  whole text (untrimmed; the hub keeps the last 32 000 characters), `files` upload ids
+  (`POST /v1/upload`, at most 20), `mentions` the mentioned messages as `send` takes them (at
+  most 20). Report when it changes, at most every ~400 ms (the last change always goes), plus
+  the 3 s heartbeat. Also send `text` (its last 500 characters) for hubs before 0.64.
+- An emptied composer (no text, files or mentions) sends `typing: false` with the empty
+  `draft`: the draft empties everywhere. `typing: false` without `draft` (leaving the chat) only
+  ends the lease; the draft stays.
+- A message sent in the chat (from any device, or the desktop) empties the draft everywhere
+  and ends every typing lease in it (the message doesn't wait for "one sender at a time" then).
+- A report with only `text` (0.56–0.63 clients) changes the draft's text and keeps its files
+  and mentions; `typing: false` from such a client leaves the draft alone. Clients before 0.56
+  don't touch it.
+- Every chat (the chats list and items replies) carries `draft`: `{text, files: [{id, name,
+  path}], mentions, by, label, rev}`, or `null` when nobody wrote one since the hub started. `by`
+  is the device that wrote it (`""` after a send), `rev` grows with every change. `path` is the
+  file on the hub, for `/v1/image?path=…&chat=…`. Another PC's chat leaves `files` out (they're
+  that PC's uploads): keep your own files there.
+- Applying it: take a draft whose `rev` is newer than the last one you saw, unless `by` is you
+  (`you`), and unless your composer was edited in the last second (try again after that second;
+  the newer report wins at the hub: last writer wins). Keep the cursor where it was (at the end
+  if it was there). The draft stays after its writer's lease runs out (it's just a draft then;
+  the hub keeps drafts in memory until it restarts).
+- A new draft wakes the long-polls (the chat is in `changed_chats`) at most every 400 ms per
+  chat; heartbeats with the same draft don't.
 
 Other PCs: any client with a paired token can report typing with `kind: "pc"`; another PC's
 Harbor doesn't act as a client of a hub yet (chats aren't shared between PCs' Harbors).
@@ -1505,7 +1527,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   home PC, which gives up ownership only after this answer, never ends up with two owners; with
   no answer it asks `adopt/check` again, and the target's chat list (the chat listed as its own,
   or a full list without it) settles a move whose answer was lost.
-- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on, text?}`: someone types in (`view: false`, `text` their draft, 0.56)
+- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on, text?, draft?}`: someone types in (`view: false`; `draft` the shared draft without `files` (0.64), `text` its text for older PCs)
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
   `typing` and `viewing`.

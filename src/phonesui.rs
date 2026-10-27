@@ -460,56 +460,13 @@ impl App {
         self.typers(chat).into_iter().filter(|t| t.device != me).collect()
     }
 
-    /// Above the composer while another device writes in this chat: "✎ Galaxy A13: <their
-    /// draft>" for clients that send it (its end, at most two lines), else "✎ Galaxy A13 is
-    /// typing…".
-    pub fn typing_line(&self, ui: &mut Ui, chat: i64) {
+    /// "✎ Galaxy A13" for the composer's corner while other devices write in this chat (its
+    /// shared draft is theirs then), or None.
+    /// Also when the soonest of their leases runs out (the label goes then).
+    pub fn typing_label(&self, chat: i64) -> Option<(String, std::time::Instant)> {
         let who = self.others_typing(chat);
-        let Some(soonest) = who.iter().map(|t| t.until).min() else { return };
-        let mut lines = vec![];
-        for t in who.iter().filter(|t| !api::draft_line(&t.text).is_empty()) {
-            let head = format!("{}  {}: ", ic::PEN_LINE, t.label);
-            lines.push(fit_two_rows(ui, &head, &api::draft_line(&t.text)));
-        }
-        let names: Vec<&str> = who.iter().filter(|t| api::draft_line(&t.text).is_empty()).map(|t| t.label.as_str()).collect();
-        match names.as_slice() {
-            [] => {}
-            [one] => lines.push(format!("{}  {one} is typing…", ic::PEN_LINE)),
-            [a, b] => lines.push(format!("{}  {a} and {b} are typing…", ic::PEN_LINE)),
-            _ => lines.push(format!("{}  {} people are typing…", ic::PEN_LINE, names.len())),
-        }
-        for text in lines {
-            egui::Frame::NONE.inner_margin(Margin { left: 6, ..Margin::ZERO }).show(ui, |ui| {
-                ui.add(egui::Label::new(w::rich(text, "label-12").color(w::tokens(ui).subtle())).wrap());
-            });
-        }
-        ui.add_space(4.0);
-        // The line goes when the lease runs out, even if nothing else repaints.
-        ui.ctx().request_repaint_after(soonest.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
+        let soonest = who.iter().map(|t| t.until).min()?;
+        let names: Vec<&str> = who.iter().map(|t| t.label.as_str()).collect();
+        Some((format!("{}  {}", ic::PEN_LINE, names.join(", ")), soonest))
     }
-}
-
-/// `head` and as much of the end of `draft` as fits in two rows of the line's width, "…" in
-/// front when it's cut.
-fn fit_two_rows(ui: &Ui, head: &str, draft: &str) -> String {
-    let width = (ui.available_width() - 6.0).max(40.0);
-    let font = crate::theme::ts("label-12").resolve(ui.style());
-    let rows = |s: &str| ui.painter().layout(s.to_string(), font.clone(), egui::Color32::WHITE, width).rows.len();
-    let full = format!("{head}{draft}");
-    if rows(&full) <= 2 {
-        return full;
-    }
-    let chars: Vec<char> = draft.chars().collect();
-    let cut = |from: usize| format!("{head}…{}", chars[from..].iter().collect::<String>());
-    // The fewest characters dropped from the front that fit.
-    let (mut lo, mut hi) = (1, chars.len());
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        if rows(&cut(mid)) <= 2 {
-            hi = mid;
-        } else {
-            lo = mid + 1;
-        }
-    }
-    cut(lo)
 }

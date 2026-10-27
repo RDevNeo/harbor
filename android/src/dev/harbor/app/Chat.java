@@ -37,9 +37,14 @@ public class Chat extends Base {
     private Attach attach;
     private Run run;
     private long typedAt;           // last typing ping
-    private String sentDraft;       // the draft that ping carried
+    private String sentDraft;       // the draft that ping carried (JSON)
     private final Runnable draftPing = this::pingDraft;
-    private java.util.List<String[]> typingLines = new java.util.ArrayList<>(); // who else types, and what (Sidebar.typingLines)
+    private long editedAt;          // the composer's last edit here
+    private long appliedRev;        // the newest shared draft applied (or written) here
+    private boolean applying;       // a shared draft going in: not an edit
+    private JSONObject pendingDraft; // one that waits for the composer's edit to settle
+    private final Runnable retryDraft = () -> applyDraft(pendingDraft);
+    private JSONArray mentions = new JSONArray(); // messages the draft mentions
     private JSONObject bars;        // the items reply's "status": queue, working, waiting, limit
     private TextView workingText;   // "Working… · 12s", ticking
     private Boolean stripOpen;      // the agent strip unfolded (null: the hub's default)
@@ -131,6 +136,7 @@ public class Chat extends Base {
         comp.onSend = this::send;
         comp.onStop = this::stop;
         comp.onType = this::typed;
+        attach.onChange = this::typed;
         comp.onPill = () -> {
             if (run == null) return;
             Sheet sh = new Sheet(this, "Run settings");
@@ -174,7 +180,7 @@ public class Chat extends Base {
         super.onPause();
         if (comp.voice != null) comp.voice.cancel();
         if (composer == null || gone) return;
-        typing(false);
+        typing(false, false);
         String d = composer.getText().toString();
         if (d.trim().isEmpty()) drafts(this).edit().remove(draftKey(hub, chatId)).apply();
         else drafts(this).edit().putString(draftKey(hub, chatId), d).apply();
@@ -252,7 +258,8 @@ public class Chat extends Base {
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
-        typingLines = Sidebar.typingLines(c, st == null ? "" : st.optString("you", ""));
+        comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));
+        applyDraft(c.optJSONObject("draft"));
         drawBars();
     }
 
@@ -361,7 +368,8 @@ public class Chat extends Base {
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
         earlierButton();
         if (items.isEmpty()) { hintView = emptyView(); content.addView(hintView); }
-        if (r.has("typing")) typingLines = Sidebar.typingLines(r, you());
+        if (r.has("typing")) comp.who(Sidebar.typingWho(r, you()));
+        applyDraft(r.optJSONObject("draft"));
         bars = r.optJSONObject("status");
         JSONObject u = r.optJSONObject("usage");
         String label = u == null ? "" : u.optString("label");
@@ -535,16 +543,6 @@ public class Chat extends Base {
                 if (owner != null) acts.addView(small("Run on " + owner.optString("name"), this::runOnOwner), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
                 status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
             }
-        }
-        for (String[] l : typingLines) {
-            if (l[1] == null) {
-                status.addView(Ui.subtitle(Ui.text(this, l[0], 14, Ui.BLUE)), Ui.margins(Ui.fill(), 0, 4, 0, 4));
-                continue;
-            }
-            TextView t = Ui.text(this, l[0] + l[1], 14, Ui.BLUE);
-            t.setMaxLines(2);
-            status.addView(t, Ui.margins(Ui.fill(), 0, 4, 0, 4));
-            t.post(() -> fitTwoLines(t, l[0], l[1]));
         }
         strip(b.optJSONObject("agents"));
         // The hub's recap over the composer, its suggestion in the empty composer (Recap.java).
@@ -841,62 +839,119 @@ public class Chat extends Base {
         }
     }
 
-    /** `head` and as much of the end of `draft` as fits in two lines, "…" in front when it's cut
-     *  (TextView only ellipsizes the start of a single line). */
-    private static void fitTwoLines(TextView t, String head, String draft) {
-        int w = t.getWidth() - t.getPaddingLeft() - t.getPaddingRight();
-        if (w <= 0) return;
-        java.util.function.IntPredicate fits = from -> {
-            String s = from == 0 ? head + draft : head + "…" + draft.substring(from);
-            return android.text.StaticLayout.Builder.obtain(s, 0, s.length(), t.getPaint(), w).build().getLineCount() <= 2;
-        };
-        if (fits.test(0)) return;
-        int lo = 1, hi = draft.length();
-        while (lo < hi) {
-            int mid = (lo + hi) / 2;
-            if (fits.test(mid)) hi = mid; else lo = mid + 1;
-        }
-        // Not inside a surrogate pair.
-        if (lo < draft.length() && Character.isLowSurrogate(draft.charAt(lo))) lo++;
-        t.setText(head + "…" + draft.substring(lo));
+    // ---- the shared draft (PROTOCOL.md "Typing"): the same composer on every device ----
+
+    /** What the composer holds, as typing reports carry it. */
+    private JSONObject draftJson() {
+        JSONObject d = new JSONObject();
+        try { d.put("text", composer.getText().toString()).put("files", attach.ids()).put("mentions", mentions); } catch (Exception ignored) { }
+        return d;
     }
 
-    /** The draft goes to the hub at most every 400 ms while it changes (the last one always
-     *  goes), and every 3 s anyway while the user types; the hub expires it after 6 s. An
-     *  emptied composer stops at once. */
+    private boolean emptyDraft() {
+        return composer.getText().toString().trim().isEmpty() && !attach.any() && mentions.length() == 0;
+    }
+
+    /** An edit here (text, files, mentions): the draft goes to the hub at most every 400 ms
+     *  while it changes (the last one always goes), and every 3 s anyway while the user types;
+     *  the lease runs out 6 s after. An emptied composer empties the draft everywhere. */
     private void typed() {
+        if (applying || composer == null) return;
+        editedAt = System.currentTimeMillis();
         Ui.main.removeCallbacks(draftPing);
-        if (composer.getText().toString().trim().isEmpty()) { typing(false); return; }
+        if (emptyDraft()) { typing(false, true); return; }
         long wait = typedAt + 400 - System.currentTimeMillis();
         if (wait <= 0) pingDraft();
         else Ui.main.postDelayed(draftPing, wait);
     }
 
     private void pingDraft() {
-        if (composer == null || gone) return;
-        String d = composer.getText().toString().trim();
+        if (composer == null || gone || emptyDraft()) return;
+        String d = draftJson().toString();
         long now = System.currentTimeMillis();
-        if (d.isEmpty() || d.equals(sentDraft) && now - typedAt < 3000) return;
+        if (d.equals(sentDraft) && now - typedAt < 3000) return;
         typedAt = now;
         sentDraft = d;
-        typing(true);
+        typing(true, true);
     }
 
-    private void typing(boolean on) {
+    /** on: still typing; withDraft: the composer's content goes too (off and empty: the
+     *  draft empties everywhere; off without it: only the lease ends, e.g. leaving the chat). */
+    private void typing(boolean on, boolean withDraft) {
         if (!on) Ui.main.removeCallbacks(draftPing);
-        if (!on && typedAt == 0) return;
+        if (!on && typedAt == 0 && !withDraft) return;
         if (!on) { typedAt = 0; sentDraft = null; }
         Hub h = hub;
         String id = chatId;
-        // The end of the draft, as much as the hub keeps (PROTOCOL.md "Typing").
-        String d = on && sentDraft != null ? sentDraft.substring(Math.max(0, sentDraft.length() - 500)) : null;
+        JSONObject d = withDraft ? draftJson() : null;
         Ui.pool.execute(() -> {
             try {
                 JSONObject b = new JSONObject().put("typing", on).put("kind", "phone");
-                if (d != null) b.put("text", d);
+                if (d != null) {
+                    b.put("draft", d);
+                    // Hubs before 0.64 keep the end of the text only.
+                    String t = d.optString("text");
+                    b.put("text", t.substring(Math.max(0, t.length() - 500)));
+                }
                 h.call("POST", "/v1/chats/" + id + "/typing", b);
             } catch (Exception ignored) { }
         });
+    }
+
+    /** The chat's shared draft from the hub into this composer: one newer than the last seen,
+     *  written on another device, unless this composer was edited in the last second (it's
+     *  tried again then). The same rules as the desktop (api::should_apply). */
+    private void applyDraft(JSONObject d) {
+        if (d == null || composer == null) return;
+        long rev = d.optLong("rev");
+        if (rev <= appliedRev) return;
+        String by = d.optString("by");
+        if (!by.isEmpty() && by.equals(you())) { appliedRev = rev; return; }
+        long wait = editedAt + 1000 - System.currentTimeMillis();
+        if (wait > 0) {
+            pendingDraft = d;
+            Ui.main.removeCallbacks(retryDraft);
+            Ui.main.postDelayed(retryDraft, wait);
+            return;
+        }
+        appliedRev = rev;
+        applying = true;
+        try {
+            String text = d.optString("text");
+            if (!text.equals(composer.getText().toString())) {
+                int sel = composer.getSelectionEnd();
+                boolean atEnd = sel < 0 || sel >= composer.length();
+                composer.setText(text);
+                composer.setSelection(atEnd ? text.length() : Math.min(sel, text.length()));
+            }
+            // Another PC's chat leaves `files` out: the files here stay.
+            if (d.has("files")) attach.setRemote(d.optJSONArray("files"), chatId);
+            JSONArray ms = d.optJSONArray("mentions");
+            mentions = ms == null ? new JSONArray() : ms;
+            drawMentions();
+        } finally {
+            applying = false;
+        }
+    }
+
+    /** The messages the draft mentions, as chips over the composer (a tap on ✕ drops one). */
+    private void drawMentions() {
+        comp.mentions.removeAllViews();
+        for (int i = 0; i < mentions.length(); i++) {
+            JSONObject m = mentions.optJSONObject(i);
+            if (m == null) continue;
+            String q = m.optString("text").replaceAll("\\s+", " ").trim();
+            if (q.length() > 80) q = q.substring(0, 80) + "…";
+            TextView t = Ui.text(this, "❝ " + m.optString("from") + ": " + (m.optBoolean("excerpt") ? "\"" + q + "\"" : q) + "  ✕", 13, Ui.FG);
+            t.setSingleLine(true);
+            t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            t.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
+            t.setBackground(Ui.round(Ui.G100, 0, 14));
+            final int at = i;
+            t.setOnClickListener(v -> { mentions.remove(at); drawMentions(); typed(); });
+            comp.mentions.addView(t, Ui.margins(Ui.fill(), 8, 6, 8, 0));
+        }
+        comp.mentions.setVisibility(mentions.length() == 0 ? View.GONE : View.VISIBLE);
     }
 
     /** A card's `images` without those its `media` already draws large. */
@@ -1371,16 +1426,17 @@ public class Chat extends Base {
     private void send() {
         if (sending) return;
         String text = composer.getText().toString().trim();
-        if (text.isEmpty() && !attach.any()) return;
+        if (text.isEmpty() && !attach.any() && mentions.length() == 0) return;
         if (attach.busy()) { Ui.toast(this, "Still uploading…"); return; }
         sending = true;
         comp.busy(true);
-        typing(false);
+        typing(false, false);
         JSONArray files = attach.ids();
+        JSONArray ms = mentions;
         Ui.pool.execute(() -> {
             String err = null;
             try {
-                hub.call("POST", "/v1/chats/" + chatId + "/send", new JSONObject().put("text", text).put("files", files));
+                hub.call("POST", "/v1/chats/" + chatId + "/send", new JSONObject().put("text", text).put("files", files).put("mentions", ms));
             } catch (Exception e) {
                 err = Hub.why(e);
             }
@@ -1390,8 +1446,13 @@ public class Chat extends Base {
                 comp.busy(false);
                 if (isFinishing()) return;
                 if (fe != null) { Ui.toast(this, fe); return; }
+                // Sent: the hub empties the draft everywhere; this composer too (not an edit).
+                applying = true;
                 composer.setText("");
                 attach.clear();
+                mentions = new JSONArray();
+                drawMentions();
+                applying = false;
                 drafts(this).edit().remove(draftKey(hub, chatId)).apply();
                 toEnd();
                 load(false);

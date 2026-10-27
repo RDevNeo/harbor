@@ -46,6 +46,16 @@ final class Composer {
     TextView use;
 
     Runnable onSend, onStop, onPlus, onPill, onType;
+    /** The draft's mentioned messages (Chat.drawMentions), over the files. */
+    final LinearLayout mentions;
+    private LinearLayout whoRow;
+    private TextView whoText;
+
+    /** "✎ Desk" in the text's corner while another device writes here; null hides it. */
+    void who(String names) {
+        whoText.setText(names == null ? "" : names);
+        whoRow.setVisibility(names == null ? View.GONE : View.VISIBLE);
+    }
     /** Dictation (Voice), once `voice(hub)` set it up; its strip goes over the buttons. */
     Voice voice;
     private FrameLayout mic;
@@ -69,6 +79,9 @@ final class Composer {
         view.setBackground(Ui.round(Ui.CARD, Ui.LINE, 28));
         view.setElevation(Ui.dp(Ui.dark ? 0 : 1));
         view.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(10), Ui.dp(10));
+        mentions = Ui.col(a);
+        mentions.setVisibility(View.GONE);
+        view.addView(mentions, Ui.fill());
         if (attach != null) view.addView(attach.view, Ui.fill());
 
         edit = new Edit(a, attach);
@@ -90,6 +103,18 @@ final class Composer {
         use = Recap.useChip(a, this);
         box.addView(use, Ui.margins(new FrameLayout.LayoutParams(-2, Ui.dp(28), Gravity.TOP | Gravity.END), 0, 8, 6, 0));
         Recap.tapToUse(this);
+        // Who else writes in this chat (the draft here is theirs then), as the desktop's corner.
+        whoRow = Ui.row(a);
+        whoRow.setGravity(Gravity.CENTER_VERTICAL);
+        whoRow.addView(Ui.icon(a, Ui.I_PEN, 12, Ui.G600));
+        whoText = Ui.text(a, "", 12, Ui.G600);
+        whoText.setSingleLine(true);
+        whoText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        whoRow.addView(whoText, Ui.margins(Ui.wrap(), 4, 0, 0, 0));
+        whoRow.setVisibility(View.GONE);
+        LinearLayout.LayoutParams wp = Ui.margins(Ui.wrap(), 14, 2, 10, 0);
+        wp.gravity = Gravity.END;
+        view.addView(whoRow, wp);
         view.addView(box, Ui.fill());
 
         LinearLayout row = Ui.row(a);

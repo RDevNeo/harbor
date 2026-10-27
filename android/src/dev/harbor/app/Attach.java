@@ -41,9 +41,13 @@ final class Attach {
     private final LinearLayout chips;
     private final List<Up> ups = new ArrayList<>();
 
+    /** The files changed here (added and uploaded, or removed): the shared draft follows. */
+    Runnable onChange;
+
     private static final class Up {
         String name, id; boolean failed;
         Uri uri;          // on this phone (null: already on the hub)
+        String url;       // an image on the hub (a shared draft's), for its thumbnail
         View chip;        // the chip or the thumbnail tile
         TextView text;    // a chip's label
         TextView state;   // a tile's uploading / failed overlay
@@ -150,8 +154,35 @@ final class Attach {
         chip(u);
     }
 
+    /** The shared draft's files (PROTOCOL.md "Typing": [{id, name, path}]), in place of the
+     *  ones here; ones being uploaded here stay. */
+    void setRemote(JSONArray files, String chatId) {
+        java.util.List<String> want = new ArrayList<>();
+        for (int i = 0; files != null && i < files.length(); i++) {
+            JSONObject f = files.optJSONObject(i);
+            if (f != null && !f.optString("id").isEmpty()) want.add(f.optString("id"));
+        }
+        java.util.List<String> have = new ArrayList<>();
+        for (Up u : ups) if (u.id != null) have.add(u.id);
+        if (want.equals(have)) return;
+        for (Up u : new ArrayList<>(ups)) if (u.id != null || u.failed) { ups.remove(u); chips.removeView(u.chip); }
+        for (int i = 0; files != null && i < files.length(); i++) {
+            JSONObject f = files.optJSONObject(i);
+            if (f == null || f.optString("id").isEmpty()) continue;
+            Up u = new Up();
+            u.id = f.optString("id");
+            u.name = f.optString("name", u.id.substring(u.id.lastIndexOf('/') + 1));
+            String path = f.optString("path");
+            if (!path.isEmpty() && isImage(u.name)) u.url = "/v1/image?path=" + Uri.encode(path) + "&max=512" + (chatId == null ? "" : "&chat=" + Uri.encode(chatId));
+            chip(u);
+        }
+        show();
+    }
+
+    private void changed() { if (onChange != null) onChange.run(); }
+
     private void chip(Up u) {
-        if (u.uri != null && isImage(u.name)) tile(u);
+        if ((u.uri != null || u.url != null) && isImage(u.name)) tile(u);
         else {
             u.text = Ui.text(a, "", 13, Ui.FG);
             u.text.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
@@ -185,12 +216,16 @@ final class Attach {
         View.OnClickListener open = v -> {
             List<Images.Src> all = new ArrayList<>();
             int at = 0;
-            for (Up o : ups) if (o.uri != null && isImage(o.name)) { if (o == u) at = all.size(); all.add(new Images.Src(o.uri, o.name)); }
+            for (Up o : ups) {
+                if (o.uri != null && isImage(o.name)) { if (o == u) at = all.size(); all.add(new Images.Src(o.uri, o.name)); }
+                else if (o.url != null) { if (o == u) at = all.size(); all.add(new Images.Src(hub, o.url, o.name)); }
+            }
             Images.view(a, all, at);
         };
         iv.setOnClickListener(open);
         u.state.setOnClickListener(open);
-        Images.local(a, u.uri, THUMB, iv);
+        if (u.uri != null) Images.local(a, u.uri, THUMB, iv);
+        else Images.load(a, hub, u.url, iv);
         u.chip = f;
     }
 
@@ -198,6 +233,7 @@ final class Attach {
         ups.remove(u);
         chips.removeView(u.chip);
         show();
+        changed();
     }
 
     private void add(Uri uri, Runnable done) {
@@ -233,6 +269,7 @@ final class Attach {
             Ui.main.post(() -> {
                 label(u);
                 if (done != null) done.run();
+                changed();
             });
         });
     }

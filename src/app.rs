@@ -958,6 +958,8 @@ impl App {
         if self.mesh_send(chat_id, &text, &files, &mentions) {
             return;
         }
+        // Sent: the shared draft empties in every composer.
+        self.api.hub.clear_draft(chat_id);
         // Being handed to another PC (movepc.rs): it goes there, or here if the move fails.
         if self.moving_to(chat_id).is_some() {
             self.movepc.held.entry(chat_id).or_default().push((text, files, mentions));

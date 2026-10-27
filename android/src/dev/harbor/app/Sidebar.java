@@ -496,26 +496,19 @@ final class Sidebar {
         return null;
     }
 
-    /** Above the composer, as the desktop draws it: one "Desk: <draft>" per device that sends
-     *  its draft ({label, draft}), then "Desk is typing…" for the others ({line, null}). */
-    static java.util.List<String[]> typingLines(JSONObject c, String you) {
-        java.util.List<String[]> out = new java.util.ArrayList<>();
-        java.util.List<String> names = new java.util.ArrayList<>();
+    /** Who else is typing in c, for the composer's corner ("Desk, Galaxy A13"), or null. */
+    static String typingWho(JSONObject c, String you) {
         JSONArray t = c.optJSONArray("typing");
+        StringBuilder b = new StringBuilder();
         for (int i = 0; t != null && i < t.length(); i++) {
             JSONObject o = t.optJSONObject(i);
             if (o == null || you.equals(o.optString("device"))) continue;
             String l = o.optString("label", "");
             if (l.isEmpty()) l = "pc".equals(o.optString("kind")) ? "A PC" : "A phone";
-            // Whitespace and line breaks as single spaces (the hub's api::draft_line).
-            String d = o.optString("text", "").trim().replaceAll("\\s+", " ");
-            if (d.isEmpty()) names.add(l);
-            else out.add(new String[] { l + ": ", d });
+            if (b.length() > 0) b.append(", ");
+            b.append(l);
         }
-        if (names.size() == 1) out.add(new String[] { names.get(0) + " is typing…", null });
-        else if (names.size() == 2) out.add(new String[] { names.get(0) + " and " + names.get(1) + " are typing…", null });
-        else if (names.size() > 2) out.add(new String[] { names.size() + " people are typing…", null });
-        return out;
+        return b.length() == 0 ? null : b.toString();
     }
 
     private View chatRow(JSONObject c, String you) {

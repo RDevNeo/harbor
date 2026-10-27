@@ -137,6 +137,8 @@ struct Revs {
     /// Which PCs have which chat open, until when (mesh.rs presence); `kind` is "focused" or
     /// "away" (its window isn't focused).
     viewing: HashMap<i64, Vec<Typer>>,
+    /// Each chat's shared composer draft (0.64): what any device last wrote in it.
+    drafts: HashMap<i64, SharedDraft>,
 }
 
 impl Revs {
@@ -158,6 +160,13 @@ impl Revs {
                 gone.push(*chat);
             }
         }
+        for (chat, d) in self.drafts.iter_mut().filter(|(_, d)| d.held && d.quiet.is_some_and(|q| q <= now)) {
+            d.held = false;
+            d.quiet = Some(now + PREVIEW_GAP);
+            if !gone.contains(chat) {
+                gone.push(*chat);
+            }
+        }
         for map in [&mut self.typing, &mut self.viewing] {
             for (chat, v) in map.iter_mut() {
                 let n = v.len();
@@ -175,7 +184,8 @@ impl Revs {
     }
 
     fn next_expiry(&self) -> Option<Instant> {
-        let held = self.typing.values().flatten().filter(|t| t.held).filter_map(|t| t.quiet);
+        let drafts = self.drafts.values().filter(|d| d.held).filter_map(|d| d.quiet);
+        let held = self.typing.values().flatten().filter(|t| t.held).filter_map(|t| t.quiet).chain(drafts);
         self.typing.values().chain(self.viewing.values()).flatten().map(|t| t.until).chain(held).min()
     }
 }
@@ -212,9 +222,97 @@ pub const PREVIEW_GAP: Duration = Duration::from_millis(400);
 /// How much of a draft a typing report keeps: its end, where the cursor usually is.
 pub const PREVIEW_CHARS: usize = 500;
 
-/// A draft as its preview line shows it: whitespace and line breaks as single spaces.
-pub fn draft_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+/// The most text a shared draft keeps (its start goes beyond).
+pub const DRAFT_CHARS: usize = 32_000;
+/// The most files and mentions a shared draft holds.
+pub const DRAFT_ITEMS: usize = 20;
+
+/// A chat's shared composer draft: the same text, files and mentions in every device's
+/// composer. Any device's edit replaces it (last writer wins; clients don't apply it over
+/// their own edit of the last second); a send or an emptied composer clears it. It stays
+/// after the typer's lease runs out (it's just a draft then), until the hub restarts.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SharedDraft {
+    pub text: String,
+    pub files: Vec<DraftFile>,
+    /// Mentioned messages (`mentions::Mention` as JSON), an array.
+    pub mentions: Vec<Value>,
+    /// The device that wrote it ("" after a send) and its label.
+    pub by: String,
+    pub label: String,
+    /// Grows with every change, across chats: a client applies a draft newer than the last it saw.
+    pub rev: u64,
+    quiet: Option<Instant>,
+    held: bool,
+}
+
+/// A file in a shared draft: an upload on this hub (`id`, as `/v1/upload` answers it) and
+/// its path here (for `/v1/image`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DraftFile {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
+impl DraftFile {
+    pub fn of_upload(id: &str) -> Option<DraftFile> {
+        let path = resolve_upload(id)?;
+        let name = path.file_name()?.to_string_lossy().into_owned();
+        Some(DraftFile { id: id.into(), name, path: path.to_string_lossy().into_owned() })
+    }
+}
+
+impl SharedDraft {
+    pub fn is_empty(&self) -> bool {
+        self.text.trim().is_empty() && self.files.is_empty() && self.mentions.is_empty()
+    }
+
+    /// As the chats list and items replies carry it.
+    pub fn json(&self) -> Value {
+        json!({ "text": self.text, "files": self.files, "mentions": self.mentions, "by": self.by, "label": self.label, "rev": self.rev })
+    }
+
+    /// From `json` (another PC's status of its chat).
+    pub fn from_json(v: &Value) -> Option<SharedDraft> {
+        let rev = v["rev"].as_u64()?;
+        let files = v["files"].as_array().into_iter().flatten().filter_map(|f| serde_json::from_value::<DraftFileIn>(f.clone()).ok()).map(|f| DraftFile { id: f.id, name: f.name, path: f.path }).collect();
+        let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+        Some(SharedDraft { text: s("text"), files, mentions: v["mentions"].as_array().cloned().unwrap_or_default(), by: s("by"), label: s("label"), rev, quiet: None, held: false })
+    }
+}
+
+#[derive(Deserialize)]
+struct DraftFileIn {
+    id: String,
+    name: String,
+    #[serde(default)]
+    path: String,
+}
+
+/// A composer edited this recently isn't overwritten by another device's draft.
+pub const DRAFT_HOLD: Duration = Duration::from_secs(1);
+
+#[derive(Debug, PartialEq)]
+pub enum Apply {
+    /// Into the composer now.
+    Now,
+    /// Not now (this composer was just edited); try again.
+    Later,
+    /// Never: this device wrote it.
+    Skip,
+}
+
+/// Whether a newer shared draft goes into this device's composer (`me`; `edited`: its
+/// composer's last edit). The phone follows the same rules (Chat.java).
+pub fn should_apply(d: &SharedDraft, me: &str, edited: Option<Instant>, now: Instant) -> Apply {
+    if d.by == me {
+        Apply::Skip
+    } else if edited.is_some_and(|e| now.saturating_duration_since(e) < DRAFT_HOLD) {
+        Apply::Later
+    } else {
+        Apply::Now
+    }
 }
 
 /// The end of a draft, at most [`PREVIEW_CHARS`] long.
@@ -500,6 +598,96 @@ impl Hub {
         changed
     }
 
+    /// A device's composer for `chat` now holds this (`files`/`mentions` `None`: kept as
+    /// they are, e.g. an older client that only knows text). New content wakes the
+    /// long-polls at most every [`PREVIEW_GAP`]. True when that happened now.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_draft(&self, chat: i64, device: &str, label: &str, text: &str, files: Option<Vec<DraftFile>>, mentions: Option<Vec<Value>>) -> bool {
+        let now = Instant::now();
+        let mut r = self.revs.lock().unwrap();
+        let mut changed = r.prune(now);
+        let n = text.chars().count();
+        let text: String = if n > DRAFT_CHARS { text.chars().skip(n - DRAFT_CHARS).collect() } else { text.to_string() };
+        let old = r.drafts.get(&chat).cloned().unwrap_or_default();
+        let mut d = SharedDraft { text, files: files.unwrap_or_else(|| old.files.clone()), mentions: mentions.unwrap_or_else(|| old.mentions.clone()), by: device.into(), label: label.into(), ..old.clone() };
+        d.files.truncate(DRAFT_ITEMS);
+        d.mentions.truncate(DRAFT_ITEMS);
+        if (&d.text, &d.files, &d.mentions) == (&old.text, &old.files, &old.mentions) {
+            drop(r);
+            if changed {
+                self.cv.notify_all();
+            }
+            return changed;
+        }
+        r.rev += 1;
+        d.rev = r.rev;
+        let now_too = !d.quiet.is_some_and(|q| q > now);
+        if now_too {
+            d.quiet = Some(now + PREVIEW_GAP);
+            d.held = false;
+            changed = true;
+        } else {
+            d.held = true;
+        }
+        r.drafts.insert(chat, d);
+        if changed {
+            r.mark(chat);
+            drop(r);
+            self.cv.notify_all();
+        }
+        now_too
+    }
+
+    /// A typing report: the lease, and the composer's content when it says (`draft`
+    /// `{text, files?, mentions?}`, files as upload ids; an older client sends only `text`).
+    /// True when anything visible changed now.
+    #[allow(clippy::too_many_arguments)]
+    pub fn report(&self, chat: i64, device: &str, kind: &str, label: &str, on: bool, draft: Option<&Value>) -> bool {
+        let text = draft.and_then(|d| d["text"].as_str());
+        let mut changed = self.set_typing(chat, device, kind, label, on, text);
+        if let Some(d) = draft {
+            // Only `text`: an older client (0.56); it doesn't stop typing on an empty composer.
+            let text_only = d.get("files").is_none() && d.get("mentions").is_none();
+            if !(text_only && !on) {
+                let files = d["files"].as_array().map(|a| a.iter().filter_map(|f| f.as_str().or(f["id"].as_str())).filter_map(DraftFile::of_upload).collect());
+                let mentions = d["mentions"].as_array().cloned();
+                changed |= self.set_draft(chat, device, label, text.unwrap_or(""), files, mentions);
+            }
+        }
+        changed
+    }
+
+    /// A message went out of `chat`: its draft empties in every composer (at once), and who
+    /// was typing in it stops (it was that one shared draft: the message doesn't wait for them).
+    pub fn clear_draft(&self, chat: i64) {
+        let mut r = self.revs.lock().unwrap();
+        let typers = r.typing.remove(&chat).is_some();
+        if r.drafts.get(&chat).is_none_or(|d| d.is_empty()) {
+            if typers {
+                r.mark(chat);
+                drop(r);
+                self.cv.notify_all();
+            }
+            return;
+        }
+        r.rev += 1;
+        let rev = r.rev;
+        r.drafts.insert(chat, SharedDraft { rev, ..Default::default() });
+        r.mark(chat);
+        drop(r);
+        self.cv.notify_all();
+    }
+
+    /// `chat`'s shared draft, if any device wrote one since the hub started.
+    pub fn draft(&self, chat: i64) -> Option<SharedDraft> {
+        self.revs.lock().unwrap().drafts.get(&chat).cloned()
+    }
+
+    /// Every chat's shared draft revision (cheap; for the desktop to spot new ones).
+    pub fn draft_revs(&self) -> Vec<(i64, u64)> {
+        self.revs.lock().unwrap().drafts.iter().map(|(c, d)| (*c, d.rev)).collect()
+    }
+
     /// Who is typing in `chat` now.
     pub fn typing(&self, chat: i64) -> Vec<Typer> {
         let now = Instant::now();
@@ -766,6 +954,11 @@ pub struct Local {
     /// When the draft was last reported, and when a newer one is due (the debounce).
     draft_sent: Option<Instant>,
     pub draft_due: Option<Instant>,
+    /// When each composer was last edited here, and the newest shared draft rev applied/seen.
+    edited: HashMap<i64, Instant>,
+    applied: HashMap<i64, u64>,
+    /// Files attached here, as uploads of this hub (for other devices): path → upload id.
+    uploads: HashMap<PathBuf, String>,
     /// Lead → hash of its team panel (`/v1/chats/{id}/team`), for leads with a team.
     teams: HashMap<i64, u64>,
     /// The pull requests and issues fetched for phones (ghapi.rs).
@@ -781,8 +974,32 @@ pub struct PhonesUi {
 }
 
 impl Local {
+    /// A file in the composer as an upload of this hub: itself when it is one, else a link
+    /// (or copy) of it in the uploads folder, made once.
+    fn upload_id(&mut self, path: &Path) -> Option<String> {
+        if let Some(id) = self.uploads.get(path) {
+            return Some(id.clone());
+        }
+        let dir = uploads_dir();
+        let id = match path.strip_prefix(&dir) {
+            Ok(rel) if resolve_upload(&rel.to_string_lossy()).is_some() => rel.to_string_lossy().into_owned(),
+            _ => {
+                let name = safe_name(&path.file_name()?.to_string_lossy());
+                let sub = format!("d{:08x}", hash_of(&path) as u32);
+                std::fs::create_dir_all(dir.join(&sub)).ok()?;
+                let to = dir.join(&sub).join(&name);
+                if !to.is_file() && std::fs::hard_link(path, &to).is_err() {
+                    std::fs::copy(path, &to).ok()?;
+                }
+                format!("{sub}/{name}")
+            }
+        };
+        self.uploads.insert(path.to_path_buf(), id.clone());
+        Some(id)
+    }
+
     pub fn new(hub: Arc<Hub>) -> Self {
-        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, draft_sent: None, draft_due: None, teams: HashMap::new(), gh: Default::default(), ui: Default::default() }
+        Local { hub, items: HashMap::new(), looked: HashMap::new(), chats: HashMap::new(), rest: 0, draft: None, draft_sent: None, draft_due: None, edited: HashMap::new(), applied: HashMap::new(), uploads: HashMap::new(), teams: HashMap::new(), gh: Default::default(), ui: Default::default() }
     }
 }
 
@@ -1463,11 +1680,16 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         ("POST", ["v1", "chats", c, "typing"]) => {
             let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(w, 404, &json!({ "error": "no such chat" })) };
-            let body: Value = read_body(&mut r, req.len, 16 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let body: Value = read_body(&mut r, req.len, 512 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
             let w = r.get_mut();
             let on = body["typing"].as_bool().unwrap_or(true);
-            // The draft (0.55): left out by older clients, who still show as "is typing…".
-            let text = body["text"].as_str().map(preview_tail);
+            // The composer's content: `draft` (0.64), only `text` (0.56), or neither (older:
+            // just "is typing").
+            let draft = match (&body["draft"], body["text"].as_str()) {
+                (d @ Value::Object(_), _) => Some(d.clone()),
+                (_, Some(t)) => Some(json!({ "text": t })),
+                _ => None,
+            };
             let kind = if body["kind"].as_str() == Some("pc") { "pc" } else { "phone" };
             let label = if !device.is_empty() {
                 device.clone()
@@ -1475,10 +1697,10 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 hub.tokens.lock().unwrap().iter().find(|t| t.token == token).map(|t| t.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| if kind == "pc" { "A PC".into() } else { "Phone".into() })
             };
             // Another PC's chat: its PC keeps who types in it (mesh.rs).
-            if crate::mesh::forward_lease(hub, chat, false, &device_id(&token), kind, &label, on, text.as_deref()) {
+            if crate::mesh::forward_lease(hub, chat, false, &device_id(&token), kind, &label, on, draft.as_ref()) {
                 return send_json(w, 200, &json!({ "ok": true }));
             }
-            if hub.set_typing(chat, &device_id(&token), kind, &label, on, text.as_deref()) {
+            if hub.report(chat, &device_id(&token), kind, &label, on, draft.as_ref()) {
                 wake(); // this PC's window shows it
             }
             send_json(w, 200, &json!({ "ok": true }));
@@ -2260,6 +2482,7 @@ impl App {
         if !self.api.hub.active() {
             return;
         }
+        self.apply_drafts();
         self.local_typing();
         let mut subs: HashMap<i64, usize> = HashMap::new();
         for c in self.chats.iter().filter(|c| c.role == store::Role::Sub && self.turns.contains_key(&c.id)) {
@@ -2345,13 +2568,21 @@ impl App {
         parts.into_iter().map(|(k, h)| (k, h.finish())).collect()
     }
 
-    /// This PC's composer as a typer: an edit to an open chat's draft renews the lease and
-    /// carries the draft (at most every [`PREVIEW_GAP`]), an emptied draft (sent or cleared)
-    /// ends it.
+    /// What this PC's composer holds for `chat`: text, files, mentions; and a hash of it.
+    fn composer_of(&self, chat: i64) -> (String, Vec<PathBuf>, Vec<crate::mentions::Mention>, u64) {
+        let text = self.drafts.get(&chat).cloned().unwrap_or_default();
+        let files = self.files.get(&chat).cloned().unwrap_or_default();
+        let ms = self.mentions.drafts.get(&chat).cloned().unwrap_or_default();
+        let h = hash_of(&(&text, &files, serde_json::to_string(&ms).unwrap_or_default()));
+        (text, files, ms, h)
+    }
+
+    /// This PC's composer as a typer and the chat's shared draft: an edit to an open chat's
+    /// composer renews the lease and sends what it holds (at most every [`PREVIEW_GAP`]); an
+    /// emptied composer (sent or cleared) ends the lease and empties the draft everywhere.
     fn local_typing(&mut self) {
         let crate::app::View::Chat(id) = self.view else { return };
-        let draft = self.drafts.get(&id).map(|d| d.trim().to_string()).unwrap_or_default();
-        let h = hash_of(&draft);
+        let (text, files, ms, h) = self.composer_of(id);
         if self.api.draft == Some((id, h)) {
             self.api.draft_due = None;
             return;
@@ -2366,8 +2597,10 @@ impl App {
             self.api.draft = Some((id, h));
             return;
         }
+        self.api.edited.insert(id, Instant::now());
+        let empty = text.trim().is_empty() && files.is_empty() && ms.is_empty();
         // Keys in a burst: the draft goes out once the gap has passed (`typing_repaint` wakes then).
-        if let Some(at) = self.api.draft_sent.filter(|at| !draft.is_empty() && at.elapsed() < PREVIEW_GAP) {
+        if let Some(at) = self.api.draft_sent.filter(|at| !empty && at.elapsed() < PREVIEW_GAP) {
             self.api.draft_due = Some(at + PREVIEW_GAP);
             return;
         }
@@ -2376,7 +2609,63 @@ impl App {
         self.api.draft_due = None;
         let name = self.api.hub.mesh.me().name;
         let label = if name.is_empty() { crate::remote::hostname() } else { name };
-        self.set_lease(id, false, &me, "pc", &label, !draft.is_empty(), Some(&draft));
+        // Files go as uploads of this hub (another PC's chat keeps its own, see forward_lease).
+        let ids: Vec<String> = if self.is_foreign(id) { vec![] } else { files.iter().filter_map(|f| self.api.upload_id(f)).collect() };
+        let mut draft = json!({ "text": text, "mentions": ms });
+        if !self.is_foreign(id) {
+            draft["files"] = json!(ids);
+        }
+        self.set_lease(id, false, &me, "pc", &label, !empty, Some(&draft));
+    }
+
+    /// Other devices' shared drafts into this PC's composers: a draft newer than the last one
+    /// seen, written elsewhere, unless this composer was edited in the last [`DRAFT_HOLD`]
+    /// (it's tried again then; the newer of the two wins at the hub).
+    fn apply_drafts(&mut self) {
+        let mut fresh: Vec<(i64, SharedDraft)> = vec![];
+        for (chat, rev) in self.api.hub.draft_revs() {
+            if !self.is_foreign(chat) && rev > self.api.applied.get(&chat).copied().unwrap_or(0) {
+                fresh.extend(self.api.hub.draft(chat).map(|d| (chat, d)));
+            }
+        }
+        for (chat, r) in &self.mesh.status {
+            if let Some(d) = r.draft.as_ref().filter(|d| d.rev > self.api.applied.get(chat).copied().unwrap_or(0)) {
+                fresh.push((*chat, d.clone()));
+            }
+        }
+        let me = local_device();
+        for (chat, d) in fresh {
+            match should_apply(&d, &me, self.api.edited.get(&chat).copied(), Instant::now()) {
+                Apply::Skip => {
+                    self.api.applied.insert(chat, d.rev);
+                    continue;
+                }
+                Apply::Later => {
+                    // A frame when the hold is over, to apply it then.
+                    let at = self.api.edited.get(&chat).map(|e| *e + DRAFT_HOLD);
+                    self.api.draft_due = self.api.draft_due.into_iter().chain(at).min();
+                    continue;
+                }
+                Apply::Now => {}
+            }
+            self.api.applied.insert(chat, d.rev);
+            if d.text.is_empty() {
+                self.drafts.remove(&chat);
+            } else {
+                self.drafts.insert(chat, d.text.clone());
+            }
+            // Another PC's chat: its files are that PC's; the files here stay.
+            if !self.is_foreign(chat) {
+                self.files.insert(chat, d.files.iter().map(|f| PathBuf::from(&f.path)).collect());
+            }
+            let ms: Vec<crate::mentions::Mention> = d.mentions.iter().filter_map(|m| serde_json::from_value(m.clone()).ok()).collect();
+            self.mentions.drafts.insert(chat, ms);
+            // Not an edit here: it doesn't go back out.
+            if self.view == crate::app::View::Chat(chat) {
+                let h = self.composer_of(chat).3;
+                self.api.draft = Some((chat, h));
+            }
+        }
     }
 
     pub fn queued_count(&self, id: i64) -> usize {
@@ -2784,6 +3073,27 @@ impl App {
         self.chat_by_ref(r).map(|c| c.id)
     }
 
+    /// A chat's shared composer draft (a copy: as its home PC says).
+    pub fn shared_draft(&self, chat: i64) -> Option<SharedDraft> {
+        match self.mesh.status.get(&chat) {
+            Some(r) => r.draft.clone(),
+            None => self.api.hub.draft(chat),
+        }
+    }
+
+    /// A chat's shared draft as phones get it; another PC's chat leaves `files` out (they're
+    /// that PC's uploads: a phone keeps its own files there).
+    pub fn draft_json(&self, chat: i64) -> Value {
+        let Some(d) = self.shared_draft(chat) else { return Value::Null };
+        let mut v = d.json();
+        if self.is_foreign(chat) {
+            if let Some(o) = v.as_object_mut() {
+                o.remove("files");
+            }
+        }
+        v
+    }
+
     /// Who is typing in a chat, as the wire says it.
     pub fn typing_json(&self, chat: i64) -> Vec<Value> {
         self.typers(chat)
@@ -2860,6 +3170,7 @@ impl App {
             "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
             "parent": c.parent,
             "typing": self.typing_json(c.id),
+            "draft": self.draft_json(c.id),
             // Finished while nobody had it open, not opened since (the sidebar's blue dot), and
             // whether that last turn failed (optional, 0.42).
             "unread": self.unread.contains(&c.id),
@@ -3146,6 +3457,7 @@ impl App {
             "running": self.is_running(chat),
             "queued": self.queued_count(chat),
             "typing": self.typing_json(chat),
+            "draft": self.draft_json(chat),
             "status": self.status_json(chat),
             // Its tokens and cost so far (cost.rs), for the header; optional.
             "usage": self.usage_json(chat),
@@ -3259,6 +3571,7 @@ impl App {
         // Sent: the sender's draft preview goes (its client ends the lease too).
         if !self.sender_device.is_empty() {
             self.api.hub.set_typing(chat, &self.sender_device, "", "", false, None);
+            self.api.hub.clear_draft(chat);
         }
         let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
         self.send_to(chat, text, files, mentions, ctx);
@@ -3629,6 +3942,79 @@ mod tests {
         let kept = &hub.typing(6)[0].text;
         assert_eq!(kept.chars().count(), PREVIEW_CHARS);
         assert!(kept.ends_with('é'));
+    }
+
+    #[test]
+    fn shared_drafts() {
+        let hub = Arc::new(Hub::new(vec![], DEFAULT_PORT));
+        let dir = uploads_dir().join("dtest01");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shot.png"), b"x").unwrap();
+        // A phone types: text, an upload, a mention. Unknown uploads are dropped.
+        let d = json!({ "text": "Look at this", "files": ["dtest01/shot.png", "nope/x.png"], "mentions": [{ "item": 3, "from": "Claude", "text": "hi" }] });
+        assert!(hub.report(7, "tok:1", "phone", "Galaxy", true, Some(&d)));
+        let got = hub.draft(7).unwrap();
+        assert_eq!((got.text.as_str(), got.by.as_str(), got.label.as_str()), ("Look at this", "tok:1", "Galaxy"));
+        assert_eq!(got.files.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["dtest01/shot.png"]);
+        assert!(got.files[0].path.ends_with("shot.png") && got.files[0].name == "shot.png");
+        assert_eq!(got.mentions.len(), 1);
+        assert_eq!(hub.typing(7)[0].text, "Look at this", "0.56 clients still see the text");
+        let r1 = got.rev;
+        // The same content again (a heartbeat): nothing changes.
+        assert!(!hub.report(7, "tok:1", "phone", "Galaxy", true, Some(&d)));
+        assert_eq!(hub.draft(7).unwrap().rev, r1);
+        // Within the gap a change is kept (newest wins) but announced later.
+        assert!(!hub.set_draft(7, "pc:desk", "desk", "Look at this one", Some(vec![DraftFile::of_upload("dtest01/shot.png").unwrap()]), Some(vec![])), "held");
+        let got = hub.draft(7).unwrap();
+        assert!(got.rev > r1);
+        assert_eq!((got.text.as_str(), got.by.as_str(), got.mentions.len()), ("Look at this one", "pc:desk", 0));
+        let since = hub.rev();
+        let (_, chats, _) = hub.wait(since, Duration::from_secs(3));
+        assert_eq!(chats, vec![7], "the held draft wakes the long-polls once the gap is over");
+        // An older client only sends text: files and mentions stay; stopping keeps the draft.
+        hub.revs.lock().unwrap().drafts.get_mut(&7).unwrap().quiet = None;
+        assert!(hub.report(7, "tok:2", "phone", "Old", true, Some(&json!({ "text": "typed on 0.56" }))));
+        assert!(hub.report(7, "tok:2", "phone", "", false, Some(&json!({ "text": "" }))));
+        let got = hub.draft(7).unwrap();
+        assert_eq!((got.text.as_str(), got.files.len()), ("typed on 0.56", 1));
+        // A new client's emptied composer clears it everywhere.
+        hub.revs.lock().unwrap().drafts.get_mut(&7).unwrap().quiet = None;
+        assert!(hub.report(7, "tok:1", "phone", "", false, Some(&json!({ "text": "", "files": [], "mentions": [] }))));
+        assert!(hub.draft(7).unwrap().is_empty());
+        // A send clears it at once, with a newer rev (so composers empty too).
+        hub.revs.lock().unwrap().drafts.get_mut(&7).unwrap().quiet = None;
+        hub.report(7, "tok:1", "phone", "Galaxy", true, Some(&d));
+        let before = hub.draft(7).unwrap().rev;
+        hub.clear_draft(7);
+        let got = hub.draft(7).unwrap();
+        assert!(got.is_empty() && got.rev > before && got.by.is_empty());
+        assert!(hub.typing(7).is_empty(), "the typers stop: the message doesn't wait for them");
+        // The draft outlives the typer's lease.
+        {
+            let mut r = hub.revs.lock().unwrap();
+            r.drafts.get_mut(&7).unwrap().quiet = None;
+        }
+        hub.report(7, "tok:1", "phone", "Galaxy", true, Some(&json!({ "text": "stays" })));
+        hub.revs.lock().unwrap().typing.clear();
+        assert!(hub.typing(7).is_empty());
+        assert_eq!(hub.draft(7).unwrap().text, "stays");
+        // Its wire form round-trips (another PC's status of its chat).
+        let back = SharedDraft::from_json(&hub.draft(7).unwrap().json()).unwrap();
+        assert_eq!((back.text.as_str(), back.rev), ("stays", hub.draft(7).unwrap().rev));
+        assert!(SharedDraft::from_json(&Value::Null).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn draft_merge_rules() {
+        let now = Instant::now();
+        let d = SharedDraft { text: "x".into(), by: "tok:1".into(), rev: 3, ..Default::default() };
+        assert_eq!(should_apply(&d, "tok:1", None, now), Apply::Skip, "its own draft");
+        assert_eq!(should_apply(&d, "pc:desk", None, now), Apply::Now);
+        assert_eq!(should_apply(&d, "pc:desk", Some(now - Duration::from_millis(300)), now), Apply::Later, "edited here just now");
+        assert_eq!(should_apply(&d, "pc:desk", Some(now - DRAFT_HOLD - Duration::from_millis(1)), now), Apply::Now);
+        let sent = SharedDraft { rev: 4, ..Default::default() };
+        assert_eq!(should_apply(&sent, "pc:desk", None, now), Apply::Now, "a send empties every composer");
     }
 
     fn account(id: &str, kind: Kind) -> providers::Account {

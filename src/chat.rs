@@ -907,7 +907,6 @@ impl App {
             return;
         }
         if let View::Chat(id) = self.view {
-            self.typing_line(ui, id);
             self.agent_strip(ui, id);
             self.recap_line(ui, id);
         }
@@ -966,8 +965,19 @@ impl App {
         let mut point: Option<usize> = None;
         let mut model_rect = Rect::NOTHING;
         let mut effort_rect = Rect::NOTHING;
+        // Another device writes in this chat (its draft is in this composer): who, in a corner.
+        let typing = match self.view {
+            View::Chat(id) => self.typing_label(id),
+            _ => None,
+        };
         let shown = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
+            if let Some((label, until)) = &typing {
+                let r = ui.max_rect();
+                let font = crate::theme::ts("label-12").resolve(ui.style());
+                ui.painter().text(egui::pos2(r.right(), r.top() - 12.0), egui::Align2::RIGHT_TOP, label, font, t.subtle());
+                ui.ctx().request_repaint_after(until.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
+            }
             // Mentioned messages, each with a box for a note about it; a click on
             // one shows its message in the chat.
             if let Some(ms) = self.mentions.drafts.get_mut(&key).filter(|m| !m.is_empty()) {

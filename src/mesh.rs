@@ -457,6 +457,8 @@ pub struct Remote {
     /// Who types in it and which PCs have it open, as its home PC keeps them.
     pub typing: Vec<api::Typer>,
     pub viewing: Vec<api::Typer>,
+    /// Its shared composer draft.
+    pub draft: Option<api::SharedDraft>,
 }
 
 /// Messages from the peer workers to the UI thread.
@@ -930,7 +932,12 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             let changed = if b["view"].as_bool() == Some(true) {
                 hub.set_viewing(chat, &s("device"), &s("label"), s("kind") != "away", on)
             } else {
-                hub.set_typing(chat, &s("device"), &s("kind"), &s("label"), on, b["text"].as_str())
+                let draft = match (&b["draft"], b["text"].as_str()) {
+                    (d @ Value::Object(_), _) => Some(d.clone()),
+                    (_, Some(t)) => Some(json!({ "text": t })),
+                    _ => None,
+                };
+                hub.report(chat, &s("device"), &s("kind"), &s("label"), on, draft.as_ref())
             };
             if changed {
                 wake();
@@ -1200,12 +1207,18 @@ fn mint(hub: &api::Hub, body: &Value) -> Reply {
 /// A typing or viewing lease for a copy goes to its home PC (on a thread). False when the
 /// chat is this PC's own.
 #[allow(clippy::too_many_arguments)]
-pub fn forward_lease(hub: &api::Hub, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool, text: Option<&str>) -> bool {
+pub fn forward_lease(hub: &api::Hub, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool, draft: Option<&Value>) -> bool {
     let Some((home, hid)) = hub.mesh.homes.lock().unwrap().get(&chat).cloned() else { return false };
     let Some(p) = hub.mesh.peer(&home).filter(|p| p.online) else { return true };
     let mut body = json!({ "chat": hid, "view": view, "device": device, "kind": kind, "label": label, "on": on });
-    if let Some(t) = text {
-        body["text"] = json!(t);
+    if let Some(d) = draft {
+        // Its files are uploads here, unknown there: the home PC keeps the draft's own.
+        let mut d = d.clone();
+        if let Some(o) = d.as_object_mut() {
+            o.remove("files");
+        }
+        body["text"] = d["text"].clone(); // home PCs before 0.64
+        body["draft"] = d;
     }
     let body = serde_json::to_vec(&body).unwrap_or_default();
     std::thread::spawn(move || {
@@ -2037,25 +2050,25 @@ impl App {
     /// A typing or viewing lease of this PC (or a phone through it): kept here for this PC's
     /// chats, sent to the home PC for copies (renewals at most every few seconds).
     #[allow(clippy::too_many_arguments)]
-    pub fn set_lease(&mut self, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool, text: Option<&str>) {
+    pub fn set_lease(&mut self, chat: i64, view: bool, device: &str, kind: &str, label: &str, on: bool, draft: Option<&Value>) {
         if !self.is_foreign(chat) {
             if view {
                 self.api.hub.set_viewing(chat, device, label, kind != "away", on);
             } else {
-                self.api.hub.set_typing(chat, device, kind, label, on, text);
+                self.api.hub.report(chat, device, kind, label, on, draft);
             }
             return;
         }
         let key = (chat, view);
         let every = if view { Duration::from_secs(5) } else { Duration::from_millis(2500) };
         // A new draft goes out at once (the caller debounces it).
-        let th = api::hash_of(&text);
+        let th = api::hash_of(&draft.map(|d| d.to_string()));
         let same = self.mesh.leases.get(&key).is_some_and(|(o, k, h, at)| *o == on && k == kind && *h == th && at.elapsed() < every);
         if same {
             return;
         }
         self.mesh.leases.insert(key, (on, kind.to_string(), th, Instant::now()));
-        forward_lease(&self.api.hub, chat, view, device, kind, label, on, text);
+        forward_lease(&self.api.hub, chat, view, device, kind, label, on, draft);
     }
 
     /// True when someone other than `device` types in the chat: a message from `device` waits.
@@ -2341,7 +2354,7 @@ impl App {
         let (typing, viewing) = (leases("typing", api::TYPING_TTL), leases("viewing", api::VIEWING_TTL));
         self.mesh.status.insert(
             id,
-            Remote { running: m["running"].as_bool().unwrap_or(false), since_ms: m["since_ms"].as_i64(), queued: m["queued"].as_u64().unwrap_or(0) as usize, status, forks, typing, viewing },
+            Remote { running: m["running"].as_bool().unwrap_or(false), since_ms: m["since_ms"].as_i64(), queued: m["queued"].as_u64().unwrap_or(0) as usize, status, forks, typing, viewing, draft: api::SharedDraft::from_json(&m["draft"]) },
         );
         self.api_touch(id);
         Some(id)
@@ -2493,6 +2506,7 @@ impl App {
             "running": self.turns.contains_key(&c.id), "since_ms": since_ms, "queued": self.queued_count(c.id),
             "status": self.status_json(c.id), "forks": forks,
             "typing": self.typing_json(c.id),
+            "draft": self.shared_draft(c.id).map(|d| d.json()),
             "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
         })
     }
