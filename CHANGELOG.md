@@ -6,6 +6,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ## [Unreleased]
 
 ### Changed
+- Another PC in your mesh now gets "Everything" (shell, any file, your GitHub login) on this PC
+  until you pick a level for it, instead of "Read my projects". Pick one per PC under Your PCs.
 - Phone dictation no longer uses Google's speech services. The phone records and cuts what you say
   into phrases at pauses (Silero VAD, on the phone); each phrase goes to your PC, which
   transcribes it, so the words appear while you talk and pauses never stop it. Tapping stop puts

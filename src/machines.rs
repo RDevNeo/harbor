@@ -84,9 +84,9 @@ impl Level {
 pub fn about_level(l: Level) -> &'static str {
     match l {
         Level::Off => "Its chats can't see this PC's files",
-        Level::Read => "Read and search inside your Harbor projects (the default)",
+        Level::Read => "Read and search inside your Harbor projects",
         Level::Edit => "Also write and edit files inside your projects",
-        Level::Full => "Run any command and open any file as you, use your GitHub login",
+        Level::Full => "Run any command and open any file as you, use your GitHub login (the default)",
     }
 }
 
@@ -101,7 +101,7 @@ pub fn short(l: Level) -> &'static str {
 }
 
 /// The default for a PC nobody chose a level for.
-pub const DEFAULT: Level = Level::Read;
+pub const DEFAULT: Level = Level::Full;
 
 /// What the listener threads answer peers with, kept up to date by the UI thread ([`publish`]).
 #[derive(Default)]
