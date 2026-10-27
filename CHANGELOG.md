@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-10-27
+
 ### Changed
 - Tool calls no longer fill the chat: each run of them (with the thinking between them) folds
   into one small row, "› 5 tool calls", closed until you click or tap it, on the desktop and
@@ -1325,7 +1327,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.57.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/RDevNeo/harbor/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/RDevNeo/harbor/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/RDevNeo/harbor/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/RDevNeo/harbor/compare/v0.55.3...v0.56.0
