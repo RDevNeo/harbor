@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-10-27
+
 ### Added
 - A project another PC shares is no longer a dead end on your PC: its git remote is shared with
   it, and the first chat you run in it here uses your own clone of the same repository, or
@@ -1382,7 +1384,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.61.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.62.0...HEAD
+[0.62.0]: https://github.com/RDevNeo/harbor/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/RDevNeo/harbor/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/RDevNeo/harbor/compare/v0.59.2...v0.60.0
 [0.59.2]: https://github.com/RDevNeo/harbor/compare/v0.59.1...v0.59.2
