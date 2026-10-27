@@ -38,6 +38,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ## [0.55.0] - 2026-10-26
 
 ### Added
+- Live draft preview: while someone types in a chat on another device, the desktop and the
+  phone show what they're writing above the composer ("✎ Galaxy A13: fix the build…", the end
+  of the draft in two lines) instead of only "is typing…". Older phones still show as "is
+  typing…". Hub API: `text` on `POST /v1/chats/{id}/typing` and on each chat's `typing`.
 - Dictation now transcribes with NVIDIA Parakeet TDT 0.6B v3 (25 European languages, detects
   the language itself), built into Harbor through sherpa-onnx: faster and more accurate than
   Whisper, which stays as the fallback for other languages. Its model (670 MB) downloads by

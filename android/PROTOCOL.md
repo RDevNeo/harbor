@@ -624,19 +624,31 @@ next turn; a running turn keeps its settings.
 
 ### `POST /v1/chats/{id}/typing`
 
-`{"typing"?: true, "kind"?: "phone"}` → `{"ok": true}`.
+`{"typing"?: true, "kind"?: "phone", "text"?: "draft"}` → `{"ok": true}`.
 
 #### Typing
 
 Send `typing: true` every ~3 s while the composer has fresh input, and `typing: false` when the
-message is sent or the composer is cleared. A lease lasts 6 s after the last `true`. `kind` is
+message is sent or the composer is cleared. A lease lasts 6 s after the last `true`.
+
+Draft preview (0.56): `text` is the composer's current text (trimmed); the hub keeps its last
+500 characters. Send it with each `typing: true`, and send a new one when the draft changes,
+at most every ~400 ms (the last change always goes). The hub keeps it with the lease and drops
+it when the lease runs out, on `typing: false` and when that device sends a message. A report
+without `text` (older clients) keeps the lease's draft as it was; such clients show as "is
+typing…". A new draft wakes the long-polls (the chat is in `changed_chats`) at most every
+400 ms per device; heartbeats with the same draft don't. `kind` is
 `phone` (default) or `pc` (another PC acting as a client). The label shown is the
 `X-Harbor-Device` header, else the name saved for the token, else "Phone" / "A PC".
 
-Every chat's `typing` lists `{device, kind, label}`: API clients as `tok:<8 hex>` (stable per
-token; compare with `you`), and the hub's own desktop composer as `pc:<hostname>` (kind `pc`,
-label the hostname) while someone types there. The desktop shows the others as "✎ Galaxy A13 is
-typing…" above its composer and a ✎ on the sidebar row.
+Every chat's `typing` lists `{device, kind, label, text?}`: API clients as `tok:<8 hex>`
+(stable per token; compare with `you`), and the hub's own desktop composer as `pc:<hostname>`
+(kind `pc`, label the hostname, `text` its draft) while someone types there. `text` is there
+when the device sent a non-empty draft. The desktop shows the others above its composer, never
+yourself: "✎ Galaxy A13: <draft>" for each one with a `text` (whitespace and line breaks as
+single spaces, at most two lines; when longer, its end with "…" in front), then "✎ Galaxy A13
+is typing…" ("A and B are typing…", "3 people are typing…") for those without; and a ✎ on the
+sidebar row. The phone draws the same lines above its composer.
 
 Other PCs: any client with a paired token can report typing with `kind: "pc"`; another PC's
 Harbor doesn't act as a client of a hub yet (chats aren't shared between PCs' Harbors).
@@ -1397,7 +1409,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   `POST /mesh/v1/issues/close|reopen?url=<issue url>` → `{ok: true}`: with this PC's account,
   for a PC whose own can't see the issue.
 - `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
-- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on}`: someone types in (`view: false`)
+- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on, text?}`: someone types in (`view: false`, `text` their draft, 0.56)
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
   `typing` and `viewing`.
