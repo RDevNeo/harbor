@@ -341,6 +341,12 @@ impl App {
             .show_separator_line(false)
             .show(ui, |ui| centered(ui, CONTENT_W, |ui| self.composer(ui, running)));
 
+        // Another PC's chat names that PC's files: its images come from there (mesh.rs).
+        let source: Option<crate::images::Fetch> = self.chat(id).filter(|c| c.foreign()).map(|_| {
+            let hub = self.api.hub.clone();
+            std::sync::Arc::new(move |path: &str| crate::mesh::home_image(&hub, id, path, Some(crate::mesh::REMOTE_IMAGE_PX)).map(|(_, b)| b)) as crate::images::Fetch
+        });
+        crate::images::set_source(ui.ctx(), source);
         let out = ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
@@ -352,6 +358,7 @@ impl App {
                     ui.add_space(24.0);
                 });
             });
+        crate::images::set_source(ui.ctx(), None);
         // Scrolled up to older messages: an automatic update waits (reload.rs), as the restart
         // would bring the transcript back to its end.
         self.reading_back = out.state.clamped_offset().y + out.inner_rect.height() < out.content_size.y - 48.0;

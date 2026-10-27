@@ -73,6 +73,21 @@ struct Cache {
     bytes: HashMap<String, Arc<[u8]>>,
     queue: VecDeque<Job>,
     workers: usize,
+    /// Where images drawn now come from when they aren't on this disk (see [`set_source`]).
+    source: Option<Fetch>,
+    /// Image → where to fetch it, for images of another PC's chat.
+    remote: HashMap<String, Fetch>,
+}
+
+/// Fetches an image that isn't on this disk by its path there (encoded bytes), e.g. from the
+/// PC a mirrored chat runs on (mesh.rs `home_image`). Runs on a decode worker; may block.
+pub type Fetch = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
+/// Images drawn until the next call come from `source` when their file isn't here: a chat of
+/// another PC names that PC's files (an attachment its sender uploaded there, a screenshot its
+/// agent took). None for this PC's own chats.
+pub fn set_source(ctx: &egui::Context, source: Option<Fetch>) {
+    lock(&shared(ctx)).source = source;
 }
 
 type Shared = Arc<Mutex<Cache>>;
@@ -96,6 +111,12 @@ fn stamp(key: &str) -> Option<SystemTime> {
 
 /// Queues a decode; workers start on demand and stop when the queue is empty.
 fn request(ctx: &egui::Context, s: &Shared, c: &mut Cache, job: Job) {
+    let real = job.key.strip_prefix(MID).unwrap_or(&job.key);
+    if let Some(src) = c.source.clone() {
+        if !c.bytes.contains_key(real) && !c.remote.contains_key(real) && !Path::new(real).exists() {
+            c.remote.insert(real.to_string(), src);
+        }
+    }
     if job.full {
         c.queue.push_front(job);
     } else {
@@ -124,8 +145,16 @@ fn worker(ctx: egui::Context, s: Shared) {
             None => (job.key.as_str(), if job.full { FULL_PX } else { THUMB_PX }),
         };
         let bytes = bytes.or_else(|| lock(&s).bytes.get(real).cloned());
+        let (bytes, away) = match bytes {
+            Some(b) => (Some(b), Ok(())),
+            None => match fetched(&s, real) {
+                Some(Ok(b)) => (Some(b), Ok(())),
+                Some(Err(e)) => (None, Err(e)),
+                None => (None, Ok(())),
+            },
+        };
         let st = if bytes.is_none() { stamp(real) } else { None };
-        let slot = match decode(real, bytes, cap) {
+        let slot = match away.and_then(|_| decode(real, bytes, cap)) {
             Ok((img, dims)) => {
                 let name = format!("image-{}-{}", if job.full { "full" } else { "thumb" }, job.key);
                 Slot::Ready { tex: ctx.load_texture(name, img, TextureOptions::LINEAR), dims, stamp: st }
@@ -143,6 +172,19 @@ fn worker(ctx: egui::Context, s: Shared) {
         drop(c);
         ctx.request_repaint();
     }
+}
+
+/// The bytes of an image of another PC's chat, fetched from that PC and kept, so the
+/// thumbnail, the inline size and the lightbox fetch it once. None for a file of this PC.
+fn fetched(s: &Shared, key: &str) -> Option<Result<Arc<[u8]>, String>> {
+    let fetch = lock(s).remote.get(key).cloned()?;
+    if Path::new(key).exists() {
+        return None;
+    }
+    let Some(bytes) = fetch(key) else { return Some(Err("the PC this chat runs on is off or doesn't have it".into())) };
+    let bytes: Arc<[u8]> = bytes.into();
+    lock(s).bytes.insert(key.to_string(), bytes.clone());
+    Some(Ok(bytes))
 }
 
 /// Decodes (first frame of a GIF, EXIF-rotated) and shrinks to `cap` pixels.
@@ -682,5 +724,47 @@ mod tests {
         });
         b[29..33].copy_from_slice(&(!crc).to_be_bytes());
         assert!(decode("t.png", Some(b.into()), THUMB_PX).is_err());
+    }
+
+    /// A thumbnail's state once its decode is done.
+    fn settled(ctx: &egui::Context, key: &str) -> Slot {
+        for _ in 0..500 {
+            match thumb(ctx, key) {
+                Slot::Loading => std::thread::sleep(std::time::Duration::from_millis(10)),
+                s => return s,
+            }
+        }
+        panic!("{key} never loaded");
+    }
+
+    #[test]
+    fn images_of_another_pcs_chat_come_from_that_pc() {
+        // The sender attached a picture on their PC; the chat's home PC keeps it under a path of
+        // its own, which this PC doesn't have: drawing it fetches it from there, once.
+        let ctx = egui::Context::default();
+        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = asked.clone();
+        set_source(&ctx, Some(Arc::new(move |p: &str| {
+            log.lock().unwrap().push(p.to_string());
+            (p == "/home-pc/uploads/1-photo.png").then(|| png(40, 30))
+        })));
+        assert!(matches!(settled(&ctx, "/home-pc/uploads/1-photo.png"), Slot::Ready { dims: [40, 30], .. }));
+        assert!(matches!(settled(&ctx, &format!("{MID}/home-pc/uploads/1-photo.png")), Slot::Ready { dims: [40, 30], .. }));
+        assert_eq!(*asked.lock().unwrap(), ["/home-pc/uploads/1-photo.png"]);
+        // Gone there too (or the PC is off): says why instead of a bare missing file.
+        match settled(&ctx, "/home-pc/uploads/2-gone.png") {
+            Slot::Failed(e) => assert!(e.contains("off"), "{e}"),
+            _ => panic!("drew an image the PC doesn't have"),
+        }
+        // A file of this PC is read here, not fetched; this PC's own chats fetch nothing.
+        let dir = std::env::temp_dir().join(format!("harbor-img-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let local = dir.join("here.png");
+        std::fs::write(&local, png(8, 8)).unwrap();
+        assert!(matches!(settled(&ctx, local.to_str().unwrap()), Slot::Ready { dims: [8, 8], .. }));
+        set_source(&ctx, None);
+        assert!(matches!(settled(&ctx, "/home-pc/uploads/3-other.png"), Slot::Failed(_)));
+        assert_eq!(asked.lock().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

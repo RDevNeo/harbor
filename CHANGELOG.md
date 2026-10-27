@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- A chat shared from another PC now shows its images on this PC's desktop: a picture you attach
+  to such a chat (and anything its agent shows) is fetched from the PC the chat runs on, instead
+  of a broken placeholder for everyone but that PC. The phone already did this.
+
 ## [0.55.2] - 2026-10-27
 
 ### Fixed
