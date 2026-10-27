@@ -1199,8 +1199,14 @@ The phone's own Settings › Update automatically follows `auto` until it's chos
 newer app (this call, at most every 10 minutes) and install it only while none of Harbor's
 screens is in front and the screen is off or locked: Android always ends an app's process when
 it replaces it. The next start opens the chat the user had (drafts are kept). A version that
-didn't go in (refused, or Android asked to confirm: then a notification finishes it) is tried
-again by itself only after 6 hours.
+didn't go in by itself is never tried again in the background: one notification per version
+offers it ("Harbor X is ready: tap to install", which installs it in front, from the PC that
+offered it), and Settings shows Android's whole reason (`INSTALL_FAILED_…`, with the status).
+When the phone's verifier refused it (Google Play Protect wants to ask "Scan app?" for a build
+it hasn't seen, which it can't with nobody there: `INSTALL_FAILED_VERIFICATION_FAILURE`), later
+versions skip the background and go straight to the notification, until the user asks to try the
+background again in Settings (after turning on Play Protect's "Improve harmful app detection").
+Nothing on the wire changed for this (0.55.1).
 
 ### `GET /app.apk` (and `HEAD`)
 

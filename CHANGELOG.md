@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: an automatic update that can't install by itself no longer just fails quietly. Google
+  Play Protect refuses background installs of builds it hasn't scanned yet
+  (`INSTALL_FAILED_VERIFICATION_FAILURE`), so the phone now shows a "Harbor X is ready: tap to
+  install" notification once per version; tapping it installs it in front, where Play Protect can
+  ask to scan it. After such a refusal, later versions skip the background try and come as that
+  notification, until you ask Settings to try the background again (after turning on Play
+  Protect's "Improve harmful app detection"). Settings shows Android's whole reason instead of
+  cutting it off, and a tap shows it to copy.
+
 ## [0.55.0] - 2026-10-26
 
 ### Added
