@@ -37,6 +37,8 @@ import java.util.Set;
  *  start opens the chat the user had ({@link #resume}). Also gets MY_PACKAGE_REPLACED. */
 public class Update extends BroadcastReceiver {
     static volatile boolean busy;
+    /** Settings while it's open: shown again when an install's result comes (a failure). */
+    static volatile Runnable changed;
 
     interface Progress { void at(long done, long total); }
 
@@ -97,32 +99,49 @@ public class Update extends BroadcastReceiver {
     }
 
     /** Updating automatically, and nothing stops it (the sidebar's "Update available" then
-     *  stays away): Android lets Harbor install, and the version on offer didn't fail. */
+     *  stays away): Android lets Harbor install, the verifier hasn't refused one, and the
+     *  version on offer didn't fail. */
     static boolean silent(Context c, long offered) {
-        if (!auto(c) || !c.getPackageManager().canRequestPackageInstalls()) return false;
+        if (!auto(c) || !c.getPackageManager().canRequestPackageInstalls() || blocked(c)) return false;
         return Ui.prefs(c).getLong("auto_fail_code", 0) != offered;
     }
 
+    /** The phone's verifier (Google Play Protect) refused a background install: it wants the
+     *  user there to scan each new version, so they're offered in a notification instead, until
+     *  the user asks to try the background again (Settings). */
+    static boolean blocked(Context c) { return Ui.prefs(c).getBoolean("auto_blocked", false); }
+
+    static void unblock(Context c) { Ui.prefs(c).edit().remove("auto_blocked").apply(); }
+
     /** From the background jobs: installs the newest app any PC offers when updating
-     *  automatically and nobody sees Harbor. Blocking. Android ends the process when it
-     *  replaces the app; the next start opens where the user was. */
+     *  automatically and nobody sees Harbor, or offers it in a notification when the background
+     *  can't (Quiet.plan). Blocking. Android ends the process when it replaces the app; the
+     *  next start opens where the user was. */
     static void background(Context c) {
         try {
-            if (busy || !auto(c) || !quiet(c) || !c.getPackageManager().canRequestPackageInstalls()) return;
-            long best = check(c, false);
+            if (busy || !auto(c) || !c.getPackageManager().canRequestPackageInstalls()) return;
             SharedPreferences p = Ui.prefs(c);
-            if (!Quiet.due(best, Settings.myCode(c), p.getLong("auto_fail_code", 0), p.getLong("auto_fail_at", 0), System.currentTimeMillis())) return;
+            boolean blocked = blocked(c);
+            // Installing needs nobody looking; a notification only needs Harbor out of sight
+            // (in front, the sidebar and Settings say it).
+            if (blocked ? Base.resumed > 0 : !quiet(c)) return;
+            long best = check(c, false);
             Hub from = bestHub == null ? null : Hub.get(c, bestHub);
             if (from == null) return;
-            install(c, from, null, true);
+            switch (Quiet.plan(best, Settings.myCode(c), p.getLong("auto_fail_code", 0), blocked, p.getLong("offered_code", 0))) {
+                case Quiet.INSTALL: install(c, from, null, true); break;
+                case Quiet.OFFER: offer(c, best, from.id); break;
+                default: break;
+            }
         } catch (Away a) {
             // the next quiet moment
         } catch (Exception e) {
+            // It didn't get as far as Android (the download): offered at the next look.
             failed(c, bestCode, Hub.why(e));
         }
     }
 
-    /** The last automatic try of `code` didn't go in: not again for a while (Quiet.RETRY_MS). */
+    /** The automatic try of `code` didn't go in: never again in the background (it's offered). */
     private static void failed(Context c, long code, String why) {
         if (code <= 0) return;
         Ui.prefs(c).edit().putLong("auto_fail_code", code).putLong("auto_fail_at", System.currentTimeMillis())
@@ -270,7 +289,10 @@ public class Update extends BroadcastReceiver {
                 // The next start opens the chat the user had (if the version changes by then).
                 Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", to).apply();
                 int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
-                s.commit(PendingIntent.getBroadcast(c, id, new Intent(c, Update.class).setAction("status"), flags).getIntentSender());
+                // The result says whether it was the background's, and what to offer if it fails.
+                Intent status = new Intent(c, Update.class).setAction("status").putExtra("auto", auto).putExtra("to", to)
+                        .putExtra("hub", from != null && bestCode > Settings.myCode(c) ? from.id : hub.id);
+                s.commit(PendingIntent.getBroadcast(c, id, status, flags).getIntentSender());
             } catch (Exception e) {
                 busy = false;
                 pi.abandonSession(id);
@@ -293,7 +315,8 @@ public class Update extends BroadcastReceiver {
             return;
         }
         int st = i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
-        long to = Ui.prefs(c).getLong("update_to", 0);
+        long to = i.getLongExtra("to", Ui.prefs(c).getLong("update_to", 0));
+        boolean auto = i.getBooleanExtra("auto", false);
         boolean front = Base.resumed > 0;
         if (st == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             // Android 8–11, a copy whose installed version lacks the permission, or a phone that
@@ -310,13 +333,54 @@ public class Update extends BroadcastReceiver {
             ask(c, confirm, to);
         } else {
             busy = false;
-            if (st != PackageInstaller.STATUS_SUCCESS) {
-                String why = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
-                why = why == null ? "status " + st : why;
-                failed(c, to, why);
-                if (front) Toast.makeText(c, "Harbor couldn't update: " + why, Toast.LENGTH_LONG).show();
+            if (st == PackageInstaller.STATUS_SUCCESS) {
+                if (auto) unblock(c); // the background works on this phone again
+                return;
+            }
+            String msg = i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            String why = Quiet.reason(st, msg);
+            failed(c, to, why);
+            Runnable r = changed;
+            if (r != null) Ui.main.post(r);
+            if (auto) {
+                // Most often Google Play Protect: it wants to ask "Scan app?" for a version it
+                // hasn't seen, which it can't with nobody there (INSTALL_FAILED_VERIFICATION_FAILURE).
+                // Offered instead: a tap installs it in front, where it can ask. Later versions skip
+                // the doomed background try.
+                if (Quiet.verifier(st, msg)) Ui.prefs(c).edit().putBoolean("auto_blocked", true).apply();
+                offer(c, to, i.getStringExtra("hub"));
+            } else if (front) {
+                Toast.makeText(c, "Harbor couldn't update: " + why, Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    /** "Harbor X is ready: tap to install": once per version. The tap opens Settings, which
+     *  installs it in front (Settings.update), where Play Protect can ask to scan it. */
+    static void offer(Context c, long code, String hubId) {
+        SharedPreferences p = Ui.prefs(c);
+        if (code <= 0 || p.getLong("offered_code", 0) == code) return;
+        Hub h = hubId == null ? null : Hub.get(c, hubId);
+        if (h == null) h = Hub.get(c, Hub.last(c));
+        if (h == null && !Hub.all(c).isEmpty()) h = Hub.all(c).get(0);
+        if (h == null) return;
+        try {
+            NotificationManager nm = c.getSystemService(NotificationManager.class);
+            nm.createNotificationChannel(new NotificationChannel("update", "App updates", NotificationManager.IMPORTANCE_LOW));
+            // Harbor's start screen under it, so Back from Settings lands in the app.
+            Intent home = new Intent(c, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            Intent install = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("install", code);
+            PendingIntent pi = PendingIntent.getActivities(c, 12, new Intent[] { home, install }, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            Notification n = new Notification.Builder(c, "update").setSmallIcon(R.drawable.ic_stat)
+                    .setContentTitle("Harbor " + Settings.name(code) + " is ready")
+                    .setContentText("It couldn't install by itself: tap to install it.")
+                    .setStyle(new Notification.BigTextStyle().bigText(blocked(c)
+                            ? "It couldn't install by itself: tap to install it. Google Play Protect may ask to scan it first (Scan app)."
+                            : "It couldn't install by itself: tap to install it."))
+                    .setContentIntent(pi).setAutoCancel(true).build();
+            nm.notify("update", 1, n);
+            p.edit().putLong("offered_code", code).apply();
+        } catch (Exception ignored) { } // notifications off: Settings › Update still shows it
     }
 
     /** The system's confirmation, behind a notification: tap to finish installing. */
@@ -331,6 +395,7 @@ public class Update extends BroadcastReceiver {
                     .setContentText("Android asks you to confirm the update: tap to install it.")
                     .setContentIntent(pi).setAutoCancel(true).build();
             nm.notify("update", 1, n);
+            if (to > 0) Ui.prefs(c).edit().putLong("offered_code", to).apply(); // offered: no second notification
         } catch (Exception ignored) { } // notifications off: Settings › Update still shows it
     }
 }

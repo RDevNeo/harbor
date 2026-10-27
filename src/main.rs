@@ -98,6 +98,10 @@ fn main() -> eframe::Result {
     if let Some(code) = args.get(1).and_then(|a| update::cli(a)) {
         std::process::exit(code);
     }
+    // The speech engine's own process (parakeet.rs): a crash there never takes Harbor down.
+    if args.get(1).map(String::as_str) == Some(parakeet::WORKER_FLAG) {
+        std::process::exit(parakeet::worker_main());
+    }
     if args.get(1).map(String::as_str) == Some("mcp") {
         mcpshim::run(&args[2..]);
         return Ok(());

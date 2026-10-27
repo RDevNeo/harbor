@@ -20,8 +20,9 @@ import org.json.JSONObject;
 public class Settings extends Base {
     private TextView updateNote, hubVersion, badge;
     private View updateBtn;
-    private LinearLayout autoRow;
+    private LinearLayout autoRow, whyRow;
     private long available;
+    private boolean installing;
 
     static long myCode(Context c) {
         try {
@@ -66,6 +67,9 @@ public class Settings extends Base {
         updateRow.addView(updateBtn);
         Ui.wrapSub(updateRow, 3);
         app.addView(updateRow, Ui.fill());
+        // Why the last automatic install didn't go in: Android's whole message (INSTALL_FAILED_…).
+        whyRow = Ui.col(this);
+        app.addView(whyRow, Ui.fill());
         app.addView(Ui.gap(this));
         autoRow = Ui.col(this);
         autoRows();
@@ -113,6 +117,13 @@ public class Settings extends Base {
         pr.addView(Ui.chevron(this));
         people.addView(pr, Ui.fill());
         if (getIntent().getBooleanExtra("people", false)) people();
+        // The "Harbor X is ready: tap to install" notification (Update.offer): the install, in
+        // front, where Play Protect can ask to scan it.
+        long install = getIntent().getLongExtra("install", 0);
+        if (b == null && install > Settings.myCode(this)) {
+            available = install;
+            Ui.main.post(this::update);
+        }
         Ui.pool.execute(() -> {
             try {
                 hub.get("/v1/people");
@@ -179,6 +190,33 @@ public class Settings extends Base {
         // On without the permission: the tap asks for it; a long press turns it off.
         if (on && !allowed) r.setOnLongClickListener(v -> { Update.setAuto(this, false); autoRows(); return true; });
         autoRow.addView(r, Ui.fill());
+        // Play Protect refused a background install: new versions come as a notification.
+        if (on && Update.blocked(this)) {
+            autoRow.addView(Ui.gap(this));
+            LinearLayout pp = Ui.cardRow(this, Ui.I_ALERT, "Play Protect stops background updates",
+                    "New versions come as a notification: tap it, then Scan app. To let them install by themselves, turn on "
+                            + "Play Store › your picture › Play Protect › ⚙ › Improve harmful app detection, then tap here to try again.",
+                    Ui.AMBER, v -> {
+                        Update.unblock(this);
+                        autoRows();
+                        Ui.toast(this, "The next version tries the background again");
+                    });
+            Ui.wrapSub(pp, 6);
+            autoRow.addView(pp, Ui.fill());
+        }
+    }
+
+    /** "Why it didn't install": the whole reason, wrapped; a tap shows it to copy. */
+    private void whyRows(String reason) {
+        whyRow.removeAllViews();
+        if (reason.isEmpty()) return;
+        whyRow.addView(Ui.gap(this));
+        LinearLayout r = Ui.cardRow(this, Ui.I_ALERT, "Why it didn't install", reason, Ui.AMBER,
+                v -> Ui.dialog(this).setTitle("Why it didn't install").setMessage(reason)
+                        .setNegativeButton("Copy", (d, w) -> Ui.copy(this, reason))
+                        .setPositiveButton("Close", null).show());
+        Ui.wrapSub(r, 8);
+        whyRow.addView(r, Ui.fill());
     }
 
     private void toggleAuto() {
@@ -588,6 +626,14 @@ public class Settings extends Base {
         if (hub == null) return;
         autoRows(); // back from Android's "Install unknown apps"
         checkUpdates();
+        // An install that fails after its download (Android or Play Protect refused it).
+        Update.changed = () -> { if (!isFinishing()) { autoRows(); checkUpdates(); } };
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        Update.changed = null;
     }
 
     /** The PC's version, and the newest app any PC offers (tap the Update row to ask again). */
@@ -606,17 +652,18 @@ public class Settings extends Base {
             code = Update.check(getApplicationContext(), true);
             long mine = myCode(this);
             String where = Update.bestHub == null ? "" : pcName(Update.bestHub, Update.bestPc);
-            String failed = Update.failure(getApplicationContext(), code);
+            String failed = code > mine ? Update.failure(getApplicationContext(), code) : "";
             note = code <= 0 ? "No PC answered with an app to offer"
                     : code > mine ? "Version " + name(code) + " is ready" + (where.isEmpty() ? "" : " on " + where)
-                        + (!failed.isEmpty() ? ". It didn't install by itself (" + failed + "): tap Update"
+                        + (!failed.isEmpty() || Update.blocked(getApplicationContext()) ? ". Tap Update to install it"
                         : Update.silent(getApplicationContext(), code) ? ". It installs by itself the next time the screen is off" : "")
                     : "Up to date (" + name(mine) + ")";
-            final String fi = info, fn = note, fv = version; final long fc = code;
+            final String fi = info, fn = note, fv = version, ff = failed; final long fc = code;
             Ui.main.post(() -> {
                 if (isFinishing()) return;
                 hubVersion.setText(fi);
-                updateNote.setText(fn);
+                whyRows(ff);
+                if (!installing) updateNote.setText(fn); // else its progress stays on the line
                 badge.setText(fv);
                 badge.setVisibility(fv.isEmpty() ? View.GONE : View.VISIBLE);
                 available = fc;
@@ -644,6 +691,7 @@ public class Settings extends Base {
         updateBtn.setEnabled(false);
         updateBtn.setAlpha(0.5f);
         updateNote.setText("Downloading…");
+        installing = true;
         Ui.pool.execute(() -> {
             String err = null;
             try {
@@ -656,6 +704,7 @@ public class Settings extends Base {
             }
             final String fe = err;
             Ui.main.post(() -> {
+                installing = false;
                 updateBtn.setEnabled(true);
                 updateBtn.setAlpha(1f);
                 updateNote.setText(fe == null ? "Installing " + name(available) + "… Harbor closes when it's done: open it again and it's back on your chat." : "Update failed: " + fe);

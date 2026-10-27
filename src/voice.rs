@@ -298,7 +298,7 @@ pub fn wav_samples(b: &[u8]) -> Result<Vec<i16>, String> {
             b"data" if channels > 0 => {
                 let frames: Vec<i16> = body
                     .chunks_exact(2 * channels)
-                    .map(|f| (f.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as i32).sum::<i32>() / channels as i32) as i16)
+                    .map(|f| (f.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as i64).sum::<i64>() / channels as i64) as i16)
                     .collect();
                 return Ok(resample(&frames, rate, RATE));
             }

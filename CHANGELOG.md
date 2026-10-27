@@ -5,6 +5,36 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Paired PCs share everything by default (shell, any file, GitHub); lower it per PC in Devices.
+
+### Fixed
+- A chat shared from another PC now shows its images on this PC's desktop: a picture you attach
+  to such a chat (and anything its agent shows) is fetched from the PC the chat runs on, instead
+  of a broken placeholder for everyone but that PC. The phone already did this.
+
+## [0.55.2] - 2026-10-27
+
+### Fixed
+- The desktop sidebar no longer hides a project's oldest open chat behind the project row: every
+  chat of a project now has its own row, as on the phone, so a chat no longer goes missing on the
+  PC or seems to sit inside another chat. The phone takes the desktop's placement from the hub
+  (snoozed chats stay hidden on both).
+
+## [0.55.1] - 2026-10-27
+
+### Fixed
+- Phone: an automatic update that can't install by itself no longer just fails quietly. Google
+  Play Protect refuses background installs of builds it hasn't scanned yet
+  (`INSTALL_FAILED_VERIFICATION_FAILURE`), so the phone now shows a "Harbor X is ready: tap to
+  install" notification once per version; tapping it installs it in front, where Play Protect can
+  ask to scan it. After such a refusal, later versions skip the background try and come as that
+  notification, until you ask Settings to try the background again (after turning on Play
+  Protect's "Improve harmful app detection"). Settings shows Android's whole reason instead of
+  cutting it off, and a tap shows it to copy.
+
+## [0.55.0] - 2026-10-26
+
 ### Added
 - Live draft preview: while someone types in a chat on another device, the desktop and the
   phone show what they're writing above the composer ("✎ Galaxy A13: fix the build…", the end
@@ -14,8 +44,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   the language itself), built into Harbor through sherpa-onnx: faster and more accurate than
   Whisper, which stays as the fallback for other languages. Its model (670 MB) downloads by
   itself on the first dictation, with progress by the mic.
-- The speech model loads while you speak and is freed after a few idle minutes (Settings ›
-  Voice › Keep speech model loaded, default 5 min): no memory or CPU while you don't dictate.
+- The speech model loads while you speak, in a process of its own, and is freed after a few
+  idle minutes (Settings › Voice › Keep speech model loaded, default 5 min): no memory or CPU
+  while you don't dictate, and a crash or out-of-memory in the speech engine never takes Harbor
+  down. Parakeet isn't loaded when less than 1.2 GB is free (Whisper or another PC instead).
 - Each recording is transcribed on the PC of your mesh with the most free memory (this PC on a
   near tie; PCs that don't answer are skipped). Phones' recordings go the same way through
   their hub.
@@ -1260,7 +1292,10 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.54.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.2...HEAD
+[0.55.2]: https://github.com/RDevNeo/harbor/compare/v0.55.1...v0.55.2
+[0.55.1]: https://github.com/RDevNeo/harbor/compare/v0.55.0...v0.55.1
+[0.55.0]: https://github.com/RDevNeo/harbor/compare/v0.54.1...v0.55.0
 [0.54.1]: https://github.com/RDevNeo/harbor/compare/v0.54.0...v0.54.1
 [0.54.0]: https://github.com/RDevNeo/harbor/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/RDevNeo/harbor/compare/v0.53.0...v0.53.1

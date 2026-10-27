@@ -9,8 +9,8 @@
 //! - **This PC** runs them directly: the agent can already do as much with its own tools.
 //! - **Another PC** gets `POST /mesh/v1/tool` over the mesh's pinned TLS and decides by what
 //!   its owner shares with the calling PC ([`Level`], Settings › Devices on that PC, per PC):
-//!   `off` nothing; `read` (the default) reads and searches inside its Harbor projects;
-//!   `edit` also writes and edits there; `full` runs anything anywhere as its user, `github`
+//!   `off` nothing; `read` reads and searches inside its Harbor projects; `edit` also writes
+//!   and edits there; `full` (the default) runs anything anywhere as its user, `github`
 //!   included. Paths are checked after resolving symlinks, so a link can't lead outside.
 //! - **GitHub through the PC a chat is driven from.** A chat commanded from another PC
 //!   (meshctx.rs) gets its GitHub login there: `github` on that PC runs `gh` with Harbor's
@@ -84,9 +84,9 @@ impl Level {
 pub fn about_level(l: Level) -> &'static str {
     match l {
         Level::Off => "Its chats can't see this PC's files",
-        Level::Read => "Read and search inside your Harbor projects (the default)",
+        Level::Read => "Read and search inside your Harbor projects",
         Level::Edit => "Also write and edit files inside your projects",
-        Level::Full => "Run any command and open any file as you, use your GitHub login",
+        Level::Full => "Run any command and open any file as you, use your GitHub login (the default)",
     }
 }
 
@@ -101,7 +101,7 @@ pub fn short(l: Level) -> &'static str {
 }
 
 /// The default for a PC nobody chose a level for.
-pub const DEFAULT: Level = Level::Read;
+pub const DEFAULT: Level = Level::Full;
 
 /// What the listener threads answer peers with, kept up to date by the UI thread ([`publish`]).
 #[derive(Default)]
@@ -542,6 +542,9 @@ mod tests {
         assert!(r["content"][0]["text"].as_str().unwrap().contains("doesn't let"), "{r}");
         assert_eq!(serve_share("pc:off").body["projects"], json!([]));
         assert_eq!(serve_share("pc:reader").body["level"], "read");
+        // A PC nobody chose a level for shares everything; an explicit choice stays.
+        assert_eq!(DEFAULT, Level::Full);
+        assert_eq!(serve_share("pc:never-chosen").body["level"], "full");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

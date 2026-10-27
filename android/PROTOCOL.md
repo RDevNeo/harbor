@@ -353,6 +353,13 @@ refetch everything.
   hubs leave it out) is what an empty `effort` means for each kind (the CLI's own default, e.g.
   `high`): show a chat's or the defaults' `""` as that level, and pick it for a new chat.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
+- `tree` (optional, older hubs leave it out): where the desktop sidebar places each chat, so the
+  list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed": false,
+  "chats": [14, 12]}], "threads": [9], "settled": [3]}`, chat ids in display order. Each project
+  lists all its unsettled leads, newest first, as siblings; `threads` are leads with no project
+  (or a project the hub doesn't have); `settled` holds every settled lead. Sub-agents and
+  snoozed chats are in none of them; a `snoozed` project shows only while searching. Without
+  `tree`, group `chats` by `project_id` and `settled` as before.
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
@@ -1120,7 +1127,8 @@ on another PC takes this PC's instructions and memory (`send_context`). `PATCH` 
 
 From 0.45 (shared files, `src/machines.rs`): each other PC in `pcs` has `share` (`off`, `read`,
 `edit` or `full`: what chats running on that PC may do with this PC's files, shell and GitHub)
-and `share_label`; `levels` lists the choices (`[{id, label, about}]`); `me.share_github` says
+and `share_label` (since 0.55.3 a PC nobody chose a level for is `full`; before, `read`; an
+explicit choice is stored and kept); `levels` lists the choices (`[{id, label, about}]`); `me.share_github` says
 whether chats this PC drives on other PCs may run `gh` here with its GitHub sign-in. `PATCH` also
 takes `share_github` and `share: {pc, level}`.
 
@@ -1211,8 +1219,14 @@ The phone's own Settings › Update automatically follows `auto` until it's chos
 newer app (this call, at most every 10 minutes) and install it only while none of Harbor's
 screens is in front and the screen is off or locked: Android always ends an app's process when
 it replaces it. The next start opens the chat the user had (drafts are kept). A version that
-didn't go in (refused, or Android asked to confirm: then a notification finishes it) is tried
-again by itself only after 6 hours.
+didn't go in by itself is never tried again in the background: one notification per version
+offers it ("Harbor X is ready: tap to install", which installs it in front, from the PC that
+offered it), and Settings shows Android's whole reason (`INSTALL_FAILED_…`, with the status).
+When the phone's verifier refused it (Google Play Protect wants to ask "Scan app?" for a build
+it hasn't seen, which it can't with nobody there: `INSTALL_FAILED_VERIFICATION_FAILURE`), later
+versions skip the background and go straight to the notification, until the user asks to try the
+background again in Settings (after turning on Play Protect's "Improve harmful app detection").
+Nothing on the wire changed for this (0.55.1).
 
 ### `GET /app.apk` (and `HEAD`)
 

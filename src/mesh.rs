@@ -51,6 +51,8 @@ const POLL: Duration = Duration::from_secs(20);
 const CONNECT: Duration = Duration::from_secs(3);
 /// A forwarded call (a send with its files) may take this long.
 const CALL_WAIT: Duration = Duration::from_secs(60);
+/// Largest side of an image of another PC's chat as this PC fetches it to draw (`home_image`).
+pub const REMOTE_IMAGE_PX: u32 = 2048;
 /// How long a pairing code is good for.
 pub const CODE_TTL: i64 = 600;
 /// Wrong guesses a pairing code takes before it's void.
