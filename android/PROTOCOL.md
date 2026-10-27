@@ -703,7 +703,9 @@ PC's chat, or a project folder that isn't on this PC.
 Dictation from the app's mic. Since 0.55 the phone records itself (no Android `SpeechRecognizer`),
 cuts the recording into phrases with Silero VAD (sherpa-onnx) and sends each phrase here as it
 ends, with `cleanup=0` (below); when the hub doesn't answer within ~6 s, fails (other than `409`)
-or is unreachable, its own offline sherpa-onnx model transcribes the phrase. Phones before 0.55
+or is unreachable, its own offline sherpa-onnx model transcribes the phrase. A hub that answers
+`404` to `GET /v1/voice` (before 0.55) gets the whole dictation here once, at the end, without
+`cleanup`. Phones before 0.55
 used `SpeechRecognizer` and sent whole recordings here only without one. The body
 is the recording as a WAV file (16-bit PCM, mono, 16 kHz; at most 10 minutes), `Content-Type:
 audio/wav`. The PC transcribes it with whisper.cpp and its model from Settings › Voice → `{"text":

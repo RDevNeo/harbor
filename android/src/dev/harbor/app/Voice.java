@@ -40,7 +40,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *  seconds, fails, or is still downloading its model, the phone's own offline model (Asr) takes
  *  the phrase. It listens until the mic is tapped again (a minute without speech also ends it);
  *  then, if the hub's "Clean up dictation" is on, the words are cleaned up there once
- *  (POST /v1/voice/cleanup) and replace what was dictated, unless it was edited meanwhile. A
+ *  (POST /v1/voice/cleanup) and replace what was dictated, unless it was edited meanwhile. A hub
+ *  before 0.55 (404 on GET /v1/voice) gets the whole dictation when you stop, uncleaned. A
  *  phone whose ABI the APK has no sherpa-onnx library for records the whole dictation for the PC.
  *  Asks for the microphone the first time. Never sends anything by itself. Log tag: HarborVoice. */
 final class Voice {
@@ -71,8 +72,14 @@ final class Voice {
     private boolean recorded;
     /** Phrases are transcribed one at a time, in order (shared by every composer). */
     private static final ExecutorService work = Executors.newSingleThreadExecutor();
-    /** GET /v1/voice at the start (null: an older hub, or unreachable). */
+    /** GET /v1/voice at the start (null: an older hub, or unreachable); `probed` once it answered
+     *  or failed. A 404 is a hub before 0.55: its whisper.cpp gets the whole dictation at the
+     *  end (a process per request would be too slow per phrase), and nothing is cleaned up. */
     private volatile JSONObject info;
+    private volatile java.util.concurrent.CountDownLatch probed;
+    private volatile boolean oldHub;
+    /** An older hub's phrases, kept for the end. */
+    private final java.util.List<float[]> held = new java.util.ArrayList<>();
     /** PC failures in a row: after two, the phone's model takes the rest of the dictation. */
     private volatile int hubFails;
     private volatile String problem;
@@ -173,6 +180,9 @@ final class Voice {
         problem = null;
         told = false;
         info = null;
+        oldHub = false;
+        synchronized (held) { held.clear(); }
+        final java.util.concurrent.CountDownLatch p = probed = new java.util.concurrent.CountDownLatch(1);
         out.set(0);
         dictated.setLength(0);
         // The words go where the cursor is, and grow from there.
@@ -187,7 +197,11 @@ final class Voice {
         log("start, phrases " + phrases + ", offline model " + (Asr.ready(a) ? "ready" : "none"));
         Ui.pool.execute(() -> {
             try { info = hub.call("GET", "/v1/voice", null, 5000); log("hub voice " + info); }
-            catch (Exception ex) { log("no /v1/voice: " + ex.getMessage()); }
+            catch (Exception ex) {
+                oldHub = ex instanceof Hub.ApiError && ((Hub.ApiError) ex).code == 404;
+                log("no /v1/voice: " + ex.getMessage() + (oldHub ? " (an older hub)" : ""));
+            }
+            p.countDown();
         });
         Ui.pool.execute(() -> listen(r, g, phrases));
     }
@@ -262,6 +276,16 @@ final class Voice {
 
     /** On `work`, in order: the PC first, the phone's own model when the PC can't. */
     private void phrase(float[] samples, int g) {
+        try { probed.await(6, TimeUnit.SECONDS); } catch (InterruptedException e) { return; }
+        if (oldHub) {
+            synchronized (held) { held.add(samples); }
+            Ui.main.post(() -> {
+                if (g == gen && recording) said.setText("Recording · " + host() + " transcribes it when you stop");
+                out.decrementAndGet();
+                if (g == gen) maybeDone();
+            });
+            return;
+        }
         String text = null, where = null;
         boolean local = hubFails >= 2 && Asr.ready(a);
         if (!local) {
@@ -320,6 +344,9 @@ final class Voice {
     private void maybeDone() {
         if (recording || !recorded || out.get() > 0 || !busy) return;
         final int g = gen;
+        final float[][] whole;
+        synchronized (held) { whole = held.toArray(new float[0][]); held.clear(); }
+        if (whole.length > 0) { out.incrementAndGet(); work.execute(() -> wholeToOldHub(whole, g)); return; }
         final String text = dictated.toString().trim();
         work.execute(Asr::free);
         // The first dictation asks for the offline model (on Wi-Fi, in the background).
@@ -339,6 +366,41 @@ final class Voice {
                 if (c != null && !c.isEmpty()) replace(text, c);
                 done(false);
             });
+        });
+    }
+
+    /** An older hub: the phrases as one recording (a short pause between them); the phone's
+     *  model takes them one by one if the PC can't. */
+    private void wholeToOldHub(float[][] phrases, int g) {
+        int n = 0, gap = 16000 / 4;
+        for (float[] x : phrases) n += x.length + gap;
+        float[] all = new float[n];
+        int at = 0;
+        for (float[] x : phrases) { System.arraycopy(x, 0, all, at, x.length); at += x.length + gap; }
+        Ui.main.post(() -> { if (g == gen) said.setText("Transcribing on " + host() + "…"); });
+        java.util.List<String> got = new java.util.ArrayList<>();
+        try {
+            String t = hub.transcribe(wav(all), langParam(a), false, 180_000).optString("text", "").trim();
+            log("whole dictation → \"" + t + "\" on " + host());
+            got.add(t);
+        } catch (Exception e) {
+            problem = Hub.why(e);
+            log("PC failed: " + e);
+            Ui.main.post(() -> { if (g == gen) said.setText("Transcribing on this phone…"); });
+            for (float[] x : phrases) {
+                String t = Asr.transcribe(a, x, langParam(a));
+                if (t == null) { got.clear(); break; }
+                got.add(t);
+            }
+        }
+        Ui.main.post(() -> {
+            for (String t : got) if (!t.isEmpty()) put(t);
+            if (got.isEmpty() && problem != null && g == gen && !told) {
+                Ui.toast(a, Asr.available() && !Asr.ready(a) ? problem + " The offline model isn't on this phone yet." : problem);
+                told = true;
+            }
+            out.decrementAndGet();
+            if (g == gen) maybeDone();
         });
     }
 
