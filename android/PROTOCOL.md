@@ -710,6 +710,51 @@ download and gets `409` with the progress ("try again when it's done"). `lang` m
 says beforehand (optional, 0.38): `"voice": {"transcribe": true|false, "why": "…"|null, "lang":
 "auto"}`. Hubs before 0.38 answer `404`.
 
+### Voice on the hub: Parakeet, mesh routing, cleanup (0.55)
+
+Since 0.55 the hub's main speech engine is NVIDIA Parakeet TDT 0.6B v3 (int8, via sherpa-onnx,
+built in; 25 European languages, detects the language itself). Its model (~670 MB) downloads on
+first use; built-in whisper.cpp stays as the fallback (a language Parakeet lacks, or Parakeet
+failing). The model is loaded only while in use and freed after an idle period. All fields below
+are optional additions: old phones ignore them, and phones must treat a `404` from an older hub as
+"not supported" (fall back to plain `POST /v1/transcribe`).
+
+**Mesh routing.** A transcription runs on the mesh PC with the most free RAM at that moment
+(`MemAvailable`; a PC that already has the model loaded counts its free RAM plus the model's size).
+Near ties (within ~10%) prefer the PC that got the request. Unreachable or failing PCs are
+skipped; the receiving PC is the last resort. The phone just calls its own hub: the hub routes.
+
+#### `GET /v1/voice`
+
+→ `{"engine": "parakeet"|"whisper", "model_state": "none"|"downloading"|"ready"|"loaded",
+"progress": 0-100, "model_mb": 670, "mem_available_mb": 5120, "cleanup": true,
+"keep_loaded_min": 5, "host": "<pc name>"}`. `engine`: what this hub transcribes with by default.
+`model_state`: `none` (not downloaded), `downloading` (`progress` is present only then), `ready`
+(on disk, not in memory), `loaded` (in memory). Used by mesh routing and the phone's Settings.
+
+#### `POST /v1/transcribe` additions
+
+Body and format unchanged (WAV, 16-bit PCM). New optional query parameters: `cleanup=0|1`
+(default: the hub's "Clean up dictation" setting) and `local=1` (transcribe here, don't forward
+to another PC; hubs set it when they forward, so requests never loop). The response keeps `text`
+and may add `raw` (the transcript before cleanup; present when cleanup ran) and `host` (the PC
+that transcribed). The `409` with the model download's progress stays.
+
+#### `POST /v1/voice/cleanup`
+
+Body `{"text": "…"}` → `{"text": "…"}`. Cleans up dictated text the way the "Clean up dictation"
+setting does (filler words and false starts removed, punctuation and capitals fixed, spoken
+self-corrections applied, same language, nothing added). On any failure or timeout (~8 s) it
+returns the input unchanged, still `200`. The phone sends each VAD phrase to `/v1/transcribe`
+with `cleanup=0` for live text, then the whole text here when dictation stops.
+
+#### `PUT /v1/voice/settings`
+
+Body `{"cleanup": true|false, "keep_loaded_min": N}`, each optional → the same object as
+`GET /v1/voice`. `keep_loaded_min`: minutes the model stays in memory after the last use
+(Settings › Voice › "Keep speech model loaded"); `0` frees it right after each use. The desktop's
+Settings › Voice shows the same two settings.
+
 ### `POST /v1/upload?name=<file name>&chat=<id>`
 
 Raw body (the file), `Content-Length` required. `chat` is optional, an id or a gid (files go to
