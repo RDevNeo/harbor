@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.55.2] - 2026-10-27
+
+### Fixed
+- The desktop sidebar no longer hides a project's oldest open chat behind the project row: every
+  chat of a project now has its own row, as on the phone, so a chat no longer goes missing on the
+  PC or seems to sit inside another chat. The phone takes the desktop's placement from the hub
+  (snoozed chats stay hidden on both).
+
 ## [0.55.1] - 2026-10-27
 
 ### Fixed
@@ -52,12 +60,6 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   phones with 6 GB of memory or more, Whisper small or base on others). The model downloads on
   Wi-Fi after the first dictation (Settings › Dictation › Offline dictation shows its progress,
   and removes it), and takes memory only while you dictate. The app is ~9 MB bigger for it.
-
-### Fixed
-- The desktop sidebar no longer hides a project's oldest open chat behind the project row: every
-  chat of a project now has its own row, as on the phone, so a chat no longer goes missing on the
-  PC or seems to sit inside another chat. The phone takes the desktop's placement from the hub
-  (snoozed chats stay hidden on both).
 
 ## [0.54.1] - 2026-10-26
 
@@ -1278,7 +1280,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.55.2...HEAD
+[0.55.2]: https://github.com/RDevNeo/harbor/compare/v0.55.1...v0.55.2
 [0.55.1]: https://github.com/RDevNeo/harbor/compare/v0.55.0...v0.55.1
 [0.55.0]: https://github.com/RDevNeo/harbor/compare/v0.54.1...v0.55.0
 [0.54.1]: https://github.com/RDevNeo/harbor/compare/v0.54.0...v0.54.1
