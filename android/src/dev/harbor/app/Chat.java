@@ -908,6 +908,17 @@ public class Chat extends Base {
                     f.setMaxWidth(maxBubble());
                     bubble.addView(f);
                 }
+                // Written on another PC or a phone: "from …" small in the bubble's bottom-right
+                // corner (as the desktop shows it).
+                String from = it.optString("sender", "");
+                TextView fromView = null;
+                if (!from.isEmpty()) {
+                    fromView = Ui.text(this, "from " + from, 12, Ui.G700);
+                    fromView.setSingleLine(true);
+                    fromView.setEllipsize(TextUtils.TruncateAt.END);
+                    fromView.setGravity(Gravity.END);
+                    bubble.addView(fromView, Ui.margins(Ui.fill(), 0, 2, 0, 0));
+                }
                 bubble.setOnLongClickListener(v -> { itemMenu(it, text, false); return true; });
                 // Hug the content like the desktop: as wide as the longest line (or the image
                 // strip), at most maxBubble(); a wrap_content bubble cut lines short next to images.
@@ -919,12 +930,10 @@ public class Chat extends Base {
                 JSONArray ims = it.optJSONArray("images");
                 if (ims != null && ims.length() > 0) need = Math.max(need, Math.min(ims.length(), 3) * Ui.dp(104));
                 if (files != null && files.length() > 0) need = Math.max(need, Ui.dp(160));
+                if (fromView != null) need = Math.max(need, fromView.getPaint().measureText(fromView.getText().toString()));
                 int avail = getResources().getDisplayMetrics().widthPixels - Ui.dp(76); // the row's padding
                 int w = (int) Math.min(need + Ui.dp(34), Math.min(avail, maxBubble() + Ui.dp(32)));
                 wrap.addView(bubble, new LinearLayout.LayoutParams(w, -2));
-                // Written on another PC or a phone: where, under the bubble (as the desktop shows it).
-                String from = it.optString("sender", "");
-                if (!from.isEmpty()) wrap.addView(Ui.text(this, "from " + from, 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 4, 2, 0));
                 wrap.setPadding(Ui.dp(56), Ui.dp(10), Ui.dp(20), Ui.dp(10));
                 break;
             }
@@ -981,12 +990,7 @@ public class Chat extends Base {
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 30, 6, 0, 0));
                 break;
             }
-            case "footer": {
-                TextView t = Ui.text(this, it.optString("text"), 12, Ui.G700);
-                t.setTypeface(Ui.mono);
-                wrap.addView(t, Ui.fill());
-                break;
-            }
+            // "footer" (a turn's usage line, from hubs before 0.59.2): not drawn, as on the desktop.
             case "forked_from":
                 wrap.addView(divider("Forked from conversation", "Open source conversation",
                         () -> open(this, hub, it.optString("chat"))), Ui.fill());

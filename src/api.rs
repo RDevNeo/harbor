@@ -2109,7 +2109,6 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
             "label": label, "summary": summary, "input": clipped(input),
             "result": result.map(clipped), "done": result.is_some(), "is_error": is_error, "images": images,
         }),
-        Card::Footer { text, at } => json!({ "text": text, "at": at }),
         Card::ForkedFrom { chat, seq } => json!({ "chat": chat, "seq": seq }),
         // `chat` (this hub's id of that chat, null while it isn't here) is filled in by `chat_items`.
         Card::ChatLink { gid, text } => json!({ "gid": gid, "text": text }),
@@ -3019,9 +3018,8 @@ impl App {
             None => self.forks_of(chat),
         };
         let lead = self.chat(chat).is_some_and(|c| c.role == store::Role::Lead);
-        let who = |account: &str, model: &str| self.footer_who(chat, account, model);
         let items = &self.transcripts[&chat].items;
-        let cards = crate::view::project(items, lead, &forks, &who);
+        let cards = crate::view::project(items, lead, &forks);
         // Every change to a chat goes through `api_touch`: nothing new since the last look,
         // nothing to hash (a phone asks again after each event, many times a second).
         let now = self.api.hub.chat_rev(chat);
@@ -3917,7 +3915,7 @@ mod tests {
     fn items_on_the_wire() {
         let one = |it: Item| {
             let items = vec![it];
-            let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
+            let cards = crate::view::project(&items, false, &[]);
             card_json(&cards[0], 9, &mut |_| vec![], &HashMap::new())
         };
         let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![], sender: String::new() });
@@ -3930,14 +3928,15 @@ mod tests {
         let v = one(Item::Text { text: "# H".into(), at: 0 });
         assert_eq!((v["markdown"].as_str(), v["blocks"][0]["type"].as_str()), (Some("# H"), Some("heading")));
         let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() });
-        assert_eq!((v["kind"].as_str(), v["text"].as_str()), (Some("footer"), Some("75.0s · 0 in · 0 out")));
+        // A turn's end: no usage line in the chat.
+        assert_eq!((v["kind"].as_str(), v.get("text")), (Some("hidden"), None));
     }
 
     #[test]
     fn media_on_the_wire() {
         use crate::media::Media;
         let items = vec![Item::Text { text: "See ![Chart](out/c.png) and the run\n\n![](/v/run.mp4)\nAlso /tmp/x.png".into(), at: 1 }];
-        let cards = crate::view::project(&items, false, &[], &|_: &str, _: &str| String::new());
+        let cards = crate::view::project(&items, false, &[]);
         let m = |path: &str, caption: &str, video: bool, shown: bool| Media { path: path.into(), caption: caption.into(), video, shown, url: None };
         let v = card_json(&cards[0], 3, &mut |_| vec![m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)], &HashMap::new());
         let v = with_chat(v, "g1".into());
@@ -3952,20 +3951,19 @@ mod tests {
         assert!(v["markdown"].as_str().unwrap().contains("![Chart](out/c.png)"));
         // No media: no field.
         let plain = vec![Item::Text { text: "hi".into(), at: 1 }];
-        let cards = crate::view::project(&plain, false, &[], &|_: &str, _: &str| String::new());
+        let cards = crate::view::project(&plain, false, &[]);
         assert!(card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new()).get("media").is_none());
     }
 
     /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,
-    /// the same kinds in the same order, the same footer text, labels, dividers and images.
+    /// the same kinds in the same order, the same labels, dividers and images.
     #[test]
     fn the_phone_sees_what_the_desktop_draws() {
         use crate::view::{Card, kind, project};
         let items = crate::view::fixture();
-        let who = |a: &str, _m: &str| if a == "claude" { "Claude · AB · Opus 5.5 · ".to_string() } else { String::new() };
         let forks = [(8, 42)];
         // What chat.rs draws: these cards, skipping the hidden ones.
-        let desktop = project(&items, true, &forks, &who);
+        let desktop = project(&items, true, &forks);
         let phone: Vec<Value> = desktop.iter().map(|c| card_json(c, 1, &mut |_| vec![], &HashMap::new())).collect();
         assert_eq!(phone.len(), items.len(), "one card per item, so seq stays the item's index");
         for (d, p) in desktop.iter().zip(&phone) {
@@ -3973,7 +3971,6 @@ mod tests {
             assert_eq!(p["seq"].as_u64(), Some(d.seq as u64));
             assert_eq!(p["forks_after"].as_array().map(|a| a.len()).unwrap_or(0), d.forks_after.len());
             match &d.card {
-                Card::Footer { text, .. } => assert_eq!(p["text"].as_str(), Some(text.as_str())),
                 Card::Text { text, forkable, .. } => assert_eq!((p["markdown"].as_str(), p["forkable"].as_bool()), (Some(*text), Some(*forkable))),
                 Card::Tool { label, .. } => assert_eq!(p["label"].as_str(), Some(label.as_str())),
                 Card::Message { from, to, text } => assert_eq!((p["from"].as_str(), p["to"].as_str(), p["text"].as_str()), (Some(*from), Some(*to), Some(*text))),
@@ -3982,8 +3979,8 @@ mod tests {
             }
         }
         let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
-        assert_eq!(shown, ["user", "message", "tool", "text", "footer", "notice", "error"]);
-        assert_eq!(phone[9]["text"], "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96");
+        assert_eq!(shown, ["user", "message", "tool", "text", "notice", "error"]);
+        assert_eq!(phone[9]["kind"], "hidden");
         assert_eq!(phone[8]["forks_after"], json!([42]));
     }
 }

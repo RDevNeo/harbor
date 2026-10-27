@@ -1,6 +1,6 @@
 //! What a chat's transcript shows, card by card. The desktop (chat.rs) draws these cards and
 //! the phone API (api.rs) sends them, so a chat looks the same on both: the same items hidden
-//! (a lead's coordination), the same footers, labels, dividers and images.
+//! (a lead's coordination), the same labels, dividers and images.
 
 use crate::media::Media;
 use crate::mentions::Mention;
@@ -24,8 +24,6 @@ pub enum Card<'a> {
     Text { text: &'a str, at: i64, forkable: bool },
     Thinking { text: &'a str },
     Tool { label: String, summary: &'a str, input: &'a str, result: Option<&'a str>, is_error: bool },
-    /// The line under a finished turn: "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96".
-    Footer { text: String, at: i64 },
     /// The top of a fork: back to the reply it came from.
     ForkedFrom { chat: i64, seq: usize },
     /// A chat an agent opened (openchat.rs): in the new chat, where it came from; in the
@@ -84,7 +82,7 @@ pub fn tool_label(name: &str) -> String {
 
 /// Which items a transcript hides. Only a lead's: its coordination is invisible (tool calls
 /// to Harbor, thinking, agents' reports), and so is the text of turns that hand work off
-/// (only an acknowledgement), and the footer of turns that said nothing.
+/// (only an acknowledgement).
 pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     let mut out = vec![false; items.len()];
     if !lead {
@@ -100,46 +98,27 @@ pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
             start = i + 1;
         }
     }
-    // Whether the current turn (since the last user message or result) said anything.
-    let mut said = false;
     for (i, item) in items.iter().enumerate() {
         out[i] = match item {
             Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != SHOW_MEDIA || *is_error),
             Item::Thinking { .. } => true,
             Item::Notice { icon, .. } => icon == "bot",
             Item::Text { text, .. } => text.trim().is_empty() || handoff[i],
-            Item::Result { .. } => !said,
             _ => false,
         };
-        match item {
-            Item::Text { text, .. } if !text.trim().is_empty() && !handoff[i] => said = true,
-            Item::Result { .. } | Item::User { .. } => said = false,
-            _ => {}
-        }
     }
     out
 }
 
-/// The footer line of a turn; `who` is "Claude · AB · Opus 5.5 · " for its account and model
-/// ("" when the account is gone).
-pub fn footer(who: &str, cost_usd: f64, duration_ms: u64, input_tokens: u64, output_tokens: u64, cached: u64) -> String {
-    use crate::cost::{money, short};
-    let cost = money(cost_usd);
-    let cost = if cost.is_empty() { cost } else { format!(" · {cost}") };
-    let cached = if cached > 0 { format!(" ({} cached)", short(cached)) } else { String::new() };
-    format!("{who}{:.1}s · {} in{cached} · {} out{cost}", duration_ms as f64 / 1000.0, short(input_tokens), short(output_tokens))
-}
-
-/// The transcript as cards. `who(account, model)` names a turn's account and model for its
-/// footer; `forks` are (item index, forked chat) pairs.
-pub fn project<'a>(items: &'a [Item], lead: bool, forks: &[(usize, i64)], who: &dyn Fn(&str, &str) -> String) -> Vec<Shown<'a>> {
+/// The transcript as cards. `forks` are (item index, forked chat) pairs.
+pub fn project<'a>(items: &'a [Item], lead: bool, forks: &[(usize, i64)]) -> Vec<Shown<'a>> {
     let hide = hidden(items, lead);
     let forkable = crate::fork::forkable(items);
     let mut out: Vec<Shown> = items
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let card = if hide[i] { Card::Hidden } else { card(item, forkable[i].is_some(), who) };
+            let card = if hide[i] { Card::Hidden } else { card(item, forkable[i].is_some()) };
             let forks_after = forks.iter().filter(|(at, _)| *at == i).map(|(_, f)| *f).collect();
             Shown { seq: i, card, forks_after, group: None }
         })
@@ -194,7 +173,7 @@ pub fn group_label(calls: usize) -> String {
     format!("{calls} tool call{}", if calls == 1 { "" } else { "s" })
 }
 
-fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) -> Card<'a> {
+fn card<'a>(item: &'a Item, forkable: bool) -> Card<'a> {
     match item {
         Item::User { text, files, at, mentions, sender } => Card::User {
             text,
@@ -212,9 +191,8 @@ fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) 
             Card::Media { input, caption: v["caption"].as_str().unwrap_or("").to_string(), pending: result.is_none() }
         }
         Item::Tool { name, summary, input, result, is_error, .. } => Card::Tool { label: tool_label(name), summary, input, result: result.as_deref(), is_error: *is_error },
-        Item::Result { cost_usd, duration_ms, input_tokens, output_tokens, cached, account, model, at, .. } => {
-            Card::Footer { text: footer(&who(account, model), *cost_usd, *duration_ms, *input_tokens, *output_tokens, *cached), at: *at }
-        }
+        // A turn's end draws nothing: its usage line ("4.3s · 189k in · $3.96") stays in Usage.
+        Item::Result { .. } => Card::Hidden,
         Item::Notice { icon, detail, .. } if icon == "fork" && detail.starts_with("harbor:chat/") => {
             let (c, n) = detail["harbor:chat/".len()..].split_once('/').unwrap_or_default();
             Card::ForkedFrom { chat: c.parse().unwrap_or(0), seq: n.parse().unwrap_or(0) }
@@ -287,7 +265,6 @@ pub fn kind(c: &Card) -> &'static str {
         Card::Text { .. } => "text",
         Card::Thinking { .. } => "thinking",
         Card::Tool { .. } => "tool",
-        Card::Footer { .. } => "footer",
         Card::ForkedFrom { .. } => "forked_from",
         Card::ChatLink { .. } => "chat_link",
         Card::Notice { .. } => "notice",
@@ -305,7 +282,7 @@ mod tests {
     fn tool_calls_fold_into_runs() {
         let tool = |id: &str, result: Option<&str>| Item::Tool { id: id.into(), name: "Bash".into(), summary: String::new(), input: "{}".into(), result: result.map(String::from), is_error: false };
         let text = |t: &str| Item::Text { text: t.into(), at: 0 };
-        let groups_of = |items: &[Item]| project(items, false, &[], &|_: &str, _: &str| String::new()).iter().map(|s| s.group).collect::<Vec<_>>();
+        let groups_of = |items: &[Item]| project(items, false, &[]).iter().map(|s| s.group).collect::<Vec<_>>();
         let mut items = vec![
             Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new() },
             Item::Thinking { text: "hmm".into() },
@@ -315,10 +292,10 @@ mod tests {
             text("Done with a and b."),
             tool("c", None),
         ];
-        let groups_of_lead = |items: &[Item]| project(items, true, &[], &|_: &str, _: &str| String::new()).iter().map(|s| s.group).collect::<Vec<_>>();
+        let groups_of_lead = |items: &[Item]| project(items, true, &[]).iter().map(|s| s.group).collect::<Vec<_>>();
         // A lead's (its thinking and empty text hidden: they don't break the run either).
         assert_eq!(groups_of_lead(&items), [None, None, Some(2), None, Some(2), None, Some(6)]);
-        let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
+        let cards = project(&items, true, &[]);
         let g = groups(&cards);
         assert_eq!((g[&2], g[&6]), (Group { calls: 2, pending: false }, Group { calls: 1, pending: true }));
         assert_eq!((group_label(1), group_label(5)), ("1 tool call".to_string(), "5 tool calls".to_string()));
@@ -341,18 +318,16 @@ mod tests {
     #[test]
     fn a_lead_hides_its_coordination() {
         let items = fixture();
-        let who = |a: &str, _m: &str| if a == "claude" { "Claude · AB · Opus 5.5 · ".to_string() } else { String::new() };
-        let cards = project(&items, true, &[(8, 42)], &who);
+        let cards = project(&items, true, &[(8, 42)]);
         let kinds: Vec<&str> = cards.iter().map(|s| kind(&s.card)).collect();
-        assert_eq!(kinds, ["user", "hidden", "hidden", "hidden", "hidden", "message", "hidden", "tool", "text", "footer", "notice", "error"]);
-        assert_eq!(cards[9].card, Card::Footer { text: "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96".into(), at: 9 });
+        assert_eq!(kinds, ["user", "hidden", "hidden", "hidden", "hidden", "message", "hidden", "tool", "text", "hidden", "notice", "error"]);
         assert_eq!(cards[8].forks_after, [42]);
         assert!(matches!(cards[8].card, Card::Text { forkable: true, .. }));
         let Card::User { files, images, .. } = &cards[0].card else { panic!() };
         assert_eq!((files.as_slice(), images.as_slice()), (["/tmp/notes.txt"].as_slice(), ["/tmp/shot.png"].as_slice()));
         assert!(matches!(cards[10].card, Card::Notice { url: Some("http://127.0.0.1:3000"), .. }));
-        // Not a lead: everything shows.
-        assert!(project(&items, false, &[], &who).iter().all(|s| s.card != Card::Hidden));
+        // Not a lead: everything shows but the ends of turns (no usage line in the chat).
+        assert!(project(&items, false, &[]).iter().zip(&items).all(|(s, it)| (s.card == Card::Hidden) == matches!(it, Item::Result { .. })));
     }
 
     #[test]
@@ -361,7 +336,7 @@ mod tests {
             Item::Notice { icon: "bot".into(), text: "api finished".into(), detail: "old".into() },
             Item::Notice { icon: "report".into(), text: "api finished: added tests".into(), detail: "**Added tests.**".into() },
         ];
-        let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
+        let cards = project(&items, true, &[]);
         assert_eq!(cards[0].card, Card::Hidden);
         assert!(matches!(cards[1].card, Card::Notice { text: "api finished: added tests", markdown: true, .. }));
     }
@@ -370,7 +345,7 @@ mod tests {
     fn shown_media_is_a_card_even_for_a_lead() {
         let tool = |result: Option<&str>, is_error: bool| Item::Tool { id: "m".into(), name: SHOW_MEDIA.into(), summary: String::new(), input: r#"{"path":"out/demo.mp4","caption":"Demo"}"#.into(), result: result.map(String::from), is_error };
         let items = vec![tool(Some("Shown"), false), tool(None, false), tool(Some("no such file"), true)];
-        let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
+        let cards = project(&items, true, &[]);
         let kinds: Vec<&str> = cards.iter().map(|c| kind(&c.card)).collect();
         // A failed call stays a tool card (a lead hides it, like its other Harbor calls).
         assert_eq!(kinds, ["media", "media", "hidden"]);
@@ -392,7 +367,5 @@ mod tests {
         assert_eq!(tool_label("mcp__harbor__spawn_agent"), "Spawn agent");
         assert_eq!(tool_label("mcp__github__get_pr"), "github · get_pr");
         assert_eq!(tool_label("Bash"), "Bash");
-        assert_eq!(footer("", 0.0, 1500, 999, 3, 0), "1.5s · 999 in · 3 out");
-        assert_eq!(footer("", 0.004, 1500, 12_400, 3, 12_000), "1.5s · 12.4k in (12k cached) · 3 out · <$0.01");
     }
 }

@@ -373,9 +373,8 @@ impl App {
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
         // Where relative media paths in replies start (another PC's chat: nowhere here).
         let cwd = self.chat(id).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c).to_string_lossy().into_owned()).unwrap_or_default();
-        // The same cards the phone gets (view.rs): what's hidden, footers, dividers.
-        let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
-        let cards = crate::view::project(&tr.items, lead, &forks, &who);
+        // The same cards the phone gets (view.rs): what's hidden, dividers.
+        let cards = crate::view::project(&tr.items, lead, &forks);
         // Tool calls fold behind one chevron row per run, closed until clicked.
         let groups = crate::view::groups(&cards);
         let running = self.is_running(id);
@@ -474,6 +473,12 @@ impl App {
                                     let f = ui.style().text_styles.get(&theme::ts("label-13")).cloned().unwrap_or_default();
                                     need = need.max(ui.painter().layout_no_wrap(m.note.trim().to_string(), f, Color32::WHITE).size().x + 26.0);
                                 }
+                                // Written on another PC or a phone: "from …" in the bubble's corner.
+                                let from = (!sender.is_empty()).then(|| format!("from {sender}"));
+                                if let Some(from) = &from {
+                                    let f = ui.style().text_styles.get(&theme::ts("label-12")).cloned().unwrap_or_default();
+                                    need = need.max(ui.painter().layout_no_wrap(from.clone(), f, Color32::WHITE).size().x);
+                                }
                                 ui.set_max_width((need + 2.0).min(avail * 0.8 - 28.0).max(40.0));
                                 ui.vertical(|ui| {
                                     if mentions.iter().any(|m| !m.note.trim().is_empty()) {
@@ -514,6 +519,13 @@ impl App {
                                         ui.label(RichText::new(format!("{}  {name}", ic::CLIP)).text_style(theme::ts("label-12")).color(t.subtle()))
                                             .tip(*f);
                                     }
+                                    if let Some(from) = from {
+                                        ui.add_space(-6.0);
+                                        // A long "from … via …" ends in "…" (full on hover).
+                                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                            ui.add(egui::Label::new(RichText::new(&from).text_style(theme::ts("label-12")).color(t.subtle())).truncate()).on_hover_text(from);
+                                        });
+                                    }
                                 });
                             })
                             .response
@@ -525,15 +537,6 @@ impl App {
                             0 => MsgAction::Copy(text.to_string()),
                             1 => MsgAction::Quote(text.to_string()),
                             _ => MsgAction::Mention(i),
-                        });
-                    }
-                    // Written on another PC or a phone: where, under the bubble.
-                    if !sender.is_empty() {
-                        ui.add_space(-8.0);
-                        // One line inside the column: a long "from … via …" ends in "…" (full on hover).
-                        ui.allocate_ui_with_layout(Vec2::new(avail, 0.0), Layout::right_to_left(Align::Min), |ui| {
-                            let from = format!("from {sender}");
-                            ui.add(egui::Label::new(RichText::new(&from).text_style(theme::ts("label-12")).color(t.subtle())).truncate()).on_hover_text(from);
                         });
                     }
                 }
@@ -661,9 +664,6 @@ impl App {
                         w::subtle(ui, format!("{}  Can't show this file here", ic::ALERT), "label-12");
                     }
                     media_view(ui, &media, 0.0);
-                }
-                Card::Footer { text, .. } => {
-                    w::subtle(ui, text.as_str(), "label-12-mono");
                 }
                 // The top of a fork: back to the reply it was forked from.
                 Card::ForkedFrom { chat, seq } => {

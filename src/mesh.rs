@@ -2072,17 +2072,6 @@ impl App {
         }
     }
 
-    /// A turn footer's "account · model · " for a chat: a copy's account is its home PC's.
-    pub fn footer_who(&self, chat: i64, account: &str, model: &str) -> String {
-        if let Some(c) = self.chat(chat).filter(|c| c.foreign()) {
-            let Some(p) = self.shared().peer(&c.home) else { return String::new() };
-            let Some((_, short, kind)) = p.accounts.iter().find(|(id, _, _)| id == account) else { return String::new() };
-            let k = crate::providers::Kind::ALL.into_iter().find(|k| k.label().eq_ignore_ascii_case(kind)).unwrap_or(crate::providers::Kind::Claude);
-            return format!("{short} · {} · ", self.model_label(k, model));
-        }
-        self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default()
-    }
-
     /// Once per frame: copies written to disk now and then, the chat waiting to open.
     pub fn mesh_tick(&mut self, ctx: &eframe::egui::Context) {
         // Who is who: a detection that finished, or one that's due (profile.rs).

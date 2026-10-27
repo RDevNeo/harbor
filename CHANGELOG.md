@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The usage line under each agent turn ("Claude · Opus 5.5 · 6.3s · 158k in · 358 out · $0.85")
+  no longer shows in the chat, on the desktop and the phone. Tokens and cost stay in the chat's
+  header and in Usage.
+- "from <PC or phone>" on a message written elsewhere now sits small in the bottom-right corner
+  inside its bubble, instead of under it, on the desktop and the phone.
+
 ## [0.59.1] - 2026-10-27
 
 ### Fixed

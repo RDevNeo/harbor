@@ -344,13 +344,13 @@ mod tests {
             Item::Notice { icon: "chat".into(), text: opened_by("Fix login"), detail: format!("{LINK}g-a") },
             Item::User { text: "go".into(), files: vec![], at: 1, mentions: vec![], sender: String::new() },
         ];
-        let cards = crate::view::project(&items, true, &[], &|_, _| String::new());
+        let cards = crate::view::project(&items, true, &[]);
         assert_eq!(cards[0].card, crate::view::Card::ChatLink { gid: "g-a", text: "Opened by the agent of “Fix login”" });
         let v = crate::api::card_json(&cards[0], 1, &mut |_| vec![], &Default::default());
         assert_eq!((v["kind"].as_str(), v["gid"].as_str()), (Some("chat_link"), Some("g-a")));
         // A chat notice that isn't a link stays a notice.
         let plain = [Item::Notice { icon: "chat".into(), text: "x".into(), detail: "y".into() }];
-        assert!(matches!(crate::view::project(&plain, true, &[], &|_, _| String::new())[0].card, crate::view::Card::Notice { .. }));
+        assert!(matches!(crate::view::project(&plain, true, &[])[0].card, crate::view::Card::Notice { .. }));
     }
 
     #[test]
