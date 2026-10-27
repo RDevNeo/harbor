@@ -644,16 +644,33 @@ first; if any field fails nothing changes (`400` an unknown value, `409` not swi
 - `model`: one of `models[kind]` of the (new) account's kind.
 - `effort`: one of `efforts[kind]`, or `""`. Left out and no longer valid for the provider: its default.
 - `access`: one of `access[kind]`. Left out and no longer valid: the provider's first level.
-- `device`: `""` (the hub) or an id from `devices`; only before the chat's first turn
-  (`switchable.device`); other providers than Claude run on the hub only.
+- `device`: `""` (the hub) or an id from `devices`; other providers than Claude run on the hub
+  only. Before the chat's first turn it is just set. Since 0.63 a started Claude chat **moves**
+  there (with its sub-agents): the hub carries each Claude session (`<sid>.jsonl` and its
+  sidecar folder) from where it is to where the next turn will look (an SSH device's newest
+  copy over ssh, into this hub's account folder for the project, or onto the device in the
+  profile and folder its turns use), then the chat runs there; a `hub` device (another PC of
+  the mesh) gets the chat through "Move to PC…" (below). The answer comes at once with
+  `chat.moving_to` set; the outcome is a notice in the chat ("Moved from X to Y", icon
+  `monitor`, or "Couldn't move to Y: why", icon `alert`). `409` with why when it can't go there
+  now; when the agent's files change place (this PC's files and a device that works on its
+  own), uncommitted changes in the folder it leaves refuse the move in that notice ("… commit
+  or stash them first"). Hubs before 0.63 answer `409` for any device change of a started chat.
 - `fast`: the hub-wide flag; `true` only for providers with a fast mode (claude, codex).
 
-`switch_reason` gives, for each run setting that can't change now, why (e.g. `{"device": "A
-started chat stays on the device it started on"}`), for the greyed-out option.
+`switch_reason` gives, for each run setting that can't change now, why (e.g. `{"device": "it
+is running: move it once its turn ends"}`), for the greyed-out option.
 `switchable` tells which of these make sense now: `account` (another allowed account exists),
 `model`, `effort` (the provider has efforts), `access` (it has more than one level),
-`device` (not started, Claude), `fast` (the provider has a fast mode). Changes apply from the
-next turn; a running turn keeps its settings.
+`device` (Claude; a started chat only when it can move now: idle, a lead, not another PC's),
+`fast` (the provider has a fast mode). Changes apply from the next turn; a running turn keeps
+its settings.
+
+Optional since 0.63, for a started chat: `device_why` `{"<device id>": "why"}` names the
+places of `devices` (`""` this hub) it can't move to now, each with why (offline, an older
+Harbor, no Claude account, a Windows device…): grey those rows out with it; the rest can be
+picked. `moving_to`: the place's name while a move runs (`null` otherwise); messages sent
+meanwhile follow the chat.
 
 ### `POST /v1/chats/{id}/typing`
 

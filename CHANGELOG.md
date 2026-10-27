@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Runs on, after the first message: a started Claude chat can switch where it runs from the
+  composer's "Runs on" picker (desktop) or the Device row of its run settings (phone): this PC,
+  another SSH device, or another PC of the mesh. Its Claude session goes along (fetched from the
+  device or put on it over ssh), and the next turn resumes it there. Places it can't go to now
+  are greyed out with the reason (a turn running, the device offline, an older Harbor there…),
+  and when the agent's files change place, uncommitted changes in the folder it leaves stop the
+  move ("commit or stash them first"). "Move to PC…" now also takes chats that run on an SSH
+  device.
+
 ## [0.62.0] - 2026-10-27
 
 ### Added

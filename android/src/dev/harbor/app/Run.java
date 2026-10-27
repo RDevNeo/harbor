@@ -65,7 +65,7 @@ final class Run {
         String s = r == null ? "" : r.optString(f, "");
         if (!s.isEmpty()) return s;
         switch (f) {
-            case "device": return chat != null ? "fixed once the chat has started" : "only Claude chats run on other devices";
+            case "device": return chat != null ? "can't move it now" : "only Claude chats run on other devices";
             case "account": return "this chat stays on its provider";
             case "effort": return "this provider has no effort levels";
             case "fast": return "only Claude and Codex have fast mode";
@@ -238,6 +238,10 @@ final class Run {
 
     private void pickList(Activity a, String title, JSONArray list, String cur, String field, Changed ch) {
         List<Sheet.Option> o = new ArrayList<>();
+        // A started chat moves to the device picked (its session with it); the hub says why it
+        // can't go to some (device_why, by device id). Hubs before 0.63 don't send it.
+        boolean started = chat != null && "device".equals(field) && chat.has("device_why");
+        JSONObject no = started ? chat.optJSONObject("device_why") : null;
         for (int i = 0; i < list.length(); i++) {
             Object e = list.opt(i);
             String sub = "";
@@ -247,12 +251,15 @@ final class Run {
                 sub = j.optString("desc", "");
                 boolean off = j.has("online") && !j.isNull("online") && !j.optBoolean("online");
                 // Another PC running Harbor: the chat starts there, so it has to be on.
-                if (j.optBoolean("hub")) { sub = off ? "Harbor · off" : "Harbor · the chat runs there"; ok = !off; }
+                if (j.optBoolean("hub")) { sub = off ? "Harbor · off" : started ? "Harbor · the chat moves there" : "Harbor · the chat runs there"; ok = !off; }
                 else if (off) sub = sub.isEmpty() ? "offline" : sub + " · offline";
             }
+            String why = no == null ? "" : no.optString(Hub.optId(e), "");
+            if (!why.isEmpty()) { sub = why; ok = false; }
             o.add(new Sheet.Option(Hub.optId(e), Hub.optLabel(e), sub, ok));
         }
-        Sheet.pick(a, title, null, o, cur, id -> ch.apply(field, id));
+        String note = started ? "The chat moves to the device you pick, with its Claude session, and goes on there." : null;
+        Sheet.pick(a, title, note, o, cur, id -> { if (!id.equals(cur)) ch.apply(field, id); });
     }
 
     private void pickAccount(Activity a, Changed ch) {

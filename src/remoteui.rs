@@ -122,15 +122,23 @@ impl App {
         r.tip(tip)
     }
 
-    /// The device menu above the composer; returns whether it should close.
+    /// The device menu above the composer; returns whether it should close. A started chat of
+    /// this PC moves where it's picked, its sessions with it (relocate.rs); places it can't go
+    /// to now are greyed out with why.
     pub fn device_menu(&mut self, ctx: &egui::Context) -> bool {
         let t = self.theme.t;
         let sel = self.sel();
         let kind = self.account(&sel.account).map(|a| a.kind).unwrap_or(Kind::Claude);
-        // A started chat's session lives on its device: it stays there.
-        let locked = matches!(self.view, View::Chat(id) if self.chat(id).is_some_and(|c| c.started));
+        let chat = match self.view {
+            View::Chat(id) => self.chat(id).filter(|c| c.started).cloned(),
+            _ => None,
+        };
+        // Another PC's started chat runs in that PC's Harbor: it stays as it is from here.
+        let locked = chat.as_ref().is_some_and(|c| c.foreign());
+        let moving = chat.as_ref().filter(|c| !c.foreign()).map(|c| c.id);
         let net = remote::tailnet(ctx);
-        let devs: Vec<(Host, Option<bool>)> = remote::devices(&self.remote, &net).into_iter().filter(|(h, _)| !h.hidden || h.id == sel.device).collect();
+        let all = remote::devices(&self.remote, &net);
+        let devs: Vec<(Host, Option<bool>)> = all.iter().filter(|(h, _)| !h.hidden || h.id == sel.device).cloned().collect();
         // SSH hosts get their online dot (and OS) from one test per session.
         for (h, _) in &devs {
             remote::test_once(&self.remote, h, ctx);
@@ -143,40 +151,54 @@ impl App {
         // PCs running Harbor with chats shared (mesh.rs): a chat picked there starts in that Harbor.
         let hubs = self.mesh_hosts();
         let only_hubs: Vec<crate::mesh::Peer> = hubs.iter().filter(|p| !devs.iter().any(|(h, _)| h.id == p.id)).cloned().collect();
+        // A started chat: why it can't go to each place (None: it can).
+        let why = |id: &str| moving.and_then(|c| self.relocate_why(c, id, &all));
+        let here_why = why("");
+        let dev_why: Vec<Option<String>> = devs.iter().map(|(h, _)| why(&h.id)).collect();
+        let hub_why: Vec<Option<String>> = only_hubs.iter().map(|p| why(&p.id)).collect();
+        let started = moving.is_some();
         let (pick, close) = w::popover(ctx, "device", self.popup_anchor, 300.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             w::menu_label(ui, "Runs on");
             let mut pick: Option<Option<String>> = None;
             let here = sel.device.is_empty();
-            let r = device_row(ui, |p, r, fg| paint_mark(p, r, ic::HOUSE, None, None, fg, &t), "This PC", &me, here, !locked || here);
+            let desc = here_why.clone().unwrap_or_else(|| me.clone());
+            let r = device_row(ui, |p, r, fg| paint_mark(p, r, ic::HOUSE, None, None, fg, &t), "This PC", &desc, here, (!locked || here) && here_why.is_none());
             if r.clicked() {
                 pick = Some(Some(String::new()));
             }
             ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                for ((h, online), tex) in devs.iter().zip(&texs) {
+                for (((h, online), tex), no) in devs.iter().zip(&texs).zip(&dev_why) {
                     let current = h.id == sel.device;
-                    let ok = kind == Kind::Claude && (!locked || current);
+                    let ok = kind == Kind::Claude && (!locked || current) && no.is_none();
                     let glyph = remote::glyph(h);
                     let hub = hubs.iter().find(|p| p.id == h.id);
                     let ok = ok && hub.is_none_or(|p| p.online);
                     let desc = match hub {
                         _ if kind != Kind::Claude => "Claude Code only".to_string(),
+                        _ if no.is_some() => no.clone().unwrap_or_default(),
+                        Some(p) if p.online && started => "Harbor · the chat moves there".to_string(),
                         Some(p) if p.online => "Harbor · starts the chat there".to_string(),
                         Some(_) => "Harbor · off".to_string(),
                         None => where_(h, *online),
                     };
                     let r = device_row(ui, |p, r, fg| paint_mark(p, r, glyph, *tex, *online, fg, &t), h.label(), &desc, current, ok);
-                    let r = if locked && !current { r.tip("A started chat stays on the device it started on. Start a new chat to use another.") } else { r };
+                    let r = if locked && !current { r.tip("This chat runs in another PC's Harbor: change where it runs there.") } else { r };
                     if r.clicked() {
                         pick = Some(Some(h.id.clone()));
                     }
                 }
-                for p in &only_hubs {
+                for (p, no) in only_hubs.iter().zip(&hub_why) {
                     let current = p.id == sel.device;
-                    let ok = kind == Kind::Claude && !locked && p.online;
-                    let desc = if p.online { "Harbor · starts the chat there" } else { "Harbor · off" };
+                    let ok = kind == Kind::Claude && !locked && p.online && no.is_none();
+                    let desc = match no {
+                        Some(w) => w.clone(),
+                        None if !p.online => "Harbor · off".into(),
+                        None if started => "Harbor · the chat moves there".into(),
+                        None => "Harbor · starts the chat there".into(),
+                    };
                     let online = Some(p.online);
-                    if device_row(ui, |pa, r, fg| paint_mark(pa, r, ic::MONITOR, None, online, fg, &t), &p.name, desc, current, ok).clicked() {
+                    if device_row(ui, |pa, r, fg| paint_mark(pa, r, ic::MONITOR, None, online, fg, &t), &p.name, &desc, current, ok).clicked() {
                         pick = Some(Some(p.id.clone()));
                     }
                 }
@@ -192,6 +214,17 @@ impl App {
             pick
         });
         match pick {
+            // A started chat moves there (on a thread); the outcome is a notice in it.
+            Some(Some(id)) if moving.is_some() => {
+                self.popup = None;
+                if id != sel.device {
+                    let chat = moving.unwrap_or_default();
+                    match self.relocate(chat, &id, ctx) {
+                        Ok(name) => crate::picker::show_toast(ctx, format!("Moving to {name}…")),
+                        Err(e) => crate::picker::show_toast(ctx, format!("Couldn't move this chat: {e}")),
+                    }
+                }
+            }
             Some(Some(id)) => {
                 // A found PC picked for the first time is saved, so the chat finds it even
                 // before the list is read again after a restart.

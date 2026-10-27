@@ -2817,8 +2817,13 @@ impl App {
         if providers::access(kind).len() <= 1 {
             r.insert("access".into(), json!(format!("{} has one access level", kind.label())));
         }
-        if c.started {
-            r.insert("device".into(), json!("A started chat stays on the device it started on"));
+        if c.started && kind == Kind::Claude {
+            // Each place's own reason is in `device_why`; this one holds for all of them.
+            if let Some(w) = self.relocate_blocker(c.id) {
+                r.insert("device".into(), json!(w));
+            }
+        } else if c.started {
+            r.insert("device".into(), json!("Only Claude chats move between devices for now"));
         } else if kind != Kind::Claude {
             r.insert("device".into(), json!("Only Claude chats run on another device"));
         }
@@ -2866,12 +2871,17 @@ impl App {
                 "model": true,
                 "effort": !providers::efforts(kind).is_empty(),
                 "access": providers::access(kind).len() > 1,
-                // A started chat's session lives on its device; other providers run here only.
-                "device": !c.started && kind == Kind::Claude,
+                // A started Claude chat moves, its session with it (relocate.rs); other
+                // providers run here only.
+                "device": kind == Kind::Claude && (!c.started || self.relocate_blocker(c.id).is_none()),
                 "fast": providers::has_fast(kind),
             },
             "allowed_accounts": allowed,
             "switch_reason": self.switch_reason(c, kind),
+            // A started chat: why it can't move to each place it can't go to now, by device id
+            // ("" this PC); and where it's moving to, while it is (both optional, 0.63).
+            "device_why": self.device_why(c),
+            "moving_to": self.moving_to(c.id),
         })
     }
 
@@ -2882,7 +2892,26 @@ impl App {
         let hosts: Vec<crate::remote::Host> = crate::remote::devices(&self.remote, &net).into_iter().map(|(h, _)| h).collect();
         let ids: Vec<&str> = hosts.iter().map(|h| h.id.as_str()).collect();
         let allowed = self.allowed_accounts(chat);
-        let Some((n, fast)) = check_run(&c, body, &self.accounts, &allowed, &|k| self.models_for(k).to_vec(), &ids)? else { return Ok(()) };
+        // A started chat moves to the device picked, its sessions with it (relocate.rs): checked
+        // first, started after the rest applied.
+        let moving = body["device"].as_str().filter(|d| c.started && !c.foreign() && *d != c.device).map(String::from);
+        let mut body = body.clone();
+        if let Some(d) = &moving {
+            let devs = crate::remote::devices(&self.remote, &net);
+            if let Some(w) = self.relocate_why(chat, d, &devs) {
+                return Err(err(409, format!("can't move it there: {w}")));
+            }
+            if let Some(o) = body.as_object_mut() {
+                o.remove("device");
+            }
+        }
+        let checked = check_run(&c, &body, &self.accounts, &allowed, &|k| self.models_for(k).to_vec(), &ids)?;
+        let Some((n, fast)) = checked else {
+            if let Some(d) = moving {
+                self.relocate(chat, &d, ctx).map_err(|e| err(409, e))?;
+            }
+            return Ok(());
+        };
         // Checked: apply. A Tailscale PC picked once is kept, as the desktop's device menu does.
         if let Some(h) = hosts.iter().find(|h| h.id == n.device && n.device != c.device) {
             if !self.remote.devices.iter().any(|x| x.id == h.id) {
@@ -2898,6 +2927,9 @@ impl App {
             *ch = n;
         }
         self.persist(chat);
+        if let Some(d) = moving {
+            self.relocate(chat, &d, ctx).map_err(|e| err(409, e))?;
+        }
         Ok(())
     }
 

@@ -349,6 +349,11 @@ pub fn tailnet(ctx: &eframe::egui::Context) -> Tailnet {
     cur.map(|(_, t)| t).unwrap_or_default()
 }
 
+/// The tailnet as last read, without reading it again (for answers that have no window).
+pub fn tailnet_cached() -> Tailnet {
+    TAILNET.lock().unwrap().clone().map(|(_, t)| t).unwrap_or_default()
+}
+
 pub fn refresh(ctx: &eframe::egui::Context) {
     if READING.swap(true, Ordering::SeqCst) {
         return;
@@ -410,7 +415,7 @@ pub fn quote(s: &str) -> String {
 }
 
 /// A remote path for the shell: a leading ~ stays expandable.
-fn shell_path(p: &str) -> String {
+pub fn shell_path(p: &str) -> String {
     match p {
         "~" | "" => "\"$HOME\"".into(),
         _ => match p.strip_prefix("~/") {

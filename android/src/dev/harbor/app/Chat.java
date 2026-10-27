@@ -764,6 +764,9 @@ public class Chat extends Base {
         try { body.put(field, value); } catch (Exception ignored) { }
         Ui.bg(this, () -> hub.call("PATCH", "/v1/chats/" + chatId, body), r -> {
             JSONObject c = r.optJSONObject("chat");
+            // A started chat moving to another device: the hub moves it in the background.
+            String to = c == null || c.isNull("moving_to") ? "" : c.optString("moving_to", "");
+            if (!to.isEmpty()) Ui.toast(this, "Moving to " + to + "…");
             if (c != null) {
                 JSONObject st = Hub.states.get(hub.id);
                 if (st != null) replaceChat(st, c);

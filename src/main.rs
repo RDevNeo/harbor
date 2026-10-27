@@ -42,6 +42,7 @@ mod meshctx;
 mod machines;
 mod movechat;
 mod movepc;
+mod relocate;
 mod notices;
 mod notify;
 mod openchat;

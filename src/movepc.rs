@@ -67,6 +67,8 @@ pub struct Local {
     pub adopting: HashSet<String>,
     /// Gids whose handoff thread still runs here (its outcome settles them).
     pub sending: HashSet<String>,
+    /// Started chats moving between this PC and its devices (relocate.rs): lead → where to.
+    pub relocating: HashMap<i64, String>,
     /// Messages sent to a chat while it was being handed over: they follow it, or are sent
     /// here if it stays.
     pub held: HashMap<i64, Vec<(String, Vec<PathBuf>, Vec<crate::mentions::Mention>)>>,
@@ -442,7 +444,7 @@ impl App {
     pub fn moving_to(&self, chat: i64) -> Option<String> {
         let c = self.chat(chat)?;
         let lead = if c.role == Role::Sub { c.parent.and_then(|p| self.chat(p))? } else { c };
-        self.movepc.moving.get(&lead.gid).map(|(_, n)| n.clone())
+        self.movepc.moving.get(&lead.gid).map(|(_, n)| n.clone()).or_else(|| self.movepc.relocating.get(&lead.id).cloned())
     }
 
     /// Why this PC's chat can't move to any PC now (None: it may, the PCs say the rest).
@@ -466,8 +468,9 @@ impl App {
         for id in &ids {
             let Some(x) = self.chat(*id) else { continue };
             let it = if *id == chat_id { "it".to_string() } else { format!("its sub-agent {}", x.name) };
-            if !x.device.is_empty() {
-                return Some(format!("{it} runs on device {}, which keeps its session there", x.device));
+            // (A chat on an SSH device comes here first, its sessions with it: relocate.rs.)
+            if x.device != c.device {
+                return Some(format!("{it} runs on another device than its lead"));
             }
             if self.account(&x.account).is_none_or(|a| a.kind != Kind::Claude) {
                 return Some(format!("{it} isn't a Claude chat: only Claude chats move to another PC for now"));
@@ -514,7 +517,8 @@ impl App {
     pub fn api_move_targets(&self, chat_id: i64) -> Value {
         let (mut blocker, mut targets) = self.move_pc_targets(chat_id);
         if blocker.is_none() {
-            if let Some(Err(e)) = self.chat(chat_id).filter(|c| c.repo_id.is_some()).map(|c| code_state(&self.chat_cwd(c), self.worktree_of(c).is_some())) {
+            // (A chat on a device that works on its own files is checked there, when it moves.)
+            if let Some(Err(e)) = self.chat(chat_id).filter(|c| c.repo_id.is_some() && c.device.is_empty()).map(|c| code_state(&self.chat_cwd(c), self.worktree_of(c).is_some())) {
                 for t in &mut targets {
                     t.why = Some(e.clone());
                 }
@@ -537,6 +541,10 @@ impl App {
         }
         let peer = self.api.hub.mesh.peer(pc).ok_or("that PC isn't one of this PC's")?;
         let lead = self.chat(chat_id).cloned().ok_or("no such chat")?;
+        // On an SSH device: its sessions come here first, then on (relocate.rs).
+        if !lead.device.is_empty() {
+            return self.relocate(chat_id, pc, ctx);
+        }
         let mut chats = vec![lead.clone()];
         chats.extend(self.subs_of(chat_id));
         // Where it works: clean, or it doesn't go.
@@ -617,7 +625,7 @@ impl App {
     }
 
     /// What waited while the chat was being handed over: its turn, here.
-    fn move_pc_resume(&mut self, chat_id: i64, ctx: &egui::Context) {
+    pub(crate) fn move_pc_resume(&mut self, chat_id: i64, ctx: &egui::Context) {
         if let Some(q) = self.pending.remove(&chat_id).filter(|q| !q.is_empty()) {
             self.start_turn(chat_id, q.join("\n\n---\n\n"), vec![], ctx);
         }
@@ -977,7 +985,7 @@ impl App {
         } else {
             let (blocker, mut targets) = self.move_pc_targets(c.id);
             // The code's state, as the bar reads it (on a thread, cached).
-            let dirty = (blocker.is_none() && c.repo_id.is_some()).then(|| self.ws_head(&self.chat_cwd(c), ui.ctx())).flatten().filter(|h| h.dirty > 0);
+            let dirty = (blocker.is_none() && c.repo_id.is_some() && c.device.is_empty()).then(|| self.ws_head(&self.chat_cwd(c), ui.ctx())).flatten().filter(|h| h.dirty > 0);
             match dirty {
                 Some(h) => {
                     let why = format!("{} uncommitted change{}: commit or stash them first", h.dirty, if h.dirty == 1 { "" } else { "s" });
