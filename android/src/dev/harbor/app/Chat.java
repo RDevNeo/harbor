@@ -59,6 +59,8 @@ public class Chat extends Base {
     private final TreeMap<Integer, JSONObject> items = new TreeMap<>();
     private final TreeMap<Integer, View> views = new TreeMap<>(); // seq >= from only
     private final Set<Integer> expanded = new HashSet<>();
+    /** Runs of tool calls opened from their chevron row, by the run's id (its `group`). */
+    private final Set<Integer> openGroups = new HashSet<>();
     private View hintView;   // the empty / error line
     private TextView earlier; // "Show earlier" on top
     private int from = -1;          // first seq drawn (-1: not known yet)
@@ -346,11 +348,20 @@ public class Chat extends Base {
         // Drop the "No messages" / error hint before placing items by position.
         if (hintView != null) { content.removeView(hintView); hintView = null; }
         if (!items.isEmpty() && (from < 0 || from > items.lastKey())) from = Math.max(0, items.lastKey() + 1 - WINDOW);
+        // A run's chevron row (on its first card) counts its tool calls and turns while one runs:
+        // it's drawn again when a card of the run changes, or the chat stops or starts running.
+        boolean wasRunning = running;
+        if (r.has("running")) running = r.optBoolean("running");
+        for (int seq : new ArrayList<>(touched)) {
+            int g = items.get(seq) == null ? -1 : items.get(seq).optInt("group", -1);
+            if (g >= 0 && items.containsKey(g)) touched.add(g);
+        }
+        if (running != wasRunning) for (Map.Entry<Integer, JSONObject> e : items.entrySet())
+            if (e.getValue().optInt("group", -1) == e.getKey()) touched.add(e.getKey());
         for (int seq : touched) if (seq >= from && items.containsKey(seq)) place(seq);
         earlierButton();
         if (items.isEmpty()) { hintView = emptyView(); content.addView(hintView); }
         if (r.has("typing")) typingLines = Sidebar.typingLines(r, you());
-        if (r.has("running")) running = r.optBoolean("running");
         bars = r.optJSONObject("status");
         JSONObject u = r.optJSONObject("usage");
         String label = u == null ? "" : u.optString("label");
@@ -415,6 +426,10 @@ public class Chat extends Base {
         from = Math.max(0, from - WINDOW);
         int before = content.getHeight(), y = scroll.getScrollY();
         for (int seq = from; seq < old; seq++) if (items.containsKey(seq)) place(seq);
+        // A run of tool calls that started above: its row moves up to its first card.
+        Integer next = items.ceilingKey(old);
+        while (next != null && "hidden".equals(items.get(next).optString("kind"))) next = items.higherKey(next);
+        if (next != null && items.get(next).has("group")) place(next);
         earlierButton();
         // Keep what was on screen where it was.
         content.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
@@ -1018,7 +1033,7 @@ public class Chat extends Base {
             wrap.addView(divider("Conversation fork", "Open fork", () -> open(this, hub, f)), Ui.margins(Ui.fill(), 0, 6, 0, 0));
         }
         if (wrap.getChildCount() == 0) wrap.setVisibility(View.GONE);
-        return wrap;
+        return grouped(it, wrap);
     }
 
     /** The desktop's centred notice pill; expands to its detail, or opens its link. */
@@ -1110,6 +1125,57 @@ public class Chat extends Base {
     interface Body { View make(); }
 
     /** A one-line row (status icon, label, summary) that expands to body on tap, like the desktop. */
+    /** A card in a run of tool calls (its `group`, PROTOCOL.md): the run's first card carries the
+     *  chevron row ("› 5 tool calls"); the cards show only while the run is open. Opens on a tap,
+     *  never by itself. Without `group` (an older hub) the card draws as it is. */
+    private View grouped(JSONObject it, LinearLayout card) {
+        int g = it.optInt("group", -1), seq = it.optInt("seq");
+        if (g < 0) return card;
+        boolean open = openGroups.contains(g);
+        if (!open) card.setVisibility(View.GONE);
+        // The run starts above the drawn window ("Show earlier"): its first drawn card has the row.
+        boolean first = g == seq;
+        if (g < from && seq >= from) {
+            first = true;
+            for (JSONObject m : items.subMap(from, seq).values()) if (m.optInt("group", -1) == g) first = false;
+        }
+        if (!first) return card;
+        int calls = 0;
+        boolean pending = false;
+        for (JSONObject m : items.tailMap(g).values()) {
+            if (m.optInt("group", -1) != g) { if (!"hidden".equals(m.optString("kind"))) break; continue; }
+            if (!"tool".equals(m.optString("kind"))) continue;
+            calls++;
+            if (!m.optBoolean("done", !m.isNull("result"))) pending = true;
+        }
+        LinearLayout col = Ui.col(this);
+        LinearLayout head = Ui.row(this);
+        head.setPadding(Ui.dp(20), Ui.dp(4), Ui.dp(20), Ui.dp(4));
+        head.addView(Ui.icon(this, open ? Ui.I_DOWN : Ui.I_RIGHT, 13, Ui.G700));
+        head.addView(Ui.text(this, calls + (calls == 1 ? " tool call" : " tool calls"), 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        if (pending && running) {
+            TextView spin = Ui.icon(this, Ui.I_LOADER, 12, Ui.G700);
+            android.view.animation.RotateAnimation a = new android.view.animation.RotateAnimation(0, 360,
+                    android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f, android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f);
+            a.setDuration(1200);
+            a.setRepeatCount(android.view.animation.Animation.INFINITE);
+            a.setInterpolator(new android.view.animation.LinearInterpolator());
+            spin.startAnimation(a);
+            head.addView(spin, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        }
+        head.setBackground(Ui.press(0, 0, 10));
+        head.setOnClickListener(v -> {
+            if (!openGroups.remove(g)) openGroups.add(g);
+            for (Map.Entry<Integer, JSONObject> e : new ArrayList<>(items.tailMap(g).entrySet())) {
+                if (e.getValue().optInt("group", -1) != g) { if (!"hidden".equals(e.getValue().optString("kind"))) break; continue; }
+                if (e.getKey() >= from) place(e.getKey());
+            }
+        });
+        col.addView(head, Ui.wrap());
+        col.addView(card, Ui.fill());
+        return col;
+    }
+
     private void fold(LinearLayout wrap, int seq, String glyph, int tint, String name, String summary, Body body) {
         LinearLayout head = Ui.row(this);
         head.setPadding(Ui.dp(10), Ui.dp(7), Ui.dp(10), Ui.dp(7));

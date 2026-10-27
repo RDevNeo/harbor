@@ -376,6 +376,9 @@ impl App {
         // The same cards the phone gets (view.rs): what's hidden, footers, dividers.
         let who = |account: &str, model: &str| self.account(account).map(|a| format!("{} · {} · ", a.short(), self.model_label(a.kind, model))).unwrap_or_default();
         let cards = crate::view::project(&tr.items, lead, &forks, &who);
+        // Tool calls fold behind one chevron row per run, closed until clicked.
+        let groups = crate::view::groups(&cards);
+        let running = self.is_running(id);
         // Commit hashes in replies become pills once git says they're commits (commits.rs).
         // (Its project is looked up once, and only when a reply may name one.)
         let mut commit_dir: Option<Option<std::path::PathBuf>> = None;
@@ -406,12 +409,33 @@ impl App {
                 }
                 continue;
             }
+            let flashing = self.mentions.flash.is_some_and(|(c, f, _, _)| c == id && f == i);
+            if let Some(g) = shown.group {
+                let key = (id, g);
+                // A mention pointing inside a folded run opens it.
+                if flashing {
+                    self.open_tool_groups.insert(key);
+                }
+                let open = self.open_tool_groups.contains(&key);
+                if g == i && tool_group_row(ui, &t, groups.get(&g).copied().unwrap_or_default(), open, running) {
+                    if open {
+                        self.open_tool_groups.remove(&key);
+                    } else {
+                        self.open_tool_groups.insert(key);
+                    }
+                }
+                if !open {
+                    if let Some(f) = fork_dividers(ui, &shown.forks_after) {
+                        action = Some(MsgAction::Open(f));
+                    }
+                    continue;
+                }
+            }
             let top = ui.cursor().top();
             // Far off screen: a message whose height is known at this width is only
             // space, not laid out or painted. Long chats would otherwise lay out every
             // message on every frame. The last few (still streaming) always draw.
             let height_key = Id::NULL.with(("item-height", id, i, item_sig(item)));
-            let flashing = self.mentions.flash.is_some_and(|(c, f, _, _)| c == id && f == i);
             if i + 3 < tr.items.len() && !flashing {
                 if let Some((w, h)) = ui.data(|d| d.get_temp::<(f32, f32)>(height_key)) {
                     let view = ui.clip_rect();
@@ -1521,6 +1545,24 @@ fn star_shape(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32) {
 /// "Conversation fork · Open fork" for the forks that branch off right before item
 /// `i`; the fork clicked, if any.
 /// "Conversation fork" dividers for the chats forked after a message; the one clicked.
+/// The row a run of tool calls folds into: "› 5 tool calls", small and muted, turning while
+/// one of them runs. True when clicked (open or close it).
+fn tool_group_row(ui: &mut Ui, t: &theme::Tokens, g: crate::view::Group, open: bool, running: bool) -> bool {
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let r = ui.add(egui::Label::new(RichText::new(if open { ic::DOWN } else { ic::RIGHT }).size(12.0).color(t.subtle())).selectable(false).sense(Sense::click()));
+            let l = ui.add(egui::Label::new(RichText::new(crate::view::group_label(g.calls)).text_style(theme::ts("label-12")).color(t.subtle())).selectable(false).sense(Sense::click()));
+            if g.pending && running {
+                let (s, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+                w::spinner(ui.painter(), s.center(), 5.0, t.subtle());
+            }
+            r.union(l)
+        })
+        .inner;
+    r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 fn fork_dividers(ui: &mut Ui, forks: &[i64]) -> Option<i64> {
     let mut open = None;
     for f in forks {

@@ -432,6 +432,15 @@ smaller than what you hold (a message was taken back), drop cards with `seq >= c
 Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the desktop's
 "Conversation fork · Open fork" divider(s), drawn right after the card (tap: open that chat).
 
+Optional `group` (0.58): the card is part of a run of tool calls (consecutive `tool` and
+`thinking` cards, `hidden` ones in between don't break it, with at least one `tool`), and
+`group` is the `seq` of the run's first card. It is stable while the run grows, so key the
+open/closed state on it. The desktop folds each run into one small, muted row before its first
+card: a chevron (Lucide `chevron-right` closed, `chevron-down` open), "N tool calls" (N = the
+run's `tool` cards; "1 tool call") and, while the chat is `running` and one of them isn't
+`done`, a small spinner. Runs start closed and only open on a tap (never by themselves); open,
+the cards draw as below. Cards without `group` (an older hub) draw as before.
+
 | kind | what the desktop draws | fields |
 |---|---|---|
 | `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |

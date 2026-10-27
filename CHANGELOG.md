@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Tool calls no longer fill the chat: each run of them (with the thinking between them) folds
+  into one small row, "› 5 tool calls", closed until you click or tap it, on the desktop and
+  the phone. It turns while a call runs and never opens by itself. Phone API: cards have an
+  optional `group`.
+
 ## [0.57.1] - 2026-10-27
 
 ### Changed

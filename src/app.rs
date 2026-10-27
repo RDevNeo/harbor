@@ -176,6 +176,8 @@ pub struct App {
     ctx: egui::Context,
     pub collapsed: HashSet<i64>,
     pub expanded_tools: HashSet<(i64, usize)>,
+    /// Runs of tool calls opened from their chevron row: (chat, the run's id, view.rs).
+    pub open_tool_groups: HashSet<(i64, usize)>,
     pub md: CommonMarkCache,
     pub dialog: Option<Dialog>,
     pub popup: Option<Popup>,
@@ -351,6 +353,7 @@ impl App {
             ctx: ctx.clone(),
             collapsed,
             expanded_tools: HashSet::new(),
+            open_tool_groups: HashSet::new(),
             md: CommonMarkCache::default(),
             dialog: None,
             popup: None,

@@ -56,6 +56,10 @@ pub struct Shown<'a> {
     pub seq: usize,
     pub card: Card<'a>,
     pub forks_after: Vec<i64>,
+    /// The run of tool calls (and the thinking between them) this card belongs to, shown
+    /// folded behind one chevron row: the seq of the run's first card, which stays put while
+    /// the run grows. `None` outside a run.
+    pub group: Option<usize>,
 }
 
 /// "mcp__harbor__spawn_agent" → "Spawn agent"; "mcp__github__get_pr" → "github · get_pr".
@@ -131,15 +135,63 @@ pub fn footer(who: &str, cost_usd: f64, duration_ms: u64, input_tokens: u64, out
 pub fn project<'a>(items: &'a [Item], lead: bool, forks: &[(usize, i64)], who: &dyn Fn(&str, &str) -> String) -> Vec<Shown<'a>> {
     let hide = hidden(items, lead);
     let forkable = crate::fork::forkable(items);
-    items
+    let mut out: Vec<Shown> = items
         .iter()
         .enumerate()
         .map(|(i, item)| {
             let card = if hide[i] { Card::Hidden } else { card(item, forkable[i].is_some(), who) };
             let forks_after = forks.iter().filter(|(at, _)| *at == i).map(|(_, f)| *f).collect();
-            Shown { seq: i, card, forks_after }
+            Shown { seq: i, card, forks_after, group: None }
         })
-        .collect()
+        .collect();
+    mark_groups(&mut out);
+    out
+}
+
+/// Marks each run of tool calls: consecutive Tool and Thinking cards (hidden ones in between
+/// don't break it) with at least one tool call.
+fn mark_groups(cards: &mut [Shown]) {
+    let foldable = |c: &Card| matches!(c, Card::Tool { .. } | Card::Thinking { .. } | Card::Hidden);
+    let mut i = 0;
+    while i < cards.len() {
+        let mut j = i;
+        while j < cards.len() && foldable(&cards[j].card) {
+            j += 1;
+        }
+        let run = &mut cards[i..j];
+        if run.iter().any(|s| matches!(s.card, Card::Tool { .. })) {
+            let first = run.iter().find(|s| s.card != Card::Hidden).map(|s| s.seq);
+            for s in run.iter_mut().filter(|s| s.card != Card::Hidden) {
+                s.group = first;
+            }
+        }
+        i = j.max(i + 1);
+    }
+}
+
+/// A run of tool calls as its chevron row shows it: how many calls, whether one still runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Group {
+    pub calls: usize,
+    pub pending: bool,
+}
+
+/// Each run's row, by its id ([`Shown::group`]).
+pub fn groups(cards: &[Shown]) -> std::collections::HashMap<usize, Group> {
+    let mut out = std::collections::HashMap::<usize, Group>::new();
+    for s in cards {
+        if let (Some(g), Card::Tool { result, .. }) = (s.group, &s.card) {
+            let e = out.entry(g).or_default();
+            e.calls += 1;
+            e.pending |= result.is_none();
+        }
+    }
+    out
+}
+
+/// "1 tool call", "5 tool calls".
+pub fn group_label(calls: usize) -> String {
+    format!("{calls} tool call{}", if calls == 1 { "" } else { "s" })
 }
 
 fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) -> Card<'a> {
@@ -248,6 +300,35 @@ pub fn kind(c: &Card) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_calls_fold_into_runs() {
+        let tool = |id: &str, result: Option<&str>| Item::Tool { id: id.into(), name: "Bash".into(), summary: String::new(), input: "{}".into(), result: result.map(String::from), is_error: false };
+        let text = |t: &str| Item::Text { text: t.into(), at: 0 };
+        let groups_of = |items: &[Item]| project(items, false, &[], &|_: &str, _: &str| String::new()).iter().map(|s| s.group).collect::<Vec<_>>();
+        let mut items = vec![
+            Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new() },
+            Item::Thinking { text: "hmm".into() },
+            tool("a", Some("ok")),
+            text(""),
+            tool("b", Some("ok")),
+            text("Done with a and b."),
+            tool("c", None),
+        ];
+        let groups_of_lead = |items: &[Item]| project(items, true, &[], &|_: &str, _: &str| String::new()).iter().map(|s| s.group).collect::<Vec<_>>();
+        // A lead's (its thinking and empty text hidden: they don't break the run either).
+        assert_eq!(groups_of_lead(&items), [None, None, Some(2), None, Some(2), None, Some(6)]);
+        let cards = project(&items, true, &[], &|_: &str, _: &str| String::new());
+        let g = groups(&cards);
+        assert_eq!((g[&2], g[&6]), (Group { calls: 2, pending: false }, Group { calls: 1, pending: true }));
+        assert_eq!((group_label(1), group_label(5)), ("1 tool call".to_string(), "5 tool calls".to_string()));
+        // The run grows; its id stays its first card's seq.
+        items.push(tool("d", Some("ok")));
+        assert_eq!(groups_of_lead(&items)[6..], [Some(6), Some(6)]);
+        // Others' thinking folds in with the calls; alone it doesn't.
+        assert_eq!(groups_of(&items[..3]), [None, Some(1), Some(1)]);
+        assert_eq!(groups_of(&[Item::Thinking { text: "x".into() }, text("hi")]), [None, None]);
+    }
 
     #[test]
     fn tool_label_accepts_empty_and_non_ascii_names() {

@@ -2127,6 +2127,9 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
     if !s.forks_after.is_empty() {
         v["forks_after"] = json!(s.forks_after);
     }
+    if let Some(g) = s.group {
+        v["group"] = json!(g);
+    }
     v
 }
 
@@ -3035,7 +3038,8 @@ impl App {
             _ => Default::default(),
         };
         // An item's version includes how it shows: hidden later (a lead's turn delegating),
-        // forkable once its turn ends, a fork made from it, the commits it names.
+        // forkable once its turn ends, a fork made from it, the commits it names, the run of
+        // tool calls it folds into.
         let hashes: Vec<u64> = if fresh {
             vec![]
         } else {
@@ -3047,7 +3051,7 @@ impl App {
                     shas.sort();
                     // A chat link changes when the chat it names arrives (from another PC).
                     let linked = matches!(c.card, crate::view::Card::ChatLink { gid, .. } if self.chats.iter().any(|x| x.gid == gid));
-                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas, linked))
+                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas, linked, c.group))
                 })
                 .collect()
         };
