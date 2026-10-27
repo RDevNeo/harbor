@@ -631,7 +631,7 @@ next turn; a running turn keeps its settings.
 Send `typing: true` every ~3 s while the composer has fresh input, and `typing: false` when the
 message is sent or the composer is cleared. A lease lasts 6 s after the last `true`.
 
-Draft preview (0.55): `text` is the composer's current text (trimmed); the hub keeps its last
+Draft preview (0.56): `text` is the composer's current text (trimmed); the hub keeps its last
 500 characters. Send it with each `typing: true`, and send a new one when the draft changes,
 at most every ~400 ms (the last change always goes). The hub keeps it with the lease and drops
 it when the lease runs out, on `typing: false` and when that device sends a message. A report
@@ -1409,7 +1409,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   `POST /mesh/v1/issues/close|reopen?url=<issue url>` → `{ok: true}`: with this PC's account,
   for a PC whose own can't see the issue.
 - `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
-- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on, text?}`: someone types in (`view: false`, `text` their draft, 0.55)
+- `POST /mesh/v1/lease` `{chat, view, device, kind, label, on, text?}`: someone types in (`view: false`, `text` their draft, 0.56)
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
   `typing` and `viewing`.
