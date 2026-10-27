@@ -234,11 +234,7 @@ impl App {
                             _ => {}
                         }
                     }
-                    // A project's main chat is the project itself: no second crumb.
-                    let is_main = chat.is_some_and(|c| c.role == Role::Lead && c.repo_id.and_then(|r| self.main_thread(r)) == Some(c.id));
-                    if !is_main {
-                        sep(ui);
-                    }
+                    sep(ui);
                     let rest = |ui: &Ui| ui.available_width() - git_w;
                     match chat {
                         None => {
@@ -246,9 +242,7 @@ impl App {
                         }
                         Some(c) => match c.role {
                             Role::Lead => {
-                                if !is_main {
-                                    crumb(ui, "", &c.title, true, rest(ui));
-                                }
+                                crumb(ui, "", &c.title, true, rest(ui));
                             }
                             Role::Sub => {
                                 let parent = c.parent.and_then(|l| self.chat(l)).map(|l| l.title.clone()).unwrap_or_else(|| "Lead".into());

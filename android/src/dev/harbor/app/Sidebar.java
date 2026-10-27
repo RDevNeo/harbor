@@ -190,7 +190,8 @@ final class Sidebar {
 
         String q = search.getText().toString().trim().toLowerCase();
         String you = st.optString("you", "");
-        List<JSONObject> chats = new ArrayList<>();
+        // The chats that pass the project filter and the search, by id.
+        Map<String, JSONObject> byId = new LinkedHashMap<>();
         JSONArray ca = st.optJSONArray("chats");
         if (ca != null) for (int i = 0; i < ca.length(); i++) {
             JSONObject c = ca.optJSONObject(i);
@@ -198,30 +199,44 @@ final class Sidebar {
             String pid = c.isNull("project_id") ? "" : c.optString("project_id");
             if (!filter.isEmpty() && !filter.equals(pid)) continue;
             if (!q.isEmpty() && !c.optString("title").toLowerCase().contains(q) && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
-            chats.add(c);
+            byId.put(c.optString("id"), c);
         }
-        if (chats.isEmpty()) {
+        if (byId.isEmpty()) {
             TextView t = Ui.text(a, q.isEmpty() ? "No chats yet. Start one with New session." : "No chat matches “" + q + "”.", 14, Ui.G700);
             t.setPadding(Ui.dp(20), Ui.dp(16), Ui.dp(20), Ui.dp(16));
             list.addView(t, Ui.fill());
             return;
         }
-        chats.sort((x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms")));
-        // By project, in the desktop sidebar's order (the hub sends them so), newest first in
-        // each; chats without a project under Threads, as on the desktop; settled chats fold
-        // into Settled at the end. Projects never settle (an older hub's project `settled` is
-        // ignored).
+        // By project, in the desktop sidebar's order, newest first in each; chats without a
+        // project under Threads; settled chats fold into Settled at the end. Projects never
+        // settle (an older hub's project `settled` is ignored).
         LinkedHashMap<String, List<JSONObject>> groups = new LinkedHashMap<>();
-        if (pa != null) for (int i = 0; i < pa.length(); i++) {
-            JSONObject p = pa.optJSONObject(i);
-            if (p != null) groups.put(p.optString("id"), new ArrayList<>());
-        }
         List<JSONObject> loose = new ArrayList<>(), settled = new ArrayList<>();
-        for (JSONObject c : chats) {
-            String pid = c.isNull("project_id") ? "" : c.optString("project_id");
-            if (c.optBoolean("settled")) settled.add(c);
-            else if (groups.containsKey(pid)) groups.get(pid).add(c);
-            else loose.add(c);
+        JSONObject tree = st.optJSONObject("tree");
+        if (tree != null) {
+            // The desktop sidebar's own placement (newer hubs): the same chats in the same
+            // places, snoozed ones left out as there.
+            JSONArray tp = tree.optJSONArray("projects");
+            if (tp != null) for (int i = 0; i < tp.length(); i++) {
+                JSONObject p = tp.optJSONObject(i);
+                if (p == null || (p.optBoolean("snoozed") && q.isEmpty())) continue;
+                groups.put(p.optString("id"), pick(byId, p.optJSONArray("chats")));
+            }
+            loose = pick(byId, tree.optJSONArray("threads"));
+            settled = pick(byId, tree.optJSONArray("settled"));
+        } else {
+            List<JSONObject> chats = new ArrayList<>(byId.values());
+            chats.sort((x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms")));
+            if (pa != null) for (int i = 0; i < pa.length(); i++) {
+                JSONObject p = pa.optJSONObject(i);
+                if (p != null) groups.put(p.optString("id"), new ArrayList<>());
+            }
+            for (JSONObject c : chats) {
+                String pid = c.isNull("project_id") ? "" : c.optString("project_id");
+                if (c.optBoolean("settled")) settled.add(c);
+                else if (groups.containsKey(pid)) groups.get(pid).add(c);
+                else loose.add(c);
+            }
         }
         boolean first = true;
         for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
@@ -415,6 +430,16 @@ final class Sidebar {
         View line = new View(a);
         line.setBackgroundColor(Ui.LINE);
         list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 6, 20, 2));
+    }
+
+    /** The chats of `ids` (a `tree` list) that are in `byId`, in that order. */
+    private static List<JSONObject> pick(Map<String, JSONObject> byId, JSONArray ids) {
+        List<JSONObject> out = new ArrayList<>();
+        if (ids != null) for (int i = 0; i < ids.length(); i++) {
+            JSONObject c = byId.get(String.valueOf(ids.optLong(i)));
+            if (c != null) out.add(c);
+        }
+        return out;
     }
 
     /** Projects folded on this phone, per PC ("" is Threads). */

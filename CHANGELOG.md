@@ -37,6 +37,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   Wi-Fi after the first dictation (Settings › Dictation › Offline dictation shows its progress,
   and removes it), and takes memory only while you dictate. The app is ~9 MB bigger for it.
 
+### Fixed
+- The desktop sidebar no longer hides a project's oldest open chat behind the project row: every
+  chat of a project now has its own row, as on the phone, so a chat no longer goes missing on the
+  PC or seems to sit inside another chat. The phone takes the desktop's placement from the hub
+  (snoozed chats stay hidden on both).
+
 ## [0.54.1] - 2026-10-26
 
 ### Fixed

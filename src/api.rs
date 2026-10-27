@@ -2803,6 +2803,13 @@ impl App {
         let projects: Vec<Value> = repos.iter().map(|r| json!({ "id": r.id, "name": r.name, "path": r.path.to_string_lossy() })).collect();
         let hub = &self.api.hub;
         let chats: Vec<Value> = self.chats.iter().map(|c| self.chat_json(c)).collect();
+        // Where each chat sits, as the desktop sidebar places it (sidebar.rs `tree`; older hubs leave it out).
+        let t = self.sidebar_tree();
+        let tree = json!({
+            "projects": t.projects.iter().map(|(id, snoozed, chats)| json!({ "id": id, "snoozed": snoozed, "chats": chats })).collect::<Vec<_>>(),
+            "threads": t.threads,
+            "settled": t.settled,
+        });
         let accounts: Vec<Value> = self
             .accounts
             .iter()
@@ -2869,6 +2876,7 @@ impl App {
             "rev": hub.rev(),
             "projects": projects,
             "chats": chats,
+            "tree": tree,
             "accounts": accounts,
             "models": models,
             "efforts": efforts,

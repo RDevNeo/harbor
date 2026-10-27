@@ -11,7 +11,50 @@ use crate::widgets as w;
 use std::collections::HashMap;
 use eframe::egui::{self, Align, CornerRadius, FontId, Id, Layout, Rect, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
 
+/// Where every chat sits in the sidebar: one list for the desktop and the phone (`/v1/state`
+/// `tree`), so both place chats the same way. Each project lists all its unsettled leads, newest
+/// first, as siblings (no chat hides behind the project row); leads of no project, or of a
+/// project this PC doesn't have, are Threads; settled leads go to Settled whatever their
+/// project. Sub-agents live inside their lead's chat; snoozed chats stay out until they wake.
+#[derive(Debug, Default, PartialEq)]
+pub struct Tree {
+    /// (project, snoozed, its chats) in the sidebar's order; a snoozed project shows only
+    /// while searching.
+    pub projects: Vec<(i64, bool, Vec<i64>)>,
+    pub threads: Vec<i64>,
+    pub settled: Vec<i64>,
+}
+
+/// The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `snoozed` takes the
+/// sidebar's keys, "r<project>" and "c<chat>".
+pub fn tree(repos: &[i64], chats: &[crate::store::Chat], snoozed: &dyn Fn(&str) -> bool) -> Tree {
+    let mut leads: Vec<&crate::store::Chat> = chats.iter().filter(|c| c.role == Role::Lead).collect();
+    leads.sort_by_key(|c| (std::cmp::Reverse(c.updated), std::cmp::Reverse(c.id)));
+    let mut t = Tree { projects: repos.iter().map(|r| (*r, snoozed(&format!("r{r}")), vec![])).collect(), ..Default::default() };
+    for c in leads {
+        if c.settled {
+            t.settled.push(c.id);
+        } else if snoozed(&format!("c{}", c.id)) {
+        } else if let Some(p) = t.projects.iter_mut().find(|p| Some(p.0) == c.repo_id) {
+            p.2.push(c.id);
+        } else {
+            t.threads.push(c.id);
+        }
+    }
+    t
+}
+
 impl App {
+    /// This sidebar's `Tree`: the projects in its order (by hand, or by last activity).
+    pub fn sidebar_tree(&self) -> Tree {
+        let mut repos: Vec<&Repo> = self.repos.iter().collect();
+        if self.order_by_activity {
+            repos.sort_by_key(|r| std::cmp::Reverse(self.activity(r.id)));
+        }
+        let ids: Vec<i64> = repos.iter().map(|r| r.id).collect();
+        tree(&ids, &self.chats, &|k| self.is_snoozed(k))
+    }
+
     /// Last activity of a project: its newest chat (lead, subagents or old chats).
     pub fn activity(&self, repo: i64) -> i64 {
         self.chats.iter().filter(|c| c.repo_id == Some(repo)).map(|c| c.updated).max().unwrap_or(0)
@@ -27,7 +70,7 @@ impl App {
             .min()
     }
 
-    /// Opens the project's main chat, or a new one if it has none.
+    /// Opens the project's newest chat, or a new one if it has none.
     pub fn open_project(&mut self, repo: i64) {
         match self.main_thread(repo) {
             Some(id) => self.open(View::Chat(id)),
@@ -348,19 +391,25 @@ impl App {
         ui.add_space(8.0);
 
         let q = self.search.trim().to_lowercase();
-        let mut active: Vec<Repo> = self.repos.iter().filter(|r| !self.is_snoozed(&format!("r{}", r.id)) || !q.is_empty()).cloned().collect();
-        if !q.is_empty() {
-            active.retain(|r| {
-                r.name.to_lowercase().contains(&q)
-                    || self.chats.iter().any(|c| c.repo_id == Some(r.id) && c.role != Role::Chat && c.title.to_lowercase().contains(&q))
-            });
+        // The same placement the phone gets (`tree`): every unsettled chat of a project on its own row.
+        let tree = self.sidebar_tree();
+        let chat = |id: &i64| self.chat(*id).cloned();
+        let matches = |c: &crate::store::Chat| q.is_empty() || c.title.to_lowercase().contains(&q);
+        let mut active: Vec<(Repo, Vec<crate::store::Chat>)> = vec![];
+        for (rid, snoozed, ids) in &tree.projects {
+            let Some(r) = self.repos.iter().find(|r| r.id == *rid) else { continue };
+            if *snoozed && q.is_empty() {
+                continue;
+            }
+            let named = r.name.to_lowercase().contains(&q);
+            let cs: Vec<crate::store::Chat> = ids.iter().filter_map(chat).filter(|c| named || matches(c)).collect();
+            if q.is_empty() || named || !cs.is_empty() {
+                active.push((r.clone(), cs));
+            }
         }
-        if self.order_by_activity {
-            active.sort_by_key(|r| std::cmp::Reverse(self.activity(r.id)));
-        }
+        let loose: Vec<crate::store::Chat> = tree.threads.iter().filter_map(chat).filter(|c| matches(c)).collect();
         // Only chats settle; projects always stay in the list above.
-        let mut settled_chats: Vec<crate::store::Chat> = self.chats.iter().filter(|c| c.settled && c.role == Role::Lead).cloned().collect();
-        settled_chats.sort_by_key(|c| std::cmp::Reverse(c.updated));
+        let settled_chats: Vec<crate::store::Chat> = tree.settled.iter().filter_map(chat).collect();
         let n_settled = settled_chats.len();
 
         let footer_h = 40.0;
@@ -381,17 +430,10 @@ impl App {
                     w::empty(ui, ic::SEARCH, "No match", "", None);
                 }
             }
-            for (i, r) in active.iter().enumerate() {
+            for (i, (r, cs)) in active.iter().enumerate() {
                 let Some(resp) = self.project_row(ui, r, draggable) else { continue };
-                // The project's other chats (the main one is the project row itself).
-                let main = self.main_thread(r.id);
-                for c in self.threads_of(Some(r.id)) {
-                    if c.settled || self.is_snoozed(&format!("c{}", c.id)) {
-                        continue;
-                    }
-                    if Some(c.id) != main && (q.is_empty() || c.title.to_lowercase().contains(&q) || r.name.to_lowercase().contains(&q)) {
-                        self.thread_row(ui, &c, 14.0);
-                    }
+                for c in cs {
+                    self.thread_row(ui, c, 14.0);
                 }
                 if draggable {
                     if let Some(dragged) = resp.dnd_hover_payload::<i64>() {
@@ -408,8 +450,6 @@ impl App {
                 }
             }
             // Project-less chats ("No project / …").
-            let loose: Vec<crate::store::Chat> =
-                self.threads_of(None).into_iter().filter(|c| !c.settled && !self.is_snoozed(&format!("c{}", c.id)) && (q.is_empty() || c.title.to_lowercase().contains(&q))).collect();
             if !loose.is_empty() {
                 ui.add_space(6.0);
                 w::subtle(ui, "  Threads", "label-12");
@@ -419,7 +459,8 @@ impl App {
             }
         });
         if let Some((dragged, to)) = drop {
-            self.move_project(dragged, to, &active);
+            let visible: Vec<Repo> = active.into_iter().map(|(r, _)| r).collect();
+            self.move_project(dragged, to, &visible);
         }
 
         // ---- Settled (N) ─────── ^
@@ -551,12 +592,8 @@ impl App {
             dragging = handle.dragged();
             handle.on_hover_cursor(if dragging { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         }
-        // Selected while its main chat (or a new chat for it) is open.
-        let selected = match self.view {
-            View::Chat(id) => self.main_thread(r.id) == Some(id),
-            View::Draft => self.draft.repo == Some(r.id),
-            _ => false,
-        };
+        // Selected while a new chat for it is open (its chats highlight their own rows).
+        let selected = self.view == View::Draft && self.draft.repo == Some(r.id);
         let p = ui.painter();
         if selected || hovering {
             p.rect_filled(rect, CornerRadius::same(crate::theme::RADIUS_MD), t.accent());
@@ -580,13 +617,8 @@ impl App {
                 p.text(ir.center(), egui::Align2::CENTER_CENTER, letter, FontId::new(10.5, crate::theme::semibold()), t.fg());
             }
         }
-        // Right side: the main thread's status (working, also while its subagents do, waiting
-        // on a limit, done / failed), else snoozed, else nothing. Other chats show on their own rows.
-        let idle = if snoozed { w::Status::Text(ic::ALARM.to_string(), t.subtle()) } else { w::Status::Text(String::new(), t.gray(800)) };
-        let status = match self.main_thread(r.id) {
-            Some(id) => self.own_status(id, idle),
-            None => idle,
-        };
+        // Right side: snoozed, else nothing. Its chats show their status on their own rows.
+        let status = if snoozed { w::Status::Text(ic::ALARM.to_string(), t.subtle()) } else { w::Status::Text(String::new(), t.gray(800)) };
         let rx = if hovering {
             rect.right() - 28.0
         } else {
@@ -679,5 +711,84 @@ impl App {
             self.order_by_activity = true;
             self.store.set("order_by_activity", "1");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Chat;
+
+    fn chat(id: i64, repo: Option<i64>, role: Role, updated: i64) -> Chat {
+        Chat {
+            id,
+            repo_id: repo,
+            title: format!("chat {id}"),
+            session_id: String::new(),
+            started: true,
+            account: "claude".into(),
+            model: String::new(),
+            effort: String::new(),
+            access: "full".into(),
+            settled: false,
+            updated,
+            role,
+            parent: None,
+            name: "lead".into(),
+            device: String::new(),
+            gid: String::new(),
+            home: String::new(),
+            home_id: 0,
+        }
+    }
+
+    #[test]
+    fn every_open_lead_is_a_sibling_row_of_its_project() {
+        // The reported case: older chats settled, so the oldest open lead (once the project
+        // row's hidden "main" chat) must still get its own row, beside a newer lead.
+        let mut old = chat(1, Some(6), Role::Lead, 10);
+        old.settled = true;
+        let oldest_open = chat(2, Some(6), Role::Lead, 20);
+        let mut sub = chat(3, Some(6), Role::Sub, 40);
+        sub.parent = Some(2);
+        let mut remote = chat(4, Some(6), Role::Lead, 30);
+        remote.device = "ssh:1".into();
+        let mut sub2 = chat(5, Some(6), Role::Sub, 50);
+        sub2.parent = Some(4);
+        let t = tree(&[6], &[old, oldest_open, sub, remote, sub2], &|_| false);
+        assert_eq!(t.projects, vec![(6, false, vec![4, 2])]);
+        assert!(t.threads.is_empty());
+        assert_eq!(t.settled, vec![1]);
+    }
+
+    #[test]
+    fn loose_unknown_and_settled_chats() {
+        let mut settled_loose = chat(4, None, Role::Lead, 5);
+        settled_loose.settled = true;
+        let chats = [
+            chat(1, None, Role::Lead, 1),
+            // A project this PC doesn't have (another PC's chat, a removed project): Threads, not lost.
+            chat(2, Some(99), Role::Lead, 2),
+            chat(3, Some(7), Role::Lead, 3),
+            settled_loose,
+            chat(5, Some(7), Role::Chat, 9),
+        ];
+        let t = tree(&[7, 8], &chats, &|_| false);
+        assert_eq!(t.projects, vec![(7, false, vec![3]), (8, false, vec![])]);
+        assert_eq!(t.threads, vec![2, 1]);
+        assert_eq!(t.settled, vec![4]);
+    }
+
+    #[test]
+    fn snoozed_chats_and_projects() {
+        let chats = [chat(1, Some(7), Role::Lead, 1), chat(2, Some(7), Role::Lead, 2), chat(3, Some(8), Role::Lead, 3)];
+        let t = tree(&[7, 8], &chats, &|k| k == "c2" || k == "r8");
+        assert_eq!(t.projects, vec![(7, false, vec![1]), (8, true, vec![3])]);
+    }
+
+    #[test]
+    fn same_update_time_orders_newest_id_first() {
+        let t = tree(&[7], &[chat(1, Some(7), Role::Lead, 5), chat(2, Some(7), Role::Lead, 5)], &|_| false);
+        assert_eq!(t.projects[0].2, vec![2, 1]);
     }
 }
