@@ -147,6 +147,7 @@ impl App {
                 self.set_chat_settled(c.id, !c.settled);
             }
             self.move_menu(ui, c);
+            self.move_pc_menu(ui, c);
             if ui.button("Delete").clicked() {
                 self.dialog = Some(Dialog::DeleteChat(c.id));
             }

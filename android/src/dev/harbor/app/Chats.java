@@ -96,10 +96,14 @@ public class Chats extends Base {
     static void menu(Base a, Hub hub, JSONObject c, Runnable after, Runnable deleted) {
         String id = c.optString("id");
         boolean settled = c.optBoolean("settled");
-        String[] items = {"Rename", settled ? "Unsettle" : "Settle", "Delete"};
+        // Sub-agents move with their lead: no "Move to PC…" on them.
+        boolean sub = "sub".equals(c.optString("role"));
+        String[] items = sub ? new String[]{"Rename", settled ? "Unsettle" : "Settle", "Delete"}
+                : new String[]{"Rename", settled ? "Unsettle" : "Settle", "Move to PC…", "Delete"};
         Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items, (d, w) -> {
             if (w == 0) rename(a, hub, c, after);
             else if (w == 1) Ui.bg(a, () -> hub.call("PATCH", "/v1/chats/" + id, new JSONObject().put("settled", !settled)), r -> after.run());
+            else if (!sub && w == 2) movePc(a, hub, c, after);
             else Ui.dialog(a).setTitle("Delete this chat?")
                     .setMessage("“" + c.optString("title") + "” and its transcript are removed on the PC. A running turn is stopped first.")
                     .setNegativeButton("Cancel", null)
@@ -109,6 +113,39 @@ public class Chats extends Base {
                     }))
                     .show();
         }).show();
+    }
+
+    /** "Move to PC…": a sheet of the mesh's PCs as the chat's home PC lists them (greyed, with
+     *  why, when the chat can't go there); the pick hands the chat over (`POST move_pc`). The
+     *  hub decides everything; an old hub without the call says so in a toast. */
+    static void movePc(Base a, Hub hub, JSONObject c, Runnable after) {
+        String id = c.optString("id");
+        Ui.bg(a, () -> {
+            try {
+                return hub.call("GET", "/v1/chats/" + id + "/move_targets", null);
+            } catch (Hub.ApiError e) {
+                // A hub from before "Move to PC…".
+                if (e.code == 404) throw new Hub.ApiError(404, "This PC runs an older Harbor that can't move chats: update it first.");
+                throw e;
+            }
+        }, r -> {
+            JSONArray ts = r.optJSONArray("targets");
+            String why = r.isNull("why") ? "" : r.optString("why", "");
+            List<Sheet.Option> o = new ArrayList<>();
+            for (int i = 0; ts != null && i < ts.length(); i++) {
+                JSONObject t = ts.optJSONObject(i);
+                if (t == null) continue;
+                String no = t.isNull("why") ? "" : t.optString("why", "");
+                o.add(new Sheet.Option(t.optString("id"), t.optString("name", t.optString("id")), no.isEmpty() ? "Goes on there" : no, no.isEmpty()));
+            }
+            if (o.isEmpty()) { Ui.toast(a, "No other PCs: pair one in Settings › Devices on a PC"); return; }
+            String note = why.isEmpty()
+                    ? "The chat and its sub-agents move with their Claude sessions and go on there. Its project must be on that PC, with no uncommitted changes here."
+                    : "Can't move now: " + why;
+            Sheet.pick(a, "Move to PC", note, o, null, pc -> Ui.bg(a,
+                    () -> hub.call("POST", "/v1/chats/" + id + "/move_pc", new JSONObject().put("pc", pc)),
+                    r2 -> { Ui.toast(a, "Moving to " + r2.optString("to", "the PC") + "…"); after.run(); }));
+        });
     }
 
     static void rename(Base a, Hub hub, JSONObject c, Runnable after) {

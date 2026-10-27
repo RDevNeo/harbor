@@ -2486,6 +2486,11 @@ impl App {
                 Some(c) => ok(self.api_team(c, ctx)),
                 None => err(404, "no such chat"),
             },
+            // "Move to PC…": the PCs the chat could move to, each with why not (movepc.rs).
+            ("GET", ["v1", "chats", c, "move_targets"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) => ok(self.api_move_targets(c)),
+                None => err(404, "no such chat"),
+            },
             ("GET", ["v1", "chats", c, "slash"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_slash(c, ctx)),
                 None => err(404, "no such chat"),
@@ -2581,6 +2586,15 @@ impl App {
                     "fork" => self.api_fork(c, &call.body),
                     // "Move to project…": {"repo": project id, its path, or null for No project}.
                     "move" => self.api_move(c, &call.body),
+                    // "Move to PC…": {"pc": a peer id from move_targets}. 202: the handoff runs;
+                    // its outcome shows in the chat (a notice, or the chat's new home).
+                    "move_pc" => {
+                        let pc = call.body["pc"].as_str().unwrap_or("").to_string();
+                        match self.move_pc(c, &pc, ctx) {
+                            Ok(name) => Reply { status: 202, body: json!({ "ok": true, "moving": true, "to": name }) },
+                            Err(e) => err(409, e),
+                        }
+                    }
                     // The slash menu's /plan and /default (slash.rs).
                     "slash" => self.api_slash_command(c, &call.body, ctx),
                     // The waiting bar's Stop all: the lead and its sub-agents; the lead's queue comes back.

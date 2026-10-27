@@ -725,6 +725,29 @@ next turn resumes there. → `{"ok": true, "chat": {...}, "moved": [ids]}`. `409
 when it can't move now: a sub-agent (move its lead), a lead mid-turn, a chat on a device, another
 PC's chat, or a project folder that isn't on this PC.
 
+### `GET /v1/chats/{id}/move_targets`, `POST /v1/chats/{id}/move_pc`
+
+"Move to PC…" (optional; hubs without it answer `404`, and the app says so; for a copy whose
+home PC is older, the hub answers `409` with that reason itself). A finished chat (and
+its sub-agents) moves to another PC of the mesh and goes on there: its home changes, its `gid`
+stays. Both calls about a copy are forwarded to its home PC, which decides.
+
+`GET …/move_targets` → `{"why": "…"|null, "targets": [{"id", "name", "why": "…"|null}]}`: the
+other PCs of the mesh, each with why the chat can't go there now (`null`: it can). The top `why`
+says why it can't move at all (then every target carries it): another PC's chat that its home
+can't reach, a sub-agent (its lead moves it), a turn running, a provider other than Claude, a
+chat on an SSH device, sharing off, a move already under way, or uncommitted changes where it
+works ("… commit or stash them first"). Per PC: off or out of reach, an older Harbor, no Claude
+account.
+
+`POST …/move_pc` `{"pc": "<target id>"}` → `202 {"ok": true, "moving": true, "to": "<name>"}`:
+the handoff runs on the hub; `409 {"error"}` when it can't start (the reasons above). Its outcome
+shows in the chat: on success the chat turns into a copy of the target's (its `home`/`home_name`
+change in the next state) with a `notice` (`icon: "monitor"`, "Moved here from …"); otherwise a
+notice (`icon: "alert"`, "Couldn't move to …: why"). The target refuses when it has no project
+for the chat's repository (matched by git remote, then folder or project name) or no Claude
+account that can take it. Messages sent while it moves follow it.
+
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 
 Dictation from the app's mic. Since 0.55 the phone records itself (no Android `SpeechRecognizer`),
@@ -1253,8 +1276,8 @@ Harbor keeps a full copy of every chat (`src/mesh.rs`), so any of them answers t
 same chats, rendered the same way.
 
 - A chat runs on one PC, its `home`. Another hub holds a copy: reading it is local; a write to it
-  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `continue_on`, `fork`, `slash`, `PATCH`, `DELETE`), and
-  `GET …/slash`, is forwarded to the home PC and answered from there. The message records where it came from (`sender`).
+  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `continue_on`, `fork`, `slash`, `move_pc`, `PATCH`, `DELETE`), and
+  `GET …/slash` and `GET …/move_targets`, is forwarded to the home PC and answered from there. The message records where it came from (`sender`).
   While the home PC is off the copy is read-only (`writable: false`, writes `409`) and catches up
   when it's back.
 - `POST /v1/chats` with a `device` that is another hub's id starts the chat on that PC (`409` when
@@ -1422,6 +1445,22 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   `POST /mesh/v1/issues/close|reopen?url=<issue url>` → `{ok: true}`: with this PC's account,
   for a PC whose own can't see the issue.
 - `POST /mesh/v1/upload?name=<file name>` (raw body) → `201 {id, path}`: a file for a forwarded call.
+- "Move to PC…" (`src/movepc.rs`; peers say they take moved chats with `moves: 1` in `hello`):
+  `POST /mesh/v1/adopt/check` `{gid, kind: "claude", email, project: {name, folder, remote}|null,
+  from, code: {branch, sha}, worktree: {branch, remote}|null}` → `{ok, owns, busy?, ids?, why?,
+  project?, account?}`: whether this PC already owns the chat (`owns`, with `ids` {gid: id}),
+  is taking it now (`busy`), or could take it (`ok`, else `why`). With only `{gid}` it answers
+  just `owns`/`busy`. Then the chat's home uploads `move.json` (`{chats: [{gid, title,
+  session_id, started, model, effort, access, settled, role, parent (gid), name, items}]}`, lead
+  first) and each session file (`<sid>.jsonl` and its sidecar folder `<sid>/…`) with
+  `/mesh/v1/upload`, and sends `POST /mesh/v1/adopt` (the check's body plus `payload`: upload id,
+  `sessions: [{sid, files: [{rel, upload}]}]`) → `{ok, ids}` once this PC owns the chats: it
+  fetched the pushed worktree branch (if any) into a worktree of its own, wrote the sessions
+  under its account's folder for its own path of the project, and made the copies its chats.
+  This PC takes it only within 150 s of receiving the call (its listener waits 180 s), so the
+  home PC, which gives up ownership only after this answer, never ends up with two owners; with
+  no answer it asks `adopt/check` again, and the target's chat list (the chat listed as its own,
+  or a full list without it) settles a move whose answer was lost.
 - `POST /mesh/v1/lease` `{chat, view, device, kind, label, on, text?}`: someone types in (`view: false`, `text` their draft, 0.56)
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
