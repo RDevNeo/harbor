@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.63.1] - 2026-10-27
+
 ### Fixed
 - Phone: the app installs again on phones with a 32-bit Android (it was missing the armeabi-v7a
   dictation library since 0.55, so Android refused it with INSTALL_FAILED_NO_MATCHING_ABIS). When
@@ -1402,7 +1404,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.63.1...HEAD
+[0.63.1]: https://github.com/RDevNeo/harbor/compare/v0.63.0...v0.63.1
 [0.63.0]: https://github.com/RDevNeo/harbor/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/RDevNeo/harbor/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/RDevNeo/harbor/compare/v0.60.0...v0.61.0
