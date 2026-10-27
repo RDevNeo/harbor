@@ -10,8 +10,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   the language itself), built into Harbor through sherpa-onnx: faster and more accurate than
   Whisper, which stays as the fallback for other languages. Its model (670 MB) downloads by
   itself on the first dictation, with progress by the mic.
-- The speech model loads while you speak and is freed after a few idle minutes (Settings ›
-  Voice › Keep speech model loaded, default 5 min): no memory or CPU while you don't dictate.
+- The speech model loads while you speak, in a process of its own, and is freed after a few
+  idle minutes (Settings › Voice › Keep speech model loaded, default 5 min): no memory or CPU
+  while you don't dictate, and a crash or out-of-memory in the speech engine never takes Harbor
+  down. Parakeet isn't loaded when less than 1.2 GB is free (Whisper or another PC instead).
 - Each recording is transcribed on the PC of your mesh with the most free memory (this PC on a
   near tie; PCs that don't answer are skipped). Phones' recordings go the same way through
   their hub.
