@@ -2092,7 +2092,7 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
         Card::Hidden => json!({}),
         Card::User { text, files, mentions, at, sender, .. } => json!({
             "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "images": images,
-            "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet(), "excerpt": m.excerpt })).collect::<Vec<_>>(), "at": at,
+            "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet(), "excerpt": m.excerpt, "note": m.note.trim() })).collect::<Vec<_>>(), "at": at,
             "sender": sender,
         }),
         Card::Text { text, at, forkable } => {

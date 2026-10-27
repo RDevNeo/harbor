@@ -885,6 +885,12 @@ public class Chat extends Base {
                     chip.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(10), Ui.dp(4));
                     chip.setMaxWidth(maxBubble());
                     bubble.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
+                    String note = m.optString("note");
+                    if (!note.isEmpty()) {
+                        TextView n = Ui.text(this, note, 14, Ui.G900);
+                        n.setMaxWidth(maxBubble());
+                        bubble.addView(n, Ui.margins(Ui.wrap(), 10, 0, 0, 8));
+                    }
                 }
                 View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96);
                 if (imgs != null) bubble.addView(imgs, Ui.margins(Ui.wrap(), 0, 0, 0, 6));

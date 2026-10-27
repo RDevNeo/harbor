@@ -470,9 +470,29 @@ impl App {
                                 if !mentions.is_empty() {
                                     need = need.max(260.0);
                                 }
+                                for m in mentions.iter().filter(|m| !m.note.trim().is_empty()) {
+                                    let f = ui.style().text_styles.get(&theme::ts("label-13")).cloned().unwrap_or_default();
+                                    need = need.max(ui.painter().layout_no_wrap(m.note.trim().to_string(), f, Color32::WHITE).size().x + 26.0);
+                                }
                                 ui.set_max_width((need + 2.0).min(avail * 0.8 - 28.0).max(40.0));
                                 ui.vertical(|ui| {
-                                    if !mentions.is_empty() {
+                                    if mentions.iter().any(|m| !m.note.trim().is_empty()) {
+                                        // With notes: one mention a row, its note under its chip.
+                                        for m in mentions.iter() {
+                                            if let crate::mentions::Click::Open = crate::mentions::chip(ui, m, false) {
+                                                action = Some(MsgAction::Point(m.item));
+                                            }
+                                            let note = m.note.trim();
+                                            if !note.is_empty() {
+                                                ui.add_space(-6.0);
+                                                ui.horizontal(|ui| {
+                                                    // Under the author's name in the chip.
+                                                    ui.add_space(24.0);
+                                                    ui.add(egui::Label::new(RichText::new(note).text_style(theme::ts("label-13")).color(t.subtle())).wrap());
+                                                });
+                                            }
+                                        }
+                                    } else if !mentions.is_empty() {
                                         ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing = Vec2::splat(6.0);
                                             for m in mentions.iter() {
@@ -947,18 +967,25 @@ impl App {
         let mut effort_rect = Rect::NOTHING;
         let shown = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
-            // Mentioned messages; a click shows the message in the chat.
-            if let Some(ms) = self.mentions.drafts.get(&key).filter(|m| !m.is_empty()) {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::splat(8.0);
-                    for (i, m) in ms.iter().enumerate() {
-                        match crate::mentions::chip(ui, m, true) {
+            // Mentioned messages, each with a box for a note about it; a click on
+            // one shows its message in the chat.
+            if let Some(ms) = self.mentions.drafts.get_mut(&key).filter(|m| !m.is_empty()) {
+                let mut done = false;
+                let focus = &mut self.mentions.focus_note;
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    for (i, m) in ms.iter_mut().enumerate() {
+                        match crate::mentions::draft(ui, key, m, focus) {
                             crate::mentions::Click::Remove => unmention = Some(i),
                             crate::mentions::Click::Open => point = Some(m.item),
+                            crate::mentions::Click::Done => done = true,
                             crate::mentions::Click::None => {}
                         }
                     }
                 });
+                if done {
+                    self.focus_composer = true;
+                }
                 ui.add_space(6.0);
             }
             if let Some(files) = self.files.get(&key).filter(|f| !f.is_empty()) {

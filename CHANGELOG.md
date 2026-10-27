@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A note for each mention: every mention waiting in the composer (an excerpt or a whole message)
+  has its own box to write about that one thing. The agent gets each quote with its note right
+  under it, then your message; the sent message shows each note under its chip, on the desktop
+  and the phone. Mentioning a selection puts the cursor in its note box; Enter there moves on to
+  the message (Shift+Enter: a new line), so it never sends by surprise.
+
 ## [0.58.0] - 2026-10-27
 
 ### Changed

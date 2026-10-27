@@ -8,6 +8,9 @@
 //! still pointing at its message. egui reports a finished label selection as
 //! `OutputCommand::TextSelectionSettled` (the text egui would copy); [`Selection`]
 //! catches it, and the transcript ties it to the message the drag started in.
+//!
+//! Each mention waiting in the composer has its own note box: what the user says about
+//! that message or excerpt. The note goes to the agent right under its quote.
 
 use crate::widgets::Tip as _;
 use crate::app::App;
@@ -39,6 +42,9 @@ pub struct Mention {
     /// `text` is a part of the message the user selected, not all of it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub excerpt: bool,
+    /// What the user wrote about it, sent right under its quote.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
 
 /// Text selected in a message, waiting for its "Mention selection" button.
@@ -94,6 +100,8 @@ pub struct State {
     pub press: Option<(i64, usize)>,
     /// Selected text that can be mentioned.
     pub selected: Option<Selected>,
+    /// The note box to focus once drawn (a selection was just mentioned).
+    pub focus_note: Option<egui::Id>,
 }
 
 impl State {
@@ -169,6 +177,11 @@ pub fn prompt(ms: &[Mention]) -> String {
         if m.len > m.text.chars().count() {
             out.push_str(&format!("> (truncated: the first {} of {} characters)\n", m.text.chars().count(), m.len));
         }
+        let note = m.note.trim();
+        if !note.is_empty() {
+            out.push_str(note);
+            out.push('\n');
+        }
         out.push('\n');
     }
     out
@@ -209,7 +222,7 @@ impl App {
         };
         let len = text.chars().count();
         let text = if len > MAX_CHARS { text.chars().take(MAX_CHARS).collect() } else { text };
-        Some(Mention { item: i, from, at, text, len, excerpt: false })
+        Some(Mention { item: i, from, at, text, len, excerpt: false, note: String::new() })
     }
 
     /// Adds a mention of item `i` to the chat's composer (once).
@@ -228,8 +241,9 @@ impl App {
             return;
         }
         let m = if m.len <= MAX_CHARS && folded(text) == folded(&m.text) { m } else { excerpt(m, text) };
+        // Straight into its note box: Enter there goes on to the message.
+        self.mentions.focus_note = Some(note_id(chat_id, &m));
         add(self.mentions.drafts.entry(chat_id).or_default(), m);
-        self.focus_composer = true;
     }
 
     /// Scrolls the chat to item `i` and highlights it for a moment.
@@ -243,21 +257,79 @@ pub enum Click {
     None,
     Open,
     Remove,
+    /// Enter in its note box: on to the message.
+    Done,
 }
 
 /// A mention chip: "@ author  snippet", with an (x) when `removable`.
 pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
+    chip_in(ui, m, removable, true)
+}
+
+/// A mention waiting in the composer: its chip as the header of a card, with the
+/// note box under it. Enter there moves on to the message (Shift+Enter: a new line).
+pub fn draft(ui: &mut Ui, chat: i64, m: &mut Mention, focus: &mut Option<egui::Id>) -> Click {
+    let t = w::tokens(ui);
+    let id = note_id(chat, m);
+    if *focus == Some(id) {
+        ui.memory_mut(|x| x.request_focus(id));
+        *focus = None;
+    }
+    let enter = ui.memory(|x| x.has_focus(id)) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let mut click = Click::None;
+    egui::Frame::new()
+        .fill(t.gray(100))
+        .stroke(Stroke::new(1.0, t.border()))
+        .corner_radius(CornerRadius::same(RADIUS_MD))
+        .inner_margin(egui::Margin { left: 0, right: 0, top: 0, bottom: 4 })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            click = chip_in(ui, m, true, false);
+            ui.horizontal(|ui| {
+                ui.add_space(22.0);
+                ui.add(
+                    egui::TextEdit::multiline(&mut m.note)
+                        .id(id)
+                        .frame(egui::Frame::NONE)
+                        .desired_rows(1)
+                        .desired_width(ui.available_width() - 10.0)
+                        .hint_text(if m.excerpt { "Add a note about this excerpt" } else { "Add a note about this message" })
+                        .font(theme::ts("label-13"))
+                        .return_key(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter))
+                        .lock_focus(false),
+                );
+            });
+        });
+    if enter {
+        click = Click::Done;
+    }
+    click
+}
+
+/// The note box of mention `m` in the chat's composer.
+fn note_id(chat: i64, m: &Mention) -> egui::Id {
+    egui::Id::NULL.with(("mention-note", chat, m.item, m.excerpt, &m.text))
+}
+
+/// The chip; `framed`: a pill of its own (else the header row of a card, as wide as it).
+fn chip_in(ui: &mut Ui, m: &Mention, removable: bool, framed: bool) -> Click {
     let t = w::tokens(ui);
     let from = ui.painter().layout_no_wrap(m.from.clone(), FontId::new(12.5, theme::medium()), t.fg());
-    let room = (ui.available_width() - from.size().x - if removable { 70.0 } else { 46.0 }).clamp(40.0, 220.0);
+    let room = (ui.available_width() - from.size().x - if removable { 70.0 } else { 46.0 }).clamp(40.0, if framed { 220.0 } else { 600.0 });
     // An excerpt reads as a quote: “…”.
     let snippet = if m.excerpt { format!("\u{201c}{}\u{201d}", m.snippet()) } else { m.snippet().to_string() };
     let snip = w::truncated(ui, &snippet, FontId::proportional(12.5), t.subtle(), room);
     let x_w = if removable { 22.0 } else { 0.0 };
-    let width = 24.0 + from.size().x + 8.0 + snip.size().x + 10.0 + x_w;
+    let width = if framed { 24.0 + from.size().x + 8.0 + snip.size().x + 10.0 + x_w } else { ui.available_width() };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
     let p = ui.painter();
-    p.rect(rect, CornerRadius::same(RADIUS_MD), if resp.hovered() { t.gray(200) } else { t.gray(100) }, Stroke::new(1.0, t.border()), StrokeKind::Inside);
+    if framed {
+        p.rect(rect, CornerRadius::same(RADIUS_MD), if resp.hovered() { t.gray(200) } else { t.gray(100) }, Stroke::new(1.0, t.border()), StrokeKind::Inside);
+    } else if resp.hovered() {
+        let top = CornerRadius { nw: RADIUS_MD, ne: RADIUS_MD, sw: 0, se: 0 };
+        p.rect_filled(rect.shrink(1.0), top, t.gray(200));
+    }
     p.text(pos2(rect.left() + 13.0, rect.center().y), Align2::CENTER_CENTER, "@", FontId::new(13.0, theme::medium()), t.subtle());
     let fx = rect.left() + 24.0;
     p.galley(pos2(fx, rect.center().y - from.size().y / 2.0), from.clone(), t.fg());
@@ -274,7 +346,10 @@ pub fn chip(ui: &mut Ui, m: &Mention, removable: bool) -> Click {
             click = Click::Remove;
         }
     }
-    let tip: String = m.text.chars().take(300).collect();
+    let mut tip: String = m.text.chars().take(300).collect();
+    if framed && !m.note.trim().is_empty() {
+        tip.push_str(&format!("\n\nYour note: {}", m.note.trim()));
+    }
     let what = if m.excerpt { "Excerpt. Click to see its message in the chat" } else { "Click to see it in the chat" };
     if resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{tip}\n\n{what}")).clicked() && matches!(click, Click::None) {
         click = Click::Open;
@@ -301,7 +376,7 @@ mod tests {
     use super::*;
 
     fn whole(item: usize, text: &str) -> Mention {
-        Mention { item, from: "Claude".into(), at: 0, text: text.into(), len: text.chars().count(), excerpt: false }
+        Mention { item, from: "Claude".into(), at: 0, text: text.into(), len: text.chars().count(), excerpt: false, note: String::new() }
     }
 
     #[test]
@@ -318,6 +393,18 @@ mod tests {
         assert!(m.excerpt);
         assert_eq!(prompt(&[m]), "> [excerpt of a message from Claude]\n> The part that matters.\n\n");
         assert_eq!(prompt(&[whole(2, "a\nb")]), "> [mentioned message from Claude]\n> a\n> b\n\n");
+    }
+
+    #[test]
+    fn notes_go_under_their_quote() {
+        let mut a = excerpt(whole(2, "One. Two. Three."), "Two.");
+        a.note = "  why two?\n".into();
+        let b = whole(3, "Done.");
+        assert_eq!(prompt(&[a, b]), "> [excerpt of a message from Claude]\n> Two.\nwhy two?\n\n> [mentioned message from Claude]\n> Done.\n\n");
+        // Old mentions have no note; an empty one isn't saved.
+        let m: Mention = serde_json::from_str(r#"{"item":3,"from":"you","text":"hi","excerpt":true}"#).unwrap();
+        assert!(m.note.is_empty());
+        assert!(!serde_json::to_string(&m).unwrap().contains("note"));
     }
 
     #[test]
