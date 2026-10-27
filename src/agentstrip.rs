@@ -212,7 +212,7 @@ impl App {
         if self.chat(lead).is_none_or(|c| c.role != Role::Lead) {
             return vec![];
         }
-        let root = self.chat(lead).and_then(|c| c.repo_id).and_then(|r| self.repo(r)).map(|r| r.path.display().to_string()).unwrap_or_default();
+        let root = self.chat(lead).and_then(|c| c.repo_id).and_then(|r| self.repo(r)).map(|r| r.dir().display().to_string()).unwrap_or_default();
         self.running_subs(lead)
             .into_iter()
             .map(|(c, secs)| {

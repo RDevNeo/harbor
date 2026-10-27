@@ -107,7 +107,7 @@ impl App {
         }
         if let Some(r) = repo {
             let r = self.repo(r).ok_or("no such project")?;
-            if !r.path.is_dir() {
+            if !r.dir().is_dir() {
                 return Err(format!("{} isn't on this PC", r.path.display()));
             }
         }

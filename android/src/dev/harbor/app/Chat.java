@@ -520,6 +520,22 @@ public class Chat extends Base {
             if (targets != null && targets.length() > 0) acts.addView(small("Continue on…", () -> continueOn(targets)), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
         }
+        // The project isn't on the chat's PC (a project another PC shares; hubs from 0.62).
+        JSONObject folder = b.optJSONObject("folder");
+        if (folder != null) {
+            boolean cloning = folder.optBoolean("cloning");
+            LinearLayout r = Ui.row(this);
+            r.addView(Ui.icon(this, cloning ? Ui.I_LOADER : Ui.I_FOLDER, 15, cloning ? Ui.G700 : Ui.AMBER));
+            r.addView(Ui.text(this, folder.optString("text"), 14, Ui.G900), Ui.margins(Ui.weight(), 8, 0, 8, 0));
+            status.addView(r, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+            if (!cloning) {
+                LinearLayout acts = Ui.row(this);
+                acts.addView(small("Clone here", () -> cloneHere(folder.optString("suggested", ""))));
+                JSONObject owner = folder.optJSONObject("owner");
+                if (owner != null) acts.addView(small("Run on " + owner.optString("name"), this::runOnOwner), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+                status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
+            }
+        }
         for (String[] l : typingLines) {
             if (l[1] == null) {
                 status.addView(Ui.subtitle(Ui.text(this, l[0], 14, Ui.BLUE)), Ui.margins(Ui.fill(), 0, 4, 0, 4));
@@ -692,6 +708,43 @@ public class Chat extends Base {
             try { body.put("account", id); } catch (Exception ignored) { }
             Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/continue_on", body), r -> load(false));
         });
+    }
+
+    /** The folder line's Clone here: where on the PC (the hub suggests the owner's place under
+     *  this PC's home; a folder that already holds the project is used as it is). */
+    private void cloneHere(String suggested) {
+        EditText e = Ui.input(this, "Folder on the PC", false);
+        e.setText(suggested);
+        FrameLayout f = new FrameLayout(this);
+        f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        f.addView(e);
+        Ui.dialog(this).setTitle("Clone here").setMessage("The project is cloned into this folder on the PC, or used from it when it's already there.")
+                .setView(f).setNegativeButton("Cancel", null)
+                .setPositiveButton("Clone", (d, w) -> {
+                    String p = e.getText().toString().trim();
+                    if (p.isEmpty()) return;
+                    Ui.bg(this, () -> folderCall("clone", new JSONObject().put("path", p)), r -> load(false));
+                }).show();
+    }
+
+    /** The folder line's Run on <owner>: the chat starts on the PC that has the project; open it. */
+    private void runOnOwner() {
+        Ui.bg(this, () -> folderCall("run_on", null), r -> {
+            String id = r.optString("id");
+            if (id.isEmpty() || r.isNull("id")) { refreshState(); return; }
+            open(this, hub, id);
+            finish();
+        });
+    }
+
+    /** A folder line action; a hub without it (404) says to update Harbor there. */
+    private JSONObject folderCall(String action, JSONObject body) throws Exception {
+        try {
+            return hub.call("POST", "/v1/chats/" + chatId + "/" + action, body);
+        } catch (Hub.ApiError x) {
+            if (x.code == 404) throw new Hub.ApiError(404, "Update Harbor on that PC to do this from the phone.");
+            throw x;
+        }
     }
 
     private void post(String action) {
@@ -1061,6 +1114,7 @@ public class Chat extends Base {
             case "restart": glyph = Ui.I_ROTATE; break;
             case "users": glyph = Ui.I_USERS; break;
             case "monitor": glyph = Ui.I_MONITOR; break;
+            case "folder": glyph = Ui.I_FOLDER; break;
             default: glyph = Ui.I_CIRCLE_CHECK;
         }
         boolean expandable = !detail.isEmpty() && url.isEmpty();

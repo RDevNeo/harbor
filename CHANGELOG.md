@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A project another PC shares is no longer a dead end on your PC: its git remote is shared with
+  it, and the first chat you run in it here uses your own clone of the same repository, or
+  clones it with this PC's git/gh login into the same place relative to your home ("Cloning…" in
+  the chat; the message runs once it's there). Each PC keeps its own folder for the project.
+- When the clone can't be made (no access, no remote), a line under the chat offers **Clone
+  here** (pick a folder) and **Run on <owner>** (the message starts a chat on the PC that has the
+  project), on the desktop and the phone (`status.folder`, `POST /v1/chats/{id}/clone` and
+  `…/run_on`).
+
 ## [0.61.0] - 2026-10-27
 
 ### Added

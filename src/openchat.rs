@@ -35,7 +35,7 @@ pub fn find_project(repos: &[Repo], want: &str) -> Option<i64> {
     let want = want.trim().trim_end_matches('/');
     repos
         .iter()
-        .find(|r| r.path.to_string_lossy().trim_end_matches('/') == want)
+        .find(|r| [r.path.as_path(), r.dir()].iter().any(|p| p.to_string_lossy().trim_end_matches('/') == want))
         .or_else(|| repos.iter().find(|r| r.name.eq_ignore_ascii_case(want)))
         .or_else(|| repos.iter().find(|r| r.path.file_name().is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(want))))
         .map(|r| r.id)
@@ -143,7 +143,7 @@ impl App {
         q.push_back(Instant::now());
 
         if let Some(peer) = peer {
-            let project = repo.and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() }));
+            let project = repo.and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy(), "remote": r.remote }));
             let mut body = json!({
                 "project": project, "access": me.access, "device": "", "text": prompt,
                 "opened_from": { "gid": me.gid, "title": me.title },
@@ -292,7 +292,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn repo(id: i64, name: &str, path: &str) -> Repo {
-        Repo { id, name: name.into(), path: PathBuf::from(path), sort: 0 }
+        Repo { id, name: name.into(), path: PathBuf::from(path), sort: 0, remote: String::new(), local: None }
     }
 
     fn chat(id: i64, title: &str, gid: &str) -> Chat {

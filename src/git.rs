@@ -11,6 +11,8 @@ pub struct Status {
     pub ahead: usize,
     pub behind: usize,
     pub remote: Option<String>,
+    /// origin's URL as configured (`remote` is its web address).
+    pub origin: Option<String>,
 }
 
 /// How long a git query may take before it's killed (a hung mount, a held lock).
@@ -68,12 +70,18 @@ pub fn status(dir: &Path) -> Option<Status> {
             s.changed += 1;
         }
     }
-    s.remote = git(dir, &["remote", "get-url", "origin"]).map(|u| web_url(&u));
+    s.origin = origin(dir);
+    s.remote = s.origin.as_deref().map(web_url);
     Some(s)
 }
 
+/// origin's URL of the repository at `dir`, as configured.
+pub fn origin(dir: &Path) -> Option<String> {
+    git(dir, &["remote", "get-url", "origin"]).filter(|u| !u.is_empty())
+}
+
 /// git@github.com:a/b.git and https://github.com/a/b.git both become https://github.com/a/b
-fn web_url(u: &str) -> String {
+pub fn web_url(u: &str) -> String {
     let u = u.trim().trim_end_matches(".git");
     // ssh://git@host[:port]/owner/repo
     if let Some(rest) = u.strip_prefix("ssh://") {

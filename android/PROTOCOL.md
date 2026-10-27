@@ -514,6 +514,26 @@ the desktop shows nothing:
   instead of the usual placeholder colour, with a small "⇥ Use" chip in the composer's row (the
   desktop's Tab / →): tapping it puts the text into the composer (it doesn't send). Typing
   anything hides both. Gone once the next turn starts.
+- `folder: {text, cloning, owner: {id, name}|null, suggested}` (optional, from 0.62; null or
+  missing otherwise, older hubs never send it): the chat's project isn't on its PC (a project
+  another PC of the mesh shares). The desktop draws a line under the transcript: a folder icon
+  (a spinner while `cloning`) and `text`, then, unless `cloning`, **Clone here** and, with an
+  `owner`, **Run on `owner.name`**. A turn that starts without the folder clones the project
+  first by itself (the line says "Cloning…", the queued message runs once it's there); these
+  are for when that can't be done (no access, no remote known). On the phone, the chips go under
+  the line like the limit line's:
+  - **Clone here**: a dialog with a path field filled with `suggested` (the owner's folder,
+    relative to this PC's home) → `POST /v1/chats/{id}/clone` `{"path": "<absolute, or ~/…>"}`
+    → `{"ok": true}`; `409` with the reason (already there, already cloning, not a full path).
+    A folder that already holds a clone of the project is used as it is; an empty or new one
+    gets the clone; one with other files gets it in a subfolder named after the project. The
+    message that was waiting runs once it's there.
+  - **Run on …** → `POST /v1/chats/{id}/run_on` → `{"id": <new chat>}`: the chat's waiting (else
+    last) message starts a chat in the project on the owner PC, with the same run settings;
+    open that chat (`id` null: not copied yet, find it in the next state by its gid). This chat
+    is deleted if it never ran. `409` when the owner is off or there's nothing to send.
+  Hubs before 0.62 answer both with `404 unknown action`: keep the old behaviour (the error card
+  only).
 
 #### Blocks
 
@@ -1402,10 +1422,17 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
 - `GET /mesh/v1/chats?since=<rev>&epoch=<epoch>` → `{epoch, rev, full, chats: [chat], gone: [id]}`:
   this PC's own chats changed after `since`, all of them (`full: true`) when `since` is 0 or the
   epoch is another; `gone` are own chats deleted since. A chat: `id` (on its home PC), `gid`,
-  `title`, `project: {name, path}|null`, `account`, `model`, `effort`, `access`, `device`, `settled`,
+  `title`, `project: {name, path, remote?}|null`, `account`, `model`, `effort`, `access`, `device`, `settled`,
   `updated`, `role`, `parent` (id there), `name`, `started`, `count`, `digest` (hex FNV of the
   items, only in full lists: a copy whose digest differs fetches its items from 0), `running`,
   `since_ms`, `queued`, `status` (as in items), `forks: [[seq, id]]`.
+  `project.remote` (optional, from 0.62; older PCs send none and ignore it): the project's git
+  origin URL. A shared project is the same one on every PC by its remote (normalized: host and
+  path, lowercase, no `.git`), whatever folder each keeps it in; `path` stays the owner's and is
+  still how the project is named in calls. A PC that lists the project without its folder clones
+  the remote when one of its own chats first needs it (see `status.folder`). The `project` of a
+  new chat forwarded with `POST /mesh/v1/call` (`POST /v1/chats`) carries `remote` too: a PC
+  without the project then lists it and clones it for the chat's first turn, instead of `409`.
 - `GET /mesh/v1/chats/{id}/items?since=<rev>&epoch=<epoch>` → `{epoch, rev, count, items: [{seq, item}]}`:
   raw transcript items (the database's JSON) changed after `since`; cut the copy to `count`.
 - `POST /mesh/v1/call` `{method, path, body, sender, ctx?}`: a phone API call (`path` like

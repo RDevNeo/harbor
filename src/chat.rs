@@ -1252,7 +1252,7 @@ impl App {
                             pick = Some(Some(None));
                         }
                         for r in &self.repos {
-                            if w::menu_item(ui, ic::FOLDER, &r.name, Some(&tilde(&r.path)), self.draft.repo == Some(r.id)).clicked() {
+                            if w::menu_item(ui, ic::FOLDER, &r.name, Some(&tilde(r.dir())), self.draft.repo == Some(r.id)).clicked() {
                                 pick = Some(Some(Some(r.id)));
                             }
                         }

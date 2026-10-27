@@ -223,7 +223,7 @@ impl App {
         if account.kind != Kind::Claude {
             return Err(format!("Only Claude Code runs on other devices so far; this chat uses {}.", account.kind.label()));
         }
-        let project = chat.repo_id.and_then(|r| self.repo(r)).map(|r| r.path.clone());
+        let project = chat.repo_id.and_then(|r| self.repo(r)).map(|r| r.dir().to_path_buf());
         let dir = remote::remote_dir(&h, project.as_deref());
         // Not known yet (a device added before Harbor asked): POSIX this time, and asked now.
         if h.os.is_empty() {

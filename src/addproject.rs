@@ -81,7 +81,7 @@ fn subdirs(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// The setting that marks a project folder as not trusted.
-fn untrusted_key(p: &Path) -> String {
+pub(crate) fn untrusted_key(p: &Path) -> String {
     format!("untrusted:{}", p.display())
 }
 
@@ -158,12 +158,12 @@ impl App {
     /// theirs; a clone is someone else's files until they trust it (the composer asks).
     pub fn trusted(&self, repo: Option<i64>) -> bool {
         let Some(r) = repo.and_then(|id| self.repo(id)) else { return true };
-        self.store.get(&untrusted_key(&r.path)).is_none_or(|v| v != "1")
+        self.store.get(&untrusted_key(r.dir())).is_none_or(|v| v != "1")
     }
 
     pub fn set_trusted(&mut self, repo: i64, yes: bool) {
         if let Some(r) = self.repo(repo) {
-            self.store.set(&untrusted_key(&r.path), if yes { "" } else { "1" });
+            self.store.set(&untrusted_key(r.dir()), if yes { "" } else { "1" });
         }
     }
 
@@ -193,7 +193,7 @@ impl App {
     fn rows(&self, ap: &AddProject) -> Vec<Row> {
         let q = ap.query.trim();
         let ql = q.to_lowercase();
-        let known: HashSet<PathBuf> = self.repos.iter().map(|r| r.path.clone()).collect();
+        let known: HashSet<PathBuf> = self.repos.iter().flat_map(|r| [r.path.clone(), r.dir().to_path_buf()]).collect();
         let g = |i| Icon::Glyph(i);
         let row = |icon, title: String, detail: String, act| Row { icon, title, detail, act };
         let mut v = vec![];

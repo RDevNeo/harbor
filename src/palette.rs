@@ -257,10 +257,10 @@ impl App {
         v.push(Item::new("act:terminal".into(), Section::Actions, ic::TERMINAL, "terminal", "Open or close the terminal", "", Act::ToggleTerminal).kw("toggle shell console"));
         v.push(Item::new("act:browser".into(), Section::Actions, ic::GLOBE, "globe", "Open or close the browser", "", Act::ToggleBrowser).kw("toggle web"));
         for r in &self.repos {
-            v.push(Item::new(format!("new:{}", r.id), Section::Actions, ic::COMPOSE, "compose", format!("New chat in {}", r.name), crate::app::tilde(&r.path), Act::NewChat(Some(r.id))).kw("thread start create"));
+            v.push(Item::new(format!("new:{}", r.id), Section::Actions, ic::COMPOSE, "compose", format!("New chat in {}", r.name), crate::app::tilde(r.dir()), Act::NewChat(Some(r.id))).kw("thread start create"));
         }
         for r in &self.repos {
-            v.push(Item::new(format!("project:{}", r.id), Section::Projects, ic::FOLDER, "folder", r.name.clone(), crate::app::tilde(&r.path), Act::Project(r.id)).kw("project folder repo"));
+            v.push(Item::new(format!("project:{}", r.id), Section::Projects, ic::FOLDER, "folder", r.name.clone(), crate::app::tilde(r.dir()), Act::Project(r.id)).kw("project folder repo"));
         }
         for c in &self.chats {
             let title = if c.title.is_empty() { "New chat".to_string() } else { c.title.clone() };

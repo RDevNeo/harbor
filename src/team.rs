@@ -200,7 +200,7 @@ impl App {
     pub fn team_for(&self, chat: &Chat) -> Option<Team> {
         // Project-less threads are teams too, working in the home folder.
         let (name, path) = match chat.repo_id.and_then(|r| self.repo(r)) {
-            Some(r) => (r.name.clone(), r.path.clone()),
+            Some(r) => (r.name.clone(), r.dir().to_path_buf()),
             None => ("No project".to_string(), crate::store::home()),
         };
         match chat.role {

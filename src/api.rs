@@ -2624,6 +2624,20 @@ impl App {
                             err(409, "couldn't move the chat to that account")
                         }
                     }
+                    // The folder line's Clone here (clone.rs): {"path": where to clone, or the clone that's there}.
+                    "clone" => {
+                        let path = call.body["path"].as_str().map(str::trim).unwrap_or("");
+                        let path = match path.strip_prefix("~/") {
+                            Some(rest) => store::home().join(rest),
+                            None => PathBuf::from(path),
+                        };
+                        match self.clone_here(c, path) {
+                            Ok(()) => ok(json!({ "ok": true })),
+                            Err(e) => err(409, e),
+                        }
+                    }
+                    // Run on <owner> goes through the mesh (mesh.rs answers it); here it's off.
+                    "run_on" => err(409, "the PCs aren't sharing chats now: turn the mesh on, or start the chat on that PC"),
                     _ => err(404, "unknown action"),
                 }
             }
@@ -3137,7 +3151,7 @@ impl App {
                 .collect();
             json!({ "text": text, "can_cancel": cancel, "targets": targets })
         });
-        json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit, "agents": self.strip_json(chat) })
+        json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit, "agents": self.strip_json(chat), "folder": self.folder_json(chat) })
     }
 
     /// The team panel of a chat's lead (a subagent's is its lead's), as teamui.rs draws it.
@@ -3224,13 +3238,22 @@ impl App {
     }
 
     /// The project a new chat asks for (`project_id`, or `project` from another PC).
-    pub(crate) fn api_create_repo(&self, body: &Value) -> Result<Option<i64>, Reply> {
+    pub(crate) fn api_create_repo(&mut self, body: &Value) -> Result<Option<i64>, Reply> {
         Ok(match &body["project_id"] {
-            // From another PC (mesh.rs): the project by its folder, else by its name.
+            // From another PC (mesh.rs): the project by its folder, else its remote, else its name.
+            // Unknown here but with a remote: listed by the other PC's folder, and cloned here
+            // when the chat's first turn starts (clone.rs).
             Value::Null if body["project"].is_object() => {
-                let (path, name) = (body["project"]["path"].as_str().unwrap_or(""), body["project"]["name"].as_str().unwrap_or(""));
-                match self.repos.iter().find(|r| r.path.to_string_lossy() == path).or_else(|| self.repos.iter().find(|r| r.name == name)) {
-                    Some(r) => Some(r.id),
+                let p = &body["project"];
+                let (path, name, remote) = (p["path"].as_str().unwrap_or(""), p["name"].as_str().unwrap_or(""), p["remote"].as_str().unwrap_or(""));
+                match self.repo_for(path, name, remote).0 {
+                    Some(r) => Some(r),
+                    None if !remote.is_empty() && !path.is_empty() => {
+                        let id = self.store.add_repo(std::path::Path::new(path)).map_err(|e| err(500, e.to_string()))?;
+                        self.store.set_repo_remote(id, remote);
+                        self.repos = self.store.repos();
+                        Some(id)
+                    }
                     None => return Err(err(409, format!("{name} isn't a project on {} yet", crate::remote::hostname()))),
                 }
             }

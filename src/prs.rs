@@ -750,7 +750,7 @@ impl App {
     pub fn gh_repos(&mut self) -> impl FnOnce() -> Vec<String> + Send + 'static {
         let known: Vec<String> = self.pr_projects().into_iter().map(|p| p.2).collect();
         let missing: Vec<(i64, std::path::PathBuf)> =
-            self.repos.iter().filter(|r| !self.git.contains_key(&r.id) && !self.git_running.contains(&r.id)).map(|r| (r.id, r.path.clone())).collect();
+            self.repos.iter().filter(|r| !self.git.contains_key(&r.id) && !self.git_running.contains(&r.id)).map(|r| (r.id, r.dir().to_path_buf())).collect();
         self.git_running.extend(missing.iter().map(|m| m.0));
         let tx = self.bg_tx.clone();
         move || {
@@ -1286,7 +1286,7 @@ impl App {
                 );
             } else {
                 let argv = vec!["gh".into(), "pr".into(), "checkout".into(), p.number.to_string()];
-                self.open_terminal(&ctx, &format!("checkout #{}", p.number), repo.path.clone(), argv, vec![]);
+                self.open_terminal(&ctx, &format!("checkout #{}", p.number), repo.dir().to_path_buf(), argv, vec![]);
             }
         }
 

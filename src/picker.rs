@@ -23,10 +23,15 @@ pub struct Opts<'a> {
     pub filter: Option<(&'a str, &'a [&'a str])>,
     /// Folder the dialog starts in.
     pub dir: Option<&'a Path>,
+    /// Picks a folder, not files.
+    pub directory: bool,
 }
 
 fn zenity_args(o: &Opts) -> Vec<String> {
     let mut a = vec!["--file-selection".to_string(), "--separator=\n".into(), format!("--title={}", o.title)];
+    if o.directory {
+        a.push("--directory".into());
+    }
     if o.multiple {
         a.push("--multiple".into());
     }
@@ -41,7 +46,7 @@ fn zenity_args(o: &Opts) -> Vec<String> {
 
 fn kdialog_args(o: &Opts) -> Vec<String> {
     let start = o.dir.map(|d| d.display().to_string()).unwrap_or_else(|| ".".into());
-    let mut a = vec!["--getopenfilename".to_string(), start];
+    let mut a = vec![if o.directory { "--getexistingdirectory" } else { "--getopenfilename" }.to_string(), start];
     if let Some((name, pats)) = o.filter {
         a.push(format!("{name} ({})", pats.join(" ")));
     }
@@ -113,7 +118,7 @@ mod tests {
     #[test]
     fn picker_args() {
         let dir = Path::new("/tmp/x");
-        let o = Opts { title: "Icon", multiple: false, filter: Some(("Images", &["*.png", "*.svg"])), dir: Some(dir) };
+        let o = Opts { title: "Icon", multiple: false, filter: Some(("Images", &["*.png", "*.svg"])), dir: Some(dir), ..Default::default() };
         assert_eq!(zenity_args(&o), ["--file-selection", "--separator=\n", "--title=Icon", "--file-filter=Images | *.png *.svg", "--filename=/tmp/x/"]);
         assert_eq!(kdialog_args(&o), ["--getopenfilename", "/tmp/x", "Images (*.png *.svg)", "--title", "Icon"]);
         let m = Opts { title: "Attach", multiple: true, ..Default::default() };

@@ -12,6 +12,7 @@ impl App {
     pub fn status_line(&mut self, ui: &mut Ui, id: i64) {
         self.queued_bubbles(ui, id);
         self.limit_line(ui, id);
+        self.folder_ui(ui, id);
         let own = self.turns.get(&id).map(|(_, s)| s.elapsed().as_secs());
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
         let subs = if lead { self.running_subs(id) } else { vec![] };

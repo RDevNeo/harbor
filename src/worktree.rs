@@ -283,7 +283,7 @@ impl App {
         if !c.device.is_empty() {
             return None;
         }
-        let repo = self.repo(c.repo_id?)?.path.clone();
+        let repo = self.repo(c.repo_id?)?.dir().to_path_buf();
         let dir = if c.foreign() { repo } else { self.worktree_of(c).filter(|w| w.is_dir()).unwrap_or(repo) };
         dir.is_dir().then_some(dir)
     }
@@ -305,7 +305,7 @@ impl App {
                 (c.repo_id?, Some(c))
             }
         };
-        let repo = self.repo(repo_id)?.path.clone();
+        let repo = self.repo(repo_id)?.dir().to_path_buf();
         if !repo.join(".git").exists() {
             return None;
         }

@@ -103,6 +103,10 @@ pub enum Bg {
     GhRepos(Result<Vec<(String, String)>, String>),
     Cloned(Result<PathBuf, String>),
     Git(i64, Option<git::Status>),
+    /// A shared project's clone is done (clone.rs): its folder, or why not.
+    ProjectCloned(i64, Result<PathBuf, String>),
+    /// The folder line's Clone here: the folder picked for a chat's project.
+    ClonePicked(i64, PathBuf),
 }
 
 /// Account, model, effort and access of a chat or of the draft.
@@ -173,7 +177,7 @@ pub struct App {
     pub(crate) git_running: HashSet<i64>,
     git_again: HashSet<i64>,
     /// Wakes the UI from background threads (git status).
-    ctx: egui::Context,
+    pub(crate) ctx: egui::Context,
     pub collapsed: HashSet<i64>,
     pub expanded_tools: HashSet<(i64, usize)>,
     /// Runs of tool calls opened from their chevron row: (chat, the run's id, view.rs).
@@ -201,6 +205,8 @@ pub struct App {
     pub profile: crate::profile::State,
     /// Prompts waiting for a chat's current turn to end.
     pub pending: HashMap<i64, Vec<String>>,
+    /// Shared projects being cloned here, and the turns waiting for them (clone.rs).
+    pub clones: crate::clone::State,
     pub auto_turns: HashMap<i64, VecDeque<Instant>>,
     /// Projects whose automatic turns hit the hourly limit.
     pub paused: HashSet<i64>,
@@ -377,6 +383,7 @@ impl App {
             recap: Default::default(),
             profile: Default::default(),
             pending: HashMap::new(),
+            clones: Default::default(),
             auto_turns: HashMap::new(),
             paused: HashSet::new(),
             timers: vec![],
@@ -595,7 +602,7 @@ impl App {
     }
 
     pub fn cwd_of(&self, repo: Option<i64>) -> PathBuf {
-        repo.and_then(|r| self.repo(r)).map(|r| r.path.clone()).unwrap_or_else(store::home)
+        repo.and_then(|r| self.repo(r)).map(|r| r.dir().to_path_buf()).unwrap_or_else(store::home)
     }
 
     /// Where the current view's agent works: the chat's worktree or project, the draft's project.
@@ -738,7 +745,7 @@ impl App {
     /// Reads a project's git status on a thread (it can take seconds in a big tree);
     /// the last one known shows meanwhile. A refresh asked during one runs once after it.
     pub fn refresh_git(&mut self, repo_id: i64) {
-        let Some(path) = self.repo(repo_id).map(|r| r.path.clone()) else { return };
+        let Some(path) = self.repo(repo_id).map(|r| r.dir().to_path_buf()) else { return };
         if !self.git_running.insert(repo_id) {
             self.git_again.insert(repo_id);
             return;
@@ -752,6 +759,14 @@ impl App {
 
     /// A git status read on a thread: kept, and read again if asked meanwhile.
     fn git_loaded(&mut self, repo_id: i64, s: Option<git::Status>) {
+        // Its remote, kept: other PCs of the mesh know the project by it (clone.rs).
+        let origin = s.as_ref().and_then(|s| s.origin.clone());
+        if let Some(o) = origin.filter(|o| self.repo(repo_id).is_some_and(|r| r.remote != *o)) {
+            self.store.set_repo_remote(repo_id, &o);
+            if let Some(r) = self.repos.iter_mut().find(|r| r.id == repo_id) {
+                r.remote = o;
+            }
+        }
         self.git.insert(repo_id, s);
         self.git_running.remove(&repo_id);
         if self.git_again.remove(&repo_id) {
@@ -1034,6 +1049,11 @@ impl App {
         // The agent's tools work in the project folder on this PC (all of them, or the
         // workspace ones of a device without its own files): it has to be here.
         if remote.as_ref().is_none_or(|r| r.workspace) {
+            // A project another PC shares: this PC's clone of it, made now if need be (clone.rs).
+            if self.missing_folder(&chat).is_some() && self.clone_for_turn(&chat, &prompt, &files) {
+                self.persist(chat_id);
+                return;
+            }
             if let Some(e) = self.missing_folder(&chat) {
                 self.transcripts.get_mut(&chat_id).unwrap().items.push(Item::Error { text: e });
                 self.persist(chat_id);
@@ -1497,6 +1517,12 @@ impl App {
                     self.funnel_stale = stale;
                 }
                 Bg::Git(repo, s) => self.git_loaded(repo, s),
+                Bg::ProjectCloned(repo, r) => self.project_cloned(repo, r, ctx),
+                Bg::ClonePicked(chat, p) => {
+                    if let Err(e) = self.clone_here(chat, p) {
+                        crate::picker::show_toast(ctx, e);
+                    }
+                }
                 Bg::Prs(generation, state, r) => self.prs_loaded(generation, state, r),
                 Bg::PrAvatar(login, img) => self.pr_avatar(ctx, login, img),
                 Bg::Issues(generation, state, r) => self.issues_loaded(generation, state, r),

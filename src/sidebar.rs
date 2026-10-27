@@ -175,7 +175,7 @@ impl App {
                 w::separator(ui);
             }
             for r in &repos {
-                let path = crate::app::tilde(&r.path);
+                let path = crate::app::tilde(r.dir());
                 if w::menu_item(ui, ic::FOLDER, &r.name, Some(&path), c.repo_id == Some(r.id)).clicked() {
                     to = Some(Some(r.id));
                 }
@@ -323,7 +323,7 @@ impl App {
     fn load_icon(&self, ctx: &egui::Context, id: i64, refresh: bool) {
         let Some(r) = self.repo(id) else { return };
         let tx = self.bg_tx.clone();
-        let (path, name, ctx) = (r.path.clone(), r.name.clone(), ctx.clone());
+        let (path, name, ctx) = (r.dir().to_path_buf(), r.name.clone(), ctx.clone());
         std::thread::spawn(move || {
             let img = crate::favicon::resolve(id, &path, &name, refresh);
             let _ = tx.send(crate::app::Bg::Avatar(id, img));
@@ -335,7 +335,7 @@ impl App {
     fn pick_icon(&self, ctx: &egui::Context, id: i64) {
         let Some(r) = self.repo(id) else { return };
         let tx = self.bg_tx.clone();
-        let (path, name, ctx) = (r.path.clone(), r.name.clone(), ctx.clone());
+        let (path, name, ctx) = (r.dir().to_path_buf(), r.name.clone(), ctx.clone());
         std::thread::spawn(move || {
             let opts = crate::picker::Opts { title: "Project icon", filter: Some(("Images", crate::picker::IMAGES)), dir: Some(&path), ..Default::default() };
             let Some(file) = crate::picker::pick(opts).pop() else { return };
@@ -645,7 +645,7 @@ impl App {
             self.open_project(r.id);
         }
         let ctx = ui.ctx().clone();
-        let path = r.path.clone();
+        let path = r.dir().to_path_buf();
         let id = r.id;
         let out = resp.clone();
         resp.tip(crate::app::tilde(&path)).context_menu(|ui| {

@@ -12,6 +12,7 @@ mod background;
 mod bridge;
 mod chat;
 mod clipboard;
+mod clone;
 mod commits;
 mod control;
 mod detach;

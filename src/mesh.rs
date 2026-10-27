@@ -1891,7 +1891,7 @@ pub fn load_peers(s: &store::Store) -> HashMap<String, Peer> {
 // ================================================================== the UI thread's side
 
 impl App {
-    fn shared(&self) -> &Shared {
+    pub(crate) fn shared(&self) -> &Shared {
         &self.api.hub.mesh
     }
 
@@ -1968,7 +1968,7 @@ impl App {
             return Some(format!("This thread's worktree ({}) is gone. Start a new chat in the project to go on.", w.display()));
         }
         let r = self.repo(chat.repo_id?)?;
-        if r.path.is_dir() {
+        if r.dir().is_dir() {
             return None;
         }
         let owner = self.chats.iter().find(|c| c.repo_id == Some(r.id) && c.foreign()).map(|c| self.shared().name_of(&c.home));
@@ -2168,9 +2168,14 @@ impl App {
                             *d = text;
                         }
                     }
-                } else if what == "start the chat" || what == "fork the chat" {
-                    if let Some(hid) = reply.body["id"].as_i64() {
-                        self.mesh.open_when = Some((reply.body["home"].as_str().unwrap_or("").to_string(), hid, Instant::now()));
+                } else {
+                    if what == crate::clone::RUN_THERE || what == crate::clone::RAN_THERE {
+                        self.ran_on_owner(chat);
+                    }
+                    if what == "start the chat" || what == "fork the chat" || what == crate::clone::RUN_THERE {
+                        if let Some(hid) = reply.body["id"].as_i64() {
+                            self.mesh.open_when = Some((reply.body["home"].as_str().unwrap_or("").to_string(), hid, Instant::now()));
+                        }
                     }
                 }
             }
@@ -2226,20 +2231,41 @@ impl App {
         }
     }
 
-    /// The project a copy goes in: this PC's with the same folder, else the same name, else
-    /// a new entry for the home PC's folder.
+    /// The project a copy goes in: this PC's with the same folder, else the same remote, else
+    /// the same name, else a new entry for the home PC's folder (cloned here when a chat of
+    /// this PC first needs it, clone.rs).
     fn mesh_repo(&mut self, p: &Value) -> Option<i64> {
         let path = p["path"].as_str()?;
-        let name = p["name"].as_str().unwrap_or("");
-        if let Some(r) = self.repos.iter().find(|r| r.path.to_string_lossy() == path) {
-            return Some(r.id);
-        }
-        if let Some(r) = self.repos.iter().find(|r| !name.is_empty() && r.name == name) {
-            return Some(r.id);
+        let (id, remote) = self.repo_for(path, p["name"].as_str().unwrap_or(""), p["remote"].as_str().unwrap_or(""));
+        if let Some(id) = id {
+            return Some(id);
         }
         let id = self.store.add_repo(std::path::Path::new(path)).ok()?;
+        if !remote.is_empty() {
+            self.store.set_repo_remote(id, &remote);
+        }
         self.repos = self.store.repos();
         Some(id)
+    }
+
+    /// A project another PC names by its folder there, name and remote (optional: older PCs
+    /// send none): this PC's by the same folder, else the same remote, else the same name.
+    /// A matching entry of a folder not on this PC learns the remote. Also gives the remote back.
+    pub(crate) fn repo_for(&mut self, path: &str, name: &str, remote: &str) -> (Option<i64>, String) {
+        let found = self
+            .repos
+            .iter()
+            .find(|r| r.path.to_string_lossy() == path)
+            .or_else(|| self.repos.iter().find(|r| crate::clone::same(&r.remote, remote)))
+            .or_else(|| self.repos.iter().find(|r| !name.is_empty() && r.name == name))
+            .map(|r| (r.id, r.remote.clone(), r.dir().is_dir()));
+        if let Some((id, known, here)) = &found {
+            if !here && !remote.is_empty() && known != remote {
+                self.store.set_repo_remote(*id, remote);
+                self.repos = self.store.repos();
+            }
+        }
+        (found.map(|f| f.0), remote.to_string())
     }
 
     /// Makes or updates the copy of a peer's chat; its id here.
@@ -2437,7 +2463,7 @@ impl App {
 
     /// One of this PC's chats as peers copy it.
     fn mesh_chat_json(&mut self, c: &Chat, digest: bool) -> Value {
-        let project = c.repo_id.and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() }));
+        let project = c.repo_id.and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy(), "remote": r.remote }));
         let (count, digest) = if digest {
             let rev = self.api.hub.chat_rev(c.id);
             let cached = self.mesh.digests.get(&c.id).filter(|(r, _)| *r == rev && rev != 0).map(|(_, d)| *d);
@@ -2579,7 +2605,7 @@ impl App {
             self.drafts.entry(crate::app::DRAFT).or_default().push_str(text);
             return true;
         }
-        let project = self.draft.repo.and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() }));
+        let project = self.draft.repo.and_then(|r| self.repo(r)).map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy(), "remote": r.remote }));
         let body = json!({
             "project": project, "account": sel.account, "model": sel.model, "effort": sel.effort, "access": sel.access,
             "device": "", "text": text,
@@ -2616,7 +2642,7 @@ impl App {
                 Value::String(p) => self.repos.iter().find(|r| r.path.to_string_lossy() == *p),
                 v => v.as_i64().and_then(|r| self.repo(r)),
             };
-            body["project"] = repo.map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy() })).unwrap_or(Value::Null);
+            body["project"] = repo.map(|r| json!({ "name": r.name, "path": r.path.to_string_lossy(), "remote": r.remote })).unwrap_or(Value::Null);
             let ctx = self.ctx_for(repo.map(|r| r.id));
             if let Some(o) = body.as_object_mut() {
                 o.remove("project_id");
@@ -2629,6 +2655,14 @@ impl App {
             forward(peer.dest(), peer.name, "POST", vec!["v1".into(), "chats".into()], strip_files(body), files, sender, ctx, move |r| {
                 let _ = reply.send(map_new(&shared, &home, r, global));
             });
+            return None;
+        }
+        // The folder line's Run on <owner> (clone.rs), answered with the chat it starts there.
+        if call.method == "POST" && p.len() == 4 && p[..2] == ["v1", "chats"] && p[3] == "run_on" {
+            let Some(c) = self.chat_by_ref(p[2]).filter(|c| !c.foreign()).map(|c| c.id) else { return Some(call) };
+            if let Err(e) = self.run_on_owner(c, Some((call.reply.clone(), global))) {
+                let _ = call.reply.send(err(409, e));
+            }
             return None;
         }
         if !for_home(&call.method, &p) {
@@ -2692,14 +2726,14 @@ impl App {
     /// A phone's message through this PC: its name for "from …", its device id for the typing lock.
     /// What this PC shares with other PCs' chats, for the listener threads (machines.rs).
     pub fn share_publish(&self) {
-        let projects = self.repos.iter().filter(|r| r.path.is_dir()).map(|r| (r.name.clone(), r.path.clone())).collect();
+        let projects = self.repos.iter().filter(|r| r.dir().is_dir()).map(|r| (r.name.clone(), r.dir().to_path_buf())).collect();
         crate::machines::publish(&self.store, projects);
     }
 
     /// This PC's instructions and memory for a call that may start a turn on another PC, with
     /// the memory of `repo` as this PC has it (meshctx.rs).
     pub fn ctx_for(&self, repo: Option<i64>) -> Value {
-        let ctx = crate::meshctx::outgoing(&self.store, repo.and_then(|r| self.repo(r)).map(|r| r.path.as_path()));
+        let ctx = crate::meshctx::outgoing(&self.store, repo.and_then(|r| self.repo(r)).map(|r| r.dir()));
         // Its memory id may be new: the listener threads know it at once (machines.rs).
         self.share_publish();
         ctx

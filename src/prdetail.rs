@@ -679,7 +679,7 @@ impl App {
                 Act::Checkout => {
                     if let Some(r) = project.and_then(|id| self.repo(id)).cloned() {
                         let argv = vec!["gh".into(), "pr".into(), "checkout".into(), number.to_string()];
-                        self.open_terminal(&ctx, &format!("checkout #{number}"), r.path.clone(), argv, vec![]);
+                        self.open_terminal(&ctx, &format!("checkout #{number}"), r.dir().to_path_buf(), argv, vec![]);
                     }
                 }
                 Act::Merge(ask) => {

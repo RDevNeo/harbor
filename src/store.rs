@@ -14,6 +14,19 @@ pub struct Repo {
     pub name: String,
     /// Manual order in the sidebar.
     pub sort: i64,
+    /// Its git remote (origin's URL; "" when unknown): how PCs of the mesh know a shared
+    /// project is the same one, wherever each keeps its folder (clone.rs).
+    pub remote: String,
+    /// This PC's own folder for a project another PC shares (cloned or found here): `path`
+    /// stays the owner's, the project's name across the mesh.
+    pub local: Option<PathBuf>,
+}
+
+impl Repo {
+    /// The project's folder on this PC: its own clone of a shared project, else `path`.
+    pub fn dir(&self) -> &std::path::Path {
+        self.local.as_deref().unwrap_or(&self.path)
+    }
 }
 
 /// What a chat is in a project's team.
@@ -372,6 +385,18 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
              COMMIT;",
         )?;
     }
+    if v < 8 {
+        // A project's git remote, shared over the mesh, and this PC's folder for a project
+        // another PC shares (clone.rs).
+        let cols: Vec<String> = {
+            let mut st = db.prepare("SELECT name FROM pragma_table_info('repos')")?;
+            st.query_map([], |r| r.get(0))?.flatten().collect()
+        };
+        for col in ["remote", "local"].into_iter().filter(|c| !cols.iter().any(|x| x == c)) {
+            db.execute_batch(&format!("ALTER TABLE repos ADD COLUMN {col} TEXT NOT NULL DEFAULT '';"))?;
+        }
+        db.execute_batch("PRAGMA user_version=8;")?;
+    }
     Ok(())
 }
 
@@ -435,13 +460,15 @@ impl Store {
     }
 
     pub fn repos(&self) -> Vec<Repo> {
-        let mut st = self.db.prepare("SELECT id, path, name, sort FROM repos ORDER BY sort, name COLLATE NOCASE").unwrap();
+        let mut st = self.db.prepare("SELECT id, path, name, sort, remote, local FROM repos ORDER BY sort, name COLLATE NOCASE").unwrap();
         st.query_map([], |r| {
             Ok(Repo {
                 id: r.get(0)?,
                 path: PathBuf::from(r.get::<_, String>(1)?),
                 name: r.get(2)?,
                 sort: r.get(3)?,
+                remote: r.get(4)?,
+                local: Some(r.get::<_, String>(5)?).filter(|l| !l.is_empty()).map(PathBuf::from),
             })
         })
         .unwrap()
@@ -462,6 +489,15 @@ impl Store {
         let _ = self.db.execute("DELETE FROM repos WHERE id=?1", [id]);
         // Its chats went with it.
         self.saved.borrow_mut().clear();
+    }
+
+    pub fn set_repo_remote(&self, id: i64, remote: &str) {
+        let _ = self.db.execute("UPDATE repos SET remote=?2 WHERE id=?1", params![id, remote]);
+    }
+
+    /// This PC's folder for a shared project (None: back to its own `path`).
+    pub fn set_repo_local(&self, id: i64, local: Option<&std::path::Path>) {
+        let _ = self.db.execute("UPDATE repos SET local=?2 WHERE id=?1", params![id, local.map(|l| l.to_string_lossy().into_owned()).unwrap_or_default()]);
     }
 
     pub fn save_repo_meta(&self, r: &Repo) {
@@ -780,6 +816,25 @@ mod tests {
         assert_eq!(s.webhooks().len(), 1);
         s.remove_repo(repo);
         assert!(s.webhooks().is_empty(), "the project's hook tokens must not outlive it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_shared_projects_folder_is_kept_per_pc() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-local-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Store::open_at(&dir.join("harbor.db")).unwrap();
+        let owner = std::path::Path::new("/home/owner/Documents/proj");
+        let id = s.add_repo(owner).unwrap();
+        let r = &s.repos()[0];
+        assert_eq!((r.remote.as_str(), r.local.as_deref(), r.dir()), ("", None, owner));
+        s.set_repo_remote(id, "git@github.com:o/proj.git");
+        s.set_repo_local(id, Some(&dir));
+        let r = &s.repos()[0];
+        assert_eq!(r.path, owner, "the owner's path stays the project's name");
+        assert_eq!((r.remote.as_str(), r.dir()), ("git@github.com:o/proj.git", dir.as_path()));
+        s.set_repo_local(id, None);
+        assert_eq!(s.repos()[0].dir(), owner);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

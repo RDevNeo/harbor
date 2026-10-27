@@ -668,7 +668,7 @@ impl App {
         let pid = |id: i64| if global { self.repo(id).map_or(json!(id), |r| json!(r.path.to_string_lossy())) } else { json!(id) };
         let mut known: Vec<Value> = self.pr_projects().into_iter().map(|(id, name, repo)| json!({ "id": pid(id), "name": name, "repo": repo })).collect();
         let missing: Vec<(Value, String, std::path::PathBuf)> =
-            self.repos.iter().filter(|r| !self.git.contains_key(&r.id)).map(|r| (pid(r.id), r.name.clone(), r.path.clone())).collect();
+            self.repos.iter().filter(|r| !self.git.contains_key(&r.id)).map(|r| (pid(r.id), r.name.clone(), r.dir().to_path_buf())).collect();
         move || {
             for (id, name, path) in missing {
                 if let Some(repo) = crate::git::status(&path).and_then(|s| s.remote).and_then(|r| prs::github_repo(&r)) {

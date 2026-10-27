@@ -694,8 +694,8 @@ impl App {
     fn move_candidates(&self) -> Vec<Candidate> {
         self.repos
             .iter()
-            .filter(|r| r.path.is_dir())
-            .map(|r| Candidate { id: r.id, name: r.name.clone(), folder: r.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), remote: remote_url(&r.path) })
+            .filter(|r| r.dir().is_dir())
+            .map(|r| Candidate { id: r.id, name: r.name.clone(), folder: r.dir().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), remote: remote_url(r.dir()) })
             .collect()
     }
 
@@ -722,7 +722,7 @@ impl App {
             let what = if s("remote").is_empty() { s("name") } else { format!("{} ({})", s("name"), s("remote")) };
             format!("{me} has no project for {what}: clone it there and add it to Harbor first")
         })?;
-        if body["worktree"].is_object() && crate::worktree::head(&self.repo(repo).map(|r| r.path.clone()).unwrap_or_default()).is_none() {
+        if body["worktree"].is_object() && crate::worktree::head(&self.repo(repo).map(|r| r.dir().to_path_buf()).unwrap_or_default()).is_none() {
             return Err(format!("{me}'s copy of the project isn't a git checkout"));
         }
         Ok((Some(repo), account))
@@ -818,7 +818,7 @@ impl App {
             sessions.push((sid, files));
         }
         let config = self.account(&account).and_then(|a| a.config_dir.clone());
-        let repo_path = repo.and_then(|r| self.repo(r)).map(|r| r.path.clone());
+        let repo_path = repo.and_then(|r| self.repo(r)).map(|r| r.dir().to_path_buf());
         let worktree = body["worktree"].is_object().then(|| (body["worktree"]["branch"].as_str().unwrap_or("").to_string(), body["worktree"]["remote"].as_str().unwrap_or("").to_string()));
         let home = store::home();
         self.movepc.adopting.insert(gid.clone());
@@ -851,7 +851,7 @@ impl App {
                 Err(e) => err(409, e),
                 Ok(wt) if now_ms() > deadline => {
                     // The source has given up waiting: it keeps the chat.
-                    if let (Some(w), Some(r)) = (wt, repo.and_then(|r| app.repo(r)).map(|r| r.path.clone())) {
+                    if let (Some(w), Some(r)) = (wt, repo.and_then(|r| app.repo(r)).map(|r| r.dir().to_path_buf())) {
                         std::thread::spawn(move || crate::worktree::remove(&r, &w));
                     }
                     err(409, "it took too long")
@@ -930,7 +930,7 @@ impl App {
             let acc = self.account(account).map(|a| a.short()).unwrap_or_else(|| account.to_string());
             let mut detail = format!("It runs as {acc} here");
             if let Some(r) = repo.and_then(|r| self.repo(r)) {
-                detail.push_str(&format!(", in {}", crate::app::tilde(&r.path)));
+                detail.push_str(&format!(", in {}", crate::app::tilde(r.dir())));
             }
             if let Some(w) = &wt {
                 detail.push_str(&format!(", worktree {}", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
@@ -939,7 +939,7 @@ impl App {
             if let (Some(b), Some(sha)) = (code["branch"].as_str().filter(|b| !b.is_empty()), code["sha"].as_str()) {
                 detail.push_str(&format!(". On {from} it was on {b} at {sha}"));
                 // In the checkout (not its own worktree): say where this PC's checkout is.
-                let path = repo.and_then(|r| self.repo(r)).map(|r| r.path.clone()).filter(|_| wt.is_none());
+                let path = repo.and_then(|r| self.repo(r)).map(|r| r.dir().to_path_buf()).filter(|_| wt.is_none());
                 if let Some((p, h)) = path.and_then(|p| crate::worktree::head(&p).map(|h| (p, h))) {
                     let here = git(&p, &["rev-parse", "--short", "HEAD"], GIT_TIMEOUT).unwrap_or_default();
                     detail.push_str(&format!("; here the checkout is on {} at {here}", h.label()));
