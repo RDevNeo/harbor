@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-10-27
+
 ### Added
 - Agents can open chats: a chat's agent can start a new chat in the sidebar (desktop and phone)
   with its `open_chat` tool, for an independent topic you want as its own thread; the new chat's
@@ -1309,7 +1311,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.56.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/RDevNeo/harbor/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/RDevNeo/harbor/compare/v0.55.3...v0.56.0
 [0.55.3]: https://github.com/RDevNeo/harbor/compare/v0.55.2...v0.55.3
 [0.55.2]: https://github.com/RDevNeo/harbor/compare/v0.55.1...v0.55.2
