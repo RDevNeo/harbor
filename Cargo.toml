@@ -34,9 +34,10 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem",
 ring = "0.17"
 # getifaddrs: this PC's LAN addresses for pairing (already in the tree).
 libc = "0.2"
-# Voice input's transcriber (voice.rs): whisper.cpp compiled in (CPU only, static), so
-# dictation needs no separate install. Build flags for it are in .cargo/config.toml.
-whisper-rs = { version = "0.16", default-features = false }
+# Voice input's speech engine (parakeet.rs): sherpa-onnx, linked statically with its ONNX
+# Runtime (prebuilt libraries fetched at build time), runs Parakeet TDT 0.6B v3 and the
+# Whisper fallback. No separate install; models download on first use.
+sherpa-onnx = { version = "2.0", default-features = false, features = ["static"] }
 
 [profile.release]
 opt-level = 3

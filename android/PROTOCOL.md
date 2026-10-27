@@ -703,7 +703,7 @@ or is unreachable, its own offline sherpa-onnx model transcribes the phrase. A h
 `cleanup`. Phones before 0.55
 used `SpeechRecognizer` and sent whole recordings here only without one. The body
 is the recording as a WAV file (16-bit PCM, mono, 16 kHz; at most 10 minutes), `Content-Type:
-audio/wav`. The PC transcribes it with whisper.cpp and its model from Settings › Voice → `{"text":
+audio/wav`. The PC transcribes it with its speech model from Settings › Voice (see below) → `{"text":
 "…"}` (it may be empty: nothing was said). `409 {"error": "…"}` says why it can't, to show as is:
 since 0.53 whisper.cpp is built into the hub, and with no model yet the first recording starts its
 download and gets `409` with the progress ("try again when it's done"). `lang` missing or empty: the PC's own setting. `GET /v1/state`
@@ -714,7 +714,7 @@ says beforehand (optional, 0.38): `"voice": {"transcribe": true|false, "why": "�
 
 Since 0.55 the hub's main speech engine is NVIDIA Parakeet TDT 0.6B v3 (int8, via sherpa-onnx,
 built in; 25 European languages, detects the language itself). Its model (~670 MB) downloads on
-first use; built-in whisper.cpp stays as the fallback (a language Parakeet lacks, or Parakeet
+first use; a built-in Whisper stays as the fallback (a language Parakeet lacks, or Parakeet
 failing). The model is loaded only while in use and freed after an idle period. All fields below
 are optional additions: old phones ignore them, and phones must treat a `404` from an older hub as
 "not supported" (fall back to plain `POST /v1/transcribe`).

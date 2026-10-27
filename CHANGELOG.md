@@ -5,7 +5,27 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Dictation now transcribes with NVIDIA Parakeet TDT 0.6B v3 (25 European languages, detects
+  the language itself), built into Harbor through sherpa-onnx: faster and more accurate than
+  Whisper, which stays as the fallback for other languages. Its model (670 MB) downloads by
+  itself on the first dictation, with progress by the mic.
+- The speech model loads while you speak and is freed after a few idle minutes (Settings ›
+  Voice › Keep speech model loaded, default 5 min): no memory or CPU while you don't dictate.
+- Each recording is transcribed on the PC of your mesh with the most free memory (this PC on a
+  near tie; PCs that don't answer are skipped). Phones' recordings go the same way through
+  their hub.
+- Clean up dictation (Settings › Voice, on by default): filler words and false starts go,
+  punctuation and capitals are fixed and spoken corrections ("no wait, I meant…") applied,
+  through this PC's Claude account (Haiku, a few hundred tokens). The raw text when it fails.
+- Hub API for the phone: `GET /v1/voice`, `PUT /v1/voice/settings`, `POST /v1/voice/cleanup`,
+  and `cleanup`/`local` on `POST /v1/transcribe` (answers add `raw` and `host`).
+
 ### Changed
+- The built-in Whisper now runs on the same engine as Parakeet (sherpa-onnx) instead of
+  whisper.cpp: no AVX2 needed any more, and Harbor builds without cmake. Whisper models
+  downloaded before need downloading again (Settings › Voice); `HARBOR_WHISPER` still runs an
+  external `whisper-cli` with a ggml model.
 - Phone dictation no longer uses Google's speech services. The phone records and cuts what you say
   into phrases at pauses (Silero VAD, on the phone); each phrase goes to your PC, which
   transcribes it, so the words appear while you talk and pauses never stop it. Tapping stop puts

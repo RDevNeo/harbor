@@ -2,12 +2,13 @@
 //! transcribes into the composer at the cursor, to edit before sending (never sent by itself).
 //!
 //! Recording is a `pw-record` (PipeWire) or `parecord` (PulseAudio) child writing raw 16 kHz
-//! mono s16 to a pipe: no audio library. Transcription is local, private and free: whisper.cpp,
-//! compiled into Harbor (whisper-rs), with a ggml model from Settings › Voice (tiny, base or
-//! small, downloaded into Harbor's data folder; the first dictation downloads base by itself).
-//! HARBOR_WHISPER names an external `whisper-cli` to use instead. Phones without a recogniser
-//! of their own send their recording here (`POST /v1/transcribe`, api.rs), and it's
-//! transcribed the same way.
+//! mono s16 to a pipe: no audio library. Transcription is private and free, on the user's own
+//! PCs: Parakeet by default, Whisper (tiny, base or small) as the fallback, both through
+//! sherpa-onnx built into Harbor (parakeet.rs); dictate.rs picks the engine, routes each
+//! recording to the mesh PC with the most free memory and cleans the text up. Models download
+//! into Harbor's data folder on first use. HARBOR_WHISPER names an external whisper.cpp
+//! `whisper-cli` to use instead of the built-in Whisper (with a ggml model in `<data>/whisper`). Phones without a recogniser of their own send their recording to
+//! their hub (`POST /v1/transcribe`, api.rs), and it goes the same way.
 
 use crate::widgets::Tip as _;
 use crate::app::App;
@@ -28,12 +29,24 @@ const TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(300);
 /// (code whisper takes, label).
 pub const LANGS: &[(&str, &str)] = &[("auto", "Detect automatically"), ("en", "English"), ("pt", "Portuguese")];
 
-/// (name, what it's like, download size in bytes): whisper.cpp's multilingual models.
+/// (name, what it's like, download size in bytes): Whisper's multilingual models (int8).
 pub const MODELS: &[(&str, &str, u64)] = &[
-    ("tiny", "Fastest, rougher", 77_691_713),
-    ("base", "Fast, good for dictation", 147_951_465),
-    ("small", "Slower, most accurate", 487_601_967),
+    ("tiny", "Fastest, rougher", 103_609_903),
+    ("base", "Fast, good for dictation", 160_609_290),
+    ("small", "Slower, most accurate", 375_485_327),
 ];
+
+/// Each Whisper model's files (sherpa-onnx's int8 export of OpenAI's Whisper): (file, size,
+/// SHA-256 or "").
+fn model_files(name: &str) -> Vec<(String, u64, &'static str)> {
+    let (enc, dec) = match name {
+        "tiny" => ((12_937_772, "d24fb083ae3b1041fc24e97971d60e280c9342201fbb67b0ab428a8b4a51a434"), (89_855_401, "d2fece8dd42771f1df975c6c0445770d0c292bf7547c2cae04a6c0cc57540925")),
+        "base" => ((29_120_534, "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"), (130_672_026, "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d")),
+        "small" => ((112_442_483, "4cbe7b22fa9026b843b60a68640c747de05bafb1a11b57edc0e66c232d9f33a9"), (262_226_114, "acad50b5c782696e91b55914cc5ab4f756f1532f76e22aa6fc615f39fb69a8ee")),
+        _ => return vec![],
+    };
+    vec![(format!("{name}-encoder.int8.onnx"), enc.0, enc.1), (format!("{name}-decoder.int8.onnx"), dec.0, dec.1), (format!("{name}-tokens.txt"), 816_730, "")]
+}
 
 /// The model the first dictation downloads when there is none yet.
 pub const DEFAULT_MODEL: &str = "base";
@@ -41,16 +54,24 @@ pub const DEFAULT_MODEL: &str = "base";
 /// The language and model, kept for the API threads (phones' recordings) too.
 static CONFIG: Mutex<(String, String)> = Mutex::new((String::new(), String::new()));
 
+/// The built-in Whisper models' folder (one subfolder per model).
 pub fn models_dir() -> PathBuf {
-    crate::store::data_dir().join("whisper")
+    crate::store::data_dir().join("whisper-onnx")
 }
 
-pub fn model_path(name: &str) -> PathBuf {
-    models_dir().join(format!("ggml-{name}.bin"))
+pub fn model_dir(name: &str) -> PathBuf {
+    models_dir().join(name)
 }
 
 pub fn installed(name: &str) -> bool {
-    std::fs::metadata(model_path(name)).is_ok_and(|m| m.len() > 1_000_000)
+    let files = model_files(name);
+    !files.is_empty() && files.iter().all(|(f, size, _)| std::fs::metadata(model_dir(name).join(f)).is_ok_and(|m| m.len() == *size))
+}
+
+/// A whisper.cpp ggml model for HARBOR_WHISPER's `whisper-cli` (`<data>/whisper/ggml-*.bin`).
+fn ggml_model(name: &str) -> Option<PathBuf> {
+    let dir = crate::store::data_dir().join("whisper");
+    std::iter::once(name).chain(MODELS.iter().map(|m| m.0)).map(|n| dir.join(format!("ggml-{n}.bin"))).find(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 1_000_000))
 }
 
 fn on_path(names: &[&str]) -> Option<PathBuf> {
@@ -58,32 +79,20 @@ fn on_path(names: &[&str]) -> Option<PathBuf> {
     std::env::split_paths(&path).flat_map(|d| names.iter().map(move |n| d.join(n))).find(|p| p.is_file())
 }
 
-/// What transcribes.
+/// What transcribes with Whisper.
 pub enum Engine {
-    /// whisper.cpp compiled into Harbor.
+    /// Built into Harbor (sherpa-onnx).
     Builtin,
-    /// An external whisper.cpp command line program.
+    /// An external whisper.cpp command line program (HARBOR_WHISPER).
     Cli(PathBuf),
 }
 
-/// The transcriber: a `whisper-cli` named by HARBOR_WHISPER, else the built-in whisper.cpp,
-/// else (a CPU the built-in one can't run on) a `whisper-cli` on the PATH.
-pub fn engine() -> Option<Engine> {
-    if let Some(p) = std::env::var_os("HARBOR_WHISPER").map(PathBuf::from).filter(|p| p.is_file()) {
-        return Some(Engine::Cli(p));
+/// The Whisper transcriber: a `whisper-cli` named by HARBOR_WHISPER, else the built-in one.
+pub fn engine() -> Engine {
+    match std::env::var_os("HARBOR_WHISPER").map(PathBuf::from).filter(|p| p.is_file()) {
+        Some(p) => Engine::Cli(p),
+        None => Engine::Builtin,
     }
-    if builtin_runs() {
-        return Some(Engine::Builtin);
-    }
-    on_path(&["whisper-cli", "whisper-cpp", "whisper.cpp"]).map(Engine::Cli)
-}
-
-/// Whether this CPU has what the built-in whisper.cpp was compiled for (.cargo/config.toml).
-fn builtin_runs() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    return is_x86_feature_detected!("avx") && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") && is_x86_feature_detected!("f16c");
-    #[cfg(not(target_arch = "x86_64"))]
-    true
 }
 
 /// The recorder: PipeWire's, else PulseAudio's.
@@ -110,30 +119,43 @@ pub fn current_model() -> Option<String> {
     MODELS.iter().map(|m| m.0).find(|m| installed(m)).map(String::from)
 }
 
-/// Why this PC can't transcribe, if it can't (a missing model isn't a reason: it downloads).
-pub fn missing() -> Option<String> {
-    engine().is_none().then(|| "This CPU lacks AVX2, which Harbor's speech recogniser needs. Set HARBOR_WHISPER to a whisper-cli built for it.".into())
-}
-
 /// Why the mic can't record here, if it can't.
 pub fn cant_record() -> Option<String> {
     recorder().is_none().then(|| "Can't record: neither pw-record (PipeWire) nor parecord (PulseAudio) is on this PC.".into())
 }
 
-/// The model to transcribe with. When there's none yet, the default one starts downloading and
-/// the error says how far along it is.
-fn ready_model() -> Result<String, String> {
-    if let Some(m) = current_model() {
-        return Ok(m);
+/// Why a transcription didn't happen.
+#[derive(Debug)]
+pub enum Fail {
+    /// A model is downloading: try again when it's done (the text says how far along).
+    Wait(String),
+    Err(String),
+}
+
+impl Fail {
+    pub fn text(&self) -> &str {
+        match self {
+            Fail::Wait(s) | Fail::Err(s) => s,
+        }
     }
-    if let Some((name, e)) = take_download_error() {
-        return Err(format!("Couldn't download the {name} speech model: {e}"));
+}
+
+/// `name` is needed and not there: starts its download (unless one runs) and says how far along
+/// it is, or why the last try failed.
+pub fn wait_for(name: &str) -> Fail {
+    if let Some((n, e)) = take_download_error() {
+        return Fail::Err(format!("Couldn't download the {} speech model: {e}", label(&n)));
     }
     if downloading().is_none() {
-        start_download(DEFAULT_MODEL);
+        start_download(name);
     }
-    let (name, done, total) = downloading().unwrap_or((DEFAULT_MODEL.into(), 0, 0));
-    Err(format!("Getting the {name} speech model ({} of {}); try again when it's done.", megabytes(done), megabytes(total)))
+    let (n, done, total) = downloading().unwrap_or((name.into(), 0, 0));
+    Fail::Wait(format!("Getting the {} speech model ({} of {}); try again when it's done.", label(&n), megabytes(done), megabytes(total)))
+}
+
+/// A model's name for people ("parakeet" → "Parakeet").
+pub fn label(name: &str) -> String {
+    capital(name)
 }
 
 // ------------------------------------------------------------------ recording
@@ -236,12 +258,6 @@ pub fn wav(samples: &[i16], rate: u32) -> Vec<u8> {
     v
 }
 
-/// Transcribes a WAV file (16-bit PCM; a phone's recording): the text, or why not.
-pub fn transcribe(wav: &Path, lang: &str) -> Result<String, String> {
-    let bytes = std::fs::read(wav).map_err(|e| e.to_string())?;
-    transcribe_samples(&wav_samples(&bytes)?, lang)
-}
-
 /// whisper.cpp's command line program on a WAV file (16 kHz mono).
 fn transcribe_cli(bin: &Path, model: &Path, wav: &Path, lang: &str) -> Result<String, String> {
     let mut cmd = Command::new(bin);
@@ -252,29 +268,6 @@ fn transcribe_cli(bin: &Path, model: &Path, wav: &Path, lang: &str) -> Result<St
         return Err(format!("{} failed: {}", bin.display(), e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim()));
     }
     Ok(clean(&String::from_utf8_lossy(&out.stdout)))
-}
-
-/// The built-in whisper.cpp on 16 kHz mono samples.
-fn transcribe_builtin(model: &Path, samples: &[i16], lang: &str) -> Result<String, String> {
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-    // whisper.cpp logs every step to stderr; with no log backend this silences it.
-    whisper_rs::install_logging_hooks();
-    let mut cp = WhisperContextParameters::default();
-    cp.use_gpu = false;
-    let ctx = WhisperContext::new_with_params(model, cp).map_err(|e| format!("Couldn't load the speech model ({e:?}). Remove it in Settings › Voice and download it again."))?;
-    let mut state = ctx.create_state().map_err(|e| format!("Couldn't start the speech recogniser: {e:?}"))?;
-    let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    p.set_n_threads(threads() as _);
-    p.set_language(Some(lang));
-    p.set_no_timestamps(true);
-    p.set_print_progress(false);
-    p.set_print_realtime(false);
-    p.set_print_special(false);
-    p.set_print_timestamps(false);
-    let pcm: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
-    state.full(p, &pcm).map_err(|e| format!("Transcription failed: {e:?}"))?;
-    let text: Vec<String> = state.as_iter().filter_map(|seg| seg.to_str_lossy().ok().map(|t| t.into_owned())).collect();
-    Ok(clean(&text.join("\n")))
 }
 
 fn threads() -> usize {
@@ -352,22 +345,23 @@ pub fn clean(s: &str) -> String {
     out
 }
 
-/// Transcribes 16 kHz mono samples on this thread.
-pub fn transcribe_samples(samples: &[i16], lang: &str) -> Result<String, String> {
-    if samples.len() < RATE as usize / 4 {
-        return Err("Nothing was recorded (check the input device).".into());
-    }
-    let engine = engine().ok_or_else(|| missing().unwrap_or_default())?;
-    let model = model_path(&ready_model()?);
+/// Whisper on 16 kHz mono samples, on this thread. Without a model, the default one starts
+/// downloading (`Fail::Wait`).
+pub fn whisper(samples: &[i16], lang: &str) -> Result<String, Fail> {
     let lang = if LANGS.iter().any(|l| l.0 == lang) { lang } else { "auto" };
-    match engine {
-        Engine::Builtin => transcribe_builtin(&model, samples, lang),
+    match engine() {
+        Engine::Builtin => {
+            let name = current_model().ok_or_else(|| wait_for(DEFAULT_MODEL))?;
+            crate::parakeet::whisper(&model_dir(&name), &name, samples, lang).map_err(Fail::Err)
+        }
         Engine::Cli(bin) => {
+            let (_, picked) = config();
+            let model = ggml_model(&picked).ok_or_else(|| Fail::Err(format!("HARBOR_WHISPER is set: put a whisper.cpp ggml model (ggml-base.bin) in {}.", crate::store::data_dir().join("whisper").display())))?;
             let path = std::env::temp_dir().join(format!("harbor-voice-{}-{}.wav", std::process::id(), crate::store::new_uuid()));
-            std::fs::write(&path, wav(samples, RATE)).map_err(|e| e.to_string())?;
+            std::fs::write(&path, wav(samples, RATE)).map_err(|e| Fail::Err(e.to_string()))?;
             let r = transcribe_cli(&bin, &model, &path, lang);
             let _ = std::fs::remove_file(&path);
-            r
+            r.map_err(Fail::Err)
         }
     }
 }
@@ -384,13 +378,30 @@ struct Download {
 /// The one model download (Settings, a first dictation, or a phone's recording started it).
 static DOWNLOAD: Mutex<Option<Download>> = Mutex::new(None);
 
-/// Starts downloading model `name`, unless a download is already under way.
+/// One file of a model: where from, where to, its size and SHA-256 ("" to check the size only).
+pub struct Part {
+    pub url: String,
+    pub dst: PathBuf,
+    pub size: u64,
+    pub sha256: &'static str,
+}
+
+/// Starts downloading model `name` ("parakeet", or a Whisper model), unless a download is
+/// already under way.
 pub fn start_download(name: &str) {
     let mut d = DOWNLOAD.lock().unwrap();
     if d.as_ref().is_some_and(|d| d.result.lock().unwrap().is_none()) {
         return;
     }
-    *d = Some(download(name));
+    let parts = if name == "parakeet" {
+        crate::parakeet::parts()
+    } else {
+        model_files(name)
+            .into_iter()
+            .map(|(f, size, sha256)| Part { url: format!("https://huggingface.co/csukuangfj/sherpa-onnx-whisper-{name}/resolve/main/{f}"), dst: model_dir(name).join(&f), size, sha256 })
+            .collect()
+    };
+    *d = Some(download(name, parts));
 }
 
 /// The download under way: (model, bytes so far, total bytes).
@@ -418,52 +429,84 @@ pub fn take_download_error() -> Option<(String, String)> {
     Some(e)
 }
 
-/// Downloads a model from whisper.cpp's own Hugging Face repo, into a temporary name first.
-fn download(name: &str) -> Download {
-    let total = MODELS.iter().find(|m| m.0 == name).map(|m| m.2).unwrap_or(0);
+/// Downloads a model's files, each into a temporary name first; files already there are kept.
+fn download(name: &str, parts: Vec<Part>) -> Download {
+    let total = parts.iter().map(|p| p.size).sum();
     let d = Download { name: name.into(), total, done: Arc::new(AtomicU64::new(0)), result: Arc::new(Mutex::new(None)) };
-    let (done, result, name) = (d.done.clone(), d.result.clone(), name.to_string());
+    let (done, result) = (d.done.clone(), d.result.clone());
     std::thread::spawn(move || {
-        let dst = model_path(&name);
-        let tmp = dst.with_extension("part");
         let r = (|| -> Result<(), String> {
-            std::fs::create_dir_all(models_dir()).map_err(|e| e.to_string())?;
-            let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin");
-            let mut child = Command::new("curl")
-                .args(["-fsSL", "--retry", "2", "--connect-timeout", "20", "-o"])
-                .arg(&tmp)
-                .arg(&url)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("curl: {e}"))?;
-            let status = loop {
-                if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
-                    break st;
+            let mut base = 0;
+            for part in &parts {
+                if std::fs::metadata(&part.dst).is_ok_and(|m| m.len() == part.size) {
+                    base += part.size;
+                    continue;
                 }
-                done.store(std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0), Ordering::Relaxed);
-                std::thread::sleep(Duration::from_millis(400));
-            };
-            if !status.success() {
-                let mut e = String::new();
-                if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_string(&mut e);
-                }
-                let _ = std::fs::remove_file(&tmp);
-                let e = e.trim().trim_start_matches("curl: ");
-                return Err(if e.is_empty() { "the download stopped".into() } else { e.into() });
+                fetch(part, |n| done.store(base + n, Ordering::Relaxed))?;
+                base += part.size;
             }
-            let len = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
-            if total > 0 && len != total {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(format!("download incomplete ({len} of {total} bytes)"));
-            }
-            std::fs::rename(&tmp, &dst).map_err(|e| e.to_string())
+            Ok(())
         })();
         *result.lock().unwrap() = Some(r);
     });
     d
+}
+
+/// One file with curl, its size and checksum checked; `progress` gets the bytes so far.
+fn fetch(part: &Part, progress: impl Fn(u64)) -> Result<(), String> {
+    let tmp = part.dst.with_extension("part");
+    if let Some(dir) = part.dst.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut child = Command::new("curl")
+        .args(["-fsSL", "--retry", "2", "--connect-timeout", "20", "-o"])
+        .arg(&tmp)
+        .arg(&part.url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("curl: {e}"))?;
+    let status = loop {
+        if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+            break st;
+        }
+        progress(std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0));
+        std::thread::sleep(Duration::from_millis(400));
+    };
+    if !status.success() {
+        let mut e = String::new();
+        if let Some(mut err) = child.stderr.take() {
+            let _ = err.read_to_string(&mut e);
+        }
+        let _ = std::fs::remove_file(&tmp);
+        let e = e.trim().trim_start_matches("curl: ");
+        return Err(if e.is_empty() { "the download stopped".into() } else { e.into() });
+    }
+    let len = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+    if part.size > 0 && len != part.size {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("download incomplete ({len} of {} bytes)", part.size));
+    }
+    if !part.sha256.is_empty() && sha256_file(&tmp).as_deref() != Some(part.sha256) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err("the download was damaged (checksum mismatch); try again".into());
+    }
+    std::fs::rename(&tmp, &part.dst).map_err(|e| e.to_string())
+}
+
+fn sha256_file(path: &Path) -> Option<String> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        ctx.update(&buf[..n]);
+    }
+    Some(ctx.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 pub fn megabytes(b: u64) -> String {
@@ -472,21 +515,32 @@ pub fn megabytes(b: u64) -> String {
 
 // ------------------------------------------------------------------ the composer's mic
 
+/// A finished transcription for a composer, or a recording handed back to wait for a model.
+enum Back {
+    Done(i64, Result<String, String>),
+    Wait(i64, Vec<i16>),
+}
+
 #[derive(Default)]
 pub struct State {
     /// Recording for this composer (chat id or app::DRAFT).
     pub rec: Option<(i64, Recording)>,
     /// Transcribing for this composer, since.
     pub busy: Option<(i64, Instant)>,
-    chan: Option<(Sender<(i64, Result<String, String>)>, Receiver<(i64, Result<String, String>)>)>,
+    chan: Option<(Sender<Back>, Receiver<Back>)>,
     /// A recording waiting for the speech model to finish downloading.
     pending: Option<(i64, Vec<i16>)>,
+    /// When the cleanup account was last mirrored for the API threads.
+    account_at: Option<Instant>,
 }
 
 impl App {
     /// The voice settings from the store, mirrored for the API threads (called at start).
     pub fn voice_load(&self) {
         *CONFIG.lock().unwrap() = (self.store.get("voice_lang").unwrap_or_default(), self.store.get("voice_model").unwrap_or_default());
+        let keep = self.store.get("voice_keep_min").and_then(|v| v.parse().ok()).unwrap_or(5);
+        let engine = self.store.get("voice_engine").unwrap_or_default();
+        crate::dictate::set(Some(&engine), Some(self.store.get("voice_cleanup").as_deref() != Some("0")), Some(keep), false);
     }
 
     pub fn voice_set(&self, lang: Option<&str>, model: Option<&str>) {
@@ -499,30 +553,44 @@ impl App {
         self.voice_load();
     }
 
+    /// Settings › Voice's engine, cleanup and keep-loaded choices.
+    fn voice_set_more(&self, engine: Option<&str>, cleanup: Option<bool>, keep_min: Option<u64>) {
+        if let Some(e) = engine {
+            self.store.set("voice_engine", e);
+        }
+        if let Some(c) = cleanup {
+            self.store.set("voice_cleanup", if c { "1" } else { "0" });
+        }
+        if let Some(m) = keep_min {
+            self.store.set("voice_keep_min", &m.to_string());
+        }
+        self.voice_load();
+    }
+
     /// The mic button or its shortcut: starts recording into composer `key`, or stops and
     /// transcribes.
     pub fn voice_toggle(&mut self, key: i64, ctx: &egui::Context) {
         if let Some((k, rec)) = self.voice.rec.take() {
             let samples = rec.stop();
             self.voice.busy = Some((k, Instant::now()));
-            if current_model().is_none() && engine().is_some() && samples.len() >= RATE as usize / 4 {
-                // The model is still on its way: transcribed once it's here (voice_poll).
-                start_download(DEFAULT_MODEL);
-                self.voice.pending = Some((k, samples));
-                return;
-            }
             self.voice_transcribe(k, samples, ctx);
             return;
         }
         if self.voice.busy.is_some() {
             return;
         }
-        if let Some(why) = cant_record().or_else(missing) {
+        if let Some(why) = cant_record() {
             crate::picker::show_toast(ctx, why);
             return;
         }
-        if current_model().is_none() {
-            // The first dictation: the default model downloads while you speak.
+        // While you speak: the model loads, or (the first dictation) downloads.
+        if crate::dictate::engine() == "parakeet" {
+            if crate::parakeet::installed() {
+                crate::parakeet::preload();
+            } else {
+                start_download("parakeet");
+            }
+        } else if current_model().is_none() {
             start_download(DEFAULT_MODEL);
         }
         let c = ctx.clone();
@@ -532,19 +600,20 @@ impl App {
         }
     }
 
+    /// Transcribes on a thread: the best PC of the mesh, then the cleanup.
     fn voice_transcribe(&mut self, key: i64, samples: Vec<i16>, ctx: &egui::Context) {
-        let (tx, _) = self.voice_chan();
+        let tx = self.voice.chan.get_or_insert_with(channel).0.clone();
         let (lang, _) = config();
-        let ctx = ctx.clone();
+        let (ctx, hub) = (ctx.clone(), self.api.hub.clone());
         std::thread::spawn(move || {
-            let _ = tx.send((key, transcribe_samples(&samples, &lang)));
+            let back = match crate::dictate::transcribe(&hub, &samples, &lang, crate::dictate::cleanup_on(), false) {
+                Ok(d) => Back::Done(key, Ok(d.text)),
+                Err(Fail::Wait(_)) => Back::Wait(key, samples),
+                Err(Fail::Err(e)) => Back::Done(key, Err(e)),
+            };
+            let _ = tx.send(back);
             ctx.request_repaint();
         });
-    }
-
-    fn voice_chan(&mut self) -> (Sender<(i64, Result<String, String>)>, ()) {
-        let c = self.voice.chan.get_or_insert_with(channel);
-        (c.0.clone(), ())
     }
 
     /// Transcripts that came back: into their composer at the cursor (from `App::tick`).
@@ -553,33 +622,57 @@ impl App {
             let key = self.voice.rec.as_ref().map(|r| r.0).unwrap_or(crate::app::DRAFT);
             self.voice_toggle(key, ctx);
         }
+        // The cleanup's account, for the API threads too (every 10 s).
+        if self.voice.account_at.is_none_or(|t| t.elapsed() > Duration::from_secs(10)) {
+            self.voice.account_at = Some(Instant::now());
+            let a = self
+                .accounts
+                .iter()
+                .find(|a| a.id == "claude" && a.installed() && a.logged_in == Some(true))
+                .filter(|a| self.blocked(&a.id).is_none())
+                .map(|a| (a.bin_str(), a.env()));
+            crate::dictate::set_account(a);
+        }
+        // Settings a phone changed.
+        if let Some((cleanup, keep)) = crate::dictate::take_dirty() {
+            self.store.set("voice_cleanup", if cleanup { "1" } else { "0" });
+            self.store.set("voice_keep_min", &keep.to_string());
+        }
         if let Some((name, e)) = take_download_error() {
-            crate::picker::show_toast(ctx, format!("Couldn't download the {name} speech model: {e}"));
+            crate::picker::show_toast(ctx, format!("Couldn't download the {} speech model: {e}", label(&name)));
             if self.voice.pending.take().is_some() {
                 self.voice.busy = None;
             }
         }
         if self.voice.pending.is_some() {
-            if current_model().is_some() {
+            if crate::dictate::ready_here() {
                 let (k, samples) = self.voice.pending.take().unwrap();
                 self.voice_transcribe(k, samples, ctx);
             } else {
                 if downloading().is_none() {
-                    start_download(DEFAULT_MODEL);
+                    start_download(if crate::dictate::engine() == "parakeet" { "parakeet" } else { DEFAULT_MODEL });
                 }
                 ctx.request_repaint_after(Duration::from_millis(400));
             }
         }
-        let got: Vec<(i64, Result<String, String>)> = match &self.voice.chan {
+        let got: Vec<Back> = match &self.voice.chan {
             Some((_, rx)) => rx.try_iter().collect(),
             None => return,
         };
-        for (key, r) in got {
-            self.voice.busy = None;
-            match r {
-                Ok(text) if text.trim().is_empty() => crate::picker::show_toast(ctx, "Didn't catch any words.".into()),
-                Ok(text) => self.voice_insert(ctx, key, &text),
-                Err(e) => crate::picker::show_toast(ctx, e),
+        for b in got {
+            match b {
+                Back::Wait(key, samples) => {
+                    // The model is still on its way: transcribed once it's here (above).
+                    self.voice.pending = Some((key, samples));
+                }
+                Back::Done(key, r) => {
+                    self.voice.busy = None;
+                    match r {
+                        Ok(text) if text.trim().is_empty() => crate::picker::show_toast(ctx, "Didn't catch any words.".into()),
+                        Ok(text) => self.voice_insert(ctx, key, &text),
+                        Err(e) => crate::picker::show_toast(ctx, e),
+                    }
+                }
             }
         }
     }
@@ -626,14 +719,14 @@ impl App {
         if busy {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 20.0), egui::Sense::hover());
             crate::widgets::spinner(ui.painter(), rect.center(), 6.0, t.subtle());
-            let what = match model_progress().filter(|_| self.voice.pending.is_some()) {
+            let what = match model_progress().filter(|_| self.voice.pending.is_some() || !crate::dictate::ready_here()) {
                 Some(p) => format!("Getting the speech model… {p}"),
                 None => "Transcribing…".into(),
             };
             ui.label(egui::RichText::new(what).color(t.subtle()).size(12.5));
             return;
         }
-        let tip = match cant_record().or_else(missing) {
+        let tip = match cant_record() {
             Some(why) => why,
             None => hint,
         };
@@ -644,7 +737,8 @@ impl App {
 }
 
 impl App {
-    /// Settings › Voice: what's installed, the model (download or remove), the language.
+    /// Settings › Voice: what's installed, the engine and its models (download or remove), the
+    /// language, cleanup and how long the model stays loaded.
     pub fn voice_tab(&mut self, ui: &mut egui::Ui) {
         use crate::pages::{rows, section};
         use crate::widgets as w;
@@ -666,24 +760,51 @@ impl App {
                 |ui| ui.label(egui::RichText::new(if rec.is_some() { "Ready" } else { "Missing" }).color(if rec.is_some() { t.green(900) } else { t.red(900) })),
             );
             w::separator(ui);
-            let engine = engine();
-            w::setting_row(
-                ui,
-                "Speech recognition",
-                &match &engine {
-                    Some(Engine::Builtin) => "whisper.cpp, built into Harbor. Runs on this PC; nothing leaves it.".to_string(),
-                    Some(Engine::Cli(b)) => format!("Transcribes with {}.", b.display()),
-                    None => missing().unwrap_or_default(),
-                },
-                |ui| ui.label(egui::RichText::new(if engine.is_some() { "Ready" } else { "Missing" }).color(if engine.is_some() { t.green(900) } else { t.red(900) })),
-            );
+            let parakeet = crate::dictate::engine() == "parakeet";
+            w::setting_row(ui, "Engine", if parakeet { "Parakeet: fast and accurate in 25 European languages, detects the language itself. Whisper takes over for other languages." } else { "Whisper: many languages, slower and less accurate." }, |ui| {
+                if let Some(i) = w::tabs(ui, &["Parakeet", "Whisper"], if parakeet { 0 } else { 1 }) {
+                    self.voice_set_more(Some(if i == 0 { "parakeet" } else { "whisper" }), None, None);
+                }
+            });
+            if let Engine::Cli(b) = engine() {
+                w::separator(ui);
+                w::setting_row(ui, "Whisper", &format!("Transcribes with {} (HARBOR_WHISPER).", b.display()), |ui| ui.label(egui::RichText::new("Ready").color(t.green(900))));
+            }
         });
-        ui.add_space(12.0);
-        section(ui, "Speech model");
         let dl = downloading();
         if dl.is_some() {
             ctx.request_repaint_after(Duration::from_millis(400));
         }
+        let progress_bar = |ui: &mut egui::Ui, done: u64, total: u64| {
+            let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+            ui.add(egui::ProgressBar::new(frac.min(1.0)).desired_width(140.0).text(format!("{} of {}", megabytes(done), megabytes(total))));
+        };
+        ui.add_space(12.0);
+        section(ui, "Parakeet model");
+        let mut pk: Option<&str> = None;
+        rows(ui, |ui| {
+            let here = crate::parakeet::installed();
+            let state = if crate::parakeet::loaded() { "  ·  in memory" } else { "" };
+            let desc = format!("Parakeet TDT 0.6B v3, int8 · {}{}", megabytes(crate::parakeet::size()), if here { "" } else { " · downloads by itself on the first dictation" });
+            w::setting_row(ui, &format!("Parakeet{state}"), &desc, |ui| {
+                if let Some((_, done, total)) = dl.as_ref().filter(|d| d.0 == "parakeet") {
+                    progress_bar(ui, *done, *total);
+                } else if here {
+                    if w::btn("Remove").sm().outline().show(ui).clicked() {
+                        pk = Some("remove");
+                    }
+                } else if w::btn("Download").sm().outline().enabled(dl.is_none()).show(ui).clicked() {
+                    pk = Some("download");
+                }
+            });
+        });
+        match pk {
+            Some("download") => start_download("parakeet"),
+            Some("remove") => crate::parakeet::remove(),
+            _ => {}
+        }
+        ui.add_space(12.0);
+        section(ui, if crate::dictate::engine() == "parakeet" { "Whisper models (fallback)" } else { "Whisper models" });
         let mut action: Option<(&str, &str)> = None;
         rows(ui, |ui| {
             for (i, (name, what, size)) in MODELS.iter().enumerate() {
@@ -696,8 +817,7 @@ impl App {
                 let desc = format!("{what} · {}", megabytes(*size));
                 w::setting_row(ui, &title, &desc, |ui| {
                     if let Some((_, done, total)) = dl.as_ref().filter(|d| d.0 == *name) {
-                        let frac = if *total > 0 { *done as f32 / *total as f32 } else { 0.0 };
-                        ui.add(egui::ProgressBar::new(frac.min(1.0)).desired_width(140.0).text(format!("{} of {}", megabytes(*done), megabytes(*total))));
+                        progress_bar(ui, *done, *total);
                     } else if here {
                         if w::btn("Remove").sm().outline().show(ui).clicked() {
                             action = Some(("remove", name));
@@ -719,18 +839,40 @@ impl App {
             }
             Some(("use", name)) => self.voice_set(None, Some(name)),
             Some(("remove", name)) => {
-                let _ = std::fs::remove_file(model_path(name));
+                let _ = std::fs::remove_dir_all(model_dir(name));
                 if model == name {
                     self.voice_set(None, Some(""));
                 }
             }
             _ => {}
         }
-        w::subtle(ui, "Models come from whisper.cpp's own repository on Hugging Face and stay in Harbor's data folder. Without one, the first dictation downloads Base.", "label-12");
+        w::subtle(
+            ui,
+            "Parakeet TDT 0.6B v3 is NVIDIA's model (CC-BY-4.0), run with sherpa-onnx (Apache-2.0); Whisper is OpenAI's (MIT), in sherpa-onnx's export. Both download from Hugging Face and stay in Harbor's data folder.",
+            "label-12",
+        );
+        ui.add_space(12.0);
+        section(ui, "Dictation");
+        rows(ui, |ui| {
+            let mut on = crate::dictate::cleanup_on();
+            let changed = w::setting_row(ui, "Clean up dictation", "Removes filler words and false starts, fixes punctuation and applies spoken corrections (\"no wait, I meant…\"), through this PC's Claude account. Never adds anything; the raw text when it can't.", |ui| w::toggle(ui, &mut on).changed());
+            if changed {
+                self.voice_set_more(None, Some(on), None);
+            }
+            w::separator(ui);
+            let keeps: [(u64, &str); 5] = [(0, "Off"), (1, "1 min"), (5, "5 min"), (15, "15 min"), (60, "1 h")];
+            let cur = keeps.iter().position(|k| k.0 == crate::parakeet::keep_min()).unwrap_or(2);
+            w::setting_row(ui, "Keep speech model loaded", "After the last dictation, then it's freed: no memory or CPU while idle.", |ui| {
+                let labels: Vec<&str> = keeps.iter().map(|k| k.1).collect();
+                if let Some(i) = w::tabs(ui, &labels, cur) {
+                    self.voice_set_more(None, None, Some(keeps[i].0));
+                }
+            });
+        });
         ui.add_space(12.0);
         section(ui, "Language");
         rows(ui, |ui| {
-            w::setting_row(ui, "Spoken language", "Detect works for either; picking yours is a little faster and surer.", |ui| {
+            w::setting_row(ui, "Spoken language", "Parakeet detects it by itself; for Whisper, picking yours is a little faster and surer.", |ui| {
                 let labels: Vec<&str> = LANGS.iter().map(|(code, label)| if *code == "auto" { "Detect" } else { *label }).collect();
                 let cur = LANGS.iter().position(|l| l.0 == lang).unwrap_or(0);
                 if let Some(i) = w::tabs(ui, &labels, cur) {
@@ -742,7 +884,7 @@ impl App {
         w::subtle(
             ui,
             format!(
-                "The mic in the composer (or {}) starts and stops dictation; the text goes in at the cursor, to edit before you send. Phones dictate with their own recogniser, and send their recording here only when they have none.",
+                "The mic in the composer (or {}) starts and stops dictation; the text goes in at the cursor, to edit before you send. Each recording is transcribed on the PC of your mesh with the most free memory (this one on a near tie). Phones send their recordings here the same way.",
                 crate::keys::label(&self.keys.get("voice"))
             ),
             "label-12",
@@ -837,24 +979,25 @@ mod tests {
         assert!(wav_samples(b"RIFF....WAVEjunk").is_err());
     }
 
-    /// End to end with the built-in whisper.cpp: no model at first (it downloads), then the
+    /// End to end with the built-in Whisper: no model at first (it downloads), then the
     /// WAV at HARBOR_VOICE_TEST_WAV is transcribed. Needs the network; run it with
     /// `XDG_DATA_HOME=<empty dir> cargo test voice::tests::builtin -- --ignored`.
     #[test]
     #[ignore]
     fn builtin_downloads_and_transcribes() {
         let wavf = PathBuf::from(std::env::var_os("HARBOR_VOICE_TEST_WAV").expect("HARBOR_VOICE_TEST_WAV"));
-        assert!(matches!(engine(), Some(Engine::Builtin)));
+        assert!(matches!(engine(), Engine::Builtin));
+        let samples = wav_samples(&std::fs::read(&wavf).unwrap()).unwrap();
         if current_model().is_none() {
-            let e = transcribe(&wavf, "en").unwrap_err();
-            assert!(e.starts_with("Getting the base speech model"), "{e}");
+            let e = whisper(&samples, "en").unwrap_err();
+            assert!(e.text().starts_with("Getting the Base speech model"), "{e:?}");
             while downloading().is_some() {
                 std::thread::sleep(Duration::from_secs(1));
             }
             assert!(take_download_error().is_none());
         }
         let t0 = Instant::now();
-        let text = transcribe(&wavf, "en").unwrap();
+        let text = whisper(&samples, "en").unwrap();
         eprintln!("transcribed in {:?}: {text}", t0.elapsed());
         assert!(!text.trim().is_empty());
     }

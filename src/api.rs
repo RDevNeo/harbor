@@ -47,7 +47,7 @@ const UI_WAIT: Duration = Duration::from_secs(30);
 const COALESCE: Duration = Duration::from_millis(150);
 const MAX_JSON: usize = 2 << 20;
 /// A phone's recording for `POST /v1/transcribe`: 10 minutes of 16 kHz mono 16-bit, and its header.
-const MAX_AUDIO: usize = 16_000 * 2 * 600 + 4096;
+pub const MAX_AUDIO: usize = 16_000 * 2 * 600 + 4096;
 /// The most a request's line and headers may take to arrive.
 pub const HEAD_WAIT: Duration = Duration::from_secs(10);
 const MAX_UPLOAD: usize = 200 << 20;
@@ -1465,12 +1465,46 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 return send_json(r.get_mut(), 400, &json!({ "error": "short body" }));
             }
             let lang = req.query("lang").map(String::from).filter(|l| !l.is_empty() && l != "default").unwrap_or_else(|| crate::voice::config().0);
-            let path = std::env::temp_dir().join(format!("harbor-phone-voice-{}.wav", crate::store::new_uuid()));
-            let res = std::fs::write(&path, &body).map_err(|e| e.to_string()).and_then(|_| crate::voice::transcribe(&path, &lang));
-            let _ = std::fs::remove_file(&path);
-            match res {
-                Ok(text) => send_json(r.get_mut(), 200, &json!({ "text": text })),
-                Err(e) => send_json(r.get_mut(), 409, &json!({ "error": e })),
+            // `cleanup` (0.55): default the hub's setting; `local=1`: transcribe here only.
+            let cleanup = match req.query("cleanup") {
+                Some("0") => false,
+                Some("1") => true,
+                _ => crate::dictate::cleanup_on(),
+            };
+            let local = req.query("local") == Some("1");
+            let samples = match crate::voice::wav_samples(&body) {
+                Ok(s) => s,
+                Err(e) => return send_json(r.get_mut(), 400, &json!({ "error": e })),
+            };
+            match crate::dictate::transcribe(&hub, &samples, &lang, cleanup, local) {
+                Ok(d) => {
+                    let mut v = json!({ "text": d.text, "host": d.host });
+                    if let Some(raw) = d.raw {
+                        v["raw"] = json!(raw);
+                    }
+                    send_json(r.get_mut(), 200, &v)
+                }
+                Err(f) => send_json(r.get_mut(), 409, &json!({ "error": f.text() })),
+            }
+        }
+        // The hub's voice (dictate.rs): engine, model, free memory, settings.
+        ("GET", ["v1", "voice"]) => send_json(w, 200, &crate::dictate::status(&hub.mesh.me().name)),
+        ("PUT", ["v1", "voice", "settings"]) | ("POST", ["v1", "voice", "cleanup"]) => {
+            let v: Value = match read_body(&mut r, req.len, MAX_JSON) {
+                Ok(b) if b.iter().all(u8::is_ascii_whitespace) => Value::Null,
+                Ok(b) => match serde_json::from_slice(&b) {
+                    Ok(v) => v,
+                    Err(e) => return send_json(r.get_mut(), 400, &json!({ "error": format!("bad JSON: {e}") })),
+                },
+                Err(_) => return send_json(r.get_mut(), 413, &json!({ "error": "body too large" })),
+            };
+            if req.method == "PUT" {
+                crate::dictate::set(None, v["cleanup"].as_bool(), v["keep_loaded_min"].as_u64(), true);
+                wake();
+                send_json(r.get_mut(), 200, &crate::dictate::status(&hub.mesh.me().name))
+            } else {
+                let text = v["text"].as_str().unwrap_or("");
+                send_json(r.get_mut(), 200, &json!({ "text": crate::dictate::cleanup_text(text) }))
             }
         }
         ("POST", ["v1", "upload"]) => {
@@ -2849,7 +2883,7 @@ impl App {
             // "Is this you?": this PC's detected owner, until confirmed (profile.rs; 0.47).
             "profile_check": self.profile_check_json(),
             // Whether this PC can transcribe a phone's recording (voice.rs), and why not.
-            "voice": { "transcribe": crate::voice::missing().is_none(), "why": crate::voice::missing(), "lang": crate::voice::config().0 },
+            "voice": { "transcribe": true, "why": null, "lang": crate::voice::config().0 },
         })
     }
 

@@ -346,6 +346,11 @@ fn full_prompt(items: &[Item], ask: &str) -> String {
 /// One question to Haiku through the account's Claude Code: no tools, servers, hooks or session.
 /// Also profile.rs's who-is-who detection, with its own system prompt.
 pub fn ask(bin: String, env: Vec<(String, Option<String>)>, system: &str, prompt: String) -> Result<String, String> {
+    ask_within(bin, env, system, prompt, TIMEOUT)
+}
+
+/// [`ask`] with its own time limit (dictation cleanup: a few seconds).
+pub fn ask_within(bin: String, env: Vec<(String, Option<String>)>, system: &str, prompt: String, timeout: Duration) -> Result<String, String> {
     let dir = store::data_dir().join("recap");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let mut cmd = Command::new(bin);
@@ -377,7 +382,7 @@ pub fn ask(bin: String, env: Vec<(String, Option<String>)>, system: &str, prompt
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() > TIMEOUT => {
+            Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err("timed out".into());

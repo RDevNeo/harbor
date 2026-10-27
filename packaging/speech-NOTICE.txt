@@ -1,0 +1,31 @@
+Harbor's voice input links these speech libraries into the harbor binary
+(sherpa-onnx's prebuilt static libraries, https://github.com/k2-fsa/sherpa-onnx):
+
+- sherpa-onnx, Copyright (c) Xiaomi Corporation and the sherpa-onnx contributors. Apache License 2.0.
+- ONNX Runtime, Copyright (c) Microsoft Corporation. MIT License.
+  https://github.com/microsoft/onnxruntime
+- kaldi-native-fbank and kaldi-decoder, Copyright (c) Xiaomi Corporation. Apache License 2.0.
+- OpenFst (as kaldifst), Copyright (c) Google, Inc. Apache License 2.0.
+- sentencepiece, Copyright (c) Google, Inc. Apache License 2.0.
+- utf8proc, Copyright (c) 2014-2021 Steven G. Johnson, Jiahao Chen, Tony Kelman,
+  Jonas Fonseca, and other contributors; Copyright (c) 2009 Public Software Group e. V.,
+  Berlin, Germany. MIT License.
+- KISS FFT, Copyright (c) 2003-2010 Mark Borgerding. BSD-3-Clause.
+
+The full Apache License 2.0 text: https://www.apache.org/licenses/LICENSE-2.0
+The MIT License text: https://opensource.org/license/mit
+
+Speech models are not shipped with Harbor: they download on first use into Harbor's data
+folder.
+
+- Parakeet TDT 0.6B v3 (int8 ONNX export by the sherpa-onnx project,
+  https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8), based on
+  NVIDIA's nvidia/parakeet-tdt-0.6b-v3 (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
+  Copyright (c) NVIDIA Corporation. Licensed under Creative Commons Attribution 4.0
+  International (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/. Converted to
+  ONNX and quantised to int8; no other changes.
+- Silero VAD (silero_vad.onnx), Copyright (c) 2020-present Silero Team. MIT License.
+  https://github.com/snakers4/silero-vad
+- Whisper tiny, base and small (int8 ONNX exports by the sherpa-onnx project,
+  https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base and its siblings), from OpenAI's
+  Whisper, Copyright (c) 2022 OpenAI. MIT License.

@@ -894,6 +894,16 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             let about = shared.about.lock().unwrap().clone();
             ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c), "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"] }))
         }
+        // Voice (dictate.rs): how this PC is doing, and a recording to transcribe here (never
+        // forwarded again).
+        ("GET", ["mesh", "v1", "voice"]) => ok(crate::dictate::status(&shared.me().name)),
+        ("POST", ["mesh", "v1", "transcribe"]) => match api::read_body(r, req.len, api::MAX_AUDIO) {
+            Ok(body) => {
+                let (status, body) = crate::dictate::serve_peer(hub, &body, req.query("lang").unwrap_or("auto"));
+                Reply { status, body }
+            }
+            Err(_) => err(413, "recording too long"),
+        },
         ("POST", ["mesh", "v1", "upload"]) => {
             let q = api::Request { query: vec![("name".into(), req.query("name").unwrap_or("file").into())], ..req.clone() };
             api::upload_to(r, &q, &api::uploads_dir())
