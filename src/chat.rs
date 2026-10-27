@@ -627,6 +627,15 @@ impl App {
                         action = Some(MsgAction::OpenAt(*chat, *seq));
                     }
                 }
+                // A chat an agent opened: back to where it came from, or on to the new one.
+                Card::ChatLink { gid, text } => {
+                    let to = self.chats.iter().find(|c| c.gid == *gid).map(|c| c.id);
+                    if crate::fork::divider_with(ui, ic::BOT, text, "Open chat") {
+                        if let Some(c) = to {
+                            action = Some(MsgAction::Open(c));
+                        }
+                    }
+                }
                 Card::Notice { icon, text, detail, markdown, url } => {
                     let key = (id, i);
                     let open = self.expanded_tools.contains(&key);

@@ -70,6 +70,32 @@ pub fn tools(role: &str) -> Vec<Value> {
                 &["name", "task"],
             ),
             tool(
+                "open_chat",
+                "Open a new chat (a thread in the sidebar, on the user's PC and phone, like one the user starts) whose agent starts on `prompt` at once. Use it for an independent topic the user wants as its own thread; use spawn_agent for work that serves this chat. Returns the new chat's id.",
+                json!({
+                    "prompt": prop("string", "Its first message: a complete, self-contained request"),
+                    "project": prop("string", "Project name or folder (default: this chat's project)"),
+                    "title": prop("string", "Sidebar title (default: the prompt's first line)"),
+                    "account": prop("string", "Claude account id from list_models (default: yours)"),
+                    "model": prop("string", "Model id from list_models (default: yours)"),
+                    "effort": prop("string", "Reasoning effort (optional)"),
+                    "machine": prop("string", "Another PC of the user's Harbor mesh to run it on (default: this PC)"),
+                }),
+                &["prompt"],
+            ),
+            tool(
+                "list_chats",
+                "The project's chats (sidebar threads): id, title and status (working, queued, idle, settled).",
+                json!({ "project": prop("string", "Project name or folder (default: this chat's project)") }),
+                &[],
+            ),
+            tool(
+                "message_chat",
+                "Send a message to another chat's agent (by id from list_chats or open_chat, or its title). It starts a turn with it, or reads it after the current one.",
+                json!({ "chat": prop("string", "Chat id or title"), "text": prop("string", "Message") }),
+                &["chat", "text"],
+            ),
+            tool(
                 "message_agent",
                 "Send a message to a subagent. If it is idle it starts a new turn with it; if busy it reads it with read_messages or after its turn.",
                 json!({ "agent": prop("string", "Agent name"), "text": prop("string", "Message") }),
@@ -176,5 +202,19 @@ pub fn run(args: &[String]) {
         };
         let _ = writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "result": result }));
         let _ = out.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_leads_open_chats() {
+        let names = |role| super::tools(role).iter().map(|t| t["name"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>();
+        for t in ["open_chat", "list_chats", "message_chat"] {
+            assert!(names("lead").iter().any(|n| n == t), "{t}");
+            assert!(!names("sub").iter().any(|n| n == t), "{t}");
+        }
+        let open = super::tools("lead").into_iter().find(|t| t["name"] == "open_chat").unwrap();
+        assert_eq!(open["inputSchema"]["required"], serde_json::json!(["prompt"]));
     }
 }

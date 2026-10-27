@@ -2111,6 +2111,8 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
         }),
         Card::Footer { text, at } => json!({ "text": text, "at": at }),
         Card::ForkedFrom { chat, seq } => json!({ "chat": chat, "seq": seq }),
+        // `chat` (this hub's id of that chat, null while it isn't here) is filled in by `chat_items`.
+        Card::ChatLink { gid, text } => json!({ "gid": gid, "text": text }),
         Card::Notice { icon, text, detail, markdown, url } => json!({ "icon": icon, "text": text, "detail": clipped(detail), "detail_markdown": markdown, "url": url }),
         Card::Message { from, to, text } => json!({ "from": from, "to": to, "text": clipped(text) }),
         Card::Error { text } => json!({ "text": clipped(text) }),
@@ -2677,7 +2679,7 @@ impl App {
                             *x = gid(x);
                         }
                     }
-                    if it["kind"] == "forked_from" {
+                    if it["kind"] == "forked_from" || it["kind"] == "chat_link" {
                         it["chat"] = gid(&it["chat"]);
                     }
                 }
@@ -3043,7 +3045,9 @@ impl App {
                 .map(|(it, c)| {
                     let mut shas: Vec<String> = commits_of(c).values().map(|c| c.sha.clone()).collect();
                     shas.sort();
-                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas))
+                    // A chat link changes when the chat it names arrives (from another PC).
+                    let linked = matches!(c.card, crate::view::Card::ChatLink { gid, .. } if self.chats.iter().any(|x| x.gid == gid));
+                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas, linked))
                 })
                 .collect()
         };
@@ -3066,6 +3070,13 @@ impl App {
             .iter()
             .filter(|c| revs[c.seq].1 > since)
             .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut |t| crate::media::find(t, cwd.as_deref()), &commits_of(c)), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
+            .map(|mut v| {
+                if v["kind"] == "chat_link" {
+                    let to = v["gid"].as_str().and_then(|g| self.chats.iter().find(|c| c.gid == g)).map(|c| c.id);
+                    v["chat"] = json!(to);
+                }
+                v
+            })
             .collect();
         json!({
             "rev": self.api.hub.rev(),
@@ -3260,6 +3271,15 @@ impl App {
             c.effort = effort;
             c.access = access;
             c.device = device;
+        }
+        // Optional (0.57): the sidebar title, and the chat whose agent opened it (openchat.rs).
+        if let Some(t) = body["title"].as_str().map(|t| t.trim().chars().take(80).collect::<String>()).filter(|t| !t.is_empty()) {
+            if let Some(c) = self.chat_mut(id) {
+                c.title = t;
+            }
+        }
+        if let (Some(gid), Some(title)) = (body["opened_from"]["gid"].as_str(), body["opened_from"]["title"].as_str()) {
+            self.notice(id, "chat", &crate::openchat::opened_by(title), &format!("{}{gid}", crate::openchat::LINK));
         }
         self.persist(id);
         if !text.is_empty() || !files.is_empty() {

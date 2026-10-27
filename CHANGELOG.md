@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Agents can open chats: a chat's agent can start a new chat in the sidebar (desktop and phone)
+  with its `open_chat` tool, for an independent topic you want as its own thread; the new chat's
+  agent starts on its first message at once. Both chats link to each other ("Opened by the agent
+  of …" · Open chat). `list_chats` and `message_chat` let it follow up. A chat driven from
+  another PC opens chats only on the PC it runs on, for the same person.
+
 ## [0.56.0] - 2026-10-27
 
 ### Added

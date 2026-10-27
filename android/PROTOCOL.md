@@ -441,6 +441,7 @@ Every card has `seq`, `rev`, `kind`, and may have `forks_after: [chat ids]`: the
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
 | `footer` | the turn's line, monospace and subtle | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
+| `chat_link` (0.57) | a divider "`text` · Open chat" linking to another chat: at the top of a chat an agent opened with its `open_chat` tool ("Opened by the agent of “Fix login”"), and in the chat that opened it ("Opened “Docs pass”"). Tap: open `chat`; while `chat` is null (that chat hasn't reached this hub yet) draw just the text | `text`, `chat` (this hub's id, or the gid with `X-Harbor-Ids: global`; null when it isn't here), `gid` |
 | `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
@@ -583,6 +584,9 @@ project). With no `text` and no `files` the chat is created idle. `fast` sets th
 Since 0.37 (optional): `"worktree": true, "base": "<branch>"` starts it in a new git worktree of
 the project made from `base` ("" or missing: the checkout's branch); a hub that can't make it
 answers `409` with git's reason and creates nothing. Ignored with a `device`.
+Since 0.57 (optional): `"title": "…"` names it in the sidebar (default: the text's first line), and
+`"opened_from": {"gid", "title"}` (sent by a hub whose agent opened the chat on this PC with
+`open_chat`) puts a `chat_link` card back to that chat at its top. Phones don't need either.
 
 ### `POST /v1/chats/{id}/send`
 
@@ -1252,7 +1256,7 @@ same chats, rendered the same way.
   queue is the chat PC's and shows in `status.queue` on every hub.
 - Ids differ per hub (`id`, `project_id`, `parent`); `gid` and `home` don't. A client that moves
   between hubs sends `X-Harbor-Ids: global` with every call: answers then name chats by `gid`
-  (`id`, `parent`, `forks_after`, `forked_from.chat`, `status.waiting.agents[].id`, the `id` of a
+  (`id`, `parent`, `forks_after`, `forked_from.chat`, `chat_link.chat`, `status.waiting.agents[].id`, the `id` of a
   new chat or fork, `changed_chats`) and projects by their path (`projects[].id`, `project_id`,
   `defaults.project_id`); `project_id` in `POST /v1/chats` may be a path too.
 

@@ -14,7 +14,7 @@ use serde_json::Value;
 use std::time::{Duration, Instant};
 
 /// Automatic (non-user) turns allowed per project per hour, against runaway loops.
-const AUTO_TURNS_PER_HOUR: usize = 60;
+pub const AUTO_TURNS_PER_HOUR: usize = 60;
 /// Automatic messages kept for a chat while its automatic turns are paused.
 const MAX_PAUSED_PENDING: usize = 100;
 /// Subagents running at once per project; further spawns wait their turn.
@@ -410,6 +410,10 @@ impl App {
     // ------------------------------------------------------------ tools
 
     pub fn handle_tool(&mut self, call: ToolCall, ctx: &egui::Context) {
+        // It may answer later, when another PC has opened the chat.
+        if call.tool == "open_chat" {
+            return self.open_chat(call, ctx);
+        }
         let r = self.tool(call.chat_id, &call.tool, &call.args, ctx);
         let _ = call.reply.send(match r {
             Ok(t) => (true, t),
@@ -613,6 +617,8 @@ impl App {
                     if queued { " (queued: too many agents running)" } else { "" }
                 ))
             }
+            "list_chats" => self.list_chats(&me, a),
+            "message_chat" => self.message_chat(&me, a, ctx),
             "read_agent" => {
                 let target = self.resolve(&me, arg(a, "agent")).ok_or("no such agent")?;
                 let n = a["items"].as_u64().unwrap_or(20) as usize;
@@ -768,6 +774,7 @@ Be smart about effort. Handle simple things yourself, right away:\n\
 - quick checks with Bash (git status, curl a URL, list files);\n\
 - starting a dev server or other long-running command with harbor start_process (read package.json / README first to find the right command; never run it in Bash, your shell dies with your turn).\n\
 Delegate with spawn_agent when the work changes code or files, takes many steps, or needs a long investigation. Give each subagent a short name and a complete, self-contained task; run independent work in parallel.\n\
+For an independent topic that deserves its own thread (the user asks for a separate chat, or a side task they'll want to follow on its own), open_chat(prompt) opens a new chat in the sidebar whose agent starts on it at once; spawn_agent is for work that serves this chat. list_chats / message_chat follow up on chats.\n\
 Other harbor tools: message_agent / list_agents / read_agent / stop_agent; list_models (pick cheaper models for simple work, spread load across accounts with spare quota); list_processes / process_logs / stop_process; snooze(minutes, reason) to wake yourself later (not to wait for subagents: their reports wake you); create_webhook / list_webhooks / delete_webhook.\n\
 To show the user an image or video, call harbor show_media(path, caption) or put ![caption](path) in your reply (absolute path, path in the project, or an https URL; png, jpg, gif, webp, svg, mp4, webm, mov): it appears inline in the chat.\n\
 Messages that start with [agent …], [message from …], [process …], [wake] or [webhook …] come from Harbor, not the user.\n\

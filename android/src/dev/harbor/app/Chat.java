@@ -970,6 +970,18 @@ public class Chat extends Base {
                 wrap.addView(divider("Forked from conversation", "Open source conversation",
                         () -> open(this, hub, it.optString("chat"))), Ui.fill());
                 break;
+            case "chat_link": {
+                // A chat an agent opened: back to the chat it came from, or on to the new one.
+                String to = it.isNull("chat") ? "" : it.optString("chat", "");
+                if (to.isEmpty()) {
+                    TextView t = Ui.text(this, it.optString("text"), 13, Ui.G700);
+                    t.setGravity(Gravity.CENTER_HORIZONTAL);
+                    wrap.addView(t, Ui.fill());
+                } else {
+                    wrap.addView(divider(it.optString("text"), "Open chat", () -> open(this, hub, to)), Ui.fill());
+                }
+                break;
+            }
             case "notice":
                 notice(wrap, it, seq);
                 break;

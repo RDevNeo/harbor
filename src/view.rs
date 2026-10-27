@@ -28,6 +28,9 @@ pub enum Card<'a> {
     Footer { text: String, at: i64 },
     /// The top of a fork: back to the reply it came from.
     ForkedFrom { chat: i64, seq: usize },
+    /// A chat an agent opened (openchat.rs): in the new chat, where it came from; in the
+    /// opening chat, the new one. `gid`: the other chat's global id.
+    ChatLink { gid: &'a str, text: &'a str },
     Notice {
         icon: &'a str,
         text: &'a str,
@@ -164,6 +167,9 @@ fn card<'a>(item: &'a Item, forkable: bool, who: &dyn Fn(&str, &str) -> String) 
             let (c, n) = detail["harbor:chat/".len()..].split_once('/').unwrap_or_default();
             Card::ForkedFrom { chat: c.parse().unwrap_or(0), seq: n.parse().unwrap_or(0) }
         }
+        Item::Notice { icon, text, detail } if icon == "chat" && detail.starts_with(crate::openchat::LINK) => {
+            Card::ChatLink { gid: &detail[crate::openchat::LINK.len()..], text }
+        }
         Item::Notice { icon, text, detail } => Card::Notice {
             icon,
             text,
@@ -231,6 +237,7 @@ pub fn kind(c: &Card) -> &'static str {
         Card::Tool { .. } => "tool",
         Card::Footer { .. } => "footer",
         Card::ForkedFrom { .. } => "forked_from",
+        Card::ChatLink { .. } => "chat_link",
         Card::Notice { .. } => "notice",
         Card::Message { .. } => "message",
         Card::Error { .. } => "error",

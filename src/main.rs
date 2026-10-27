@@ -41,6 +41,7 @@ mod machines;
 mod movechat;
 mod notices;
 mod notify;
+mod openchat;
 mod oauth;
 mod pages;
 mod phoneauth;

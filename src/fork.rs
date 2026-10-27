@@ -59,9 +59,14 @@ pub fn forkable(items: &[Item]) -> Vec<Option<usize>> {
 
 /// A full-width divider: a line with "label · link" in the middle. True when the link is clicked.
 pub fn divider(ui: &mut Ui, label: &str, link: &str) -> bool {
+    divider_with(ui, ic::FORK, label, link)
+}
+
+/// `divider` with another glyph before the label.
+pub fn divider_with(ui: &mut Ui, glyph: &str, label: &str, link: &str) -> bool {
     let t = w::tokens(ui);
     let font = FontId::proportional(12.5);
-    let lg = ui.painter().layout_no_wrap(format!("{}  {label}  ·  ", ic::FORK), font.clone(), t.subtle());
+    let lg = ui.painter().layout_no_wrap(format!("{glyph}  {label}  ·  "), font.clone(), t.subtle());
     let kg = ui.painter().layout_no_wrap(link.to_string(), font, t.fg());
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     let width = lg.size().x + kg.size().x;
