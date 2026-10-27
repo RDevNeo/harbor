@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.64.1] - 2026-10-27
+
 ### Fixed
 - Phone: the chat list (the drawer and the Chats screen) is back. Since 0.55.2 the hub sent the
   sidebar's placement with its own chat ids while the phone names chats by their global id, so
@@ -1424,7 +1426,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.64.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.64.1...HEAD
+[0.64.1]: https://github.com/RDevNeo/harbor/compare/v0.64.0...v0.64.1
 [0.64.0]: https://github.com/RDevNeo/harbor/compare/v0.63.1...v0.64.0
 [0.63.1]: https://github.com/RDevNeo/harbor/compare/v0.63.0...v0.63.1
 [0.63.0]: https://github.com/RDevNeo/harbor/compare/v0.62.0...v0.63.0
