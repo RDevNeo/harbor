@@ -2975,8 +2975,7 @@ impl App {
         let queue: Vec<Value> = self
             .queued(chat)
             .iter()
-            // On their way into the turn (queue.rs): `sending` for apps before steering.
-            .map(|q| json!({ "text": q.text, "files": q.files.iter().map(|f| file_name(&f.to_string_lossy())).collect::<Vec<_>>(), "sending": true, "steering": true }))
+            .map(|q| json!({ "text": q.text, "files": q.files.iter().map(|f| file_name(&f.to_string_lossy())).collect::<Vec<_>>(), "sending": q.written }))
             .collect();
         let working = self.turns.get(&chat).map(|(_, at)| {
             json!({ "since_ms": now_ms - at.elapsed().as_millis() as i64, "subagents": subs.len(), "text": format!("Working…{}", crate::waiting::subs_running(subs.len())) })
@@ -3066,10 +3065,10 @@ impl App {
         if text.is_empty() && files.is_empty() {
             return err(400, "nothing to send");
         }
-        let steering = self.is_running(chat);
+        let before = self.queued(chat).len();
         let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
         self.send_to(chat, text, files, mentions, ctx);
-        ok(json!({ "ok": true, "queued": false, "steering": steering }))
+        ok(json!({ "ok": true, "queued": self.queued(chat).len() > before }))
     }
 
     fn api_create(&mut self, body: &Value, ctx: &egui::Context) -> Reply {

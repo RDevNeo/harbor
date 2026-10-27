@@ -17,6 +17,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   Wi-Fi after the first dictation (Settings › Dictation › Offline dictation shows its progress,
   and removes it), and takes memory only while you dictate. The app is ~9 MB bigger for it.
 
+## [0.54.1] - 2026-10-26
+
+### Fixed
+- Steering is reverted: a message sent while the agent works is queued again and delivered when
+  the turn ends, as before 0.49.0, on the desktop and the phone. Queued messages can be edited
+  and removed again (Esc, /clear-queue), and Ctrl+Enter queues. Steering mid-turn was unreliable.
+
 ## [0.54.0] - 2026-10-26
 
 ### Added
@@ -1229,7 +1236,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.54.1...HEAD
+[0.54.1]: https://github.com/RDevNeo/harbor/compare/v0.54.0...v0.54.1
 [0.54.0]: https://github.com/RDevNeo/harbor/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/RDevNeo/harbor/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/RDevNeo/harbor/compare/v0.52.0...v0.53.0
