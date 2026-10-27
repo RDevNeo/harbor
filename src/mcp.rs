@@ -44,11 +44,17 @@ pub enum Auth {
     OAuth,
     /// A pasted API key, sent in this header; `get` is where to create one.
     Key { header: &'static str, get: &'static str },
+    /// Google's installed-app flow (loopback + PKCE) with the user's own OAuth client: Gmail's
+    /// scopes are restricted, so Google allows no shared client without a security assessment.
+    /// `help` is where to create the client.
+    Google { scope: &'static str, help: &'static str },
 }
 
 pub enum Transport {
     Http(&'static str),
     Stdio(&'static [&'static str]),
+    /// Served by Harbor itself: `harbor app <name>` (stdio), which reads its token from the store.
+    Harbor(&'static str),
 }
 
 /// An app: a service agents may only use after the user signs in to it in Harbor.
@@ -74,6 +80,17 @@ pub const APPS: &[App] = &[
         mcp: Transport::Http("https://mcp.context7.com/mcp"),
     },
     App { id: "convex", label: "Convex", about: "Deployments, data and the convex CLI", auth: Auth::Convex, mcp: Transport::Stdio(&["npx", "-y", "convex@latest", "mcp", "start"]) },
+    App {
+        id: "gmail",
+        label: "Gmail",
+        about: "Read, send and sort your mail",
+        // modify: read, send, drafts, labels, trash (not permanent delete); settings.basic: filters.
+        auth: Auth::Google {
+            scope: "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic",
+            help: "https://console.cloud.google.com/apis/credentials",
+        },
+        mcp: Transport::Harbor(crate::gmail::NAME),
+    },
 ];
 
 pub fn app(id: &str) -> Option<&'static App> {
@@ -151,6 +168,9 @@ struct Cred {
     token_endpoint: String,
     #[serde(default)]
     resource: String,
+    /// Who signed in (Gmail's address), for the card.
+    #[serde(default)]
+    account: String,
 }
 
 fn cred_path(id: &str) -> PathBuf {
@@ -158,7 +178,12 @@ fn cred_path(id: &str) -> PathBuf {
 }
 
 fn load(id: &str) -> Option<Cred> {
-    serde_json::from_str(&std::fs::read_to_string(cred_path(id)).ok()?).ok().filter(|c: &Cred| !c.access_token.is_empty())
+    load_any(id).filter(|c| !c.access_token.is_empty())
+}
+
+/// Also a Google client saved before its sign-in finished.
+fn load_any(id: &str) -> Option<Cred> {
+    serde_json::from_str(&std::fs::read_to_string(cred_path(id)).ok()?).ok()
 }
 
 fn save(id: &str, c: &Cred) -> Result<(), String> {
@@ -191,20 +216,32 @@ pub fn github_user() -> Option<String> {
     text.lines().find_map(|l| l.trim().strip_prefix("user:").map(|u| u.trim().to_string())).filter(|u| !u.is_empty())
 }
 
+/// Who is signed in to the app, when Harbor knows: GitHub's login, Gmail's address.
+pub fn account(id: &str) -> Option<String> {
+    match app(id)?.auth {
+        Auth::Github => github_user(),
+        _ => load(id).map(|c| c.account).filter(|a| !a.is_empty()),
+    }
+}
+
 /// The app's token for an agent; OAuth tokens are refreshed when about to expire.
 fn token(id: &str) -> Option<String> {
     match &app(id)?.auth {
         Auth::Github => gh_token(),
         Auth::Convex => convex_token(),
         Auth::Key { .. } => load(id).map(|c| c.access_token),
-        Auth::OAuth => {
-            let c = load(id)?;
-            if c.expires_at > 0 && store::now() > c.expires_at - 120 {
-                return refresh(id, &c).ok().map(|c| c.access_token);
-            }
-            Some(c.access_token)
-        }
+        Auth::OAuth | Auth::Google { .. } => fresh_token(id, false),
     }
+}
+
+/// An OAuth app's access token, refreshed when about to expire or when `force`d (the
+/// service just refused it). For Harbor's own servers (gmail.rs) too.
+pub fn fresh_token(id: &str, force: bool) -> Option<String> {
+    let c = load(id)?;
+    if force || c.expires_at > 0 && store::now() > c.expires_at - 120 {
+        return refresh(id, &c).ok().map(|c| c.access_token);
+    }
+    Some(c.access_token)
 }
 
 pub fn sign_out(id: &str) {
@@ -216,6 +253,18 @@ pub fn sign_out(id: &str) {
         Some(Auth::Convex) => {
             let _ = std::fs::remove_file(convex_home().join(".convex/config.json"));
         }
+        Some(Auth::Google { .. }) => {
+            // Google keeps a grant until it is revoked; the client stays for the next sign-in.
+            if let Some(c) = load_any(id) {
+                let t = if c.refresh_token.is_empty() { c.access_token.clone() } else { c.refresh_token.clone() };
+                if !t.is_empty() {
+                    std::thread::spawn(move || {
+                        let _ = http("POST", GOOGLE_REVOKE, Some("application/x-www-form-urlencoded"), Some(&form(&[("token", &t)])));
+                    });
+                }
+                let _ = save(id, &Cred { client_id: c.client_id, client_secret: c.client_secret, ..Default::default() });
+            }
+        }
         _ => {
             let _ = std::fs::remove_file(cred_path(id));
         }
@@ -224,6 +273,35 @@ pub fn sign_out(id: &str) {
 
 pub fn save_key(id: &str, key: &str) -> Result<(), String> {
     save(id, &Cred { access_token: key.trim().into(), ..Default::default() })
+}
+
+/// The OAuth client a Google app signs in with: (client id, secret); empty when none yet.
+pub fn google_client(id: &str) -> (String, String) {
+    load_any(id).map(|c| (c.client_id, c.client_secret)).unwrap_or_default()
+}
+
+/// Saves the user's Google OAuth client for the next [`sign_in`]. `client_id` may also be
+/// the JSON file Google offers to download for it, which holds both.
+pub fn save_google_client(id: &str, client_id: &str, secret: &str) -> Result<(), String> {
+    let (cid, secret) = parse_google_client(client_id, secret).ok_or("Paste the client ID and secret of a Desktop app OAuth client.")?;
+    save(id, &Cred { client_id: cid, client_secret: secret, ..Default::default() })
+}
+
+/// Whether the form holds a client [`save_google_client`] takes.
+pub fn valid_google_client(client_id: &str, secret: &str) -> bool {
+    parse_google_client(client_id, secret).is_some()
+}
+
+/// (client id, secret) from the two fields, or from the client JSON pasted into the first.
+fn parse_google_client(client_id: &str, secret: &str) -> Option<(String, String)> {
+    let (cid, secret) = match serde_json::from_str::<Value>(client_id.trim()) {
+        Ok(v) => {
+            let c = if v["installed"].is_object() { &v["installed"] } else { &v["web"] };
+            (c["client_id"].as_str()?.to_string(), c["client_secret"].as_str().unwrap_or(secret).to_string())
+        }
+        Err(_) => (client_id.trim().to_string(), secret.trim().to_string()),
+    };
+    (cid.ends_with(".apps.googleusercontent.com") && !secret.trim().is_empty()).then(|| (cid, secret.trim().to_string()))
 }
 
 // ------------------------------------------------------------------ sign-in flows
@@ -289,6 +367,7 @@ pub fn sign_in(id: &'static str, ctx: eframe::egui::Context) {
             (Auth::Github, _) => device_login(id, gh_login_cmd(), &child, &update),
             (Auth::Convex, _) => device_login(id, convex_login_cmd(), &child, &update),
             (Auth::OAuth, Transport::Http(url)) => oauth_login(id, url, &cancel, &update),
+            (Auth::Google { scope, .. }, _) => google_login(id, scope, &cancel, &update),
             _ => Err("This app signs in with a key.".into()),
         };
         if !cancel.load(Ordering::Relaxed) {
@@ -411,7 +490,7 @@ fn form(pairs: &[(&str, &str)]) -> String {
     pairs.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| format!("{}={}", enc(k), enc(v))).collect::<Vec<_>>().join("&")
 }
 
-fn enc(s: &str) -> String {
+pub fn enc(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
@@ -489,7 +568,7 @@ fn oauth_login(id: &str, url: &str, cancel: &AtomicBool, update: &dyn Fn(Pending
     let auth_url = format!("{authorize}{}{q}", if authorize.contains('?') { '&' } else { '?' });
     crate::git::open_url(&auth_url);
     update(Pending { code: None, url: Some(auth_url) });
-    let code = wait_callback(&listener, &state, cancel)?;
+    let code = wait_callback(&listener, "/callback", &state, cancel)?;
     let body = form(&[
         ("grant_type", "authorization_code"),
         ("code", &code),
@@ -503,6 +582,70 @@ fn oauth_login(id: &str, url: &str, cancel: &AtomicBool, update: &dyn Fn(Pending
     let mut c = Cred { client_id, client_secret, token_endpoint: token_ep, resource, ..Default::default() };
     apply_token(&mut c, status, &t)?;
     save(id, &c)
+}
+
+const GOOGLE_AUTH: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN: &str = "https://oauth2.googleapis.com/token";
+const GOOGLE_REVOKE: &str = "https://oauth2.googleapis.com/revoke";
+
+/// Google's loopback flow with the client saved by [`save_google_client`]. A refresh token
+/// only comes with `access_type=offline`, and again on a later sign-in with `prompt=consent`.
+fn google_login(id: &str, scope: &str, cancel: &AtomicBool, update: &dyn Fn(Pending)) -> Result<(), String> {
+    let (client_id, client_secret) = google_client(id);
+    if client_id.is_empty() {
+        return Err("Add your OAuth client first.".into());
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let redirect = format!("http://127.0.0.1:{}/", listener.local_addr().map_err(|e| e.to_string())?.port());
+    let verifier = b64url(&random(32)?);
+    let state = b64url(&random(16)?);
+    let q = form(&[
+        ("response_type", "code"),
+        ("client_id", &client_id),
+        ("redirect_uri", &redirect),
+        ("scope", scope),
+        ("code_challenge", &b64url(&sha256(verifier.as_bytes()))),
+        ("code_challenge_method", "S256"),
+        ("state", &state),
+        ("access_type", "offline"),
+        ("prompt", "consent"),
+    ]);
+    let auth_url = format!("{GOOGLE_AUTH}?{q}");
+    crate::git::open_url(&auth_url);
+    update(Pending { code: None, url: Some(auth_url) });
+    let code = wait_callback(&listener, "/", &state, cancel)?;
+    let body = form(&[
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", &redirect),
+        ("client_id", &client_id),
+        ("client_secret", &client_secret),
+        ("code_verifier", &verifier),
+    ]);
+    let (status, t) = http("POST", GOOGLE_TOKEN, Some("application/x-www-form-urlencoded"), Some(&body))?;
+    let mut c = Cred { client_id, client_secret, token_endpoint: GOOGLE_TOKEN.into(), ..Default::default() };
+    apply_token(&mut c, status, &t)?;
+    // Google's consent page lets people untick scopes.
+    let missing = missing_scopes(scope, t["scope"].as_str());
+    if missing.iter().any(|s| s.ends_with("gmail.modify")) {
+        return Err("Google didn't grant access to your mail: sign in again and tick every box.".into());
+    }
+    save(id, &c)?;
+    // A client whose project hasn't enabled the Gmail API signs in fine and fails on first use.
+    match crate::gmail::email() {
+        Ok(e) => c.account = e,
+        Err(e) => {
+            let _ = save(id, &Cred { client_id: c.client_id, client_secret: c.client_secret, ..Default::default() });
+            return Err(e);
+        }
+    }
+    save(id, &c)
+}
+
+/// The scopes asked for that the token answer's `scope` doesn't list (none when it has none).
+fn missing_scopes<'a>(asked: &'a str, granted: Option<&str>) -> Vec<&'a str> {
+    let Some(g) = granted else { return vec![] };
+    asked.split_whitespace().filter(|s| !g.split_whitespace().any(|x| x == *s)).collect()
 }
 
 fn apply_token(c: &mut Cred, status: u16, t: &Value) -> Result<(), String> {
@@ -542,7 +685,7 @@ fn keep_fresh() {
     STARTED.call_once(|| {
         std::thread::spawn(|| {
             loop {
-                for a in APPS.iter().filter(|a| matches!(a.auth, Auth::OAuth)) {
+                for a in APPS.iter().filter(|a| matches!(a.auth, Auth::OAuth | Auth::Google { .. })) {
                     if let Some(c) = load(a.id) {
                         if c.expires_at > 0 && c.expires_at - store::now() < 15 * 60 {
                             let _ = refresh(a.id, &c);
@@ -555,8 +698,8 @@ fn keep_fresh() {
     });
 }
 
-/// Waits for the browser to come back to the loopback redirect; returns the code.
-fn wait_callback(listener: &std::net::TcpListener, state: &str, cancel: &AtomicBool) -> Result<String, String> {
+/// Waits for the browser to come back to the loopback redirect at `want`; returns the code.
+fn wait_callback(listener: &std::net::TcpListener, want: &str, state: &str, cancel: &AtomicBool) -> Result<String, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let until = Instant::now() + Duration::from_secs(600);
     while Instant::now() < until {
@@ -576,7 +719,7 @@ fn wait_callback(listener: &std::net::TcpListener, state: &str, cancel: &AtomicB
             let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
             continue;
         };
-        if path != "/callback" {
+        if path != want {
             continue;
         }
         let params: HashMap<String, String> = query.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (dec(k), dec(v))).collect();
@@ -790,6 +933,26 @@ pub fn agent_env_as(signed_in: bool) -> Vec<(String, Option<String>)> {
     v
 }
 
+/// This binary, for the servers Harbor serves itself (after a release swap the running one
+/// reads "<path> (deleted)"; the new one is at <path>).
+fn harbor_exe() -> String {
+    crate::update::self_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "harbor".into())
+}
+
+/// `harbor app <name>`: serves one of Harbor's own app servers on stdio.
+pub fn serve(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some(crate::gmail::NAME) => {
+            crate::gmail::run();
+            0
+        }
+        _ => {
+            eprintln!("harbor app: unknown app");
+            2
+        }
+    }
+}
+
 /// The env var Codex reads an app's token from.
 fn token_var(id: &str) -> String {
     format!("HARBOR_TOKEN_{}", id.to_uppercase())
@@ -826,6 +989,8 @@ pub fn claude_servers(extra: Option<(&str, Value)>) -> Map<String, Value> {
             (Transport::Http(url), Auth::Key { header, .. }) => json!({ "type": "http", "url": url, "headers": { *header: tok } }),
             (Transport::Http(url), _) => json!({ "type": "http", "url": url, "headers": { "Authorization": format!("Bearer {tok}") } }),
             (Transport::Stdio(argv), _) => json!({ "type": "stdio", "command": argv[0], "args": argv[1..], "env": { "CONVEX_OVERRIDE_ACCESS_TOKEN": tok } }),
+            // It reads the token from the store itself, so none is in the config.
+            (Transport::Harbor(name), _) => json!({ "type": "stdio", "command": harbor_exe(), "args": ["app", name] }),
         };
         m.insert(a.id.into(), v);
     }
@@ -881,6 +1046,10 @@ pub fn codex_args() -> Vec<String> {
                 c(format!("mcp_servers.{id}.args=[{args}]"));
                 c(format!("mcp_servers.{id}.env_vars=[\"CONVEX_OVERRIDE_ACCESS_TOKEN\"]"));
             }
+            (Transport::Harbor(name), _) => {
+                c(format!("mcp_servers.{id}.command={:?}", harbor_exe()));
+                c(format!("mcp_servers.{id}.args=[\"app\",{name:?}]"));
+            }
         }
         c(format!("mcp_servers.{id}.enabled=true"));
     }
@@ -905,6 +1074,36 @@ mod tests {
         assert_eq!(hex(sha256(b"")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         assert_eq!(hex(sha256(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(hex(sha256(&[b'a'; 1000])), "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
+    }
+
+    #[test]
+    fn google_client_from_fields_or_json() {
+        let id = "123-abc.apps.googleusercontent.com";
+        assert_eq!(parse_google_client(&format!(" {id} "), " s3cret "), Some((id.into(), "s3cret".into())));
+        assert_eq!(parse_google_client(id, ""), None);
+        assert_eq!(parse_google_client("not-a-client", "s"), None);
+        let file = format!(r#"{{"installed":{{"client_id":"{id}","client_secret":"from-file","redirect_uris":["http://localhost"]}}}}"#);
+        assert_eq!(parse_google_client(&file, ""), Some((id.into(), "from-file".into())));
+    }
+
+    #[test]
+    fn google_scopes_granted() {
+        let asked = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic";
+        assert!(missing_scopes(asked, None).is_empty());
+        assert!(missing_scopes(asked, Some(asked)).is_empty());
+        assert_eq!(missing_scopes(asked, Some("https://www.googleapis.com/auth/gmail.settings.basic openid")), vec!["https://www.googleapis.com/auth/gmail.modify"]);
+    }
+
+    #[test]
+    fn token_answers_keep_the_refresh_token() {
+        let mut c = Cred { refresh_token: "r1".into(), ..Default::default() };
+        // A refresh answer from Google has no new refresh token.
+        apply_token(&mut c, 200, &json!({ "access_token": "a2", "expires_in": 3599, "scope": "x", "token_type": "Bearer" })).unwrap();
+        assert_eq!((c.access_token.as_str(), c.refresh_token.as_str()), ("a2", "r1"));
+        assert!(c.expires_at > store::now() + 3500);
+        let e = apply_token(&mut c, 400, &json!({ "error": "invalid_grant", "error_description": "Token has been expired or revoked." })).unwrap_err();
+        assert!(e.contains("expired or revoked"), "{e}");
+        assert_eq!(c.access_token, "a2");
     }
 
     #[test]

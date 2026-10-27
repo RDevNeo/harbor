@@ -21,6 +21,7 @@ mod discover;
 mod favicon;
 mod ghapi;
 mod git;
+mod gmail;
 mod hookcert;
 mod icons;
 mod fork;
@@ -106,6 +107,9 @@ fn main() -> eframe::Result {
     if args.get(1).map(String::as_str) == Some("mcp") {
         mcpshim::run(&args[2..]);
         return Ok(());
+    }
+    if args.get(1).map(String::as_str) == Some("app") {
+        std::process::exit(mcp::serve(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("net") {
         std::process::exit(portmap::cli(&args[2..]));

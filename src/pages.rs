@@ -896,6 +896,9 @@ impl App {
         let signed = mcp::signed_in(a.id);
         let key_id = Id::NULL.with(("app-key", a.id));
         let mut key: Option<String> = ui.data(|d| d.get_temp(key_id));
+        // A Google app's form: the client ID goes in `key`, its secret here.
+        let secret_id = Id::NULL.with(("app-secret", a.id));
+        let mut secret: String = ui.data(|d| d.get_temp(secret_id)).unwrap_or_default();
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if pending.is_some() {
@@ -915,6 +918,10 @@ impl App {
                 } else if w::btn("Sign in").sm().primary().show(ui).clicked() {
                     match a.auth {
                         mcp::Auth::Key { .. } => key = Some(String::new()),
+                        mcp::Auth::Google { .. } => {
+                            let (c, s) = mcp::google_client(a.id);
+                            (key, secret) = (Some(c), s);
+                        }
                         _ => mcp::sign_in(a.id, ctx.clone()),
                     }
                 }
@@ -926,8 +933,9 @@ impl App {
                     let (sub, color) = match &pending {
                         Some(p) if p.code.is_some() => ("Enter the code below in your browser".to_string(), t.blue(900)),
                         Some(_) => ("Finish in your browser…".to_string(), t.blue(900)),
+                        None if key.is_some() && matches!(a.auth, mcp::Auth::Google { .. }) => ("Add your Google OAuth client below".to_string(), t.subtle()),
                         None if key.is_some() => ("Paste an API key below".to_string(), t.subtle()),
-                        None if signed && a.id == "github" => (mcp::github_user().map(|u| format!("Signed in as {u}")).unwrap_or_else(|| a.about.into()), t.subtle()),
+                        None if signed => (mcp::account(a.id).map(|u| format!("Signed in as {u}")).unwrap_or_else(|| a.about.into()), t.subtle()),
                         None => (a.about.to_string(), t.subtle()),
                     };
                     ui.vertical(|ui| {
@@ -962,6 +970,36 @@ impl App {
                     }
                 });
             }
+        } else if let (Some(k), mcp::Auth::Google { help, .. }) = (&mut key, &a.auth) {
+            ui.add_space(8.0);
+            let ready = mcp::valid_google_client(k, &secret);
+            let mut go = false;
+            w::input(ui, k, "Client ID, or the client's JSON file", true, ui.available_width());
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if w::btn(ic::EXTERNAL).muted().icon_xs().show(ui).tip("Create an OAuth client in Google Cloud").clicked() {
+                        crate::git::open_url(help);
+                    }
+                    go |= w::btn("Sign in").sm().primary().enabled(ready).show(ui).clicked();
+                    ui.add_space(4.0);
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let r = w::input(ui, &mut secret, "Client secret", true, ui.available_width());
+                        go |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && ready;
+                    });
+                });
+            });
+            ui.add_space(6.0);
+            w::subtle(
+                ui,
+                "Gmail needs your own OAuth client. In Google Cloud console: create a project, enable the Gmail API, set the OAuth consent screen to In production (sign-ins in Testing end after 7 days), then Credentials › Create OAuth client ID › Desktop app.",
+                "label-12",
+            );
+            if go {
+                let _ = mcp::save_google_client(a.id, k, &secret);
+                mcp::sign_in(a.id, ctx.clone());
+                key = None;
+            }
         } else if let Some(k) = &mut key {
             ui.add_space(8.0);
             let mut save = false;
@@ -988,9 +1026,11 @@ impl App {
         ui.data_mut(|d| match key {
             Some(k) => {
                 d.insert_temp(key_id, k);
+                d.insert_temp(secret_id, secret);
             }
             None => {
                 d.remove::<String>(key_id);
+                d.remove::<String>(secret_id);
             }
         });
     }

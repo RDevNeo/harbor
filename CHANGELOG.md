@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Gmail app: sign in to Gmail under Settings › Integrations › Apps with your own Google OAuth
+  client (Desktop app; the card says how to create one) and the agents Harbor starts can search,
+  read and send mail, reply in a conversation, keep drafts, download attachments, move mail
+  between labels, archive, mark read or starred, trash, and manage labels and filters. Harbor
+  serves it itself (`harbor app gmail`), so the token never leaves Harbor's store. Agents on
+  every device get it; signing in is on the desktop, like the other apps.
+
 ## [0.59.2] - 2026-10-27
 
 ### Changed
