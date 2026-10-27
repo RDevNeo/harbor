@@ -41,6 +41,9 @@ public class UpdateTest {
         same(Quiet.reason(2, "INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed"),
                 "INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed (status 2, blocked)", "whole reason");
         same(Quiet.reason(1, null), "status 1, failed", "no message");
+        check(!Quiet.verifier(7, "INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113"), "ABIs aren't the verifier");
+        check(Quiet.reason(7, "INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113")
+                .startsWith("This version wasn't built for this phone's processor"), "ABI reason in plain words");
         same(Quiet.reason(42, " "), "status 42", "unknown status");
 
         // The phone's own choice wins; until there is one it follows the PCs.

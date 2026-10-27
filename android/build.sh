@@ -53,7 +53,9 @@ cp "$ROOT/assets/logos/"p-*.{a8,rgba} "$W/assets/logos/"
 
 # Dictation on the phone (Voice, Asr): sherpa-onnx's JNI library (onnxruntime linked in) and
 # Silero VAD's model, pinned by SHA-256 and cached between builds. ANDROID_ABIS picks the ABIs
-# packaged (default arm64-v8a; add x86_64 for the emulator). See third_party/sherpa-onnx/NOTICE.
+# packaged (default arm64-v8a armeabi-v7a: phones with a 32-bit Android refuse an APK without
+# their ABI, INSTALL_FAILED_NO_MATCHING_ABIS; add x86_64 for the emulator). See
+# third_party/sherpa-onnx/NOTICE.
 SHERPA=2.0.1
 SHERPA_SHA=fe1c9ceffd86770218a1d4bba6b410d6f726b2b8dda6a5488499b05250b53aea
 VAD_SHA=9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
@@ -69,7 +71,7 @@ fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$SHERPA/sherpa-o
   "$SHERPA_SHA" "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2"
 fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" "$VAD_SHA" "$DEPS/silero_vad.onnx"
 cp "$DEPS/silero_vad.onnx" "$W/assets/"
-for abi in ${ANDROID_ABIS:-arm64-v8a}; do
+for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
   mkdir -p "$W/lib/$abi"
   tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$W/lib/$abi" --strip-components=3 "./jniLibs/$abi/libsherpa-onnx-jni.so"
 done

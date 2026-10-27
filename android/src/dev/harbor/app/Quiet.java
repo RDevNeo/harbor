@@ -56,10 +56,15 @@ final class Quiet {
         }
     }
 
-    /** The whole reason: Android's message (INSTALL_FAILED_…) and the status it came with. */
+    /** The whole reason: what it means when Android's message says it plainly, then the
+     *  message (INSTALL_FAILED_…) and the status it came with. */
     static String reason(int st, String message) {
         String m = message == null ? "" : message.trim();
         String s = "status " + st + (status(st).startsWith("status") ? "" : ", " + status(st));
-        return m.isEmpty() ? s : m + " (" + s + ")";
+        String hint = m.contains("NO_MATCHING_ABIS") ? "This version wasn't built for this phone's processor: update Harbor on your PC, then try again. "
+                : m.contains("INSUFFICIENT_STORAGE") ? "The phone is out of space. "
+                : m.contains("UPDATE_INCOMPATIBLE") ? "This version is signed differently from the installed app. "
+                : "";
+        return hint + (m.isEmpty() ? s : m + " (" + s + ")");
     }
 }

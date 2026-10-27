@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: the app installs again on phones with a 32-bit Android (it was missing the armeabi-v7a
+  dictation library since 0.55, so Android refused it with INSTALL_FAILED_NO_MATCHING_ABIS). When
+  an update doesn't install, the phone now says why in plain words when Android's reason isn't
+  Play Protect (wrong processor, no space, a different signature).
+
 ## [0.63.0] - 2026-10-27
 
 ### Added
