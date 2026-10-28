@@ -214,7 +214,8 @@ pub struct Live {
 }
 
 pub static LIVE: LazyLock<RwLock<Live>> = LazyLock::new(Default::default);
-static POKE: LazyLock<(Mutex<bool>, Condvar)> = LazyLock::new(Default::default);
+/// Wakes the loop: 1 = settings changed here (sent after a short pause), 2 = everything now.
+static POKE: LazyLock<(Mutex<u8>, Condvar)> = LazyLock::new(Default::default);
 static CANCEL: AtomicBool = AtomicBool::new(false);
 /// Ask for a new Harbor token at the next turn of the loop (workspaces changed).
 static RENEW: AtomicBool = AtomicBool::new(false);
@@ -228,10 +229,19 @@ fn wake_ui() {
     }
 }
 
-/// Wakes the account loop now (a sign-in, a change in Settings).
+/// Wakes the account loop now (a sign-in, an action in Settings): everything is fetched again.
 pub fn poke() {
     let (m, cv) = &*POKE;
-    *m.lock().unwrap() = true;
+    *m.lock().unwrap() = 2;
+    cv.notify_all();
+}
+
+/// A setting changed here: it goes to the account after a short pause (a burst of changes,
+/// one call).
+pub fn poke_sync() {
+    let (m, cv) = &*POKE;
+    let mut g = m.lock().unwrap();
+    *g = (*g).max(1);
     cv.notify_all();
 }
 
@@ -899,11 +909,14 @@ pub fn start(s: &store::Store, wake: impl Fn() + Send + Sync + 'static) {
                 tick(&mut t);
                 let (m, cv) = &*POKE;
                 let g = m.lock().unwrap();
-                let (mut g, _) = cv.wait_timeout_while(g, Duration::from_secs(20), |p| !*p).unwrap();
-                if *g {
+                let (mut g, _) = cv.wait_timeout_while(g, Duration::from_secs(20), |p| *p == 0).unwrap();
+                let why = std::mem::take(&mut *g);
+                drop(g);
+                if why == 2 {
                     t = Timers { keys: t.keys, ..Default::default() };
+                } else if why == 1 {
+                    std::thread::sleep(Duration::from_secs(2));
                 }
-                *g = false;
             }
         });
     });
@@ -922,7 +935,37 @@ fn due(at: Option<Instant>, every: Duration) -> bool {
     at.is_none_or(|t| t.elapsed() >= every)
 }
 
+/// The account as kv has it now: `harbor account login|logout` on a terminal changes it under
+/// a running Harbor, which follows within a turn of the loop.
+fn follow_kv(t: &mut Timers) {
+    let Ok(s) = store::Store::open() else { return };
+    let kv = s.get("account").and_then(|v| serde_json::from_str::<Account>(&v).ok()).filter(|a| !a.id.is_empty());
+    let ws = s.get("account_ws").unwrap_or_default();
+    let changed = {
+        let l = LIVE.read().unwrap();
+        l.account.as_ref().map(|a| &a.id) != kv.as_ref().map(|a| &a.id) || l.ws != ws
+    };
+    if changed {
+        let came = kv.is_some() && !signed_in();
+        {
+            let mut l = LIVE.write().unwrap();
+            l.account = kv;
+            if l.ws != ws {
+                l.dir = s.get("account_dir").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+            }
+            l.ws = ws;
+        }
+        if came {
+            crate::settingsync::load(&s);
+            ENABLE.store(true, Ordering::SeqCst);
+        }
+        *t = Timers { keys: t.keys, ..Default::default() };
+        wake_ui();
+    }
+}
+
 fn tick(t: &mut Timers) {
+    follow_kv(t);
     if due(t.keys, Duration::from_secs(6 * 3600)) && (signed_in() || !workspace().is_empty()) {
         t.keys = Some(Instant::now());
         fetch_keys();
@@ -1000,13 +1043,53 @@ pub fn take_notice() -> Option<String> {
 
 // ================================================================== CLI
 
-/// `harbor account [status]`: who is signed in on this PC, its workspace and directory.
+/// `harbor account [status|login|logout]`: who is signed in on this PC, its workspace and
+/// directory; signing in from a terminal (a PC without a screen, over SSH: the URL is printed
+/// to open anywhere that reaches this PC's loopback, e.g. through `ssh -L`).
 pub fn cli(args: &[String]) -> i32 {
     let Ok(s) = store::Store::open() else {
         eprintln!("harbor: can't open the database");
         return 1;
     };
     match args.first().map(String::as_str).unwrap_or("status") {
+        "login" => {
+            start(&s, || {});
+            {
+                let mut l = LIVE.write().unwrap();
+                l.account = None;
+            }
+            std::thread::spawn(|| {
+                let mut shown = String::new();
+                loop {
+                    let st = status();
+                    if !st.url.is_empty() && st.url != shown {
+                        shown = st.url.clone();
+                        println!("Sign in with Google in the browser that opened, or open:\n{shown}");
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            });
+            match sign_in_flow() {
+                Ok(()) => {
+                    let a = account().unwrap_or_default();
+                    println!("Signed in as {} <{}>.", a.name, a.email);
+                    if workspace().is_empty() && a.workspaces.len() > 1 {
+                        println!("Pick this PC's workspace in Harbor › Settings › Account: {}", a.workspaces.iter().map(|w| w.name.as_str()).collect::<Vec<_>>().join(", "));
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("harbor: {e}");
+                    1
+                }
+            }
+        }
+        "logout" => {
+            start(&s, || {});
+            sign_out();
+            println!("Signed out. This PC stays in its workspace.");
+            0
+        }
         "status" => {
             let a = s.get("account").and_then(|v| serde_json::from_str::<Account>(&v).ok()).filter(|a| !a.id.is_empty());
             let ws = s.get("account_ws").unwrap_or_default();
@@ -1029,7 +1112,7 @@ pub fn cli(args: &[String]) -> i32 {
             0
         }
         _ => {
-            eprintln!("usage: harbor account [status]\nSign in and out in Harbor › Settings › Account.");
+            eprintln!("usage: harbor account [status|login|logout]\nOr sign in and out in Harbor › Settings › Account.");
             2
         }
     }

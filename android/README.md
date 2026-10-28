@@ -6,18 +6,15 @@ access, fast), and can rename, settle, fork and delete them. A chat's team (agen
 wake-ups, webhooks) slides in from the right. Typing `/` in a chat's message box opens the
 desktop's slash menu (commands and skills from the PC). The API is in [PROTOCOL.md](PROTOCOL.md).
 
-## Install and pair
+## Install and sign in
 
-1. On the PC: Harbor › Settings › Phones, turn on **Phone access**. While it's on and the PC has
-   the app, the page shows an install QR code: scan it with the phone and let the browser
-   install the APK. Otherwise use **Download the app** there, or get `harbor-android.apk` from
-   the GitHub release.
-2. Pair: click **Pair a phone** on the PC (each phone gets its own key) and scan the pairing QR
-   code with the phone's camera app (it opens the `harbor://pair` link in Harbor), or tap **+**
-   in the app to scan it with a QR app, paste the link, or type host, port and token. The phone
-   then shows a 6-digit code: confirm it on the PC (Settings › Phones). The phone needs a screen
-   lock: it's the third factor, asked for when a session starts more than 5 minutes after the
-   last unlock. Several PCs can be paired.
+1. On the PC: Harbor › Settings › Phones shows an install QR code: scan it with the phone and let
+   the browser install the APK. Otherwise use **Download the app** there, or get
+   `harbor-android.apk` from the GitHub release.
+2. Sign in with Google in the app, with the account you use in Harbor on your PC (or the one a
+   workspace invited). The PCs of your workspaces show up by themselves and connect directly, each
+   pinned to its own key; there's no pairing code. Owners invite people in Settings (the
+   workspace's card) or on the PC (Settings › Account).
 3. Updates: when the PC has a newer app, the chat list shows **Update**; Settings › Update
    installs it (Android asks once to allow "Install unknown apps" for Harbor; Android 12+
    updates silently after that).

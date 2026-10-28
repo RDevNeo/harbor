@@ -160,7 +160,7 @@ pub fn changed(key: &str) {
         let t = now_ms();
         DIRTY.lock().unwrap().insert(key.to_string(), t);
         AT.lock().unwrap().insert(key.to_string(), t);
-        crate::account::poke();
+        crate::account::poke_sync();
     }
 }
 

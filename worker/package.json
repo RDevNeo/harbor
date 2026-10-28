@@ -7,7 +7,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "keygen": "node scripts/keygen.mjs",
-    "test": "python3 ../../haccounts/worker_test.py"
+    "test": "python3 test/run.py"
   },
   "devDependencies": {
     "wrangler": "4.155.0"

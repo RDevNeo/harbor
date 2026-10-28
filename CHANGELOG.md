@@ -5,6 +5,38 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Google accounts (through Clerk) on every PC and phone. Harbor opens on "Sign in with Google";
+  the sign-in runs in the browser (PKCE, no secret in the app) and `harbor account login` does it
+  from a terminal. Each account gets its own workspace, and a PC you sign in on joins it (you
+  pick one when you're in several). Settings › Account (desktop) and Settings (phone) show the
+  workspace's people and PCs; owners invite people by email, and an invited person who signs
+  in with that address, on a PC or a phone, controls all of the workspace's PCs and chats.
+  Owners remove people, anyone leaves a workspace that isn't their own.
+- Settings follow the account: theme, density, keybindings, run defaults, notifications, voice,
+  recaps and suggestions, limits and caps, follow-up, updates… are the same on every PC you sign
+  in on. Machine-bound settings stay on each PC (network, ports, router, mesh keys, phones,
+  windows and sidebars, the last chat, tokens).
+- `worker/`: the account service, a Cloudflare Worker (free tier) holding Clerk's secret key:
+  workspaces, invitations, settings and each workspace's PC directory, and the Harbor tokens
+  every PC checks offline. Deploy steps in `worker/README.md`.
+
+### Changed
+- Phones sign in with Google instead of pairing: no QR code, 6-digit code, screen-lock factor or
+  rotating sessions. The phone gets its workspaces' PCs from the account service and connects to
+  them directly, pinned to each PC's key as before; every call carries a token signed by the
+  account service and bound to the phone's own key, which each PC checks itself, also while the
+  service can't be reached. Phones from before this version update the app, then sign in.
+- PCs of one workspace share chats without pairing codes; PCs paired by hand keep working.
+- A PC's owner is the signed-in account's name (detection only runs on PCs nobody signed in on).
+- An expired sign-in or an unreachable account service stops nothing: the hub and agents keep
+  running with what the PC has cached, and Settings › Account asks to sign in again.
+- Settings › Phones lists the signed-in phones (with whose account) and can sign a lost one out.
+
+### Removed
+- Phone pairing (three factors, the presence key, `/v1/pair/*`, `/v1/session/*`,
+  `/mesh/v1/mint`) and the in-app QR scanner.
+
 ## [0.79.0] - 2026-10-28
 
 ### Changed

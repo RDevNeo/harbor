@@ -27,13 +27,20 @@ Secret values are typed at the prompt (or set in the Cloudflare dashboard), neve
 2. `npx wrangler login`
 3. `npx wrangler d1 create harbor-accounts`, then paste the printed `database_id` into `wrangler.toml`.
 4. `npx wrangler d1 migrations apply harbor-accounts --remote`
-5. `npm run keygen`: prints the private key and `kid:base64url` public key. The public key goes into the Rust/env constant (`HARBOR_ACCOUNTS_KEYS`).
+5. `npm run keygen`: prints the private key and the `kid:base64url` public key. The public key goes into
+   `KEYS` in `src/account.rs` (PCs check phones' tokens with it, offline); without it a build trusts the
+   keys `GET /v1/keys` serves over HTTPS.
 6. `npx wrangler secret put CLERK_SECRET_KEY` and `npx wrangler secret put HARBOR_SIGNING_KEY` (paste the keygen private key).
 7. Edit `[vars]` in `wrangler.toml`: `CLERK_FRONTEND_URL`, `PUBLIC_URL`, and the rest if needed.
 8. `npx wrangler deploy`
 9. Optional: attach a custom domain to the Worker in the Cloudflare dashboard, and set `PUBLIC_URL` to it.
 
-Local test (fake Clerk + `wrangler dev`): `npm test`.
+Then point the apps at it: `CLERK_URL`, `CLIENT_ID` and `ACCOUNTS_URL` in `src/account.rs`, and the same
+three defaults in `android/build.sh` (`HARBOR_CLERK_URL`, `HARBOR_CLERK_CLIENT_ID`, `HARBOR_ACCOUNTS_URL`).
+Test builds override them with those environment variables.
+
+Local test: `npm test` runs `test/run.py`: `test/fakeclerk.py` (Clerk's OAuth endpoints and the Backend API
+subset the Worker uses) and the real Worker under `wrangler dev --local`, driven through every endpoint.
 
 ## Clerk dashboard checklist
 

@@ -328,7 +328,8 @@ impl Shared {
         if fp.is_empty() {
             return None;
         }
-        self.allowed.lock().unwrap().iter().find(|a| a.fp == fp).cloned().or_else(|| crate::account::mesh_peers().into_iter().find(|a| a.fp == fp))
+        let paired = self.allowed.lock().unwrap().iter().find(|a| a.fp == fp).cloned();
+        paired.or_else(|| crate::account::mesh_peers().into_iter().find(|a| a.fp == fp))
     }
 
     /// The allowed entry of a Tailscale node that already has a key on file (then plain is over).
@@ -2496,7 +2497,10 @@ impl App {
         path.extend(tail.iter().map(|s| s.to_string()));
         let tx = self.inc_tx.clone();
         let ctx = if starts_turn(method, tail) { self.ctx_for(c.repo_id) } else { Value::Null };
-        forward(peer.dest(), name, method, path, body, files, (self.shared().me().name, api::local_device()), ctx, move |reply| {
+        // Typed at this PC: by its signed-in account ("desk (Sam Rig)"), in a workspace of several people.
+        let me = self.shared().me().name;
+        let by = crate::account::owner_name().map(|o| format!("{me} ({o})")).unwrap_or(me);
+        forward(peer.dest(), name, method, path, body, files, (by, api::local_device()), ctx, move |reply| {
             let _ = tx.send(crate::control::Incoming::Mesh(Msg::Done { chat, what, reply, restore }));
         });
         true
@@ -2691,7 +2695,7 @@ impl App {
 
     fn phone_name(&self, call: &Call) -> (String, String) {
         let me = self.shared().me().name;
-        let phone = if call.device.is_empty() { "Phone".to_string() } else { call.device.clone() };
+        let phone = self.api.hub.caller_label(&call.token, &call.device);
         (format!("{phone} via {me}"), api::device_id(&call.token))
     }
 
@@ -3321,7 +3325,7 @@ mod tests {
         *shared.allowed.lock().unwrap() = vec![Allowed { fp: fp.clone(), id: "pc:laptop".into(), name: "laptop".into(), addrs: vec!["10.0.0.7:47931".into()], ..Default::default() }];
         let req = api::Request::default();
         let ip: std::net::IpAddr = "10.0.0.8".parse().unwrap();
-        let at = |via| api::Peer { ip, via, x: None };
+        let at = |via| api::Peer { ip, via };
         assert_eq!(who(&shared, &at(api::Via::Tls(Some(fp.clone()))), &req), Ok(("pc:laptop".to_string(), None)));
         // It called from a new address: kept as a hint, at the port it listens on.
         assert_eq!(shared.hints.lock().unwrap()[&fp], ["10.0.0.8:47931"]);
@@ -3348,7 +3352,7 @@ mod tests {
         let ask = |via: api::Via, method: &str, path: &str, body: Value| {
             let data = serde_json::to_vec(&body).unwrap();
             let req = api::Request { method: method.into(), path: path.into(), len: data.len(), ..Default::default() };
-            serve(&api::Peer { ip, via, x: None }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {})
+            serve(&api::Peer { ip, via }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {})
         };
         let fp = "b".repeat(64);
         let r = ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": fp, "id": "ts:laptop", "addrs": ["10.0.0.5:47930", "junk"] }));
@@ -3361,14 +3365,14 @@ mod tests {
         assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/enroll", json!({ "fp": "c".repeat(64) })).status, 409, "another key takes pairing again");
         assert_eq!(hub.mesh.allowed.lock().unwrap()[0].fp, fp);
         // Over TLS its key is who it is (same peer id as before, so its chats stay its chats).
-        assert_eq!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some(fp.clone())), x: None }, &api::Request::default()), Ok(("ts:laptop".to_string(), None)));
-        assert!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some("c".repeat(64))), x: None }, &api::Request::default()).is_err());
+        assert_eq!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some(fp.clone())) }, &api::Request::default()), Ok(("ts:laptop".to_string(), None)));
+        assert!(who(&hub.mesh, &api::Peer { ip, via: api::Via::Tls(Some("c".repeat(64))) }, &api::Request::default()).is_err());
         // A node nobody allowed can't swap keys.
         let other = std::net::IpAddr::V4(std::net::Ipv4Addr::new(100, 90, 1, 3));
         hub.mesh.whois.lock().unwrap().insert(other, (Instant::now(), Some(Node { id: "nX".into(), label: "x".into(), user: None, tagged: true })));
         let data = serde_json::to_vec(&json!({ "fp": "e".repeat(64) })).unwrap();
         let req = api::Request { method: "POST".into(), path: "/mesh/v1/enroll".into(), len: data.len(), ..Default::default() };
-        assert_eq!(serve(&api::Peer { ip: other, via: api::Via::Legacy, x: None }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {}).status, 403);
+        assert_eq!(serve(&api::Peer { ip: other, via: api::Via::Legacy }, &req, &mut std::io::Cursor::new(data), &hub, &tx, &|| {}).status, 403);
         // Pairing needs TLS and a key.
         assert_eq!(ask(api::Via::Legacy, "POST", "/mesh/v1/pair", json!({})).status, 403);
     }

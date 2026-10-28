@@ -871,6 +871,15 @@ impl Hub {
         }
     }
 
+    /// Who a phone's message comes from: "Pixel 8 (Sam Rig)" for a signed-in phone.
+    pub fn caller_label(&self, token: &str, device: &str) -> String {
+        let phone = if device.is_empty() { "Phone" } else { device };
+        match self.tokens.lock().unwrap().iter().find(|t| t.token == token && !t.account_name.is_empty()) {
+            Some(t) => format!("{phone} ({})", t.account_name),
+            None => phone.to_string(),
+        }
+    }
+
     /// The handle of a signed-in phone (key `fp`, account `c`): made the first time it calls.
     pub fn account_phone(&self, c: &crate::account::Claims, fp: &str) -> String {
         let mut tokens = self.tokens.lock().unwrap();
@@ -2809,8 +2818,9 @@ impl App {
             }
             return;
         }
-        // What the phone sends says it came from the phone.
-        self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
+        // What the phone sends says it came from the phone, and whose it is: a workspace has
+        // several people, and chats record who started them.
+        self.sender = self.api.hub.caller_label(&call.token, &call.device);
         self.sender_device = device_id(&call.token);
         let mut r = self.api_route(&call, ctx);
         self.sender.clear();
