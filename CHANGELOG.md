@@ -12,6 +12,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   opened: ← → (or the side buttons) on the desktop, a swipe or the side buttons on the phone,
   with a "3 / 7" counter. The buttons hide at the first and last image; on the phone a swipe
   only turns the page when the image isn't zoomed.
+- A chat's pull request shows under its composer: the footer row says "PR #123 · Open" (Draft,
+  Merged or Closed) left of the branch, with the state's icon in its colour, and a click opens
+  it on GitHub. A chat in its own worktree gets the same icon on its sidebar row. Harbor finds
+  the PR of the branch the chat works on with the GitHub CLI, in the background: when the chat
+  is shown, after each of its turns, and every few minutes for open ones, so a merge on GitHub
+  shows up too. Nothing shows without `gh`, for the default branch or a branch never pushed.
+  The phone shows it the same way in its footer chips (tap opens it, long-press shows the
+  title) and its chat list.
 
 ### Fixed
 - → in the desktop's image viewer no longer fills the composer with the suggested prompt.

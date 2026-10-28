@@ -269,7 +269,7 @@ public class Chat extends Base implements Images.Gallery {
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));
-        work.marker(c.optJSONObject("worktree"), c.optString("home_name", ""));
+        work.marker(c.optJSONObject("worktree"), c.optJSONObject("pr"), c.optString("home_name", ""));
         applyDraft(c.optJSONObject("draft"));
         drawBars();
     }

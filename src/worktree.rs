@@ -623,18 +623,36 @@ impl App {
 
     // -------------------------------------------------------------- the bar
 
-    /// The slim bar under the composer: where the agent works (left) and its branch (right).
+    /// The slim bar under the composer: where the agent works (left), and its branch's pull
+    /// request and the branch (right).
     pub fn workspace_bar(&mut self, ui: &mut Ui) {
         let target = self.ws_target();
+        let ctx = ui.ctx().clone();
+        if let Target::Chat(id) = target {
+            self.pr_want(id, Some(crate::chatpr::SHOWN_TTL), &ctx);
+        }
+        let pr = match target {
+            Target::Chat(id) => self.chat(id).and_then(|c| self.chat_pr(c)).cloned(),
+            Target::Draft(_) => None,
+        };
         let Some(info) = self.ws_info(target) else {
-            // Another PC's chat (or one run on a device) in a worktree: where it works, read-only.
+            // Another PC's chat (or one run on a device) in a worktree: where it works, read-only;
+            // and its PR, as its home PC says.
             if let Target::Chat(id) = target {
                 let marker = self.chat(id).cloned().and_then(|c| self.worktree_marker(&c).map(|m| (m, self.home_name(&c))));
-                if let Some((m, home)) = marker {
+                if marker.is_some() || pr.is_some() {
                     let t = self.theme.t;
                     ui.horizontal(|ui| {
                         ui.add_space(6.0);
-                        w_small(ui, crate::icons::FOLDER_GIT, &format!("Worktree · {}", m.name), false, &t).tip(format!("Runs in its own worktree on {home}, {}", m.name));
+                        if let Some((m, home)) = marker {
+                            w_small(ui, crate::icons::FOLDER_GIT, &format!("Worktree · {}", m.name), false, &t).tip(format!("Runs in its own worktree on {home}, {}", m.name));
+                        }
+                        if let Some(p) = &pr {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.add_space(6.0);
+                                w_pr(ui, p, &t);
+                            });
+                        }
                     });
                 }
             }
@@ -642,7 +660,6 @@ impl App {
         };
         // Its worktree was removed outside Harbor: said in place of the folder, no branch.
         let gone = info.worktree.as_ref().is_some_and(|w| !w.exists());
-        let ctx = ui.ctx().clone();
         let h = self.ws_head(&info.dir, &ctx);
         let t = self.theme.t;
         let mut open: Option<(Popup, egui::Rect)> = None;
@@ -672,13 +689,21 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(6.0);
+                // The branch's PR goes left of the branch (and stays when the worktree is gone:
+                // often why it went).
                 if gone {
+                    if let Some(p) = &pr {
+                        w_pr(ui, p, &t);
+                    }
                     return;
                 }
                 if let Some((Side::Branch, what)) = &busy {
                     let r = w_busy(ui, what, &t);
                     if self.popup == Some(Popup::Branch) {
                         self.popup_anchor = r.rect;
+                    }
+                    if let Some(p) = &pr {
+                        w_pr(ui, p, &t);
                     }
                     return;
                 }
@@ -697,6 +722,9 @@ impl App {
                     open = Some((Popup::Branch, r.rect));
                 } else if self.popup == Some(Popup::Branch) {
                     self.popup_anchor = r.rect;
+                }
+                if let Some(p) = &pr {
+                    w_pr(ui, p, &t);
                 }
             });
         });
@@ -924,6 +952,11 @@ impl App {
                     Ok(t) => t,
                     Err((st, e)) => return Some(Some(err(st, e))),
                 };
+                // A phone shows the chat: its PR is looked up as for the desktop's footer (it comes
+                // in the chat's JSON).
+                if let Target::Chat(id) = target {
+                    self.pr_want(id, Some(crate::chatpr::SHOWN_TTL), ctx);
+                }
                 let Some(info) = self.ws_info(target) else { return Some(Some(ok(json!({ "git": false })))) };
                 let new_worktree = matches!(target, Target::Draft(_)) && q("worktree") == Some("1");
                 let base = q("base").unwrap_or("").to_string();
@@ -1088,6 +1121,26 @@ fn w_busy(ui: &mut Ui, text: &str, t: &crate::theme::Tokens) -> egui::Response {
 /// text, no box; hovered or open, the text comes up to full strength.
 fn w_small(ui: &mut Ui, icon: &str, text: &str, open: bool, t: &crate::theme::Tokens) -> egui::Response {
     w_small_tinted(ui, icon, text, open, t.subtle(), t)
+}
+
+/// The branch's pull request in the footer: its state's icon in the state's colour, "PR #123 ·
+/// Merged" muted like the rest; a click opens it on GitHub.
+fn w_pr(ui: &mut Ui, p: &crate::chatpr::ChatPr, t: &crate::theme::Tokens) -> egui::Response {
+    let font = egui::FontId::proportional(12.5);
+    let icon = ui.painter().layout_no_wrap(format!("{}  ", p.state.icon()), font.clone(), p.state.color(t));
+    let text = ui.painter().layout_no_wrap(p.label(), font, t.subtle());
+    let size = egui::vec2(icon.size().x + text.size().x, icon.size().y.max(text.size().y)) + egui::vec2(16.0, 8.0);
+    let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let fg = if r.hovered() { t.fg() } else { t.subtle() };
+    let at = rect.min + egui::vec2(8.0, 4.0);
+    let icon_w = icon.size().x;
+    ui.painter().galley(at, icon, p.state.color(t));
+    ui.painter().galley_with_override_text_color(at + egui::vec2(icon_w, 0.0), text, fg);
+    if r.clicked() {
+        crate::git::open_url(&p.url);
+    }
+    r.tip(p.tip())
 }
 
 fn w_small_tinted(ui: &mut Ui, icon: &str, text: &str, open: bool, rest: egui::Color32, t: &crate::theme::Tokens) -> egui::Response {

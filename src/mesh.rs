@@ -461,6 +461,8 @@ pub struct Remote {
     pub draft: Option<api::SharedDraft>,
     /// The name of its worktree there, when it runs in one (worktree.rs).
     pub worktree: Option<String>,
+    /// Its branch's pull request (chatpr.rs).
+    pub pr: Option<crate::chatpr::ChatPr>,
 }
 
 /// Messages from the peer workers to the UI thread.
@@ -2373,6 +2375,7 @@ impl App {
                 viewing,
                 draft: api::SharedDraft::from_json(&m["draft"]),
                 worktree: m["worktree"].as_str().filter(|w| !w.is_empty()).map(String::from),
+                pr: crate::chatpr::ChatPr::from_json(&m["pr"]),
             },
         );
         self.api_touch(id);
@@ -2529,6 +2532,8 @@ impl App {
             "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
             // Its worktree's name, when it runs in one (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| m.name),
+            // Its branch's pull request (optional, 0.82).
+            "pr": self.chat_pr(c).map(|p| p.json()),
         })
     }
 

@@ -548,6 +548,14 @@ final class Sidebar {
             m.setContentDescription("Worktree " + wt.optString("name"));
             r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
         }
+        // Its branch's pull request (the desktop row's PR mark): the state's icon and colour; only
+        // for a chat in its own worktree, as the desktop's.
+        JSONObject pr = wt == null ? null : c.optJSONObject("pr");
+        if (pr != null) {
+            TextView m = Ui.icon(a, WorkBar.prGlyph(pr), 14, WorkBar.prColor(pr));
+            m.setContentDescription(pr.optString("label"));
+            r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        }
         // Snoozed (shown while searching): when it wakes, as the desktop row says it.
         if (!c.isNull("snoozed_until_ms")) {
             r.addView(Ui.icon(a, Ui.I_CLOCK, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 8, 0, 0, 0));

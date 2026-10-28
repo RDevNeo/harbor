@@ -2585,7 +2585,7 @@ impl App {
             let n = subs.get(&c.id).copied().unwrap_or(0);
             let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
             let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queue_hash(c.id));
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id))));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id), self.chat_pr(c).map(|p| (p.number, p.state)))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -3418,6 +3418,9 @@ impl App {
             // It runs in a worktree of its own (worktree.rs): the folder's name, its path (null
             // for another PC's chat) and whether it's gone (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| json!({ "name": m.name, "path": m.path.map(|p| p.to_string_lossy().into_owned()), "gone": m.gone })),
+            // The pull request of the branch it works on (chatpr.rs): number, state, the
+            // footer's label, title and url; null when it has none (optional, 0.82).
+            "pr": self.chat_pr(c).map(|p| p.json()),
             // Snoozed out of this PC's sidebar until then, and that time as its row says it
             // ("Tomorrow, 9:00"); null when it isn't (optional, 0.78: there = /snooze answers).
             "snoozed_until_ms": self.snooze_until(&format!("c{}", c.id)).map(|u| u * 1000),

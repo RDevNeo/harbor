@@ -424,6 +424,19 @@ refetch everything.
   chat's title, "Worktree · <branch>" (the branch from `GET /v1/workspace`, else the name;
   "Worktree gone"; a new chat headed for one: "New worktree · from <base>"); the phone does the
   same in its list and under its title. Tapping the chip opens the workspace sheet.
+- `pr` (optional, 0.82; null or missing: none, or an older hub): the pull request of the branch
+  the chat works on (sub-agents: their lead's), `{"number": 123, "state": "open" | "draft" |
+  "merged" | "closed", "label": "PR #123 · Open", "title": "Fix the login", "url":
+  "https://github.com/o/r/pull/123"}`. The hub looks it up with the GitHub CLI off its UI thread
+  (src/chatpr.rs): while the chat is shown on the desktop or a phone asks
+  `GET /v1/workspace?chat=` (at most once a minute), after each of its turns, and every few minutes
+  for open ones; another PC's chat has it as its home PC says. None for the default branch, a
+  branch never pushed, a project without a GitHub remote, or without `gh`. The desktop shows
+  `label` in the footer under the composer, left of the branch, its icon in the state's colour
+  (git-pull-request `U+E555` green, pr-draft `U+E35B` grey, git-merge `U+E0E4` purple, pr-closed
+  `U+E35A` red; a click opens `url`), and, for a chat with a `worktree` (a checkout's branch is
+  every chat's there), the same icon after the title on its sidebar row; the phone does the same
+  in its footer chips (tap: open `url`, long-press: the title) and list.
 - `snoozed_until_ms` / `snoozed_label` (optional, 0.78; missing: an older hub, so offer no
   Snooze): the chat is snoozed out of this hub's sidebar until then, and that time as the
   desktop's row says it ("Tomorrow, 9:00", "Thu, 14:00"); both null when it isn't. Such a chat is
@@ -865,7 +878,9 @@ chip reads "Worktree · <name>" since 0.66) and for New chat with `worktree=1` (
 `detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
 a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
 switched now (an agent is working there), null when it can. `pending` (0.37.2, optional): what git is
-doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Every git call runs off
+doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Since 0.82 asking for
+a chat also has the hub look up its branch's pull request when it's over a minute old; it comes in
+the chat's JSON `pr` (a state change), not in this answer. Every git call runs off
 the hub's UI thread, so a big repository answers late but never freezes it: give these calls the
 long timeout, and show a pending chip meanwhile.
 

@@ -272,6 +272,8 @@ pub struct App {
     pub devices_ui: crate::remoteui::State,
     /// The workspace and branch bar under the composer (worktree.rs).
     pub ws: crate::worktree::State,
+    /// The pull request of each chat's branch (chatpr.rs).
+    pub chatpr: crate::chatpr::State,
     /// The composer's mic (voice.rs).
     pub voice: crate::voice::State,
     /// Settings › Usage totals, summed off the UI thread.
@@ -430,6 +432,7 @@ impl App {
             remote: Default::default(),
             devices_ui: Default::default(),
             ws: Default::default(),
+            chatpr: Default::default(),
             voice: Default::default(),
             usage_totals: Default::default(),
             sender: String::new(),
@@ -495,6 +498,7 @@ impl App {
         crate::theme::set_compact(app.store.get("density").as_deref() == Some("compact"));
         app.load_cursor_models();
         app.load_snoozed();
+        app.load_chat_prs();
         app
     }
 
@@ -1357,6 +1361,8 @@ impl App {
                 if let Some(c) = self.chat_mut(id) {
                     c.updated = store::now();
                 }
+                // It may have opened or merged a PR (chatpr.rs).
+                self.pr_want(id, None, ctx);
                 self.persist(id);
                 if let Some(r) = self.chat(id).and_then(|c| c.repo_id) {
                     self.refresh_git(r);
@@ -1625,6 +1631,7 @@ impl App {
         self.wake_snoozed(ctx);
         self.mesh_tick(ctx);
         self.ws_poll(ctx);
+        self.pr_sweep(ctx);
         self.voice_poll(ctx);
         self.queue_drain(ctx);
         self.queue_edit_check(ctx);

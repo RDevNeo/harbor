@@ -148,19 +148,31 @@ impl App {
             w::paint_status(ui.painter(), pos2(rect.right() - 8.0, rect.center().y), &status);
             w::status_width(ui, &status) + 16.0
         };
-        // A chat in its own worktree: its folder-git mark after the title (worktree.rs).
+        // A chat in its own worktree: its folder-git mark after the title (worktree.rs), and its
+        // branch's pull request: the PR's state icon after that (chatpr.rs; a checkout's branch
+        // is every chat's there, so it marks none of them).
         let wt = self.worktree_marker(c);
-        let mark_w = if wt.is_some() { 20.0 } else { 0.0 };
+        let pr = wt.as_ref().and_then(|_| self.chat_pr(c)).cloned();
+        let mark_w = if wt.is_some() { 20.0 } else { 0.0 } + if pr.is_some() { 20.0 } else { 0.0 };
         let font = FontId::new(14.0, if active { crate::theme::medium() } else { egui::FontFamily::Proportional });
         let g = w::truncated(ui, &c.title, font, t.fg(), (rect.right() - right - x - mark_w).max(10.0));
         let title_w = g.size().x;
         ui.painter().galley(pos2(x, rect.center().y - g.size().y / 2.0), g, t.fg());
         let mut resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let mut mark_x = x + title_w + 6.0 + 7.0;
         if let Some(m) = &wt {
-            let at = pos2(x + title_w + 6.0 + 7.0, rect.center().y);
+            let at = pos2(mark_x, rect.center().y);
             ic::glyph(ui.painter(), at, ic::FOLDER_GIT, 13.0, if m.gone { t.red(900) } else if active { t.fg() } else { t.subtle() });
             if ui.rect_contains_pointer(Rect::from_center_size(at, Vec2::splat(16.0))) {
                 resp = resp.on_hover_text(if m.gone { format!("Its worktree, {}, is gone", m.name) } else { format!("Runs in its own worktree, {}", m.name) });
+            }
+            mark_x += 20.0;
+        }
+        if let Some(p) = &pr {
+            let at = pos2(mark_x, rect.center().y);
+            ic::glyph(ui.painter(), at, p.state.icon(), 13.0, p.state.color(&t));
+            if ui.rect_contains_pointer(Rect::from_center_size(at, Vec2::splat(16.0))) {
+                resp = resp.on_hover_text(format!("{}: {}", p.label(), p.title));
             }
         }
         if resp.clicked() {

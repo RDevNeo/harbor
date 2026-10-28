@@ -12,6 +12,7 @@ mod background;
 mod bridge;
 mod chat;
 mod chatlink;
+mod chatpr;
 mod chatmention;
 mod clipboard;
 mod clone;
