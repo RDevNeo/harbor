@@ -4,14 +4,20 @@ cache="$HOME/cache"
 mkdir -p "$cache" "$HOME/out"
 
 # image <name> <dockerfile>: tagged by the Dockerfile's hash. A snapshot keeps only images that a
-# container uses, hence the keep- container.
+# container uses, hence the keep- container. Its images load in the background after the sandbox
+# is ready and no docker command waits for them, so ~/cache/images lists the ones it should have.
 image() {
-  local img="$1:$(sha256sum "$2" | cut -c1-12)"
+  local img="$1:$(sha256sum "$2" | cut -c1-12)" i
+  until docker info >/dev/null 2>&1; do sleep 1; done
+  if grep -qx "$img" "$cache/images" 2>/dev/null; then
+    for i in $(seq 300); do docker image inspect "$img" >/dev/null 2>&1 && break; sleep 1; done
+  fi
   if ! docker image inspect "$img" >/dev/null 2>&1; then
     docker build -q -t "$img" -f "$2" "$(dirname "$2")" >/dev/null
     docker rm -f "keep-$1" >/dev/null 2>&1 || true
     docker create --name "keep-$1" "$img" >/dev/null
   fi
+  grep -qx "$img" "$cache/images" 2>/dev/null || echo "$img" >> "$cache/images"
   echo "$img"
 }
 
