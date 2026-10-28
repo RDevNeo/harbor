@@ -95,6 +95,13 @@ fn main() -> eframe::Result {
     // Before anything is started: children older than this are a previous image's.
     let born = procs::uptime_ticks();
     let args: Vec<String> = std::env::args().collect();
+    // Terminal commands stop quietly when their reader closes the pipe. Keep Rust's
+    // ignored SIGPIPE for the GUI/background hub, workers, stdio MCP servers and nc:
+    // those use sockets and handle write errors rather than dying on a disconnect.
+    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V" | "--update" | "--restore-previous" | "mesh" | "net")) {
+        #[allow(unsafe_code)] // signal(2), before starting any threads
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL); }
+    }
     if matches!(args.get(1).map(String::as_str), Some("--version" | "-V")) {
         println!("harbor {}", update::version_label());
         return Ok(());

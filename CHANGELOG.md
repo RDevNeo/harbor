@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Terminal commands now stop quietly when piped to a reader that closes early, without a
+  panic or core dump. The desktop/background hub and socket/stdio servers keep handling
+  disconnects safely; MCP servers finish cleanly when their output closes. Fixes #86.
+
 ## [0.67.0] - 2026-10-28
 
 ### Changed

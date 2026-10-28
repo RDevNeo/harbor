@@ -52,13 +52,16 @@ pub fn run() {
             }
             "ping" => json!({}),
             _ => {
-                let _ = writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } }));
-                let _ = out.flush();
+                if writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "method not found" } })).and_then(|_| out.flush()).is_err() {
+                    break;
+                }
                 continue;
             }
         };
-        let _ = writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-        let _ = out.flush();
+        // The client went away: finish the stdio server without a panic or SIGPIPE.
+        if writeln!(out, "{}", json!({ "jsonrpc": "2.0", "id": id, "result": result })).and_then(|_| out.flush()).is_err() {
+            break;
+        }
     }
 }
 
