@@ -150,6 +150,10 @@ pub enum Item {
         /// Where it was written when not on the chat's own PC: another PC or a phone ("from laptop").
         #[serde(default, skip_serializing_if = "String::is_empty")]
         sender: String,
+        /// How it reached a running turn (queue.rs): "steer" (sent as one) or "promoted"
+        /// (queued, then steered); empty for a message that started its turn.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        intent: String,
     },
     Text {
         text: String,

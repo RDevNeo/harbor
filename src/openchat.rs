@@ -228,7 +228,7 @@ impl App {
         // The prompt as its first message, written by no one on another device. Not `send_to`:
         // that makes a chat this PC's person's own again (meshctx.rs `ctx_adopt`).
         let tr = self.transcripts.entry(id).or_default();
-        tr.items.push(Item::User { text: prompt.clone(), files: vec![], at: store::now(), mentions: vec![], sender: String::new() });
+        tr.items.push(Item::User { text: prompt.clone(), files: vec![], at: store::now(), mentions: vec![], sender: String::new(), intent: String::new() });
         self.persist(id);
         self.start_turn(id, format!("{}{prompt}", preamble(&me)), vec![], ctx);
         ctx.request_repaint();
@@ -409,7 +409,7 @@ mod tests {
     fn opened_chats_link_back_on_both_sides() {
         let items = vec![
             Item::Notice { icon: "chat".into(), text: opened_by("Fix login"), detail: format!("{LINK}g-a") },
-            Item::User { text: "go".into(), files: vec![], at: 1, mentions: vec![], sender: String::new() },
+            Item::User { text: "go".into(), files: vec![], at: 1, mentions: vec![], sender: String::new(), intent: String::new() },
         ];
         let cards = crate::view::project(&items, true, &[]);
         assert_eq!(cards[0].card, crate::view::Card::ChatLink { gid: "g-a", text: "Opened by the agent of “Fix login”" });

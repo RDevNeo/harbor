@@ -460,7 +460,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | kind | what the desktop draws | fields |
 |---|---|---|
 | `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
-| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note}]` (`excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise) |
+| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note}]` (`excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.69, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu) |
 | `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable`; commit pills in its spans (below) | `markdown`, `blocks` (below), `images`, `at`, `forkable`, `commits` (optional, 0.52) |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
@@ -513,8 +513,18 @@ notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 `status` is the bars the desktop shows under the transcript; each part is null or empty when
 the desktop shows nothing:
 
-- `queue: [{text, files, sending}]`: messages waiting for the running turn, right-aligned
-  bubbles labelled "Queued" (or "Sending" once handed to the agent).
+- `queue: [{id, text, files, sending, intent, held, note, editing}]`: messages sent while the
+  turn runs (see "Steer and the queue" below). Items with an `intent` (`steer`, `promoted`) are
+  steers on their way in: the user's own bubble captioned "Steering…" until the agent takes it
+  in (then it's a transcript `user` item). The others are "Up next": dashed right-aligned
+  bubbles under the turn, in order, "Sending" once handed to the agent (no controls then).
+  `held`: a Stop holds it; `note`: why it's there when it wasn't queued as such ("Steer didn't
+  land: queued", in red); `editing`: some device is editing it. Hubs before 0.69 send only
+  `text`, `files`, `sending` (no ids: read-only bubbles labelled "Queued").
+- `can_steer` (0.69): whether a message sent now can steer the running turn (Claude, Codex);
+  false or absent: the send button queues. `held` (0.69): a Stop holds the queue; the empty
+  composer's button is ▶ Resume queue. `follow_up`: the PC's own Enter setting (`steer` |
+  `queue`); the phone keeps its own (Settings › While the agent is running, default Steer).
 - `working: {since_ms, subagents, text}`: the spinner line while the chat's own turn runs;
   show the time since `since_ms` after `text` ("Working…  ·  1 sub-agent running").
 - `waiting: {agents: [{id, name, title, since_ms}], queued}`: a lead whose own turn is done while
@@ -665,14 +675,40 @@ Since 0.57 (optional): `"title": "…"` names it in the sidebar (default: the te
 
 ### `POST /v1/chats/{id}/send`
 
-`{"text": "…", "files": [upload ids]}` → `{"ok": true, "queued": false}`. While a turn runs the
-message waits in the queue, as on the desktop (`queued: true`).
+`{"text": "…", "files": [upload ids], "mode"?: "steer" | "queue"}` → `{"ok": true, "queued":
+false, "steering": false}`. While a turn runs, `mode` says what the message does (0.69; absent:
+queue, as older apps expect): `steer` reaches the running turn now (`steering: true`) when it can
+(`can_steer`), else it queues; `queue` waits for the turn to end (`queued: true`). A message to an
+idle chat starts a turn, and resumes a queue a Stop held (it runs after this one).
 
 ### `POST /v1/chats/{id}/stop`
 
-→ `{"ok": true, "returned": [{"text": "…", "files": [upload ids]}]}`. Stops the running turn
-(if any). Messages that were queued behind it are taken out of the queue and returned, oldest
-first, so the app can put them back in its composer (files that weren't phone uploads are left out).
+`{"hold": true}` (0.69) → `{"ok": true, "returned": [], "held": true}`: stops the running turn
+(if any); the queue stays, in order, held until `POST …/resume` or the next message sent. Without
+`hold` (older apps) → `{"ok": true, "returned": [{"text": "…", "files": [upload ids]}]}`: messages
+queued behind it are taken out of the queue and returned, oldest first, so the app can put them
+back in its composer (files that weren't phone uploads are left out).
+
+### Steer and the queue (0.69)
+
+While the agent works, a message either **steers** it (reaches the running turn now: Claude takes
+it with `priority: "now"`, ending what it was doing; Codex is stopped and its session resumed
+with it) or is **queued** (waits for the turn to end, then runs as the next turn, one message per
+turn, in order). The phone's send button shows which (`list-plus` Queue, `corner-up-right`
+Steer) and long-press offers the other ("Choose how to send this message": Steer now / Queue).
+Agents that can't be steered (`can_steer` false) always queue. A steer never gets lost: if the
+turn just ended it runs as the next turn; if it can't be written it goes back to the top of the
+queue with a `note`. Ids are the status' `queue[].id` (the home PC's for a chat on another PC;
+calls about a copy are forwarded there like other writes). Each answers `{"ok": true}`, or 404
+when the message is gone (it started or was removed):
+
+- `POST /v1/chats/{id}/queue/{qid}/steer`: steer with it now (`intent: promoted`); when no turn
+  runs it's "Send now" and starts one.
+- `PATCH /v1/chats/{id}/queue/{qid}` `{"text"?, "mentions"?, "editing"?: bool}`: edit it in place
+  (it keeps its place); `editing` marks that a device has it in its composer.
+- `POST /v1/chats/{id}/queue/{qid}/move` `{"to": n}`: move it to position n (0 = next).
+- `DELETE /v1/chats/{id}/queue/{qid}`: remove it.
+- `POST /v1/chats/{id}/resume`: after a Stop, the next queued message starts.
 
 ### `PATCH /v1/chats/{id}`
 

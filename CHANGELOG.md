@@ -5,6 +5,29 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Steer and Queue, side by side (modeled on T3 Code), on the desktop, the phone and from other
+  PCs. While the agent works, a message either **steers** it (Claude takes it in at once, ending
+  what it was doing; Codex is stopped and resumes its session with it) or is **queued** (it runs
+  after the current turn, one message per turn, in order). Steer is the default; Settings ›
+  General › "While the agent works, Enter…" (phone: Settings › While the agent is running)
+  switches it to Queue. Ctrl+Enter (or Ctrl-click; long-press send on the phone) does the other
+  for one message, and the send button's icon says which (holding Ctrl flips it). Agents that
+  can't be steered (Cursor, Gemini, Grok, OpenCode, Meta) always queue.
+- Queued messages show as dashed "Up next" bubbles under the turn. Each can be edited in place
+  (it keeps its place; Alt+↑ edits the latest), moved (right-click the grip; phone: long-press),
+  removed, or sent as a steer (Ctrl+Shift+Enter steers the oldest; "Send now" when idle). A
+  steered message shows "Steering…" until the agent takes it in, then a small "Steer" caption.
+  A steer is never lost: if the turn just ended it runs as the next turn, if it can't land it
+  goes back to the top of the queue, said so.
+
+### Changed
+- Queued messages now wait for the turn to end instead of slipping into it at the next tool call
+  (injecting mid-turn is Steer's job). Stop (and Esc) holds the queue instead of returning it to
+  the composer: ▶ Resume queue (or the next message you send) runs it. Hub API: optional `mode`
+  on send, queue ids and `queue/{id}` calls, `can_steer`/`held` in the status, `intent` on user
+  items; older phones and hubs keep the plain queue.
+
 ## [0.70.0] - 2026-10-28
 
 ### Added

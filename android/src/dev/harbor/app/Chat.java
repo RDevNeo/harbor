@@ -50,6 +50,11 @@ public class Chat extends Base {
     private Boolean stripOpen;      // the agent strip unfolded (null: the hub's default)
     private final java.util.List<TextView> stripTimes = new java.util.ArrayList<>(); // its elapsed labels
     private boolean running;
+    /** The queued message being edited in this composer (0: none), its text then, and the
+     *  draft set aside meanwhile (PROTOCOL.md "Steer and the queue"). */
+    private long editId;
+    private String editOriginal = "", editAside = "";
+    private boolean queueUnfolded;
     private Render render;
     private Team team;
     private Slash slash;
@@ -135,6 +140,8 @@ public class Chat extends Base {
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         comp.onSend = this::send;
         comp.onStop = this::stop;
+        comp.onResume = this::resume;
+        comp.onSendMenu = this::sendMenu;
         comp.onType = this::typed;
         attach.onChange = this::typed;
         comp.onPill = () -> {
@@ -467,21 +474,21 @@ public class Chat extends Base {
         status.removeAllViews();
         workingText = null;
         JSONObject b = bars == null ? new JSONObject() : bars;
+        // Steers on their way in sit with the turn; "Up next" comes after the bars (drawQueue).
+        List<JSONObject> waitingQ = new ArrayList<>();
         JSONArray queue = b.optJSONArray("queue");
         if (queue != null) for (int i = 0; i < queue.length(); i++) {
             JSONObject q = queue.optJSONObject(i);
             if (q == null) continue;
+            if (q.optString("intent").isEmpty()) { waitingQ.add(q); continue; }
             LinearLayout w = Ui.col(this);
             w.setGravity(Gravity.END);
-            TextView tag = Ui.text(this, q.optBoolean("sending") ? "Sending" : "Queued", 12, Ui.G700);
-            w.addView(tag);
-            TextView t = Ui.text(this, q.optString("text"), 15, Ui.G900);
-            t.setBackground(Ui.round(Ui.G100, Ui.LINE, 18));
+            w.addView(caption(Ui.I_REDO, "Steering…"));
+            TextView t = Ui.text(this, q.optString("text"), 15, Ui.FG);
+            t.setBackground(Ui.round(Ui.G100, 0, 18));
             t.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
             t.setMaxWidth(maxBubble());
             w.addView(t, Ui.wrap());
-            JSONArray f = q.optJSONArray("files");
-            if (f != null) for (int j = 0; j < f.length(); j++) w.addView(Ui.text(this, "📎 " + f.optString(j), 12, Ui.G700));
             status.addView(w, Ui.margins(Ui.fill(), 36, 4, 0, 4));
         }
         JSONObject waiting = b.optJSONObject("waiting"), working = b.optJSONObject("working"), limit = b.optJSONObject("limit");
@@ -549,6 +556,8 @@ public class Chat extends Base {
                 status.addView(acts, Ui.margins(Ui.fill(), 23, 0, 0, 4));
             }
         }
+        drawQueue(waitingQ, b.optBoolean("held"), b.optBoolean("can_steer"));
+        comp.follow(b.optBoolean("can_steer"), b.optBoolean("held"), followUp(this));
         strip(b.optJSONObject("agents"));
         // The hub's recap over the composer, its suggestion in the empty composer (Recap.java).
         TextView recap = Recap.line(this, b);
@@ -862,6 +871,8 @@ public class Chat extends Base {
      *  the lease runs out 6 s after. An emptied composer empties the draft everywhere. */
     private void typed() {
         if (applying || composer == null) return;
+        // Editing a queued message isn't writing a draft: nothing goes to the other devices.
+        if (editId != 0) return;
         editedAt = System.currentTimeMillis();
         Ui.main.removeCallbacks(draftPing);
         if (emptyDraft()) { typing(false, true); return; }
@@ -988,6 +999,12 @@ public class Chat extends Base {
                 break;
             case "user": {
                 wrap.setGravity(Gravity.END);
+                // It steered a running turn: "↻ Steer" over the bubble (its why in the long-press menu).
+                String intent = it.optString("intent", "");
+                if (!intent.isEmpty()) {
+                    wrap.setOrientation(LinearLayout.VERTICAL);
+                    wrap.addView(caption(Ui.I_REDO, "Steer"), Ui.margins(Ui.wrap(), 0, 0, 0, 2));
+                }
                 LinearLayout bubble = Ui.col(this);
                 bubble.setBackground(Ui.round(Ui.G100, 0, 20));
                 bubble.setPadding(Ui.dp(16), Ui.dp(11), Ui.dp(16), Ui.dp(11));
@@ -1371,6 +1388,13 @@ public class Chat extends Base {
         if (time.isEmpty() && at > 0) time = android.text.format.DateFormat.getTimeFormat(this).format(new java.util.Date(at * 1000));
         int seq = it.optInt("seq");
         Sheet s = new Sheet(this, time.isEmpty() ? "Message" : time);
+        // A steer says how it reached the turn (the desktop's caption tooltip).
+        String intent = it.optString("intent", "");
+        if (!intent.isEmpty()) {
+            TextView why = Ui.text(this, "promoted".equals(intent) ? "Originally queued, then promoted to steer the active turn" : "Steered the active turn", 14, Ui.G700);
+            why.setPadding(Ui.dp(6), 0, Ui.dp(6), Ui.dp(10));
+            s.body.addView(why);
+        }
         LinearLayout c = s.card();
         int n = 0;
         for (String id : ids) {
@@ -1430,6 +1454,196 @@ public class Chat extends Base {
         ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(composer, 0);
     }
 
+    /** A small muted icon + label, right-aligned ("↻ Steer", "↻ Steering…"). */
+    private TextView caption(String icon, String label) {
+        TextView t = Ui.text(this, "", 12, Ui.G700);
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(icon + "  " + label);
+        sb.setSpan(new Ui.Font(Ui.icons, 0), 0, icon.length(), 0);
+        t.setText(sb);
+        t.setGravity(Gravity.END);
+        return t;
+    }
+
+    // ---- Steer and the queue (PROTOCOL.md "Steer and the queue") ----
+
+    /** This phone's choice for the send button while the agent works: "steer" (default) or "queue". */
+    static String followUp(Context c) { return Ui.prefs(c).getString("follow_up", "steer"); }
+
+    static String followLabel(Context c) {
+        return "steer".equals(followUp(c)) ? "Steer: the agent gets your message right away" : "Queue: your message waits for the turn to end";
+    }
+
+    /** "Up next · N queued": dashed bubbles under the turn. Tap one to edit it in the composer;
+     *  long-press for Steer now / Edit / Move / Remove; its Steer pill steers with it now (Send
+     *  now when the agent isn't running). A hub before 0.69 sends no ids: read-only bubbles. */
+    private void drawQueue(List<JSONObject> q, boolean held, boolean canSteer) {
+        // An edit whose message started or went: it ends here too.
+        if (editId != 0) {
+            boolean here = false;
+            for (JSONObject m : q) if (m.optLong("id") == editId && !m.optBoolean("sending")) here = true;
+            if (!here) endEdit(false);
+        }
+        if (q.isEmpty()) return;
+        int n = q.size();
+        TextView head = caption(Ui.I_LIST_ORDERED, "Up next · " + n + " queued" + (held ? " · paused" : ""));
+        status.addView(head, Ui.margins(Ui.fill(), 36, 6, 0, 2));
+        if (held) {
+            LinearLayout r = Ui.row(this);
+            r.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            r.addView(Ui.text(this, "Queue paused", 13, Ui.G700), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
+            r.addView(small("Resume queue", this::resume));
+            status.addView(r, Ui.margins(Ui.fill(), 36, 2, 0, 4));
+        }
+        int waiting = 0;
+        for (JSONObject m : q) if (!m.optBoolean("sending")) waiting++;
+        boolean fold = n > 3 && !queueUnfolded;
+        int pos = 0;
+        for (int i = 0; i < (fold ? 2 : n); i++) {
+            JSONObject m = q.get(i);
+            boolean sending = m.optBoolean("sending");
+            long id = m.optLong("id");
+            final int place = sending ? -1 : pos;
+            if (!sending) pos++;
+            boolean mine = id != 0 && id == editId, elsewhere = !mine && m.optBoolean("editing");
+            LinearLayout w = Ui.col(this);
+            w.setGravity(Gravity.END);
+            String text = m.optString("text");
+            JSONArray f = m.optJSONArray("files");
+            if (text.isEmpty() && f != null) text = f.length() + " attachment(s)";
+            TextView t = Ui.text(this, text, 15, mine ? Ui.FG : Ui.G700);
+            t.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
+            t.setMaxWidth(maxBubble());
+            if (sending) {
+                w.addView(Ui.text(this, "Sending", 12, Ui.G700));
+                t.setBackground(Ui.round(Ui.G100, Ui.LINE, 18));
+            } else {
+                android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable();
+                d.setCornerRadius(Ui.dp(18));
+                d.setColor(0);
+                d.setStroke(Ui.dp(1), mine || elsewhere ? Ui.INK : Ui.G400, Ui.dp(4), Ui.dp(3));
+                t.setBackground(d);
+            }
+            w.addView(t, Ui.wrap());
+            if (f != null) for (int j = 0; j < f.length(); j++) w.addView(Ui.text(this, "📎 " + f.optString(j), 12, Ui.G700));
+            if (!sending && id != 0) {
+                t.setOnClickListener(v -> startEdit(m));
+                t.setOnLongClickListener(v -> { queueMenu(m, place, waiting(q), canSteer && !held); return true; });
+                LinearLayout acts = Ui.row(this);
+                acts.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+                String note = m.optString("note");
+                if (!note.isEmpty()) acts.addView(Ui.text(this, note, 12, Ui.RED), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
+                if (mine) {
+                    acts.addView(Ui.text(this, "Editing in the composer", 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 0, 8, 0));
+                    acts.addView(small("Cancel", () -> endEdit(false)));
+                } else if (elsewhere) {
+                    acts.addView(Ui.text(this, "Being edited on another device", 12, Ui.G700));
+                } else {
+                    if (waiting > 1) acts.addView(Ui.text(this, String.valueOf(place + 1), 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 0, 10, 0));
+                    boolean on = !running || canSteer && !held;
+                    TextView pill = small(running ? "Steer" : "Send now", () -> queueCall("POST", id + "/steer", null));
+                    if (!on) { pill.setAlpha(0.4f); pill.setOnClickListener(v -> Ui.toast(this, "The agent can't be steered now: it waits for the turn to end")); }
+                    acts.addView(pill);
+                }
+                w.addView(acts, Ui.margins(Ui.wrap(), 0, 4, 0, 0));
+            }
+            status.addView(w, Ui.margins(Ui.fill(), 36, 4, 0, 4));
+        }
+        if (fold) {
+            TextView all = Ui.text(this, "Show all " + n + " queued", 13, Ui.G700);
+            all.setGravity(Gravity.END);
+            all.setPadding(0, Ui.dp(4), 0, Ui.dp(4));
+            all.setOnClickListener(v -> { queueUnfolded = true; drawBars(); });
+            status.addView(all, Ui.margins(Ui.fill(), 36, 0, 0, 4));
+        }
+    }
+
+    private static int waiting(List<JSONObject> q) {
+        int n = 0;
+        for (JSONObject m : q) if (!m.optBoolean("sending")) n++;
+        return n;
+    }
+
+    private void queueMenu(JSONObject m, int place, int waiting, boolean steerable) {
+        long id = m.optLong("id");
+        List<String> opts = new ArrayList<>();
+        List<Runnable> acts = new ArrayList<>();
+        if (!running || steerable) { opts.add(running ? "Steer now" : "Send now"); acts.add(() -> queueCall("POST", id + "/steer", null)); }
+        opts.add("Edit"); acts.add(() -> startEdit(m));
+        if (place > 0) { opts.add("Move up"); acts.add(() -> queueMove(id, place - 1)); }
+        if (place >= 0 && place + 1 < waiting) { opts.add("Move down"); acts.add(() -> queueMove(id, place + 1)); }
+        opts.add("Remove"); acts.add(() -> queueCall("DELETE", String.valueOf(id), null));
+        Ui.dialog(this).setItems(opts.toArray(new String[0]), (d, w) -> acts.get(w).run()).show();
+    }
+
+    private void queueMove(long id, int to) {
+        try { queueCall("POST", id + "/move", new JSONObject().put("to", to)); } catch (Exception e) { /* not reached */ }
+    }
+
+    private void queueCall(String method, String tail, JSONObject body) {
+        Ui.bg(this, () -> hub.call(method, "/v1/chats/" + chatId + "/queue/" + tail, body), r -> load(false));
+    }
+
+    /** Tap on a queued bubble: its text into the composer, the draft aside; it keeps its place. */
+    private void startEdit(JSONObject m) {
+        if (editId != 0) endEdit(false);
+        long id = m.optLong("id");
+        if (id == 0) return;
+        editId = id;
+        editOriginal = m.optString("text");
+        editAside = composer.getText().toString();
+        applying = true;
+        composer.setText(editOriginal);
+        composer.setSelection(composer.length());
+        applying = false;
+        comp.editing(true);
+        composer.requestFocus();
+        try { queueCall("PATCH", String.valueOf(id), new JSONObject().put("editing", true)); } catch (Exception e) { /* not reached */ }
+    }
+
+    /** Ends the edit: `save` writes the composer into the message; the draft set aside comes
+     *  back (after the edited text when the message already left the queue). */
+    private void endEdit(boolean save) {
+        if (editId == 0) return;
+        long id = editId;
+        String text = composer.getText().toString().trim();
+        boolean changed = !text.equals(editOriginal.trim());
+        editId = 0;
+        comp.editing(false);
+        applying = true;
+        boolean gone = !save && bars != null && !hasQueued(id);
+        composer.setText(gone && changed && !text.isEmpty() ? (text + (editAside.trim().isEmpty() ? "" : "\n" + editAside)) : editAside);
+        composer.setSelection(composer.length());
+        applying = false;
+        if (gone) return;
+        try {
+            JSONObject b = new JSONObject().put("editing", false);
+            if (save) b.put("text", text);
+            queueCall("PATCH", String.valueOf(id), b);
+        } catch (Exception e) { /* not reached */ }
+    }
+
+    private boolean hasQueued(long id) {
+        JSONArray q = bars == null ? null : bars.optJSONArray("queue");
+        if (q != null) for (int i = 0; i < q.length(); i++) {
+            JSONObject m = q.optJSONObject(i);
+            if (m != null && m.optLong("id") == id && !m.optBoolean("sending")) return true;
+        }
+        return false;
+    }
+
+    /** Long-press on send while the agent works: Steer now or Queue for this one message. */
+    private void sendMenu() {
+        List<Sheet.Option> o = new ArrayList<>();
+        o.add(new Sheet.Option("steer", "Steer now", "Interrupt what the agent is doing", true));
+        o.add(new Sheet.Option("queue", "Queue", "Run after the current turn", true));
+        Sheet.pick(this, "Choose how to send this message", null, o, followUp(this), this::send);
+    }
+
+    /** Resume after a Stop held the queue: the next queued message starts. */
+    private void resume() {
+        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/resume", new JSONObject()), r -> load(false));
+    }
+
     // ---- actions ----
 
     /** A chat link in a reply (PROTOCOL.md `chat_links`): the hub found the chat, or says why not. */
@@ -1482,9 +1696,10 @@ public class Chat extends Base {
     }
 
     private void stop() {
-        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/stop", null), r -> {
-            // Messages that waited behind the stopped turn come back: into the composer, as on
-            // the desktop, ahead of whatever is being typed.
+        // The queue waits, held, for Resume (0.69); an older hub hands it back instead.
+        Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/stop", new JSONObject().put("hold", true)), r -> {
+            // Messages that waited behind the stopped turn come back from an older hub: into the
+            // composer, ahead of whatever is being typed.
             JSONArray back = r.optJSONArray("returned");
             if (back != null && back.length() > 0) {
                 StringBuilder sb = new StringBuilder();
@@ -1507,6 +1722,13 @@ public class Chat extends Base {
     }
 
     private void send() {
+        if (editId != 0) { endEdit(true); return; }
+        send(comp.sendMode());
+    }
+
+    /** `mode`: "steer" or "queue" while the agent works (ignored by an idle chat, and by hubs
+     *  before 0.69, which queue). */
+    private void send(String mode) {
         if (sending) return;
         String text = composer.getText().toString().trim();
         if (text.isEmpty() && !attach.any() && mentions.length() == 0) return;
@@ -1519,7 +1741,7 @@ public class Chat extends Base {
         Ui.pool.execute(() -> {
             String err = null;
             try {
-                hub.call("POST", "/v1/chats/" + chatId + "/send", new JSONObject().put("text", text).put("files", files).put("mentions", ms));
+                hub.call("POST", "/v1/chats/" + chatId + "/send", new JSONObject().put("text", text).put("files", files).put("mentions", ms).put("mode", mode));
             } catch (Exception e) {
                 err = Hub.why(e);
             }

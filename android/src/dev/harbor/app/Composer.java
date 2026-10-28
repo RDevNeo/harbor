@@ -39,13 +39,15 @@ final class Composer {
     private final FrameLayout send;
     private final TextView sendGlyph;
     private final Activity a;
-    private boolean running;
+    private boolean running, canSteer, held, editing;
+    /** What the send button does while the agent works: "steer" or "queue" (Chat.followUp). */
+    private String mode = "queue";
     /** The usual placeholder; the hub's suggested next message and its Use chip (Recap.java). */
     final String hint;
     String ghost;
     TextView use;
 
-    Runnable onSend, onStop, onPlus, onPill, onType;
+    Runnable onSend, onStop, onPlus, onPill, onType, onResume, onSendMenu;
     /** The draft's mentioned messages (Chat.drawMentions), over the files. */
     final LinearLayout mentions;
     private LinearLayout whoRow;
@@ -130,8 +132,16 @@ final class Composer {
         mic.setContentDescription("Dictate");
         row.addView(mic, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
         send = Ui.roundButton(a, Ui.I_UP, Ui.INK, Ui.ON_INK, 44, v -> {
-            if (running && empty()) { if (onStop != null) onStop.run(); }
+            if (editing) { if (onSend != null) onSend.run(); }
+            else if (running && empty()) { if (onStop != null) onStop.run(); }
+            else if (!running && held && empty()) { if (onResume != null) onResume.run(); }
             else if (onSend != null) onSend.run();
+        });
+        // Long-press while the agent works: "Choose how to send this message" (Steer or Queue).
+        send.setOnLongClickListener(v -> {
+            if (editing || !running || empty() || !canSteer || onSendMenu == null) return false;
+            onSendMenu.run();
+            return true;
         });
         sendGlyph = (TextView) send.getChildAt(0);
         row.addView(send, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
@@ -156,12 +166,38 @@ final class Composer {
         refresh();
     }
 
+    /** The hub's follow-up state (PROTOCOL.md status `can_steer`, `held`) and this phone's mode. */
+    void follow(boolean canSteer, boolean held, String mode) {
+        this.canSteer = canSteer;
+        this.held = held;
+        this.mode = mode;
+        refresh();
+    }
+
+    /** A queued message is being edited here: the button saves it (a check). */
+    void editing(boolean e) {
+        editing = e;
+        refresh();
+    }
+
+    /** What sending now does: "steer" when the running agent takes it, else "queue". */
+    String sendMode() { return running && canSteer && "steer".equals(mode) ? "steer" : "queue"; }
+
     void busy(boolean b) { send.setAlpha(b ? 0.4f : 1f); }
 
     private void refresh() {
-        boolean stop = running && empty();
-        sendGlyph.setText(stop ? Ui.I_STOP : Ui.I_UP);
-        send.setContentDescription(stop ? "Stop" : "Send");
+        boolean empty = empty();
+        String g, d;
+        if (editing) { g = Ui.I_CHECK; d = "Update queued message"; }
+        else if (running && empty) { g = Ui.I_STOP; d = "Stop"; }
+        else if (running) {
+            boolean steer = "steer".equals(sendMode());
+            g = steer ? Ui.I_STEER : Ui.I_LIST_PLUS;
+            d = steer ? "Steer message" : "Queue message";
+        } else if (held && empty) { g = Ui.I_PLAY; d = "Resume queue"; }
+        else { g = Ui.I_UP; d = "Send"; }
+        sendGlyph.setText(g);
+        send.setContentDescription(d);
         Recap.refresh(this);
     }
 

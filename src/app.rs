@@ -966,8 +966,12 @@ impl App {
     /// A user message for an existing chat (the composer's, or the phone's): a new turn,
     /// or queued while one runs.
     pub fn send_to(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<crate::mentions::Mention>, ctx: &egui::Context) {
+        // Steer or Queue if its turn runs (queue.rs): the caller says which; else it queues.
+        let mode = self.queue.mode.unwrap_or(crate::queue::Mode::Queue);
         // Another PC's chat: its PC runs the turn.
-        if self.mesh_send(chat_id, &text, &files, &mentions) {
+        let forwarded = self.mesh_send(chat_id, &text, &files, &mentions);
+        self.queue.mode = None;
+        if forwarded {
             return;
         }
         // Sent: the shared draft empties in every composer.
@@ -983,12 +987,19 @@ impl App {
         if let Some(p) = self.chat(chat_id).and_then(|c| c.repo_id) {
             self.paused.remove(&p);
         }
-        // Busy, or someone on another device is typing in it (one sender at a time): it waits
-        // in the queue and joins the transcript once delivered.
-        if self.turns.contains_key(&chat_id) || self.locked_for(chat_id, &self.sending_device()) {
+        // Busy: it steers the turn or waits for its end (queue.rs).
+        if self.turns.contains_key(&chat_id) {
+            self.follow_up(chat_id, text, files, mentions, mode, ctx);
+            return;
+        }
+        // Someone on another device is typing in it (one sender at a time): it waits in the
+        // queue and joins the transcript once delivered.
+        if self.locked_for(chat_id, &self.sending_device()) {
             self.enqueue(chat_id, text, files, mentions);
             return;
         }
+        // A message to an idle chat resumes a queue its Stop held: the queue follows it.
+        self.queue_resume(chat_id);
         let device = self.sending_device();
         let tr = self.transcripts.entry(chat_id).or_default();
         if tr.items.is_empty() {
@@ -1007,6 +1018,7 @@ impl App {
             at: store::now(),
             mentions: mentions.clone(),
             sender: self.sender.clone(),
+            intent: String::new(),
         });
         // Mentioned messages go first, quoted; the transcript shows them as chips.
         let quoted = format!("{from}{}", crate::mentions::prompt(&mentions));
@@ -1175,6 +1187,8 @@ impl App {
             return;
         }
         if let Some((t, _)) = self.turns.remove(&chat_id) {
+            // Its queue waits for Resume (or the next message), in order (queue.rs).
+            self.queue_stopped(chat_id);
             t.stop();
             if let Some(tr) = self.transcripts.get_mut(&chat_id) {
                 tr.items.push(Item::Error { text: "Stopped.".into() });
@@ -1590,6 +1604,7 @@ impl App {
         self.ws_poll(ctx);
         self.voice_poll(ctx);
         self.queue_drain(ctx);
+        self.queue_edit_check(ctx);
         self.recap_tick(ctx);
         self.api_tick();
         self.typing_repaint(ctx);

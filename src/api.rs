@@ -2304,7 +2304,7 @@ fn clipped(s: &str) -> String {
     crate::app::clip(s, CLIP)
 }
 
-fn file_name(p: &str) -> String {
+pub fn file_name(p: &str) -> String {
     Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string())
 }
 
@@ -2360,11 +2360,18 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
     let media: Vec<Value> = all.iter().filter(|m| m.shown || m.video).map(media_json).collect();
     let mut v = match &s.card {
         Card::Hidden => json!({}),
-        Card::User { text, files, mentions, at, sender, .. } => json!({
-            "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "images": images,
-            "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet(), "excerpt": m.excerpt, "note": m.note.trim() })).collect::<Vec<_>>(), "at": at,
-            "sender": sender,
-        }),
+        Card::User { text, files, mentions, at, sender, intent, .. } => {
+            let mut v = json!({
+                "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "images": images,
+                "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet(), "excerpt": m.excerpt, "note": m.note.trim() })).collect::<Vec<_>>(), "at": at,
+                "sender": sender,
+            });
+            // It steered a running turn (queue.rs): the "Steer" caption over the bubble.
+            if !intent.is_empty() {
+                v["intent"] = json!(intent);
+            }
+            v
+        }
         Card::Text { text, at, forkable } => {
             let stripped = crate::media::strip_refs(text);
             // A chat link reads as its chat's title, as on the desktop.
@@ -2558,7 +2565,7 @@ impl App {
             // A lead's bars (waiting for sub-agents, a usage limit) change with it too.
             let n = subs.get(&c.id).copied().unwrap_or(0);
             let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
-            let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queued(c.id).iter().filter(|q| q.written).count());
+            let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queue_hash(c.id));
             let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
@@ -2645,6 +2652,11 @@ impl App {
     fn local_typing(&mut self) {
         let crate::app::View::Chat(id) = self.view else { return };
         let (text, files, ms, h) = self.composer_of(id);
+        // Editing a queued message isn't typing a draft (queue.rs): nothing goes out.
+        if self.queue_editing(id).is_some() {
+            self.api.draft = Some((id, h));
+            return;
+        }
         if self.api.draft == Some((id, h)) {
             self.api.draft_due = None;
             return;
@@ -2697,6 +2709,10 @@ impl App {
         }
         let me = local_device();
         for (chat, d) in fresh {
+            // The composer holds a queued message being edited: the draft comes after.
+            if self.queue_editing(chat).is_some() {
+                continue;
+            }
             match should_apply(&d, &me, self.api.edited.get(&chat).copied(), Instant::now()) {
                 Apply::Skip => {
                     self.api.applied.insert(chat, d.rev);
@@ -2942,15 +2958,49 @@ impl App {
                 }
                 ok(json!({ "ok": true, "auto": on }))
             }
+            // The "Up next" queue (queue.rs): steer with a queued message ("Send now" when
+            // idle), reorder, edit in place, remove. Ids are the status' `queue[].id`.
+            ("POST", ["v1", "chats", c, "queue", q, op]) => {
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let Ok(q) = q.parse::<u64>() else { return err(404, "no such queued message") };
+                let done = match *op {
+                    "steer" => self.queue_promote(c, q, ctx),
+                    "move" => {
+                        let Some(to) = call.body["to"].as_u64() else { return err(400, "send {\"to\": position}") };
+                        self.queue_move(c, q, to as usize)
+                    }
+                    _ => return err(404, "no such queue action"),
+                };
+                if done { ok(json!({ "ok": true })) } else { err(404, "no such queued message (it may have started)") }
+            }
+            ("PATCH", ["v1", "chats", c, "queue", q]) => {
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let Ok(q) = q.parse::<u64>() else { return err(404, "no such queued message") };
+                let text = call.body["text"].as_str().map(|t| t.trim().to_string());
+                let mentions = call.body.get("mentions").and_then(|m| serde_json::from_value(m.clone()).ok());
+                if self.queue_update(c, q, text, mentions, call.body["editing"].as_bool()) { ok(json!({ "ok": true })) } else { err(404, "no such queued message (it may have started)") }
+            }
+            ("DELETE", ["v1", "chats", c, "queue", q]) => {
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let Ok(q) = q.parse::<u64>() else { return err(404, "no such queued message") };
+                if self.queue_remove(c, q) { ok(json!({ "ok": true })) } else { err(404, "no such queued message (it may have started)") }
+            }
             ("POST", ["v1", "chats", c, action]) => {
                 let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 match *action {
                     "send" => self.api_send(c, &call.body, ctx),
                     "stop" => {
-                        // What waited behind the turn goes back to the phone, not to the desktop's composer.
-                        let returned: Vec<Value> = self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect();
+                        // `{"hold": true}` (0.69): the queue waits, held, for Resume. An older app
+                        // gets what waited behind the turn back, for its composer.
+                        let hold = call.body["hold"].as_bool() == Some(true);
+                        let returned: Vec<Value> = if hold { vec![] } else { self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect() };
                         self.stop(c);
-                        ok(json!({ "ok": true, "returned": returned }))
+                        ok(json!({ "ok": true, "returned": returned, "held": self.queue_held(c) }))
+                    }
+                    // Resume after a Stop held the queue: the next queued message starts.
+                    "resume" => {
+                        self.queue_resume(c);
+                        ok(json!({ "ok": true }))
                     }
                     "fork" => self.api_fork(c, &call.body),
                     // "Move to project…": {"repo": project id, its path, or null for No project}.
@@ -2968,7 +3018,8 @@ impl App {
                     "slash" => self.api_slash_command(c, &call.body, ctx),
                     // The waiting bar's Stop all: the lead and its sub-agents; the lead's queue comes back.
                     "stop_all" => {
-                        let returned: Vec<Value> = self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect();
+                        let hold = call.body["hold"].as_bool() == Some(true);
+                        let returned: Vec<Value> = if hold { vec![] } else { self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect() };
                         self.stop_all(c);
                         ok(json!({ "ok": true, "returned": returned }))
                     }
@@ -3585,11 +3636,7 @@ impl App {
         let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
         let lead = self.chat(chat).is_some_and(|c| c.role == store::Role::Lead);
         let subs = if lead { self.running_subs(chat) } else { vec![] };
-        let queue: Vec<Value> = self
-            .queued(chat)
-            .iter()
-            .map(|q| json!({ "text": q.text, "files": q.files.iter().map(|f| file_name(&f.to_string_lossy())).collect::<Vec<_>>(), "sending": q.written }))
-            .collect();
+        let queue = self.queue_json(chat);
         let working = self.turns.get(&chat).map(|(_, at)| {
             json!({ "since_ms": now_ms - at.elapsed().as_millis() as i64, "subagents": subs.len(), "text": format!("Working…{}", crate::waiting::subs_running(subs.len())) })
         });
@@ -3606,7 +3653,12 @@ impl App {
                 .collect();
             json!({ "text": text, "can_cancel": cancel, "targets": targets })
         });
-        json!({ "queue": queue, "working": working, "waiting": waiting, "limit": limit, "agents": self.strip_json(chat), "folder": self.folder_json(chat) })
+        json!({
+            "queue": queue, "working": working, "waiting": waiting, "limit": limit, "agents": self.strip_json(chat), "folder": self.folder_json(chat),
+            // Steer or Queue (queue.rs): whether the running turn takes a steer, a Stop holds
+            // the queue, and this PC's own default (the phone keeps its own setting).
+            "can_steer": self.can_steer(chat), "held": self.queue_held(chat), "follow_up": self.follow_setting().as_str(),
+        })
     }
 
     /// The team panel of a chat's lead (a subagent's is its lead's), as teamui.rs draws it.
@@ -3678,15 +3730,20 @@ impl App {
         if text.is_empty() && files.is_empty() {
             return err(400, "nothing to send");
         }
-        let before = self.queued(chat).len();
+        let before = self.queued(chat).iter().filter(|q| q.intent.is_empty()).count();
+        let running = self.turns.contains_key(&chat);
+        // Steer or Queue while its turn runs: the phone says which; an app before 0.69 queues.
+        let mode = body["mode"].as_str().and_then(crate::queue::Mode::parse).unwrap_or(crate::queue::Mode::Queue);
         // Sent: the sender's draft preview goes (its client ends the lease too).
         if !self.sender_device.is_empty() {
             self.api.hub.set_typing(chat, &self.sender_device, "", "", false, None);
             self.api.hub.clear_draft(chat);
         }
         let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
+        self.queue.mode = Some(mode);
         self.send_to(chat, text, files, mentions, ctx);
-        ok(json!({ "ok": true, "queued": self.queued(chat).len() > before }))
+        let queued = self.queued(chat).iter().filter(|q| q.intent.is_empty()).count() > before;
+        ok(json!({ "ok": true, "queued": queued, "steering": running && !queued && !self.is_foreign(chat) }))
     }
 
     fn api_create(&mut self, body: &Value, ctx: &egui::Context) -> Reply {
@@ -4562,7 +4619,7 @@ mod tests {
             let cards = crate::view::project(&items, false, &[]);
             card_json(&cards[0], 9, &mut |_| vec![], &HashMap::new(), &Default::default())
         };
-        let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![], sender: String::new() });
+        let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![], sender: String::new(), intent: String::new() });
         assert_eq!((v["kind"].as_str(), v["seq"].as_u64(), v["rev"].as_u64()), (Some("user"), Some(0), Some(9)));
         assert_eq!(v["files"], json!(["notes.txt"]));
         assert_eq!(v["images"], json!([{ "name": "photo.jpg", "url": "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512" }]));

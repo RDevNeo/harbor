@@ -140,6 +140,13 @@ public class Settings extends Base {
         dn.addView(Ui.chevron(this));
         look.addView(dn, Ui.fill());
 
+        // While the agent works, the send button steers or queues (as the desktop's Settings ›
+        // General); long-press does the other for one message (Chat.sendMenu).
+        LinearLayout chat = card(col);
+        LinearLayout fu = Ui.cardRow(this, Ui.I_STEER, "While the agent is running", Chat.followLabel(this), Ui.FG, v -> followUp());
+        fu.addView(Ui.chevron(this));
+        chat.addView(fu, Ui.fill());
+
         // Dictation in the composer (Voice): the language it listens for (on this phone), the
         // hub's cleanup (GET /v1/voice, PUT /v1/voice/settings; hidden on hubs without them) and
         // this phone's offline model (Asr).
@@ -582,6 +589,16 @@ public class Settings extends Base {
         for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "found from what you say" : "", true));
         Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. The PC transcribes what you say, or this phone's offline model when the PC can't.", o, Voice.lang(this), l -> {
             Ui.prefs(this).edit().putString("voice_lang", l).apply();
+            recreate();
+        });
+    }
+
+    private void followUp() {
+        java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
+        o.add(new Sheet.Option("queue", "Queue", "Your message waits and runs after the current turn finishes.", true));
+        o.add(new Sheet.Option("steer", "Steer", "Your message reaches the agent right away, changing what it is working on.", true));
+        Sheet.pick(this, "While the agent is running", "Long-press the send button to use the other option for a single message. Agents that can't be steered always queue.", o, Chat.followUp(this), m -> {
+            Ui.prefs(this).edit().putString("follow_up", m).apply();
             recreate();
         });
     }

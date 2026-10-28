@@ -790,11 +790,11 @@ mod tests {
 
     #[test]
     fn context_keeps_the_request_and_the_end() {
-        let mut items = vec![Item::User { text: "build the login page".into(), files: vec![], at: 0, mentions: vec![], sender: String::new() }];
+        let mut items = vec![Item::User { text: "build the login page".into(), files: vec![], at: 0, mentions: vec![], sender: String::new(), intent: String::new() }];
         for i in 0..400 {
             items.push(Item::Text { text: format!("step {i} done with some words to fill the line"), at: 0 });
         }
-        items.push(Item::User { text: "now add tests".into(), files: vec![], at: 0, mentions: vec![], sender: String::new() });
+        items.push(Item::User { text: "now add tests".into(), files: vec![], at: 0, mentions: vec![], sender: String::new(), intent: String::new() });
         let c = context(&items, 2000);
         assert!(c.starts_with("User: build the login page\n[… earlier"));
         assert!(c.ends_with("User: now add tests"));

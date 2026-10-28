@@ -112,6 +112,11 @@ pub const CIRCLE_DOT: &str = "\u{e345}";
 pub const MILESTONE: &str = "\u{e298}";
 pub const AT_SIGN: &str = "\u{e04e}";
 pub const USER_CHECK: &str = "\u{e1a0}";
+// Steer and the "Up next" queue (queue.rs).
+pub const LIST_PLUS: &str = "\u{e23f}";
+pub const CORNER_UP_RIGHT: &str = "\u{e0a8}";
+pub const LIST_ORDERED: &str = "\u{e1d1}";
+pub const REDO_2: &str = "\u{e2a0}";
 
 pub fn glyph(p: &Painter, center: Pos2, icon: &str, size: f32, color: Color32) {
     p.text(center, Align2::CENTER_CENTER, icon, FontId::proportional(size), color);

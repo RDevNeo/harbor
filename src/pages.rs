@@ -288,7 +288,21 @@ impl App {
 
     fn general_tab(&mut self, ui: &mut Ui) {
         let (mut resume, mut order, mut fast) = (self.resume_on_restart(), self.order_by_activity, self.fast);
+        let follow = self.follow_default();
+        let mut steer = follow == crate::queue::Mode::Steer;
         rows(ui, |ui| {
+            // Steer or Queue (queue.rs), as T3 Code's "Follow-up behavior".
+            w::setting_row(
+                ui,
+                "While the agent works, Enter…",
+                "Steer: your message reaches the agent right away, changing what it's working on. Queue: it waits and runs after the current turn. Ctrl+Enter does the other for one message. Agents that can't be steered (Cursor, Gemini, Grok, OpenCode, Meta) always queue.",
+                |ui| {
+                    if let Some(i) = w::tabs(ui, &["Queue", "Steer"], usize::from(steer)) {
+                        steer = i == 1;
+                    }
+                },
+            );
+            w::separator(ui);
             w::setting_row(
                 ui,
                 "Continue threads after restarts",
@@ -303,6 +317,9 @@ impl App {
             w::setting_row(ui, "Fast mode", "Claude and Codex turns use fast mode where the model has it. Also in the composer's reasoning menu.", |ui| w::toggle(ui, &mut fast));
         });
         let b = |v: bool| if v { "1" } else { "0" };
+        if steer != (follow == crate::queue::Mode::Steer) {
+            self.set_follow_default(if steer { crate::queue::Mode::Steer } else { crate::queue::Mode::Queue });
+        }
         if resume != self.resume_on_restart() {
             self.store.set("resume_on_restart", b(resume));
         }

@@ -2595,14 +2595,22 @@ impl App {
         true
     }
 
+    /// A queue action for a copy (queue.rs), at its home PC. False for own chats.
+    pub fn mesh_forward_pub(&mut self, chat: i64, what: &'static str, method: &str, tail: &[&str], body: Value) -> bool {
+        self.mesh_forward(chat, what, method, tail, body, vec![], None)
+    }
+
     /// The desktop's message for a copy goes to its home PC. False for own chats.
+    /// `mode`: steer or queue while its turn runs (a home PC before 0.69 queues).
     pub fn mesh_send(&mut self, chat: i64, text: &str, files: &[PathBuf], mentions: &[crate::mentions::Mention]) -> bool {
-        let body = json!({ "text": text, "mentions": mentions });
+        let mode = self.queue.mode.unwrap_or(crate::queue::Mode::Queue);
+        let body = json!({ "text": text, "mentions": mentions, "mode": mode.as_str() });
         self.mesh_forward(chat, "send", "POST", &["send"], body, files.to_vec(), Some(text.to_string()))
     }
 
     pub fn mesh_stop(&mut self, chat: i64) -> bool {
-        self.mesh_forward(chat, "stop", "POST", &["stop"], Value::Null, vec![], None)
+        // Its home PC holds the queue (0.69); one before that hands it back, unused here.
+        self.mesh_forward(chat, "stop", "POST", &["stop"], json!({ "hold": true }), vec![], None)
     }
 
     pub fn mesh_patch(&mut self, chat: i64, body: Value) -> bool {
@@ -3286,7 +3294,7 @@ impl App {
 /// A forwarded call about a chat (`tail` after `/v1/chats/{id}`) that may start a turn: it
 /// carries this PC's instructions and memory (meshctx.rs).
 fn starts_turn(method: &str, tail: &[&str]) -> bool {
-    method == "POST" && matches!(tail.first(), Some(&"send") | Some(&"continue") | Some(&"continue_on") | Some(&"slash"))
+    method == "POST" && (matches!(tail.first(), Some(&"send") | Some(&"continue") | Some(&"continue_on") | Some(&"slash") | Some(&"resume")) || tail.last() == Some(&"steer"))
 }
 
 /// A phone's call about a chat (`/v1/chats/{id}/…`) that the chat's home PC answers for a
@@ -3470,5 +3478,18 @@ mod tests {
         for (method, path) in [("GET", "v1/chats/7/items"), ("GET", "v1/chats/7/team"), ("GET", "v1/state"), ("POST", "v1/chats"), ("POST", "v1/upload")] {
             assert!(!for_home(method, &path.split('/').collect::<Vec<_>>()), "{method} {path}");
         }
+    }
+
+    /// Steer and the queue (queue.rs) for a copy: every call goes to its home PC, and those
+    /// that may start a turn carry the sender's context.
+    #[test]
+    fn a_copys_queue_calls_go_home() {
+        for (method, path) in [("POST", "v1/chats/7/queue/3/steer"), ("POST", "v1/chats/7/queue/3/move"), ("PATCH", "v1/chats/7/queue/3"), ("DELETE", "v1/chats/7/queue/3"), ("POST", "v1/chats/7/resume"), ("POST", "v1/chats/7/stop")] {
+            assert!(for_home(method, &path.split('/').collect::<Vec<_>>()), "{method} {path}");
+        }
+        assert!(starts_turn("POST", &["queue", "3", "steer"]));
+        assert!(starts_turn("POST", &["resume"]));
+        assert!(!starts_turn("POST", &["queue", "3", "move"]));
+        assert!(!starts_turn("DELETE", &["queue", "3"]));
     }
 }

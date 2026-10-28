@@ -459,7 +459,20 @@ impl App {
             use crate::view::Card;
             match &shown.card {
                 Card::Hidden => {}
-                Card::User { text, files, images: shown_images, at, mentions, sender } => {
+                Card::User { text, files, images: shown_images, at, mentions, sender, intent } => {
+                    // It steered a running turn (queue.rs): a small caption over the bubble.
+                    if !intent.is_empty() {
+                        let tip = if *intent == crate::queue::PROMOTED { "Originally queued, then promoted to steer the active turn" } else { "Steered the active turn" };
+                        let g = ui.painter().layout_no_wrap("Steer".into(), FontId::proportional(11.5), t.subtle());
+                        let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width().min(width), 16.0), Sense::hover());
+                        let x = row.right() - g.size().x;
+                        ui.painter().galley(pos2(x, row.center().y - g.size().y / 2.0), g, t.subtle());
+                        ic::glyph(ui.painter(), pos2(x - 9.0, row.center().y), ic::REDO_2, 12.0, t.subtle());
+                        if ui.rect_contains_pointer(egui::Rect::from_min_max(pos2(x - 18.0, row.top()), row.max)) {
+                            resp.on_hover_text(tip);
+                        }
+                        ui.add_space(2.0);
+                    }
                     // Measured here, not from the transcript's start: the bubble sits against
                     // this row's right edge and never reaches past it, whatever came before.
                     let avail = ui.available_width().min(width);
@@ -947,12 +960,28 @@ impl App {
         if self.popup.is_none() && self.dialog.is_none() && ui.input_mut(|i| self.keys.take(i, "voice")) {
             self.voice_toggle(key, ui.ctx());
         }
-        // While a turn runs, Enter queues the message; Ctrl+Enter interrupts and sends now.
+        // While the agent works, Enter steers or queues (Settings › Follow-ups) and Ctrl+Enter
+        // does the other; Ctrl+Shift+Enter steers with the oldest queued message and Alt+↑, the
+        // caret at the start, edits the latest one (queue.rs).
         let mut now = false;
+        let (mut steer_first, mut edit_last) = (false, false);
         if focused && self.popup.is_none() && !crate::images::is_open(ui.ctx()) {
+            steer_first = ui.input_mut(|i| self.keys.take(i, "steer_queued"));
             now = ui.input_mut(|i| self.keys.take(i, "send_now"));
             send = ui.input_mut(|i| self.keys.take(i, "send"));
+            let at_start = draft.is_empty() || egui::text_edit::TextEditState::load(ui.ctx(), cid).and_then(|s| s.cursor.char_range()).is_some_and(|r| r.primary.index.0 == 0 && r.secondary.index.0 == 0);
+            if at_start && key != crate::app::DRAFT && !self.shown_queue_empty(key) {
+                edit_last = ui.input_mut(|i| self.keys.take(i, "edit_queued"));
+            }
         }
+        let editing = self.queue_editing(key);
+        let steerable = key != crate::app::DRAFT && self.can_steer(key);
+        // What Enter does now; holding Ctrl previews the other (the icon flips).
+        let default = if steerable { self.follow_default() } else { crate::queue::Mode::Queue };
+        let ctrl = ui.input(|i| i.modifiers.command);
+        let shown_mode = if ctrl && steerable { default.opposite() } else { default };
+        let mut click_mode: Option<crate::queue::Mode> = None;
+        let mut resume = false;
         let sel = self.sel();
         let account = self.account(&sel.account).cloned();
         let kind = account.as_ref().map(|a| a.kind).unwrap_or(Kind::Claude);
@@ -1091,12 +1120,33 @@ impl App {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    if running.is_some() {
+                    let empty = draft.trim().is_empty() && self.files.get(&key).is_none_or(|f| f.is_empty()) && self.mentions.drafts.get(&key).is_none_or(|m| m.is_empty());
+                    let held = key != crate::app::DRAFT && self.queue_held(key);
+                    if editing.is_some() {
+                        if w::round_button(ui, ic::CHECK, true).on_hover_text("Update queued message (Enter)").clicked() {
+                            send = true;
+                        }
+                    } else if running.is_some() && empty {
                         if w::round_button(ui, ic::STOP, true).on_hover_text("Stop (Esc)").clicked() {
                             stop = true;
                         }
+                    } else if running.is_some() {
+                        // The icon says what a click (or Enter) does: Queue or Steer.
+                        let (icon, tip) = match (shown_mode, steerable) {
+                            (crate::queue::Mode::Steer, _) if default == crate::queue::Mode::Steer => (ic::CORNER_UP_RIGHT, "Click to steer, Ctrl-click or Ctrl+Enter to queue"),
+                            (crate::queue::Mode::Steer, _) => (ic::CORNER_UP_RIGHT, "Steer: the agent gets it now (Ctrl+Enter)"),
+                            (_, false) => (ic::LIST_PLUS, "Queue: it runs after the current turn (this agent can't be steered now)"),
+                            _ if default == crate::queue::Mode::Queue => (ic::LIST_PLUS, "Click to queue, Ctrl-click or Ctrl+Enter to steer"),
+                            _ => (ic::LIST_PLUS, "Queue: it runs after the current turn (Ctrl+Enter)"),
+                        };
+                        if w::round_button(ui, icon, true).on_hover_text(tip).clicked() {
+                            click_mode = Some(shown_mode);
+                        }
+                    } else if held && empty {
+                        if w::round_button(ui, ic::PLAY, true).on_hover_text("Resume queue: the next queued message starts").clicked() {
+                            resume = true;
+                        }
                     } else {
-                        let empty = draft.trim().is_empty() && self.files.get(&key).is_none_or(|f| f.is_empty()) && self.mentions.drafts.get(&key).is_none_or(|m| m.is_empty());
                         // Someone on another device is typing: the message waits for them (one sender at a time).
                         let tip = match self.others_typing(key).first() {
                             Some(t) if key != crate::app::DRAFT => format!("Queue (Enter): {} is typing; it goes out when they're done", t.label),
@@ -1172,10 +1222,19 @@ impl App {
             ui.memory_mut(|m| m.request_focus(cid));
             self.focus_composer = false;
         }
-        if send {
-            self.send(ui.ctx());
-        } else if now {
-            self.send_now(ui.ctx());
+        let ctx = ui.ctx().clone();
+        if editing.is_some() && (send || now) {
+            self.queue_edit_end(&ctx, true);
+        } else if let Some(mode) = click_mode.or(send.then_some(default)).or(now.then_some(if steerable { default.opposite() } else { default })) {
+            self.queue.mode = Some(mode);
+            self.send(&ctx);
+            self.queue.mode = None;
+        } else if resume {
+            self.queue_resume(key);
+        } else if steer_first {
+            self.queue_steer_first(key, &ctx);
+        } else if edit_last {
+            self.queue_edit_last(key, &ctx);
         }
     }
 

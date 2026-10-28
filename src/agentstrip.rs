@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn doing_reads_the_latest_step() {
         let root = "/work/app";
-        let user = Item::User { text: "go".into(), files: vec![], at: 1, mentions: vec![], sender: String::new() };
+        let user = Item::User { text: "go".into(), files: vec![], at: 1, mentions: vec![], sender: String::new(), intent: String::new() };
         assert_eq!(doing(&[], root), "starting");
         assert_eq!(doing(&[user.clone()], root), "starting");
         assert_eq!(doing(&[user.clone(), Item::Thinking { text: "h".into() }], root), "thinking");

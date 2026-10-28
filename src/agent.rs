@@ -48,6 +48,26 @@ impl Turn {
         crate::detach::input_open(&self.dir) && crate::detach::write_input(&self.dir, &claude_message(prompt, files))
     }
 
+    /// Writes a steer: Claude ends what the turn is doing and takes it in now
+    /// (`priority: "now"`; running commands go to the background).
+    pub fn write_now(&self, prompt: &str, files: &[PathBuf]) -> bool {
+        crate::detach::input_open(&self.dir) && crate::detach::write_input(&self.dir, &claude_message_with(prompt, files, Some("now")))
+    }
+
+    /// How a steer reaches this turn (queue.rs): Claude reads its open input mid-turn;
+    /// Codex resumes its session reliably, so it's stopped and resumed with the message;
+    /// the other CLIs can't be steered.
+    pub fn steering(&self) -> crate::queue::Steering {
+        use crate::queue::Steering;
+        if self.meta.kind == Kind::Claude.label() {
+            if crate::detach::input_open(&self.dir) { Steering::Active } else { Steering::No }
+        } else if self.meta.kind == Kind::Codex.label() {
+            Steering::Restart
+        } else {
+            Steering::No
+        }
+    }
+
     /// Ends the input: Claude exits once it is done with what it was given.
     pub fn close_input(&self) {
         crate::detach::close_input(&self.dir);
@@ -252,6 +272,11 @@ fn prompt_with_paths(prompt: &str, paths: &[&PathBuf]) -> String {
 
 /// One stream-json user message for Claude: images inline, other files as paths.
 fn claude_message(prompt: &str, files: &[PathBuf]) -> String {
+    claude_message_with(prompt, files, None)
+}
+
+/// With `priority` ("now": a steer), as the Agent SDK sends it.
+fn claude_message_with(prompt: &str, files: &[PathBuf], priority: Option<&str>) -> String {
     let mut content = vec![];
     for img in files.iter().filter(|p| is_image(p)) {
         if let Ok(bytes) = std::fs::read(img) {
@@ -263,7 +288,10 @@ fn claude_message(prompt: &str, files: &[PathBuf]) -> String {
     }
     let others: Vec<&PathBuf> = files.iter().filter(|p| !is_image(p)).collect();
     content.push(serde_json::json!({ "type": "text", "text": prompt_with_paths(prompt, &others) }));
-    let msg = serde_json::json!({ "type": "user", "message": { "role": "user", "content": content } });
+    let mut msg = serde_json::json!({ "type": "user", "message": { "role": "user", "content": content } });
+    if let Some(p) = priority {
+        msg["priority"] = serde_json::json!(p);
+    }
     format!("{msg}\n")
 }
 
@@ -1100,6 +1128,19 @@ fn parse_opencode(v: &Value, st: &mut ParseState) -> Vec<Event> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A steer is a stream-json user message with `priority: "now"` (queue.rs); a plain
+    /// one has none, so the CLI's default (next) applies.
+    #[test]
+    fn steer_message_has_priority_now() {
+        let plain: serde_json::Value = serde_json::from_str(claude_message("hi", &[]).trim()).unwrap();
+        assert!(plain.get("priority").is_none());
+        let steer: serde_json::Value = serde_json::from_str(claude_message_with("also the square", &[], Some("now")).trim()).unwrap();
+        assert_eq!(steer["priority"], "now");
+        assert_eq!(steer["type"], "user");
+        assert_eq!(steer["message"]["content"][0]["text"], "also the square");
+    }
+
     use super::*;
 
     #[test]

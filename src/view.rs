@@ -20,6 +20,8 @@ pub enum Card<'a> {
         at: i64,
         /// Written on another PC or a phone: its name ("from laptop"); empty when written here.
         sender: &'a str,
+        /// "steer" or "promoted" when it steered a running turn (queue.rs); else empty.
+        intent: &'a str,
     },
     Text { text: &'a str, at: i64, forkable: bool },
     Thinking { text: &'a str },
@@ -219,9 +221,10 @@ pub fn group_label(calls: usize) -> String {
 
 fn card<'a>(item: &'a Item, forkable: bool) -> Card<'a> {
     match item {
-        Item::User { text, files, at, mentions, sender } => Card::User {
+        Item::User { text, files, at, mentions, sender, intent } => Card::User {
             text,
             sender,
+            intent,
             files: files.iter().filter(|f| !crate::images::is_image(f)).map(String::as_str).collect(),
             images: files.iter().filter(|f| crate::images::is_image(f)).map(String::as_str).collect(),
             mentions,
@@ -286,7 +289,7 @@ pub fn fixture() -> Vec<Item> {
     let tool = |name: &str, result: Option<&str>| Item::Tool { id: name.into(), name: name.into(), summary: "s".into(), input: "{}".into(), result: result.map(String::from), is_error: false };
     let result = || Item::Result { cost_usd: 3.96342, duration_ms: 4300, turns: 1, input_tokens: 189_400, output_tokens: 304, cached: 180_000, at: 9, account: "claude".into(), model: "claude-opus-5-5".into() };
     vec![
-        Item::User { text: "build it".into(), files: vec!["/tmp/shot.png".into(), "/tmp/notes.txt".into()], at: 1, mentions: vec![], sender: String::new() },
+        Item::User { text: "build it".into(), files: vec!["/tmp/shot.png".into(), "/tmp/notes.txt".into()], at: 1, mentions: vec![], sender: String::new(), intent: String::new() },
         Item::Thinking { text: "hmm".into() },
         tool("mcp__harbor__spawn_agent", Some("ok")),
         Item::Text { text: "Started a worker.".into(), at: 2 },
@@ -328,7 +331,7 @@ mod tests {
         let text = |t: &str| Item::Text { text: t.into(), at: 0 };
         let groups_of = |items: &[Item]| project(items, false, &[]).iter().map(|s| s.group).collect::<Vec<_>>();
         let mut items = vec![
-            Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new() },
+            Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new(), intent: String::new() },
             Item::Thinking { text: "hmm".into() },
             tool("a", Some("ok")),
             text(""),
