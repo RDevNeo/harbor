@@ -28,6 +28,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
   id-token: write
   attestations: write
 
@@ -68,8 +69,10 @@ jobs:
           boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out out.tgz'
           boat snapshot "${{ steps.boat.outputs.id }}" harbor-build --json
       - name: Delete the sandbox
-        if: always() && steps.boat.outputs.id != ''
-        run: boat delete "${{ steps.boat.outputs.id }}" --yes --json
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/boat/cleanup.sh
       # The oldest supported base, glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …), as this runner.
       - run: ldd out/harbor-x86_64/harbor && out/harbor-x86_64/harbor --version
       - uses: actions/upload-artifact@v7
