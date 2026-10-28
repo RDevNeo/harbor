@@ -130,6 +130,18 @@ jobs:
           bt="$ANDROID_HOME/build-tools/34.0.0"
           [ -x "$bt/apksigner" ] || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" >/dev/null
           mkdir -p art/harbor-android
+          # The built-in browser's engine (browser.yml engine-android) goes in before signing,
+          # with its id (assets/servo.id: the next release reuses it from this APK).
+          if [ "${{ needs.browser.outputs.found-android }}" = "true" ] && [ -f art/harbor-servo-android/arm64-v8a/libharborservo.so ]; then
+            (cd art/harbor-servo-android && mkdir -p lib assets && cp -r arm64-v8a lib/ && cp servo.id assets/servo.id \
+              && zip -q -r ../harbor-android-unsigned/harbor-android-unsigned.apk lib/arm64-v8a/libharborservo.so lib/arm64-v8a/libc++_shared.so assets/servo.id)
+            "$bt/zipalign" -f 4 art/harbor-android-unsigned/harbor-android-unsigned.apk /tmp/aligned.apk
+            mv /tmp/aligned.apk art/harbor-android-unsigned/harbor-android-unsigned.apk
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::a release needs the Android browser engine"; exit 1
+          else
+            echo "::warning::no Android browser engine in this APK"
+          fi
           "$bt/apksigner" sign --ks "$ks" --ks-pass env:ANDROID_KEYSTORE_PASS --ks-key-alias "${ANDROID_KEY_ALIAS:-harbor}" \
             --out art/harbor-android/harbor-android.apk art/harbor-android-unsigned/harbor-android-unsigned.apk
           rm -f "$ks" art/harbor-android/harbor-android.apk.idsig

@@ -176,8 +176,11 @@ final class Render {
             }
             String link = s.optString("link", "");
             if (web(link)) {
-                sb.setSpan(new URLSpan(link), a, z, f);
-                sb.setSpan(new ForegroundColorSpan(Ui.BLUE), a, z, f);
+                // Web links open in the built-in browser (Browser), or the phone's own without it.
+                sb.setSpan(new android.text.style.ClickableSpan() {
+                    @Override public void onClick(View w) { Browser.open(w.getContext(), link); }
+                    @Override public void updateDrawState(android.text.TextPaint p) { p.setColor(Ui.BLUE); p.setUnderlineText(true); }
+                }, a, z, f);
             } else if (onChat != null && chatLinks != null && link.startsWith("harbor://chat/") && chatLinks.optJSONObject(link) != null) {
                 // Only a chat link the hub resolved: it opens the chat in the app, nothing else.
                 JSONObject target = chatLinks.optJSONObject(link);

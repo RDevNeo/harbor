@@ -48,6 +48,11 @@
             </intent-filter>
         </activity>
         <activity android:name=".Chats" android:exported="false" />
+        <!-- The built-in browser (Servo, libharborservo.so) in a process of its own: its memory
+             goes with the screen, and an engine crash leaves the chats running -->
+        <activity android:name=".Browser" android:exported="false" android:process=":browser"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden" />
         <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".NewChat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".Palette" android:exported="false" android:windowSoftInputMode="adjustResize|stateVisible" />

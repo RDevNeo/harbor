@@ -1333,7 +1333,8 @@ public class Chat extends Base {
         wrap.addView(pill, pp);
         if (!url.isEmpty()) {
             pill.setOnClickListener(v -> {
-                try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (Exception e) { Ui.copy(this, url); }
+                if (Render.web(url)) Browser.open(this, url);
+                else try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (Exception e) { Ui.copy(this, url); }
             });
         } else if (expandable) {
             final View[] body = {null};

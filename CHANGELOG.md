@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Phone: a built-in browser. Web links in chats (and Browser in the drawer) open in Servo, the
+  engine of the desktop's browser pane, drawing straight into the screen: no WebView, Chromium or
+  GeckoView. URL bar, back, forward, reload, touch scrolling, taps, the soft keyboard and
+  rotation; ↗ opens the page in the phone's own browser. It runs in a process of its own, so its
+  memory goes when it closes and a crash there leaves the chats running. On 64-bit ARM phones
+  with Android 9+ (the APK grows by about 40 MB); elsewhere links open in the phone's browser as
+  before.
+
 ## [0.80.0] - 2026-10-28
 
 ### Added

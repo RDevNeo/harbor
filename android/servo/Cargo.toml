@@ -1,0 +1,32 @@
+[package]
+name = "harbor-servo"
+version = "0.1.0"
+edition = "2024"
+description = "Servo for Harbor for Android's browser screen: a JNI library drawing into a SurfaceView"
+license = "MIT"
+
+[lib]
+name = "harborservo"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Like servoshell on Android: one process, no clipboard crate (Android has its own).
+servo = { version = "0.7", default-features = false, features = ["bundled", "js_jit"] }
+dpi = "0.1"
+euclid = "0.22"
+url = "2.5"
+keyboard-types = "0.8.3"
+raw-window-handle = "0.6"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+log = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+android_logger = "0.15"
+# Android's tagged pointers don't work well with SpiderMonkey: jemalloc instead, as servoshell does.
+servo-allocator = { version = "0.7", features = ["use-jemalloc"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
