@@ -71,6 +71,7 @@ fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$SHERPA/sherpa-o
   "$SHERPA_SHA" "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2"
 fetch "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" "$VAD_SHA" "$DEPS/silero_vad.onnx"
 cp "$DEPS/silero_vad.onnx" "$W/assets/"
+# Asr.ABIS lists these: on any other ABI the app doesn't load the library (#97).
 for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
   mkdir -p "$W/lib/$abi"
   tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$W/lib/$abi" --strip-components=3 "./jniLibs/$abi/libsherpa-onnx-jni.so"

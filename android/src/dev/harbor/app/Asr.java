@@ -84,8 +84,18 @@ final class Asr {
 
     private static Boolean lib;
 
-    /** False when this APK has no sherpa-onnx library for the phone's ABI. */
+    /** The ABIs android/build.sh packs the library for (ANDROID_ABIS). */
+    static final String[] ABIS = {"arm64-v8a", "armeabi-v7a"};
+
+    /** False when this APK has no sherpa-onnx library for the phone's ABI. An x86 device (the
+     *  emulator, ChromeOS) runs the ARM one through the native bridge (libndk_translation),
+     *  where loading it dies in native code (SIGSEGV, #97) where no catch can help: so it's
+     *  only loaded when the phone's own ABI is one the APK ships. */
     static synchronized boolean available() {
+        if (lib == null && !java.util.Arrays.asList(ABIS).contains(android.os.Build.SUPPORTED_ABIS[0])) {
+            Log.w(TAG, "no sherpa-onnx library for " + android.os.Build.SUPPORTED_ABIS[0] + " (not loading the ARM one through translation)");
+            lib = false;
+        }
         if (lib == null) {
             try { System.loadLibrary("sherpa-onnx-jni"); lib = true; }
             catch (Throwable t) { Log.w(TAG, "no sherpa-onnx library: " + t); lib = false; }

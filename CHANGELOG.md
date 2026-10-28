@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: opening Settings (or the mic) no longer crashes the app on x86_64 Android devices and
+  emulators. The APK carries the offline dictation library for ARM only, and Android ran it there
+  through its ARM translation, where it crashed natively; on such devices offline dictation now
+  just says it isn't available. Real ARM phones were not affected. Fixes #97.
+
 ## [0.72.0] - 2026-10-28
 
 ### Added
