@@ -120,6 +120,21 @@ h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 600; letter-spacing: -.02em
 .grid h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
 .grid p { margin: 0; color: var(--gray900); font-size: 14px; }
 
+/* Text pages (privacy policy). */
+.doc { max-width: 760px; padding-top: 48px; padding-bottom: 64px; }
+.doc h1 { font-size: clamp(36px, 6vw, 48px); letter-spacing: -.03em; }
+.doc .meta { margin: 12px 0 32px; color: var(--gray600); font-size: 14px; }
+.doc h2 { margin: 40px 0 12px; font-size: 22px; text-align: left; letter-spacing: -.01em; }
+.doc h3 { margin: 24px 0 8px; font-size: 16px; font-weight: 600; }
+.doc p, .doc li { color: var(--gray900); font-size: 15px; }
+.doc b { color: var(--gray1000); font-weight: 600; }
+.doc ul { padding-left: 20px; }
+.doc li + li { margin-top: 8px; }
+.doc a { color: var(--blue900); text-underline-offset: 2px; }
+.doc code { overflow-wrap: anywhere; color: var(--gray1000); }
+.callout { padding: 16px 20px; border: 1px solid var(--gray500); border-radius: var(--r-lg); background: var(--bg200); }
+.grid article.span { grid-column: 1 / -1; }
+
 footer { padding-bottom: 48px; color: var(--gray600); font-size: 13px; }
 footer p:first-child { margin: 0 0 12px; padding-top: 32px; border-top: 1px solid var(--gray400); }
 footer a { color: var(--gray900); }
