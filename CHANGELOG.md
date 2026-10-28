@@ -11,6 +11,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   hover still has its model, task and how long it has run). Each row's Stop shows on hover (or
   from the keyboard) and asks in place, "Stop api? Cancel / Stop"; Cancel, Esc or moving away
   leaves it running.
+- A lead's reply when it hands work to its agents shows in the chat (it was hidden), and the
+  lead says in a line or two what it understood and what happens next.
 
 ## [0.79.0] - 2026-10-28
 

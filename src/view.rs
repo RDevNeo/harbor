@@ -127,29 +127,19 @@ pub fn tool_label(name: &str) -> String {
 }
 
 /// Which items a transcript hides. Only a lead's: its coordination is invisible (tool calls
-/// to Harbor, thinking, agents' reports), and so is the text of turns that hand work off
-/// (only an acknowledgement).
+/// to Harbor, thinking, agents' reports). What it says when it hands work off shows, so the
+/// user hears what happens next.
 pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     let mut out = vec![false; items.len()];
     if !lead {
         return out;
-    }
-    // Lead turns that hand work off.
-    let mut handoff = vec![false; items.len()];
-    let mut start = 0;
-    for (i, it) in items.iter().enumerate() {
-        if matches!(it, Item::Result { .. }) || i + 1 == items.len() {
-            let delegated = items[start..=i].iter().any(|x| matches!(x, Item::Tool { name, .. } if name == "mcp__harbor__spawn_agent" || name == "mcp__harbor__message_agent"));
-            handoff[start..=i].fill(delegated);
-            start = i + 1;
-        }
     }
     for (i, item) in items.iter().enumerate() {
         out[i] = match item {
             Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != SHOW_MEDIA || *is_error),
             Item::Thinking { .. } => true,
             Item::Notice { icon, .. } => icon == "bot",
-            Item::Text { text, .. } => text.trim().is_empty() || handoff[i],
+            Item::Text { text, .. } => text.trim().is_empty(),
             _ => false,
         };
     }
@@ -367,7 +357,7 @@ mod tests {
         let items = fixture();
         let cards = project(&items, true, &[(8, 42)]);
         let kinds: Vec<&str> = cards.iter().map(|s| kind(&s.card)).collect();
-        assert_eq!(kinds, ["user", "hidden", "hidden", "hidden", "hidden", "message", "hidden", "tool", "text", "hidden", "notice", "error"]);
+        assert_eq!(kinds, ["user", "hidden", "hidden", "text", "hidden", "message", "hidden", "tool", "text", "hidden", "notice", "error"]);
         assert_eq!(cards[8].forks_after, [42]);
         assert!(matches!(cards[8].card, Card::Text { forkable: true, .. }));
         let Card::User { files, images, .. } = &cards[0].card else { panic!() };

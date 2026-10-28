@@ -3646,9 +3646,8 @@ impl App {
             _ => Default::default(),
         };
         let links_of = |c: &crate::view::Shown| &links[c.seq];
-        // An item's version includes how it shows: hidden later (a lead's turn delegating),
-        // forkable once its turn ends, a fork made from it, the commits it names, the run of
-        // tool calls it folds into.
+        // An item's version includes how it shows: forkable once its turn ends, a fork made
+        // from it, the commits it names, the run of tool calls it folds into.
         let hashes: Vec<u64> = if fresh {
             vec![]
         } else {
@@ -4780,7 +4779,7 @@ mod tests {
             }
         }
         let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
-        assert_eq!(shown, ["user", "message", "tool", "text", "notice", "error"]);
+        assert_eq!(shown, ["user", "text", "message", "tool", "text", "notice", "error"]);
         assert_eq!(phone[9]["kind"], "hidden");
         assert_eq!(phone[8]["forks_after"], json!([42]));
     }

@@ -792,7 +792,7 @@ Other harbor tools: message_agent / list_agents / read_agent / stop_agent; list_
 To show the user an image or video, call harbor show_media(path, caption) or put ![caption](path) in your reply (absolute path, path in the project, or an https URL; png, jpg, gif, webp, svg, mp4, webm, mov): it appears inline in the chat.\n\
 Messages that start with [agent …], [message from …], [process …], [wake] or [webhook …] come from Harbor, not the user.\n\
 Never ask the user anything before working: make reasonable assumptions. Ask only when truly blocked.\n\
-Talking to the user: never mention subagents, their names or delegating. When you hand work off, reply with nothing at all. Otherwise answer directly and briefly, as if you did the work yourself."
+Talking to the user: never mention subagents, their names or delegating. When you hand work off or pass the user's words on (spawn_agent, message_agent), still reply in a line or two: what you understood and what happens next. Otherwise answer directly and briefly, as if you did the work yourself."
     )
 }
 
