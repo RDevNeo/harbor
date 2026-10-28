@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-10-28
+
 ### Added
 - Snooze a chat or project until a time you type (desktop): the snooze menu has a field under
   its presets for a duration ("5h", "90m", "1h30m", "1.5h", "2d", "1w"; a bare number is hours)
@@ -1635,7 +1637,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.74.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.75.0...HEAD
+[0.75.0]: https://github.com/RDevNeo/harbor/compare/v0.74.2...v0.75.0
 [0.74.2]: https://github.com/RDevNeo/harbor/compare/v0.74.1...v0.74.2
 [0.74.1]: https://github.com/RDevNeo/harbor/compare/v0.74.0...v0.74.1
 [0.74.0]: https://github.com/RDevNeo/harbor/compare/v0.73.0...v0.74.0
