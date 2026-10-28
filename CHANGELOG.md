@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.74.2] - 2026-10-28
+
 ### Fixed
 - Dictation in two languages (desktop and phone): switching from Portuguese to English (or back)
   mid-dictation no longer turns what you said in one into the other. The cleanup keeps every word
@@ -1627,7 +1629,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.74.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.74.2...HEAD
+[0.74.2]: https://github.com/RDevNeo/harbor/compare/v0.74.1...v0.74.2
 [0.74.1]: https://github.com/RDevNeo/harbor/compare/v0.74.0...v0.74.1
 [0.74.0]: https://github.com/RDevNeo/harbor/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/RDevNeo/harbor/compare/v0.72.3...v0.73.0
