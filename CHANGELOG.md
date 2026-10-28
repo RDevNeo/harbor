@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Ctrl+B shows or hides the sidebar (it was Ctrl+\); the browser pane moved to Ctrl+Shift+B.
+  Keys you rebound in Settings › Keybindings stay as they are.
+
 ## [0.76.0] - 2026-10-28
 
 ### Added

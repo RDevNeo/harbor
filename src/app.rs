@@ -1768,7 +1768,7 @@ impl App {
         w < NARROW_W || (pane && w < SIDEBAR_W + 320.0 + CHAT_MIN_W)
     }
 
-    /// Ctrl+\ and the sidebar buttons: dock or hide it, or on narrow windows
+    /// Ctrl+B and the sidebar buttons: dock or hide it, or on narrow windows
     /// open and close it as a drawer (without touching the docked preference).
     pub fn toggle_sidebar(&mut self, ctx: &egui::Context) {
         if self.sidebar_narrow(ctx) {

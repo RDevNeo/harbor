@@ -258,7 +258,7 @@ impl App {
         }
     }
 
-    /// Ctrl+B: the browser in the right pane.
+    /// Ctrl+Shift+B: the browser in the right pane.
     pub fn toggle_browser(&mut self) {
         let d = Dock::Right;
         let p = self.pane(d);
