@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.72.1] - 2026-10-28
+
 ### Fixed
 - Phone: opening Settings (or the mic) no longer crashes the app on x86_64 Android devices and
   emulators. The APK carries the offline dictation library for ARM only, and Android ran it there
@@ -1563,7 +1565,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.1...HEAD
+[0.72.1]: https://github.com/RDevNeo/harbor/compare/v0.72.0...v0.72.1
 [0.72.0]: https://github.com/RDevNeo/harbor/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/RDevNeo/harbor/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/RDevNeo/harbor/compare/v0.69.0...v0.70.0
