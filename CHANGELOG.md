@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.67.2] - 2026-10-28
+
 ### Fixed
 - Bare http/https URLs in agent replies are now tappable on the phone, matching the desktop.
   Existing links and inline/fenced/indented code stay intact on both screens. Fixes #87.
@@ -1485,7 +1487,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.67.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.67.2...HEAD
+[0.67.2]: https://github.com/RDevNeo/harbor/compare/v0.67.1...v0.67.2
 [0.67.1]: https://github.com/RDevNeo/harbor/compare/v0.67.0...v0.67.1
 [0.67.0]: https://github.com/RDevNeo/harbor/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/RDevNeo/harbor/compare/v0.65.1...v0.66.0
