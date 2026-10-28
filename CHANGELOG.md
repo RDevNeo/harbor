@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-10-28
+
 ### Added
 - Secrets (Settings › Secrets): keys such as `BOAT_API_KEY` that agents use without seeing
   them. Add one as a name and a value; the list shows only names, and a saved value can be
@@ -1742,7 +1744,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.79.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.80.0...HEAD
+[0.80.0]: https://github.com/RDevNeo/harbor/compare/v0.79.0...v0.80.0
 [0.79.0]: https://github.com/RDevNeo/harbor/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/RDevNeo/harbor/compare/v0.77.0...v0.78.0
 [0.77.0]: https://github.com/RDevNeo/harbor/compare/v0.76.0...v0.77.0
