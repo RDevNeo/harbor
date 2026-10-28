@@ -1,0 +1,17 @@
+name = "harbor-accounts"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+CLERK_FRONTEND_URL = "https://clerk.harbor.example"
+CLERK_API_URL = "https://api.clerk.com/v1"
+HARBOR_KID = "k1"
+APP_REDIRECT = "harbor://oauth"
+TOKEN_DAYS = "7"
+PUBLIC_URL = "https://accounts.harbor.example"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "harbor-accounts"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

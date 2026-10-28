@@ -1,8 +1,9 @@
-//! Settings › Phones: turns the phone API (api.rs) on, pairs Harbor for Android with a QR
-//! code, lists the paired phones (revocable) and offers the app itself.
+//! Settings › Phones: turns the phone API (api.rs) on, lists the phones signed in with Google
+//! that reached this PC (a lost one can be signed out) and offers the app itself. There's no
+//! pairing: a phone signs in with an account of this PC's workspace (account.rs).
 
 use crate::widgets::Tip as _;
-use crate::api::{self, Token, url_encode};
+use crate::api::{self, Token};
 use crate::app::App;
 use crate::icons as ic;
 use crate::pages::{rows, section};
@@ -34,57 +35,11 @@ impl App {
         let hub = self.api.hub.clone();
         let mut on = hub.enabled.load(Ordering::SeqCst);
         let was = on;
-        // Phones that wait for the codes to be compared here (pairing, or upgrading a pairing
-        // from before three factors).
-        let waiting = hub.auth3.waiting();
-        if !waiting.is_empty() {
-            ui.add_space(4.0);
-            w::text(ui, "Confirm a phone", "heading-16");
-            ui.add_space(6.0);
-            for p in &waiting {
-                w::card(ui).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let who = if p.name.is_empty() { "A phone" } else { p.name.as_str() };
-                    let what = match (p.upgrade, p.rekey, p.nolock) {
-                        (true, _, false) => "asks to upgrade its pairing to three factors",
-                        (true, _, true) => "asks to upgrade its pairing to two factors (it has no screen lock)",
-                        (_, true, true) => "lost its screen lock: asks to go on with two factors",
-                        (_, true, false) => "has a new screen lock: asks to re-confirm its pairing",
-                        (_, _, true) => "wants to pair with two factors (it has no screen lock)",
-                        _ => "wants to pair with this PC",
-                    };
-                    w::text(ui, format!("{}  {who} {what}", ic::SMARTPHONE), "strong-14");
-                    w::subtle(ui, format!("Its key {}. Confirm only if the phone shows this same code:", crate::tls::short(&p.phone_fp)), "label-13");
-                    if p.nolock {
-                        w::subtle(ui, "Without a screen lock anyone holding the phone can use it: only its key and the pairing secret protect this PC. Setting a lock on the phone adds the third factor.", "label-12");
-                    }
-                    ui.add_space(4.0);
-                    w::text(ui, format!("{} {}", &p.code[..3], &p.code[3..]), "heading-32");
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if w::btn("Confirm").primary().sm().show(ui).clicked() {
-                            hub.auth3.decide(&p.token, true);
-                            if self.api.ui.pairing.as_ref().is_some_and(|q| q.0 == p.token) {
-                                self.api.ui.pairing = None;
-                            }
-                        }
-                        if w::btn("Reject").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
-                            hub.auth3.decide(&p.token, false);
-                        }
-                        let left = crate::phoneauth::CONFIRM_TTL.saturating_sub(p.at.elapsed()).as_secs();
-                        w::subtle(ui, format!("{}:{:02} left", left / 60, left % 60), "label-12");
-                    });
-                });
-                ui.add_space(6.0);
-            }
-            ctx.request_repaint_after(std::time::Duration::from_secs(1));
-        }
-
         rows(ui, |ui| {
             w::setting_row(
                 ui,
                 "Phone access",
-                "Harbor for Android lists, opens and starts this PC's chats over your network. Every connection is encrypted with this PC's key and the phone's own, paired by the QR code below: Harbor answers paired phones only.",
+                "Harbor for Android lists, opens and starts this PC's chats over your network. Every connection is encrypted with this PC's key and the phone's own, and Harbor answers only phones signed in with Google by people in this PC's workspace.",
                 |ui| w::toggle(ui, &mut on),
             );
         });
@@ -93,10 +48,6 @@ impl App {
         }
         let net = hub.net.lock().unwrap().clone();
         let port = *hub.port.lock().unwrap();
-        let fp = crate::tls::my_fp();
-        // The phone tries each of this PC's addresses; an app before 0.13 only the first
-        // (`host`, `ip`), which must be a Tailscale one for it.
-        let host = net.legacy_ip();
         let shown: Vec<String> = net.addrs.iter().take(6).cloned().collect();
         if on {
             ui.add_space(8.0);
@@ -131,87 +82,31 @@ impl App {
             self.outside_section(ui);
         }
 
-        section(ui, "Pair a phone");
-        w::subtle(ui, "Each phone gets its own key. Scan the code with the phone's camera app, or tap + in Harbor for Android to scan it, paste the link or type the details shown beside it. The phone then shows a 6-digit code: confirm it here. It also asks for its screen lock or fingerprint, which it needs again when a session starts.", "copy-14");
-        ui.add_space(8.0);
-        // A code nobody used in time is void.
-        let expired = self.api.ui.pairing.as_ref().is_some_and(|(tok, _, _)| !hub.tokens.lock().unwrap().iter().any(|t| t.token == *tok && t.ticket && crate::store::now() - t.created <= crate::phoneauth::TICKET_TTL));
-        if expired {
-            let tok = self.api.ui.pairing.take().map(|p| p.0).unwrap_or_default();
-            let mut tokens = hub.tokens.lock().unwrap();
-            tokens.retain(|t| !(t.token == tok && t.ticket));
-            api::save_tokens(&self.store, &tokens);
-            drop(tokens);
-            w::subtle(ui, "The last pairing code expired or was used by two phones at once. Make a new one.", "label-13");
+        section(ui, "Add a phone");
+        let mine = crate::account::my_dir();
+        match &mine {
+            Some(d) => w::subtle(ui, format!("Install Harbor for Android (below) and sign in with Google there, with an account in this PC's workspace, “{}”. The phone finds this PC and the workspace's other PCs on its own: no code to scan or confirm. To add someone else, invite them in Settings › Account.", d.ws.name), "copy-14"),
+            None if crate::account::workspace().is_empty() => w::subtle(ui, "Sign in on this PC first (Settings › Account): phones reach the PCs of their account's workspaces.", "copy-14"),
+            None => w::subtle(ui, "Install Harbor for Android (below) and sign in with Google there, with an account in this PC's workspace.", "copy-14"),
+        };
+        if crate::account::workspace().is_empty() {
             ui.add_space(6.0);
-        }
-        if self.api.ui.pairing.is_none() {
-            let b = w::btn(&format!("{}  Pair a phone", ic::PLUS)).sm().primary().show(ui);
-            if let Some(token) = b.clicked().then(api::new_token).and_then(|t| t.map_err(|e| eprintln!("harbor: no key for a phone: {e}")).ok()) {
-                let mut tokens = hub.tokens.lock().unwrap();
-                // A pairing code: good for pairing only, for 10 minutes, once.
-                tokens.retain(|t| !t.ticket || crate::store::now() - t.created <= crate::phoneauth::TICKET_TTL);
-                tokens.push(Token { token: token.clone(), created: crate::store::now(), group: crate::store::random_hex(16).unwrap_or_else(|_| token.clone()), ticket: true, ..Default::default() });
-                api::save_tokens(&self.store, &tokens);
-                drop(tokens);
-                self.api.ui.pairing = Some((token, None, None));
-                if !on {
-                    self.api_set_enabled(true, &ctx);
-                }
+            if w::btn(&format!("{}  Open Settings › Account", ic::USER_ROUND)).sm().outline().show(ui).clicked() {
+                self.open(crate::app::View::Settings(crate::app::Tab::Account));
             }
-        }
-        let name = crate::remote::hostname();
-        let mut done = false;
-        if let Some((token, tex, _)) = &mut self.api.ui.pairing {
-            let uri = format!("harbor://pair?v=3&host={}&port={port}&token={token}&name={}&ip={}&fp={fp}&addrs={}", url_encode(&host), url_encode(&name), url_encode(&host), url_encode(&shown.join(",")));
-            if host.is_empty() || fp.is_empty() {
-                w::subtle(ui, if fp.is_empty() { "This PC has no key (see the log): phones can't pair." } else { "Waiting for this PC's network address…" }, "label-13");
-            } else {
-                let tex = tex.get_or_insert_with(|| ctx.load_texture(format!("phone-pair-{host}"), crate::devices::qr_image(&uri), egui::TextureOptions::NEAREST)).clone();
-                w::card(ui).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal_top(|ui| {
-                        qr(ui, &tex, 200.0);
-                        ui.add_space(12.0);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 4.0;
-                            let addrs = shown.join(" ");
-                            for (k, v) in [("PC", name.as_str()), ("Addresses", addrs.as_str()), ("Port", &port.to_string()), ("Token", token.as_str()), ("PC key", fp.as_str())] {
-                                w::subtle(ui, k, "label-12");
-                                copy_line(ui, v);
-                            }
-                            let left = hub.tokens.lock().unwrap().iter().find(|t| t.token == *token).map_or(0, |t| (crate::phoneauth::TICKET_TTL - (crate::store::now() - t.created)).max(0));
-                            w::subtle(ui, format!("Good once, for {} more min.", (left + 59) / 60), "label-12");
-                            ui.add_space(6.0);
-                            if w::btn("Done").outline().sm().show(ui).clicked() {
-                                done = true;
-                            }
-                        });
-                    });
-                });
-            }
-        }
-        if done {
-            // Not used: void now.
-            if let Some((tok, _, _)) = self.api.ui.pairing.take() {
-                let mut tokens = hub.tokens.lock().unwrap();
-                tokens.retain(|t| !(t.token == tok && t.ticket));
-                api::save_tokens(&self.store, &tokens);
-            }
-        }
-        if self.api.ui.pairing.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_secs(5));
         }
 
-        section(ui, "Paired phones");
-        let tokens: Vec<Token> = hub.tokens.lock().unwrap().iter().filter(|t| !t.ticket).cloned().collect();
+        section(ui, "Phones");
+        let tokens: Vec<Token> = hub.tokens.lock().unwrap().iter().filter(|t| !t.account.is_empty()).cloned().collect();
+        let old = hub.tokens.lock().unwrap().iter().filter(|t| t.account.is_empty()).count();
         let phones = hub.paired_phones();
-        let mut revoke = None;
-        let mut unlock = None;
+        let me = crate::account::account();
+        let owner = mine.as_ref().is_some_and(|d| d.ws.owner());
+        let mut sign_out = None;
         w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
             ui.set_width(ui.available_width());
             if tokens.is_empty() {
-                egui::Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "None yet.", "label-13"));
+                egui::Frame::new().inner_margin(Margin::same(16)).show(ui, |ui| w::subtle(ui, "No phone has connected yet.", "label-13"));
             }
             for (i, t) in tokens.iter().enumerate() {
                 if i > 0 {
@@ -221,7 +116,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
-                            let label = if t.name.is_empty() { "Not connected yet".to_string() } else { t.name.clone() };
+                            let label = if t.name.is_empty() { "Phone".to_string() } else { t.name.clone() };
                             w::text(ui, format!("{}  {label}", ic::SMARTPHONE), "strong-14");
                             // Seen here or on another PC of the mesh, and its app's version.
                             let phone = phones.iter().find(|p| p.group == t.group && !t.group.is_empty());
@@ -249,55 +144,37 @@ impl App {
                             if let Some((note, _)) = phone.and_then(|p| crate::devices::app_note(p.app, p.seen)) {
                                 last.push_str(&format!(" · {note}"));
                             }
-                            let when = match crate::app::ago(t.created).as_str() {
-                                "now" => "just now".to_string(),
-                                a => format!("{a} ago"),
-                            };
-                            let key = if t.fp.is_empty() { "no key yet".to_string() } else { format!("key {}", crate::tls::short(&t.fp)) };
-                            w::subtle(ui, format!("Paired {when} · {key}{last}"), "label-12");
-                            let st = hub.auth3.status(&t.token);
-                            ui.horizontal(|ui| {
-                                if !t.secured() {
-                                    w::badge(ui, "Needs upgrade", Tone::Amber);
-                                    w::subtle(ui, "Paired before three factors: it gets nothing until you confirm its code here (open Harbor on the phone).", "label-12");
-                                } else if let Some(left) = st.locked {
-                                    w::badge(ui, "Locked", Tone::Red);
-                                    w::subtle(ui, format!("Too many failed sign-ins: locked for {} more min.", left.as_secs() / 60 + 1), "label-12");
-                                } else {
-                                    if t.two() {
-                                        w::badge(ui, "2 factors", Tone::Amber);
-                                    } else {
-                                        w::badge(ui, "3 factors", Tone::Green);
-                                    }
-                                    let s = if st.sessions > 0 {
-                                        let secs = st.next_key.as_secs();
-                                        format!("Connected · key {} · next key in {}:{:02}{}", st.epoch + 1, secs / 60, secs % 60, if t.binding { " · bound to TLS" } else { "" })
-                                    } else {
-                                        "No session open".to_string()
-                                    };
-                                    w::subtle(ui, s, "label-12");
-                                }
-                            });
-                            if t.two() {
-                                w::subtle(ui, "2-factor: the phone has no screen lock. Setting one on the phone upgrades it to 3 factors.", "label-12");
-                            }
+                            let who = if t.account_name.is_empty() { "Signed in".to_string() } else { format!("Signed in as {}", t.account_name) };
+                            w::subtle(ui, format!("{who} · key {}{last}", crate::tls::short(&t.fp)), "label-12");
                         });
+                        // The phone's own account, or an owner of the workspace, may sign it out.
+                        let may = me.as_ref().is_some_and(|a| a.id == t.account) || owner;
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if w::btn("Revoke").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
-                                revoke = Some(t.token.clone());
-                            }
-                            if hub.auth3.status(&t.token).locked.is_some() && w::btn("Unlock").sm().outline().show(ui).clicked() {
-                                unlock = Some(t.token.clone());
+                            if may && w::btn("Sign out").sm().variant(w::Variant::GhostDestructive).show(ui).tip("Signs this phone out of the account: every PC refuses it from their next directory update (a few minutes). For a lost phone.").clicked() {
+                                sign_out = Some(t.fp.clone());
                             }
                         });
                     });
                 });
             }
         });
-        if let Some(tok) = unlock {
-            hub.auth3.unlock(&tok);
+        if let Some(fp) = sign_out {
+            crate::account::remove_device(fp.clone());
+            hub.tokens.lock().unwrap().retain(|t| t.fp != fp || t.account.is_empty());
+            hub.tokens_dirty.store(true, Ordering::SeqCst);
         }
-        let log: Vec<(i64, String)> = hub.auth3.log.lock().unwrap().iter().rev().take(4).cloned().collect();
+        if old > 0 {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                w::subtle(ui, format!("{old} phone pairing{} from before Google accounts: they can only update the app, then sign in.", if old == 1 { "" } else { "s" }), "label-12");
+                if w::btn("Remove").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
+                    let mut tokens = hub.tokens.lock().unwrap();
+                    tokens.retain(|t| !t.account.is_empty());
+                    api::save_tokens(&self.store, &tokens);
+                }
+            });
+        }
+        let log: Vec<(i64, String)> = api::REFUSED.lock().unwrap().iter().rev().take(4).cloned().collect();
         if !log.is_empty() {
             ui.add_space(6.0);
             w::subtle(ui, "Recently refused", "label-12");
@@ -306,23 +183,7 @@ impl App {
             }
         }
         if !tokens.is_empty() {
-            ctx.request_repaint_after(std::time::Duration::from_secs(1));
-        }
-        if let Some(tok) = revoke {
-            // Its sessions end at once.
-            hub.auth3.drop_token(&tok);
-            // The phone's keys on the other PCs go too (mesh.rs).
-            if let Some(g) = hub.tokens.lock().unwrap().iter().find(|t| t.token == tok).map(|t| t.group.clone()).filter(|g| !g.is_empty()) {
-                self.mesh_revoke(&g);
-            }
-            let mut tokens = hub.tokens.lock().unwrap();
-            tokens.retain(|t| t.token != tok);
-            api::save_tokens(&self.store, &tokens);
-            drop(tokens);
-            hub.seen.lock().unwrap().remove(&tok);
-            if self.api.ui.pairing.as_ref().is_some_and(|p| p.0 == tok) {
-                self.api.ui.pairing = None;
-            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(5));
         }
 
         section(ui, "Install the app");

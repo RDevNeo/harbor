@@ -125,8 +125,8 @@ pub struct Device {
     pub via: String,
     /// Phones: its app's versionCode (api::PairedPhone::app, 0: unknown, an old app).
     pub app: i64,
-    /// Phones: the pairing's factors (2: the phone has no screen lock).
-    pub factors: u8,
+    /// Phones: the account signed in on it ("" before accounts).
+    pub owner: String,
     /// PCs that don't answer: why (mesh::Down::slug: "harbor" isn't running there, the "pc" is off).
     pub down: String,
     /// Phones: Harbor is open on it right now (online is also true while it only pings).
@@ -138,7 +138,7 @@ pub struct Device {
 impl Device {
     fn from_json(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), factors: v["factors"].as_u64().unwrap_or(0) as u8, down: s("down"), open: v["open"].as_bool().unwrap_or(false), harbor: s("harbor") }
+        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), owner: s("owner"), down: s("down"), open: v["open"].as_bool().unwrap_or(false), harbor: s("harbor") }
     }
 
     pub fn phone(&self) -> bool {
@@ -202,7 +202,7 @@ fn paired() -> Vec<Device> {
             let open = p.seen > 0 && now - p.seen < PHONE_OPEN_SECS;
             let online = open || (p.alive > 0 && now - p.alive < PHONE_ALIVE_SECS);
             let seen = p.seen.max(p.alive);
-            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, open, ip: p.ip, seen, via: p.via, app: p.app, factors: p.factors, ..Default::default() });
+            v.push(Device { key: format!("phone:{}", p.group), name: if p.name.is_empty() { "Phone".into() } else { p.name }, kind: "android".into(), online, open, ip: p.ip, seen, via: p.via, app: p.app, owner: p.owner, ..Default::default() });
         }
     }
     v
@@ -696,8 +696,8 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         _ => "offline".into(),
     });
     if d.phone() {
-        if d.factors == 2 {
-            bits.push("2-factor, no screen lock".into());
+        if !d.owner.is_empty() {
+            bits.push(d.owner.clone());
         }
         if let Some((note, _)) = app_note(d.app, d.seen) {
             bits.push(note);
@@ -1348,7 +1348,7 @@ impl Files {
 
 /// For hot reload: what a device tab needs to come back.
 pub fn device_json(d: &Device) -> Value {
-    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "factors": d.factors, "down": d.down, "open": d.open, "harbor": d.harbor })
+    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "owner": d.owner, "down": d.down, "open": d.open, "harbor": d.harbor })
 }
 
 pub fn device_from(v: &Value) -> Device {

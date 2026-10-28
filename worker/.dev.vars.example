@@ -1,0 +1,3 @@
+# names only; wrangler dev reads .dev.vars (gitignored)
+CLERK_SECRET_KEY=
+HARBOR_SIGNING_KEY=

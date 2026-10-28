@@ -486,7 +486,7 @@ fn get_json(url: &str) -> Option<Value> {
     }
 }
 
-fn form(pairs: &[(&str, &str)]) -> String {
+pub fn form(pairs: &[(&str, &str)]) -> String {
     pairs.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| format!("{}={}", enc(k), enc(v))).collect::<Vec<_>>().join("&")
 }
 
@@ -699,7 +699,7 @@ fn keep_fresh() {
 }
 
 /// Waits for the browser to come back to the loopback redirect at `want`; returns the code.
-fn wait_callback(listener: &std::net::TcpListener, want: &str, state: &str, cancel: &AtomicBool) -> Result<String, String> {
+pub fn wait_callback(listener: &std::net::TcpListener, want: &str, state: &str, cancel: &AtomicBool) -> Result<String, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let until = Instant::now() + Duration::from_secs(600);
     while Instant::now() < until {

@@ -1,6 +1,8 @@
 // deny, not forbid: a few system calls std has no wrapper for allow unsafe code where they are.
 #![deny(unsafe_code)]
 
+mod account;
+mod accountui;
 mod addproject;
 mod agent;
 mod agentstrip;
@@ -51,7 +53,6 @@ mod notify;
 mod openchat;
 mod oauth;
 mod pages;
-mod phoneauth;
 mod phonesui;
 mod picker;
 mod portmap;
@@ -67,6 +68,7 @@ mod recap;
 mod reload;
 mod remote;
 mod remoteui;
+mod settingsync;
 mod sidebar;
 mod single;
 mod slash;
@@ -102,7 +104,7 @@ fn main() -> eframe::Result {
     // Terminal commands stop quietly when their reader closes the pipe. Keep Rust's
     // ignored SIGPIPE for the GUI/background hub, workers, stdio MCP servers and nc:
     // those use sockets and handle write errors rather than dying on a disconnect.
-    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V" | "--update" | "--restore-previous" | "mesh" | "net")) {
+    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V" | "--update" | "--restore-previous" | "mesh" | "net" | "account")) {
         #[allow(unsafe_code)] // signal(2), before starting any threads
         unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL); }
     }
@@ -133,6 +135,9 @@ fn main() -> eframe::Result {
     }
     if args.get(1).map(String::as_str) == Some("mesh") {
         std::process::exit(mesh::cli(&args[2..]));
+    }
+    if args.get(1).map(String::as_str) == Some("account") {
+        std::process::exit(account::cli(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("turn") {
         detach::run(&args[2..]);

@@ -757,6 +757,13 @@ impl Store {
 
     pub fn set(&self, k: &str, v: &str) {
         let _ = self.db.execute("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)", [k, v]);
+        // A setting that follows the account goes to its other devices (settingsync.rs).
+        crate::settingsync::changed(k);
+    }
+
+    /// [`Store::set`] for a setting that came from the account: not sent back.
+    pub fn set_quiet(&self, k: &str, v: &str) {
+        let _ = self.db.execute("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)", [k, v]);
     }
 }
 

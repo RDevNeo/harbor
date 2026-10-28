@@ -124,10 +124,11 @@ impl UsageTotals {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 11] = [Tab::General, Tab::Notifications, Tab::Appearance, Tab::Keybindings, Tab::Voice, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
+    pub const ALL: [Tab; 12] = [Tab::Account, Tab::General, Tab::Notifications, Tab::Appearance, Tab::Keybindings, Tab::Voice, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
 
     pub fn label(self) -> &'static str {
         match self {
+            Tab::Account => "Account",
             Tab::General => "General",
             Tab::Notifications => "Notifications",
             Tab::Appearance => "Appearance",
@@ -144,6 +145,7 @@ impl Tab {
 
     pub fn icon(self) -> &'static str {
         match self {
+            Tab::Account => ic::USER_ROUND,
             Tab::General => ic::SLIDERS,
             Tab::Notifications => ic::BELL,
             Tab::Appearance => ic::PALETTE,
@@ -161,6 +163,7 @@ impl Tab {
     /// Its name in reload snapshots and HARBOR_VIEW.
     pub fn slug(self) -> &'static str {
         match self {
+            Tab::Account => "account",
             Tab::General => "general",
             Tab::Notifications => "notifications",
             Tab::Appearance => "appearance",
@@ -183,6 +186,7 @@ impl Tab {
     /// What the settings search matches besides the name.
     pub fn keywords(self) -> &'static str {
         match self {
+            Tab::Account => "account google sign in sign out login logout workspace invite people members team email pcs",
             Tab::General => "restart resume continue order activity sort fast mode recap summary suggestion prompt background tray autostart login startup quit close",
             Tab::Notifications => "notify notifications alerts popups desktop phone quiet hours away finished needs input ci checks limit offline",
             Tab::Appearance => "theme dark light omarchy colours colors density compact comfortable",
@@ -192,13 +196,14 @@ impl Tab {
             Tab::Integrations => "apps mcp servers sign in tools",
             Tab::Webhooks => "hooks public url https certificate lets encrypt",
             Tab::Devices => "remote machines pcs tailscale ssh run agents elsewhere mcp bridge",
-            Tab::Phones => "android phone mobile app pair qr code token api",
+            Tab::Phones => "android phone mobile app sign in api",
             Tab::Voice => "voice dictation speech microphone mic whisper transcribe language model",
         }
     }
 
     fn desc(self) -> &'static str {
         match self {
+            Tab::Account => "Your Google account, this PC's workspace and the people who share it. Settings follow your account to every PC you sign in on.",
             Tab::General => "How threads behave.",
             Tab::Notifications => "What Harbor tells you about while you're elsewhere, on this desktop and on your phones.",
             Tab::Appearance => "How Harbor looks.",
@@ -208,7 +213,7 @@ impl Tab {
             Tab::Integrations => "",
             Tab::Webhooks => "",
             Tab::Devices => "Run agents on your other PCs. They work in that PC's folders, with this PC's MCP servers and apps.",
-            Tab::Phones => "Your chats on your phone: Harbor for Android talks to this PC over your network, encrypted with both keys.",
+            Tab::Phones => "Your chats on your phone: Harbor for Android signs in with Google and talks to this PC over your network, encrypted with both keys.",
             Tab::Voice => "Dictate into the composer. Speech is transcribed on this PC with whisper.cpp: private, free, offline.",
         }
     }
@@ -256,6 +261,7 @@ impl App {
                 }
                 ui.add_space(20.0);
                 match tab {
+                    Tab::Account => self.account_tab(ui),
                     Tab::General => self.general_tab(ui),
                     Tab::Notifications => self.notifications_tab(ui),
                     Tab::Appearance => self.appearance_tab(ui),

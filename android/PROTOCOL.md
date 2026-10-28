@@ -7,202 +7,163 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
 
 - HTTP/1.1 inside TLS, JSON bodies (UTF-8), `Connection: close` on every response.
 - The hub listens on every interface, port **47930** by default (kv `api_port`, applies after a
-  restart; `HARBOR_LISTEN=addr,…` picks addresses). Turned on in Settings › Phones.
+  restart; `HARBOR_LISTEN=addr,…` picks addresses). Turned on in Settings › Phones (and on its
+  own when the PC signs in).
 - **Keys.** The hub and each phone have a long-term key of their own: the hub an ECDSA P-256 key
   and self-signed certificate in `identity.pem` in its state dir (owner-only), the phone an EC
-  P-256 key in the Android Keystore (non-exportable) with the certificate the Keystore makes. A
-  key's *fingerprint* is the SHA-256 of its certificate's SubjectPublicKeyInfo, 64 lowercase hex
-  characters.
+  P-256 key in the Android Keystore (non-exportable, alias `harbor-tls`) with the certificate the
+  Keystore makes. A key's *fingerprint* is the SHA-256 of its certificate's
+  SubjectPublicKeyInfo, 64 lowercase hex characters.
 - **Mutual TLS, pinned.** TLS 1.3 (the hub also takes 1.2 from phones whose Android has no 1.3).
-  The phone checks that the hub's certificate has the fingerprint from the pairing, and nothing
-  else (no CA, no names); it shows its own certificate. The handshake signatures are checked
-  against that same key. The hub binds a pairing's token to the first phone key it's used with
-  (`api_tokens[].fp`); from then on the token is refused with any other key (`401`).
-- **Three factors** (from 0.22, [below](#three-factors)): every call carries a session and a MAC
-  under the session's current key (`X-Harbor-Session`, `X-Harbor-Auth`); the pairing's token
-  alone (`Authorization: Bearer <token>`) only pairs and starts sessions. `GET /app.apk` needs
-  neither on the PC's own network. Optional `X-Harbor-Device: <phone name>` (shown next to the token in Settings › Phones) and,
-  from app 0.19, `X-Harbor-App: <versionCode>` (Devices and Settings › Phones show the app's
-  version and say when it's out of date; the other PCs learn it through `GET /mesh/v1/phones`).
-  The versionCode is the whole app version (`major*1000000 + minor*1000 + patch`, the
-  versionName is Cargo.toml's version), so the hub derives the versionName from it. From 0.68
-  the hub keeps each phone's last-seen time and app version across restarts (kv `phones_seen`)
-  and agents read them (`GET /v1/versions`, the `machines` `list` tool, the who-is-who note).
+  The phone checks that the hub's certificate has the fingerprint from its workspace's
+  directory ([Accounts](#accounts)), and nothing else (no CA, no names); it shows its own
+  certificate. The handshake signatures are checked against that same key.
+- **Who calls** (from 0.80): every call but `GET /app.apk` carries
+  `Authorization: Bearer <Harbor token>`, the phone's Google sign-in ([Accounts](#accounts)). The
+  hub checks it itself, offline, on every call: signed by the account service, not expired,
+  `kind: "phone"`, `dev` = the fingerprint of this connection's client key, and the hub's
+  workspace in `ws`. Optional `X-Harbor-Device: <phone name>` (Settings › Phones and Devices show
+  it) and, from app 0.19, `X-Harbor-App: <versionCode>` (Devices and Settings › Phones show the
+  app's version and say when it's out of date; the other PCs learn it through
+  `GET /mesh/v1/phones`). The versionCode is the whole app version
+  (`major*1000000 + minor*1000 + patch`, the versionName is Cargo.toml's version), so the hub
+  derives the versionName from it. From 0.68 the hub keeps each phone's last-seen time and app
+  version across restarts (kv `phones_seen`) and agents read them (`GET /v1/versions`, the
+  `machines` `list` tool, the who-is-who note).
 - **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
-  answers plain HTTP on its Tailscale interface, from Tailscale addresses, for tokens no key is
-  bound to yet (apps before 0.13; they update themselves from there).
+  answers plain HTTP on its Tailscale interface, from Tailscale addresses (apps before 0.13; they
+  can only update themselves there).
 - A TLS client without a known key gets nothing but `GET /app.apk` and PC pairing
-  (`POST /mesh/v1/pair`). From outside private networks (a public IPv6, a forwarded port) only a
-  key the hub knows gets any answer. Failed authentications are counted per address (IPv6 per
-  /64): past 30 a minute, connections are closed without an answer. At most 12 connections per
-  address at once.
+  (`POST /mesh/v1/pair`). From outside private networks (a public IPv6, a forwarded port) the
+  handshake itself needs a key the hub knows: a PC of its workspace or paired by hand, or a
+  device of one of the workspace's members (the directory's `devices`). Failed authentications
+  are counted per address (IPv6 per /64): past 30 a minute, connections are closed without an
+  answer. At most 12 connections per address at once.
 - Request bodies need `Content-Length` (no chunked encoding). JSON bodies ≤ 2 MB, uploads ≤ 200 MB.
 - Errors: a status code and `{"error": "<message for the user>"}`.
-  `401` not authorized: one generic answer whatever failed (the reason goes to the hub's log and
-  Settings › Phones), with `rekey: true` (start a new session) or `upgrade: true` (a pairing
-  from before three factors: run the upgrade), `400` bad input, `404` no such
-  chat/route, `409` not possible now (e.g. fork of a running turn), `413` too large,
-  `503` Harbor busy/closing.
+  `401` the sign-in is missing, expired or not this device's, with `signin: true` (the app signs
+  in again; a pairing from before accounts also gets `upgrade: true`), `403` signed in but not
+  in this PC's workspace (or removed from it), `400` bad input, `404` no such chat/route, `409`
+  not possible now (e.g. fork of a running turn), `413` too large, `503` Harbor busy/closing.
 - When phone access is turned off, connections are closed without an answer.
-- The app sends nothing but pinned TLS, except plain HTTP to loopback for a pairing without a
-  key, and the one-time upgrade below.
+- The app sends nothing but pinned TLS to PCs, and HTTPS (the platform's CAs) to Clerk and the
+  account service.
 
-## Pairing
+## Accounts
 
-One pairing reaches every PC of the mesh: `GET /v1/hubs` hands the phone a token for each other
-PC, with that PC's key and addresses (see [Every PC is a hub](#every-pc-is-a-hub)).
+From 0.80 every device, each Harbor desktop and each phone, signs in with Google. There's no
+pairing: a phone signs in, gets the PCs of its workspaces from the account service, and connects
+to them directly (pinned TLS, the fingerprint from the directory). Code: `src/account.rs`,
+`src/settingsync.rs`, `src/accountui.rs` (desktop), `Account.java` (phone), `worker/` (the
+service).
 
-The QR code in Settings › Phones encodes
+- **Clerk** is the identity provider: an OAuth 2.0 / OIDC "OAuth application", a *public*
+  client with PKCE (S256), Google as its only sign-in method. Endpoints on Clerk's Frontend API
+  (`HARBOR_CLERK_URL`, placeholder `https://clerk.harbor.example`):
+  - `GET /oauth/authorize?response_type=code&client_id=…&redirect_uri=…&scope=openid profile email offline_access&code_challenge=…&code_challenge_method=S256&state=…&prompt=login`
+  - `POST /oauth/token` form: `grant_type=authorization_code&code&redirect_uri&client_id&code_verifier`,
+    or `grant_type=refresh_token&refresh_token&client_id` → `{access_token, refresh_token, id_token, expires_in}`.
+  - `GET /oauth/userinfo` (`Authorization: Bearer <access token>`) → `{sub, email, name, …}`.
+- **Redirects.** Desktop: `http://127.0.0.1:<any port>/callback` (a loopback listener, RFC 8252;
+  registered in Clerk as `http://127.0.0.1/callback`). Phone: `<service>/oauth/android`, which
+  answers `302` to `harbor://oauth?<the same query>`, so the browser (a Custom Tab where there
+  is one) hands the code to the app; the code is useless without the app's PKCE verifier.
+- **The account service** (`worker/`, a Cloudflare Worker; `HARBOR_ACCOUNTS_URL`, placeholder
+  `https://accounts.harbor.example`) holds Clerk's secret key. Workspaces are Clerk
+  organizations: each account gets its own at its first sign-in (`personal`), owners
+  (`org:admin`) invite people by email (Clerk sends the email), and an invited person joins at
+  their first sign-in with that address (Google addresses are verified). Roles: `owner`
+  (invites, removes) and `member`; both control every PC and chat of the workspace.
 
-```
-harbor://pair?v=3&host=<address>&port=<port>&token=<token>&name=<hub name>&ip=<address>&fp=<hub fingerprint>&addrs=<address>,<address>,…
-```
+### Harbor tokens
 
-all values percent-encoded. `addrs` are the hub's addresses (at most 6) in the order to try them:
-its network's IPv4, the public address its router maps for it or a port forward set by hand
-(`ip:port` when the port differs), a dynamic DNS name for the home (`name:port`), IPv6 (global ones reach it from mobile data where the router lets them in), then
-Tailscale's while it's installed. An entry is `ip`, `ip:port` or `[ipv6]:port`;
-the app tries the one that answered last, then each of them, then `host` and `ip` (which apps
-before 0.13 use: a Tailscale address while the PC has one). Every try is pinned to `fp`; a hub
-that answers with another key is never sent the token. The same values are shown as text under
-the code. `/v1/state` gives the hub's current `hub_addrs`, so the app's list follows address
-changes.
-
-The `token` of a link is a **pairing code**: it works for 10 minutes, once, and for nothing but
-the pairing below; the pairing becomes real only when the person at the PC confirms the 6-digit
-code both screens show (Settings › Phones › Confirm a phone; the PC also posts a desktop notice).
-"Done" or a second phone trying the same code voids it.
-
-**Upgrading a pairing from before 0.13** (no `fp`): the app makes one TLS connection to the
-pairing's Tailscale address, only through Tailscale's VPN (as before 0.13, WireGuard vouches for
-the hub there), takes the hub's fingerprint from that handshake and pins it from then on; the hub
-binds the token to the phone's key on that same call. Without Tailscale such a pairing can't
-upgrade: the app asks to pair again.
-
-## Three factors
-
-A phone reaches a hub only with all three, checked when a session starts; then every call needs
-the session's current key, which changes every 10 minutes. Code: `src/phoneauth.rs` (hub),
-`Sec.java`, `Presence.java`, `Hub.java` (phone).
-
-| factor | what | where it lives | checked |
-|---|---|---|---|
-| 1. Device key | the phone's TLS key (`harbor-tls`, EC P-256), pinned by fingerprint | Android Keystore, non-exportable | every connection (mutual TLS), and every MAC and transcript names it |
-| 2. Pairing secret | 32 bytes from an ECDH agreement at pairing, confirmed by the 6-digit code on the PC | phone: the encrypted pairing list (AES-GCM key in the Keystore); hub: kv `api_tokens[].secret` | HMAC over each session's handshake |
-| 3. User presence | a second Keystore key, `harbor-presence` (EC P-256, `setUserAuthenticationRequired`, usable 5 minutes after the fingerprint, face or screen lock) | Android Keystore; the hub pins its public key (`api_tokens[].presence`) | its signature over each session's handshake |
-
-A phone without a screen lock can't make the presence key: from 0.34.1 it pairs with **two
-factors** (1 and 2, sessions and rotating keys unchanged), see [Two factors](#two-factors-no-screen-lock).
-
-### Notation
-
-- `th(label, p1, p2, …)` = SHA-256(label ‖ 0x00 ‖ for each part: its length as 4 bytes big-endian ‖ the part).
-- `HKDF(salt, ikm, info)` = HKDF-SHA256 (RFC 5869), 32 bytes. `Expand(prk, info)` = HKDF-Expand to 32 bytes.
-- `HMAC(k, label, t)` = HMAC-SHA256(k, label ‖ t).
-- Fingerprints are the 64-hex strings (their ASCII bytes); ECDH keys and the presence key travel as
-  P-256 SubjectPublicKeyInfo DER (91 bytes), hex in JSON; signatures are ECDSA-SHA256, ASN.1 DER.
-- `X` = 32 bytes of TLS exporter (RFC 5705 / RFC 8446 §7.5) of the connection the request travels
-  on, label `EXPORTER-harbor-v3`, no context. A phone that can export (Android 12+) says
-  `binding: true` at pairing; from then on the hub wants `X` in every handshake and MAC of that
-  pairing. Without binding, `X` is empty (in transcripts) or `-` (in MACs).
-
-### Pairing (and the upgrade)
-
-`POST /v1/pair/start` with `Authorization: Bearer <pairing code token>` (or a pairing's token
-from before three factors: the upgrade, only from the TLS key that token is bound to), over TLS:
+A JWT `b64url(header).b64url(payload).b64url(signature)`, header
+`{"alg":"EdDSA","typ":"JWT","kid":"k1"}`, Ed25519 over the ASCII `header.payload`:
 
 ```json
-{"epk": "<phone ECDH key>", "presence": "<presence public key>", "binding": true,
- "psig": "<presence signature>", "name": "Pixel 8"}
+{"iss": "harbor-accounts", "sub": "user_…", "email": "sam@example.com", "name": "Sam Rig",
+ "ws": ["org_a", "org_b"], "dev": "<fingerprint of the device's TLS key>", "kind": "phone",
+ "iat": 1730000000, "exp": 1730604800}
 ```
 
-- `psig` signs `th("harbor-pair-v3 presence", hubFp, phoneFp, token, epk, presence, "1"|"0", X)`
-  (so pairing already wants the unlock).
-- Two factors (no screen lock, from 0.34.1): `"nolock": true` instead of `presence` and `psig`
-  (sending both is refused); `presence` is then empty in `T`.
-- The hub answers `{"epk": "<hub ECDH key>", "wait_ms": 180000}`. Both compute
-  `T = th("harbor-pair-v3", hubFp, phoneFp, token, epkPhone, epkHub, presence, "1"|"0", X)`,
-  `Z` = the ECDH secret, `S = HKDF(T, Z, "harbor-pair-v3 secret")` and the code:
-  `HKDF(T, Z, "harbor-pair-v3 sas")`'s first 4 bytes as a big-endian number, mod 1 000 000, 6 digits.
-- The phone shows the code; the PC shows it under "Confirm a phone" with the phone's name and key.
-- `POST /v1/pair/finish` `{"proof": HMAC(S, "harbor-pair-v3 phone", T)}` (same token and TLS key)
-  waits up to 20 s for the PC's answer: `{"status": "waiting"}` (ask again), `403` refused, or
-  `{"status": "paired", "proof": HMAC(S, "harbor-pair-v3 hub", T)}`, which the phone checks. Then
-  the token is the pairing's (bound to the phone's TLS key, with `S`, the presence key and
-  `binding`); the phone keeps `S` with the pairing. A wrong proof voids the attempt; the PC's
-  confirmation waits 3 minutes.
+Good for 7 days; devices ask for a new one about daily. PCs verify it with the service's public
+keys (shipped in the build, `account::KEYS`; a build without them fetches `GET /v1/keys` over
+HTTPS once; tests set `HARBOR_ACCOUNTS_KEYS=kid:base64url,…`). A PC lets a phone in when the
+token is valid, its `dev` is this connection's client key, and the PC's own workspace is in `ws`
+— **unless** the PC's cached directory of that workspace is newer than the token's `iat` and no
+longer lists `sub` among the members (removed) or `dev` among the devices (signed out of that
+phone): then `403`/`401`. A PC in no workspace, or in another one, takes nobody (Option A).
 
-### Sessions
+### Signing in
 
-1. `POST /v1/session/hello` (Bearer token of a three-factor pairing, its TLS key)
-   `{"epk": "<fresh ECDH key>", "nonce": "<32 bytes>"}` → `{"hid", "epk", "challenge": "<32 bytes>", "factors": 3}`
-   (`factors` from 0.34.1: `2` for a pairing confirmed without a screen lock; absent means 3).
-2. `POST /v1/session/open` (same) within 60 s: `{"hid", "proof", "sig"}` with
-   `T2 = th("harbor-session-v3", hubFp, phoneFp, token, epkPhone, epkHub, nonce, challenge, X)`
-   (`X` of this second connection), `proof = HMAC(S, "harbor-session-v3 proof", T2)` (factor 2)
-   and `sig` = the presence key's signature over `"harbor-session-v3 presence" ‖ T2` (factor 3).
-   For a two-factor pairing `sig` is left out (the hub ignores it).
-   → `{"sid", "epoch_ms": 600000, "grace_ms": 30000, "idle_ms", "max_ms", "proof", "factors"}`, where
-   `root = HKDF(T2, Z ‖ S, "harbor-session-v3 root")` and `proof = HMAC(root, "harbor-session-v3 hub", T2)`:
-   the phone checks it (the hub knows `S` and the fresh `Z`).
+1. OAuth with Clerk as above (PKCE). The device keeps Clerk's tokens privately (desktop:
+   `<state>/account.json`, 0600; phone: encrypted with a Keystore key), never in the database and
+   never synced.
+2. `POST <service>/v1/session` with `Authorization: Bearer <Clerk access token>`:
+   ```json
+   {"device": {"kind": "phone", "name": "Pixel 8", "spki": "<base64 DER SPKI of the TLS key>",
+               "ts": 1730000000, "sig": "<base64 ECDSA-P256-SHA256 signature>"}, "app": "0.80.0"}
+   ```
+   `sig` (DER or raw r‖s) signs `harbor-device-v1\n<ts>\n<sha256 hex of the access token>`, so
+   the service knows the device holds its key; `ts` within 10 minutes of the service's clock.
+   → `{"account": {"id", "email", "name", "image"}, "workspaces": [{"id", "name", "role", "personal"}],
+   "token": "<Harbor token>", "exp", "device": {"fp"}, "joined": [{"id", "name"}], "pc"?}`.
+   `joined`: workspaces an invitation just took the account into. `pc` (desktops only, when the
+   PC is already in a workspace): `{"ws", "ws_name", "owner", "member"}`; with `member: false`
+   the desktop drops the sign-in: **someone else's PC stays theirs**.
+3. A PC picks its workspace (asked when there are several) and registers:
+   `POST /v1/pcs {"ws", "id": "<mesh id>", "name", "addrs": ["host:port", …], "version"}` (every
+   5 minutes and when its addresses change). `403` with `ws`/`ws_name`/`owner` when the PC is in a
+   workspace the account isn't in.
+4. Every 2 minutes: `GET /v1/directory` →
+   ```json
+   {"at": 1730000000000, "workspaces": [{"id", "name", "role", "personal",
+     "members": [{"id", "name", "email", "role"}],
+     "pcs": [{"fp", "id", "name", "addrs", "owner", "owner_name", "seen", "version"}],
+     "devices": ["<fp>", …], "invites": [{"id", "email", "at"}]}]}
+   ```
+   (`invites` only for owners). PCs cache it (kv `account_dir`) and link with the workspace's
+   other PCs without pairing (mesh.rs); phones turn each workspace into a hub entry whose PCs
+   are its endpoints.
 
-The app asks for the unlock before step 1 when the presence key can't sign (5 minutes after
-the last unlock), and only while it's in front. Five failed opens within 15 minutes lock the
-pairing for 15 minutes (Settings › Phones shows it, with Unlock). A session ends after 30 minutes
-without calls, after 12 hours, when the pairing is revoked (here or on another PC), and when the
-hub restarts; at most 4 per pairing. Sessions live in memory only.
+Also on the service (all with the Harbor token): `DELETE /v1/pcs/{fp}` (a member takes a PC
+out), `DELETE /v1/devices/{fp}` (sign a device out: its own account, or an owner of a workspace
+its account is in), `POST /v1/workspaces/{ws}/invites {"email"}`,
+`DELETE /v1/workspaces/{ws}/invites/{id}` (owners), `DELETE /v1/workspaces/{ws}/members/{user}`
+(owners remove others; anyone leaves a workspace that isn't their own), and settings:
+`GET /v1/settings` / `PUT /v1/settings {"set": {"<kv key>": {"v": "<value>", "at": <ms>}}}` →
+`{"settings": {…}, "at"}`, newest `at` per key wins (`src/settingsync.rs` lists which keys
+follow the account; machine-bound ones never travel). Errors are `{"error"}`; `401` with
+`signin: true` means sign in again.
 
-### Two factors (no screen lock)
+### Offline and expired sign-ins
 
-From 0.34.1. Android only lets the presence key exist behind a secure screen lock
-(`KeyguardManager.isDeviceSecure()`), so a phone without one pairs with factors 1 and 2 only.
-Both screens say so: the PC's confirmation card ("wants to pair with two factors"), its
-Settings › Phones row (amber "2 factors" badge) and Devices row ("2-factor, no screen lock"), and
-the phone's Settings › Sign-in row, each with the hint that a screen lock adds the third.
+Nothing stops when Clerk or the service can't be reached, or Clerk ends a session (Clerk's free
+plan has fixed 7-day sessions and no multi-session, so switching accounts is sign out, sign in):
+PCs keep checking phones' tokens with the keys and directory they have, the hub and agents keep
+running, and the desktop asks to sign in again in Settings › Account. A phone keeps its Harbor
+token until it expires; when it's refused (`401 signin`) the app shows its sign-in screen.
+Signing a PC out keeps it in its workspace (its people still reach it); only a member takes it
+out (Settings › Account › Take this PC out).
 
-- Hub: `api_tokens[].nolock = true`, `presence` empty, `keys_at` (unix s of the last change of
-  factors). `nolock` is only ever set by a pairing or re-confirmation the person at the PC
-  confirmed with the code; a token with a presence key always wants its signature.
-- **Adding the third** (a lock set later): the app sees `factors: 2` on a session while the phone
-  is secure, makes the presence key and, over that session, sends
-  `POST /v1/pair/presence {"presence": "<key>", "psig": "<sig>"}`, `psig` over
-  `th("harbor-presence-v3", hubFp, phoneFp, token, sid, presence)` → `{"factors": 3}`. Adding a
-  factor needs nothing more. A pairing that has a presence key already gets `409` for another one.
-- **Losing the third** (the lock removed, or changed so Android erased the key): the app can't
-  sign, and the phone's key and secret alone must not be enough to drop the factor. It offers
-  "Use two factors" (no lock) or "Re-confirm" (a new lock, a new key): the pairing ceremony
-  again with the pairing's own token (`POST /v1/pair/start` at session level, only from the TLS
-  key it is bound to), plus `"rekey": HMAC(S, "harbor-rekey-v3", th("harbor-rekey-v3", hubFp, phoneFp, token, epk, presence, "1"|"0", X))`
-  (`presence` empty with `nolock`). A wrong proof counts as a failed session start. The PC
-  shows "lost its screen lock: asks to go on with two factors" (or "has a new screen lock") with
-  the code; only its Confirm changes anything. `S` stays the same (the mesh's PCs keep theirs).
-- **The mesh**: `POST /mesh/v1/mint` also carries `nolock` and `keys_at`; a PC with the same
-  secret takes the other factors when `keys_at` is newer (and ends that pairing's sessions).
-  A PC that still says `factors: 3` to a two-factor phone is skipped until it has heard.
-- Old hubs refuse `nolock` and re-confirmation (`401`): the app says to update Harbor on the PC
-  or set a screen lock. Old apps never send them.
+### Phones from before 0.80
+
+Pairing tokens from before accounts (kv `api_tokens` without `account`) still get `GET /v1/app`
+and `GET /app.apk` (also from the internet), so the old app updates itself; everything else is
+`401` `{"error": "This PC now uses Google accounts: update Harbor on this phone…", "signin": true, "upgrade": true}`.
+The 0.80 app forgets its pairings and shows "Sign in with Google". A 0.80 app with a PC that
+hasn't updated finds no PCs in its directory and says so.
 
 ### Background pings (online with the app closed)
 
-From 0.37.1 (optional: older hubs answer `401`, older apps never ping). The app schedules an
-Android JobScheduler job every 15 minutes with any network (`Alive.java`, persisted across
-reboots; Doze and App Standby run it later). It pings one PC, the one calls go to first, then
-the others, until one answers:
-
-`POST /v1/alive` with `Authorization: Bearer <token>` over pinned TLS (factor 1), body
-`{"ts": <unix ms>, "mac": HMAC-SHA256(K_alive, th("harbor-alive-v1", hubFp, phoneFp, token, ts as decimal text, X))}`,
-`K_alive = HKDF("harbor-alive-v1", S_pc, "harbor-alive-v1 key")` (factor 2; the screen lock isn't
-needed, nobody is there to unlock). → `{"ok": true, "every_s": 900}`. `ts` must be within
-10 minutes of the hub's clock and newer than that pairing's last ping (no replays); `X` as in
-sessions when the pairing has binding. Anything wrong is the usual `401`, without counting towards
-the pairing's lock-out. Only two- and three-factor pairings can ping.
-
-The hub records the time and nothing else: no session, no call, no `seen` (that stays "the app
-is open"). Devices shows a phone **Harbor open** while its app calls (within 75 s), **online**
-while its last ping is under 35 minutes old, else offline with "seen X ago" (the newest of
-both). The mesh shares pings (`alive` in `GET /mesh/v1/phones`), so a ping to one PC counts
-on all.
+The app schedules an Android JobScheduler job every 15 minutes with any network (`Alive.java`,
+persisted across reboots; Doze and App Standby run it later). It pings one PC, the one calls go
+to first, then the others, until one answers: `POST /v1/alive` (the Harbor token, as every call)
+→ `{"ok": true, "every_s": 900}`. The hub records the time and nothing else: Devices shows a
+phone **Harbor open** while its app calls (within 75 s), **online** while its last ping is under
+35 minutes old, else offline with "seen X ago" (the newest of both). The mesh shares pings
+(`alive` in `GET /mesh/v1/phones`), so a ping to one PC counts on all.
 
 ### Notifications
 
@@ -232,8 +193,7 @@ add `"since": <last id taken from that PC>` (0: none yet: the answer has no note
 nothing old is shown) and optionally `"wait_ms"` (at most 240000: the hub answers as soon as a
 note comes). The answer adds `{"notes": [...], "last": <id>}`. Ids grow per PC and start at its
 start time in ms, so a restarted hub's ids are higher; a `since` from the future gets every kept
-note. This read needs factors 1 and 2 only (no session, no screen lock): what a lock-screen
-notification would show anyway. Acting on a note goes through a normal session.
+note.
 
 The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
 - the 15-minute ping job takes notes; for 8 minutes after the user leaves the app a one-off job
@@ -243,57 +203,12 @@ The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
 - shows nothing while Harbor is in front; filters by the phone's own choices (kinds, quiet hours,
   only when away), Android channels per kind;
 - actions: tap opens the chat (or the PR's `url`), **Reply** (RemoteInput) sends
-  `POST /v1/chats/{gid}/send {"text"}` over a session (three factors: Android unlocks the phone
-  first, Android 12+), **Continue** sends `POST /v1/chats/{gid}/continue`. Harbor runs agents
+  `POST /v1/chats/{gid}/send {"text"}` (Android unlocks the phone first, Android 12+), **Continue** sends `POST /v1/chats/{gid}/continue`. Harbor runs agents
   without permission prompts, so there is no approve/deny.
 
 The desktop shows its own notes with notify-send (click opens the chat) only while Harbor's window
 isn't in front, per Settings › Notifications (kinds, "only when I'm away", quiet hours); a key
 pops up at most every 30 s, else its notification is replaced quietly.
-
-### Every call
-
-```
-X-Harbor-Session: <sid>
-X-Harbor-Auth: <epoch>.<counter>.<hex HMAC-SHA256(K_epoch, msg)>
-msg = "harbor-req-v3\n<sid>\n<epoch>\n<counter>\n<METHOD>\n<request target as sent>\n<Content-Length or 0>\n<phoneFp>\n<hubFp>\n<hex X, or ->"
-```
-
-- **Rotation.** `C_0 = root`, `C_{e+1} = Expand(C_e, "harbor-v3 chain")`,
-  `K_e = Expand(C_e, "harbor-v3 mac")`. The epoch is the time since the session opened divided
-  by `epoch_ms` (10 minutes), each side on its own monotonic clock. Each step erases the link
-  before it (a key taken from memory opens nothing older). The hub takes the previous epoch's key
-  for `grace_ms` after a change and the next one for `grace_ms` before it, then the old key is
-  gone; anything else is refused with `rekey: true`.
-- `counter` starts at 1 and is never used twice in a session (the hub keeps a window of 128, so
-  calls may arrive out of order). With binding, `X` ties the MAC to its one TLS connection.
-- Ten bad MACs end the session. Every refusal counts towards the per-address limit (30 a minute).
-- A call refused for its session wasn't run: the app ends that session, starts a new one and sends
-  the call again (writes too). Long-polls and uploads are checked when they start, so a key change
-  during one doesn't cut it.
-
-### The other PCs of the mesh
-
-Each PC gets its own secret, so no PC holds another's: `S_pc = HKDF(pcFp, S, "harbor-hub-v3")`.
-For a three-factor pairing `GET /v1/hubs` mints nothing: other PCs come with `token: null,
-provision: true`. The app then sends `POST /v1/hubs` `{"secrets": {"<pc fp>": "<S_pc hex>"}}` over
-its session; the hub passes each to that PC in `POST /mesh/v1/mint` (with the presence key and
-`binding`) and answers like the GET, with tokens. The phone starts a session with each PC on its
-own (`S_pc`, the same presence key).
-
-### Upgrading older pairings
-
-A pairing made before 0.22 (token bound to the phone's TLS key, no secret) gets only
-`GET /v1/app`, `GET /app.apk` and `POST /v1/pair/*`; everything else is `401` with
-`upgrade: true`. The app (0.22) then offers "Upgrade the pairing": the same ceremony with the
-pairing's own token, confirmed on the PC (marked "asks to upgrade"). There is no way back: a
-three-factor pairing never works with the token alone. Apps before 0.22 can still update
-themselves (`/v1/app`, `/app.apk`), also from outside the home network, and then upgrade.
-Plain HTTP from 127.0.0.1 keeps working with the token alone (test rigs, `adb reverse`): it's
-this PC itself.
-
-Test rigs may set `HARBOR_TEST_EPOCH_S` (20 to 3600) on the hub for shorter epochs; the phone
-follows `epoch_ms`.
 
 ## Revisions
 
@@ -391,7 +306,7 @@ refetch everything.
   Update (`POST /v1/providers/update`). `updating`: the hub is running the updaters; `error`:
   the last update failed (text). Dismissing either banner remembers its version (`version`, or
   `key` for providers), so it shows again for the next one. Older hubs send neither field.
-- `hub_fp`, `hub_addrs`, `hub_port`: this hub's key and where it answers (keep the pairing's
+- `hub_fp`, `hub_addrs`, `hub_port`: this hub's key and where it answers (keep the entry's
   address list up to date with them).
 - `hub_id`: this hub's id in the mesh; `mesh`: chats are shared with the user's other PCs; `hubs`:
   every PC of the mesh (this one first). A hub the phone has no token for yet: ask `GET /v1/hubs`.
@@ -1195,9 +1110,8 @@ order; issues by number, then title, open before closed) and sends at most 50, b
 
 For a copy of another PC's chat, both calls are answered by its home PC, where its files and
 agent are. A PC with a Harbor before 0.23 answers both with `404`: the app then asks the chat's
-`home` PC, and the pairing's other PCs, directly (`GET /v1/hubs` tokens), and sends /plan and
-/default to the one that answered. When none can, a bare `/` shows why: the home PC's Harbor
-needs an update, or the pairing needs its upgrade to three factors.
+`home` PC, and the workspace's other PCs, directly, and sends /plan and /default to the one that
+answered. When none can, a bare `/` shows why: the home PC's Harbor needs an update.
 
 
 ### `GET /v1/slash?project=&account=&device=&access=` and `GET /v1/tags?project=&trigger=@&q=`
@@ -1414,10 +1328,10 @@ hubs ignore `op` and send none of these fields.
 
 What the hub's user sent this phone from Devices › Send. Each item waits on the PC that sent it
 for up to a day, until the app takes it. `GET /v1/events` says how many wait (`"inbox": 2`), and a
-new item wakes the long-poll. The app also asks every PC of every pairing every 30 s while it's
+new item wakes the long-poll. The app also asks every PC of its workspaces every 30 s while it's
 open.
 
-`GET /v1/inbox` → `{"items": [{"id", "kind", "name", "size", "text"?}]}`, only this pairing's items.
+`GET /v1/inbox` → `{"items": [{"id", "kind", "name", "size", "text"?}]}`, only this phone's items.
 `kind` is `text` (put `text` on the clipboard), `clip-image` (an image for the clipboard), `image`
 (saved to Pictures/Harbor and opened) or `file` (saved to Download/Harbor). `GET /v1/inbox/{id}`
 gives an item's bytes (`application/octet-stream`, `404` when it's gone). `POST /v1/inbox/{id}/done`
@@ -1509,8 +1423,8 @@ Nothing on the wire changed for this (0.55.1).
 
 ### `GET /app.apk` (and `HEAD`)
 
-No token needed on the PC's network; from outside it a session (or a pairing from before three
-factors, so old apps can update and then upgrade). The APK the hub has (`404` when none), `application/vnd.android.package-archive`.
+No token needed on the PC's network; from outside it a signed-in phone (or a pairing from before
+accounts, so old apps can update and then sign in). The APK the hub has (`404` when none), `application/vnd.android.package-archive`.
 
 ## Every PC is a hub
 
@@ -1539,22 +1453,19 @@ same chats, rendered the same way.
 
 ```json
 {"hubs": [{"id": "ts:desk", "name": "desk", "host": "10.0.0.12", "ip": "10.0.0.12", "port": 47930,
-           "fp": "<64 hex>", "addrs": ["10.0.0.12", "fd00::12"],
-           "online": true, "token": "<the caller's>", "self": true},
-          {"id": "ts:laptop", "name": "laptop", "host": "10.0.0.20", "ip": "10.0.0.20", "port": 47930,
-           "fp": "<64 hex>", "addrs": ["10.0.0.20"],
-           "online": true, "token": "<a token for this phone on that PC, bound to its key>"}]}
+           "fp": "<64 hex>", "addrs": ["10.0.0.12", "fd00::12"], "online": true, "self": true},
+          {"id": "fp:0123abcd", "name": "laptop", "host": "10.0.0.20", "ip": "10.0.0.20", "port": 47930,
+           "fp": "<64 hex>", "addrs": ["10.0.0.20"], "online": true}]}
 ```
 
-`fp` and `addrs` as in the pairing link: each PC is only reached pinned to its own `fp`. A PC
-without an `fp` runs Harbor before 0.13 and can't be reached safely: skip it. `host`/`ip` are for
-apps before 0.13.
-
-Each other PC that answers mints a token for the caller's pairing (the same one each time), so a
-phone paired once can talk to any of them (three-factor pairings: only through
-`POST /v1/hubs` with each PC's secret, see [Three factors](#the-other-pcs-of-the-mesh)); `token` is null for a PC that is off (ask again later)
-or whose phone access is off (`phones: false`: it would drop the phone; forget it until it's on).
-Removing the phone in Settings › Phones on any PC removes its tokens on all of them.
+The PCs this hub shares chats with: its workspace's (also ones it hasn't reached yet, from the
+directory) and any paired by hand. Each is only reached pinned to its own `fp`; entries are `ip`,
+`ip:port` or `[ipv6]:port` (the port of the first, or its own). A PC without an `fp` runs Harbor
+before 0.13: skip it. `host`/`ip` are for apps before 0.13. The phone's Harbor token works on
+every PC of its workspace, so there are no tokens here (before 0.80 each entry had one, minted
+for the phone's pairing); the app adds these addresses to what the directory says (they're
+fresher on the local network). `phones: false`: that PC's phone access is off (it would drop the
+phone): skip it.
 
 Since 0.34 (optional, older hubs leave them out) each other PC also has `seen` (unix seconds of
 its last answer to this PC, 0: never) and, while `online` is false, `down`: `"harbor"` when its PC
@@ -1573,7 +1484,7 @@ after 3 s (8 s with a single address), so nothing waits longer than a long-poll 
 
 ### Failover
 
-The app keeps the hubs' addresses and tokens (encrypted, like the pairing) and sends every call to
+The app keeps the PCs' addresses (encrypted, with the account) and sends every call to
 the PC used last. When that PC can't be reached, or a call to it fails mid-way, the next one is
 tried; the one that answers is used from then on (shown as "via <name>"). Revisions are per hub:
 after a switch, start the long-poll over and reload. Only reads are retried at once; a write that
@@ -1586,8 +1497,8 @@ can: `POST /relay/v1/<peer fingerprint>/<port>` with an empty body, over that PC
 The answer is `HTTP/1.1 200 Connection established` and an empty line, and from then on the
 connection carries a raw byte stream to the peer; the caller runs a second TLS session inside
 it, pinned to the peer's key (the relay only sees ciphertext). Allowed: a PC on the relay's
-allowed list (any port of the peer: `harbor nc` uses it for ssh), or a paired phone with a
-session (only the peer's Harbor port). Only to a PC on the relay's allowed list, at the addresses
+allowed list (any port of the peer: `harbor nc` uses it for ssh), or a signed-in phone of the
+workspace (only the peer's Harbor port). Only to a PC on the relay's allowed list, at the addresses
 the relay knows for it, never through a second relay. `403` not allowed, `404` not a paired PC,
 `502` the relay can't reach it either. Idle streams close after 15 minutes.
 
@@ -1715,13 +1626,8 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
   `typing` and `viewing`.
-- `POST /mesh/v1/mint` `{group, name, fp}` → `{token}`: this PC's token for a phone paired on
-  another PC (`group`: the pairing's id; the same group always gets the same token), bound to the
-  phone's key `fp` at once. `410` once removed, `409` when the group's token has another key.
-  Three factors: also `secret` (this PC's own, hex), `presence` and `binding`; a token without a
-  secret takes them, one with another secret is `409`. From 0.34.1 also `nolock` (two factors,
-  `presence` empty) and `keys_at`: the same secret with newer `keys_at` takes the new factors.
-- `POST /mesh/v1/revoke` `{groups: […]}`: phones removed on another PC; their tokens here go too.
+- `POST /mesh/v1/mint` (before 0.80): minted phone tokens for pairings; gone, a 0.80 PC answers `404`.
+- `POST /mesh/v1/revoke` `{groups: […]}`: pairings (from before 0.80) removed on another PC; their tokens here go too.
 - `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk, owner, github, owner_suggested}` (`alive`: unix s of its last background ping, from 0.37.1; `owner`, `github` from 0.44, `owner_suggested` from 0.47, as in `hello`): where this PC saw the
   phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it
   serves. Each PC asks the others every 15 s: a phone that talks to another PC shows online

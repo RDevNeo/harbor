@@ -3,7 +3,7 @@
 //! came back, another PC of the mesh went offline.
 //!
 //! Every event becomes a [`Note`] in the hub's short list (a day, 200 at most). Phones take them
-//! with their background pings and long-polls (phoneauth::alive, `since`), even with the app
+//! with their background pings and long-polls (`POST /v1/alive`, `since`), even with the app
 //! closed, and show them as Android notifications. This PC shows its own as desktop
 //! notifications (notify-send), only while Harbor's window isn't in front.
 //!

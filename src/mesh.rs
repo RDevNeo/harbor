@@ -30,7 +30,11 @@
 //!   127.0.0.1, `HARBOR_MESH_PEERS=host:port,…` adds addresses to try, and
 //!   `HARBOR_MESH_ID`/`HARBOR_MESH_NAME` set this instance's identity.)
 //!
-//! Settings stay local to each PC and never travel. The wire format is in android/PROTOCOL.md.
+//! - **Workspaces (0.80).** The PCs of one workspace (account.rs) are on each other's lists
+//!   without pairing: the account service's directory gives their keys and addresses.
+//!
+//! Chats travel; settings follow the account instead (settingsync.rs). The wire format is in
+//! android/PROTOCOL.md.
 
 use crate::widgets::Tip as _;
 use crate::api::{self, Call, Reply, err, ok};
@@ -318,12 +322,13 @@ impl Shared {
         admit(self.node.lock().unwrap().as_ref(), n, &self.allowed.lock().unwrap())
     }
 
-    /// The allowed entry of a key.
+    /// The allowed entry of a key: a PC paired by hand, or one of this PC's workspace
+    /// (account.rs), which links without pairing.
     pub fn allowed_fp(&self, fp: &str) -> Option<Allowed> {
         if fp.is_empty() {
             return None;
         }
-        self.allowed.lock().unwrap().iter().find(|a| a.fp == fp).cloned()
+        self.allowed.lock().unwrap().iter().find(|a| a.fp == fp).cloned().or_else(|| crate::account::mesh_peers().into_iter().find(|a| a.fp == fp))
     }
 
     /// The allowed entry of a Tailscale node that already has a key on file (then plain is over).
@@ -922,10 +927,6 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
             let from = shared.name_of(&peer);
             crate::devices::receive(&from, req.query("kind").unwrap_or(""), req.query("name").unwrap_or("file"), r, req.len)
         }
-        ("POST", ["mesh", "v1", "mint"]) => {
-            let body = read_json(r, req.len);
-            mint(hub, &body)
-        }
         ("POST", ["mesh", "v1", "lease"]) => {
             let b = read_json(r, req.len);
             let Some(chat) = b["chat"].as_i64().filter(|c| !shared.foreign.lock().unwrap().contains(c)) else { return err(404, "no such chat") };
@@ -1152,60 +1153,6 @@ pub fn pair_join(shared: &Shared, addr: &str, code: &str, port: u16) -> Result<A
     Ok(a)
 }
 
-/// A peer asks for a token for a phone paired with it (`group`: the pairing both share).
-/// The same group always gets the same token here, so asking again changes nothing.
-fn mint(hub: &api::Hub, body: &Value) -> Reply {
-    let group = body["group"].as_str().unwrap_or("").trim();
-    if group.len() < 16 {
-        return err(400, "bad group");
-    }
-    if hub.mesh_revoked(group) {
-        return err(410, "this phone was removed");
-    }
-    let name: String = body["name"].as_str().unwrap_or("").chars().take(60).collect();
-    // The phone's key, as the PC it paired with has it: the token here is bound to it at once.
-    let fp = body["fp"].as_str().and_then(crate::tls::normalize_fp).unwrap_or_default();
-    // Three factors: this PC's own pairing secret (the phone derived it for this PC's key and
-    // sent it over its session with the asking PC) and the phone's presence key.
-    let secret = body["secret"].as_str().filter(|s| s.len() == 64 && crate::phoneauth::unhex(s).is_some()).unwrap_or("").to_string();
-    let presence = body["presence"].as_str().filter(|p| crate::phoneauth::unhex(p).is_some_and(|k| crate::phoneauth::p256_point(&k).is_some())).unwrap_or("").to_string();
-    let binding = body["binding"].as_bool().unwrap_or(false);
-    // A phone without a screen lock: two factors, confirmed so on the PC that asks.
-    let nolock = body["nolock"].as_bool().unwrap_or(false) && presence.is_empty();
-    let keys_at = body["keys_at"].as_i64().unwrap_or(0);
-    if (secret.is_empty() != (presence.is_empty() && !nolock)) || (!secret.is_empty() && fp.is_empty()) {
-        return err(400, "bad pairing secret");
-    }
-    let mut tokens = hub.tokens.lock().unwrap();
-    if let Some(t) = tokens.iter_mut().find(|t| t.group == group) {
-        if t.fp.is_empty() && !fp.is_empty() {
-            t.fp = fp.clone();
-            hub.tokens_dirty.store(true, Ordering::SeqCst);
-        } else if !fp.is_empty() && t.fp != fp {
-            return err(409, "this pairing belongs to another phone");
-        }
-        if !secret.is_empty() {
-            if !t.secured() {
-                (t.secret, t.presence, t.binding, t.nolock, t.keys_at) = (secret, presence, binding, nolock, keys_at);
-                hub.tokens_dirty.store(true, Ordering::SeqCst);
-            } else if t.secret != secret {
-                return err(409, "this pairing has other keys here");
-            } else if (t.presence != presence || t.nolock != nolock) && keys_at > t.keys_at {
-                // Its factors changed on the asking PC since (a screen lock set, or removed and
-                // the change confirmed there): the newest wins.
-                (t.presence, t.binding, t.nolock, t.keys_at) = (presence, binding, nolock, keys_at);
-                hub.auth3.drop_token(&t.token);
-                hub.tokens_dirty.store(true, Ordering::SeqCst);
-            }
-        }
-        return ok(json!({ "token": t.token }));
-    }
-    let Ok(token) = api::new_token() else { return err(500, "no randomness") };
-    tokens.push(api::Token { token: token.clone(), name, created: store::now(), group: group.to_string(), fp, secret, presence, binding, nolock, keys_at, ticket: false });
-    hub.tokens_dirty.store(true, Ordering::SeqCst);
-    ok(json!({ "token": token }))
-}
-
 /// A typing or viewing lease for a copy goes to its home PC (on a thread). False when the
 /// chat is this PC's own.
 #[allow(clippy::too_many_arguments)]
@@ -1257,66 +1204,33 @@ fn ips_and_port(addrs: &[String]) -> (Vec<String>, u16) {
     (out, port)
 }
 
-/// `GET /v1/hubs` for a phone: this PC and the mesh's others, with a token for the phone on
-/// each one that answers (minted there for the phone's pairing group, bound to the phone's
-/// key), and each PC's key and addresses. A three-factor pairing gets tokens only from
-/// `POST /v1/hubs`, which brings each PC's pairing secret (`secrets`: fingerprint → hex);
-/// a GET then lists the PCs with `provision: true` and no token.
-pub fn hubs(hub: &api::Hub, token: &str, secrets: Option<&serde_json::Map<String, Value>>) -> Value {
-    let (group, name, fp, three, presence, binding, nolock, keys_at) = hub
-        .tokens
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|t| t.token == token)
-        .map(|t| (t.group.clone(), t.name.clone(), t.fp.clone(), t.secured(), t.presence.clone(), t.binding, t.two(), t.keys_at))
-        .unwrap_or_default();
+/// `GET /v1/hubs` for a phone: this PC and the others it shares chats with (its workspace's
+/// and any paired by hand), with each one's key and addresses. A signed-in phone's Harbor token
+/// works on every PC of the workspace, so no tokens are handed out (before accounts each entry
+/// carried a token minted there).
+pub fn hubs(hub: &api::Hub) -> Value {
     let me = hub.mesh.me();
     let net = hub.net.lock().unwrap().clone();
     let port = *hub.port.lock().unwrap();
     let ip = net.legacy_ip();
-    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": ip, "ip": ip, "port": port, "fp": crate::tls::my_fp(), "addrs": net.addrs, "online": true, "phones": true, "token": token, "self": true })];
-    if hub.mesh.on.load(Ordering::Relaxed) && !group.is_empty() {
-        let peers: Vec<Peer> = hub.mesh.peers.lock().unwrap().values().cloned().collect();
-        // Asked all at once: a PC that's off costs one timeout, not one each.
-        let asks: Vec<_> = peers
-            .into_iter()
-            .map(|p| {
-                let secret = if three { secrets.and_then(|s| s.get(&p.fp)).and_then(|s| s.as_str()).filter(|s| s.len() == 64).map(String::from) } else { None };
-                let ask = !three || secret.is_some();
-                let mut body = json!({ "group": group, "name": name, "fp": fp });
-                if let Some(s) = secret {
-                    body["secret"] = json!(s);
-                    body["presence"] = json!(presence);
-                    body["binding"] = json!(binding);
-                    body["nolock"] = json!(nolock);
-                    body["keys_at"] = json!(keys_at);
-                }
-                let body = serde_json::to_vec(&body).unwrap_or_default();
-                std::thread::spawn(move || {
-                    // A PC with phone access off would drop the phone: no token for it.
-                    let tok = if ask && p.online && p.phones {
-                        http(&p.dest(), "POST", "/mesh/v1/mint", Some(("application/json", &body)), Duration::from_secs(6)).ok().filter(|(s, _)| *s == 200).and_then(|(_, v)| v["token"].as_str().map(String::from))
-                    } else {
-                        None
-                    };
-                    (p, tok)
-                })
-            })
-            .collect();
-        for a in asks {
-            let Ok((p, tok)) = a.join() else { continue };
-            let mut all = vec![p.addr.clone()];
-            all.extend(p.addrs.iter().filter(|a| **a != p.addr).cloned());
-            let (ips, port) = ips_and_port(&all);
-            let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.iter().find(|i| i.parse::<std::net::IpAddr>().is_ok())).cloned().unwrap_or_default();
-            let provision = three && tok.is_none() && p.online && p.phones;
-            let mut e = json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "token": tok, "provision": provision, "seen": p.seen });
-            if let Some(d) = hub.mesh.down_of(&p.id).filter(|_| !p.online) {
-                e["down"] = json!(d.slug());
-            }
-            out.push(e);
+    let mut out = vec![json!({ "id": me.id, "name": me.name, "host": ip, "ip": ip, "port": port, "fp": crate::tls::my_fp(), "addrs": net.addrs, "online": true, "phones": true, "self": true })];
+    let mut peers: Vec<Peer> = if hub.mesh.on.load(Ordering::Relaxed) { hub.mesh.peers.lock().unwrap().values().cloned().collect() } else { vec![] };
+    // The workspace's PCs this one hasn't reached yet: as the directory has them.
+    for a in crate::account::mesh_peers() {
+        if !peers.iter().any(|p| p.fp == a.fp) {
+            peers.push(Peer { id: peer_id(&a), name: a.name.clone(), addr: a.addrs.first().cloned().unwrap_or_default(), fp: a.fp.clone(), addrs: a.addrs.clone(), phones: true, ..Default::default() });
         }
+    }
+    for p in peers {
+        let mut all = vec![p.addr.clone()];
+        all.extend(p.addrs.iter().filter(|a| **a != p.addr).cloned());
+        let (ips, port) = ips_and_port(&all);
+        let ip = ips.iter().find(|i| i.parse().is_ok_and(crate::tls::tailnet_ip)).or(ips.iter().find(|i| i.parse::<std::net::IpAddr>().is_ok())).cloned().unwrap_or_default();
+        let mut e = json!({ "id": p.id, "name": p.name, "host": ip, "ip": ip, "port": port, "fp": p.fp, "addrs": ips, "online": p.online, "phones": p.phones, "seen": p.seen });
+        if let Some(d) = hub.mesh.down_of(&p.id).filter(|_| !p.online) {
+            e["down"] = json!(d.slug());
+        }
+        out.push(e);
     }
     json!({ "hubs": out })
 }
@@ -1389,7 +1303,13 @@ pub fn start(hub: Arc<api::Hub>, tx: Sender<crate::control::Incoming>, wake: imp
 /// The peers to follow now. Also turns `HARBOR_MESH_PEERS` addresses that aren't loopback into
 /// hints: each is asked for its key once in a while, and kept for that key if it's allowed.
 fn targets(shared: &Shared, port: u16, ts: Option<&Value>, probed: &mut HashMap<String, Instant>) -> Vec<Target> {
-    let allowed = shared.allowed.lock().unwrap().clone();
+    let mut allowed = shared.allowed.lock().unwrap().clone();
+    // The PCs of this PC's workspace are followed like paired ones.
+    for a in crate::account::mesh_peers() {
+        if !allowed.iter().any(|x| x.fp == a.fp) {
+            allowed.push(a);
+        }
+    }
     let mine = crate::tls::my_fp();
     let mut v: Vec<Target> = allowed.iter().filter(|a| !a.fp.is_empty() && a.fp != mine).map(|a| Target::Key(a.fp.clone())).collect();
     for a in std::env::var("HARBOR_MESH_PEERS").unwrap_or_default().split(',').map(str::trim).filter(|a| !a.is_empty()) {
@@ -1922,19 +1842,6 @@ impl App {
             api::start(self.api.hub.clone(), self.inc_tx.clone(), wake.clone());
             start(self.api.hub.clone(), self.inc_tx.clone(), wake);
             self.api_activated();
-        }
-    }
-
-    /// A phone removed here: its tokens on the other PCs go too (now on those that answer,
-    /// and on the others when they next say hello).
-    pub fn mesh_revoke(&mut self, group: &str) {
-        merge_revoked(&self.api.hub, &[group.to_string()]);
-        let body = serde_json::to_vec(&json!({ "groups": [group] })).unwrap_or_default();
-        for p in self.mesh_hosts().into_iter().filter(|p| p.online) {
-            let body = body.clone();
-            std::thread::spawn(move || {
-                let _ = http(&p.dest(), "POST", "/mesh/v1/revoke", Some(("application/json", &body)), Duration::from_secs(10));
-            });
         }
     }
 
