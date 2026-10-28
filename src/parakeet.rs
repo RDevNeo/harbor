@@ -400,8 +400,10 @@ mod in_process {
         cfg.decoding_method = Some("greedy_search".into());
         let rec = OfflineRecognizer::create(&cfg).ok_or("Couldn't load the Whisper model. Remove it in Settings › Voice and download it again.")?;
         let pcm: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
-        // Whisper reads 30 s at most: longer ones in pieces.
-        let pieces = if pcm.len() > 25 * crate::voice::RATE as usize { split(&pcm) } else { vec![pcm] };
+        // Whisper reads 30 s at most: longer ones in pieces. Detecting the language, it picks one per
+        // piece and translates the rest into it, so then each phrase (cut at pauses) is a piece:
+        // the speaker can switch languages between them.
+        let pieces = if lang == "auto" || pcm.len() > 25 * crate::voice::RATE as usize { split(&pcm) } else { vec![pcm] };
         let mut out: Vec<String> = vec![];
         for piece in pieces.iter().filter(|p| !p.is_empty()) {
             let stream = rec.create_stream();

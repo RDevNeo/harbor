@@ -586,9 +586,9 @@ public class Settings extends Base {
 
     private void voiceLang() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
-        for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "found from what you say" : "", true));
+        for (String[] l : Voice.LANGS) o.add(new Sheet.Option(l[0], l[1], "auto".equals(l[0]) ? "each phrase in the language you speak it" : "Whisper writes everything in it, translating the rest", true));
         Sheet.pick(this, "Dictation language", "The mic in the composer listens for it. The PC transcribes what you say, or this phone's offline model when the PC can't.", o, Voice.lang(this), l -> {
-            Ui.prefs(this).edit().putString("voice_lang", l).apply();
+            Ui.prefs(this).edit().putString("voice_lang2", l).apply();
             recreate();
         });
     }

@@ -27,6 +27,8 @@ const MAX_SECS: u64 = 600;
 const TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// (code whisper takes, label).
+/// "auto" detects it per phrase, so languages can be mixed; a fixed one makes Whisper write
+/// everything in it (translating the rest).
 pub const LANGS: &[(&str, &str)] = &[("auto", "Detect automatically"), ("en", "English"), ("pt", "Portuguese")];
 
 /// (name, what it's like, download size in bytes): Whisper's multilingual models (int8).
@@ -537,7 +539,9 @@ pub struct State {
 impl App {
     /// The voice settings from the store, mirrored for the API threads (called at start).
     pub fn voice_load(&self) {
-        *CONFIG.lock().unwrap() = (self.store.get("voice_lang").unwrap_or_default(), self.store.get("voice_model").unwrap_or_default());
+        // `voice_lang2` (0.74.2): a language picked before then forced Whisper into it (translating
+        // the other one spoken), so every PC starts again from Detect.
+        *CONFIG.lock().unwrap() = (self.store.get("voice_lang2").unwrap_or_default(), self.store.get("voice_model").unwrap_or_default());
         let keep = self.store.get("voice_keep_min").and_then(|v| v.parse().ok()).unwrap_or(5);
         let engine = self.store.get("voice_engine").unwrap_or_default();
         crate::dictate::set(Some(&engine), Some(self.store.get("voice_cleanup").as_deref() != Some("0")), Some(keep), false);
@@ -545,7 +549,7 @@ impl App {
 
     pub fn voice_set(&self, lang: Option<&str>, model: Option<&str>) {
         if let Some(l) = lang {
-            self.store.set("voice_lang", l);
+            self.store.set("voice_lang2", l);
         }
         if let Some(m) = model {
             self.store.set("voice_model", m);
@@ -872,7 +876,7 @@ impl App {
         ui.add_space(12.0);
         section(ui, "Language");
         rows(ui, |ui| {
-            w::setting_row(ui, "Spoken language", "Parakeet detects it by itself; for Whisper, picking yours is a little faster and surer.", |ui| {
+            w::setting_row(ui, "Spoken language", "Detect: each phrase in the language you spoke it, so you can mix languages. Picking one makes Whisper write everything in it, translating the rest.", |ui| {
                 let labels: Vec<&str> = LANGS.iter().map(|(code, label)| if *code == "auto" { "Detect" } else { *label }).collect();
                 let cur = LANGS.iter().position(|l| l.0 == lang).unwrap_or(0);
                 if let Some(i) = w::tabs(ui, &labels, cur) {

@@ -287,7 +287,8 @@ Rewrite it as the speaker meant it:
 - Remove filler words (um, uh, like, you know, né, tipo, então when it's filler), stutters and false starts.
 - Apply spoken self-corrections: when the speaker corrects themselves (\"no wait\", \"I mean\", \"actually\", \"quer dizer\", \"não, espera\"), keep only the corrected version.
 - Fix punctuation, capitalisation and obvious transcription slips; keep paragraph breaks the speaker asked for.
-- Keep everything else the speaker said, in their words: hedges and opinions (\"I think\", \"maybe\") are content, not filler. Keep their language, tone and meaning. Never translate, summarise, shorten, add content, or answer questions in the text.
+- Keep everything else the speaker said, in their words: hedges and opinions (\"I think\", \"maybe\") are content, not filler. Keep their tone and meaning. Never translate, summarise, shorten, add content, or answer questions in the text.
+- The speaker may switch languages (for example Portuguese and English) between sentences or inside one. Keep every word in the language it was spoken, even when most of the text is in another language: never translate any part, and never \"fix\" a word into the other language.
 
 Reply with only the cleaned text, nothing else.";
 
@@ -305,15 +306,41 @@ pub fn cleanup_text(text: &str) -> String {
     }
 }
 
-/// A cleanup only removes and fixes: an empty answer, or one much longer than the input, is not one.
+/// A cleanup only removes and fixes: an empty answer, one much longer than the input, or one with
+/// many words the speaker didn't say (a translation of what they said in another language) is not one.
 pub fn plausible(raw: &str, clean: &str) -> bool {
     let c = clean.trim();
-    !c.is_empty() && c.chars().count() <= raw.chars().count() * 6 / 5 + 20 && !c.starts_with("<dictation>")
+    !c.is_empty() && c.chars().count() <= raw.chars().count() * 6 / 5 + 20 && !c.starts_with("<dictation>") && new_words(raw, c) <= (words(c).len() / 6).max(1)
+}
+
+/// Lowercase words, without punctuation.
+fn words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+}
+
+/// How many of the cleaned text's words aren't in the raw transcript.
+fn new_words(raw: &str, clean: &str) -> usize {
+    let said: std::collections::HashSet<String> = words(raw).into_iter().collect();
+    words(clean).iter().filter(|w| !said.contains(*w)).count()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_keeps_mixed_languages() {
+        let raw = "é, tipo, eu quero que você faça o deploy and then check the logs on the server";
+        // Fillers out, punctuation fixed: a cleanup.
+        assert!(plausible(raw, "Eu quero que você faça o deploy and then check the logs on the server."));
+        // The English half translated into Portuguese: not one.
+        assert!(!plausible(raw, "Eu quero que você faça o deploy e depois verifique os registros no servidor."));
+        // Or the other way round.
+        assert!(!plausible(raw, "I want you to do the deploy and then check the logs on the server."));
+        // One slip fixed is fine.
+        assert!(plausible("we should merge it their now", "We should merge it there now."));
+        assert!(CLEANUP_SYSTEM.contains("Keep every word in the language it was spoken"));
+    }
 
     #[test]
     fn routes_to_most_free_memory_local_on_near_ties() {
@@ -447,6 +474,22 @@ mod tests {
         assert!(clean.to_lowercase().contains("monday") && !clean.to_lowercase().contains("friday") && !clean.contains(" um "), "{clean}");
         set_account(Some(("/nonexistent/claude".into(), vec![])));
         assert_eq!(cleanup_text(raw), raw);
+        set_account(None);
+    }
+
+    #[test]
+    #[ignore = "calls Claude through this PC's account"]
+    fn cleanup_with_claude_keeps_mixed_languages() {
+        set_account(Some(("claude".into(), vec![])));
+        for raw in [
+            "então eu acho que a gente devia tipo mudar o layout da tela and then make sure the tests still pass before we ship it",
+            "ok so the build is broken again né e eu não sei por que o teste de integração falha só no CI",
+        ] {
+            let clean = cleanup_text(raw);
+            eprintln!("{raw}\n→ {clean}");
+            assert_ne!(clean, raw);
+            assert_eq!(new_words(raw, &clean), 0, "{clean}");
+        }
         set_account(None);
     }
 

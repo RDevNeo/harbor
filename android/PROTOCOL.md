@@ -926,7 +926,10 @@ is the recording as a WAV file (16-bit PCM, mono, 16 kHz; at most 10 minutes), `
 audio/wav`. The PC transcribes it with its speech model from Settings › Voice (see below) → `{"text":
 "…"}` (it may be empty: nothing was said). `409 {"error": "…"}` says why it can't, to show as is:
 since 0.53 whisper.cpp is built into the hub, and with no model yet the first recording starts its
-download and gets `409` with the progress ("try again when it's done"). `lang` missing or empty: the PC's own setting. `GET /v1/state`
+download and gets `409` with the progress ("try again when it's done"). `lang` missing or empty: the PC's own setting.
+`auto` (the default on both sides) detects the language per phrase, so a speaker can switch
+languages; a fixed `lang` makes Whisper write everything in that language (translating the rest),
+so phones send it only when the user picked one (since 0.74.2 the setting starts again from Detect). `GET /v1/state`
 says beforehand (optional, 0.38): `"voice": {"transcribe": true|false, "why": "…"|null, "lang":
 "auto"}`. Hubs before 0.38 answer `404`.
 
@@ -964,7 +967,8 @@ that transcribed). The `409` with the model download's progress stays.
 
 Body `{"text": "…"}` → `{"text": "…"}`. Cleans up dictated text the way the "Clean up dictation"
 setting does (filler words and false starts removed, punctuation and capitals fixed, spoken
-self-corrections applied, same language, nothing added). On any failure or timeout (~8 s) it
+self-corrections applied, every word kept in the language it was spoken, nothing added or
+translated; an answer with many words the transcript doesn't have is dropped for the input). On any failure or timeout (~8 s) it
 returns the input unchanged, still `200`. The phone sends each VAD phrase to `/v1/transcribe`
 with `cleanup=0` for live text, then the whole text here when dictation stops.
 

@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class Voice {
     static final int PERMISSION = 44;
     /** (code, label): the language setting (Settings › Dictation), kept on this phone. */
-    static final String[][] LANGS = {{"auto", "The phone's language"}, {"en", "English"}, {"pt", "Portuguese"}};
+    static final String[][] LANGS = {{"auto", "Detect, mix languages"}, {"en", "English"}, {"pt", "Portuguese"}};
     private static final String TAG = Asr.TAG;
     /** Listening ends after this long without speech. */
     private static final long IDLE_MS = 60_000;
@@ -115,7 +115,9 @@ final class Voice {
 
     boolean active() { return recording || busy; }
 
-    static String lang(Context c) { return Ui.prefs(c).getString("voice_lang", "auto"); }
+    /** `voice_lang2` (0.74.2): a language picked before then forced Whisper into it (translating
+     *  the other one spoken), so every phone starts again from Detect. */
+    static String lang(Context c) { return Ui.prefs(c).getString("voice_lang2", "auto"); }
 
     static String langLabel(Context c) {
         String l = lang(c);

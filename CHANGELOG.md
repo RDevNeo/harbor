@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Dictation in two languages (desktop and phone): switching from Portuguese to English (or back)
+  mid-dictation no longer turns what you said in one into the other. The cleanup keeps every word
+  in the language it was spoken and is dropped when it translates anything; Whisper detects the
+  language per phrase instead of once per recording. "Dictation language" / "Spoken language"
+  start again from Detect (a picked language makes Whisper write everything in it).
+
 ## [0.74.1] - 2026-10-28
 
 ### Fixed
