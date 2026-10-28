@@ -1035,7 +1035,7 @@ public class Chat extends Base {
                     fromView.setGravity(Gravity.END);
                     bubble.addView(fromView, Ui.margins(Ui.fill(), 0, 2, 0, 0));
                 }
-                bubble.setOnLongClickListener(v -> { itemMenu(it, text, false); return true; });
+                bubble.setOnLongClickListener(v -> { itemMenu(it, text); return true; });
                 // Hug the content like the desktop: as wide as the longest line (or the image
                 // strip), at most maxBubble(); a wrap_content bubble cut lines short next to images.
                 android.text.TextPaint tp = new android.text.TextPaint();
@@ -1055,8 +1055,7 @@ public class Chat extends Base {
             }
             case "text": {
                 String md = it.optString("markdown");
-                boolean forkable = it.optBoolean("forkable");
-                View.OnLongClickListener lp = v -> { itemMenu(it, md, forkable); return true; };
+                View.OnLongClickListener lp = v -> { itemMenu(it, md); return true; };
                 Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info));
                 View body = r.text(it);
                 body.setOnLongClickListener(lp);
@@ -1136,7 +1135,7 @@ public class Chat extends Base {
                 card.addView(head);
                 String text = it.optString("text");
                 card.addView(Ui.text(this, clip(text), 15, Ui.FG), Ui.margins(Ui.fill(), 0, 6, 0, 0));
-                card.setOnLongClickListener(v -> { Ui.copy(this, text); return true; });
+                card.setOnLongClickListener(v -> { if (it.has("actions")) itemMenu(it, text); else Ui.copy(this, text); return true; });
                 wrap.addView(card, Ui.fill());
                 break;
             }
@@ -1152,6 +1151,9 @@ public class Chat extends Base {
             default:
                 break; // a card this version doesn't know
         }
+        // A tool call's row or a notice's pill: a long-press mentions it (the desktop's "@").
+        if ((kind.equals("tool") || kind.equals("notice")) && it.has("actions") && wrap.getChildCount() > 0)
+            wrap.getChildAt(0).setOnLongClickListener(v -> { itemMenu(it, ""); return true; });
         // "Conversation fork · Open fork" right after this card, once per fork.
         JSONArray forks = it.optJSONArray("forks_after");
         if (forks != null) for (int i = 0; i < forks.length(); i++) {
@@ -1350,14 +1352,81 @@ public class Chat extends Base {
         return s.length() > 20000 ? s.substring(0, 20000) + "\n… (" + (s.length() - 20000) + " more characters)" : s;
     }
 
-    private void itemMenu(JSONObject it, String text, boolean canFork) {
-        List<String> opts = new ArrayList<>();
-        opts.add("Copy");
-        if (canFork) opts.add("Fork from here"); // the hub's "forkable", the desktop's fork button
-        Ui.dialog(this).setItems(opts.toArray(new String[0]), (d, w) -> {
-            if (w == 0) Ui.copy(this, text);
-            else fork(it.optInt("seq"));
-        }).show();
+    /** A long-press: the card's `actions` from the hub (the desktop's hover bar, in its order)
+     *  in a bottom sheet, the message's time on top. A hub before 0.69 sends none: Copy, and
+     *  Fork when the reply is `forkable`. Actions this version doesn't know are left out. */
+    private void itemMenu(JSONObject it, String text) {
+        List<String> ids = new ArrayList<>();
+        JSONArray acts = it.optJSONArray("actions");
+        if (acts != null) for (int i = 0; i < acts.length(); i++) ids.add(acts.optString(i));
+        else {
+            if (!text.isEmpty()) ids.add("copy");
+            if (it.optBoolean("forkable")) ids.add("fork");
+        }
+        // The phone can't select a card's text, so text there can always be copied.
+        if (!text.isEmpty() && !ids.contains("copy")) ids.add(0, "copy");
+        String time = it.optString("time", "");
+        long at = it.optLong("at");
+        if (time.isEmpty() && at > 0) time = android.text.format.DateFormat.getTimeFormat(this).format(new java.util.Date(at * 1000));
+        int seq = it.optInt("seq");
+        Sheet s = new Sheet(this, time.isEmpty() ? "Message" : time);
+        LinearLayout c = s.card();
+        int n = 0;
+        for (String id : ids) {
+            Object glyph;
+            String label;
+            Runnable on;
+            switch (id) {
+                case "copy": glyph = Ui.I_COPY; label = "Copy"; on = () -> Ui.copy(this, text); break;
+                case "quote": glyph = Ui.I_LINK; label = "Quote in reply"; on = () -> quote(text); break;
+                case "fork": glyph = Ui.I_FORK; label = "Fork from this response"; on = () -> fork(seq); break;
+                case "mention": glyph = atSign(); label = "Mention in your next message"; on = () -> mention(seq); break;
+                default: continue;
+            }
+            if (n++ > 0) c.addView(Ui.gap(this));
+            c.addView(Ui.cardRow(this, glyph, label, null, Ui.FG, v -> { s.dismiss(); on.run(); }), Ui.fill());
+        }
+        if (n > 0) s.show();
+    }
+
+    /** The desktop's mention button is a plain "@" (Lucide has no glyph for it in our subset). */
+    private View atSign() {
+        TextView t = Ui.bold(this, "@", 20, Ui.FG);
+        t.setGravity(Gravity.CENTER);
+        t.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(26), Ui.dp(26)));
+        return t;
+    }
+
+    /** Quote in reply, as the desktop does it: the message as "> " lines on top of the draft. */
+    private void quote(String text) {
+        StringBuilder q = new StringBuilder();
+        for (String l : text.split("\n", -1)) q.append("> ").append(l).append('\n');
+        String draft = q + "\n" + composer.getText().toString();
+        composer.setText(draft);
+        composer.setSelection(draft.length());
+        focusComposer();
+    }
+
+    /** Mention in your next message: the hub makes the same mention the desktop's composer
+     *  gets (`GET …/mention`), and it joins the draft's chips (once, as on the desktop). */
+    private void mention(int seq) {
+        Ui.bg(this, () -> hub.call("GET", "/v1/chats/" + chatId + "/mention?seq=" + seq, null), r -> {
+            JSONObject m = r.optJSONObject("mention");
+            if (m == null) return;
+            for (int i = 0; i < mentions.length(); i++) {
+                JSONObject x = mentions.optJSONObject(i);
+                if (x != null && x.optInt("item", -1) == m.optInt("item") && !x.optBoolean("excerpt")) { focusComposer(); return; }
+            }
+            mentions.put(m);
+            drawMentions();
+            typed();
+            focusComposer();
+        });
+    }
+
+    private void focusComposer() {
+        composer.requestFocus();
+        ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(composer, 0);
     }
 
     // ---- actions ----

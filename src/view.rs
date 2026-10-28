@@ -44,6 +44,50 @@ pub enum Card<'a> {
     Media { input: &'a str, caption: String, pending: bool },
 }
 
+/// What a message offers: the desktop's hover bar, the phone's long-press sheet (served as
+/// the card's `actions`, so both list the same ones in the same order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Copy,
+    Quote,
+    Fork,
+    Mention,
+}
+
+impl Action {
+    /// Its name on the wire (PROTOCOL.md `actions`).
+    pub fn id(self) -> &'static str {
+        match self {
+            Action::Copy => "copy",
+            Action::Quote => "quote",
+            Action::Fork => "fork",
+            Action::Mention => "mention",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Action::Copy => "Copy",
+            Action::Quote => "Quote in reply",
+            Action::Fork => "Fork from this response",
+            Action::Mention => "Mention in your next message",
+        }
+    }
+}
+
+/// A card's actions, in the hover bar's order: your messages Copy, Quote, Mention; a reply
+/// Copy, Fork (once forkable), Mention; tool calls, notices and messages only Mention.
+pub fn actions(card: &Card) -> Vec<Action> {
+    use Action::*;
+    match card {
+        Card::User { .. } => vec![Copy, Quote, Mention],
+        Card::Text { forkable: true, .. } => vec![Copy, Fork, Mention],
+        Card::Text { .. } => vec![Copy, Mention],
+        Card::Tool { .. } | Card::Notice { .. } | Card::Message { .. } => vec![Mention],
+        _ => vec![],
+    }
+}
+
 /// The tool that puts an image or video in the reply.
 pub const SHOW_MEDIA: &str = "mcp__harbor__show_media";
 

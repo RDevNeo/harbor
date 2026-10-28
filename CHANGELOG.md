@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Phone: long-pressing a message offers what the desktop's hover bar does, in a bottom sheet with
+  the message's time on top: Copy, Quote in reply (your messages), Fork from this response (a
+  finished reply) and Mention in your next message, which adds the same mention chip the desktop's
+  composer gets. Tool calls, notices and messages can be mentioned with a long-press too. The hub
+  serves each card's actions, so the desktop and the phone always offer the same ones (#89).
+
 ## [0.68.0] - 2026-10-28
 
 ### Added

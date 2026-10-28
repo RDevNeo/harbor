@@ -483,6 +483,17 @@ plays from a local copy (download it with the token, then a player); a media ite
 load shows a small "can't load" tile that retries on tap. `blocks` leave out the markdown images
 that `media` draws.
 
+Optional on every card the desktop gives a hover bar or an "@" button (0.69): `actions`, what
+that bar offers, in its order, and `time` ("11:40 AM", the hub's clock, on cards with an `at`).
+A long-press opens them in a bottom sheet with `time` on top: `user` sends `["copy", "quote",
+"mention"]`, `text` `["copy", "mention"]` (`["copy", "fork", "mention"]` when `forkable`), `tool`,
+`notice` and `message` `["mention"]`. `copy` copies the text, `quote` puts the message as `> `
+lines on top of the composer's draft (then a blank line, then what was there), `fork` is
+`POST …/fork` with the card's `seq`, `mention` adds `GET /v1/chats/{id}/mention?seq=N`'s
+`mention` to the draft's `mentions` (once per message) and sends the draft. Leave out actions
+you don't know; without `actions` (an older hub) offer Copy, and Fork when `forkable`. The phone
+can't select a card's text, so it may add Copy to cards with text.
+
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 
@@ -800,6 +811,13 @@ worktree stays there.
 
 `{"seq": 7}` → `{"id": 14}`. `seq` must be a `text` item that is the last reply of a finished
 turn (`409` otherwise).
+
+### `GET /v1/chats/{id}/mention?seq=N` (0.69)
+
+The mention the desktop's composer gets for card `seq` (its "@" or Mention in your next
+message): `{"mention": {item, from, at, text, len}}`, ready to append to the shared draft's
+`mentions` as is. `404` when that card can't be mentioned (no `mention` among its `actions`).
+Answered by the PC asked, also for another PC's chat (it holds a copy of the transcript).
 
 ### `POST /v1/chats/{id}/move`
 

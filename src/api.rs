@@ -2390,6 +2390,14 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
         v["media"] = json!(media);
     }
     v["kind"] = json!(crate::view::kind(&s.card));
+    // What a long-press offers (the desktop's hover bar), and the time it shows.
+    let actions = crate::view::actions(&s.card);
+    if !actions.is_empty() {
+        v["actions"] = json!(actions.iter().map(|a| a.id()).collect::<Vec<_>>());
+    }
+    if let Some(at) = v["at"].as_i64().filter(|a| *a > 0) {
+        v["time"] = json!(crate::team::clock(at));
+    }
     v["seq"] = json!(s.seq);
     v["rev"] = json!(rev);
     if !s.forks_after.is_empty() {
@@ -2826,6 +2834,14 @@ impl App {
             ("GET", ["v1", "state"]) => ok(self.api_state(ctx, &device_id(&call.token))),
             ("GET", ["v1", "chats", c, "items"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_items(c, call.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
+                None => err(404, "no such chat"),
+            },
+            // A long-press's Mention: what the composer's draft gets for item `seq` (mentions.rs).
+            ("GET", ["v1", "chats", c, "mention"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) => match call.query("seq").and_then(|s| s.parse().ok()).and_then(|seq| self.api_mention(c, seq)) {
+                    Some(m) => ok(json!({ "mention": m })),
+                    None => err(404, "that message can't be mentioned"),
+                },
                 None => err(404, "no such chat"),
             },
             ("GET", ["v1", "chats", c, "team"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
@@ -3750,6 +3766,16 @@ impl App {
         ok(json!({ "id": id, "gid": gid }))
     }
 
+    fn api_mention(&mut self, chat: i64, seq: usize) -> Option<crate::mentions::Mention> {
+        if !self.transcripts.contains_key(&chat) {
+            let items = self.store.items(chat);
+            self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
+        }
+        let items = &self.transcripts[&chat].items;
+        let shown = crate::view::project(items, false, &[]);
+        if crate::view::actions(&shown.get(seq)?.card).contains(&crate::view::Action::Mention) { self.mention_of(chat, seq) } else { None }
+    }
+
     fn api_fork(&mut self, chat: i64, body: &Value) -> Reply {
         let Some(seq) = body["seq"].as_u64().map(|s| s as usize) else { return err(400, "seq is required") };
         if !self.transcripts.contains_key(&chat) {
@@ -4519,11 +4545,14 @@ mod tests {
         assert_eq!((v["kind"].as_str(), v["seq"].as_u64(), v["rev"].as_u64()), (Some("user"), Some(0), Some(9)));
         assert_eq!(v["files"], json!(["notes.txt"]));
         assert_eq!(v["images"], json!([{ "name": "photo.jpg", "url": "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512" }]));
+        assert_eq!((v["actions"].clone(), v["time"].is_string()), (json!(["copy", "quote", "mention"]), true));
         let v = one(Item::Tool { id: "t".into(), name: "mcp__github__get_pr".into(), summary: "ls".into(), input: "x".repeat(CLIP * 2), result: None, is_error: false });
         assert_eq!((v["label"].as_str(), v["done"].as_bool()), (Some("github · get_pr"), Some(false)));
         assert!(v["input"].as_str().unwrap().len() < CLIP + 100);
         let v = one(Item::Text { text: "# H".into(), at: 0 });
         assert_eq!((v["markdown"].as_str(), v["blocks"][0]["type"].as_str()), (Some("# H"), Some("heading")));
+        // No time to show; no turn end after it yet, so no fork.
+        assert_eq!((v["actions"].clone(), v.get("time")), (json!(["copy", "mention"]), None));
         let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() });
         // A turn's end: no usage line in the chat.
         assert_eq!((v["kind"].as_str(), v.get("text")), (Some("hidden"), None));
@@ -4567,6 +4596,9 @@ mod tests {
             assert_eq!(p["kind"].as_str(), Some(kind(&d.card)));
             assert_eq!(p["seq"].as_u64(), Some(d.seq as u64));
             assert_eq!(p["forks_after"].as_array().map(|a| a.len()).unwrap_or(0), d.forks_after.len());
+            // The long-press sheet offers what the hover bar does.
+            let acts: Vec<&str> = crate::view::actions(&d.card).iter().map(|a| a.id()).collect();
+            assert_eq!(p["actions"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>()).unwrap_or_default(), acts);
             match &d.card {
                 Card::Text { text, forkable, .. } => assert_eq!((p["markdown"].as_str(), p["forkable"].as_bool()), (Some(*text), Some(*forkable))),
                 Card::Tool { label, .. } => assert_eq!(p["label"].as_str(), Some(label.as_str())),

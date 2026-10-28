@@ -544,15 +544,12 @@ impl App {
                             .rect
                     });
                     // Only the bubble's own width counts as "hovering the message".
-                    if let Some(a) = hover_actions(ui, bubble.inner, true, *at, &[(ic::COPY, "Copy"), (ic::LINK, "Quote in reply"), ("@", "Mention in your next message")]) {
-                        action = Some(match a {
-                            0 => MsgAction::Copy(text.to_string()),
-                            1 => MsgAction::Quote(text.to_string()),
-                            _ => MsgAction::Mention(i),
-                        });
+                    let acts = crate::view::actions(&shown.card);
+                    if let Some(a) = hover_actions(ui, bubble.inner, true, *at, &buttons_of(&acts)) {
+                        action = Some(msg_action(acts[a], text, i));
                     }
                 }
-                Card::Text { text, at, forkable } => {
+                Card::Text { text, at, .. } => {
                     let stripped = crate::media::strip_refs(text);
                     let md = linkify(&stripped);
                     let dir = if crate::commits::maybe(&md) { commit_dir.get_or_insert_with(|| self.commit_dir(id)).clone() } else { None };
@@ -594,16 +591,9 @@ impl App {
                         .rect;
                     let ctx = ui.ctx().clone();
                     media_view(ui, &crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd)), 0.0);
-                    let mut buttons = vec![(ic::COPY, "Copy"), ("@", "Mention in your next message")];
-                    if *forkable {
-                        buttons.insert(1, (ic::FORK, "Fork from this response"));
-                    }
-                    if let Some(a) = hover_actions(ui, r, false, *at, &buttons) {
-                        action = Some(match buttons[a].0 {
-                            ic::COPY => MsgAction::Copy(text.to_string()),
-                            ic::FORK => MsgAction::Fork(i),
-                            _ => MsgAction::Mention(i),
-                        });
+                    let acts = crate::view::actions(&shown.card);
+                    if let Some(a) = hover_actions(ui, r, false, *at, &buttons_of(&acts)) {
+                        action = Some(msg_action(acts[a], text, i));
                     }
                 }
                 Card::Thinking { text } => {
@@ -1730,6 +1720,33 @@ fn mention_selection_button(ui: &mut Ui, item: Rect, at: Vec2) -> bool {
         .constrain_to(clip)
         .show(ui.ctx(), |ui| b.show(ui).on_hover_cursor(egui::CursorIcon::PointingHand));
     shown.inner.contains_pointer() && ui.input(|x| x.pointer.primary_pressed())
+}
+
+/// The hover bar's buttons for a card's actions (view.rs): icon and tooltip.
+fn buttons_of(acts: &[crate::view::Action]) -> Vec<(&'static str, &'static str)> {
+    use crate::view::Action;
+    acts.iter()
+        .map(|a| {
+            let icon = match a {
+                Action::Copy => ic::COPY,
+                Action::Quote => ic::LINK,
+                Action::Fork => ic::FORK,
+                Action::Mention => "@",
+            };
+            (icon, a.label())
+        })
+        .collect()
+}
+
+/// What a hover-bar button does to message `i` (its text: `text`).
+fn msg_action(a: crate::view::Action, text: &str, i: usize) -> MsgAction {
+    use crate::view::Action;
+    match a {
+        Action::Copy => MsgAction::Copy(text.to_string()),
+        Action::Quote => MsgAction::Quote(text.to_string()),
+        Action::Fork => MsgAction::Fork(i),
+        Action::Mention => MsgAction::Mention(i),
+    }
 }
 
 fn hover_actions(ui: &mut Ui, msg: Rect, right: bool, at: i64, buttons: &[(&str, &str)]) -> Option<usize> {
