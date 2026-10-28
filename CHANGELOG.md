@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-10-28
+
 ### Added
 - Chat links: every chat, sub-agent chats included, has a link `harbor://chat/<id>` that agents
   can put in a reply. The desktop shows it as the chat's title and opens the chat on a click; the
@@ -1517,7 +1519,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.69.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.70.0...HEAD
+[0.70.0]: https://github.com/RDevNeo/harbor/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/RDevNeo/harbor/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/RDevNeo/harbor/compare/v0.67.2...v0.68.0
 [0.67.2]: https://github.com/RDevNeo/harbor/compare/v0.67.1...v0.67.2
