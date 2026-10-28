@@ -67,6 +67,8 @@ mod recap;
 mod reload;
 mod remote;
 mod remoteui;
+mod secrets;
+mod secretsui;
 mod sidebar;
 mod single;
 mod slash;

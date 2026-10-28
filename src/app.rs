@@ -56,6 +56,7 @@ pub enum Tab {
     Limits,
     Integrations,
     Webhooks,
+    Secrets,
     Devices,
     Phones,
     Voice,
@@ -211,6 +212,8 @@ pub struct App {
     pub pending: HashMap<i64, Vec<String>>,
     /// Shared projects being cloned here, and the turns waiting for them (clone.rs).
     pub clones: crate::clone::State,
+    /// Settings › Secrets and the agents' asks waiting for the user (secrets.rs).
+    pub secrets: crate::secrets::State,
     pub auto_turns: HashMap<i64, VecDeque<Instant>>,
     /// Projects whose automatic turns hit the hourly limit.
     pub paused: HashSet<i64>,
@@ -391,6 +394,7 @@ impl App {
             profile: Default::default(),
             pending: HashMap::new(),
             clones: Default::default(),
+            secrets: Default::default(),
             auto_turns: HashMap::new(),
             paused: HashSet::new(),
             timers: vec![],
@@ -448,6 +452,8 @@ impl App {
             }
         }
         app.timers = app.store.timers();
+        app.secrets.asks = crate::secrets::load_asks(&app.store);
+        app.secrets.grants = crate::secrets::load_grants(&app.store);
         app.webhooks = app.store.webhooks();
         app.sync_tokens();
         app.order_by_activity = app.store.get("order_by_activity").as_deref() == Some("1");
@@ -1590,6 +1596,9 @@ impl App {
             }
         }
         if let Some(next) = self.fire_timers(ctx) {
+            ctx.request_repaint_after(next);
+        }
+        if let Some(next) = self.expire_grants(ctx) {
             ctx.request_repaint_after(next);
         }
         if let Some(next) = self.fire_limit_timers(ctx) {

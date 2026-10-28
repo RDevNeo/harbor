@@ -5,6 +5,40 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Secrets (Settings › Secrets): keys such as `BOAT_API_KEY` that agents use without seeing
+  them. Add one as a name and a value; the list shows only names, and a saved value can be
+  replaced or deleted, never shown again. Values stay on this PC, in an owner-only file
+  outside Harbor's database: never in a chat, never synced to other PCs or phones.
+- Every use of a key needs your approval. An agent asks with `request_secret_access(names,
+  reason, minutes)`; a card in the chat says who wants which keys, why and for how long
+  (15 minutes when it doesn't say, a day at most), and you Allow it as asked or for less (5
+  min, 1 h), or Deny. What's allowed shows under the chat and in
+  Settings › Secrets › Allowed now ("BOAT_API_KEY allowed · 12m left"), each with Revoke.
+  The agent is told when it's allowed, denied, revoked or over.
+- `run_with_secrets(command, secrets)` runs a command on this PC with allowed keys in its
+  environment (never the agent's own) and returns its output with their values hidden, as
+  they are and in common encodings (base64, URL, hex, JSON); without an approval it's
+  refused. Hiding them stops accidental leaks only: a command made to change a key can
+  still get it out, and Settings says so. `list_secrets` gives the names, what each is
+  for and what the chat may use now.
+- Agents ask for keys you don't have yet with `request_secret(name, reason, how_to_get)`:
+  the card says where to get it (links open in the browser) and has a field for it (shown
+  as dots, never in the transcript). Saving it can also let the agent use it right away,
+  for the time it asked or less; "Save only, no access" keeps it without allowing any use.
+  Your phone gets a notification.
+- Keys in .env files: an agent may ask for a key to go into the project's `.env`,
+  `.env.local`, `.env.production`… (`env_file` on request_secret, or
+  `write_secret_to_env(name, file)` for a saved one). You pick Harbor, the file or both;
+  Harbor writes the `VAR=value` line itself, quoted when needed, replacing the old one and
+  keeping the rest, in a new file only you can read. Only files named `.env` or `.env.*`
+  inside the chat's project (no symlinks out of it). The card warns when git doesn't ignore
+  the file and adds it to .gitignore if you leave that on. A .env file is plain text the
+  agent's own tools can read: writing one is your call.
+- The agents' instructions say to ask for keys this way, never in the chat.
+- Paste a key into the composer (`sk-`, `ghp_`, `github_pat_`, `boat_`, `AKIA`…) and a line
+  over it offers to save it as a secret: the message then names the secret instead.
+
 ### Changed
 - The running-agent strip over a lead's composer is quieter: each agent shows its logo, name and
   a soft pulsing green dot while it works; tokens, cost and what it's doing left the row (the

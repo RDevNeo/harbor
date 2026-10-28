@@ -20,11 +20,16 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 - **Projects → chats** in the sidebar, search, "Settled" section for finished chats.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks (public over
   HTTPS with a Let's Encrypt certificate Harbor gets itself, `/hooks/<token>` only).
+- **Secrets**: API keys agents use by name without seeing them (Settings › Secrets, or an agent
+  asks with `request_secret`, saying where to get one). Each use needs your approval for a time
+  you pick; `run_with_secrets` runs a command with them set and hides their values in its output.
+  They stay on this PC (`secrets.json`, 0600), never in chats or the mesh. On request Harbor also
+  writes one to the project's `.env` file, which is plain text the agent's own tools can read.
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
 - **Side panes**: a browser (Servo, in its own `harbor-browser` process from `browser/`; no Chromium, Electron or system WebView), terminals, and Devices (your paired
   PCs and phones: send them text, images and files).
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
-  integrations, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
+  integrations, secrets, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
 - **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex, Gmail presets plus custom
   servers, managed through `claude mcp` so the terminal CLI sees the same config.
 
@@ -161,7 +166,7 @@ Keys: Enter send · Shift+Enter newline · Esc stop · Ctrl+N new chat · Ctrl+`
 rebind them in Settings → Keybindings.
 
 `HARBOR_VIEW=draft|picker|settings|usage|prs|terminal` opens a view at start (for screenshots); a settings
-page by name too (`general|appearance|keybindings|providers|limits|integrations|devices|webhooks`);
+page by name too (`general|appearance|keybindings|providers|limits|integrations|secrets|devices|webhooks`);
 `device` opens the composer's device menu.
 
 ## Licences and credits

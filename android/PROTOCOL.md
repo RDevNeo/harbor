@@ -212,6 +212,7 @@ short list of notes (a day, 200 at most; `src/notify.rs`) for what matters:
 | `kind` | when | key |
 |---|---|---|
 | `input` | a lead chat's turn ends with a question, or a chat waits for you after a usage limit (`act: "continue"`) | `chat:<gid>` |
+| `input` | an agent asks for a key, to use one or to write one to a .env file (answered on the PC, never on the phone) | `secret:<gid>:<ask id>` |
 | `done` | a lead chat's turn ends (once its sub-agents are done), or stops with an error | `chat:<gid>` |
 | `agent` | a sub-agent's turn ends (apps show it only when asked) | `chat:<gid>` |
 | `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` |

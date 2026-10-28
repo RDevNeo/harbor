@@ -13,6 +13,7 @@ impl App {
         // Steers on their way in sit with the turn; "Up next" comes last (queue.rs).
         self.steering_bubbles(ui, id);
         self.limit_line(ui, id);
+        self.secret_asks_ui(ui, id);
         self.folder_ui(ui, id);
         let own = self.turns.get(&id).map(|(_, s)| s.elapsed().as_secs());
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);

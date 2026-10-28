@@ -708,6 +708,7 @@ impl App {
                         "worktree" => ic::FOLDER_GIT,
                         "users" => ic::USERS,
                         "monitor" => ic::MONITOR,
+                        "lock" => ic::LOCK,
                         _ => ic::CIRCLE_CHECK,
                     };
                     // The pill never grows past the column (a long agent report widened the whole
@@ -924,6 +925,7 @@ impl App {
             self.recap_line(ui, id);
         }
         self.trust_bar(ui);
+        self.pasted_key_line(ui);
         let t = self.theme.t;
         let key = self.key();
         let cid = Id::NULL.with(("composer", key));

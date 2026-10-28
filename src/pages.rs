@@ -124,7 +124,7 @@ impl UsageTotals {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 11] = [Tab::General, Tab::Notifications, Tab::Appearance, Tab::Keybindings, Tab::Voice, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Devices, Tab::Phones, Tab::Webhooks];
+    pub const ALL: [Tab; 12] = [Tab::General, Tab::Notifications, Tab::Appearance, Tab::Keybindings, Tab::Voice, Tab::Providers, Tab::Limits, Tab::Integrations, Tab::Secrets, Tab::Devices, Tab::Phones, Tab::Webhooks];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -136,6 +136,7 @@ impl Tab {
             Tab::Limits => "Usage",
             Tab::Integrations => "Integrations",
             Tab::Webhooks => "Webhooks",
+            Tab::Secrets => "Secrets",
             Tab::Devices => "Devices",
             Tab::Phones => "Phones",
             Tab::Voice => "Voice",
@@ -152,6 +153,7 @@ impl Tab {
             Tab::Limits => ic::GAUGE,
             Tab::Integrations => ic::PLUG,
             Tab::Webhooks => ic::WEBHOOK,
+            Tab::Secrets => ic::LOCK,
             Tab::Devices => ic::MONITOR,
             Tab::Phones => ic::SMARTPHONE,
             Tab::Voice => ic::MIC,
@@ -169,6 +171,7 @@ impl Tab {
             Tab::Limits => "usage",
             Tab::Integrations => "integrations",
             Tab::Webhooks => "webhooks",
+            Tab::Secrets => "secrets",
             Tab::Devices => "devices",
             Tab::Phones => "phones",
             Tab::Voice => "voice",
@@ -191,6 +194,7 @@ impl Tab {
             Tab::Limits => "usage limits quota caps cap percent warn tokens cost weekly wait switch accounts notify history",
             Tab::Integrations => "apps mcp servers sign in tools",
             Tab::Webhooks => "hooks public url https certificate lets encrypt",
+            Tab::Secrets => "keys api keys tokens passwords environment variables env credentials",
             Tab::Devices => "remote machines pcs tailscale ssh run agents elsewhere mcp bridge",
             Tab::Phones => "android phone mobile app pair qr code token api",
             Tab::Voice => "voice dictation speech microphone mic whisper transcribe language model",
@@ -207,6 +211,7 @@ impl Tab {
             Tab::Limits => "What each account has used, how much of it Harbor may use, and what threads do at a limit.",
             Tab::Integrations => "",
             Tab::Webhooks => "",
+            Tab::Secrets => "Keys agents can use without seeing them: API keys, tokens. Agents ask for the ones they need.",
             Tab::Devices => "Run agents on your other PCs. They work in that PC's folders, with this PC's MCP servers and apps.",
             Tab::Phones => "Your chats on your phone: Harbor for Android talks to this PC over your network, encrypted with both keys.",
             Tab::Voice => "Dictate into the composer. Speech is transcribed on this PC with whisper.cpp: private, free, offline.",
@@ -264,6 +269,7 @@ impl App {
                     Tab::Limits => self.usage_tab(ui),
                     Tab::Integrations => self.integrations_tab(ui),
                     Tab::Webhooks => self.webhooks_tab(ui),
+                    Tab::Secrets => self.secrets_tab(ui),
                     Tab::Devices => self.devices_tab(ui),
                     Tab::Phones => self.phones_tab(ui),
                     Tab::Voice => self.voice_tab(ui),
