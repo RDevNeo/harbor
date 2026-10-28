@@ -13,7 +13,7 @@
 #   ANDROID_KEYSTORE       keystore path (default ~/.local/share/harbor-android/harbor-android.jks)
 #   ANDROID_KEYSTORE_PASS  its password (default: the file next to it, harbor-android.pass)
 #   ANDROID_KEY_ALIAS      key alias (default harbor)
-# OUT=<path> writes the APK elsewhere.
+# OUT=<path> writes the APK elsewhere. UNSIGNED=1 stops before signing (CI signs it elsewhere).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -38,7 +38,7 @@ KEY=${ANDROID_KEYSTORE:-$HOME/.local/share/harbor-android/harbor-android.jks}
 ALIAS=${ANDROID_KEY_ALIAS:-harbor}
 if [ -n "${ANDROID_KEYSTORE_PASS:-}" ]; then KSPASS="env:ANDROID_KEYSTORE_PASS"
 else KSPASS="file:${KEY%.jks}.pass"; fi
-[ -f "$KEY" ] || { echo "no signing keystore at $KEY (see the header of this script)" >&2; exit 1; }
+[ -n "${UNSIGNED:-}" ] || [ -f "$KEY" ] || { echo "no signing keystore at $KEY (see the header of this script)" >&2; exit 1; }
 
 OUT=${OUT:-$HERE/build/harbor-android.apk}
 mkdir -p "$(dirname "$OUT")"
@@ -108,6 +108,11 @@ java -cp "$W/classes:$W/test" dev.harbor.app.QrTest "$HERE/test/pair-qr.png"
 (cd "$W" && zip -qj base.apk classes.dex)
 (cd "$W" && zip -qr base.apk lib)
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
+if [ -n "${UNSIGNED:-}" ]; then
+  cp "$W/aligned.apk" "$OUT"
+  echo "built $(basename "$OUT") $VER (versionCode $CODE, unsigned)"
+  exit 0
+fi
 "$BT/apksigner" sign --ks "$KEY" --ks-pass "$KSPASS" --ks-key-alias "$ALIAS" --out "$OUT" "$W/aligned.apk"
 rm -f "$OUT.idsig"
 echo "built $(basename "$OUT") $VER (versionCode $CODE, $(du -h "$OUT" | cut -f1))"

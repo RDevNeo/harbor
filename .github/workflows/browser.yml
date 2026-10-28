@@ -15,6 +15,10 @@ on:
         description: Compile Servo if no engine with this id is cached or released
         type: boolean
         default: true
+      force:
+        description: Compile even if an engine with this id is cached or released
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       build:
@@ -45,12 +49,13 @@ jobs:
         run: echo "id=$(git rev-parse HEAD:browser)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v6
         id: bin
+        if: ${{ !inputs.force }}
         with:
           path: out/harbor-browser
           key: harbor-browser-bin-${{ steps.id.outputs.id }}
       - name: Reuse the latest release's engine
         id: prev
-        if: steps.bin.outputs.cache-hit != 'true'
+        if: steps.bin.outputs.cache-hit != 'true' && !inputs.force
         # Only an engine the release key signed: the asset itself could have been replaced.
         env:
           MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
@@ -77,36 +82,38 @@ jobs:
           else
             echo "::notice::No prebuilt engine for browser/ ${{ steps.id.outputs.id }}; skipping the browser (run the browser workflow on main to build it)."
           fi
-      - name: Free disk space
-        if: steps.need.outputs.build == 'true'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
-      - name: Install Servo build dependencies
-        if: steps.need.outputs.build == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang llvm-dev libclang-dev cmake python3 pkg-config m4 gperf \
-            libfontconfig-dev libfreetype-dev libx11-dev libxkbcommon-dev libwayland-dev libegl-dev libgl-dev \
-            libgles-dev libudev-dev libdbus-1-dev libunwind-dev
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.need.outputs.build == 'true'
-      - uses: Swatinem/rust-cache@v2
+      # On a boat.dev sandbox (.github/boat/browser.sh), from the saved snapshot `harbor-browser`
+      # that keeps Rust, the crates and target/ warm; a compile on main, or a forced one, saves it.
+      - uses: ./.github/actions/boat
+        id: boat
         if: steps.need.outputs.build == 'true'
         with:
-          workspaces: browser
-          key: browser
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build harbor-browser
+          key: ${{ secrets.BOAT_API_KEY }}
+          from: harbor-browser
+      - name: Build harbor-browser (on boat)
         if: steps.need.outputs.build == 'true'
-        working-directory: browser
         run: |
-          cargo build --release --locked
-          mkdir -p ../out && cp target/release/harbor-browser ../out/
+          set -eu
+          boat exec "${{ steps.boat.outputs.id }}" --cwd src --timeout 0 -- bash .github/boat/browser.sh
+          mkdir -p out
+          boat scp "${{ steps.boat.outputs.id }}:/home/user/out/harbor-browser/harbor-browser" out/harbor-browser
+          chmod 755 out/harbor-browser
+      - name: Save the boat cache
+        if: steps.need.outputs.build == 'true' && (github.ref == 'refs/heads/main' || inputs.force)
+        continue-on-error: true
+        run: |
+          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out'
+          boat snapshot "${{ steps.boat.outputs.id }}" harbor-browser --json
+      - name: Delete the sandbox
+        if: always() && steps.boat.outputs.id != ''
+        run: boat delete "${{ steps.boat.outputs.id }}" --yes --json
       # Saved on main (a manual run) it is restorable by every later tag and main push.
       - uses: actions/cache/save@v6
         if: steps.need.outputs.build == 'true'
+        continue-on-error: true
         with:
           path: out/harbor-browser
-          key: ${{ steps.bin.outputs.cache-primary-key }}
+          key: harbor-browser-bin-${{ steps.id.outputs.id }}
       - name: Engine found
         id: done
         if: steps.bin.outputs.cache-hit == 'true' || steps.prev.outputs.hit == 'true' || steps.need.outputs.build == 'true'

@@ -1,0 +1,50 @@
+# Callers must delete the sandbox in an `if: always()` step; --ttl only backstops a job that dies first.
+name: boat sandbox
+inputs:
+  key:
+    required: true
+  type:
+    default: large
+  from:
+    description: Saved snapshot to start from; without it (or if it is gone), a clean sandbox
+    default: ""
+outputs:
+  id:
+    value: ${{ steps.box.outputs.id }}
+runs:
+  using: composite
+  steps:
+    - name: boat CLI
+      shell: bash
+      env:
+        BOAT_API_KEY: ${{ inputs.key }}
+      run: |
+        set -eu
+        [ -n "$BOAT_API_KEY" ] || { echo "::error::BOAT_API_KEY is not set"; exit 1; }
+        mkdir -p "$HOME/.local/bin"
+        curl -fsSL --retry 3 "https://boat.dev/api/boat/cli/download?platform=linux-x64&channel=prod" -o "$HOME/.local/bin/boat"
+        chmod +x "$HOME/.local/bin/boat"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        printf '%s' "$BOAT_API_KEY" | "$HOME/.local/bin/boat" login --key-stdin --json >/dev/null
+    - name: Sandbox
+      id: box
+      shell: bash
+      env:
+        FROM: ${{ inputs.from }}
+        TYPE: ${{ inputs.type }}
+      run: |
+        set -eu
+        boat=$HOME/.local/bin/boat
+        new() { "$boat" new --type "$TYPE" --no-env --ttl 7200 --name "ci-harbor-$GITHUB_RUN_ID-$GITHUB_JOB" --json "$@" | jq -r 'select(.event == "ready") | .id'; }
+        id=""
+        [ -z "$FROM" ] || id=$(new --from "$FROM" || true)
+        [ -n "$id" ] || id=$(new)
+        test -n "$id"
+        echo "id=$id" >> "$GITHUB_OUTPUT"
+    - name: Copy the source
+      shell: bash
+      run: |
+        set -eu
+        git archive --format=tar.gz -o "$RUNNER_TEMP/src.tgz" HEAD
+        "$HOME/.local/bin/boat" scp "$RUNNER_TEMP/src.tgz" "${{ steps.box.outputs.id }}:/home/user/src.tgz"
+        "$HOME/.local/bin/boat" exec "${{ steps.box.outputs.id }}" -- bash -c 'mkdir src && tar -xzf src.tgz -C src && rm src.tgz'

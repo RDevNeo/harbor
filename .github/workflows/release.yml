@@ -1,19 +1,20 @@
 # Builds Harbor for Linux x86_64 and aarch64 and publishes a GitHub Release on a v* tag, once
-# smoke.yml has installed and started it on clean distro images.
+# smoke.yml has installed and started it on clean distro images. Every build and test runs on
+# boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes.
 #
 # Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-browser-x86_64-linux.tar.gz (optional Servo engine), install.sh,
 # harbor-android.apk (the phone app), SHA256SUMS, and a minisign .minisig for each. Harbor's
 # updater checks those signatures with the public key in src/update.rs.
 #
 # Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents);
-# BOAT_API_KEY (a boat.dev API key: the x86_64 build runs on a boat.dev sandbox, see core-x86_64);
+# BOAT_API_KEY (a boat.dev API key that can create, use and delete sandboxes);
 # ANDROID_KEYSTORE (base64 of the app's signing keystore), ANDROID_KEYSTORE_PASS,
 # ANDROID_KEY_ALIAS. Every APK must be signed with that same key, or phones can't update.
 name: release
 
 # Pushes to main (each publish.sh) build everything except Servo (see browser.yml) but sign or
-# release nothing. They exist to save the caches: a tag run can only restore caches saved on its
-# own ref or on the default branch, so caches saved by a tag run were never seen again.
+# release nothing. They exist to save the caches (the boat snapshot `harbor-build`; GitHub's caches
+# for the browser engine: a tag run only restores caches saved on its own ref or on main).
 on:
   push:
     branches: [main]
@@ -36,13 +37,10 @@ env:
   MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
 
 jobs:
-  # On a boat.dev sandbox from the saved snapshot `harbor-build`, which keeps Rust, the crates and
-  # target/ warm. boat has no arm64 sandboxes, so aarch64 stays on GitHub's runner.
-  core-x86_64:
+  # The snapshot `harbor-build` keeps Rust, the crates, both target/ folders and the Android SDK warm.
+  build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 40
-    env:
-      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Tag matches Cargo.toml
@@ -50,192 +48,93 @@ jobs:
         run: |
           v="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
-      - name: boat CLI
+      - uses: ./.github/actions/boat
+        id: boat
+        with:
+          key: ${{ secrets.BOAT_API_KEY }}
+          from: harbor-build
+      - name: Build (on boat)
+        run: boat exec "${{ steps.boat.outputs.id }}" --cwd src --timeout 0 -- env HARBOR_GIT_SHA="$GITHUB_SHA" bash .github/boat/build.sh
+      - name: Fetch the results
         run: |
           set -eu
-          [ -n "$BOAT_API_KEY" ] || { echo "::error::BOAT_API_KEY is not set"; exit 1; }
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://boat.dev/api/boat/cli/download?platform=linux-x64&channel=prod" -o "$HOME/.local/bin/boat"
-          chmod +x "$HOME/.local/bin/boat"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          printf '%s' "$BOAT_API_KEY" | "$HOME/.local/bin/boat" login --key-stdin --json >/dev/null
-      # --ttl: it stops by itself if the delete step below never runs. Without the snapshot (lost
-      # or never made) it builds from scratch and a main push saves a new one.
-      - name: Sandbox
-        id: box
-        run: |
-          set -eu
-          ready() { jq -r 'select(.event == "ready") | .id'; }
-          id=$(boat new --from harbor-build --type large --no-env --ttl 3600 --name "ci-harbor-$GITHUB_RUN_ID" --json | ready || true)
-          [ -n "$id" ] || id=$(boat new --type large --no-env --ttl 3600 --name "ci-harbor-$GITHUB_RUN_ID" --json | ready)
-          test -n "$id"
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-      - name: Copy the source
-        run: |
-          set -eu
-          git archive --format=tar.gz -o /tmp/src.tgz HEAD
-          boat scp /tmp/src.tgz "${{ steps.box.outputs.id }}:/home/user/src.tgz"
-          boat exec "${{ steps.box.outputs.id }}" -- bash -c 'mkdir src && tar -xzf src.tgz -C src'
-      - name: Updater tests and release build (on boat)
-        run: boat exec "${{ steps.box.outputs.id }}" --cwd src --timeout 0 -- env HARBOR_GIT_SHA="$GITHUB_SHA" bash .github/boat/build.sh
-      - name: Fetch the binary
-        run: |
-          mkdir -p target/release
-          boat scp "${{ steps.box.outputs.id }}:/home/user/out/harbor" target/release/harbor
-          chmod 755 target/release/harbor
+          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
+          boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
+          mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       - name: Save the cache
         if: github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
-          boat exec "${{ steps.box.outputs.id }}" -- bash -c 'rm -rf src src.tgz out'
-          boat snapshot "${{ steps.box.outputs.id }}" harbor-build --json
+          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out out.tgz'
+          boat snapshot "${{ steps.boat.outputs.id }}" harbor-build --json
       - name: Delete the sandbox
-        if: always() && steps.box.outputs.id != ''
-        run: boat delete "${{ steps.box.outputs.id }}" --yes --json
-      - run: ldd target/release/harbor && ./target/release/harbor --version
+        if: always() && steps.boat.outputs.id != ''
+        run: boat delete "${{ steps.boat.outputs.id }}" --yes --json
+      # The oldest supported base, glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …), as this runner.
+      - run: ldd out/harbor-x86_64/harbor && out/harbor-x86_64/harbor --version
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-x86_64
-          path: target/release/harbor
-
-  # Oldest supported base: the binary needs glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …).
-  core-aarch64:
-    runs-on: ubuntu-22.04-arm
-    steps:
-      - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: core-aarch64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Updater tests (version order, signatures)
-        run: 'cargo test --locked -- update::'
-      - run: cargo build --release --locked
-        env:
-          HARBOR_GIT_SHA: ${{ github.sha }}
-      - run: ldd target/release/harbor && ./target/release/harbor --version
+          path: out/harbor-x86_64/harbor
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-aarch64
-          path: target/release/harbor
-
-  # The phone app (android/build.sh: aapt2 + javac + d8 + apksigner, no Gradle). Main pushes
-  # without the signing secrets sign with a throwaway key, only to prove it builds.
-  android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-      - name: Android SDK (platform 34, build-tools 34)
-        run: |
-          set -eu
-          sdk="${ANDROID_HOME:-$HOME/android-sdk}"
-          sm="$sdk/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$sm" ]; then
-            curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/clt.zip
-            mkdir -p "$sdk/cmdline-tools" && unzip -q /tmp/clt.zip -d /tmp/clt && mv /tmp/clt/cmdline-tools "$sdk/cmdline-tools/latest"
-          fi
-          yes | "$sm" --sdk_root="$sdk" --licenses >/dev/null || true
-          "$sm" --sdk_root="$sdk" --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
-          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
-      - name: Signing key
-        env:
-          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
-        run: |
-          set -eu
-          umask 077
-          if [ -n "$ANDROID_KEYSTORE" ]; then
-            printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/android.jks"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "::error::ANDROID_KEYSTORE is not set"; exit 1
-          else
-            keytool -genkeypair -keystore "$RUNNER_TEMP/android.jks" -storepass throwaway -alias harbor \
-              -keyalg RSA -keysize 2048 -validity 1 -dname "CN=throwaway" >/dev/null 2>&1
-            echo "ANDROID_KEYSTORE_PASS=throwaway" >> "$GITHUB_ENV"
-            echo "ANDROID_KEY_ALIAS=harbor" >> "$GITHUB_ENV"
-          fi
-      - name: Build the APK
-        env:
-          ANDROID_BUILD: /nonexistent
-          ANDROID_KEYSTORE: ${{ runner.temp }}/android.jks
-          SECRET_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-          SECRET_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          OUT: ${{ github.workspace }}/out/harbor-android.apk
-        run: |
-          set -eu
-          [ -z "$SECRET_PASS" ] || export ANDROID_KEYSTORE_PASS="$SECRET_PASS"
-          [ -z "$SECRET_ALIAS" ] || export ANDROID_KEY_ALIAS="$SECRET_ALIAS"
-          android/build.sh
-          rm -f "$ANDROID_KEYSTORE"
-          "$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging out/harbor-android.apk | head -3
+          path: out/harbor-aarch64/harbor
       - uses: actions/upload-artifact@v7
         with:
-          name: harbor-android
-          path: out/harbor-android.apk
+          name: harbor-android-unsigned
+          path: out/harbor-android/harbor-android-unsigned.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-extra
+          path: out/extra/
 
   # Never compiles Servo on a main push (no engine found = no browser in that run's package).
   # A tag compiles it only when browser/ changed and nobody ran the browser workflow on main.
   browser:
     uses: ./.github/workflows/browser.yml
+    secrets: inherit
     with:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
+  # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
+  # archives and their checksum lists, and the attestations.
   package:
-    needs: [core-x86_64, core-aarch64, browser, android]
+    needs: [build, browser]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: art
-      - run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
-      # The licence reports (~1-3 min) only change with the dependencies or the template, so the
-      # cache key leaves out Harbor's own version (every release bumps it in Cargo.lock). A miss
-      # falls back to the latest older report (restore-keys) until a fresh one is made.
-      - name: Licence cache key
-        id: lickey
-        run: |
-          strip() { sed '/^name = "harbor[^"]*"$/{n;d}' "$1"; }
-          h=$( (strip Cargo.lock; strip browser/Cargo.lock; cat packaging/about.toml packaging/about.hbs) | sha256sum | cut -c1-32)
-          echo "key=lic-$h" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v6
-        id: lic
-        with:
-          path: lic
-          key: ${{ steps.lickey.outputs.key }}
-          restore-keys: lic-
-      - uses: taiki-e/install-action@v2
-        if: steps.lic.outputs.cache-hit != 'true'
-        timeout-minutes: 3
-        continue-on-error: true
-        with:
-          tool: cargo-about
-      # Never stalls a release (v0.35.0 hung here for 25 min): the crates are fetched under a
-      # timeout, the reports are made offline (--frozen: no crates.io or other lookups), and a
-      # failure keeps the restored older report, or none (Assemble does without).
-      - name: Third-party licences
-        id: about
-        if: steps.lic.outputs.cache-hit != 'true'
-        timeout-minutes: 14
-        continue-on-error: true
+      # Main pushes without the signing secrets sign with a throwaway key, only to prove it signs.
+      - name: Sign the APK
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -eu
-          fetch() { for i in 1 2; do timeout 120 cargo fetch --locked "$@" && return 0; sleep 5; done; return 1; }
-          fetch
-          (cd browser && fetch)
-          mkdir -p lic.new
-          timeout 240 cargo about generate --frozen -c packaging/about.toml packaging/about.hbs -o lic.new/harbor.html
-          (cd browser && timeout 420 cargo about generate --frozen -c ../packaging/about.toml ../packaging/about.hbs -o ../lic.new/harbor-browser.html)
-          rm -rf lic && mv lic.new lic
-      - uses: actions/cache/save@v6
-        if: steps.lic.outputs.cache-hit != 'true' && steps.about.outcome == 'success'
-        with:
-          path: lic
-          key: ${{ steps.lickey.outputs.key }}
+          umask 077
+          ks="$RUNNER_TEMP/android.jks"
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$ks"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::ANDROID_KEYSTORE is not set"; exit 1
+          else
+            keytool -genkeypair -keystore "$ks" -storepass throwaway -alias harbor \
+              -keyalg RSA -keysize 2048 -validity 1 -dname "CN=throwaway" >/dev/null 2>&1
+            ANDROID_KEYSTORE_PASS=throwaway ANDROID_KEY_ALIAS=harbor
+          fi
+          export ANDROID_KEYSTORE_PASS
+          bt="$ANDROID_HOME/build-tools/34.0.0"
+          [ -x "$bt/apksigner" ] || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" >/dev/null
+          mkdir -p art/harbor-android
+          "$bt/apksigner" sign --ks "$ks" --ks-pass env:ANDROID_KEYSTORE_PASS --ks-key-alias "${ANDROID_KEY_ALIAS:-harbor}" \
+            --out art/harbor-android/harbor-android.apk art/harbor-android-unsigned/harbor-android-unsigned.apk
+          rm -f "$ks" art/harbor-android/harbor-android.apk.idsig
+          "$bt/apksigner" verify --print-certs art/harbor-android/harbor-android.apk | head -2
+          "$bt/aapt2" dump badging art/harbor-android/harbor-android.apk | head -3
       - name: Assemble
         run: |
           set -eu
@@ -251,7 +150,7 @@ jobs:
             chmod 755 "$d/harbor-stream"
             install -m755 packaging/install.sh "$d/install.sh"
             cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
-            rsvg-convert -w 256 -h 256 packaging/harbor.svg -o "$d/harbor-256.png"
+            cp art/harbor-extra/harbor-256.png "$d/harbor-256.png"
             echo "$ver" > "$d/VERSION"
             # The engine's id, also when this run has no engine (only main pushes; tags always do).
             git rev-parse HEAD:browser > "$d/browser.id"
@@ -260,7 +159,7 @@ jobs:
             cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
             cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
             cp packaging/speech-NOTICE.txt "$d/licenses/speech-NOTICE.txt"
-            [ ! -f lic/harbor.html ] || cp lic/harbor.html "$d/licenses/third-party-harbor.html"
+            [ ! -f art/harbor-extra/lic/harbor.html ] || cp art/harbor-extra/lic/harbor.html "$d/licenses/third-party-harbor.html"
           done
 
           b=pkg/harbor-browser-x86_64-linux
@@ -269,7 +168,7 @@ jobs:
             install -m755 art/harbor-browser/harbor-browser "$b/harbor-browser"
             cp art/harbor-browser/browser.id "$b/browser.id"
             cp browser/LICENSE "$b/licenses/harbor-browser-MIT.txt"
-            [ -f lic/harbor-browser.html ] && cp lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
+            [ -f art/harbor-extra/lic/harbor-browser.html ] && cp art/harbor-extra/lic/harbor-browser.html "$b/licenses/third-party-harbor-browser.html"
             echo "harbor-browser is MIT; it links Servo (MPL-2.0), whose source is at https://github.com/servo/servo" > "$b/licenses/README.txt"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "::error::a release needs the browser engine"; exit 1
@@ -339,6 +238,7 @@ jobs:
   smoke:
     needs: package
     uses: ./.github/workflows/smoke.yml
+    secrets: inherit
     with:
       dist: true
 
