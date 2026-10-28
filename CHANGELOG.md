@@ -5,17 +5,6 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
-## [0.78.0] - 2026-10-28
-
-### Added
-- Phone: snooze a chat. Long-press it in the list for Snooze…, a sheet with the desktop menu's
-  presets (1 hour, 3 hours, Tomorrow 9:00, Next week), a field for a time of your own ("5h",
-  "1h30m", "2d", "18:00") that says when it ends as you type, and Unsnooze. The snooze is the PC's:
-  the chat leaves the phone's list and that PC's sidebar until it comes back unread, whichever
-  side snoozed it. Times follow the phone's time zone.
-- Searching the list (desktop and phone) also finds snoozed chats, back in their project, with
-  the clock and when they wake ("Today, 23:40"); the desktop's search left them out.
-
 ### Changed
 - The built-in browser (Servo) is on by default: install.sh installs its engine wherever it runs
   (x86_64 and aarch64 with glibc 2.39+; elsewhere it says why in one line and skips it), and
@@ -30,6 +19,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - A browser engine that quits right after starting (a missing library…) is no longer restarted
   on every frame: the pane shows its last error with "Try again".
 
+## [0.78.0] - 2026-10-28
+
+### Added
+- Phone: snooze a chat. Long-press it in the list for Snooze…, a sheet with the desktop menu's
+  presets (1 hour, 3 hours, Tomorrow 9:00, Next week), a field for a time of your own ("5h",
+  "1h30m", "2d", "18:00") that says when it ends as you type, and Unsnooze. The snooze is the PC's:
+  the chat leaves the phone's list and that PC's sidebar until it comes back unread, whichever
+  side snoozed it. Times follow the phone's time zone.
+- Searching the list (desktop and phone) also finds snoozed chats, back in their project, with
+  the clock and when they wake ("Today, 23:40"); the desktop's search left them out.
+
+### Changed
 - Releases are built and tested on boat.dev sandboxes: Harbor for x86_64 and aarch64 (cross-compiled
   in Ubuntu 22.04), the phone app, the licence reports, the browser engine and the install tests
   on every distro. GitHub Actions only signs, attests and publishes them.
