@@ -5,13 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
-### Changed
-- Ctrl+B shows or hides the sidebar (it was Ctrl+\); the browser pane moved to Ctrl+Shift+B.
-  Keys you rebound in Settings › Keybindings stay as they are.
+## [0.77.0] - 2026-10-28
 
 ### Added
 - Ctrl+D shows or hides the team panel (agents, wake-ups, webhooks) in a lead chat. In a
   terminal Ctrl+D stays its own.
+
+### Changed
+- Ctrl+B shows or hides the sidebar (it was Ctrl+\); the browser pane moved to Ctrl+Shift+B.
+  Keys you rebound in Settings › Keybindings stay as they are.
 
 ## [0.76.0] - 2026-10-28
 
@@ -1661,7 +1663,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.76.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.77.0...HEAD
+[0.77.0]: https://github.com/RDevNeo/harbor/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/RDevNeo/harbor/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/RDevNeo/harbor/compare/v0.74.2...v0.75.0
 [0.74.2]: https://github.com/RDevNeo/harbor/compare/v0.74.1...v0.74.2
