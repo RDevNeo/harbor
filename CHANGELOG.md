@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-10-28
+
 ### Added
 - Phone: message text is selectable, as on the desktop. Long-press a word, drag the handles, and
   the selection's menu offers Mention (just that part goes to your next message, the same excerpt
@@ -1610,7 +1612,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.73.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.74.0...HEAD
+[0.74.0]: https://github.com/RDevNeo/harbor/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/RDevNeo/harbor/compare/v0.72.3...v0.73.0
 [0.72.3]: https://github.com/RDevNeo/harbor/compare/v0.72.2...v0.72.3
 [0.72.2]: https://github.com/RDevNeo/harbor/compare/v0.72.1...v0.72.2
