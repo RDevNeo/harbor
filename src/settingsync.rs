@@ -290,7 +290,8 @@ mod tests {
                 }
             }
         }
-        for (file, src) in &files {
+        // (Not this file: its own examples aren't keys.)
+        for (file, src) in files.iter().filter(|(f, _)| f != "settingsync.rs") {
             for line in src.lines() {
                 for recv in ["store.get(", "store.set(", "store.set_quiet(", "s.get(", "s.set(", "st.get(", "st.set("] {
                     for (i, _) in line.match_indices(recv) {
