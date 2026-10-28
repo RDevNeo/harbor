@@ -156,7 +156,6 @@ public class Chat extends Base {
         // The composer, and under it where the agent works and its branch (WorkBar).
         work = new WorkBar(this, hub);
         work.chat = chatId;
-        addHeaderChip(work);
         LinearLayout below = Ui.col(this);
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
@@ -269,7 +268,7 @@ public class Chat extends Base {
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));
-        work.marker(c.optJSONObject("worktree"));
+        work.marker(c.optJSONObject("worktree"), c.optString("home_name", ""));
         applyDraft(c.optJSONObject("draft"));
         drawBars();
     }

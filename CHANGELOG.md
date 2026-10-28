@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: no more worktree chip under the chat's title, ever. What only it said now shows in the
+  bar under the composer, as on the desktop: "Worktree gone" in red (no branch) when the chat's
+  worktree was removed, and a read-only "Worktree · <name>" for another PC's chat or one run on
+  a device (a tap says where it runs).
+
 ## [0.74.0] - 2026-10-28
 
 ### Added

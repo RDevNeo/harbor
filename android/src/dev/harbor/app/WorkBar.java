@@ -31,7 +31,8 @@ final class WorkBar {
     boolean worktree;
     String base = "";
     private JSONObject info, marker;
-    private LinearLayout head;
+    private String home = "";
+    private boolean loaded; // the hub has answered /v1/workspace once
     private int gen;
 
     WorkBar(Activity a, Hub hub) {
@@ -84,19 +85,46 @@ final class WorkBar {
     /** Reads the bar again (the chat, or the new chat's project and picks changed). */
     void load() {
         final int my = ++gen;
+        // Until it answers, a marker update doesn't redraw with another chat's answer.
+        loaded = false;
         final String path = "/v1/workspace?" + target() + (chat == null ? "&worktree=" + (worktree ? 1 : 0) + "&base=" + enc(base) : "");
         if (chat == null && project.isEmpty()) { view.setVisibility(View.GONE); return; }
         Ui.pool.execute(() -> {
             JSONObject r;
             try { r = hub.get(path); } catch (Exception e) { r = null; }
             final JSONObject fr = r;
-            Ui.main.post(() -> { if (my == gen) show(fr); });
+            Ui.main.post(() -> { if (my == gen) { loaded = true; show(fr); } });
         });
     }
 
+    /** The footer, as the desktop's (worktree.rs workspace_bar): where the chat works and its
+     *  branch; "Worktree gone" in red with no branch when its worktree was removed; a read-only
+     *  "Worktree · <name>" for a chat whose worktree isn't on this PC (another PC's chat, one
+     *  run on a device). The phone has no header chip for it. */
     private void show(JSONObject r) {
         info = r;
-        if (r == null || !r.optBoolean("git")) { view.setVisibility(View.GONE); showHead(); return; }
+        boolean git = r != null && r.optBoolean("git");
+        br.setVisibility(View.VISIBLE);
+        ws.setOnClickListener(v -> pickWorkspace());
+        tint(ws, Ui.G700);
+        // As the desktop: "gone" only where the workspace is this PC's (a device's chat has its
+        // worktree elsewhere, so it isn't here, yet not gone).
+        if (git && chat != null && marker != null && marker.optBoolean("gone")) {
+            view.setVisibility(View.VISIBLE);
+            label(ws, Ui.I_FOLDER_GIT, "Worktree gone");
+            tint(ws, Ui.RED);
+            br.setVisibility(View.GONE);
+            return;
+        }
+        if (!git && chat != null && marker != null) {
+            view.setVisibility(View.VISIBLE);
+            label(ws, Ui.I_FOLDER_GIT, "Worktree · " + marker.optString("name"));
+            br.setVisibility(View.GONE);
+            String on = home.isEmpty() ? "the PC it runs on" : home;
+            ws.setOnClickListener(v -> Ui.toast(a, "Runs in its own worktree on " + on + ", " + marker.optString("name")));
+            return;
+        }
+        if (!git) { view.setVisibility(View.GONE); return; }
         view.setVisibility(View.VISIBLE);
         boolean wt = "worktree".equals(r.optString("mode"));
         String name = r.isNull("name") ? "" : r.optString("name");
@@ -108,69 +136,20 @@ final class WorkBar {
         String pend = r.isNull("pending") ? "" : r.optString("pending");
         if (!pend.isEmpty()) { label(ws, Ui.I_LOADER, pend); Ui.main.postDelayed(this::load, 1500); }
         label(br, Ui.I_BRANCH, b.isEmpty() ? "…" : b + (dirty > 0 && !(chat == null && wt) ? "  ·  " + dirty + " changed" : ""));
-        showHead();
     }
 
-    // ---- the header's chip ----
-
-    /** The chip under the screen's title (Chat, NewChat), the desktop header's: that the chat
-     *  works in a worktree of its own and on which branch (a new chat: that it will), so it's
-     *  never mistaken for the checkout. Only while the composer's bar doesn't show it (0.72.3:
-     *  under the bar it was the same line twice). A tap opens the workspace sheet. */
-    LinearLayout header() {
-        head = Ui.row(a);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(Ui.dp(9), Ui.dp(2), Ui.dp(10), Ui.dp(2));
-        head.setBackground(Ui.press(Ui.G100, Ui.LINE, 11));
-        head.addView(Ui.icon(a, Ui.I_FOLDER_GIT, 13, Ui.BLUE), new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)));
-        TextView t = Ui.text(a, "", 12, Ui.FG);
-        t.setSingleLine(true);
-        t.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        head.addView(t, Ui.margins(new LinearLayout.LayoutParams(-2, -2), 5, 0, 0, 0));
-        head.setOnClickListener(v -> {
-            if (info != null && info.optBoolean("git")) pickWorkspace();
-            else if (marker != null) Ui.toast(a, "Runs in its own worktree, " + marker.optString("name") + ", on the PC it runs on");
-        });
-        head.setVisibility(View.GONE);
-        return head;
+    private static void tint(LinearLayout c, int color) {
+        ((TextView) c.getChildAt(0)).setTextColor(color);
+        ((TextView) c.getChildAt(1)).setTextColor(color);
     }
 
     /** The chat's "worktree" from the hub's state (null: none, or a hub older than 0.66). */
-    void marker(JSONObject w) {
+    void marker(JSONObject w, String home) {
         marker = w;
-        showHead();
+        this.home = home;
+        if (loaded) show(info);
     }
 
-    private void showHead() {
-        if (head == null) return;
-        boolean git = info != null && info.optBoolean("git");
-        boolean wt = git && "worktree".equals(info.optString("mode"));
-        String pend = info == null || info.isNull("pending") ? "" : info.optString("pending");
-        String text = null;
-        int glyph = Ui.BLUE;
-        if (chat == null) {
-            if (wt) {
-                String from = info.optString("base");
-                text = !pend.isEmpty() ? pend : from.isEmpty() ? "New worktree" : "New worktree · from " + from;
-                glyph = Ui.G700;
-            }
-        } else if (marker != null && marker.optBoolean("gone")) {
-            text = "Worktree gone";
-            glyph = Ui.RED;
-        } else if (marker != null || wt) {
-            String b = wt ? info.optString("branch") : "";
-            String n = marker != null ? marker.optString("name") : info.isNull("name") ? "" : info.optString("name");
-            text = "Worktree · " + (b.isEmpty() ? n : b);
-        }
-        // The composer's own bar already says it (worktree and branch): the chip only speaks up
-        // when that bar can't (another PC's chat, a worktree that's gone).
-        boolean gone = marker != null && marker.optBoolean("gone");
-        if (!gone && view.getVisibility() == View.VISIBLE) text = null;
-        head.setVisibility(text == null ? View.GONE : View.VISIBLE);
-        if (text == null) return;
-        ((TextView) head.getChildAt(0)).setTextColor(glyph);
-        ((TextView) head.getChildAt(1)).setText(text);
-    }
 
     /** A call to the PC; on failure its reason as a toast, and the chips read again. */
     private void act(Ui.Job<JSONObject> job, Ui.Done<JSONObject> done) {
@@ -188,7 +167,6 @@ final class WorkBar {
     void pending(boolean branch, String what) {
         view.setVisibility(View.VISIBLE);
         label(branch ? br : ws, Ui.I_LOADER, what);
-        if (!branch && chat == null && head != null && head.getVisibility() == View.VISIBLE) ((TextView) head.getChildAt(1)).setText(what);
     }
 
     // ---- where it works ----
