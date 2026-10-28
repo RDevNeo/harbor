@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Mention a whole chat with `$` in the composer, on the desktop and the phone (#96): `$` at the
+  start of a word lists your chats (this project's first, active ones above settled ones, other
+  projects and other PCs too, never the chat you're in), filtered as you type. Picking one adds
+  it as a chip above the composer with its own note box. On send the agent gets a quoted block
+  per mentioned chat: title, project, PC, status, recap, its last 6 prompts and final answers
+  (about 8 KB at most), and the chat's id and link, so it can `message_chat` it. The sent
+  message shows the chip; a click (or tap on the phone) opens that chat. On the phone a tap on
+  the composer's chip opens the chat and a long-press removes it. Hub API: `trigger=$` on the
+  tags lists, mention `kind: "chat"`.
+
 ## [0.71.0] - 2026-10-28
 
 ### Added

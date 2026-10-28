@@ -30,11 +30,14 @@ const FLASH_SECS: f64 = 1.6;
 /// A mentioned message: where it is (its item in the same chat) and what it said.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mention {
+    #[serde(default)]
     pub item: usize,
+    #[serde(default)]
     pub from: String,
     #[serde(default)]
     pub at: i64,
     /// The message, cut at `MAX_CHARS`.
+    #[serde(default)]
     pub text: String,
     /// Its full length in characters (more than `text` holds when cut).
     #[serde(default)]
@@ -45,6 +48,15 @@ pub struct Mention {
     /// What the user wrote about it, sent right under its quote.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// "chat": a whole chat mentioned with `$` (chatmention.rs; `chat` and `title` say which,
+    /// `text` gets its context when sent). "" for a message.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// The mentioned chat's global id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chat: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 /// Text selected in a message, waiting for its "Mention selection" button.
@@ -130,13 +142,24 @@ impl State {
 }
 
 impl Mention {
+    /// A whole chat, mentioned with `$`.
+    pub fn is_chat(&self) -> bool {
+        self.kind == "chat"
+    }
+
     /// First non-empty line, for chips.
     pub fn snippet(&self) -> &str {
+        if self.is_chat() {
+            return &self.from;
+        }
         self.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("")
     }
 
     /// The same message and text (excerpts of one message are told apart by their text).
     fn same(&self, other: &Mention) -> bool {
+        if self.is_chat() || other.is_chat() {
+            return self.chat == other.chat && self.kind == other.kind;
+        }
         self.item == other.item && self.excerpt == other.excerpt && (!self.excerpt || self.text == other.text)
     }
 }
@@ -163,6 +186,10 @@ fn excerpt(m: Mention, text: &str) -> Mention {
 pub fn prompt(ms: &[Mention]) -> String {
     let mut out = String::new();
     for m in ms {
+        if m.is_chat() {
+            out.push_str(&crate::chatmention::quote(m));
+            continue;
+        }
         let when = if m.at > 0 { format!(", {}", crate::team::clock(m.at)) } else { String::new() };
         if m.excerpt {
             out.push_str(&format!("> [excerpt of a message from {}{when}]\n", m.from));
@@ -222,7 +249,7 @@ impl App {
         };
         let len = text.chars().count();
         let text = if len > MAX_CHARS { text.chars().take(MAX_CHARS).collect() } else { text };
-        Some(Mention { item: i, from, at, text, len, excerpt: false, note: String::new() })
+        Some(Mention { item: i, from, at, text, len, excerpt: false, note: String::new(), kind: String::new(), chat: String::new(), title: String::new() })
     }
 
     /// Adds a mention of item `i` to the chat's composer (once).
@@ -290,6 +317,7 @@ pub fn draft(ui: &mut Ui, chat: i64, m: &mut Mention, focus: &mut Option<egui::I
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             click = chip_in(ui, m, true, false);
+            let hint = if m.is_chat() { "Add a note about this chat" } else if m.excerpt { "Add a note about this excerpt" } else { "Add a note about this message" };
             ui.horizontal(|ui| {
                 ui.add_space(22.0);
                 ui.add(
@@ -298,7 +326,7 @@ pub fn draft(ui: &mut Ui, chat: i64, m: &mut Mention, focus: &mut Option<egui::I
                         .frame(egui::Frame::NONE)
                         .desired_rows(1)
                         .desired_width(ui.available_width() - 10.0)
-                        .hint_text(if m.excerpt { "Add a note about this excerpt" } else { "Add a note about this message" })
+                        .hint_text(hint)
                         .font(theme::ts("label-13"))
                         .return_key(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter))
                         .lock_focus(false),
@@ -323,7 +351,9 @@ pub fn note_id(chat: i64, m: &Mention) -> egui::Id {
 /// The chip; `framed`: a pill of its own (else the header row of a card, as wide as it).
 fn chip_in(ui: &mut Ui, m: &Mention, removable: bool, framed: bool) -> Click {
     let t = w::tokens(ui);
-    let from = ui.painter().layout_no_wrap(m.from.clone(), FontId::new(12.5, theme::medium()), t.fg());
+    // A chat: its title, then where it is (project · PC).
+    let head = if m.is_chat() { m.title.clone() } else { m.from.clone() };
+    let from = ui.painter().layout_no_wrap(head, FontId::new(12.5, theme::medium()), t.fg());
     let room = (ui.available_width() - from.size().x - if removable { 70.0 } else { 46.0 }).clamp(40.0, if framed { 220.0 } else { 600.0 });
     // An excerpt reads as a quote: “…”.
     let snippet = if m.excerpt { format!("\u{201c}{}\u{201d}", m.snippet()) } else { m.snippet().to_string() };
@@ -338,7 +368,11 @@ fn chip_in(ui: &mut Ui, m: &Mention, removable: bool, framed: bool) -> Click {
         let top = CornerRadius { nw: RADIUS_MD, ne: RADIUS_MD, sw: 0, se: 0 };
         p.rect_filled(rect.shrink(1.0), top, t.gray(200));
     }
-    p.text(pos2(rect.left() + 13.0, rect.center().y), Align2::CENTER_CENTER, "@", FontId::new(13.0, theme::medium()), t.subtle());
+    if m.is_chat() {
+        ic::glyph(p, pos2(rect.left() + 13.0, rect.center().y), ic::MESSAGE, 12.5, t.subtle());
+    } else {
+        p.text(pos2(rect.left() + 13.0, rect.center().y), Align2::CENTER_CENTER, "@", FontId::new(13.0, theme::medium()), t.subtle());
+    }
     let fx = rect.left() + 24.0;
     p.galley(pos2(fx, rect.center().y - from.size().y / 2.0), from.clone(), t.fg());
     p.galley(pos2(fx + from.size().x + 8.0, rect.center().y - snip.size().y / 2.0), snip, t.subtle());
@@ -354,11 +388,11 @@ fn chip_in(ui: &mut Ui, m: &Mention, removable: bool, framed: bool) -> Click {
             click = Click::Remove;
         }
     }
-    let mut tip: String = m.text.chars().take(300).collect();
+    let mut tip: String = if m.is_chat() { format!("{}\n{}", m.title, m.from) } else { m.text.chars().take(300).collect() };
     if framed && !m.note.trim().is_empty() {
         tip.push_str(&format!("\n\nYour note: {}", m.note.trim()));
     }
-    let what = if m.excerpt { "Excerpt. Click to see its message in the chat" } else { "Click to see it in the chat" };
+    let what = if m.is_chat() { "Click to open this chat" } else if m.excerpt { "Excerpt. Click to see its message in the chat" } else { "Click to see it in the chat" };
     if resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{tip}\n\n{what}")).clicked() && matches!(click, Click::None) {
         click = Click::Open;
     }
@@ -384,7 +418,7 @@ mod tests {
     use super::*;
 
     fn whole(item: usize, text: &str) -> Mention {
-        Mention { item, from: "Claude".into(), at: 0, text: text.into(), len: text.chars().count(), excerpt: false, note: String::new() }
+        Mention { item, from: "Claude".into(), at: 0, text: text.into(), len: text.chars().count(), excerpt: false, note: String::new(), kind: String::new(), chat: String::new(), title: String::new() }
     }
 
     #[test]

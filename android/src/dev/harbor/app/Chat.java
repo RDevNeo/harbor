@@ -130,6 +130,8 @@ public class Chat extends Base {
         stage.addView(slash.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
         // `@` files and `#` issues and PRs share the composer's cursor and Back with the slash menu.
         tags = new Tags(this, hub, chatId, comp.edit);
+        // `$`: a chat picked becomes a mention (src/chatmention.rs; its context goes on send).
+        tags.onChat = this::mentionChat;
         stage.addView(tags.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
         comp.edit.onSelection = () -> { slash.update(); tags.update(); };
         comp.edit.backOpen = () -> slash.open() || tags.open();
@@ -950,12 +952,47 @@ public class Chat extends Base {
         }
     }
 
-    /** The messages the draft mentions, as chips over the composer (a tap on ✕ drops one). */
+    /** A chat from the `$` list: a mention in the draft (once), as the desktop's composer adds it. */
+    private void mentionChat(JSONObject row) {
+        String gid = row.optString("chat");
+        if (gid.isEmpty()) return;
+        for (int i = 0; i < mentions.length(); i++) {
+            JSONObject m = mentions.optJSONObject(i);
+            if (m != null && "chat".equals(m.optString("kind")) && gid.equals(m.optString("chat"))) return;
+        }
+        try {
+            mentions.put(new JSONObject().put("kind", "chat").put("chat", gid).put("title", row.optString("title")).put("from", row.optString("line")));
+        } catch (Exception ignored) { }
+        drawMentions();
+        typed();
+    }
+
+    /** A mentioned chat's chip: tap opens that chat. */
+    private void openMentioned(JSONObject m) {
+        String gid = m.optString("chat");
+        if (!gid.isEmpty()) open(this, hub, gid);
+    }
+
+    /** The messages the draft mentions, as chips over the composer (a tap on ✕ drops one). A
+     *  mentioned chat: tap opens it, long-press drops it. */
     private void drawMentions() {
         comp.mentions.removeAllViews();
         for (int i = 0; i < mentions.length(); i++) {
             JSONObject m = mentions.optJSONObject(i);
             if (m == null) continue;
+            if ("chat".equals(m.optString("kind"))) {
+                String line = m.optString("from");
+                TextView t = Ui.text(this, "\uD83D\uDCAC " + m.optString("title") + (line.isEmpty() ? "" : " · " + line), 13, Ui.FG);
+                t.setSingleLine(true);
+                t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                t.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
+                t.setBackground(Ui.round(Ui.G100, 0, 14));
+                final int at = i;
+                t.setOnClickListener(v -> openMentioned(m));
+                t.setOnLongClickListener(v -> { mentions.remove(at); drawMentions(); typed(); return true; });
+                comp.mentions.addView(t, Ui.margins(Ui.fill(), 8, 6, 8, 0));
+                continue;
+            }
             String q = m.optString("text").replaceAll("\\s+", " ").trim();
             if (q.length() > 80) q = q.substring(0, 80) + "…";
             TextView t = Ui.text(this, "❝ " + m.optString("from") + ": " + (m.optBoolean("excerpt") ? "\"" + q + "\"" : q) + "  ✕", 13, Ui.FG);
@@ -1012,8 +1049,11 @@ public class Chat extends Base {
                 if (mentions != null) for (int i = 0; i < mentions.length(); i++) {
                     JSONObject m = mentions.optJSONObject(i);
                     if (m == null) continue;
+                    boolean chat = "chat".equals(m.optString("kind"));
                     String said = m.optBoolean("excerpt") ? "\u201c" + m.optString("text") + "\u201d" : m.optString("text");
-                    TextView chip = Ui.subtitle(Ui.text(this, m.optString("from") + ": " + said, 13, Ui.G900));
+                    // A mentioned chat (hubs from 0.69): its title; a tap opens it.
+                    TextView chip = Ui.subtitle(Ui.text(this, chat ? "\uD83D\uDCAC " + m.optString("title") : m.optString("from") + ": " + said, 13, Ui.G900));
+                    if (chat) chip.setOnClickListener(v -> openMentioned(m));
                     chip.setBackground(Ui.round(Ui.CARD, Ui.LINE, 12));
                     chip.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(10), Ui.dp(4));
                     chip.setMaxWidth(maxBubble());

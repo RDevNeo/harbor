@@ -427,7 +427,7 @@ impl App {
     }
 
     /// The stored recap and suggestion of a chat ("gid\ntext": ids can come back after a delete).
-    fn recap_load(&self, chat: i64) -> (Option<String>, Option<String>) {
+    pub(crate) fn recap_load(&self, chat: i64) -> (Option<String>, Option<String>) {
         if !self.recap.shown.borrow().contains_key(&chat) {
             let gid = self.chat(chat).map(|c| c.gid.clone()).unwrap_or_default();
             let get = |k: &str| {

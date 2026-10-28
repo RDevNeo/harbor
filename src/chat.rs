@@ -510,7 +510,7 @@ impl App {
                                         // With notes: one mention a row, its note under its chip.
                                         for m in mentions.iter() {
                                             if let crate::mentions::Click::Open = crate::mentions::chip(ui, m, false) {
-                                                action = Some(MsgAction::Point(m.item));
+                                                action = Some(MsgAction::Point(m.clone()));
                                             }
                                             let note = m.note.trim();
                                             if !note.is_empty() {
@@ -527,7 +527,7 @@ impl App {
                                             ui.spacing_mut().item_spacing = Vec2::splat(6.0);
                                             for m in mentions.iter() {
                                                 if let crate::mentions::Click::Open = crate::mentions::chip(ui, m, false) {
-                                                    action = Some(MsgAction::Point(m.item));
+                                                    action = Some(MsgAction::Point(m.clone()));
                                                 }
                                             }
                                         });
@@ -857,7 +857,7 @@ impl App {
                 ui.ctx().with_plugin(|s: &mut egui::text_selection::LabelSelectionState| s.clear_selection());
                 self.mention_excerpt(id, i, &text);
             }
-            Some(MsgAction::Point(i)) => self.point_at(ui.ctx(), id, i),
+            Some(MsgAction::Point(m)) => self.open_mention(ui.ctx(), id, &m),
             None => {}
         }
         self.status_line(ui, id);
@@ -955,6 +955,7 @@ impl App {
         let mut slash = if focused { self.slash_keys(ui, key, cid, &mut draft) } else { None };
         if focused {
             self.tags_keys(ui, key, cid, &mut draft);
+            self.chat_mention_keys(ui, key, cid, &mut draft);
         }
         // The dictation shortcut works wherever the composer is (not only while it's focused).
         if self.popup.is_none() && self.dialog.is_none() && ui.input_mut(|i| self.keys.take(i, "voice")) {
@@ -996,7 +997,7 @@ impl App {
             .corner_radius(CornerRadius::same(16))
             .inner_margin(Margin { left: 18, right: 14, top: 16, bottom: 12 });
         let mut unmention: Option<usize> = None;
-        let mut point: Option<usize> = None;
+        let mut point: Option<crate::mentions::Mention> = None;
         let mut model_rect = Rect::NOTHING;
         let mut effort_rect = Rect::NOTHING;
         // Another device writes in this chat (its draft is in this composer): who, in a corner.
@@ -1022,7 +1023,7 @@ impl App {
                     for (i, m) in ms.iter_mut().enumerate() {
                         match crate::mentions::draft(ui, key, m, focus) {
                             crate::mentions::Click::Remove => unmention = Some(i),
-                            crate::mentions::Click::Open => point = Some(m.item),
+                            crate::mentions::Click::Open => point = Some(m.clone()),
                             crate::mentions::Click::Done => done = true,
                             crate::mentions::Click::None => {}
                         }
@@ -1170,6 +1171,7 @@ impl App {
             slash = Some(h);
         }
         self.tags_menu(ui, key, cid, &mut draft, focused, shown.response.rect);
+        self.chat_mention_menu(ui, key, cid, &mut draft, focused, shown.response.rect);
         self.drafts.insert(key, draft);
         match slash {
             Some(crate::slash::Harbor::Model) => open = Some((Popup::Model, model_rect)),
@@ -1187,8 +1189,8 @@ impl App {
                 m.remove(i);
             }
         }
-        if let Some(i) = point {
-            self.point_at(ui.ctx(), key, i);
+        if let Some(m) = point {
+            self.open_mention(ui.ctx(), key, &m);
         }
         if let Some((p, rect)) = open {
             if self.popup == Some(p) {
@@ -1748,8 +1750,8 @@ enum MsgAction {
     Mention(usize),
     /// Mention this text, selected in item i.
     MentionExcerpt(usize, String),
-    /// Scroll to item i and highlight it.
-    Point(usize),
+    /// A mention chip: scroll to its message and highlight it, or open its chat.
+    Point(crate::mentions::Mention),
     /// Open another thread (a fork).
     Open(i64),
     /// Open another thread and point at its item.

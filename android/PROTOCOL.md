@@ -460,7 +460,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | kind | what the desktop draws | fields |
 |---|---|---|
 | `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
-| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note}]` (`excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.71, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu) |
+| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note, kind?, chat?, title?}]` (`kind` "chat" from 0.72: a mentioned chat, `chat` its global id, `title` its title; the chip shows it and a tap opens that chat; `excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.71, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu) |
 | `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable`; commit pills in its spans (below) | `markdown`, `blocks` (below), `images`, `at`, `forkable`, `commits` (optional, 0.52) |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
@@ -680,6 +680,13 @@ false, "steering": false}`. While a turn runs, `mode` says what the message does
 queue, as older apps expect): `steer` reaches the running turn now (`steering: true`) when it can
 (`can_steer`), else it queues; `queue` waits for the turn to end (`queued: true`). A message to an
 idle chat starts a turn, and resumes a queue a Stop held (it runs after this one).
+
+Optional `mentions` (the draft's, as the shared draft holds them). A mentioned chat (from 0.72,
+`$` in the composer) is `{"kind": "chat", "chat": "<global id>", "title": "…", "from": "<its
+row's line>", "note"?: "…"}`: the hub fills in its context when the message goes out (title,
+project, PC, status, recap, its last 6 turns' prompts and final answers, at most about 8 KB, read
+from that PC's copy of the chat: the mesh keeps one of every chat) and the agent gets it quoted
+with the chat's id and link. Old hubs read it as an empty message mention.
 
 ### `POST /v1/chats/{id}/stop`
 
@@ -1108,6 +1115,15 @@ order; issues by number, then title, open before closed) and sends at most 50, b
   with the desktop's Lucide glyph and colour. `state` (issues): `open` / `closed`; (PRs): `open`,
   `draft`, `closed`, `merged`.
 - `pending`: the PC is still listing the files or asking GitHub; ask again in a second.
+- `trigger=$` (from 0.72; older hubs answer their file list or nothing: keep only `kind` "chat"
+  rows): chats to mention, `{"kind": "chat", "insert": "", "chat": "<global id>",
+  "title", "project", "pc", "status": "working" | "idle" | "settled", "updated", "line":
+  "harbor · desk · idle"}`. Every chat the PC has (other PCs' too), never the chat itself nor
+  sub-agents; ranked by title, then project, PC and status, this project's chats first and
+  settled ones below active ones. `$` starts the word as `@` does (not `$$`, not `$5`). Picking a
+  row takes the `$word` out (its `insert` is empty) and adds the chat to the draft's `mentions`
+  (above). The phone draws the composer's chip as "💬 title · line": a tap opens the chat, a
+  long-press drops it. `GET /v1/tags?trigger=$&project=…` lists the same for a new chat.
 - A chat without a project has no files, and one whose project has no GitHub remote no issues:
   `items` is empty.
 - Send the text as typed: the PC adds a short list of what was tagged after the message for the

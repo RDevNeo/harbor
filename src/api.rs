@@ -1872,6 +1872,18 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     }
 }
 
+/// A mention on a user's message, as the phone draws it: a message (author, snippet), or a
+/// chat (`kind` "chat", its global id and title; from 0.69).
+fn mention_json(m: &crate::mentions::Mention) -> Value {
+    let mut v = json!({ "from": m.from, "text": m.snippet(), "excerpt": m.excerpt, "note": m.note.trim() });
+    if m.is_chat() {
+        v["kind"] = json!("chat");
+        v["chat"] = json!(m.chat);
+        v["title"] = json!(m.title);
+    }
+    v
+}
+
 fn app_info() -> Value {
     let code = crate::update::apk().map_or(0, |(_, c)| c);
     // `hub` (0.51): this PC's own Harbor version and updates, for the phone's PCs page.
@@ -2363,7 +2375,7 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
         Card::User { text, files, mentions, at, sender, intent, .. } => {
             let mut v = json!({
                 "text": text, "files": files.iter().map(|f| file_name(f)).collect::<Vec<_>>(), "images": images,
-                "mentions": mentions.iter().map(|m| json!({ "from": m.from, "text": m.snippet(), "excerpt": m.excerpt, "note": m.note.trim() })).collect::<Vec<_>>(), "at": at,
+                "mentions": mentions.iter().map(mention_json).collect::<Vec<_>>(), "at": at,
                 "sender": sender,
             });
             // It steered a running turn (queue.rs): the "Steer" caption over the bubble.
@@ -2888,10 +2900,18 @@ impl App {
             }
             ("GET", ["v1", "tags"]) => {
                 let repo = self.project_ref(call.query("project").unwrap_or(""));
-                ok(self.api_tags_in(repo, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx))
+                match call.query("trigger").unwrap_or("@") {
+                    // `$`: chats to mention (chatmention.rs).
+                    "$" => ok(self.api_chat_rows(crate::app::DRAFT, repo, call.query("q").unwrap_or(""))),
+                    t => ok(self.api_tags_in(repo, t, call.query("q").unwrap_or(""), ctx)),
+                }
             }
             // The composer's `@` files and `#` issues and PRs (tags.rs).
             ("GET", ["v1", "chats", c, "tags"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) if call.query("trigger") == Some("$") => {
+                    let repo = self.chat(c).and_then(|x| x.repo_id);
+                    ok(self.api_chat_rows(c, repo, call.query("q").unwrap_or("")))
+                }
                 Some(c) => ok(self.api_tags(c, call.query("trigger").unwrap_or("@"), call.query("q").unwrap_or(""), ctx)),
                 None => err(404, "no such chat"),
             },

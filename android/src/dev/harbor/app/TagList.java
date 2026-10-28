@@ -22,7 +22,11 @@ final class TagList {
     }
 
     /** The `@word` or `#word` at `cursor`, if the cursor is in one. */
-    static Word word(CharSequence text, int cursor) {
+    static Word word(CharSequence text, int cursor) { return word(text, cursor, false); }
+
+    /** …and with `chats`, a `$word` too (a chat to mention, src/chatmention.rs); `$5` (money)
+     *  and `$$` aren't. */
+    static Word word(CharSequence text, int cursor, boolean chats) {
         int n = text.length();
         cursor = Math.max(0, Math.min(cursor, n));
         int start = cursor;
@@ -31,8 +35,9 @@ final class TagList {
         while (start < cursor && OPENERS.indexOf(text.charAt(start)) >= 0) start++;
         if (start == cursor) return null;
         char t = text.charAt(start);
-        if (t != '@' && t != '#') return null;
+        if (t != '@' && t != '#' && !(chats && t == '$')) return null;
         String query = text.subSequence(start + 1, cursor).toString();
+        if (t == '$' && !query.isEmpty() && (query.charAt(0) == '$' || Character.isDigit(query.charAt(0)))) return null;
         // `##` (a heading) and `@@` are not tags.
         if (!query.isEmpty() && query.charAt(0) == t) return null;
         int end = cursor;

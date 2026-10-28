@@ -156,6 +156,8 @@ pub struct App {
     pub mentions: crate::mentions::State,
     pub slash: crate::slash::State,
     pub tags: crate::tags::State,
+    /// The composer's `$` menu (chatmention.rs).
+    pub chatm: crate::chatmention::State,
     pub palette: crate::palette::State,
     pub forks: crate::fork::State,
     pub turns: HashMap<i64, (agent::Turn, Instant)>,
@@ -343,6 +345,7 @@ impl App {
             mentions: Default::default(),
             slash: Default::default(),
             tags: Default::default(),
+            chatm: Default::default(),
             palette: Default::default(),
             forks: Default::default(),
             turns: HashMap::new(),
@@ -965,9 +968,11 @@ impl App {
 
     /// A user message for an existing chat (the composer's, or the phone's): a new turn,
     /// or queued while one runs.
-    pub fn send_to(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<crate::mentions::Mention>, ctx: &egui::Context) {
+    pub fn send_to(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mut mentions: Vec<crate::mentions::Mention>, ctx: &egui::Context) {
         // Steer or Queue if its turn runs (queue.rs): the caller says which; else it queues.
         let mode = self.queue.mode.unwrap_or(crate::queue::Mode::Queue);
+        // Mentioned chats get their context here, where they were picked (chatmention.rs).
+        self.fill_chat_mentions(&mut mentions);
         // Another PC's chat: its PC runs the turn.
         let forwarded = self.mesh_send(chat_id, &text, &files, &mentions);
         self.queue.mode = None;

@@ -32,6 +32,12 @@ public class TagTest {
         same(word("## Title", 2), "none", "a heading");
         same(word("@a ", 3), "none", "after the word");
         same(word("/cmd", 4), "none", "a slash command");
+        same(word("$fix", 4), "none", "no chats there");
+        TagList.Word c = TagList.word("see $fix", 8, true);
+        same(c == null ? "none" : c.trigger + "," + c.start + "," + c.end + "," + c.query, "$,4,8,fix", "a chat");
+        same(TagList.word("costs $5", 8, true) == null, true, "money");
+        same(TagList.word("$$x", 3, true) == null, true, "two dollars");
+        same(TagList.word("a$b", 3, true) == null, true, "inside a word");
 
         same(tokens("a @b #3 c#4 #x"), "@b|#3|", "tokens");
         same(tokens("see @src/chat.rs, and #12 (also #12) or me@mail.com #7."), "@src/chat.rs|#12|#12|#7|", "punctuation");

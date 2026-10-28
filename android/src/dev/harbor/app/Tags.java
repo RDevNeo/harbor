@@ -17,11 +17,12 @@ import java.net.URLEncoder;
 import java.util.HashMap;
 import java.util.Map;
 
-/** The `@` and `#` menu above a chat's composer, as on the desktop (src/tags.rs): `@` lists the
+/** The `@`, `#` and `$` menu above a chat's composer, as on the desktop (src/tags.rs): `@` lists the
  *  project's files (type icon, name, dimmed folder), `#` its GitHub issues and pull requests
  *  (state icon, number, title). The hub ranks them for what's typed (GET /v1/chats/{id}/tags);
- *  a tap puts `@path ` or `#123 ` in, and the text shows its tags highlighted. Back, a space or
- *  no match closes it. */
+ *  a tap puts `@path ` or `#123 ` in, and the text shows its tags highlighted. `$` lists chats
+ *  to mention (src/chatmention.rs): a tap takes the `$word` out and adds the chat as a mention
+ *  chip. Back, a space or no match closes it. */
 final class Tags {
     /** An answer is asked again after this long. */
     private static final long FRESH_MS = 15_000;
@@ -55,6 +56,9 @@ final class Tags {
     private String asking;      // the key being asked
     private int tries;
     private boolean highlighting;
+    /** A chat picked from the `$` list (hubs from 0.69): the composer adds it as a mention.
+     *  Null: `$` opens nothing here. */
+    java.util.function.Consumer<JSONObject> onChat;
 
     Tags(Activity a, Hub hub, String chat, Composer.Edit edit) {
         this(a, hub, () -> "/v1/chats/" + chat + "/tags?", edit);
@@ -110,7 +114,7 @@ final class Tags {
     /** Follows the text and the cursor: shows the rows for the word under it, or hides. */
     void update() {
         int cur = edit.getSelectionStart();
-        TagList.Word w = cur == edit.getSelectionEnd() ? TagList.word(edit.getText(), cur) : null;
+        TagList.Word w = cur == edit.getSelectionEnd() ? TagList.word(edit.getText(), cur, onChat != null) : null;
         if (dismissed >= 0 && (w == null || w.start != dismissed)) dismissed = -1;
         if (w == null || w.start == dismissed || !edit.hasFocus() || !edit.isShown()) { hide(); return; }
         word = w;
@@ -138,6 +142,15 @@ final class Tags {
                 String t = URLEncoder.encode(String.valueOf(w.trigger), "UTF-8");
                 JSONObject r = hub.get(base.get() + "trigger=" + t + "&q=" + q);
                 JSONArray items = r.optJSONArray("items");
+                // `$` on a hub before 0.72 answers its files: only chats count there.
+                if (items != null && w.trigger == '$') {
+                    JSONArray chats = new JSONArray();
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject it = items.optJSONObject(i);
+                        if (it != null && "chat".equals(it.optString("kind"))) chats.put(it);
+                    }
+                    items = chats;
+                }
                 got = new Answer(items == null ? new JSONArray() : items, r.optBoolean("pending"), System.currentTimeMillis());
             } catch (Exception e) {
                 // A hub without tags (before 0.31) or not reachable now: no menu.
@@ -168,8 +181,29 @@ final class Tags {
         ((ScrollView) rows.getParent()).scrollTo(0, 0);
     }
 
+    /** A chat to mention: its icon, title, and project · PC · status (the hub's line); a tap
+     *  takes the `$word` out and hands the chat to the composer. */
+    private View chatRow(JSONObject it) {
+        LinearLayout r = Ui.row(a);
+        r.setMinimumHeight(Ui.dp(52));
+        r.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+        r.setBackground(Ui.press(0, 0, 16));
+        r.addView(Ui.icon(a, Ui.I_CHAT, 17, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)), 0, 0, 12, 0));
+        boolean settled = "settled".equals(it.optString("status"));
+        r.addView(Ui.subtitle(Ui.bold(a, it.optString("title"), 15, settled ? Ui.G700 : Ui.FG)), Ui.wrap());
+        r.addView(Ui.subtitle(Ui.text(a, it.optString("line"), 13.5f, Ui.G700)), Ui.margins(Ui.weight(), 10, 0, 0, 0));
+        r.setOnClickListener(v -> acceptChat(it));
+        return r;
+    }
+
+    private void acceptChat(JSONObject it) {
+        accept("");
+        if (onChat != null) onChat.accept(it);
+    }
+
     /** One row: a file's type icon, name and folder; an issue's or PR's state, number and title. */
     private View row(JSONObject it) {
+        if ("chat".equals(it.optString("kind"))) return chatRow(it);
         boolean file = "file".equals(it.optString("kind"));
         LinearLayout r = Ui.row(a);
         r.setMinimumHeight(Ui.dp(52));
@@ -220,8 +254,8 @@ final class Tags {
 
     /** Puts `insert ` in place of the word. */
     private void accept(String insert) {
-        TagList.Word w = word != null ? word : TagList.word(edit.getText(), edit.getSelectionStart());
-        if (w == null || insert.isEmpty()) return;
+        TagList.Word w = word != null ? word : TagList.word(edit.getText(), edit.getSelectionStart(), onChat != null);
+        if (w == null || (insert.isEmpty() && w.trigger != '$')) return;
         SlashList.Put p = SlashList.put(edit.getText(), new SlashList.Word(w.start, w.end, w.query, false), insert);
         edit.getText().replace(p.from, p.to, p.text);
         edit.setSelection(Math.min(p.cursor(), edit.length()));
