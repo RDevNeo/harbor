@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The release workflow compiles the x86_64 build on a boat.dev sandbox, in Ubuntu 22.04, with
+  its Rust, crates and build folder kept warm in a saved snapshot. aarch64 still builds on
+  GitHub's ARM runner (boat has no arm64 sandboxes); signing and publishing stay on GitHub.
+
 ## [0.77.0] - 2026-10-28
 
 ### Added

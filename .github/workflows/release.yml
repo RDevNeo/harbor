@@ -6,6 +6,7 @@
 # updater checks those signatures with the public key in src/update.rs.
 #
 # Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents);
+# BOAT_API_KEY (a boat.dev API key: the x86_64 build runs on a boat.dev sandbox, see core-x86_64);
 # ANDROID_KEYSTORE (base64 of the app's signing keystore), ANDROID_KEYSTORE_PASS,
 # ANDROID_KEY_ALIAS. Every APK must be signed with that same key, or phones can't update.
 name: release
@@ -35,14 +36,13 @@ env:
   MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
 
 jobs:
-  core:
-    # Oldest supported base: the binary needs glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …).
-    strategy:
-      matrix:
-        include:
-          - { arch: x86_64, runner: ubuntu-22.04, cache: core }
-          - { arch: aarch64, runner: ubuntu-22.04-arm, cache: core-aarch64 }
-    runs-on: ${{ matrix.runner }}
+  # On a boat.dev sandbox from the saved snapshot `harbor-build`, which keeps Rust, the crates and
+  # target/ warm. boat has no arm64 sandboxes, so aarch64 stays on GitHub's runner.
+  core-x86_64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
     steps:
       - uses: actions/checkout@v7
       - name: Tag matches Cargo.toml
@@ -50,11 +50,64 @@ jobs:
         run: |
           v="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
+      - name: boat CLI
+        run: |
+          set -eu
+          [ -n "$BOAT_API_KEY" ] || { echo "::error::BOAT_API_KEY is not set"; exit 1; }
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://boat.dev/api/boat/cli/download?platform=linux-x64&channel=prod" -o "$HOME/.local/bin/boat"
+          chmod +x "$HOME/.local/bin/boat"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          printf '%s' "$BOAT_API_KEY" | "$HOME/.local/bin/boat" login --key-stdin --json >/dev/null
+      # --ttl: it stops by itself if the delete step below never runs. Without the snapshot (lost
+      # or never made) it builds from scratch and a main push saves a new one.
+      - name: Sandbox
+        id: box
+        run: |
+          set -eu
+          ready() { jq -r 'select(.event == "ready") | .id'; }
+          id=$(boat new --from harbor-build --type large --no-env --ttl 3600 --name "ci-harbor-$GITHUB_RUN_ID" --json | ready || true)
+          [ -n "$id" ] || id=$(boat new --type large --no-env --ttl 3600 --name "ci-harbor-$GITHUB_RUN_ID" --json | ready)
+          test -n "$id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - name: Copy the source
+        run: |
+          set -eu
+          git archive --format=tar.gz -o /tmp/src.tgz HEAD
+          boat scp /tmp/src.tgz "${{ steps.box.outputs.id }}:/home/user/src.tgz"
+          boat exec "${{ steps.box.outputs.id }}" -- bash -c 'mkdir src && tar -xzf src.tgz -C src'
+      - name: Updater tests and release build (on boat)
+        run: boat exec "${{ steps.box.outputs.id }}" --cwd src --timeout 0 -- env HARBOR_GIT_SHA="$GITHUB_SHA" bash .github/boat/build.sh
+      - name: Fetch the binary
+        run: |
+          mkdir -p target/release
+          boat scp "${{ steps.box.outputs.id }}:/home/user/out/harbor" target/release/harbor
+          chmod 755 target/release/harbor
+      - name: Save the cache
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        run: |
+          boat exec "${{ steps.box.outputs.id }}" -- bash -c 'rm -rf src src.tgz out'
+          boat snapshot "${{ steps.box.outputs.id }}" harbor-build --json
+      - name: Delete the sandbox
+        if: always() && steps.box.outputs.id != ''
+        run: boat delete "${{ steps.box.outputs.id }}" --yes --json
+      - run: ldd target/release/harbor && ./target/release/harbor --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-x86_64
+          path: target/release/harbor
+
+  # Oldest supported base: the binary needs glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …).
+  core-aarch64:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.cache }}
+          key: core-aarch64
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Updater tests (version order, signatures)
         run: 'cargo test --locked -- update::'
@@ -64,7 +117,7 @@ jobs:
       - run: ldd target/release/harbor && ./target/release/harbor --version
       - uses: actions/upload-artifact@v7
         with:
-          name: harbor-${{ matrix.arch }}
+          name: harbor-aarch64
           path: target/release/harbor
 
   # The phone app (android/build.sh: aapt2 + javac + d8 + apksigner, no Gradle). Main pushes
@@ -132,7 +185,7 @@ jobs:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
   package:
-    needs: [core, browser, android]
+    needs: [core-x86_64, core-aarch64, browser, android]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
