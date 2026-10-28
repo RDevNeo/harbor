@@ -70,6 +70,7 @@ Optional (only that feature is off without it):
 | `notify-send`, `xdg-open` | notifications, opening links and files |
 | `ssh` | terminals, files and agents on your other PCs |
 | `rg` | the grep tool for agents on other PCs working on this PC's files |
+| `fontconfig` (glibc 2.39+) | the built-in browser's engine (every desktop has it) |
 | `rsvg-convert` or `magick` | SVG project favicons |
 | `npx` | Convex login |
 | Hyprland or Sway | raising the open window when you launch Harbor again |
