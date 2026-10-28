@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.72.2] - 2026-10-28
+
 ### Fixed
 - Chats that run on another device over SSH no longer stay "Working" after the agent there
   has finished. The bridge that carries this PC's MCP servers to the device waited forever
@@ -1585,7 +1587,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.2...HEAD
+[0.72.2]: https://github.com/RDevNeo/harbor/compare/v0.72.1...v0.72.2
 [0.72.1]: https://github.com/RDevNeo/harbor/compare/v0.72.0...v0.72.1
 [0.72.0]: https://github.com/RDevNeo/harbor/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/RDevNeo/harbor/compare/v0.70.0...v0.71.0
