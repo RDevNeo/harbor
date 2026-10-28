@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-10-28
+
 ### Added
 - Phone: long-pressing a message offers what the desktop's hover bar does, in a bottom sheet with
   the message's time on top: Copy, Quote in reply (your messages), Fork from this response (a
@@ -1507,7 +1509,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.68.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.69.0...HEAD
+[0.69.0]: https://github.com/RDevNeo/harbor/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/RDevNeo/harbor/compare/v0.67.2...v0.68.0
 [0.67.2]: https://github.com/RDevNeo/harbor/compare/v0.67.1...v0.67.2
 [0.67.1]: https://github.com/RDevNeo/harbor/compare/v0.67.0...v0.67.1
