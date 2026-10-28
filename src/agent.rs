@@ -25,7 +25,8 @@ pub enum Event {
     Result { cost_usd: Option<f64>, duration_ms: u64, turns: u64, input_tokens: u64, output_tokens: u64, cached: u64 },
     Error(String),
     Stderr(String),
-    Exited { ok: bool },
+    /// The turn in `dir` ended (a chat's stopped turn can end after its next one started).
+    Exited { ok: bool, dir: PathBuf },
     /// Claude took in a user message written to a running turn (`--replay-user-messages`).
     UserEcho(String),
     /// The account hit a usage limit: its window ("five_hour", "seven_day", …), when it
@@ -35,6 +36,14 @@ pub enum Event {
     Quota(Vec<(String, f64, i64)>),
 }
 
+impl Event {
+    /// The exit of another turn than `current` (the chat's running one): a stopped turn's
+    /// end that came after the chat's next turn started. That one goes on.
+    pub fn is_stale_exit(&self, current: Option<&std::path::Path>) -> bool {
+        matches!(self, Event::Exited { dir, .. } if current.is_some_and(|c| c != dir.as_path()))
+    }
+}
+
 /// A running agent turn. It runs detached (see detach.rs), so it outlives a reload.
 pub struct Turn {
     dir: PathBuf,
@@ -42,6 +51,11 @@ pub struct Turn {
 }
 
 impl Turn {
+    /// Its folder: what tells its events from another turn's of the same chat.
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     /// Writes a user message into the running turn; false once the input is closed
     /// (or the provider takes no input mid-turn).
     pub fn write(&self, prompt: &str, files: &[PathBuf]) -> bool {
@@ -695,7 +709,7 @@ fn follow(dir: PathBuf, meta: crate::detach::Meta, tx: Sender<(i64, Event)>, wak
                 },
             );
             crate::bridge::end(&dir);
-            let _ = tx.send((id, Event::Exited { ok }));
+            let _ = tx.send((id, Event::Exited { ok, dir: dir.clone() }));
             wake(true);
             // Its events are out: the folder is done. (A reload or quit ends this thread
             // before here, so a running turn's folder stays for the next Harbor.)
@@ -1142,6 +1156,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_stopped_turns_late_exit_leaves_the_next_turn() {
+        let (old, new) = (PathBuf::from("/t/5-1"), PathBuf::from("/t/5-2"));
+        let exit = |d: &PathBuf| Event::Exited { ok: false, dir: d.clone() };
+        assert!(exit(&old).is_stale_exit(Some(&new)));
+        assert!(!exit(&new).is_stale_exit(Some(&new)));
+        // Nothing else runs: it is the stop's own end.
+        assert!(!exit(&old).is_stale_exit(None));
+        assert!(!Event::Stderr("x".into()).is_stale_exit(Some(&new)));
+    }
+
+    #[test]
+    fn a_devices_exit_line_is_no_event() {
+        assert!(parse_claude(&serde_json::json!({ "type": crate::detach::REMOTE_EXIT, "code": 0 })).is_empty());
+    }
 
     #[test]
     fn resumed_sessions_follow_the_folder() {

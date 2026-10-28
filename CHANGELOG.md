@@ -5,6 +5,26 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Chats that run on another device over SSH no longer stay "Working" after the agent there
+  has finished. The bridge that carries this PC's MCP servers to the device waited forever
+  for answers that never come: Roblox Studio's server (on the newer MCP protocol) holds a
+  `subscriptions/listen` request open on purpose, and every later request to it queued
+  behind that one. The connections it kept open held the SSH session open, so the turn never
+  ended. Each request to a stdio server now waits on its own, for a limited time (a
+  subscription for as long as the agent listens) and only while the agent is still
+  connected: a request the agent gave up on is cancelled at the server, a server that stops
+  answering is restarted on the next request, and the notifications that come with a request
+  (such as a subscription's acknowledgement or a tool call's progress) now reach the agent as
+  an event stream. Http servers stop as soon as the agent hangs up. As a backstop, once the
+  agent on the device has exited, an SSH session that is still open is closed after 5
+  seconds, and the turn ends normally.
+- Pressing Stop on a stuck remote turn and then sending a message no longer cuts the new
+  turn off from every tool ("Error POSTing to endpoint: not found"). The stopped turn's
+  cleanup could hang and leave its folder behind. After Harbor's next update or reload it
+  was picked up instead of the chat's running turn, whose tools then stayed unserved. A
+  stopped turn's late end also no longer ends the chat's next turn.
+
 ## [0.72.1] - 2026-10-28
 
 ### Fixed

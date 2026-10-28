@@ -825,7 +825,8 @@ pub fn launch(family: Family, dir: &str, setup: &[Setup], argv: &[String]) -> La
 /// terminal there) that enters `dir`, runs the `setup` lines, finds the CLI (see
 /// [`path_lookup`]) and starts `argv` on the connection's stdin. A watchdog stops the
 /// agent when the connection goes away (ssh gives a command without a terminal no
-/// SIGHUP), so stopping a turn here stops it there.
+/// SIGHUP), so stopping a turn here stops it there. The last line says the agent exited,
+/// with its code ([`crate::detach::REMOTE_EXIT`]): an ssh still open after it is stopped.
 pub fn remote_command(dir: &str, setup: &[Setup], argv: &[String]) -> String {
     let mut s = format!("cd {} 2>/dev/null || {{ echo \"harbor: the folder {} doesn't exist on $(hostname)\" >&2; exit 97; }}\n", shell_path(dir), dir.replace(['"', '$', '`', '\\'], ""));
     for l in setup {
@@ -835,7 +836,7 @@ pub fn remote_command(dir: &str, setup: &[Setup], argv: &[String]) -> String {
     s.push_str(&path_require(argv.first().map(String::as_str).unwrap_or("claude")));
     s.push_str(&argv.iter().map(|a| if a == MCP_CONFIG_ARG { "\"$HARBOR_MCP_CONFIG\"".to_string() } else { quote(a) }).collect::<Vec<_>>().join(" "));
     s.push_str(
-        " <&0 &\nc=$!\n( while kill -0 $PPID 2>/dev/null; do sleep 2; done; pkill -TERM -P $c; kill -TERM $c ) >/dev/null 2>&1 &\nw=$!\nwait $c; s=$?\nkill $w 2>/dev/null\nexit $s\n",
+        " <&0 &\nc=$!\n( while kill -0 $PPID 2>/dev/null; do sleep 2; done; pkill -TERM -P $c; kill -TERM $c ) >/dev/null 2>&1 &\nw=$!\nwait $c; s=$?\nkill $w 2>/dev/null\nprintf '\\n{\"type\":\"harbor_exit\",\"code\":%d}\\n' \"$s\"\nexit $s\n",
     );
     format!("if command -v bash >/dev/null 2>&1; then exec bash -lc {0}; else exec sh -lc {0}; fi", quote(&s))
 }
@@ -1024,6 +1025,7 @@ pub fn ps_script(dir: &str, setup: &[Setup], argv: &[String]) -> String {
          $p.StartInfo.WorkingDirectory=(Get-Location).ProviderPath\n\
          [void]$p.Start();$p.WaitForExit();$HarborCode=$p.ExitCode\n\
          }}finally{{$HarborClean | ForEach-Object {{Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue}}}}\n\
+         [Console]::Out.WriteLine();[Console]::Out.WriteLine('{{\"type\":\"harbor_exit\",\"code\":'+$HarborCode+'}}');[Console]::Out.Flush()\n\
          exit $HarborCode\n"
     ));
     s
@@ -1303,7 +1305,18 @@ mod tests {
             c.stdin.take().unwrap().write_all(b"in")?;
             c.wait_with_output()
         });
-        assert_eq!(String::from_utf8_lossy(&out.unwrap().stdout).trim(), "1 in");
+        assert_eq!(agent_out(&String::from_utf8_lossy(&out.unwrap().stdout), 0).trim(), "1 in");
+        // The last line says the agent exited, and how.
+        let script = remote_command("/", &[], &["sh".into(), "-c".into(), "exit 5".into()]);
+        let out = Command::new("sh").arg("-c").arg(&script).stdin(Stdio::null()).output().unwrap();
+        assert_eq!((out.status.code(), agent_out(&String::from_utf8_lossy(&out.stdout), 5)), (Some(5), String::new()));
+    }
+
+    /// The agent's own output: what the script printed before its last line (the agent's
+    /// exit, for detach.rs).
+    fn agent_out(out: &str, code: i32) -> String {
+        let end = format!("\n{{\"type\":\"{}\",\"code\":{code}}}\n", crate::detach::REMOTE_EXIT);
+        out.strip_suffix(&end).unwrap_or_else(|| panic!("no exit line in {out:?}")).to_string()
     }
 
     /// The account's login goes first on stdin and comes out as an environment variable
@@ -1319,7 +1332,7 @@ mod tests {
                 c.stdin.take().unwrap().write_all(input.as_bytes())?;
                 c.wait_with_output()
             });
-            String::from_utf8_lossy(&out.unwrap().stdout).into_owned()
+            agent_out(&String::from_utf8_lossy(&out.unwrap().stdout), 0)
         };
         assert_eq!(run("sk-ant-oat01-abc\n{\"type\":\"user\"}\n{\"n\":2}\n"), "sk-ant-oat01-abc|1|{\"type\":\"user\"}\n{\"n\":2}\n");
         // Without a login line (the account isn't signed in here) nothing is read.
@@ -1329,7 +1342,7 @@ mod tests {
             c.stdin.take().unwrap().write_all(b"{\"n\":1}\n")?;
             c.wait_with_output()
         });
-        assert_eq!(String::from_utf8_lossy(&out.unwrap().stdout), "|1|{\"n\":1}\n");
+        assert_eq!(agent_out(&String::from_utf8_lossy(&out.unwrap().stdout), 0), "|1|{\"n\":1}\n");
     }
 
     /// The MCP config (it holds the bridge's token) comes after the login on stdin, reaches
@@ -1345,7 +1358,7 @@ mod tests {
             c.stdin.take().unwrap().write_all(b"sk-ant-oat01-abc\n{\"url\":\"http://127.0.0.1:1/secret-grant/origin\"}\n{\"type\":\"user\"}\n")?;
             c.wait_with_output()
         });
-        let out = String::from_utf8_lossy(&out.unwrap().stdout).into_owned();
+        let out = agent_out(&String::from_utf8_lossy(&out.unwrap().stdout), 0);
         let parts: Vec<&str> = out.split('|').collect();
         assert_eq!(parts[0], "sk-ant-oat01-abc");
         assert_eq!(parts[2], "{\"url\":\"http://127.0.0.1:1/secret-grant/origin\"}");
@@ -1373,7 +1386,9 @@ mod tests {
                 c.wait_with_output()
             });
             let out = out.unwrap();
-            (out.status.code(), String::from_utf8_lossy(&out.stdout).trim().to_string(), String::from_utf8_lossy(&out.stderr).trim().to_string())
+            // (Without the script's last line, there once the agent ran.)
+            let stdout = String::from_utf8_lossy(&out.stdout).lines().filter(|l| !l.contains(crate::detach::REMOTE_EXIT)).collect::<Vec<_>>().join("\n").trim().to_string();
+            (out.status.code(), stdout, String::from_utf8_lossy(&out.stderr).trim().to_string())
         };
         assert_eq!(run(&["harbor-fake-cli", "--version"]), (Some(0), "fake --version in".into(), String::new()));
         let (code, out, err) = run(&["harbor-missing-cli"]);
@@ -1567,7 +1582,10 @@ mod tests {
         let input = format!("{}sk-ant-oat01-abc\n{{\"mcpServers\":{{}}}}\n{{\"type\":\"user\"}}\n{{\"n\":2}}\n", l.input);
         let (code, out, err) = run(&l.command, &input);
         assert_eq!(code, Some(7), "{out}\n{err}");
-        let v: Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| panic!("{e}: {out}\n{err}"));
+        // The agent's output, then the line that says it exited, and how.
+        let (agent, exit) = out.trim().split_once("\n\n").unwrap_or_else(|| panic!("no exit line: {out}"));
+        assert_eq!(exit.trim(), format!("{{\"type\":\"{}\",\"code\":7}}", crate::detach::REMOTE_EXIT));
+        let v: Value = serde_json::from_str(agent).unwrap_or_else(|e| panic!("{e}: {out}\n{err}"));
         let got: Vec<String> = v["argv"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
         assert_eq!(got[..tricky.len()], tricky.map(String::from));
         assert_eq!(v["token"], "sk-ant-oat01-abc");

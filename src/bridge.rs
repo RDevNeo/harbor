@@ -5,7 +5,10 @@
 //! use; `ssh -R` makes the port reachable on the device's own 127.0.0.1, and the remote
 //! Claude Code's `--mcp-config` lists `http` servers pointing there:
 //! - stdio servers run here, one process per turn and server; each request goes to it
-//!   as a line on stdin and its answer comes back as the HTTP response;
+//!   as a line on stdin and its answer comes back as the HTTP response (notifications the
+//!   server sends about the request, like a `subscriptions/listen` stream, as events before
+//!   it). A request waits a bounded time and only while its agent is connected: a server
+//!   that never answers must not keep the connection, and with it the device's ssh, open;
 //! - http servers are forwarded with curl and get their auth headers here, so tokens
 //!   never leave this PC;
 //! - `origin` is the bridge's own server: this PC's custom slash commands and skills as
@@ -19,7 +22,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -50,17 +54,48 @@ pub struct Grant {
     pub machines: Option<crate::machines::Grant>,
 }
 
-/// A stdio server's process, and the `initialize` it got (replayed if it restarts).
+/// How long a stdio server has to answer a request ([`TOOL_WAIT`] for a tool call); each
+/// notification it sends about the request (progress) starts the wait again.
+const WAIT: Duration = Duration::from_secs(if cfg!(test) { 2 } else { 60 });
+const TOOL_WAIT: Duration = Duration::from_secs(if cfg!(test) { 4 } else { 3600 });
+/// How often a request waiting for its answer looks whether its agent is still there.
+const TICK: Duration = Duration::from_millis(100);
+/// The `_meta` key a server stamps its `subscriptions/listen` notifications with: the id of
+/// the listen request.
+const SUBSCRIPTION: &str = "io.modelcontextprotocol/subscriptionId";
+
+/// A stdio server's process, the `initialize` it got (replayed if it restarts), and the
+/// last id the bridge gave a request on its way there.
 #[derive(Default)]
 struct Slot {
     proc: Option<Proc>,
     init: Option<Value>,
+    next: u64,
 }
 
+/// A running stdio server. Requests reach it with ids of the bridge's own (agents reuse
+/// theirs after a reconnect), written by a thread of its own; a reader thread hands each
+/// answer, and the notifications about a request, to the connection waiting for it. So a
+/// request that is never answered holds up nothing but its own connection.
 struct Proc {
     child: Child,
-    stdin: ChildStdin,
-    out: BufReader<ChildStdout>,
+    input: Sender<String>,
+    waits: Arc<Mutex<Waits>>,
+}
+
+#[derive(Default)]
+struct Waits {
+    by_id: HashMap<u64, Wait>,
+    /// When the server last wrote a line.
+    heard: Option<Instant>,
+}
+
+/// A request waiting for its answer, with the agent's own id and progress token for it.
+struct Wait {
+    tx: Sender<Value>,
+    id: Value,
+    progress: Value,
+    tool: bool,
 }
 
 struct Live {
@@ -119,11 +154,10 @@ pub fn grant(g: Grant) -> Option<u16> {
 /// Stops serving a token and ends its servers.
 pub fn revoke(token: &str) {
     let Some(live) = GRANTS.lock().unwrap().remove(token) else { return };
+    // A slot is only held to start its server and send to it, so this doesn't wait on
+    // requests still pending (they hear that their server is gone).
     for slot in live.slots.values() {
-        if let Some(mut p) = slot.lock().unwrap().proc.take() {
-            let _ = p.child.kill();
-            let _ = p.child.wait();
-        }
+        slot.lock().unwrap().stop();
     }
 }
 
@@ -263,25 +297,82 @@ fn handle(s: TcpStream) {
     let Ok(msg) = serde_json::from_slice::<Value>(&req.body) else {
         return respond(&s, 400, "application/json", json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": "parse error" } }).to_string().as_bytes());
     };
-    let one = |m: &Value| -> Option<Value> {
+    let one = |m: &Value, agent: &mut Agent| -> Option<Value> {
         match &def {
             None if server == crate::machines::NAME => crate::machines::mcp(grant.machines.as_ref()?, &grant.cwd, grant.chat_id, m),
             None => origin(&grant, m),
-            Some(d) if kind.as_deref() == Some("stdio") => stdio(&grant, d, &slot, m),
+            Some(d) if kind.as_deref() == Some("stdio") => stdio(&grant, d, &slot, m, agent),
             Some(_) => m.get("id").map(|id| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "Harbor's bridge only carries stdio and http servers" } })),
         }
     };
+    // Events only for a single request (a batch's answers come together).
+    let sse = !msg.is_array() && req.header("accept").is_some_and(|a| a.contains("text/event-stream"));
+    let mut agent = Agent { s: &s, sse, streaming: false, left: false };
     let out = match &msg {
         Value::Array(batch) => {
-            let all: Vec<Value> = batch.iter().filter_map(one).collect();
+            let all: Vec<Value> = batch.iter().filter_map(|m| one(m, &mut agent)).collect();
             (!all.is_empty()).then_some(Value::Array(all))
         }
-        m => one(m),
+        m => one(m, &mut agent),
     };
+    // Gone: nobody to answer, the connection just closes.
+    if agent.left {
+        return;
+    }
     match out {
+        Some(v) if agent.streaming => agent.event(&v),
         Some(v) => respond(&s, 200, "application/json", v.to_string().as_bytes()),
         None => respond(&s, 202, "application/json", b""),
     }
+}
+
+/// The connection a request came on, while the request waits for its answer.
+struct Agent<'a> {
+    s: &'a TcpStream,
+    /// It takes an event stream as the answer.
+    sse: bool,
+    /// The stream's head went out: the answer follows as its last event.
+    streaming: bool,
+    /// The agent hung up.
+    left: bool,
+}
+
+impl Agent<'_> {
+    fn gone(&mut self) -> bool {
+        self.left = self.left || hung_up(self.s);
+        self.left
+    }
+
+    /// A message to the agent ahead of the answer, when it takes a stream.
+    fn event(&mut self, v: &Value) {
+        if !self.sse {
+            return;
+        }
+        let mut w = self.s;
+        if !self.streaming {
+            self.streaming = true;
+            let _ = w.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n");
+        }
+        let _ = w.write_all(format!("event: message\ndata: {v}\n\n").as_bytes());
+    }
+}
+
+/// Whether the other end closed `s` (or broke it). A client that gives up closes its
+/// connection, and ssh passes that on as the end of its input: the answer has nobody to go to.
+#[allow(unsafe_code)] // poll(2)
+fn hung_up(s: &TcpStream) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut p = libc::pollfd { fd: s.as_raw_fd(), events: libc::POLLIN | libc::POLLRDHUP, revents: 0 };
+    // SAFETY: one valid pollfd for the duration of the call; no wait.
+    if unsafe { libc::poll(&mut p, 1, 0) } <= 0 {
+        return false;
+    }
+    if p.revents & (libc::POLLRDHUP | libc::POLLHUP | libc::POLLERR) != 0 {
+        return true;
+    }
+    // Readable: more bytes (it's there), or the end.
+    let mut b = [0u8; 1];
+    matches!(s.peek(&mut b), Ok(0) | Err(_))
 }
 
 // ---------------------------------------------------------------- stdio servers
@@ -306,66 +397,211 @@ fn spawn(g: &Grant, def: &Value) -> Option<Proc> {
         cmd.current_dir(&g.cwd);
     }
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
-    let (stdin, out) = (child.stdin.take()?, BufReader::new(child.stdout.take()?));
-    Some(Proc { child, stdin, out })
+    let (Some(mut stdin), Some(out)) = (child.stdin.take(), child.stdout.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    // Written from a thread: a server that stops reading blocks only that thread.
+    let (input, lines) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for l in lines {
+            if stdin.write_all(l.as_bytes()).is_err() {
+                break;
+            }
+        }
+    });
+    let waits = Arc::new(Mutex::new(Waits::default()));
+    let (w, answers, cwd) = (waits.clone(), input.clone(), g.cwd.clone());
+    std::thread::spawn(move || read_answers(out, &answers, &w, &cwd));
+    Some(Proc { child, input, waits })
 }
 
-/// Sends one message to the server and waits for its answer (None for notifications).
-/// Requests the server makes meanwhile (roots, ping) are answered here.
-fn exchange(g: &Grant, p: &mut Proc, msg: &Value) -> Result<Option<Value>, ()> {
-    writeln!(p.stdin, "{msg}").and_then(|_| p.stdin.flush()).map_err(|_| ())?;
-    let Some(id) = msg.get("id") else { return Ok(None) };
-    loop {
-        let mut line = String::new();
-        if p.out.read_line(&mut line).map_err(|_| ())? == 0 {
-            return Err(());
-        }
+/// Reads a stdio server's output until it ends: answers go to the requests waiting for
+/// them, notifications about a request (its progress, its subscription) to that request,
+/// and the server's own requests (roots, ping) are answered here.
+fn read_answers(out: ChildStdout, input: &Sender<String>, waits: &Mutex<Waits>, cwd: &Path) {
+    for line in BufReader::new(out).lines() {
+        let Ok(line) = line else { break };
+        let mut w = waits.lock().unwrap();
+        w.heard = Some(Instant::now());
         let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
         match (v.get("method").and_then(|m| m.as_str()), v.get("id")) {
             (Some(m), Some(rid)) => {
                 let answer = match m {
-                    "roots/list" => json!({ "jsonrpc": "2.0", "id": rid, "result": { "roots": [{ "uri": format!("file://{}", g.cwd.display()), "name": "project" }] } }),
+                    "roots/list" => json!({ "jsonrpc": "2.0", "id": rid, "result": { "roots": [{ "uri": format!("file://{}", cwd.display()), "name": "project" }] } }),
                     "ping" => json!({ "jsonrpc": "2.0", "id": rid, "result": {} }),
                     _ => json!({ "jsonrpc": "2.0", "id": rid, "error": { "code": -32601, "message": "not supported over Harbor's bridge" } }),
                 };
-                writeln!(p.stdin, "{answer}").map_err(|_| ())?;
+                let _ = input.send(format!("{answer}\n"));
             }
-            (Some(_), None) => {}
-            (None, Some(rid)) if rid == id => return Ok(Some(v)),
+            (Some(_), None) => {
+                let p = &v["params"];
+                let to = p["_meta"][SUBSCRIPTION].as_u64().or_else(|| {
+                    let token = &p["progressToken"];
+                    if token.is_null() { None } else { w.by_id.iter().find(|(_, x)| x.progress == *token).map(|(k, _)| *k) }
+                });
+                if let Some(x) = to.and_then(|k| w.by_id.get(&k)) {
+                    let _ = x.tx.send(v);
+                }
+            }
+            (None, Some(rid)) => {
+                if let Some(x) = rid.as_u64().and_then(|k| w.by_id.remove(&k)) {
+                    let _ = x.tx.send(v);
+                }
+            }
             _ => {}
+        }
+    }
+    // It ended: whoever still waits hears so.
+    waits.lock().unwrap().by_id.clear();
+}
+
+/// Writes `msg` to the server; a request goes under the bridge's id `mine`, and its answer
+/// comes on the receiver. Err when the server isn't there to take it.
+fn send(p: &Proc, msg: &Value, mine: Option<u64>) -> Result<Option<Receiver<Value>>, ()> {
+    let mut msg = msg.clone();
+    let rx = mine.map(|k| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let wait = Wait { tx, id: msg["id"].clone(), progress: msg["params"]["_meta"]["progressToken"].clone(), tool: msg["method"] == "tools/call" };
+        p.waits.lock().unwrap().by_id.insert(k, wait);
+        msg["id"] = json!(k);
+        rx
+    });
+    if p.input.send(format!("{msg}\n")).is_err() {
+        if let Some(k) = mine {
+            p.waits.lock().unwrap().by_id.remove(&k);
+        }
+        return Err(());
+    }
+    Ok(rx)
+}
+
+/// A new process in the slot. One that replaces a server that died mid-turn comes back
+/// initialized, as the agent left it (its answer bounded like any request's).
+fn restart(g: &Grant, def: &Value, s: &mut Slot, reinit: bool) {
+    s.stop();
+    s.proc = spawn(g, def);
+    let (Some(init), Some(p)) = (s.init.clone().filter(|_| reinit), s.proc.as_ref()) else { return };
+    s.next += 1;
+    let answered = send(p, &init, Some(s.next)).ok().flatten().is_some_and(|rx| rx.recv_timeout(WAIT).is_ok_and(|v| v.get("result").is_some()));
+    if !answered || send(p, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }), None).is_err() {
+        s.stop();
+    }
+}
+
+impl Slot {
+    /// Ends the server's process; its reader then tells whoever still waits.
+    fn stop(&mut self) {
+        if let Some(mut p) = self.proc.take() {
+            let _ = p.child.kill();
+            let _ = p.child.wait();
         }
     }
 }
 
-fn stdio(g: &Grant, def: &Value, slot: &Mutex<Slot>, msg: &Value) -> Option<Value> {
-    let mut s = slot.lock().unwrap();
-    if msg["method"] == "initialize" {
-        s.init = Some(msg.clone());
-    }
-    for attempt in 0..2 {
-        if s.proc.as_mut().is_none_or(|p| p.child.try_wait().ok().flatten().is_some()) {
-            s.proc = spawn(g, def);
-            // A server that died mid-turn comes back initialized, as the agent left it.
-            if let (Some(init), Some(p)) = (s.init.clone(), s.proc.as_mut()) {
-                if msg["method"] != "initialize" {
-                    let mut init = init;
-                    init["id"] = json!("harbor-reinit");
-                    let ok = exchange(g, p, &init).is_ok() && exchange(g, p, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).is_ok();
-                    if !ok {
-                        s.proc = None;
+/// One message for a stdio server, and its answer (None for a notification, or when the
+/// agent hung up meanwhile). The slot is held only to start the server and send; then the
+/// request waits on its own, for at most [`WAIT`] ([`TOOL_WAIT`]; a `subscriptions/listen`
+/// without a limit) and only while its agent is connected. A request given up on is
+/// cancelled at the server, and a server that said
+/// nothing at all meanwhile (and runs no tool call) is taken for stuck and stopped: the
+/// next request starts it again.
+fn stdio(g: &Grant, def: &Value, slot: &Mutex<Slot>, msg: &Value, agent: &mut Agent) -> Option<Value> {
+    let err = |id: &Value, why: &str| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": why } });
+    let id = msg.get("id").cloned();
+    let mut msg = msg.clone();
+    let (rx, mine, pid, waits, input) = {
+        let mut s = slot.lock().unwrap();
+        if msg["method"] == "initialize" {
+            s.init = Some(msg.clone());
+        }
+        let mut sent = None;
+        for _ in 0..2 {
+            if !s.proc.as_mut().is_some_and(|p| p.child.try_wait().ok().flatten().is_none()) {
+                restart(g, def, &mut s, msg["method"] != "initialize");
+            }
+            s.next += 1;
+            let mine = s.next;
+            let Some(p) = s.proc.as_ref() else { break };
+            if msg["method"] == "notifications/cancelled" {
+                // The agent names its own id; the server knows the bridge's. Whoever waits
+                // for that answer stops.
+                let mut w = p.waits.lock().unwrap();
+                let theirs = msg["params"]["requestId"].clone();
+                if let Some(k) = w.by_id.iter().find(|(_, x)| x.id == theirs).map(|(k, _)| *k) {
+                    msg["params"]["requestId"] = json!(k);
+                    if let Some(x) = w.by_id.remove(&k) {
+                        let _ = x.tx.send(err(&json!(k), "cancelled"));
                     }
                 }
             }
+            match send(p, &msg, id.as_ref().map(|_| mine)) {
+                Ok(rx) => {
+                    sent = Some((rx, mine, p.child.id(), p.waits.clone(), p.input.clone()));
+                    break;
+                }
+                // It was gone already: once more with a new one.
+                Err(()) => s.stop(),
+            }
         }
-        let Some(p) = s.proc.as_mut() else { break };
-        match exchange(g, p, msg) {
-            Ok(r) => return r,
-            Err(()) if attempt == 0 => s.proc = None,
-            Err(()) => break,
+        match sent {
+            Some(x) => x,
+            None => return id.map(|id| err(&id, "the MCP server on the Harbor PC didn't start or exited")),
+        }
+    };
+    let (Some(id), Some(rx)) = (id, rx) else { return None };
+    let at = Instant::now();
+    // A listen is answered only by its events, for as long as the agent wants them.
+    let listen = msg["method"] == "subscriptions/listen";
+    let limit = if msg["method"] == "tools/call" { TOOL_WAIT } else { WAIT };
+    let mut until = at + limit;
+    // Not to wait for anymore: the server drops it too.
+    let forget = || {
+        waits.lock().unwrap().by_id.remove(&mine);
+        let _ = input.send(format!("{}\n", json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": mine, "reason": "the client is gone or it took too long" } })));
+    };
+    loop {
+        match rx.recv_timeout(TICK) {
+            // About this request (progress, a subscription's events): on to the agent, and
+            // the wait starts again.
+            Ok(mut v) if v.get("method").is_some() => {
+                if v["params"]["_meta"].get(SUBSCRIPTION).is_some() {
+                    v["params"]["_meta"][SUBSCRIPTION] = id.clone();
+                }
+                agent.event(&v);
+                if agent.gone() {
+                    forget();
+                    return None;
+                }
+                until = Instant::now() + limit;
+            }
+            Ok(mut v) => {
+                v["id"] = id;
+                return Some(v);
+            }
+            Err(RecvTimeoutError::Disconnected) => return Some(err(&id, "the MCP server on the Harbor PC exited")),
+            Err(RecvTimeoutError::Timeout) if agent.gone() => {
+                forget();
+                return None;
+            }
+            Err(RecvTimeoutError::Timeout) if !listen && Instant::now() >= until => {
+                forget();
+                let stuck = {
+                    let w = waits.lock().unwrap();
+                    w.heard.is_none_or(|h| h < at) && !w.by_id.values().any(|x| x.tool)
+                };
+                if stuck {
+                    let mut s = slot.lock().unwrap();
+                    if s.proc.as_ref().is_some_and(|p| p.child.id() == pid) {
+                        s.stop();
+                    }
+                }
+                return Some(err(&id, &format!("the MCP server on the Harbor PC didn't answer in {} s", limit.as_secs())));
+            }
+            Err(RecvTimeoutError::Timeout) => {}
         }
     }
-    let id = msg.get("id")?;
-    Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "the MCP server on the Harbor PC didn't start or exited" } }))
 }
 
 // ---------------------------------------------------------------- http servers
@@ -400,6 +636,28 @@ fn forward(s: &TcpStream, req: &Req, def: &Value) {
         let _ = sin.write_all(&req.body);
     }
     let mut out = BufReader::new(c.stdout.take().unwrap());
+    // A stream that stays silent (an event stream with nothing to say) would only notice the
+    // agent left on a write: curl stops as soon as it hangs up.
+    let c = Arc::new(Mutex::new(c));
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Ok(peer) = s.try_clone() {
+        let (c, done) = (c.clone(), done.clone());
+        std::thread::spawn(move || {
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                if hung_up(&peer) {
+                    let _ = c.lock().unwrap().kill();
+                    break;
+                }
+                std::thread::sleep(TICK);
+            }
+        });
+    }
+    let stop = || {
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut c = c.lock().unwrap();
+        let _ = c.kill();
+        let _ = c.wait();
+    };
     // Status and headers; skip interim responses (100 Continue).
     let (mut code, mut keep) = (0u16, vec![]);
     loop {
@@ -427,8 +685,7 @@ fn forward(s: &TcpStream, req: &Req, def: &Value) {
     }
     let _ = std::fs::remove_file(&hfile);
     if code == 0 {
-        let _ = c.kill();
-        let _ = c.wait();
+        stop();
         return respond(s, 502, "text/plain", b"bridge: the server didn't answer");
     }
     let mut w = s;
@@ -441,8 +698,7 @@ fn forward(s: &TcpStream, req: &Req, def: &Value) {
             break;
         }
     }
-    let _ = c.kill();
-    let _ = c.wait();
+    stop();
 }
 
 // ---------------------------------------------------------------- origin
@@ -745,6 +1001,206 @@ mod tests {
         let ok = format!("POST /{}/origin HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{body}\r\n0\r\n\r\n", g.token, body.len());
         let out = raw(port, ok.as_bytes());
         assert!(out.starts_with("HTTP/1.1 200") && out.contains("\"id\":4"), "{out}");
+        revoke(&g.token);
+    }
+
+    /// Sends a request and leaves the connection open (an agent waiting for its answer).
+    fn ask(port: u16, path: &str, body: &str, accept: &str) -> TcpStream {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(s, "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nAccept: {accept}\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+        s
+    }
+
+    /// What's left on the connection, until the bridge closes it (Err: it didn't in time).
+    fn rest(mut s: TcpStream) -> std::io::Result<String> {
+        let mut out = String::new();
+        s.read_to_string(&mut out).map(|_| out)
+    }
+
+    /// Whether the bridge's end of the connection from local port `peer` sits in CLOSE_WAIT:
+    /// the agent left and the bridge never closed (what kept a device's ssh open).
+    fn close_wait(port: u16, peer: u16) -> bool {
+        let want = format!("0100007F:{port:04X} 0100007F:{peer:04X} 08");
+        std::fs::read_to_string("/proc/net/tcp").unwrap().lines().any(|l| l.split_whitespace().skip(1).take(3).collect::<Vec<_>>().join(" ") == want)
+    }
+
+    fn wait_for(what: &str, ok: impl Fn() -> bool) {
+        let t = Instant::now();
+        while !ok() {
+            assert!(t.elapsed() < Duration::from_secs(5), "{what}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn a_stdio_server_that_never_answers_holds_up_nothing() {
+        let dir = std::env::temp_dir().join(format!("harbor-bridge-hang-{}", token().unwrap()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (log, pids) = (dir.join("log"), dir.join("pids"));
+        // Answers everything but `hang`; a listen gets only its acknowledgement, as a server
+        // of the 2026-07-28 protocol does.
+        let script = format!(
+            r#"echo $$ >> '{}'
+while read -r l; do
+  printf '%s\n' "$l" >> '{}'
+  id=$(printf '%s' "$l" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  m=$(printf '%s' "$l" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$m" in
+    hang) ;;
+    subscriptions/listen) printf '{{"jsonrpc":"2.0","method":"notifications/subscriptions/acknowledged","params":{{"_meta":{{"{SUBSCRIPTION}":%s}}}}}}\n' "$id" ;;
+    *) [ -n "$id" ] && printf '{{"jsonrpc":"2.0","id":%s,"result":{{"ok":true}}}}\n' "$id" ;;
+  esac
+done"#,
+            pids.display(),
+            log.display()
+        );
+        let mut servers = Map::new();
+        servers.insert("slow".into(), json!({ "type": "stdio", "command": "sh", "args": ["-c", script] }));
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: false, workspace: vec![], machines: None };
+        let port = grant(g.clone()).unwrap();
+        let path = format!("/{}/slow", g.token);
+        let json = "application/json, text/event-stream";
+        let (code, body) = post(port, &path, r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#);
+        assert_eq!((code, serde_json::from_str::<Value>(&body).unwrap()["id"].clone()), (200, json!(0)));
+
+        // A request it never answers doesn't hold up the next one (the agent's ids come back).
+        let hung = ask(port, &path, r#"{"jsonrpc":"2.0","id":"a-1","method":"hang"}"#, json);
+        std::thread::sleep(Duration::from_millis(300));
+        let t = Instant::now();
+        let (code, body) = post(port, &path, r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#);
+        assert_eq!((code, serde_json::from_str::<Value>(&body).unwrap()["id"].clone()), (200, json!(7)));
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+
+        // The agent hangs up as ssh passes it on (an end of input, no reset): the bridge closes
+        // its side at once (no CLOSE_WAIT holding the ssh session open) and the server hears
+        // the request is off.
+        let peer = hung.local_addr().unwrap().port();
+        hung.shutdown(std::net::Shutdown::Write).unwrap();
+        let t = Instant::now();
+        assert_eq!(rest(hung).expect("the bridge closes the connection"), "");
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        assert!(!close_wait(port, peer), "the bridge's end sits in CLOSE_WAIT");
+        wait_for("the server hears of the cancel", || std::fs::read_to_string(&log).unwrap_or_default().contains("notifications/cancelled"));
+
+        // A listen streams its acknowledgement, under the agent's own id, and stays open
+        // (past any request's wait) until the agent leaves.
+        let mut listen = ask(port, &path, r#"{"jsonrpc":"2.0","id":42,"method":"subscriptions/listen","params":{"notifications":{}}}"#, json);
+        let mut head = vec![0u8; 4096];
+        let n = listen.read(&mut head).unwrap();
+        let head = String::from_utf8_lossy(&head[..n]).to_string();
+        assert!(head.starts_with("HTTP/1.1 200") && head.contains("text/event-stream"), "{head}");
+        let head = if head.contains("data: ") { head } else { head + &rest_line(&mut listen) };
+        assert!(head.contains(&format!("\"{SUBSCRIPTION}\":42")), "{head}");
+        listen.set_read_timeout(Some(WAIT + Duration::from_millis(500))).unwrap();
+        let mut more = [0u8; 256];
+        let quiet = listen.read(&mut more);
+        assert!(quiet.as_ref().is_err_and(|e| matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)), "{quiet:?} {}", String::from_utf8_lossy(&more));
+        listen.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+        let peer = listen.local_addr().unwrap().port();
+        listen.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(rest(listen).is_ok());
+        assert!(!close_wait(port, peer), "the listen's end sits in CLOSE_WAIT");
+
+        // Still connected, an unanswered request ends with an error after its time; a server
+        // that said nothing at all meanwhile is stopped, and the next request starts it again.
+        let t = Instant::now();
+        let out = rest(ask(port, &path, r#"{"jsonrpc":"2.0","id":9,"method":"hang"}"#, "application/json")).unwrap();
+        assert!(t.elapsed() >= WAIT && out.contains("\"id\":9") && out.contains("didn't answer"), "{out}");
+        let (_, body) = post(port, &path, r#"{"jsonrpc":"2.0","id":10,"method":"tools/list"}"#);
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["result"]["ok"], true);
+        assert_eq!(std::fs::read_to_string(&pids).unwrap().lines().count(), 2);
+        // It came back initialized, as the agent left it.
+        assert_eq!(std::fs::read_to_string(&log).unwrap().matches("\"method\":\"initialize\"").count(), 2);
+
+        revoke(&g.token);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ending_a_turn_waits_for_nothing_and_leaves_the_next_ones_grant() {
+        // A stopped turn whose server never answers a request still pending, and the chat's
+        // next turn, already running.
+        let mut servers = Map::new();
+        servers.insert("slow".into(), json!({ "type": "stdio", "command": "sh", "args": ["-c", "while read -r l; do :; done"] }));
+        let a = Grant { token: token().unwrap(), chat_id: 3, cwd: std::env::temp_dir(), servers, commands: false, workspace: vec![], machines: None };
+        let b = Grant { token: token().unwrap(), ..a.clone() };
+        let root = std::env::temp_dir().join(format!("harbor-bridge-end-{}", token().unwrap()));
+        let (da, db) = (root.join("3-1"), root.join("3-2"));
+        for (d, g) in [(&da, &a), (&db, &b)] {
+            std::fs::create_dir_all(d).unwrap();
+            save(d, g);
+            grant(g.clone());
+        }
+        let port = port().unwrap();
+        let pending = ask(port, &format!("/{}/slow", a.token), r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#, "application/json");
+        std::thread::sleep(Duration::from_millis(300));
+        let t = Instant::now();
+        end(&da);
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+        // Its request hears that the server is gone.
+        assert!(rest(pending).unwrap().contains("exited"));
+        assert_eq!(post(port, &format!("/{}/slow", a.token), "{}").0, 404);
+        let (code, body) = post(port, &format!("/{}/origin", b.token), r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#);
+        assert_eq!((code, serde_json::from_str::<Value>(&body).unwrap()["id"].clone()), (200, json!(2)));
+        end(&db);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The next line on the connection (an event that came in its own packet).
+    fn rest_line(s: &mut TcpStream) -> String {
+        let mut b = vec![0u8; 4096];
+        let n = s.read(&mut b).unwrap_or(0);
+        String::from_utf8_lossy(&b[..n]).to_string()
+    }
+
+    #[test]
+    fn a_silent_http_stream_ends_when_its_agent_leaves() {
+        // An http server that never answers the first request, and opens an event stream for
+        // the second that goes silent after a first comment (curl passes the head on with it).
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let sport = server.local_addr().unwrap().port();
+        let (tx, curl_left) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for answer in [&b""[..], b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: hi\n\n"] {
+                let (mut c, _) = server.accept().unwrap();
+                let mut b = [0u8; 4096];
+                let _ = c.read(&mut b);
+                c.write_all(answer).unwrap();
+                // Until curl goes away.
+                while c.read(&mut b).is_ok_and(|n| n > 0) {}
+                let _ = tx.send(());
+            }
+        });
+        let mut servers = Map::new();
+        servers.insert("web".into(), json!({ "type": "http", "url": format!("http://127.0.0.1:{sport}/mcp") }));
+        let g = Grant { token: token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: false, workspace: vec![], machines: None };
+        let port = grant(g.clone()).unwrap();
+        let open = || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(s, "GET /{}/web HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n", g.token).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+            s
+        };
+        let leave = |s: TcpStream| {
+            let peer = s.local_addr().unwrap().port();
+            s.shutdown(std::net::Shutdown::Write).unwrap();
+            let t = Instant::now();
+            assert!(rest(s).is_ok(), "the bridge closes the connection");
+            assert!(!close_wait(port, peer), "the bridge's end sits in CLOSE_WAIT");
+            curl_left.recv_timeout(Duration::from_secs(3)).expect("curl was stopped");
+            assert!(t.elapsed() < Duration::from_secs(3));
+        };
+        // Gone before the server said anything.
+        let s = open();
+        std::thread::sleep(Duration::from_millis(300));
+        leave(s);
+        // Gone while the stream is quiet.
+        let mut s = open();
+        let mut head = [0u8; 1024];
+        let n = s.read(&mut head).unwrap();
+        assert!(String::from_utf8_lossy(&head[..n]).starts_with("HTTP/1.1 200"));
+        leave(s);
         revoke(&g.token);
     }
 

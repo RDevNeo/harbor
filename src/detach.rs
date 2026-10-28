@@ -270,6 +270,14 @@ pub fn recover(dir: &Path, pid: u32, chat_id: i64, items: &[crate::store::Item])
     meta
 }
 
+/// Leftover turns in the order they are picked up (one per chat): live ones first, then
+/// the newest.
+fn follow_order(left: &mut [(PathBuf, Meta)]) {
+    // When a folder was made: its name is `<chat>-<nanoseconds>`.
+    let made = |dir: &Path| -> u128 { dir.file_name().and_then(|n| n.to_str()?.split_once('-')?.1.parse().ok()).unwrap_or(0) };
+    left.sort_by_key(|(dir, m)| std::cmp::Reverse((alive(m.pid, m.pid_start), made(dir))));
+}
+
 /// Turn folders left by an earlier Harbor: still running, or done while it was away
 /// and not picked up yet. Old leftovers without a turn are swept.
 pub fn leftovers() -> Vec<(PathBuf, Meta)> {
@@ -369,8 +377,67 @@ pub fn run(args: &[String]) {
             }
         });
     }
-    let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
+    let remote = Path::new(spec["program"].as_str().unwrap_or_default()).file_name().is_some_and(|n| n == "ssh");
+    let code = if remote { wait_remote(&mut child, &dir) } else { child.wait().ok().and_then(|s| s.code()).unwrap_or(1) };
     let _ = std::fs::write(dir.join("exit"), code.to_string());
+}
+
+/// The last line a device's script prints once the agent there has exited, with its exit
+/// code (remote.rs): `{"type":"harbor_exit","code":N}`.
+pub const REMOTE_EXIT: &str = "harbor_exit";
+/// How long ssh gets after that to end by itself.
+const LINGER: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 5 });
+
+/// Waits for a remote turn's ssh. ssh only exits once every channel it forwards is closed,
+/// so a connection to the bridge that stays open (a server that never answered) would keep
+/// the turn going after the agent there is done. Once the device's script says the agent
+/// exited, ssh gets [`LINGER`] and is then stopped; the turn ends with the agent's exit code.
+fn wait_remote(child: &mut std::process::Child, dir: &Path) -> i32 {
+    let out = dir.join("out");
+    let mut seen = 0u64;
+    let mut partial = vec![];
+    let mut ended: Option<(i32, Instant)> = None;
+    // Only that line is parsed (the agent's own lines can be large).
+    let mark = format!("{{\"type\":\"{REMOTE_EXIT}\"");
+    loop {
+        if let Ok(Some(st)) = child.try_wait() {
+            return st.code().or(ended.map(|e| e.0)).unwrap_or(1);
+        }
+        if ended.is_none() {
+            let mut chunk = vec![];
+            if let Ok(mut f) = std::fs::File::open(&out) {
+                if f.seek(SeekFrom::Start(seen)).is_ok() {
+                    let _ = f.read_to_end(&mut chunk);
+                }
+            }
+            seen += chunk.len() as u64;
+            partial.extend_from_slice(&chunk);
+            while let Some(i) = partial.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = partial.drain(..=i).collect();
+                if !line.starts_with(mark.as_bytes()) {
+                    continue;
+                }
+                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&line) else { continue };
+                if v["type"] == REMOTE_EXIT {
+                    ended = Some((v["code"].as_i64().unwrap_or(1) as i32, Instant::now()));
+                }
+            }
+        }
+        if let Some((code, at)) = ended.filter(|e| e.1.elapsed() >= LINGER) {
+            let _ = Command::new("kill").args(["-TERM", &child.id().to_string()]).stderr(Stdio::null()).status();
+            let t = Instant::now();
+            while child.try_wait().ok().flatten().is_none() && t.elapsed() < Duration::from_secs(2) {
+                std::thread::sleep(POLL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(dir.join("err")) {
+                let _ = writeln!(f, "harbor: the agent there exited {} s ago and ssh still held the connection open; closed it", at.elapsed().as_secs());
+            }
+            return code;
+        }
+        std::thread::sleep(POLL);
+    }
 }
 
 impl crate::app::App {
@@ -378,7 +445,12 @@ impl crate::app::App {
     /// while it was away). Each chat's transcript goes back to where its turn began,
     /// keeping notices and messages that arrived since, and the turn is replayed.
     pub fn reattach_turns(&mut self, ctx: &eframe::egui::Context) {
-        for (dir, meta) in leftovers() {
+        // A chat's live turn (else its newest) is the one followed. An older folder is a
+        // stopped turn's whose end hadn't come through yet: followed first, it would leave
+        // the newer turn unfollowed, its MCP servers unserved, until the chat got a message.
+        let mut left = leftovers();
+        follow_order(&mut left);
+        for (dir, meta) in left {
             let id = meta.chat_id;
             if self.chat(id).is_none() || self.turns.contains_key(&id) {
                 // Never pull a folder from under a runner that is still going.
@@ -486,6 +558,112 @@ mod tests {
         // A test instance's turns live in another folder.
         assert_eq!(runner_chat(&args(&["/x/harbor", "turn", "/home/u/.local/state/harbor/turns-0a1b2c3d4e5f/23-1"]), root), None);
         assert_eq!(runner_chat(&args(&["/x/harbor", "turn", "/elsewhere/23-1"]), root), None);
+    }
+
+    #[test]
+    fn a_remote_turn_ends_when_ssh_lingers_after_its_agent() {
+        let dir = std::env::temp_dir().join(format!("harbor-linger-{}", crate::bridge::token().unwrap()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // ssh once the agent there exited (code 0), with a forwarded connection still open.
+        let ssh = |code: i32| {
+            let out = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("out")).unwrap();
+            let script = format!("printf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\"}}' '' '{{\"type\":\"{REMOTE_EXIT}\",\"code\":{code}}}'; exec sleep 300");
+            Command::new("sh").args(["-c", &script]).stdout(out).spawn().unwrap()
+        };
+        std::fs::write(dir.join("err"), "").unwrap();
+        let mut child = ssh(0);
+        let t = Instant::now();
+        assert_eq!(wait_remote(&mut child, &dir), 0);
+        assert!(t.elapsed() >= LINGER && t.elapsed() < LINGER + Duration::from_secs(3), "{:?}", t.elapsed());
+        assert!(child.try_wait().unwrap().is_some(), "ssh is gone");
+        assert!(std::fs::read_to_string(dir.join("err")).unwrap().contains("ssh still held"));
+        // The agent's own code, not the signal's.
+        std::fs::remove_file(dir.join("out")).unwrap();
+        assert_eq!(wait_remote(&mut ssh(2), &dir), 2);
+        // An ssh that ends by itself keeps its code, the agent's end said or not.
+        let mut quick = Command::new("sh").args(["-c", "exit 3"]).spawn().unwrap();
+        assert_eq!(wait_remote(&mut quick, &dir), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lingering_ssh_turn_ends_as_a_success() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("harbor-linger-run-{}", crate::bridge::token().unwrap()));
+        let dir = root.join("7-1");
+        std::fs::create_dir_all(&dir).unwrap();
+        // An ssh whose agent there answered and exited, held open by a forwarded connection.
+        let ssh = root.join("ssh");
+        std::fs::write(&ssh, format!("#!/bin/sh\nprintf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"duration_ms\":5,\"num_turns\":1}}' '' '{{\"type\":\"{REMOTE_EXIT}\",\"code\":0}}'\nexec sleep 300\n")).unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(dir.join("cmd.json"), json!({ "program": ssh, "args": ["-R", "127.0.0.1:1:127.0.0.1:1", "device", "cmd"], "input": false }).to_string()).unwrap();
+        let t = Instant::now();
+        run(&[dir.to_string_lossy().into_owned()]);
+        assert!(t.elapsed() >= LINGER && t.elapsed() < LINGER + Duration::from_secs(3), "{:?}", t.elapsed());
+        assert_eq!(std::fs::read_to_string(dir.join("exit")).unwrap(), "0");
+        // Harbor reads it as a turn that ended well: its result, no stop, the exit line no event.
+        let meta = Meta { chat_id: 7, kind: "Claude".into(), started: 1, base: 0, pid: u32::MAX, pid_start: 0 };
+        let mut lines = vec![];
+        assert!(follow(&dir, &meta, |l| lines.push(l.to_string()), |_| {}), "the turn ended as a success");
+        assert!(!dir.join("stopped").exists());
+        assert!(lines.iter().any(|l| l.contains("\"result\"")), "{lines:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn picks_up_a_chats_live_turn_before_an_older_stopped_one() {
+        let mut sleeper = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = sleeper.id();
+        let meta = |pid: u32| Meta { chat_id: 5, kind: "Claude".into(), started: 1, base: 0, pid, pid_start: proc_start(pid).unwrap_or(0) };
+        // The stopped turn's runner is gone; the next turn's runs.
+        let mut left = vec![(PathBuf::from("/x/5-100"), meta(u32::MAX)), (PathBuf::from("/x/5-200"), meta(pid)), (PathBuf::from("/x/6-50"), meta(u32::MAX))];
+        follow_order(&mut left);
+        assert_eq!(left[0].0, PathBuf::from("/x/5-200"));
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+        // None live: the newest first.
+        follow_order(&mut left);
+        assert_eq!(left.iter().map(|l| l.0.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["/x/5-200", "/x/5-100", "/x/6-50"]);
+    }
+
+    /// A remote turn over a real ssh (to this PC): `cargo test -- --ignored remote_turn_ends_over_ssh`.
+    /// Needs key-based ssh to 127.0.0.1. The agent there asks a stdio server that never
+    /// answers and gives up; then one leaves a request open in the background.
+    #[test]
+    #[ignore]
+    fn remote_turn_ends_over_ssh() {
+        let mut servers = serde_json::Map::new();
+        servers.insert("slow".into(), json!({ "type": "stdio", "command": "sh", "args": ["-c", "while read -r l; do :; done"] }));
+        let g = crate::bridge::Grant { token: crate::bridge::token().unwrap(), chat_id: 1, cwd: std::env::temp_dir(), servers, commands: false, workspace: vec![], machines: None };
+        let port = crate::bridge::grant(g.clone()).unwrap();
+        let rport = 20000 + std::process::id() % 40000;
+        let url = format!("http://127.0.0.1:{rport}/{}/slow", g.token);
+        let curl = |wait: u32, method: &str| format!("curl -s -m {wait} -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"{method}\"}}' {url}");
+        let turn = |agent: String| {
+            let dir = std::env::temp_dir().join(format!("harbor-ssh-turn-{}", crate::bridge::token().unwrap()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let argv: Vec<String> = ["sh", "-c", &agent].iter().map(|s| s.to_string()).collect();
+            let cmd = crate::remote::remote_command("/tmp", &[], &argv);
+            let args = ["-o", "BatchMode=yes", "-o", "UserKnownHostsFile=/tmp/harbor-dev-kh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ExitOnForwardFailure=yes", "-R", &format!("127.0.0.1:{rport}:127.0.0.1:{port}"), "127.0.0.1", &cmd];
+            std::fs::write(dir.join("cmd.json"), json!({ "program": "ssh", "args": args, "input": false }).to_string()).unwrap();
+            let t = Instant::now();
+            run(&[dir.to_string_lossy().into_owned()]);
+            let r = (std::fs::read_to_string(dir.join("exit")).unwrap(), std::fs::read_to_string(dir.join("err")).unwrap(), t.elapsed());
+            let _ = std::fs::remove_dir_all(&dir);
+            r
+        };
+        let result = "printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\"}'";
+        // The agent's request times out there and it exits: the bridge closes its end, so
+        // ssh ends by itself.
+        let (code, err, took) = turn(format!("{}; {result}", curl(2, "tools/list")));
+        assert_eq!(code, "0", "{err}");
+        assert!(!err.contains("ssh still held") && took < Duration::from_secs(10), "{took:?} {err}");
+        // A request left open behind the agent (once it got through) keeps ssh's forwarding
+        // open: stopped after LINGER.
+        let (code, err, took) = turn(format!("nohup {} </dev/null >/dev/null 2>&1 & sleep 1; {result}", curl(300, "tools/call")));
+        assert_eq!(code, "0", "{err}");
+        assert!(err.contains("ssh still held") && took < Duration::from_secs(10), "{took:?} {err}");
+        crate::bridge::revoke(&g.token);
     }
 
     #[test]

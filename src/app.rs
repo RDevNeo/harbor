@@ -1202,6 +1202,12 @@ impl App {
         }
     }
 
+    /// The exit of a turn the chat no longer runs (it was stopped and a new one started
+    /// meanwhile): dropped, the new turn goes on.
+    fn stale_exit(&self, chat_id: i64, ev: &Event) -> bool {
+        ev.is_stale_exit(self.turns.get(&chat_id).map(|(t, _)| t.dir()))
+    }
+
     fn apply_event(&mut self, id: i64, ev: Event, ctx: &egui::Context) {
         self.api_touch(id);
         if !self.transcripts.contains_key(&id) {
@@ -1300,7 +1306,7 @@ impl App {
                 }
             }
             Event::UserEcho(_) | Event::Limit { .. } | Event::Quota(_) => {}
-            Event::Exited { ok } => {
+            Event::Exited { ok, .. } => {
                 let stopped = self.turns.remove(&id).is_none();
                 let failed = !stopped && !resumes && (!tr.got_result || matches!(tr.items.last(), Some(Item::Error { .. })));
                 if !tr.got_result && !stopped && !resumes {
@@ -1521,7 +1527,7 @@ impl App {
         self.auto_tick(ctx);
         self.drop_idle_transcripts();
         while let Ok((id, ev)) = self.rx.try_recv() {
-            if self.undo_swallows(id, &ev) || self.queue_event(id, &ev) || self.limit_event(id, &ev) {
+            if self.undo_swallows(id, &ev) || self.stale_exit(id, &ev) || self.queue_event(id, &ev) || self.limit_event(id, &ev) {
                 continue;
             }
             // A turn ends as a stop when it was already taken off `turns`.
