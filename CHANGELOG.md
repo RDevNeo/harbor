@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-10-28
+
 ### Changed
 - Desktop: the bar under the composer now looks like the phone's: quiet muted text with no
   boxes, "Worktree · harbor-a1b2c3" (or "Current checkout", "New worktree") on the left and the
@@ -1602,7 +1604,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.3...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.73.0...HEAD
+[0.73.0]: https://github.com/RDevNeo/harbor/compare/v0.72.3...v0.73.0
 [0.72.3]: https://github.com/RDevNeo/harbor/compare/v0.72.2...v0.72.3
 [0.72.2]: https://github.com/RDevNeo/harbor/compare/v0.72.1...v0.72.2
 [0.72.1]: https://github.com/RDevNeo/harbor/compare/v0.72.0...v0.72.1
