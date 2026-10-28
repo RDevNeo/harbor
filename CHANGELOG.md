@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-10-28
+
 ### Changed
 - The built-in browser (Servo) is on by default: install.sh installs its engine wherever it runs
   (x86_64 and aarch64 with glibc 2.39+; elsewhere it says why in one line and skips it), and
@@ -1693,7 +1695,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.78.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.79.0...HEAD
+[0.79.0]: https://github.com/RDevNeo/harbor/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/RDevNeo/harbor/compare/v0.77.0...v0.78.0
 [0.77.0]: https://github.com/RDevNeo/harbor/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/RDevNeo/harbor/compare/v0.75.0...v0.76.0
