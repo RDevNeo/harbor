@@ -115,7 +115,8 @@ final class WorkBar {
 
     /** The chip under the screen's title (Chat, NewChat), the desktop header's: that the chat
      *  works in a worktree of its own and on which branch (a new chat: that it will), so it's
-     *  never mistaken for the checkout. A tap opens the workspace sheet. */
+     *  never mistaken for the checkout. Only while the composer's bar doesn't show it (0.72.3:
+     *  under the bar it was the same line twice). A tap opens the workspace sheet. */
     LinearLayout header() {
         head = Ui.row(a);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -161,6 +162,10 @@ final class WorkBar {
             String n = marker != null ? marker.optString("name") : info.isNull("name") ? "" : info.optString("name");
             text = "Worktree · " + (b.isEmpty() ? n : b);
         }
+        // The composer's own bar already says it (worktree and branch): the chip only speaks up
+        // when that bar can't (another PC's chat, a worktree that's gone).
+        boolean gone = marker != null && marker.optBoolean("gone");
+        if (!gone && view.getVisibility() == View.VISIBLE) text = null;
         head.setVisibility(text == null ? View.GONE : View.VISIBLE);
         if (text == null) return;
         ((TextView) head.getChildAt(0)).setTextColor(glyph);

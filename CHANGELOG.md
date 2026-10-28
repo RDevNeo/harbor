@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: the chat header no longer repeats "Worktree · branch" under the title when the bar under
+  the composer already shows the worktree and branch. It still shows for another PC's chat and
+  for a worktree that's gone. The desktop is unchanged.
+
 ## [0.72.2] - 2026-10-28
 
 ### Fixed
