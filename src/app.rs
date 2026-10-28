@@ -817,15 +817,26 @@ impl App {
     /// built-in browser pane instead of the system browser.
     fn route_links(&mut self, ctx: &egui::Context) {
         let mut urls = vec![];
+        let mut chats = vec![];
         ctx.output_mut(|o| {
             o.commands.retain(|c| match c {
                 egui::OutputCommand::OpenUrl(u) if u.url.starts_with("http://") || u.url.starts_with("https://") => {
                     urls.push(u.url.clone());
                     false
                 }
+                // A chat link (chatlink.rs) opens that chat here, never the system's harbor:// handler.
+                egui::OutputCommand::OpenUrl(u) if u.url.starts_with(crate::chatlink::SCHEME) => {
+                    chats.push(u.url.clone());
+                    false
+                }
                 _ => true,
             })
         });
+        if let Some(url) = chats.pop() {
+            if let Err(why) = self.open_link(&url) {
+                crate::picker::show_toast(ctx, why);
+            }
+        }
         if let Some(url) = urls.pop() {
             self.open_browser(Some(url));
         }

@@ -1056,7 +1056,8 @@ public class Chat extends Base {
             case "text": {
                 String md = it.optString("markdown");
                 View.OnLongClickListener lp = v -> { itemMenu(it, md); return true; };
-                Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info));
+                Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info))
+                        .chats(it.optJSONObject("chat_links"), this::openLink);
                 View body = r.text(it);
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
@@ -1430,6 +1431,13 @@ public class Chat extends Base {
     }
 
     // ---- actions ----
+
+    /** A chat link in a reply (PROTOCOL.md `chat_links`): the hub found the chat, or says why not. */
+    private void openLink(JSONObject target) {
+        String to = target.isNull("chat") ? "" : target.optString("chat", "");
+        if (to.isEmpty()) Ui.toast(this, target.optString("missing", "Chat not found"));
+        else if (!to.equals(chatId)) open(this, hub, to);
+    }
 
     private void fork(int seq) {
         Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/fork", new JSONObject().put("seq", seq)), r -> {

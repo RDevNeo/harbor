@@ -483,6 +483,17 @@ plays from a local copy (download it with the token, then a player); a media ite
 load shows a small "can't load" tile that retries on tap. `blocks` leave out the markdown images
 that `media` draws.
 
+Optional on `text` cards (0.70): `chat_links: {"<link as written>": {title, chat, missing}}`, the
+chat links the reply names (`harbor://chat/<gid>`, optionally `?pc=<PC name>`; agents write them
+to point at a chat, sub-agent chats included). The hub resolves them: `title` is the chat's title
+(a sub-agent's "Lead title › name"), `chat` the chat to open (this hub's id, or the gid with
+`X-Harbor-Ids: global`), null when it isn't here, with `missing` saying why ("Chat not found",
+"laptop is offline"). In `blocks` a bare link already reads as `title` (a span whose `link` is the
+link as written). Make a span tappable only when its `link` starts with `harbor://chat/` and is a
+key of `chat_links`: a tap opens `chat` in the app, or shows `missing` as a short notice when
+`chat` is null. Never hand any other non-web link (`harbor://pair`, `intent:`…) to the system.
+Older hubs send no `chat_links`: the link stays plain text.
+
 Optional on every card the desktop gives a hover bar or an "@" button (0.69): `actions`, what
 that bar offers, in its order, and `time` ("11:40 AM", the hub's clock, on cards with an `at`).
 A long-press opens them in a bottom sheet with `time` on top: `user` sends `["copy", "quote",

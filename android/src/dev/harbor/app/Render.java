@@ -39,6 +39,20 @@ final class Render {
         return this;
     }
 
+    /** Chat links (PROTOCOL.md `chat_links`): the item's resolved links and what a tap does. */
+    private JSONObject chatLinks;
+    private ChatLinks onChat;
+
+    interface ChatLinks { void open(JSONObject target); }
+
+    /** Makes the hub-resolved `harbor://chat/…` links tappable (`on` gets the link's entry);
+     *  any other harbor:// link stays plain text. */
+    Render chats(JSONObject links, ChatLinks on) {
+        this.chatLinks = links;
+        this.onChat = on;
+        return this;
+    }
+
     Render(Context c, View.OnLongClickListener longPress) {
         this.c = c;
         this.longPress = longPress;
@@ -148,6 +162,13 @@ final class Render {
             if (web(link)) {
                 sb.setSpan(new URLSpan(link), a, z, f);
                 sb.setSpan(new ForegroundColorSpan(Ui.BLUE), a, z, f);
+            } else if (onChat != null && chatLinks != null && link.startsWith("harbor://chat/") && chatLinks.optJSONObject(link) != null) {
+                // Only a chat link the hub resolved: it opens the chat in the app, nothing else.
+                JSONObject target = chatLinks.optJSONObject(link);
+                sb.setSpan(new android.text.style.ClickableSpan() {
+                    @Override public void onClick(View w) { onChat.open(target); }
+                    @Override public void updateDrawState(android.text.TextPaint p) { p.setColor(Ui.BLUE); p.setUnderlineText(false); }
+                }, a, z, f);
             }
         }
         return sb;

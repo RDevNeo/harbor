@@ -46,6 +46,12 @@ pub fn tools(role: &str) -> Vec<Value> {
             &[],
         ),
         tool(
+            "find_chats",
+            "Find Harbor chats by title or sub-agent name (every word must match), across all projects and PCs: title, project, PC, status and its link (harbor://chat/…) to put in a reply so the user can open it.",
+            json!({ "query": prop("string", "Words of the title or agent name (empty: the most recent chats)") }),
+            &[],
+        ),
+        tool(
             "show_media",
             "Show the user an image (png, jpg, gif, webp, svg) or a video (mp4, webm, mov) in your reply, inline in the chat on their PC and phone. Call it once per file.",
             json!({
@@ -85,7 +91,7 @@ pub fn tools(role: &str) -> Vec<Value> {
             ),
             tool(
                 "list_chats",
-                "The project's chats (sidebar threads): id, title and status (working, queued, idle, settled).",
+                "The project's chats (sidebar threads): id, title, status (working, queued, idle, settled) and link (harbor://chat/…, to put in a reply).",
                 json!({ "project": prop("string", "Project name or folder (default: this chat's project)") }),
                 &[],
             ),

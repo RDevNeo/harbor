@@ -52,6 +52,24 @@ pub fn find_chat<'a>(chats: &[&'a Chat], r: &str) -> Option<&'a Chat> {
         .copied()
 }
 
+/// The chats `visible` lets through whose title or agent name (a sub-agent's: with its lead's
+/// title) holds every word of `query`, case-insensitive; most recent first, at most 25.
+fn matching<'a>(chats: &'a [Chat], query: &str, visible: &dyn Fn(&Chat) -> bool) -> Vec<&'a Chat> {
+    let words: Vec<String> = query.to_lowercase().split_whitespace().map(String::from).collect();
+    let parent = |c: &Chat| c.parent.and_then(|p| chats.iter().find(|x| x.id == p)).map(|p| p.title.as_str()).unwrap_or("");
+    let mut hits: Vec<&Chat> = chats
+        .iter()
+        .filter(|c| !c.gid.is_empty() && visible(c))
+        .filter(|c| {
+            let hay = format!("{} {} {}", c.title, c.name, if c.role == Role::Sub { parent(c) } else { "" }).to_lowercase();
+            words.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .collect();
+    hits.sort_by_key(|c| std::cmp::Reverse(c.updated));
+    hits.truncate(25);
+    hits
+}
+
 /// What an opened chat's agent reads before the prompt.
 fn preamble(source: &Chat) -> String {
     format!(
@@ -231,22 +249,53 @@ impl App {
         let out: Vec<String> = chats
             .iter()
             .map(|c| {
-                let subs_busy = self.subs_of(c.id).iter().any(|s| self.turns.contains_key(&s.id));
-                let status = if self.turns.contains_key(&c.id) || subs_busy {
-                    let since = self.running_since(c.id).map(|t| crate::widgets::elapsed(t.elapsed().as_secs()));
-                    format!("working{}", since.map(|s| format!(" {s}")).unwrap_or_default())
-                } else if self.pending.get(&c.id).is_some_and(|q| !q.is_empty()) {
-                    "queued".into()
-                } else if c.settled {
-                    "settled".into()
-                } else {
-                    match crate::app::ago(c.updated) {
-                        a if a == "now" => "idle, active just now".to_string(),
-                        a => format!("idle, last active {a} ago"),
-                    }
-                };
                 let you = if c.id == me.id { " (this chat)" } else { "" };
-                format!("- id {} {}{you} [{status}]", c.id, quoted(&c.title))
+                format!("- id {} {}{you} [{}] {}", c.id, quoted(&c.title), self.status_words(c), self.chat_link(c))
+            })
+            .collect();
+        Ok(out.join("\n"))
+    }
+
+    /// "working 2m", "queued", "settled", "idle, last active 3h ago".
+    fn status_words(&self, c: &Chat) -> String {
+        let subs_busy = self.subs_of(c.id).iter().any(|s| self.turns.contains_key(&s.id));
+        if self.turns.contains_key(&c.id) || subs_busy {
+            let since = self.running_since(c.id).map(|t| crate::widgets::elapsed(t.elapsed().as_secs()));
+            format!("working{}", since.map(|s| format!(" {s}")).unwrap_or_default())
+        } else if self.pending.get(&c.id).is_some_and(|q| !q.is_empty()) {
+            "queued".into()
+        } else if c.settled {
+            "settled".into()
+        } else {
+            match crate::app::ago(c.updated) {
+                a if a == "now" => "idle, active just now".to_string(),
+                a => format!("idle, last active {a} ago"),
+            }
+        }
+    }
+
+    /// `find_chats`: the chats (sub-agents' too, other PCs' copies too) whose title or agent
+    /// name holds every word of `query`, most recent first, each with its link (chatlink.rs).
+    pub fn find_chats(&self, me: &Chat, a: &Value) -> Result<String, String> {
+        let who = self.commander(me);
+        let hits = matching(&self.chats, arg(a, "query"), &|c| {
+            let lead = if c.role == Role::Sub { c.parent.and_then(|p| self.chat(p)) } else { Some(c) };
+            lead.is_some_and(|l| self.commander(l) == who)
+        });
+        if hits.is_empty() {
+            return Ok("No chat matches. Try fewer or other words.".into());
+        }
+        let out: Vec<String> = hits
+            .iter()
+            .map(|c| {
+                let lead = (c.role == Role::Sub).then(|| c.parent.and_then(|p| self.chat(p))).flatten();
+                let what = match lead {
+                    Some(l) => format!("sub-agent {} of {}", quoted(&c.name), quoted(&l.title)),
+                    None => quoted(&c.title),
+                };
+                let project = c.repo_id.and_then(|r| self.repo(r)).map(|r| r.name.clone()).unwrap_or_else(|| "No project".into());
+                let you = if c.id == me.id { " (this chat)" } else { "" };
+                format!("- {what}{you} · {project} · {} [{}] {}", self.home_name(c), self.status_words(c), self.chat_link(c))
             })
             .collect();
         Ok(out.join("\n"))
@@ -339,6 +388,24 @@ mod tests {
     }
 
     #[test]
+    fn finds_chats_by_title_words_or_agent_name() {
+        let mut a = chat(4, "Fix login page", "g-a");
+        a.updated = 5;
+        let b = chat(7, "Docs pass", "g-b");
+        let mut sub = chat(9, "Write the login tests", "g-c");
+        (sub.role, sub.parent, sub.name, sub.updated) = (Role::Sub, Some(4), "tests".into(), 9);
+        let chats = [a, b, sub];
+        let ids = |q: &str| matching(&chats, q, &|_| true).iter().map(|c| c.id).collect::<Vec<_>>();
+        assert_eq!(ids("login"), [9, 4], "most recent first, sub-agents too");
+        assert_eq!(ids("LOGIN fix"), [9, 4], "a sub-agent matches its lead's title too");
+        assert_eq!(ids("tests"), [9]);
+        assert_eq!(ids("docs"), [7]);
+        assert!(ids("nothing here").is_empty());
+        assert_eq!(ids("").len(), 3);
+        assert_eq!(matching(&chats, "login", &|c| c.id != 9).iter().map(|c| c.id).collect::<Vec<_>>(), [4]);
+    }
+
+    #[test]
     fn opened_chats_link_back_on_both_sides() {
         let items = vec![
             Item::Notice { icon: "chat".into(), text: opened_by("Fix login"), detail: format!("{LINK}g-a") },
@@ -346,7 +413,7 @@ mod tests {
         ];
         let cards = crate::view::project(&items, true, &[]);
         assert_eq!(cards[0].card, crate::view::Card::ChatLink { gid: "g-a", text: "Opened by the agent of “Fix login”" });
-        let v = crate::api::card_json(&cards[0], 1, &mut |_| vec![], &Default::default());
+        let v = crate::api::card_json(&cards[0], 1, &mut |_| vec![], &Default::default(), &Default::default());
         assert_eq!((v["kind"].as_str(), v["gid"].as_str()), (Some("chat_link"), Some("g-a")));
         // A chat notice that isn't a link stays a notice.
         let plain = [Item::Notice { icon: "chat".into(), text: "x".into(), detail: "y".into() }];

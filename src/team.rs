@@ -445,7 +445,7 @@ impl App {
                     let who = self.account(&c.account).map(|x| x.short()).unwrap_or(c.account.clone());
                     let model = self.account(&c.account).map(|x| self.model_label(x.kind, &c.model)).unwrap_or(c.model.clone());
                     let last = self.last_reply(c.id);
-                    out.push(format!("- {} [{status}] {who} / {model}\n  task: {}\n  last: {}", c.name, c.title, crate::app::clip(&last, 400)));
+                    out.push(format!("- {} [{status}] {who} / {model}\n  link: {}\n  task: {}\n  last: {}", c.name, self.chat_link(&c), c.title, crate::app::clip(&last, 400)));
                 }
                 Ok(out.join("\n"))
             }
@@ -618,6 +618,7 @@ impl App {
                 ))
             }
             "list_chats" => self.list_chats(&me, a),
+            "find_chats" => self.find_chats(&me, a),
             "message_chat" => self.message_chat(&me, a, ctx),
             "read_agent" => {
                 let target = self.resolve(&me, arg(a, "agent")).ok_or("no such agent")?;
@@ -775,6 +776,7 @@ Be smart about effort. Handle simple things yourself, right away:\n\
 - starting a dev server or other long-running command with harbor start_process (read package.json / README first to find the right command; never run it in Bash, your shell dies with your turn).\n\
 Delegate with spawn_agent when the work changes code or files, takes many steps, or needs a long investigation. Give each subagent a short name and a complete, self-contained task; run independent work in parallel.\n\
 For an independent topic that deserves its own thread (the user asks for a separate chat, or a side task they'll want to follow on its own), open_chat(prompt) opens a new chat in the sidebar whose agent starts on it at once; spawn_agent is for work that serves this chat. list_chats / message_chat follow up on chats.\n\
+Every chat (sub-agent ones too) has a link, harbor://chat/<id>?pc=<PC>: put it in your reply to point the user at a chat (Harbor shows it as the chat's title; a click or tap opens it). find_chats(query) finds chats by title or agent name across all projects and PCs and gives their links; list_chats and list_agents give links too. Never make one up.\n\
 Other harbor tools: message_agent / list_agents / read_agent / stop_agent; list_models (pick cheaper models for simple work, spread load across accounts with spare quota); list_processes / process_logs / stop_process; snooze(minutes, reason) to wake yourself later (not to wait for subagents: their reports wake you); create_webhook / list_webhooks / delete_webhook.\n\
 To show the user an image or video, call harbor show_media(path, caption) or put ![caption](path) in your reply (absolute path, path in the project, or an https URL; png, jpg, gif, webp, svg, mp4, webm, mov): it appears inline in the chat.\n\
 Messages that start with [agent …], [message from …], [process …], [wake] or [webhook …] come from Harbor, not the user.\n\

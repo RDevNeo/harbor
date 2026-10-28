@@ -552,6 +552,8 @@ impl App {
                 Card::Text { text, at, .. } => {
                     let stripped = crate::media::strip_refs(text);
                     let md = linkify(&stripped);
+                    // Chat links read as their chat's title (a click opens it: app.rs route_links).
+                    let md = crate::chatlink::labelled(&md, &|u| self.link_target(u).title).into_owned();
                     let dir = if crate::commits::maybe(&md) { commit_dir.get_or_insert_with(|| self.commit_dir(id)).clone() } else { None };
                     let commits = crate::commits::of_text(dir.as_deref(), &md, commit_wake.clone());
                     let md = crate::commits::pills_md(&md, &commits);

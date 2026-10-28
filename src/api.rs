@@ -2350,7 +2350,8 @@ fn with_chat(mut v: Value, chat: String) -> Value {
 }
 
 /// `commits`: the commits a reply names (commits.rs), drawn as pills.
-pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<crate::media::Media>, commits: &HashMap<String, crate::commits::Commit>) -> Value {
+/// `links`: the chat links a reply names (chatlink.rs), resolved: link → `{title, chat, missing}`.
+pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) -> Vec<crate::media::Media>, commits: &HashMap<String, crate::commits::Commit>, links: &serde_json::Map<String, Value>) -> Value {
     use crate::view::Card;
     let all = crate::view::media(&s.card, find);
     // Every image, as older phones draw them (a strip); newer ones draw `media` large and the
@@ -2365,11 +2366,17 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
             "sender": sender,
         }),
         Card::Text { text, at, forkable } => {
-            let mut b = blocks(&crate::media::strip_refs(text));
+            let stripped = crate::media::strip_refs(text);
+            // A chat link reads as its chat's title, as on the desktop.
+            let md = crate::chatlink::labelled(&stripped, &|u| links.get(u).and_then(|l| l["title"].as_str()).unwrap_or(u).to_string());
+            let mut b = blocks(&md);
             crate::commits::mark(&mut b, commits);
             let mut v = json!({ "markdown": text, "blocks": b, "images": images, "at": at, "forkable": forkable });
             if !commits.is_empty() {
                 v["commits"] = crate::commits::wire(commits);
+            }
+            if !links.is_empty() {
+                v["chat_links"] = Value::Object(links.clone());
             }
             v
         }
@@ -3088,6 +3095,9 @@ impl App {
                     if it["kind"] == "forked_from" || it["kind"] == "chat_link" {
                         it["chat"] = gid(&it["chat"]);
                     }
+                    for l in it.get_mut("chat_links").and_then(|l| l.as_object_mut()).into_iter().flat_map(|l| l.values_mut()) {
+                        l["chat"] = gid(&l["chat"]);
+                    }
                 }
                 // (get_mut: indexing a null part mutably would turn it into an object.)
                 for a in v.get_mut("status").and_then(|s| s.get_mut("waiting")).and_then(|w| w.get_mut("agents")).and_then(|a| a.as_array_mut()).into_iter().flatten() {
@@ -3489,6 +3499,14 @@ impl App {
         // Where relative media paths in its replies start.
         let cwd = self.chat(chat).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c));
         let (dir, wake) = (self.commit_dir(chat), self.chat_waker(chat));
+        // The chats each reply links to (chatlink.rs), as this PC finds them.
+        let links: Vec<serde_json::Map<String, Value>> = cards
+            .iter()
+            .map(|c| match &c.card {
+                crate::view::Card::Text { text, .. } => self.link_targets(text),
+                _ => Default::default(),
+            })
+            .collect();
         let revs = self.api.items.entry(chat).or_default();
         let fresh = self.api.looked.get(&chat) == Some(&now) && revs.len() == items.len();
         // Commits a reply names (commits.rs): looked up on threads; the chat changes once known.
@@ -3496,6 +3514,7 @@ impl App {
             crate::view::Card::Text { text, .. } => crate::commits::of_text(dir.as_deref(), text, wake.clone()),
             _ => Default::default(),
         };
+        let links_of = |c: &crate::view::Shown| &links[c.seq];
         // An item's version includes how it shows: hidden later (a lead's turn delegating),
         // forkable once its turn ends, a fork made from it, the commits it names, the run of
         // tool calls it folds into.
@@ -3510,7 +3529,9 @@ impl App {
                     shas.sort();
                     // A chat link changes when the chat it names arrives (from another PC).
                     let linked = matches!(c.card, crate::view::Card::ChatLink { gid, .. } if self.chats.iter().any(|x| x.gid == gid));
-                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas, linked, c.group))
+                    // …and so does a reply's chat link (that chat arrives, is renamed, is deleted).
+                    let links = serde_json::to_string(links_of(c)).unwrap_or_default();
+                    hash_of(&(fingerprint(it), crate::view::kind(&c.card), matches!(c.card, crate::view::Card::Text { forkable: true, .. }), &c.forks_after, shas, linked, c.group, links))
                 })
                 .collect()
         };
@@ -3532,7 +3553,7 @@ impl App {
         let out: Vec<Value> = cards
             .iter()
             .filter(|c| revs[c.seq].1 > since)
-            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut |t| crate::media::find(t, cwd.as_deref()), &commits_of(c)), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
+            .map(|c| with_chat(card_json(c, revs[c.seq].1, &mut |t| crate::media::find(t, cwd.as_deref()), &commits_of(c), links_of(c)), if gid.is_empty() { chat.to_string() } else { gid.clone() }))
             .map(|mut v| {
                 if v["kind"] == "chat_link" {
                     let to = v["gid"].as_str().and_then(|g| self.chats.iter().find(|c| c.gid == g)).map(|c| c.id);
@@ -4484,7 +4505,7 @@ mod tests {
         assert!(spans.iter().any(|s| s.text.contains("ftp://example.com") && s.link.is_none()));
         let items = vec![Item::Text { text: "Open https://example.com/path".into(), at: 0 }];
         let cards = crate::view::project(&items, false, &[]);
-        let wire = card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new());
+        let wire = card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new(), &Default::default());
         assert_eq!(wire["blocks"][0]["spans"][1]["link"], "https://example.com/path");
         assert_eq!(wire["markdown"], "Open https://example.com/path");
     }
@@ -4539,7 +4560,7 @@ mod tests {
         let one = |it: Item| {
             let items = vec![it];
             let cards = crate::view::project(&items, false, &[]);
-            card_json(&cards[0], 9, &mut |_| vec![], &HashMap::new())
+            card_json(&cards[0], 9, &mut |_| vec![], &HashMap::new(), &Default::default())
         };
         let v = one(Item::User { text: "hi".into(), files: vec!["/a/b/photo.jpg".into(), "/a/notes.txt".into()], at: 5, mentions: vec![], sender: String::new() });
         assert_eq!((v["kind"].as_str(), v["seq"].as_u64(), v["rev"].as_u64()), (Some("user"), Some(0), Some(9)));
@@ -4551,6 +4572,13 @@ mod tests {
         assert!(v["input"].as_str().unwrap().len() < CLIP + 100);
         let v = one(Item::Text { text: "# H".into(), at: 0 });
         assert_eq!((v["markdown"].as_str(), v["blocks"][0]["type"].as_str()), (Some("# H"), Some("heading")));
+        // A chat link reads as the chat's title, resolved in `chat_links`.
+        let items = vec![Item::Text { text: "See harbor://chat/g-1 now".into(), at: 0 }];
+        let cards = crate::view::project(&items, false, &[]);
+        let links: serde_json::Map<String, Value> = [("harbor://chat/g-1".to_string(), json!({ "title": "Fix login", "chat": 4, "missing": "" }))].into_iter().collect();
+        let l = card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new(), &links);
+        assert_eq!(l["blocks"][0]["spans"][1], json!({ "text": "Fix login", "link": "harbor://chat/g-1" }));
+        assert_eq!(l["chat_links"]["harbor://chat/g-1"]["chat"], 4);
         // No time to show; no turn end after it yet, so no fork.
         assert_eq!((v["actions"].clone(), v.get("time")), (json!(["copy", "mention"]), None));
         let v = one(Item::Result { cost_usd: 0.0, duration_ms: 75_000, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() });
@@ -4564,7 +4592,7 @@ mod tests {
         let items = vec![Item::Text { text: "See ![Chart](out/c.png) and the run\n\n![](/v/run.mp4)\nAlso /tmp/x.png".into(), at: 1 }];
         let cards = crate::view::project(&items, false, &[]);
         let m = |path: &str, caption: &str, video: bool, shown: bool| Media { path: path.into(), caption: caption.into(), video, shown, url: None };
-        let v = card_json(&cards[0], 3, &mut |_| vec![m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)], &HashMap::new());
+        let v = card_json(&cards[0], 3, &mut |_| vec![m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)], &HashMap::new(), &Default::default());
         let v = with_chat(v, "g1".into());
         assert_eq!(v["media"], json!([
             { "name": "c.png", "caption": "Chart", "kind": "image", "url": "/v1/image?path=%2Fp%2Fout%2Fc.png&max=512&chat=g1" },
@@ -4578,7 +4606,7 @@ mod tests {
         // No media: no field.
         let plain = vec![Item::Text { text: "hi".into(), at: 1 }];
         let cards = crate::view::project(&plain, false, &[]);
-        assert!(card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new()).get("media").is_none());
+        assert!(card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new(), &Default::default()).get("media").is_none());
     }
 
     /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,
@@ -4590,7 +4618,7 @@ mod tests {
         let forks = [(8, 42)];
         // What chat.rs draws: these cards, skipping the hidden ones.
         let desktop = project(&items, true, &forks);
-        let phone: Vec<Value> = desktop.iter().map(|c| card_json(c, 1, &mut |_| vec![], &HashMap::new())).collect();
+        let phone: Vec<Value> = desktop.iter().map(|c| card_json(c, 1, &mut |_| vec![], &HashMap::new(), &Default::default())).collect();
         assert_eq!(phone.len(), items.len(), "one card per item, so seq stays the item's index");
         for (d, p) in desktop.iter().zip(&phone) {
             assert_eq!(p["kind"].as_str(), Some(kind(&d.card)));

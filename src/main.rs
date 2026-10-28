@@ -11,6 +11,7 @@ mod autowork;
 mod background;
 mod bridge;
 mod chat;
+mod chatlink;
 mod clipboard;
 mod clone;
 mod commits;

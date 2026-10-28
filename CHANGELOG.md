@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Chat links: every chat, sub-agent chats included, has a link `harbor://chat/<id>` that agents
+  can put in a reply. The desktop shows it as the chat's title and opens the chat on a click; the
+  phone shows the title too and opens the chat in the app on a tap (only chat links: other
+  harbor:// links stay plain text). A chat that's gone or on a PC that's off gets a short notice.
+  Agents find chats with the new `find_chats` tool (by title or agent name, across projects and
+  PCs), and `list_chats` / `list_agents` now give each chat's link (#84).
+
 ## [0.69.0] - 2026-10-28
 
 ### Added
