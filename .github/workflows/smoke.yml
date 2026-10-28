@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
   push:
     branches-ignore: [main]
-    paths: [packaging/install.sh, .github/smoke-install.sh, .github/workflows/smoke.yml, .github/boat/smoke.sh]
+    paths: [packaging/install.sh, .github/smoke-install.sh, .github/workflows/smoke.yml, .github/boat/smoke.sh, .github/boat/run.sh, .github/actions/boat/action.yml]
 
 permissions:
   contents: read
@@ -52,7 +52,7 @@ jobs:
           tar -czf "$RUNNER_TEMP/dist.tgz" dist
           boat scp "$RUNNER_TEMP/dist.tgz" "${{ steps.boat.outputs.id }}:/home/user/dist.tgz"
           boat exec "${{ steps.boat.outputs.id }}" -- tar -xzf dist.tgz
-          boat exec "${{ steps.boat.outputs.id }}" --cwd src --timeout 0 -- bash .github/boat/smoke.sh
+          .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- bash .github/boat/smoke.sh
       - name: Delete the sandbox
         if: always() && steps.boat.outputs.id != ''
         run: boat delete "${{ steps.boat.outputs.id }}" --yes --json

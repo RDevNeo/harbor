@@ -54,7 +54,7 @@ jobs:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
       - name: Build (on boat)
-        run: boat exec "${{ steps.boat.outputs.id }}" --cwd src --timeout 0 -- env HARBOR_GIT_SHA="$GITHUB_SHA" bash .github/boat/build.sh
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" bash .github/boat/build.sh
       - name: Fetch the results
         run: |
           set -eu

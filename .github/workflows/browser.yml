@@ -94,7 +94,7 @@ jobs:
         if: steps.need.outputs.build == 'true'
         run: |
           set -eu
-          boat exec "${{ steps.boat.outputs.id }}" --cwd src --timeout 0 -- bash .github/boat/browser.sh
+          .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- bash .github/boat/browser.sh
           mkdir -p out
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out/harbor-browser/harbor-browser" out/harbor-browser
           chmod 755 out/harbor-browser
