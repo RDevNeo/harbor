@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The running-agent strip over a lead's composer is quieter: each agent shows its logo, name and
+  a soft pulsing green dot while it works; tokens, cost and what it's doing left the row (the
+  hover still has its model, task and how long it has run). Each row's Stop shows on hover (or
+  from the keyboard) and asks in place, "Stop api? Cancel / Stop"; Cancel, Esc or moving away
+  leaves it running.
+
 ## [0.79.0] - 2026-10-28
 
 ### Changed

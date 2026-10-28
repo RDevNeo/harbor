@@ -1,8 +1,9 @@
 //! What a lead's subagents are doing, without asking it: the live strip over a lead chat's
-//! composer ("api · running tests · 2m"), and the one-line entry a finished subagent leaves
-//! in the lead's transcript ("api finished: added tests for X"). Both are read straight from
-//! agent state (the running turn, its latest tool call, its own final report): no model calls.
-//! The phone gets the same rows (`status.agents`, api.rs) and draws them alike.
+//! composer (each running agent with a working dot, and its Stop on hover), and the one-line
+//! entry a finished subagent leaves in the lead's transcript ("api finished: added tests for X").
+//! Both are read straight from agent state (the running turn, its latest tool call, its own
+//! final report): no model calls. The phone gets the same rows (`status.agents`, api.rs) with
+//! what each is doing ("running tests") and its usage.
 
 use crate::app::{App, View};
 use crate::icons as ic;
@@ -17,8 +18,13 @@ pub const FOLD_AT: usize = 3;
 /// The longest "doing" text and report line.
 const DOING_MAX: usize = 48;
 const REPORT_MAX: usize = 110;
-const ROW_H: f32 = 26.0;
-/// The column on the right that holds Stop all.
+const ROW_H: f32 = 30.0;
+/// The working dot's beat, and how often it is redrawn.
+const PULSE_SECS: f64 = 1.6;
+const PULSE_STEP: std::time::Duration = std::time::Duration::from_millis(80);
+/// How long a row's "Stop api?" waits once the pointer has left it.
+const CONFIRM_AWAY: f64 = 1.5;
+/// The title row's corner that holds Stop all.
 const STOP_W: f32 = 30.0;
 
 /// One running subagent as the strip shows it.
@@ -281,19 +287,25 @@ impl App {
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, lines as f32 * ROW_H + 8.0), Sense::hover());
         ui.painter().rect(rect, CornerRadius::same(12), t.bg200, Stroke::new(1.0, t.border()), egui::StrokeKind::Inside);
-        // Seconds count while any agent is under a minute; minutes after that.
-        let step = rows.iter().map(|r| if r.secs < 60 { std::time::Duration::from_secs(1) } else { w::minute_step(r.secs) }).min().unwrap_or_default();
-        w::repaint_in(ui.painter(), rect, step);
+        let pass = ui.ctx().cumulative_pass_nr();
+        let confirm = ui.ctx().data(|d| d.get_temp::<Confirm>(confirm_id())).filter(|c| rows.iter().any(|r| r.id == c.id));
+        ui.ctx().data_mut(|d| {
+            if let Some(c) = confirm {
+                d.insert_temp(confirm_id(), Confirm { pass, ..c });
+            } else {
+                d.remove::<Confirm>(confirm_id());
+            }
+        });
         let mut y = rect.top() + 4.0;
-        let mut open_chat = None;
-        // Stop all, in the top row's corner: as the old waiting bar's, it asks first.
-        let sr = Rect::from_min_size(pos2(rect.right() - 4.0 - STOP_W, y), Vec2::new(STOP_W - 2.0, ROW_H));
-        if w::overlay(ui, sr, |ui| w::btn(ic::STOP).muted().icon_xs().show(ui)).on_hover_text("Stop all: every running sub-agent, and clear their queues").clicked() {
-            self.dialog = Some(crate::app::Dialog::StopAll(lead));
-        }
-        let row_w = width - 8.0 - STOP_W;
+        let mut act = None;
+        let row_w = width - 8.0;
         if header {
-            let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(row_w, ROW_H));
+            // Stop all, in the title row's corner: as the old waiting bar's, it asks first.
+            let sr = Rect::from_min_size(pos2(rect.right() - 4.0 - STOP_W, y), Vec2::new(STOP_W - 2.0, ROW_H));
+            if w::overlay(ui, sr, |ui| w::btn(ic::STOP).muted().icon_xs().show(ui)).on_hover_text("Stop all: every running sub-agent, and clear their queues").clicked() {
+                self.dialog = Some(crate::app::Dialog::StopAll(lead));
+            }
+            let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(row_w - STOP_W, ROW_H));
             let resp = ui.interact(r, open_id.with("head"), Sense::click());
             // Folded it unfolds; unfolded (it says what's queued) it opens the Agents panel.
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -328,62 +340,166 @@ impl App {
             y += ROW_H;
         }
         if open {
-            for row in &rows {
+            w::repaint_in(ui.painter(), rect, PULSE_STEP);
+            for (nth, row) in rows.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(row_w, ROW_H));
-                if self.strip_row(ui, r, row) {
-                    open_chat = Some(row.id);
-                }
+                act = self.strip_row(ui, r, row, nth).or(act);
                 y += ROW_H;
             }
         }
         ui.add_space(8.0);
-        if let Some(id) = open_chat {
-            self.open(View::Chat(id));
+        match act {
+            Some(Act::Open(id)) => self.open(View::Chat(id)),
+            Some(Act::Stop(id)) => {
+                self.pending.remove(&id);
+                self.stop(id);
+            }
+            None => {}
         }
     }
 
-    /// One agent: mark, name · what it's doing, elapsed on the right. True when clicked.
-    fn strip_row(&self, ui: &mut Ui, r: Rect, row: &Row) -> bool {
+    /// One agent: mark, name and its working dot; Stop on hover, which asks in place first.
+    fn strip_row(&self, ui: &mut Ui, r: Rect, row: &Row, nth: usize) -> Option<Act> {
         let t = self.theme.t;
+        let ctx = ui.ctx().clone();
         let resp = ui.interact(r, egui::Id::NULL.with(("agent-strip-row", row.id)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-        if resp.hovered() {
+        let stop_id = egui::Id::NULL.with(("agent-strip-stop", row.id));
+        let mut confirm = ctx.data(|d| d.get_temp::<Confirm>(confirm_id()));
+        let hovered = resp.contains_pointer();
+        if confirm.is_some_and(|c| c.id != row.id) && hovered {
+            confirm = None;
+            ctx.data_mut(|d| d.remove::<Confirm>(confirm_id()));
+        }
+        let asking = confirm.is_some_and(|c| c.id == row.id);
+        if hovered || asking {
             ui.painter().rect_filled(r, CornerRadius::same(8), t.gray(100));
         }
-        let p = ui.painter();
+        if resp.has_focus() {
+            w::focus_ring(ui, r, 8);
+        }
         let cy = r.center().y;
         if let Some(k) = row.kind {
-            ic::account_mark(p, Rect::from_center_size(pos2(r.left() + 16.0, cy), Vec2::splat(18.0)), k, &row.badge, &t);
+            ic::account_mark(ui.painter(), Rect::from_center_size(pos2(r.left() + 16.0, cy), Vec2::splat(18.0)), k, &row.badge, &t);
         }
         let x = r.left() + 34.0;
-        // Name and what it's doing come first: the usage only shows while they keep their room
-        // (the hover has it too).
-        let elapsed = short_elapsed(row.secs);
-        let with_usage = format!("{}  ·  {elapsed}", row.usage);
-        let roomy = !row.usage.is_empty() && r.right() - 10.0 - x - w::truncated(ui, &with_usage, FontId::monospace(12.0), t.subtle(), f32::INFINITY).size().x >= 260.0;
-        let time = w::truncated(ui, if roomy { &with_usage } else { &elapsed }, FontId::monospace(12.0), t.subtle(), 200.0);
-        let right = r.right() - 10.0 - time.size().x;
-        let name = w::truncated(ui, &row.name, FontId::new(13.0, crate::theme::medium()), t.fg(), ((right - x) * 0.4).max(30.0));
+        let mut act = None;
+        // The controls on the right, and where they start.
+        let right = if asking {
+            let mut child = ui.new_child(egui::UiBuilder::new().id_salt(("agent-strip-ask", row.id)).max_rect(r.shrink2(Vec2::new(2.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            let stop = w::btn(&format!("{}  Stop", ic::STOP)).xs().variant(w::Variant::Destructive).show(&mut child);
+            let cancel = w::btn("Cancel").xs().muted().show(&mut child);
+            if let Some(c) = confirm {
+                let now = ctx.input(|i| i.time);
+                // Off the row and off the keyboard, it goes after a moment.
+                let next = if cancel.clicked() || stop.clicked() {
+                    None
+                } else if c.focus {
+                    cancel.request_focus();
+                    Some(Confirm { focus: false, ..c })
+                } else if hovered || cancel.has_focus() || stop.has_focus() {
+                    Some(Confirm { away: None, ..c })
+                } else {
+                    match c.away {
+                        Some(at) if now - at > CONFIRM_AWAY => None,
+                        Some(_) => Some(c),
+                        None => Some(Confirm { away: Some(now), ..c }),
+                    }
+                };
+                ctx.data_mut(|d| {
+                    if let Some(n) = next {
+                        d.insert_temp(confirm_id(), n);
+                    } else {
+                        d.remove::<Confirm>(confirm_id());
+                    }
+                });
+            }
+            if stop.clicked() {
+                act = Some(Act::Stop(row.id));
+            }
+            let ask = w::truncated(ui, &format!("Stop {}?", row.name), FontId::proportional(13.0), t.subtle(), (cancel.rect.left() - 8.0 - x - 80.0).max(0.0));
+            let ax = cancel.rect.left() - 8.0 - ask.size().x;
+            ui.painter().galley(pos2(ax, cy - ask.size().y / 2.0), ask, t.subtle());
+            ax - 12.0
+        } else {
+            let sr = Rect::from_center_size(pos2(r.right() - 16.0, cy), Vec2::splat(26.0));
+            if hovered || resp.has_focus() || ctx.memory(|m| m.has_focus(stop_id)) {
+                let sresp = ui.interact(sr, stop_id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("Stop {}", row.name));
+                if sresp.hovered() {
+                    ui.painter().rect_filled(sr, CornerRadius::same(6), t.accent());
+                }
+                ic::glyph(ui.painter(), sr.center(), ic::STOP, 14.0, if sresp.hovered() { t.fg() } else { t.subtle() });
+                if sresp.has_focus() {
+                    w::focus_ring(ui, sr, 6);
+                }
+                if sresp.clicked() {
+                    let c = Confirm { id: row.id, away: None, focus: sresp.has_focus(), pass: ctx.cumulative_pass_nr() };
+                    ctx.data_mut(|d| d.insert_temp(confirm_id(), c));
+                }
+            }
+            sr.left() - 4.0
+        };
+        let name = w::truncated(ui, &row.name, FontId::new(13.0, crate::theme::medium()), t.fg(), (right - x - 20.0).max(30.0));
         let nw = name.size().x;
-        let doing = w::truncated(ui, &format!("  ·  {}", row.doing), FontId::proportional(13.0), t.subtle(), (right - 8.0 - x - nw).max(0.0));
-        let p = ui.painter();
-        p.galley(pos2(x, cy - name.size().y / 2.0), name, t.fg());
-        p.galley(pos2(x + nw, cy - doing.size().y / 2.0), doing, t.subtle());
-        p.galley(pos2(right, cy - time.size().y / 2.0), time, t.subtle());
+        ui.painter().galley(pos2(x, cy - name.size().y / 2.0), name, t.fg());
+        // Out of step with the rows above and below.
+        let phase = ((ctx.input(|i| i.time) / PULSE_SECS + nth as f64 * 0.37).fract()) as f32;
+        working_dot(ui.painter(), pos2(x + nw + 11.0, cy), phase, &t);
         let resp = resp.on_hover_ui(|ui| {
             ui.set_max_width(360.0);
             w::text(ui, &row.name, "strong-14");
             w::subtle(ui, &row.model, "label-12-mono");
-            if !row.usage.is_empty() {
-                w::subtle(ui, &row.usage, "label-12-mono");
-            }
             if !row.task.is_empty() {
                 w::subtle(ui, &row.task, "label-12");
             }
+            w::subtle(ui, &format!("Working for {}", short_elapsed(row.secs)), "label-12");
             ui.add_space(4.0);
             w::subtle(ui, "Click to open the agent", "label-12");
         });
-        resp.clicked()
+        if resp.clicked() {
+            act = act.or(Some(Act::Open(row.id)));
+        }
+        act
     }
+}
+
+/// What a click in the strip asks for, done once the rows are drawn.
+enum Act {
+    Open(i64),
+    Stop(i64),
+}
+
+/// The open "Stop api?" of a row: one at a time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Confirm {
+    id: i64,
+    /// Since when the pointer is off the row.
+    away: Option<f64>,
+    /// Opened from the keyboard: Cancel takes the focus.
+    focus: bool,
+    /// The last pass that drew it.
+    pass: u64,
+}
+
+fn confirm_id() -> egui::Id {
+    egui::Id::NULL.with("agent-strip-confirm")
+}
+
+/// Esc answers an open "Stop api?" with Cancel, before it would stop the lead's turn.
+pub fn esc_cancels_stop(ctx: &egui::Context) -> bool {
+    let shown = ctx.data(|d| d.get_temp::<Confirm>(confirm_id())).is_some_and(|c| c.pass + 1 >= ctx.cumulative_pass_nr());
+    if !shown || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        return false;
+    }
+    ctx.data_mut(|d| d.remove::<Confirm>(confirm_id()));
+    true
+}
+
+/// A green dot with a ring that swells and fades, `phase` (0..1) into its beat.
+fn working_dot(p: &egui::Painter, c: egui::Pos2, phase: f32, t: &crate::theme::Tokens) {
+    let ease = 1.0 - (1.0 - phase).powi(3);
+    let green = t.green(900);
+    p.circle_filled(c, 6.0 * (0.6 + 1.4 * ease), w::alpha(green, 0.5 * (1.0 - ease)));
+    p.circle_filled(c, 3.0, green);
 }
 
 #[cfg(test)]

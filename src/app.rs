@@ -1822,6 +1822,9 @@ impl App {
             self.sidebar_drawer = false;
             self.team_drawer = false;
         }
+        if !blocked && self.popup.is_none() {
+            crate::agentstrip::esc_cancels_stop(ctx);
+        }
         let browser_focused = (0..2).any(|i| focused == Some(Id::NULL.with(("browser-page", i))));
         let lead_open = matches!(self.view, View::Chat(id) if self.chat(id).is_some_and(|c| c.role == store::Role::Lead));
         let k = &self.keys;
