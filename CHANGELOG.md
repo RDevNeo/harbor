@@ -13,6 +13,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   leaves it running.
 - A lead's reply when it hands work to its agents shows in the chat (it was hidden), and the
   lead says in a line or two what it understood and what happens next.
+- Phone: the running-agent rows over a lead's composer match: logo, name and the pulsing green
+  dot, no tokens, cost, activity or timer. Each row's stop icon asks in place first, "Stop api?
+  Cancel / Stop"; it cancels itself after a few seconds or when another row is touched.
+  Long-press a row for its model, task and how long it has run. Stop all asks first too.
 
 ## [0.79.0] - 2026-10-28
 

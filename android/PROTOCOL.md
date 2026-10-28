@@ -553,16 +553,21 @@ the desktop shows nothing:
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
   sub-agent: its account mark (the provider logo `logo`, a file in the APK's `assets/logos/`,
   48×48 RGBA when 9216 bytes, else an alpha mask in the text colour; `badge` in its corner),
-  `name` in semibold, "  ·  `doing`" ("running tests", "editing src/chat.rs") and the time since
-  `since_ms` on the right ("40s", "2m", "1h 5m"), after `usage` and "  ·  " when it isn't empty
-  (its tokens and cost so far, "12.4k tok · $0.18"; since 0.39). Tapping a row opens that agent's chat
-  (`id`). When `folded` (three or more agents) a header row comes first: the agents' logos
+  `name` in semibold and a green working dot right after it, with a ring that swells and fades
+  every 1.6 s (rows out of step); then a stop icon. The stop icon turns the row into "Stop
+  `name`?" with **Cancel** and a red **Stop** (`POST /v1/chats/{id}/stop` of that agent), one row
+  at a time; it cancels itself after 5 s or when another row is touched. Tapping a row opens that
+  agent's chat (`id`); a long press shows `model`, `task` and "Working for 2m" (since `since_ms`).
+  `doing` ("running tests") and `usage` ("12.4k tok · $0.18", since 0.39) are still sent for
+  older apps, which show them in the row with the elapsed time; this app doesn't. When `folded`
+  (three or more agents) a header row comes first: the agents' logos
   overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
   only once it is tapped open (a per-screen choice). `header` (default `folded`): draw that
   title row even unfolded (no chevron; a tap opens the Agents panel), as `title` then says
   what's queued ("1 agent working  ·  2 queued"). A stop icon sits in the top right corner of
-  the box, beside the first row: **Stop all** (`POST /v1/chats/{id}/stop_all`). `doing` is the
-  hub's own reading of each agent's latest step; the phone shows it as is.
+  the box, beside the first row: **Stop all**, which asks first ("Stop 3 running sub-agents?",
+  "Stop the main agent and …" while the lead's own turn runs) and then sends
+  `POST /v1/chats/{id}/stop_all` with `{"hold": true}`.
 - `recap: "…"` (optional string, missing when there is none; older hubs never send it): the
   session recap (Claude Code's "away summary"), drawn after the agent strip, right over the
   composer: "recap: " in semibold then the text in italics, both gray-900, wrapping. The hub
