@@ -483,6 +483,12 @@ pub struct Pc {
     /// The detection's evidence, where this PC has it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub why: String,
+    /// Its Harbor in a line (versions.rs): "0.66.0 (latest, updates automatically)".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub harbor: String,
+    /// Phone name → "app 0.66.0", for the phones whose app said its version.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub phone_apps: std::collections::BTreeMap<String, String>,
 }
 
 /// "Sam (detected, not confirmed)" and the like.
@@ -524,8 +530,12 @@ pub fn people_note(pcs: &[Pc]) -> String {
         if !p.github.is_empty() {
             parts.push(format!("GitHub {}", p.github));
         }
+        if !p.harbor.is_empty() {
+            parts.push(format!("Harbor {}", p.harbor));
+        }
         if !p.phones.is_empty() {
-            parts.push(format!("phones: {}", p.phones.join(", ")));
+            let phones: Vec<String> = p.phones.iter().map(|n| match p.phone_apps.get(n) { Some(a) => format!("{n} ({a})"), None => n.clone() }).collect();
+            parts.push(format!("phones: {}", phones.join(", ")));
         }
         if !p.accounts.is_empty() {
             parts.push(format!("agent accounts: {}", p.accounts.join(", ")));
@@ -781,21 +791,30 @@ impl crate::app::App {
         let shared = &self.api.hub.mesh;
         let me = shared.me();
         let name = if me.name.is_empty() { crate::remote::hostname() } else { me.name };
-        let phones: Vec<String> = self.api.hub.local_phones().iter().map(|p| p.name.clone()).filter(|n| !n.is_empty()).collect();
+        let local = self.api.hub.local_phones();
+        let phones: Vec<String> = local.iter().map(|p| p.name.clone()).filter(|n| !n.is_empty()).collect();
+        let phone_apps = local.iter().filter(|p| !p.name.is_empty()).filter_map(|p| crate::versions::phone_short(p.app).map(|a| (p.name.clone(), a))).collect();
+        // Each PC's Harbor version and updates in a line.
+        let (versions, _) = crate::versions::gather(&self.api.hub);
+        let newest = crate::versions::newest(&versions);
+        let harbor_of = |id: &str| versions.iter().find(|v| v.id == id).map(|v| crate::versions::pc_line(v, &newest)).unwrap_or_default();
         let accounts: Vec<String> = self.accounts.iter().filter(|a| a.installed()).map(|a| a.short()).collect();
         let detected = crate::profile::load(&self.store);
         let mine = about(&self.store);
         let suggested = mine["owner_suggested"].as_bool().unwrap_or(false);
         let why = detected.as_ref().filter(|_| suggested).map(|d| d.me.why.clone()).unwrap_or_default();
-        let mut v = vec![Pc { id: me.id, name, me: true, online: true, owner: owner(&self.store), github: github(&self.store), phones, accounts, suggested, guessed: false, why }];
+        let harbor = versions.first().map(|v| crate::versions::pc_line(v, &newest)).unwrap_or_default();
+        let mut v = vec![Pc { id: me.id, name, me: true, online: true, owner: owner(&self.store), github: github(&self.store), phones, accounts, suggested, guessed: false, why, harbor, phone_apps }];
         if !shared.on.load(std::sync::atomic::Ordering::Relaxed) {
             return v;
         }
         let elsewhere = self.api.hub.elsewhere.lock().unwrap().clone();
         for p in self.mesh_hosts() {
-            let phones = elsewhere.get(&p.id).map(|(_, s)| s.iter().map(|x| x.name.clone()).filter(|n| !n.is_empty()).collect()).unwrap_or_default();
+            let sightings = elsewhere.get(&p.id).map(|(_, s)| s.clone()).unwrap_or_default();
+            let phones = sightings.iter().map(|x| x.name.clone()).filter(|n| !n.is_empty()).collect();
+            let phone_apps = sightings.iter().filter(|x| !x.name.is_empty()).filter_map(|x| crate::versions::phone_short(x.app).map(|a| (x.name.clone(), a))).collect();
             let accounts = p.accounts.iter().map(|a| a.1.clone()).collect();
-            let mut pc = Pc { id: p.id.clone(), name: p.name.clone(), me: false, online: p.online, owner: p.owner.clone(), github: p.github.clone(), phones, accounts, suggested: p.owner_suggested, ..Default::default() };
+            let mut pc = Pc { id: p.id.clone(), name: p.name.clone(), me: false, online: p.online, owner: p.owner.clone(), github: p.github.clone(), phones, accounts, suggested: p.owner_suggested, harbor: harbor_of(&p.id), phone_apps, ..Default::default() };
             // A peer that says nothing (before 0.44, or nothing found there): this PC's guess.
             if pc.owner.is_empty() && pc.github.is_empty() {
                 if let Some(g) = detected.as_ref().and_then(|d| d.peers.get(&p.id)) {
@@ -848,10 +867,10 @@ mod tests {
     fn people_note_lists_pcs() {
         assert_eq!(people_note(&[Pc { name: "desk".into(), me: true, ..Default::default() }]), "");
         let n = people_note(&[
-            Pc { name: "desk".into(), me: true, online: true, owner: "Sam".into(), github: "sam-gh".into(), phones: vec!["Pixel".into()], ..Default::default() },
+            Pc { name: "desk".into(), me: true, online: true, owner: "Sam".into(), github: "sam-gh".into(), phones: vec!["Pixel".into(), "Tab".into()], harbor: "0.66.0 (latest)".into(), phone_apps: [("Pixel".to_string(), "app 0.66.0".to_string())].into(), ..Default::default() },
             Pc { name: "laptop".into(), owner: "Alex".into(), ..Default::default() },
         ]);
-        assert!(n.contains("- desk (this PC, where you run): owner Sam; GitHub sam-gh; phones: Pixel"));
+        assert!(n.contains("- desk (this PC, where you run): owner Sam; GitHub sam-gh; Harbor 0.66.0 (latest); phones: Pixel (app 0.66.0), Tab"), "{n}");
         assert!(n.contains("- laptop (offline): owner Alex"));
         let g = Pc { name: "lap".into(), owner: "Alex".into(), suggested: true, guessed: true, ..Default::default() };
         assert_eq!(pc_line(&g), "Alex (guessed here, not confirmed) · offline");

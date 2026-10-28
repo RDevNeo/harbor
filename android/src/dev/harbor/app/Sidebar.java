@@ -606,15 +606,65 @@ final class Sidebar {
         LinearLayout actions = Ui.row(a);
         s.body.addView(actions, Ui.margins(Ui.fill(), 0, 0, 0, 4));
         vc.addView(Ui.cardRow(a, null, "Asking your PCs…", null, Ui.G600, null), Ui.fill());
+        // Paired phones' apps, as the hub saw them (`GET /v1/versions`, hubs from 0.68).
+        TextView ph = Ui.text(a, "Harbor on your phones", 14, Ui.G700);
+        ph.setPadding(Ui.dp(6), Ui.dp(8), Ui.dp(6), Ui.dp(8));
+        ph.setVisibility(View.GONE);
+        s.body.addView(ph);
+        LinearLayout pc = s.card();
+        pc.setVisibility(View.GONE);
+        phonesCard = new View[] { ph, pc };
         s.show();
         versions(s, vc, actions, new java.util.HashMap<>());
+    }
+
+    /** The PCs sheet's phones heading and card (filled with each refresh of the versions). */
+    private View[] phonesCard;
+
+    /** The hub's `GET /v1/versions` (null from a hub before 0.68, or one that's away). */
+    private JSONObject knownVersions() {
+        try { return a.hub.get("/v1/versions"); } catch (Exception e) { return null; }
+    }
+
+    /** What the hub last heard from a PC that doesn't answer now: one of its mesh's offline PCs
+     *  by that name ("" when none). */
+    private static String lastRan(JSONObject known, String name) {
+        JSONArray l = known == null ? null : known.optJSONArray("pcs");
+        for (int i = 0; l != null && i < l.length(); i++) {
+            JSONObject p = l.optJSONObject(i);
+            if (p != null && !p.optBoolean("self") && !p.optBoolean("online") && name.equals(p.optString("name"))
+                    && !p.optString("version").isEmpty()) return p.optString("line");
+        }
+        return "";
+    }
+
+    /** One row per paired phone: its app version, when and where the hub last saw it. */
+    private void fillPhones(JSONObject known) {
+        if (phonesCard == null) return;
+        LinearLayout card = (LinearLayout) phonesCard[1];
+        card.removeAllViews();
+        JSONArray l = known == null ? null : known.optJSONArray("phones");
+        int n = l == null ? 0 : l.length();
+        for (int i = 0; i < n; i++) {
+            JSONObject p = l.optJSONObject(i);
+            if (p == null) continue;
+            if (card.getChildCount() > 0) card.addView(Ui.gap(a));
+            LinearLayout r = Ui.cardRow(a, Ui.I_PHONE, p.optString("name"), p.optString("line"), Ui.FG, null);
+            Ui.wrapSub(r, 3);
+            card.addView(r, Ui.fill());
+        }
+        int vis = card.getChildCount() > 0 ? View.VISIBLE : View.GONE;
+        phonesCard[0].setVisibility(vis);
+        card.setVisibility(vis);
     }
 
     /** Fills the PCs sheet's version card; `asked`: PCs updating since a tap here → the version
      *  they ran (until they answer with another one, or say they're busy themselves). */
     private void versions(Sheet s, LinearLayout vc, LinearLayout actions, Map<String, String> asked) {
-        Ui.bg(a, () -> Update.pcs(a), pcs -> {
+        JSONObject[] known = new JSONObject[1];
+        Ui.bg(a, () -> { List<Update.Pc> l = Update.pcs(a); known[0] = knownVersions(); return l; }, pcs -> {
             if (!s.dialog.isShowing()) return;
+            fillPhones(known[0]);
             vc.removeAllViews();
             actions.removeAllViews();
             String newest = Update.newest(pcs);
@@ -631,7 +681,10 @@ final class Sidebar {
                 managed |= p.managed();
                 if (late && !busy) behind.add(p);
                 String sub;
-                if (p.info == null) sub = "not answering";
+                if (p.info == null) {
+                    String last = lastRan(known[0], p.name);
+                    sub = last.isEmpty() ? "not answering" : "not answering · Harbor " + last;
+                }
                 else if (p.version().isEmpty()) sub = "an older Harbor: update it on that PC";
                 else {
                     String st = busy && !p.busy() ? "updating…" : p.status();

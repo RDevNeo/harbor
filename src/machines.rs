@@ -318,7 +318,7 @@ fn tool_defs(g: &Grant) -> Vec<Value> {
     let machine = json!({ "type": "string", "description": "The PC's name (as `list` shows it)" });
     let mut out = vec![json!({
         "name": "list",
-        "description": "The PCs of the user's Harbor mesh: who owns each, whether it's on, what it lets this chat do there and its projects' folders. Call it before working on another PC.",
+        "description": "The PCs of the user's Harbor mesh: who owns each, whether it's on, what it lets this chat do there and its projects' folders; then the Harbor version and update status of every PC and the app version of every paired phone. Call it before working on another PC.",
         "inputSchema": { "type": "object", "properties": {} },
         "annotations": { "readOnlyHint": true },
     })];
@@ -430,7 +430,7 @@ fn call(g: &Grant, cwd: &Path, chat_id: i64, name: &str, a: &Value) -> Value {
     }
 }
 
-/// `list`: each PC, its owner, what this chat may do there, its projects.
+/// `list`: each PC, its owner, what this chat may do there, its projects; then versions.
 fn list(hub: &crate::api::Hub, g: &Grant) -> String {
     let me = hub.mesh.me();
     let mut lines = vec![format!(
@@ -476,6 +476,9 @@ fn list(hub: &crate::api::Hub, g: &Grant) -> String {
         };
         lines.push(format!("- {}{owner}{driven}: {what}", p.name));
     }
+    // Every PC's Harbor version and updates, and the phones' apps (versions.rs, #85).
+    lines.push(String::new());
+    lines.push(crate::versions::text(hub));
     lines.join("\n")
 }
 

@@ -419,6 +419,8 @@ pub struct PairedPhone {
     pub alive: i64,
 }
 
+const PHONES_SEEN: &str = "phones_seen";
+
 /// The first app version that picks up what PCs send (`GET /v1/inbox`, 0.17.0).
 pub const APP_INBOX: i64 = 17000;
 
@@ -450,6 +452,9 @@ pub struct Hub {
     pub alive: Mutex<HashMap<String, (i64, u64)>>,
     /// Peer id → (its name, the phones it saw): the mesh's view of where phones are.
     pub elsewhere: Mutex<HashMap<String, (String, Vec<Sighting>)>>,
+    /// Pairing → the phone as this PC last saw it in an earlier run (kv `phones_seen`, 0.68):
+    /// its last-seen time and app version outlive a restart.
+    pub remembered: Mutex<HashMap<String, Sighting>>,
     /// What waits for phones' apps to pick it up (Devices › Send).
     pub inbox: Mutex<Vec<Parcel>>,
     revs: Mutex<Revs>,
@@ -482,6 +487,7 @@ impl Hub {
             ips: Mutex::new(HashMap::new()),
             apps: Mutex::new(HashMap::new()),
             elsewhere: Mutex::new(HashMap::new()),
+            remembered: Mutex::new(HashMap::new()),
             inbox: Mutex::new(vec![]),
             revs: Mutex::new(Revs { rev: base, state: base, ..Default::default() }),
             cv: Condvar::new(),
@@ -780,7 +786,45 @@ impl Hub {
                 None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), factors: t.factors(), alive: pinged }),
             }
         }
+        // Not seen in this run: what an earlier one saw.
+        let remembered = self.remembered.lock().unwrap().clone();
+        for p in out.iter_mut() {
+            if let Some(r) = remembered.get(&p.group) {
+                p.app = p.app.max(r.app);
+                if p.seen == 0 {
+                    p.seen = r.seen;
+                    if p.name.is_empty() {
+                        p.name = r.name.clone();
+                    }
+                }
+                p.alive = p.alive.max(r.alive);
+            }
+        }
         out
+    }
+
+    /// Reads what earlier runs saw of the phones (kv `phones_seen`).
+    pub fn load_remembered(&self, s: &store::Store) {
+        let v: Value = s.get(PHONES_SEEN).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        let mut m = self.remembered.lock().unwrap();
+        for (group, x) in v.as_object().into_iter().flatten() {
+            m.insert(group.clone(), Sighting { group: group.clone(), name: x["name"].as_str().unwrap_or("").into(), seen: x["seen"].as_i64().unwrap_or(0), app: x["app"].as_i64().unwrap_or(0), alive: x["alive"].as_i64().unwrap_or(0) });
+        }
+    }
+
+    /// Keeps the phones' last-seen times and app versions for the next run: written when an
+    /// app version or name changes, or a phone was seen 5 minutes past what's kept.
+    pub fn remember_phones(&self, s: &store::Store) {
+        let now: HashMap<String, Sighting> = self.local_phones().into_iter().filter(|p| p.seen > 0 || p.alive > 0 || p.app > 0).map(|p| (p.group.clone(), Sighting { group: p.group, name: p.name, seen: p.seen, app: p.app, alive: p.alive })).collect();
+        let mut kept = self.remembered.lock().unwrap();
+        let stale = now.len() != kept.len()
+            || now.iter().any(|(g, n)| kept.get(g).is_none_or(|k| k.app != n.app || k.name != n.name || n.seen.max(n.alive) - k.seen.max(k.alive) >= 300));
+        if !stale {
+            return;
+        }
+        let v: serde_json::Map<String, Value> = now.iter().map(|(g, p)| (g.clone(), json!({ "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive }))).collect();
+        s.set(PHONES_SEEN, &Value::Object(v).to_string());
+        *kept = now;
     }
 
     /// The phones paired here, one per pairing, with what the other PCs saw of them: last seen
@@ -1640,6 +1684,8 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     let w = r.get_mut();
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["v1", "app"]) => send_json(w, 200, &app_info()),
+        // Every PC's Harbor and every phone's app (versions.rs, 0.68).
+        ("GET", ["v1", "versions"]) => send_json(w, 200, &crate::versions::api_json(hub)),
         ("GET", ["v1", "events"]) => {
             let since = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
             let (rev, chats, mut state) = hub.wait(since, POLL);
@@ -4320,6 +4366,38 @@ mod tests {
         assert_eq!((p[0].group.as_str(), p[0].seen, p[0].via.as_str(), p[0].name.as_str(), p[0].app), ("gc", later, "acer", "A13", 16002));
         let a = p.iter().find(|p| p.group == "ga").unwrap();
         assert_eq!(a.via, "", "seen here last");
+    }
+
+    #[test]
+    fn phone_versions_outlive_a_restart() {
+        let tok = |t: &str, g: &str| Token { token: t.into(), name: String::new(), created: 0, group: g.into(), fp: String::new(), ..Default::default() };
+        let hub = Arc::new(Hub::new(vec![tok("a", "ga"), tok("b", "gb")], 0));
+        hub.enabled.store(true, Ordering::SeqCst);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (tx, _rx) = channel();
+        {
+            let hub = hub.clone();
+            std::thread::spawn(move || accept(l, hub, tx, || {}));
+        }
+        call(port, "GET /v1/app HTTP/1.1\r\nAuthorization: Bearer a\r\nX-Harbor-Device: Pixel\r\nX-Harbor-App: 66000\r\n\r\n");
+        // The agent's and the phone's view: the app's version, phone b never seen.
+        let v = crate::versions::api_json(&hub);
+        let pixel = v["phones"].as_array().unwrap().iter().find(|p| p["name"] == "Pixel").cloned().unwrap();
+        assert_eq!((pixel["app"].as_i64(), pixel["app_version"].as_str()), (Some(66000), Some("0.66.0")));
+        assert!(pixel["line"].as_str().unwrap().starts_with("app 0.66.0 (66000), seen just now"), "{pixel}");
+        assert_eq!(v["pcs"][0]["self"], json!(true));
+        assert_eq!(v["pcs"][0]["version"], json!(crate::update::VERSION));
+        assert!(crate::versions::text(&hub).contains("- Pixel: app 0.66.0 (66000)"));
+        let s = store::Store::open_temp();
+        hub.remember_phones(&s);
+        // The next run: nothing heard yet, what the last one saw stays.
+        let next = Hub::new(vec![tok("a2", "ga"), tok("b", "gb")], 0);
+        next.load_remembered(&s);
+        let p = next.local_phones();
+        let a = p.iter().find(|p| p.group == "ga").unwrap();
+        assert_eq!((a.name.as_str(), a.app, a.seen > 0), ("Pixel", 66000, true));
+        assert_eq!(p.iter().find(|p| p.group == "gb").unwrap().seen, 0);
     }
 
     #[test]

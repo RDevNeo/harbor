@@ -83,6 +83,7 @@ mod usage_ctl;
 mod parakeet;
 mod voice;
 mod update;
+mod versions;
 mod view;
 mod waiting;
 mod widgets;

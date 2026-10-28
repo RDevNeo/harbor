@@ -131,12 +131,14 @@ pub struct Device {
     pub down: String,
     /// Phones: Harbor is open on it right now (online is also true while it only pings).
     pub open: bool,
+    /// PCs: its Harbor version and updates in a line (versions.rs; "" when unknown).
+    pub harbor: String,
 }
 
 impl Device {
     fn from_json(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), factors: v["factors"].as_u64().unwrap_or(0) as u8, down: s("down"), open: v["open"].as_bool().unwrap_or(false) }
+        Self { key: s("key"), name: s("name"), kind: s("kind"), online: v["online"].as_bool().unwrap_or(false), ip: s("ip"), seen: v["seen"].as_i64().unwrap_or(0), via: s("via"), app: v["app"].as_i64().unwrap_or(0), factors: v["factors"].as_u64().unwrap_or(0) as u8, down: s("down"), open: v["open"].as_bool().unwrap_or(false), harbor: s("harbor") }
     }
 
     pub fn phone(&self) -> bool {
@@ -179,11 +181,19 @@ fn paired() -> Vec<Device> {
     let allowed = hub.mesh.allowed.lock().unwrap().clone();
     let peers = hub.mesh.peers.lock().unwrap().clone();
     let mesh_on = hub.mesh.on.load(std::sync::atomic::Ordering::Relaxed);
+    let (versions, _) = crate::versions::gather(hub);
+    let newest = crate::versions::newest(&versions);
     let mut v: Vec<Device> = crate::remote::paired_pcs(&allowed, &peers)
         .into_iter()
         .map(|p| {
             let down = if mesh_on && !p.online { hub.mesh.down_of(&p.id).map(|d| d.slug().to_string()).unwrap_or_default() } else { String::new() };
-            Device { seen: peers.get(&p.id).map(|q| q.seen).unwrap_or(0), key: p.id, name: p.name, kind: "pc".into(), online: mesh_on && p.online, ip: p.ip, down, ..Default::default() }
+            // Its Harbor: "0.66.0 (latest)", or the version it ran when last seen.
+            let harbor = match versions.iter().find(|x| x.id == p.id) {
+                Some(x) if x.online => format!("Harbor {}", crate::versions::pc_line(x, &newest)),
+                Some(x) if !x.version.is_empty() => format!("Harbor {}", x.version),
+                _ => String::new(),
+            };
+            Device { seen: peers.get(&p.id).map(|q| q.seen).unwrap_or(0), key: p.id, name: p.name, kind: "pc".into(), online: mesh_on && p.online, ip: p.ip, down, harbor, ..Default::default() }
         })
         .collect();
     if hub.enabled.load(std::sync::atomic::Ordering::Relaxed) {
@@ -692,8 +702,13 @@ fn device_row(ui: &mut Ui, t: &Tokens, d: &Device, hovering: bool) -> (Option<Ro
         if let Some((note, _)) = app_note(d.app, d.seen) {
             bits.push(note);
         }
-    } else if !d.ip.is_empty() && d.online {
-        bits.push(d.ip.clone());
+    } else {
+        if !d.harbor.is_empty() {
+            bits.push(d.harbor.clone());
+        }
+        if !d.ip.is_empty() && d.online {
+            bits.push(d.ip.clone());
+        }
     }
     let x = rect.left() + 10.0 + LEAD + 12.0;
 
@@ -1333,7 +1348,7 @@ impl Files {
 
 /// For hot reload: what a device tab needs to come back.
 pub fn device_json(d: &Device) -> Value {
-    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "factors": d.factors, "down": d.down, "open": d.open })
+    json!({ "key": d.key, "name": d.name, "kind": d.kind, "online": d.online, "ip": d.ip, "seen": d.seen, "via": d.via, "app": d.app, "factors": d.factors, "down": d.down, "open": d.open, "harbor": d.harbor })
 }
 
 pub fn device_from(v: &Value) -> Device {

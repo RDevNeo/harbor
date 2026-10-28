@@ -2124,6 +2124,7 @@ impl App {
             *self.api.hub.mesh.allowed.lock().unwrap() = load_allowed(&self.store);
             *self.api.hub.mesh.about.lock().unwrap() = crate::meshctx::about(&self.store);
             self.share_publish();
+            self.api.hub.remember_phones(&self.store);
             let on = self.store.get("mesh_enabled").as_deref() == Some("1");
             if on != self.api.hub.mesh.on.load(Ordering::Relaxed) {
                 self.mesh_set_enabled(on, ctx);
@@ -2991,10 +2992,17 @@ impl App {
                             d
                         }
                         (_, true) if s.is_some_and(|s| s.refuses) => format!("Allowed here, but {name} doesn't allow {} (pair them again)", me.name),
-                        (Some(p), true) if p.seen > 0 => match crate::app::ago(p.seen).as_str() {
-                            "now" => "Last seen just now".into(),
-                            a => format!("Last seen {a} ago"),
-                        },
+                        (Some(p), true) if p.seen > 0 => {
+                            let mut d = match crate::app::ago(p.seen).as_str() {
+                                "now" => "Last seen just now".to_string(),
+                                a => format!("Last seen {a} ago"),
+                            };
+                            // The version it ran then (#85).
+                            if !p.version.is_empty() {
+                                d.push_str(&format!(" · Harbor {}", p.version));
+                            }
+                            d
+                        }
                         (_, true) => "Allowed · not answering (off, or Harbor isn't sharing there)".into(),
                         _ if s.is_some_and(|s| s.asked > 0) => "Asks to share chats with this PC: pair it with a code to allow it".into(),
                         _ => "Runs Harbor with sharing on".into(),

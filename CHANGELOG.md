@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Agents can see the Harbor version on every device (#85): the `machines` server's `list` now
+  ends with each PC's Harbor version and update status (managed install or not, latest release,
+  update ready / installing / checking, auto-update; offline PCs with the version they last ran)
+  and each paired phone's app version, when and where it was last seen. The who-is-who note
+  every chat gets lists each PC's version too ("desk: … Harbor 0.68.0 (latest, updates
+  automatically); phones: Pixel (app 0.68.0)"). Settings › Devices shows each PC's version, and
+  the phone's PCs sheet gets "Harbor on your phones" plus the last version of a PC that doesn't
+  answer. The hub now keeps phones' last-seen time and app version across restarts. Old phones
+  and hubs show "unknown". Hub API: `GET /v1/versions`.
+
 ## [0.67.2] - 2026-10-28
 
 ### Fixed

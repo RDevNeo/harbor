@@ -24,6 +24,10 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   neither on the PC's own network. Optional `X-Harbor-Device: <phone name>` (shown next to the token in Settings › Phones) and,
   from app 0.19, `X-Harbor-App: <versionCode>` (Devices and Settings › Phones show the app's
   version and say when it's out of date; the other PCs learn it through `GET /mesh/v1/phones`).
+  The versionCode is the whole app version (`major*1000000 + minor*1000 + patch`, the
+  versionName is Cargo.toml's version), so the hub derives the versionName from it. From 0.68
+  the hub keeps each phone's last-seen time and app version across restarts (kv `phones_seen`)
+  and agents read them (`GET /v1/versions`, the `machines` `list` tool, the who-is-who note).
 - **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
   answers plain HTTP on its Tailscale interface, from Tailscale addresses, for tokens no key is
@@ -1324,6 +1328,20 @@ check). The phone's PCs page (sidebar › PCs) lists every PC with `Harbor <vers
 and an Update (`POST /v1/hub/update` to that PC, `callOn`) when it's `managed` and older than the
 newest `version` or `latest` any PC says, plus "Update all" with two or more behind and "Check
 for updates" (`POST /v1/hub/check` to each).
+
+### `GET /v1/versions`
+
+From 0.68 (`404` before: show nothing extra). Every PC's Harbor and every paired phone's app, as
+the hub knows them, with the line to show built on the hub (the same text agents read):
+`{"newest": "0.68.0", "pcs": [{"name": "desk", "self": true, "online": true, "seen": 1761600000,
+"version": "0.68.0", "line": "0.68.0 (latest, updates automatically)"}, …], "phones": [{"name":
+"Pixel", "app": 68000, "app_version": "0.68.0", "seen": 1761600000, "via": "laptop", "line":
+"app 0.68.0 (68000), seen 5m ago at laptop"}]}`. `pcs`: this PC first, then the mesh's PCs; an
+offline one keeps the version it last ran (`line` "0.66.0, offline (last seen 2d ago)"; `version`
+"" when unknown). `phones`: paired here or on another PC of the mesh, most recently seen first;
+`app` 0 = unknown (an app before 0.19), `via` "" = seen at this PC. The phone's PCs sheet shows
+`phones` as "Harbor on your phones" and, for a PC that doesn't answer, "not answering · Harbor
+<line>" from `pcs`.
 
 `hub.auto` (optional, from 0.53; missing: false): the PC's Settings › Updates is
 "Automatically". Such a PC installs releases in the background and swaps them in while nobody
