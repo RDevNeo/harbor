@@ -15,8 +15,9 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
-/** Settings, grouped in cards like the reference: this PC (switch PCs), the app and its
- *  update, the PC's address and version, color mode, pairing another PC, unpair. */
+/** Settings, grouped in cards like the reference: this workspace (switch workspaces), the
+ *  app and its update, the PC's address and version, the account and the workspace's people
+ *  (owners invite by email), color mode, sign out. */
 public class Settings extends Base {
     private TextView updateNote, hubVersion, badge;
     private View updateBtn;
@@ -50,7 +51,7 @@ public class Settings extends Base {
 
         // This PC, with its Harbor version as a badge; tap to switch PCs.
         LinearLayout top = card(col);
-        LinearLayout pc = Ui.cardRow(this, null, hub.label(), hub.host + ":" + hub.port, Ui.FG, v -> pcs());
+        LinearLayout pc = Ui.cardRow(this, null, hub.label(), hub.labelOn(hub.via()) + " · " + hub.host + ":" + hub.port, Ui.FG, v -> pcs());
         badge = Ui.bold(this, "", 13, Ui.ON_INK);
         badge.setPadding(Ui.dp(12), Ui.dp(5), Ui.dp(12), Ui.dp(5));
         badge.setBackground(Ui.round(Ui.INK, 0, 14));
@@ -86,28 +87,13 @@ public class Settings extends Base {
         String keys = (hub.fp.isEmpty() ? "PC key not known yet" : "PC " + shortFp(hub.fp)) + " · this phone " + shortFp(Net.myFp());
         here.addView(Ui.cardRow(this, Ui.I_LOCK, "Encrypted with", keys, Ui.FG, null), Ui.fill());
         here.addView(Ui.gap(this));
-        // How this phone signs in to the PC: the factors the pairing has.
-        int f = hub.factors();
-        boolean lock = Presence.secureLock();
-        String fs = f == 3 ? (lock ? "3 factors: this phone's key, the pairing secret and its screen lock"
-                        : "3 factors, but the screen lock was removed: tap to go on with two")
-                : f == 2 ? (lock ? "2 factors: the screen lock is added the next time Harbor connects"
-                        : "2 factors: this phone has no screen lock. Set one (tap) to add the third.")
-                : "Paired before three factors: upgrade it when the PC asks";
-        boolean warn = f == 2 || (f == 3 && !lock);
-        View.OnClickListener tap = f == 2 && !lock ? v -> Pair.openLockSettings(this) : f == 3 && !lock ? v -> Pair.offerLock(this, hub) : null;
-        LinearLayout sign = Ui.cardRow(this, warn ? Ui.I_LOCK_OPEN : Ui.I_LOCK, "Sign-in", fs, warn ? Ui.AMBER : Ui.FG, tap);
-        Ui.wrapSub(sign, 3);
-        if (tap != null) sign.addView(Ui.chevron(this));
-        here.addView(sign, Ui.fill());
-        here.addView(Ui.gap(this));
         LinearLayout ver = Ui.cardRow(this, Ui.I_MONITOR, "Harbor on the PC", "…", Ui.FG, null);
         hubVersion = (TextView) ((LinearLayout) ver.getChildAt(1)).getChildAt(1);
         here.addView(ver, Ui.fill());
-        here.addView(Ui.gap(this));
-        LinearLayout rn = Ui.cardRow(this, Ui.I_PEN, "Rename", "on this phone only", Ui.FG, v -> rename());
-        rn.addView(Ui.chevron(this));
-        here.addView(rn, Ui.fill());
+
+        // The account and this workspace's people and PCs (Account, the directory).
+        acctCard = card(col);
+        workspaceRows();
 
         // Who is who across the PCs, and whose instructions a chat run on another PC uses
         // (GET/PATCH /v1/people, hubs from 0.44; hidden on older ones).
@@ -179,17 +165,109 @@ public class Settings extends Base {
         LinearLayout nt = card(col);
         notifyRows(nt);
 
-        LinearLayout more = card(col);
-        LinearLayout pair = Ui.cardRow(this, Ui.I_PLUS, "Pair another PC", "Settings › Phones › Pair a phone on that PC", Ui.FG,
-                v -> startActivity(new Intent(this, Hubs.class).putExtra("pair", true)));
-        pair.addView(Ui.chevron(this));
-        more.addView(pair, Ui.fill());
-
         LinearLayout bye = card(col);
-        bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Unpair", null, Ui.RED, v -> unpair()), Ui.fill());
-        TextView note = Ui.text(this, "Unpairing forgets the token on this phone. Revoke it on the PC in Settings › Phones.", 13, Ui.G700);
+        bye.addView(Ui.cardRow(this, Ui.I_PLUG, "Sign out", Account.email(this), Ui.RED, v -> signOut()), Ui.fill());
+        TextView note = Ui.text(this, "Signing out forgets your PCs on this phone, and they stop taking it. Chats stay on the PCs.", 13, Ui.G700);
         note.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
         col.addView(note);
+    }
+
+    private LinearLayout acctCard;
+
+    /** Signed in as…, and this workspace: its people (owners invite and remove; anyone leaves
+     *  a workspace that isn't their own) and its PCs. */
+    private void workspaceRows() {
+        acctCard.removeAllViews();
+        acctCard.addView(Ui.cardRow(this, Ui.I_USER, Account.name(this), "Signed in with Google · " + Account.email(this), Ui.FG, null), Ui.fill());
+        String ws = Account.wsOf(hub);
+        JSONObject w = ws == null ? null : Account.workspace(this, ws);
+        if (w == null) return;
+        boolean owner = "owner".equals(w.optString("role"));
+        boolean personal = w.optBoolean("personal");
+        String me = Account.id(this);
+        acctCard.addView(Ui.gap(this));
+        acctCard.addView(Ui.cardRow(this, Ui.I_USERS, w.optString("name"), (owner ? "You own this workspace" : "You're a member") + ": everyone in it controls all of its PCs and chats.", Ui.FG, null), Ui.fill());
+        org.json.JSONArray ms = w.optJSONArray("members");
+        if (ms != null) for (int i = 0; i < ms.length(); i++) {
+            JSONObject m = ms.optJSONObject(i);
+            if (m == null) continue;
+            String uid = m.optString("id"), nm = m.optString("name").isEmpty() ? m.optString("email") : m.optString("name");
+            boolean self = uid.equals(me);
+            String role = "owner".equals(m.optString("role")) ? "Owner" : "Member";
+            View.OnClickListener tap = self && !personal ? v -> confirmRemove(ws, uid, true, w.optString("name"))
+                    : !self && owner ? v -> confirmRemove(ws, uid, false, nm) : null;
+            acctCard.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, null, nm + (self ? " (you)" : ""), role + " · " + m.optString("email"), Ui.FG, tap);
+            if (tap != null) r.addView(Ui.chevron(this));
+            acctCard.addView(r, Ui.fill());
+        }
+        org.json.JSONArray inv = w.optJSONArray("invites");
+        if (inv != null) for (int i = 0; i < inv.length(); i++) {
+            JSONObject x = inv.optJSONObject(i);
+            if (x == null) continue;
+            acctCard.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, null, x.optString("email"), "Invited · tap to cancel", Ui.G700, v -> cancelInvite(ws, x.optString("id"), x.optString("email")));
+            acctCard.addView(r, Ui.fill());
+        }
+        if (owner) {
+            acctCard.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, Ui.I_PLUS, "Invite someone", "By email: they sign in with Google using it, on a PC or phone", Ui.FG, v -> invite(ws));
+            r.addView(Ui.chevron(this));
+            acctCard.addView(r, Ui.fill());
+        }
+        org.json.JSONArray pcs = w.optJSONArray("pcs");
+        if (pcs != null) for (int i = 0; i < pcs.length(); i++) {
+            JSONObject p = pcs.optJSONObject(i);
+            if (p == null) continue;
+            acctCard.addView(Ui.gap(this));
+            String by = p.optString("owner_name").isEmpty() ? "" : " · added by " + p.optString("owner_name");
+            acctCard.addView(Ui.cardRow(this, Ui.I_MONITOR, p.optString("name"), "Harbor " + p.optString("version", "?") + by, Ui.FG, null), Ui.fill());
+        }
+    }
+
+    private void invite(String ws) {
+        EditText e = Ui.input(this, "name@example.com", false);
+        e.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        FrameLayout f = new FrameLayout(this);
+        f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        f.addView(e);
+        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("They get an email. Once they sign in with Google using that address, they control all of this workspace's PCs and chats.")
+                .setView(f).setNegativeButton("Cancel", null)
+                .setPositiveButton("Invite", (d, x) -> {
+                    String m = e.getText().toString().trim();
+                    if (!m.contains("@")) { Ui.toast(this, "Type an email address"); return; }
+                    act(() -> Account.invite(this, ws, m), "Invited " + m);
+                }).show();
+    }
+
+    private void cancelInvite(String ws, String id, String email) {
+        Ui.dialog(this).setTitle("Cancel the invitation?").setMessage(email)
+                .setNegativeButton("Keep", null)
+                .setPositiveButton("Cancel it", (d, x) -> act(() -> Account.cancelInvite(this, ws, id), null)).show();
+    }
+
+    private void confirmRemove(String ws, String user, boolean self, String name) {
+        Ui.dialog(this).setTitle(self ? "Leave " + name + "?" : "Remove " + name + "?")
+                .setMessage(self ? "You lose its PCs and chats until someone invites you again." : "They lose this workspace's PCs and chats on every device, within a few minutes.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton(self ? "Leave" : "Remove", (d, x) -> act(() -> Account.removeMember(this, ws, user), null)).show();
+    }
+
+    interface Act { void run() throws Exception; }
+
+    /** A workspace action off the UI thread, then the rows again. */
+    private void act(Act a, String done) {
+        Ui.pool.execute(() -> {
+            String err = null;
+            try { a.run(); } catch (Exception e) { err = Hub.why(e); }
+            final String fe = err;
+            runOnUiThread(() -> {
+                if (isFinishing()) return;
+                if (fe != null) Ui.toast(this, fe); else if (done != null) Ui.toast(this, done);
+                if (Hub.get(this, hub.id) == null) { startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)); finish(); return; }
+                workspaceRows();
+            });
+        });
     }
 
     /** "Update automatically": like the PCs until chosen here (Update.auto). */
@@ -841,28 +919,12 @@ public class Settings extends Base {
         });
     }
 
-    private void rename() {
-        EditText e = Ui.input(this, "Name", false);
-        e.setText(hub.label());
-        FrameLayout f = new FrameLayout(this);
-        f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
-        f.addView(e);
-        Ui.dialog(this).setTitle("Rename this PC").setView(f).setNegativeButton("Cancel", null)
-                .setPositiveButton("Rename", (d, w) -> {
-                    String n = e.getText().toString().trim();
-                    if (n.isEmpty()) return;
-                    hub.name = n;
-                    Hub.put(this, hub);
-                    recreate();
-                }).show();
-    }
-
-    private void unpair() {
-        Ui.dialog(this).setTitle("Unpair " + hub.label() + "?")
-                .setMessage("This phone forgets the PC and its token. Chats stay on the PC.")
+    private void signOut() {
+        Ui.dialog(this).setTitle("Sign out?")
+                .setMessage("This phone forgets your PCs, and they stop taking it. Chats stay on the PCs.")
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Unpair", (d, w) -> {
-                    Hub.remove(this, hub.id);
+                .setPositiveButton("Sign out", (d, w) -> {
+                    Account.signOut(this);
                     startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
                     finish();
                 }).show();

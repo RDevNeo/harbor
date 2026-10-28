@@ -13,8 +13,8 @@ import android.os.SystemClock;
  *  "Background pings", "Notifications"). Two JobScheduler jobs, both waiting for a network:
  *  every 15 minutes, kept across reboots (Android runs it later in Doze or when the app is
  *  rarely used); and a burst right after the user leaves the app, long-polling for a few
- *  minutes, when an answer to what was just asked is most likely. Each ping: the pairing
- *  secret's MAC over the time, no session and no screen lock. After the pings, an automatic
+ *  minutes, when an answer to what was just asked is most likely. Each ping carries the
+ *  account's Harbor token, like every call (Account renews it here too). After the pings, an automatic
  *  update when one is due and nobody sees Harbor (Update.background). */
 public class Alive extends JobService {
     static final int JOB = 4711, BURST = 4712;
@@ -66,6 +66,8 @@ public class Alive extends JobService {
         stop = false;
         Ui.pool.execute(() -> {
             long until = SystemClock.elapsedRealtime() + (burst ? BURST_MS : 0);
+            // A Harbor token due for renewal, and a newer directory, while the network is up.
+            try { Account.renew(this, false); } catch (Exception ignored) { }
             do {
                 java.util.List<Hub> hubs = Hub.all(this);
                 for (int i = 0; i < hubs.size() && !stop; i++) {

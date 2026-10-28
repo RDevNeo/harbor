@@ -156,10 +156,6 @@ final class Media {
         Net.Http c = null;
         try {
             c = hub.open("GET", url, 120_000);
-            if (c.code() == 401 && c.signed) {
-                c.close();
-                c = hub.open("GET", url, 120_000);
-            }
             if (c.code() != 200) return null;
             long len = c.length();
             if (len > MAX_VIDEO) return null;

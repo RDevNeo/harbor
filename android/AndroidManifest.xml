@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Harbor for Android: a chat-only client of a desktop Harbor (the hub) on the tailnet.
-     Hubs pairs and lists PCs (also from harbor://pair links and QR codes), Chats lists one hub's
+<!-- Harbor for Android: a chat-only client of the desktop Harbors (hubs) of its account.
+     Hubs signs in with Google (Account; the browser comes back as harbor://oauth) and lists the
+     account's workspaces, each with its PCs; Chats lists one workspace's
      chats (the same list slides in as a drawer inside Chat and NewChat), Chat shows and drives
      one (its team slides in from the right), NewChat starts one, GhList and GhItem show the
      PC's pull requests and issues, Settings updates the app and sets the color mode. -->
@@ -13,14 +14,12 @@
     <!-- Android 12+: updates of itself install without the system dialog (also in the
          background: Settings › Update automatically) -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
-    <!-- Pairing: the in-app QR scanner (QrScan) reads the PC's code; asked for only when used -->
+    <!-- Attach › Camera: asked for only when used -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Devices › Send on a PC: "saved to Download/Harbor" notifications; asked for the first time
          something arrives -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- The third factor: the fingerprint or screen lock unlocks the sign-in key (Presence) -->
-    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- The background ping job (Alive) survives a reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Dictation in the composer (Voice): the phone's recogniser, or a recording the PC
@@ -46,6 +45,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="harbor" android:host="pair" />
             </intent-filter>
+            <!-- The Google sign-in's answer, bounced by the account service (Account) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="harbor" android:host="oauth" />
+            </intent-filter>
         </activity>
         <activity android:name=".Chats" android:exported="false" />
         <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize" />
@@ -54,12 +60,6 @@
         <activity android:name=".Settings" android:exported="false" />
         <activity android:name=".GhList" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".GhItem" android:exported="false" />
-        <activity android:name=".QrScan" android:exported="false" android:screenOrientation="portrait"
-            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
-        <!-- Asks for the fingerprint or screen lock when a PC wants the third factor -->
-        <activity android:name=".Presence" android:exported="false" android:excludeFromRecents="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <!-- The install's result; and MY_PACKAGE_REPLACED, after an update: jobs and Listen again -->
         <receiver android:name=".Update" android:exported="false">
             <intent-filter>

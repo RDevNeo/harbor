@@ -196,9 +196,8 @@ final class Slash {
             try {
                 JSONObject r = v.equals(cur) ? hub.get(path) : hub.callOn(v, "GET", path, null);
                 return new Cached(parse(r.optJSONArray("entries")), System.currentTimeMillis(), r.optBoolean("pending"), v.equals(cur) ? null : v, null, false);
-            } catch (Hub.NeedsUpgrade e) {
-                upgrade = true;
             } catch (Hub.ApiError e) {
+                if (e.signin) upgrade = true;
                 if (e.code == 404 && v.equals(homeV)) homeOld = true;
             } catch (Exception ignored) {
                 // Not reachable now: the next one.
@@ -207,7 +206,7 @@ final class Slash {
         // No list (until it's old): say why when the user can fix it.
         String note = null;
         if (homeOld) note = (homeName.isEmpty() ? "The PC this chat runs on" : homeName) + " runs a Harbor without slash commands. Update Harbor there to use them.";
-        else if (upgrade) note = "Slash commands need this phone's pairing upgraded to three factors. Tap to upgrade.";
+        else if (upgrade) note = "This PC refused your sign-in. Tap to sign in again.";
         return new Cached(old == null ? new ArrayList<>() : old.entries, System.currentTimeMillis(), false, null, note, upgrade && !homeOld);
     }
 
@@ -246,7 +245,7 @@ final class Slash {
         view.setVisibility(View.VISIBLE);
     }
 
-    /** One muted row saying why there's no menu; a tap upgrades the pairing when that's the fix. */
+    /** One muted row saying why there's no menu; a tap goes to the sign-in when that's the fix. */
     private void note(Cached c) {
         shown = new ArrayList<>();
         rows.removeAllViews();
@@ -256,7 +255,7 @@ final class Slash {
         r.addView(Ui.text(a, c.note, 14, Ui.G700), Ui.weight());
         if (c.upgrade) {
             r.setBackground(Ui.press(0, 0, 16));
-            r.setOnClickListener(v -> { hide(); Pair.offerUpgrade(a, hub); });
+            r.setOnClickListener(v -> { hide(); a.startActivity(new android.content.Intent(a, Hubs.class).addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)); });
         }
         rows.addView(r, Ui.fill());
     }

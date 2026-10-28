@@ -1,6 +1,7 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -27,7 +28,7 @@ abstract class Base extends Activity {
     LinearLayout barActions;
     LinearLayout page; // the frame's column (top bar + content)
 
-    /** Harbor screens in the foreground now (Presence only asks for the unlock then). */
+    /** Harbor screens in the foreground now. */
     static volatile int resumed;
     private int gen;                 // bumped to stop the current poll loop
     private volatile Net.Http polling;
@@ -54,6 +55,13 @@ abstract class Base extends Activity {
     }
 
     /** True (and finishes) when the screen needs a hub that was unpaired meanwhile. */
+    /** The account's sign-in ran out and can't be renewed: the start screen asks again. */
+    void signInAgain() {
+        if (this instanceof Hubs || isFinishing()) return;
+        startActivity(new Intent(this, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        finish();
+    }
+
     boolean noHub() {
         if (hub != null) return false;
         finish();
@@ -419,12 +427,10 @@ abstract class Base extends Activity {
                     }
                 } catch (Exception e) {
                     if (my != gen) return;
-                    // The PC ended the session (it restarted): the next call starts a new one.
-                    if (e instanceof Hub.ApiError && ((Hub.ApiError) e).rekey && fails == 0) { fails = 1; continue; }
-                    // A pairing from before three factors: the PC wants the codes confirmed.
-                    if (e instanceof Hub.NeedsUpgrade) Ui.main.post(() -> { if (my == gen) Pair.offerUpgrade(this, h); });
-                    // The screen lock was removed or changed: go on with two factors, or re-confirm.
-                    if (e instanceof Hub.NeedsLock) Ui.main.post(() -> { if (my == gen) Pair.offerLock(this, h); });
+                    // The sign-in was refused: a new Harbor token may fix it (Hub.error asks for one);
+                    // when Clerk won't renew it either, back to the sign-in screen.
+                    if (e instanceof Hub.ApiError && ((Hub.ApiError) e).signin && Account.needsSignIn(this))
+                        Ui.main.post(() -> { if (my == gen) signInAgain(); });
                     // The hub answers a long-poll within 20 s: no answer in 25 means it's gone (or the
                     // way to it). The next try goes to another PC of the mesh first.
                     if (!(e instanceof Hub.ApiError)) h.failed();
