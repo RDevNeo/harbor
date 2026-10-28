@@ -25,7 +25,8 @@ runs:
         curl -fsSL --retry 3 "https://boat.dev/api/boat/cli/download?platform=linux-x64&channel=prod" -o "$HOME/.local/bin/boat"
         chmod +x "$HOME/.local/bin/boat"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-        printf '%s' "$BOAT_API_KEY" | "$HOME/.local/bin/boat" login --key-stdin --json >/dev/null
+        # boat reads the key from the environment; `boat login` keeps nothing on a runner (no keyring).
+        echo "BOAT_API_KEY=$BOAT_API_KEY" >> "$GITHUB_ENV"
     - name: Sandbox
       id: box
       shell: bash
@@ -35,7 +36,7 @@ runs:
       run: |
         set -eu
         boat=$HOME/.local/bin/boat
-        new() { "$boat" new --type "$TYPE" --no-env --ttl 7200 --name "ci-harbor-$GITHUB_RUN_ID-$GITHUB_JOB" --json "$@" | jq -r 'select(.event == "ready") | .id'; }
+        new() { "$boat" new --type "$TYPE" --no-env --ttl 7200 --name "ci-harbor-$GITHUB_RUN_ID-$GITHUB_JOB" --json "$@" | tee /dev/stderr | jq -r 'select(.event == "ready") | .id'; }
         id=""
         [ -z "$FROM" ] || id=$(new --from "$FROM" || true)
         [ -n "$id" ] || id=$(new)
