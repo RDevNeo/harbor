@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.67.1] - 2026-10-28
+
 ### Fixed
 - Terminal commands now stop quietly when piped to a reader that closes early, without a
   panic or core dump. The desktop/background hub and socket/stdio servers keep handling
@@ -1479,7 +1481,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.67.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.67.1...HEAD
+[0.67.1]: https://github.com/RDevNeo/harbor/compare/v0.67.0...v0.67.1
 [0.67.0]: https://github.com/RDevNeo/harbor/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/RDevNeo/harbor/compare/v0.65.1...v0.66.0
 [0.65.1]: https://github.com/RDevNeo/harbor/compare/v0.65.0...v0.65.1
