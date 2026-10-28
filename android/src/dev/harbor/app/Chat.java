@@ -26,7 +26,7 @@ import java.util.TreeMap;
 /** One chat: the transcript (refetched from the last revision whenever the hub says the chat
  *  changed, so streaming text grows in place), and the composer with attachments, Send, Stop.
  *  The chat list slides in from the left, its team (Team) from the right. */
-public class Chat extends Base {
+public class Chat extends Base implements Images.Gallery {
     private String chatId;
     private WorkBar work;
     private ScrollView scroll;
@@ -1080,6 +1080,27 @@ public class Chat extends Base {
             comp.mentions.addView(t, Ui.margins(Ui.fill(), 8, 6, 8, 0));
         }
         comp.mentions.setVisibility(mentions.length() == 0 ? View.GONE : View.VISIBLE);
+    }
+
+    /** Every image of the chat in the order the cards show them (a card's large ones, then its
+     *  strip), each once, as the desktop's viewer browses them (view.rs `gallery`): a tap on
+     *  any of them opens the viewer here, and swipes go on to the others. */
+    @Override public List<Images.Src> gallery() {
+        List<Images.Src> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (JSONObject it : items.values()) {
+            if ("hidden".equals(it.optString("kind"))) continue;
+            JSONArray media = it.optJSONArray("media"), rest = notShown(it);
+            for (JSONArray list : new JSONArray[]{media, rest}) {
+                for (int i = 0; list != null && i < list.length(); i++) {
+                    JSONObject m = list.optJSONObject(i);
+                    if (m == null || list == media && !"image".equals(m.optString("kind"))) continue;
+                    String url = m.optString("url");
+                    if (!url.isEmpty() && seen.add(url)) out.add(new Images.Src(hub, url, m.optString("name")));
+                }
+            }
+        }
+        return out;
     }
 
     /** A card's `images` without those its `media` already draws large. */

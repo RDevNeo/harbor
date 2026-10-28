@@ -272,6 +272,24 @@ pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media
     }
 }
 
+/// Every image of a chat's cards in the order they show (a card's large ones, then its strip),
+/// each once: what the image viewer browses with ← → or a swipe, whichever image it opened on.
+/// The phone builds the same list from the cards' `media` and `images` (PROTOCOL.md).
+pub fn gallery(cards: &[Shown], find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = vec![];
+    for s in cards {
+        let media = media(&s.card, find);
+        let images = media.iter().filter(|m| !m.video);
+        for m in images.clone().filter(|m| m.shown).chain(images.filter(|m| !m.shown)) {
+            if seen.insert(m.path.clone()) {
+                out.push(m.path.clone());
+            }
+        }
+    }
+    out
+}
+
 /// A lead's turn that delegates, one that answers, and the cards around them (tests here and
 /// in api.rs check the desktop's and the phone's projections of it).
 #[cfg(test)]
@@ -342,6 +360,26 @@ mod tests {
         // Others' thinking folds in with the calls; alone it doesn't.
         assert_eq!(groups_of(&items[..3]), [None, Some(1), Some(1)]);
         assert_eq!(groups_of(&[Item::Thinking { text: "x".into() }, text("hi")]), [None, None]);
+    }
+
+    #[test]
+    fn the_gallery_is_every_image_of_the_chat_in_order() {
+        let m = |path: &str, shown: bool, video: bool| Media { path: path.into(), caption: String::new(), video, shown, url: None };
+        let items = vec![
+            Item::User { text: "look".into(), files: vec!["/p/a.png".into(), "/p/notes.txt".into(), "/p/b.png".into()], at: 0, mentions: vec![], sender: String::new(), intent: String::new() },
+            Item::Text { text: "reply".into(), at: 0 },
+            Item::Tool { id: "t".into(), name: "Read".into(), summary: String::new(), input: "read".into(), result: Some("ok".into()), is_error: false },
+            Item::Result { cost_usd: 0.0, duration_ms: 0, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() },
+        ];
+        let cards = project(&items, false, &[]);
+        let mut find = |t: &str| match t {
+            // A reply names a file first and shows two (and a video): the shown ones come first.
+            "reply" => vec![m("/p/named.png", false, false), m("/p/c.png", true, false), m("/p/run.mp4", true, true), m("/p/d.png", true, false), m("/p/a.png", false, false)],
+            "read" => vec![m("/p/e.png", true, false)],
+            _ => vec![],
+        };
+        assert_eq!(gallery(&cards, &mut find), ["/p/a.png", "/p/b.png", "/p/c.png", "/p/d.png", "/p/named.png", "/p/e.png"]);
+        assert!(gallery(&cards[3..], &mut find).is_empty());
     }
 
     #[test]

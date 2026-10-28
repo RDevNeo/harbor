@@ -354,6 +354,8 @@ impl App {
             std::sync::Arc::new(move |path: &str| crate::mesh::home_image(&hub, id, path, Some(crate::mesh::REMOTE_IMAGE_PX)).map(|(_, b)| b)) as crate::images::Fetch
         });
         crate::images::set_source(ui.ctx(), source);
+        // (A click on the composer's attachments isn't one of the chat's images.)
+        crate::images::take_opened(ui.ctx());
         let out = ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
@@ -365,10 +367,25 @@ impl App {
                     ui.add_space(24.0);
                 });
             });
+        // An image of the chat opened: ← → browse all of the chat's images, not only its message's.
+        if crate::images::take_opened(ui.ctx()).is_some() {
+            let all = self.chat_images(ui.ctx(), id);
+            crate::images::widen(ui.ctx(), all);
+        }
         crate::images::set_source(ui.ctx(), None);
         // Scrolled up to older messages: an automatic update waits (reload.rs), as the restart
         // would bring the transcript back to its end.
         self.reading_back = out.state.clamped_offset().y + out.inner_rect.height() < out.content_size.y - 48.0;
+    }
+
+    /// Every image of chat `id`, in order (view.rs `gallery`): what the lightbox browses.
+    fn chat_images(&mut self, ctx: &egui::Context, id: i64) -> Vec<String> {
+        let forks = self.forks_of(id);
+        let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
+        let cwd = self.chat(id).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c).to_string_lossy().into_owned()).unwrap_or_default();
+        let Some(tr) = self.transcripts.get(&id) else { return vec![] };
+        let cards = crate::view::project(&tr.items, lead, &forks);
+        crate::view::gallery(&cards, &mut |t| crate::images::media_in(ctx, t, &cwd))
     }
 
     fn transcript(&mut self, ui: &mut Ui, id: i64, _running: Option<u64>) {

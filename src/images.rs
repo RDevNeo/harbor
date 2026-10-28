@@ -10,6 +10,10 @@
 //! - `attachment(ui, key, size)`: a thumbnail with a remove button; true when removed.
 //! - `open(ctx, key)`, `open_gallery(ctx, keys, index)` (← → to browse),
 //!   `lightbox(ctx)` (once per frame, after the rest), `is_open(ctx)`.
+//! - `take_keys(ctx)` (early in the frame): the lightbox's ← → Esc, before a focused
+//!   composer sees them.
+//! - `take_opened(ctx)` / `widen(ctx, keys)`: a chat turns the gallery of the message clicked
+//!   into all of its images.
 
 use crate::widgets::Tip as _;
 use crate::icons as ic;
@@ -70,6 +74,10 @@ struct Cache {
     open: Option<String>,
     /// What ← → browse in the lightbox (just `open` for a single image).
     gallery: Vec<String>,
+    /// The image a click on a thumbnail or inline image just opened (see [`take_opened`]).
+    opened: Option<String>,
+    /// ← → Esc taken early in the frame (see [`take_keys`]): previous, next, close.
+    keys: [bool; 3],
     bytes: HashMap<String, Arc<[u8]>>,
     queue: VecDeque<Job>,
     workers: usize,
@@ -343,12 +351,18 @@ fn thumb_in(ui: &mut Ui, key: &str, size: Vec2, group: &[String]) -> Response {
     }
     let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(tip);
     if resp.clicked() {
-        match group.iter().position(|k| k == key) {
-            Some(i) => open_gallery(ui.ctx(), group.to_vec(), i),
-            None => open(ui.ctx(), key),
-        }
+        open_clicked(ui.ctx(), key, group);
     }
     resp
+}
+
+/// A click on `key`: the lightbox on `group` (or `key` alone), noted for [`take_opened`].
+fn open_clicked(ctx: &egui::Context, key: &str, group: &[String]) {
+    match group.iter().position(|k| k == key) {
+        Some(i) => open_gallery(ctx, group.to_vec(), i),
+        None => open(ctx, key),
+    }
+    lock(&shared(ctx)).opened = Some(key.to_string());
 }
 
 /// An attachment: a thumbnail with a remove button in its corner. Returns true when removed.
@@ -411,15 +425,61 @@ pub fn close(ctx: &egui::Context) {
     let mut c = lock(&s);
     c.open = None;
     c.gallery.clear();
+    c.keys = [false; 3];
     // The full-size texture is large; keep it only while it's shown.
     c.full = None;
+}
+
+/// While the lightbox is open, takes ← → and Esc for it. Call at the start of the frame: the
+/// lightbox draws last, and by then a focused composer would have had → (it takes a suggestion).
+pub fn take_keys(ctx: &egui::Context) {
+    if !is_open(ctx) {
+        return;
+    }
+    let none = egui::Modifiers::NONE;
+    let keys = ctx.input_mut(|i| [i.consume_key(none, Key::ArrowLeft), i.consume_key(none, Key::ArrowRight), i.consume_key(none, Key::Escape)]);
+    let s = shared(ctx);
+    let mut c = lock(&s);
+    for (held, now) in c.keys.iter_mut().zip(keys) {
+        *held |= now;
+    }
+}
+
+/// The image a click on a thumbnail or an inline image opened since the last call.
+pub fn take_opened(ctx: &egui::Context) -> Option<String> {
+    lock(&shared(ctx)).opened.take()
+}
+
+/// Browses `keys` (all the images of a chat, in order) from the open image, when it's one of
+/// them. Call while that chat's [`set_source`] holds: images not drawn yet come from there too.
+pub fn widen(ctx: &egui::Context, keys: Vec<String>) {
+    let s = shared(ctx);
+    let mut c = lock(&s);
+    if !c.open.as_ref().is_some_and(|k| keys.contains(k)) {
+        return;
+    }
+    if let Some(src) = c.source.clone() {
+        for k in &keys {
+            if !c.bytes.contains_key(k) && !c.remote.contains_key(k) && !Path::new(k).exists() {
+                c.remote.insert(k.clone(), src.clone());
+            }
+        }
+    }
+    c.gallery = keys;
+}
+
+/// Where ← (`dir` -1) or → (1) goes from `at` of `n`: nowhere past either end.
+fn step(at: usize, n: usize, dir: isize) -> Option<usize> {
+    at.checked_add_signed(dir).filter(|i| *i < n)
 }
 
 /// Draws the lightbox when one is open, and drops thumbnails not drawn lately.
 /// Call once per frame, after the rest of the UI. Esc, the X or a click outside closes it.
 pub fn lightbox(ctx: &egui::Context) {
+    // Not taken earlier this frame (take_keys): taken now.
+    take_keys(ctx);
     let s = shared(ctx);
-    let (key, full, small, gallery) = {
+    let (key, full, small, gallery, [prev, next, esc]) = {
         let mut c = lock(&s);
         if c.thumbs.len() > KEEP {
             let now = ctx.input(|i| i.time);
@@ -428,21 +488,17 @@ pub fn lightbox(ctx: &egui::Context) {
         let Some(key) = c.open.clone() else { return };
         let full = c.full.as_ref().filter(|(k, _)| *k == key).map(|(_, s)| s.clone());
         let small = c.thumbs.get(&key).map(|(s, _)| s.clone());
-        (key, full, small, c.gallery.clone())
+        (key, full, small, c.gallery.clone(), std::mem::take(&mut c.keys))
     };
-    let mut shut = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    let mut shut = esc;
     let at = gallery.iter().position(|k| *k == key).unwrap_or(0);
     let n = gallery.len();
     let mut go: Option<usize> = None;
-    if n > 1 {
-        ctx.input_mut(|i| {
-            if i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft) {
-                go = Some((at + n - 1) % n);
-            }
-            if i.consume_key(egui::Modifiers::NONE, Key::ArrowRight) {
-                go = Some((at + 1) % n);
-            }
-        });
+    if prev {
+        go = step(at, n, -1);
+    }
+    if next {
+        go = step(at, n, 1).or(go);
     }
     let screen = ctx.content_rect();
     egui::Area::new(Id::NULL.with("lightbox")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
@@ -459,7 +515,7 @@ pub fn lightbox(ctx: &egui::Context) {
             (Some(Slot::Failed(e)), _) | (_, Some(Slot::Failed(e))) => Some(e.clone()),
             _ => None,
         };
-        let mut caption = if n > 1 { format!("{}  ·  {} of {n}", name(&key), at + 1) } else { name(&key) };
+        let mut caption = name(&key);
         if let Some((tex, dims, loading)) = shown {
             let natural = vec2(dims[0] as f32, dims[1] as f32) / ctx.pixels_per_point();
             let scale = (room.width() / natural.x).min(room.height() / natural.y).min(1.0);
@@ -498,7 +554,16 @@ pub fn lightbox(ctx: &egui::Context) {
             }
         }
         if n > 1 {
-            for (dx, glyph, to, tip) in [(32.0, ic::LEFT, (at + n - 1) % n, "Previous (←)"), (-32.0, ic::RIGHT, (at + 1) % n, "Next (→)")] {
+            // Top left, across from the buttons: where this image is in the gallery, "3 / 7".
+            let t = w::tokens(ui);
+            let g = ui.painter().layout_no_wrap(format!("{} / {n}", at + 1), FontId::proportional(13.0), t.fg());
+            let pill = Rect::from_center_size(pos2(screen.left() + 12.0 + (g.size().x + 20.0) / 2.0, bar.center().y), vec2(g.size().x + 20.0, 28.0));
+            ui.painter().rect_filled(pill, CornerRadius::same(RADIUS_MD), t.gray(100));
+            ui.painter().rect_stroke(pill, CornerRadius::same(RADIUS_MD), Stroke::new(1.0, t.border()), StrokeKind::Inside);
+            ui.painter().galley(pill.center() - g.size() / 2.0, g, t.fg());
+            // A side's button only while there's an image that way.
+            for (dx, glyph, dir, tip) in [(32.0, ic::LEFT, -1, "Previous (←)"), (-32.0, ic::RIGHT, 1, "Next (→)")] {
+                let Some(to) = step(at, n, dir) else { continue };
                 let x = if dx > 0.0 { screen.left() + dx } else { screen.right() + dx };
                 let r = Rect::from_center_size(pos2(x, room.center().y), Vec2::splat(32.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
@@ -586,10 +651,7 @@ pub fn inline(ui: &mut Ui, key: &str, max: Vec2, group: &[String]) -> Response {
             ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.border() }), StrokeKind::Inside);
             let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{}\n{} × {}", name(key), dims[0], dims[1]));
             if resp.clicked() {
-                match group.iter().position(|k| k == key) {
-                    Some(i) => open_gallery(ui.ctx(), group.to_vec(), i),
-                    None => open(ui.ctx(), key),
-                }
+                open_clicked(ui.ctx(), key, group);
             }
             resp
         }
@@ -700,6 +762,24 @@ mod tests {
         let mut out = Vec::new();
         image::RgbaImage::new(w, h).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
         out
+    }
+
+    #[test]
+    fn the_viewer_stops_at_either_end_and_widens_to_the_chat() {
+        assert_eq!((step(0, 3, -1), step(0, 3, 1), step(2, 3, 1), step(2, 3, -1)), (None, Some(1), None, Some(1)));
+        assert_eq!(step(0, 1, 1), None);
+        let ctx = egui::Context::default();
+        let keys = |v: &[&str]| v.iter().map(|s| format!("/x/{s}.png")).collect::<Vec<_>>();
+        // A message's own two images, then the chat's five: the viewer stays on the one opened.
+        open_gallery(&ctx, keys(&["c", "d"]), 1);
+        widen(&ctx, keys(&["a", "b", "c", "d", "e"]));
+        let s = shared(&ctx);
+        let c = lock(&s);
+        assert_eq!((c.open.as_deref(), c.gallery.len()), (Some("/x/d.png"), 5));
+        drop(c);
+        // A list without the open image (another chat's) changes nothing.
+        widen(&ctx, keys(&["z"]));
+        assert_eq!(lock(&shared(&ctx)).gallery.len(), 5);
     }
 
     #[test]

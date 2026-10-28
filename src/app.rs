@@ -1646,6 +1646,8 @@ impl App {
         let ctx = ui.ctx().clone();
         self.theme.refresh(&ctx);
         ctx.data_mut(|d| d.insert_temp(Id::NULL, TokensCell(self.theme.t)));
+        // The open image viewer's ← → Esc, before the composer or a terminal sees them.
+        crate::images::take_keys(&ctx);
         self.shortcuts(&ctx);
 
         let t = self.theme.t;
