@@ -467,7 +467,7 @@ impl App {
                 if engine.as_mut().is_some_and(|b| !b.alive()) {
                     *engine = None;
                 }
-                if engine.is_none() && browser::helper_path().is_some() {
+                if engine.is_none() && browser::helper_path().is_some() && browser::crashing().is_none() {
                     *engine = Browser::spawn(url, Self::wake(&ctx)).ok();
                 }
                 match engine {
@@ -484,6 +484,10 @@ impl App {
                         }
                     }
                     None => {
+                        // An installed copy without its engine fetches it now (once; then "Try again").
+                        if browser::helper_path().is_none() {
+                            crate::update::browser_auto(&ctx, true);
+                        }
                         let (build, close) = browser::missing_ui(ui, &t);
                         if close {
                             self.close_surface(d, i);

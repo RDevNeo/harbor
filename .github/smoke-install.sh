@@ -57,6 +57,18 @@ ldd "$H/.local/lib/harbor/harbor"
 as ".local/bin/harbor --version" || fail "harbor --version failed"
 end
 
+# The browser engine comes by default where glibc is 2.39+; its desktop libraries (fontconfig, EGL…)
+# are often missing from these bare images, so that's only a warning.
+step "Browser engine"
+if [ -x "$H/.local/lib/harbor/harbor-browser" ]; then
+  [ -f "$H/.local/lib/harbor/browser.installed" ] || fail "harbor-browser without browser.installed"
+  missing="$(ldd "$H/.local/lib/harbor/harbor-browser" | grep "not found" || true)"
+  [ -z "$missing" ] || echo "::warning::harbor-browser needs libraries this image doesn't have: $missing"
+else
+  echo "no engine installed here ($(getconf GNU_LIBC_VERSION 2>/dev/null || echo 'no glibc'))"
+fi
+end
+
 step "Start under Xvfb"
 Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
 sleep 2

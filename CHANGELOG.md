@@ -17,6 +17,19 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   the clock and when they wake ("Today, 23:40"); the desktop's search left them out.
 
 ### Changed
+- The built-in browser (Servo) is on by default: install.sh installs its engine wherever it runs
+  (x86_64 and aarch64 with glibc 2.39+; elsewhere it says why in one line and skips it), and
+  copies installed without it fetch it in the background after starting, or as soon as the
+  browser pane opens, retrying by themselves after a failure. Updates install or refresh it too.
+  To leave it out: `install.sh --no-browser` (`--with-browser` is still accepted and turns it
+  back on). The pane's button stays only for failures and a turned-off engine, and on systems
+  that can't run it the pane says why.
+- The browser engine is built for aarch64 too (`harbor-browser-aarch64-linux.tar.gz`).
+
+### Fixed
+- A browser engine that quits right after starting (a missing library…) is no longer restarted
+  on every frame: the pane shows its last error with "Try again".
+
 - Releases are built and tested on boat.dev sandboxes: Harbor for x86_64 and aarch64 (cross-compiled
   in Ubuntu 22.04), the phone app, the licence reports, the browser engine and the install tests
   on every distro. GitHub Actions only signs, attests and publishes them.

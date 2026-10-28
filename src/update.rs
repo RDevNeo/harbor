@@ -7,6 +7,9 @@
 //! live on. Automatically, that restart waits for a moment nobody sees it (`reload::quiet`).
 //!
 //! The previous files are kept in `.previous/` (hard links), for "Restore previous version".
+//! The browser engine (`harbor-browser`) comes with every update, and an installed copy
+//! without it fetches it in the background (`browser_auto`).
+//!
 //! Builds from a source tree have no marker and are never touched.
 
 use std::path::{Path, PathBuf};
@@ -201,11 +204,15 @@ fn install(version: &str) -> Result<(), String> {
         if !core.join("harbor").is_file() {
             return Err("the archive has no harbor".into());
         }
-        // The browser engine is optional; refresh it only when installed and changed.
+        // The browser engine comes along (also when it wasn't installed yet), unless turned off
+        // or this system can't run it. A failed download doesn't hold Harbor's update back: the
+        // engine is fetched again in the background afterwards (`browser_auto`).
         let mut browser = None;
-        if dir.join("harbor-browser").is_file() && read(&dir.join("browser.installed")) != read(&core.join("browser.id")) {
-            let b = fetch(version, &format!("harbor-browser-{ARCH}-linux"), &stage)?;
-            browser = Some(b);
+        if engine_stale(&dir, &read(&core.join("browser.id"))) {
+            match fetch(version, &format!("harbor-browser-{ARCH}-linux"), &stage) {
+                Ok(b) => browser = Some(b),
+                Err(e) => eprintln!("harbor: browser engine not updated: {e}"),
+            }
         }
         let prev = dir.join(".previous");
         let _ = std::fs::remove_dir_all(&prev);
@@ -424,6 +431,10 @@ pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
     let ctx = ctx.clone();
     std::thread::spawn(move || {
         loop {
+            // The browser engine, once the first update check had its turn.
+            if started.elapsed() >= FIRST_CHECK + Duration::from_secs(15) {
+                browser_auto(&ctx, false);
+            }
             let last = *LAST_CHECK.lock().unwrap();
             let wait = next_check(started, last, Instant::now());
             if !wait.is_zero() {
@@ -550,29 +561,150 @@ pub fn restore_previous(ctx: &eframe::egui::Context) {
     });
 }
 
-// ------------------------------------------------------------------ browser engine on demand
+// ------------------------------------------------------------------ browser engine
 
-/// Installs the browser engine of this exact version next to harbor.
+/// The engine (Servo, `harbor-browser`) is built on Ubuntu 24.04, so it needs glibc 2.39+
+/// (Harbor itself runs on 2.35+).
+const BROWSER_GLIBC: (u32, u32) = (2, 39);
+/// In the install folder: no engine downloads (`install.sh --no-browser`). "Install engine" in
+/// the browser panel removes it.
+pub const NO_BROWSER: &str = ".no-browser";
+/// Background retries of a failed engine download: 5 min, 10, 20… up to 6 h.
+const BROWSER_RETRY: Duration = Duration::from_secs(300);
+const BROWSER_RETRY_MAX: Duration = Duration::from_secs(6 * 3600);
+
+static BROWSER_RUNNING: AtomicBool = AtomicBool::new(false);
+/// (next background attempt, failures in a row).
+static BROWSER_NEXT: Mutex<(Option<Instant>, u32)> = Mutex::new((None, 0));
+
+#[cfg(target_env = "gnu")]
+#[allow(unsafe_code)] // gnu_get_libc_version: std can't
+fn glibc() -> Option<(u32, u32)> {
+    // SAFETY: returns a static NUL-terminated string.
+    let v = unsafe { std::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) };
+    parse_glibc(&v.to_string_lossy())
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn glibc() -> Option<(u32, u32)> {
+    None
+}
+
+fn parse_glibc(v: &str) -> Option<(u32, u32)> {
+    let mut it = v.trim().split('.').map(|x| x.parse::<u32>().ok());
+    Some((it.next()??, it.next()??))
+}
+
+/// Why this system can't run the browser engine; None: it can.
+pub fn browser_unsupported() -> Option<String> {
+    if !matches!(ARCH, "x86_64" | "aarch64") {
+        return Some(format!("There's no browser engine for {ARCH} yet."));
+    }
+    match glibc() {
+        Some(v) if v >= BROWSER_GLIBC => None,
+        Some((a, b)) => Some(format!("The browser engine (Servo) needs glibc 2.39 or newer; this system has {a}.{b}.")),
+        None => Some("The browser engine (Servo) needs a glibc-based system (glibc 2.39 or newer).".into()),
+    }
+}
+
+/// `install.sh --no-browser` (or an installed copy without the marker: false).
+pub fn browser_off() -> bool {
+    install_dir().is_some_and(|d| d.join(NO_BROWSER).exists())
+}
+
+/// Whether `dir` should get the engine with id `id`: missing, or another id than installed
+/// (an engine with no recorded id, after "Restore previous version", stays). Never when turned
+/// off or unsupported.
+fn engine_stale(dir: &Path, id: &str) -> bool {
+    if dir.join(NO_BROWSER).exists() || browser_unsupported().is_some() {
+        return false;
+    }
+    if !dir.join("harbor-browser").is_file() {
+        return true;
+    }
+    let installed = read(&dir.join("browser.installed"));
+    !installed.is_empty() && !id.is_empty() && installed != id
+}
+
+/// Installs the browser engine of this exact version next to harbor (in the background; the
+/// panel shows `browser_installing` / `browser_result`). By hand ("Install engine"): also turns
+/// a `--no-browser` back on.
 pub fn install_browser(ctx: &eframe::egui::Context) {
+    if let Some(d) = install_dir() {
+        let _ = std::fs::remove_file(d.join(NO_BROWSER));
+    }
+    start_browser(ctx);
+}
+
+fn start_browser(ctx: &eframe::egui::Context) -> bool {
+    if BUSY.load(Ordering::SeqCst) {
+        return false;
+    }
     *BROWSER.lock().unwrap() = None;
-    spawn(ctx, || {
+    BROWSER_RUNNING.store(true, Ordering::SeqCst);
+    let started = spawn(ctx, || {
         let r = (|| {
             let dir = install_dir().ok_or("not an installed copy")?;
             let stage = dir.join(".staging-browser");
             let _ = std::fs::remove_dir_all(&stage);
             std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
             let r = fetch(VERSION, &format!("harbor-browser-{ARCH}-linux"), &stage).and_then(|b| {
-                replace(&b.join("browser.id"), &dir.join("browser.installed"), None)?;
-                replace(&b.join("harbor-browser"), &dir.join("harbor-browser"), None)
+                replace(&b.join("harbor-browser"), &dir.join("harbor-browser"), None)?;
+                replace(&b.join("browser.id"), &dir.join("browser.installed"), None)
             });
             let _ = std::fs::remove_dir_all(&stage);
             r
         })();
+        {
+            let mut next = BROWSER_NEXT.lock().unwrap();
+            match &r {
+                Ok(()) => *next = (None, 0),
+                Err(e) => {
+                    eprintln!("harbor: browser engine download failed: {e}");
+                    next.1 += 1;
+                    next.0 = Some(Instant::now() + retry_after(next.1));
+                }
+            }
+        }
         *BROWSER.lock().unwrap() = Some(r);
+        BROWSER_RUNNING.store(false, Ordering::SeqCst);
     });
+    if !started {
+        BROWSER_RUNNING.store(false, Ordering::SeqCst);
+    }
+    started
 }
 
-/// None: not started or running (see `busy`); Some: finished.
+/// After the `n`th failure in a row.
+fn retry_after(n: u32) -> Duration {
+    (BROWSER_RETRY * 2u32.saturating_pow(n.saturating_sub(1).min(10))).min(BROWSER_RETRY_MAX)
+}
+
+/// An installed copy without its engine (installed before it came by default, or a failed
+/// download) fetches it by itself: from the update scheduler shortly after start, and when the
+/// browser panel opens (`asked`). Failures retry later, by themselves or with "Try again".
+pub fn browser_auto(ctx: &eframe::egui::Context, asked: bool) {
+    let Some(dir) = install_dir() else { return };
+    if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installing(_) | State::Installed(_)) {
+        return;
+    }
+    if !engine_stale(&dir, &read(&dir.join("browser.id"))) {
+        return;
+    }
+    let (next, fails) = *BROWSER_NEXT.lock().unwrap();
+    // The panel asks only until the first failure; then its "Try again" or the schedule.
+    let due = if asked { fails == 0 } else { next.is_none_or(|t| Instant::now() >= t) };
+    if due {
+        start_browser(ctx);
+    }
+}
+
+/// The engine download is running.
+pub fn browser_installing() -> bool {
+    BROWSER_RUNNING.load(Ordering::SeqCst)
+}
+
+/// None: not started or running (see `browser_installing`); Some: finished.
 pub fn browser_result() -> Option<Result<(), String>> {
     BROWSER.lock().unwrap().clone()
 }
@@ -627,6 +759,34 @@ mod tests {
         assert_eq!(i["ready"], false);
         assert!(i["status"].as_str().unwrap().contains("source"));
         assert!(i["auto"].is_boolean(), "phones follow it");
+    }
+
+    #[test]
+    fn browser_engine_rules() {
+        assert_eq!(parse_glibc("2.39"), Some((2, 39)));
+        assert_eq!(parse_glibc("2.35\n"), Some((2, 35)));
+        assert_eq!(parse_glibc("junk"), None);
+        assert!((2, 40) >= BROWSER_GLIBC && (3, 0) >= BROWSER_GLIBC && (2, 38) < BROWSER_GLIBC);
+        assert_eq!(retry_after(1), BROWSER_RETRY);
+        assert_eq!(retry_after(2), BROWSER_RETRY * 2);
+        assert_eq!(retry_after(40), BROWSER_RETRY_MAX);
+        if browser_unsupported().is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("harbor-update-browser-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(engine_stale(&dir, "abc"), "missing: fetched");
+        std::fs::write(dir.join("harbor-browser"), "x").unwrap();
+        assert!(!engine_stale(&dir, "abc"), "no recorded id (restored): kept");
+        std::fs::write(dir.join("browser.installed"), "abc\n").unwrap();
+        assert!(!engine_stale(&dir, "abc"));
+        assert!(engine_stale(&dir, "def"), "another release's engine: refreshed");
+        std::fs::write(dir.join(NO_BROWSER), "").unwrap();
+        assert!(!engine_stale(&dir, "def"), "turned off");
+        std::fs::remove_file(dir.join("harbor-browser")).unwrap();
+        assert!(!engine_stale(&dir, "def"), "turned off");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

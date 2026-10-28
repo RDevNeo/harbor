@@ -1,7 +1,9 @@
-# The optional Servo engine, harbor-browser. Its id is the git tree hash of browser/, so it is
-# rebuilt only when browser/ changes. Looked up in this order: the actions cache, then the
-# latest release's harbor-browser-x86_64-linux.tar.gz, if the release key signed it. Servo is
-# compiled only when neither has this id AND the caller asks for it:
+# The built-in browser's Servo engine, harbor-browser, for x86_64 (job engine, compiled on a
+# boat.dev sandbox) and aarch64 (job engine-aarch64, compiled natively on GitHub's arm runner).
+# Its id is the git tree hash of browser/, so it is rebuilt only when browser/ changes. Looked up
+# in this order: the actions cache, then the latest release's harbor-browser-<arch>-linux.tar.gz,
+# if the release key signed it. Servo is compiled only when neither has this id AND the caller
+# asks for it:
 #   - release.yml calls this with build=true on a v* tag (a release must ship the engine) and
 #     build=false on main pushes, which then just package no browser.
 #   - Run it by hand (Actions > browser > Run workflow, on main) after changing browser/, so
@@ -26,16 +28,20 @@ on:
         default: false
     outputs:
       found:
-        description: '"true" when the harbor-browser artifact was uploaded'
+        description: '"true" when the harbor-browser artifact (x86_64) was uploaded'
         value: ${{ jobs.engine.outputs.found }}
+      found-aarch64:
+        description: '"true" when the harbor-browser-aarch64 artifact was uploaded'
+        value: ${{ jobs.engine-aarch64.outputs.found }}
 
 permissions:
   contents: read
 
 jobs:
   engine:
-    # Servo's prebuilt SpiderMonkey wants a newer base; the engine is optional, so it may need
-    # glibc 2.39+ (Ubuntu 24.04, Debian 13, Arch, …) while Harbor itself runs on older systems.
+    # Servo's prebuilt SpiderMonkey wants a newer base, so the engine needs glibc 2.39+ (Ubuntu
+    # 24.04, Debian 13, Arch, …) while Harbor itself runs on older systems (install.sh and Harbor
+    # skip the engine there).
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     outputs:
@@ -124,4 +130,97 @@ jobs:
         if: steps.done.outputs.found == 'true'
         with:
           name: harbor-browser
+          path: out/
+
+  # The same for aarch64, natively on GitHub's arm runner (free for public repos; cross-compiling
+  # SpiderMonkey isn't worth it). A failure here never holds a release back: it just ships
+  # without an aarch64 engine, and aarch64 installs keep asking for one later.
+  engine-aarch64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    continue-on-error: true
+    outputs:
+      found: ${{ steps.done.outputs.found }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Engine id
+        id: id
+        run: echo "id=$(git rev-parse HEAD:browser)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        id: bin
+        if: ${{ !inputs.force }}
+        with:
+          path: out/harbor-browser
+          key: harbor-browser-aarch64-bin-${{ steps.id.outputs.id }}
+      - name: Reuse the latest release's engine
+        id: prev
+        if: steps.bin.outputs.cache-hit != 'true' && !inputs.force
+        env:
+          MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+        run: |
+          mkdir -p out /tmp/prev
+          curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
+          echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
+          tar -xzf /tmp/minisign.tgz -C /tmp 2>/dev/null
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'harbor-browser-aarch64-linux.tar.gz*' --dir /tmp/prev 2>/dev/null \
+             && tc="$(/tmp/minisign-linux/aarch64/minisign -VQm /tmp/prev/harbor-browser-aarch64-linux.tar.gz -p packaging/minisign.pub)" \
+             && case "$tc" in "harbor v"*" harbor-browser-aarch64-linux.tar.gz") true ;; *) false ;; esac \
+             && tar -xzf /tmp/prev/harbor-browser-aarch64-linux.tar.gz -C /tmp/prev \
+             && [ "$(cat /tmp/prev/harbor-browser-aarch64-linux/browser.id)" = "${{ steps.id.outputs.id }}" ]; then
+            cp /tmp/prev/harbor-browser-aarch64-linux/harbor-browser out/
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compile?
+        id: need
+        if: steps.bin.outputs.cache-hit != 'true' && steps.prev.outputs.hit != 'true'
+        run: |
+          if [ "${{ inputs.build }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No prebuilt aarch64 engine for browser/ ${{ steps.id.outputs.id }}; skipping it (run the browser workflow on main to build it)."
+          fi
+      # The packages of .github/boat/Dockerfile.browser.
+      - name: Build environment
+        if: steps.need.outputs.build == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            build-essential clang llvm-dev libclang-dev cmake python3 pkg-config m4 gperf curl ca-certificates git \
+            libfontconfig-dev libfreetype-dev libx11-dev libxkbcommon-dev libwayland-dev libegl-dev libgl-dev \
+            libgles-dev libudev-dev libdbus-1-dev libunwind-dev >/dev/null
+          command -v rustup >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          df -h / "$RUNNER_TEMP"
+      - name: Build harbor-browser
+        if: steps.need.outputs.build == 'true'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/target
+          CARGO_TERM_COLOR: always
+        run: |
+          set -eu
+          rustup toolchain install stable --profile minimal >/dev/null && rustup default stable >/dev/null
+          rustc --version
+          cd browser
+          s=$(date +%s); cargo build --release --locked; echo "::notice::harbor-browser (aarch64) built in $(( $(date +%s) - s ))s"
+          mkdir -p ../out && install -m755 "$CARGO_TARGET_DIR/release/harbor-browser" ../out/harbor-browser
+          df -h /
+      - uses: actions/cache/save@v6
+        if: steps.need.outputs.build == 'true'
+        continue-on-error: true
+        with:
+          path: out/harbor-browser
+          key: harbor-browser-aarch64-bin-${{ steps.id.outputs.id }}
+      - name: Engine found
+        id: done
+        if: steps.bin.outputs.cache-hit == 'true' || steps.prev.outputs.hit == 'true' || steps.need.outputs.build == 'true'
+        run: |
+          ldd out/harbor-browser && echo "${{ steps.id.outputs.id }}" > out/browser.id
+          echo "found=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        if: steps.done.outputs.found == 'true'
+        with:
+          name: harbor-browser-aarch64
           path: out/

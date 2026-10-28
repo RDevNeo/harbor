@@ -21,7 +21,7 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
 - **Teams**: a lead agent can spawn sub-agents, run long processes and wake on webhooks (public over
   HTTPS with a Let's Encrypt certificate Harbor gets itself, `/hooks/<token>` only).
 - **Built-in terminal** (Ctrl+`): PTY + vt100, per-project tabs; sign-in flows and `claude --resume` run there.
-- **Side panes**: a browser (optional Servo helper, `browser/`), terminals, and Devices (your paired
+- **Side panes**: a browser (Servo, in its own `harbor-browser` process from `browser/`; no Chromium, Electron or system WebView), terminals, and Devices (your paired
   PCs and phones: send them text, images and files).
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
   integrations, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
@@ -37,11 +37,13 @@ installed per user into `~/.local` without sudo:
 curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh
 ```
 
-- `… | sh -s -- --with-browser` also installs the built-in browser's engine (Servo, about 40 MB, glibc
-  2.39+); Harbor can download it later too.
+- The built-in browser's engine (Servo, about 45 MB) comes with it on x86_64 and aarch64 with glibc
+  2.39+ (Ubuntu 24.04+, Debian 13+, Fedora 40+, Arch); on older systems Harbor installs without it.
+  `… | sh -s -- --no-browser` leaves it out (`--with-browser` adds it back). Copies installed
+  before it came by default fetch it by themselves.
 - `… | sh -s -- --uninstall` removes Harbor and keeps your chats (`--uninstall --purge` deletes them).
-- Offline: download `harbor-x86_64-linux.tar.gz` or `harbor-aarch64-linux.tar.gz` (and optionally
-  `harbor-browser-x86_64-linux.tar.gz` beside it; the browser engine is x86_64 only for now), extract it and run `./install.sh` in that folder; it installs those files after checking them
+- Offline: download `harbor-x86_64-linux.tar.gz` or `harbor-aarch64-linux.tar.gz` (and
+  `harbor-browser-<arch>-linux.tar.gz` beside it for the browser engine, else it's downloaded), extract it and run `./install.sh` in that folder; it installs those files after checking them
   against the signed `SHA256SUMS` inside.
 - install.sh checks every download against the release's minisign signature, fetching a pinned static
   minisign when none is installed; `HARBOR_INSECURE=1` installs without that check.
@@ -89,8 +91,8 @@ Rust stable:
 cargo build --release   # target/release/harbor
 ```
 
-Optional helper, built separately: `browser/`, the browser pane's engine (Servo),
-`cd browser && cargo build --release`.
+The browser pane's engine (Servo, `browser/`) is a separate program, built separately:
+`cd browser && cargo build --release` (or the pane's "Build engine"). Releases ship it prebuilt.
 
 **Devices** (a side pane) lists what is paired with this Harbor: your other PCs (Settings › Devices)
 and phones running Harbor for Android (Settings › Phones), online or not. Send puts text or an image

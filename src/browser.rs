@@ -12,6 +12,20 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Engines that stopped within `QUICK` of starting, lately, with their last stderr line: three
+/// in a minute and the panel stops restarting it (it shows why, with "Try again").
+static EXITS: Mutex<Vec<(Instant, String)>> = Mutex::new(Vec::new());
+const QUICK: Duration = Duration::from_secs(5);
+
+/// The engine keeps stopping right after it starts: its last words, if any.
+pub fn crashing() -> Option<String> {
+    let mut v = EXITS.lock().unwrap();
+    v.retain(|(t, _)| t.elapsed() < Duration::from_secs(60));
+    (v.len() >= 3).then(|| v.last().map(|x| x.1.clone()).unwrap_or_default())
+}
 
 /// Where the helper binary is: $HARBOR_BROWSER, next to harbor, or the source tree's build.
 pub fn helper_path() -> Option<PathBuf> {
@@ -39,6 +53,8 @@ pub fn source_dir() -> Option<PathBuf> {
 
 pub struct Browser {
     child: Child,
+    started: Instant,
+    last_err: Arc<Mutex<String>>,
     stdin: ChildStdin,
     rx: Receiver<Value>,
     frames: String,
@@ -78,9 +94,21 @@ impl Browser {
             .args([&frames, url, "1024", "768", "1"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| e.to_string())?;
+        // Only its last line is kept, for when it stops right away (a missing library…).
+        let last_err = Arc::new(Mutex::new(String::new()));
+        if let Some(err) = child.stderr.take() {
+            let last = last_err.clone();
+            std::thread::spawn(move || {
+                for line in BufReader::new(err).lines().map_while(Result::ok) {
+                    if !line.trim().is_empty() {
+                        *last.lock().unwrap() = line;
+                    }
+                }
+            });
+        }
         let mut stdin = child.stdin.take().unwrap();
         // One frame at a time: the engine paints the next only after our "got", so a
         // hidden tab (not polled) costs no painting, copies or repaints here.
@@ -99,6 +127,8 @@ impl Browser {
         });
         Ok(Self {
             child,
+            started: Instant::now(),
+            last_err,
             stdin,
             rx,
             frames,
@@ -119,8 +149,15 @@ impl Browser {
         let _ = writeln!(self.stdin, "{v}");
     }
 
+    /// False once the engine stopped (counted when that was right after it started).
     pub fn alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        let alive = matches!(self.child.try_wait(), Ok(None));
+        if !alive && self.started.elapsed() < QUICK {
+            // (stderr's reader may still be finishing its last line)
+            std::thread::sleep(Duration::from_millis(50));
+            EXITS.lock().unwrap().push((Instant::now(), self.last_err.lock().unwrap().clone()));
+        }
+        alive
     }
 
     pub fn load(&mut self, url: &str) {
@@ -369,34 +406,57 @@ impl Browser {
     }
 }
 
-/// Shown when the helper isn't built yet.
+/// Shown while there's no engine to run: being downloaded, failed, turned off, unsupported, or
+/// (source checkouts) not built yet. (build, close): "Build engine" / "Install engine" / "Try
+/// again", and Close.
 pub fn missing_ui(ui: &mut Ui, t: &Tokens) -> (bool, bool) {
+    use crate::update;
     let mut build = false;
     let mut close = false;
+    let source = source_dir().is_some();
+    let crashed = crashing();
+    let installing = update::browser_installing();
+    let failed = update::browser_result().and_then(|r| r.err());
+    // (title, note, button: label and enabled)
+    let (title, note, button): (&str, String, Option<(String, bool)>) = if let Some(why) = &crashed {
+        let why = if why.is_empty() { String::new() } else { format!(": {why}") };
+        ("The browser engine stopped", format!("It quit right after starting{why}"), Some((format!("{}  Try again", ic::ROTATE_CW), true)))
+    } else if helper_path().is_some() {
+        ("Starting the browser…", String::new(), None)
+    } else if source {
+        ("Browser engine not built", "It's a separate program (Servo), so Harbor stays small. The first build takes a while.".into(), Some((format!("{}  Build engine", ic::HAMMER), true)))
+    } else if !update::managed() {
+        ("Browser engine not found", "This copy of Harbor has no harbor-browser beside it: install Harbor with install.sh, or set HARBOR_BROWSER.".into(), None)
+    } else if let Some(why) = update::browser_unsupported() {
+        ("The browser can't run on this system", why, None)
+    } else if installing {
+        ("Installing the browser engine…", "Servo, about 45 MB. The page opens here when it's done.".into(), Some(("Installing…".into(), false)))
+    } else if let Some(e) = &failed {
+        ("The browser engine didn't install", format!("{e}. Harbor tries again by itself later."), Some((format!("{}  Try again", ic::ROTATE_CW), true)))
+    } else if update::browser_off() {
+        ("The browser engine is turned off", "Harbor was installed with --no-browser.".into(), Some((format!("{}  Install engine", ic::DOWNLOAD), true)))
+    } else {
+        ("Getting the browser engine…", "Harbor downloads it by itself (Servo, about 45 MB).".into(), Some((format!("{}  Install now", ic::DOWNLOAD), true)))
+    };
     ui.add_space(40.0);
     ui.vertical_centered(|ui| {
         ui.label(egui::RichText::new(ic::GLOBE).size(28.0).color(t.subtle()));
-        // Installed copies download the engine; a source checkout builds it.
-        let download = source_dir().is_none() && crate::update::managed();
-        let failed = crate::update::browser_result().and_then(|r| r.err());
-        let working = download && crate::update::busy();
-        w::text(ui, if download { "Browser engine not installed" } else { "Browser engine not built" }, "heading-16");
-        let note = match (&failed, download) {
-            (Some(e), _) => format!("The download failed: {e}"),
-            (None, true) => "It's a separate download (Servo, about 40 MB), so Harbor stays small.".into(),
-            (None, false) => "It's a separate program (Servo), so Harbor stays small. The first build takes a while.".into(),
-        };
-        w::subtle(ui, note, "label-13");
+        w::text(ui, title, "heading-16");
+        if !note.is_empty() {
+            w::subtle(ui, note, "label-13");
+        }
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.add_space((ui.available_width() - 220.0).max(0.0) / 2.0);
-            let label = match (download, working) {
-                (true, true) => "Installing…".to_string(),
-                (true, false) => format!("{}  Install engine", ic::DOWNLOAD),
-                _ => format!("{}  Build engine", ic::HAMMER),
-            };
-            if w::btn(&label).sm().primary().enabled(!working).show(ui).clicked() {
-                build = true;
+            let width = if button.is_some() { 220.0 } else { 70.0 };
+            ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+            if let Some((label, enabled)) = &button {
+                if w::btn(label).sm().primary().enabled(*enabled).show(ui).clicked() {
+                    if crashed.is_some() {
+                        EXITS.lock().unwrap().clear();
+                    } else {
+                        build = true;
+                    }
+                }
             }
             if w::btn("Close").sm().outline().show(ui).clicked() {
                 close = true;
