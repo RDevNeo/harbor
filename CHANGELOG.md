@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-10-28
+
 ### Added
 - Mention a whole chat with `$` in the composer, on the desktop and the phone (#96): `$` at the
   start of a word lists your chats (this project's first, active ones above settled ones, other
@@ -1555,7 +1557,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.71.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.0...HEAD
+[0.72.0]: https://github.com/RDevNeo/harbor/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/RDevNeo/harbor/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/RDevNeo/harbor/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/RDevNeo/harbor/compare/v0.68.0...v0.69.0
