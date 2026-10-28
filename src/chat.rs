@@ -1818,6 +1818,41 @@ fn effort_row(ui: &mut Ui, label: &str, desc: &str, default: bool, selected: boo
 /// Turns bare http(s) URLs in agent text into markdown autolinks, so they can be
 /// clicked. URLs already in a link, in angle brackets or in code are left alone.
 pub fn linkify(text: &str) -> std::borrow::Cow<'_, str> {
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+    if !text.contains("http://") && !text.contains("https://") {
+        return text.into();
+    }
+    // Only prose text can gain links. Parser offsets keep every byte of code (including
+    // indented and tilde-fenced blocks), existing links and image destinations intact.
+    let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let mut code = false;
+    let mut links = 0u32;
+    let mut out = String::new();
+    let mut copied = 0;
+    for (event, range) in Parser::new_ext(text, opts).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => code = true,
+            Event::End(TagEnd::CodeBlock) => code = false,
+            Event::Start(Tag::Link { .. } | Tag::Image { .. }) => links += 1,
+            Event::End(TagEnd::Link | TagEnd::Image) => links = links.saturating_sub(1),
+            Event::Text(_) if !code && links == 0 => {
+                if let std::borrow::Cow::Owned(linked) = linkify_text(&text[range.clone()]) {
+                    out.push_str(&text[copied..range.start]);
+                    out.push_str(&linked);
+                    copied = range.end;
+                }
+            }
+            _ => {}
+        }
+    }
+    if copied == 0 {
+        return text.into();
+    }
+    out.push_str(&text[copied..]);
+    out.into()
+}
+
+fn linkify_text(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains("http://") && !text.contains("https://") {
         return text.into();
     }

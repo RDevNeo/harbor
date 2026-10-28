@@ -562,6 +562,9 @@ A list of blocks, each with a `type`:
 - `rule` `{}`
 - `table` `{rows: [[spans]]}`: rows of cells, each cell a list of spans; the first row is the header
 
+Bare http/https URLs in prose receive `link` just like explicit Markdown links, using the
+same preprocessing as the desktop. Inline code and code blocks stay literal.
+
 A span is `{text, bold?, italic?, code?, strike?, link?, commit?}`; flags are left out when false and
 `link` / `commit` when there is none. Task list markers arrive as "☑ " / "☐ " text. Raw HTML stays as text.
 

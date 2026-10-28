@@ -2128,7 +2128,8 @@ pub fn blocks(md: &str) -> Vec<Block> {
     use pulldown_cmark::{CodeBlockKind, Event as E, Options, Parser, Tag, TagEnd};
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut c = Conv { stack: vec![Container::Blocks(vec![])], ..Default::default() };
-    for ev in Parser::new_ext(md, opts) {
+    let md = crate::chat::linkify(md);
+    for ev in Parser::new_ext(&md, opts) {
         match ev {
             E::Start(tag) => match tag {
                 Tag::Paragraph | Tag::HtmlBlock => {
@@ -4368,6 +4369,39 @@ mod tests {
         assert_eq!(spans[7], Span { link: Some("https://x.y".into()), ..s("a link") });
         assert_eq!(b[2], Block::Rule);
         assert_eq!(b[3], Block::Code { lang: "rust".into(), text: "fn main() {}".into() });
+    }
+
+    #[test]
+    fn blocks_linkify_bare_web_urls() {
+        let b = blocks("See https://example.com/path, http://example.org. [named](https://example.net) and ftp://example.com.");
+        let Block::Paragraph { spans } = &b[0] else { panic!("{b:?}") };
+        let linked: Vec<_> = spans.iter().filter_map(|s| s.link.as_deref().map(|url| (s.text.as_str(), url))).collect();
+        assert_eq!(linked, vec![("https://example.com/path", "https://example.com/path"), ("http://example.org", "http://example.org"), ("named", "https://example.net")]);
+        assert!(spans.iter().any(|s| s.text.contains("ftp://example.com") && s.link.is_none()));
+        let items = vec![Item::Text { text: "Open https://example.com/path".into(), at: 0 }];
+        let cards = crate::view::project(&items, false, &[]);
+        let wire = card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new());
+        assert_eq!(wire["blocks"][0]["spans"][1]["link"], "https://example.com/path");
+        assert_eq!(wire["markdown"], "Open https://example.com/path");
+    }
+
+    #[test]
+    fn blocks_linkify_preserves_code_and_existing_links() {
+        let md = "`https://inline.example`\n\n```text\nhttps://fenced.example\n```\n\n~~~\nhttps://tilde.example\n~~~\n\n    https://indented.example\n\n[https://label.example](https://target.example) <https://auto.example>";
+        // Shared desktop/hub preprocessing must leave the original Markdown byte-for-byte.
+        assert_eq!(crate::chat::linkify(md), md);
+        let b = blocks(md);
+        assert_eq!(b[0], Block::Paragraph { spans: vec![Span { code: true, ..s("https://inline.example") }] });
+        for (i, host) in [(1, "fenced"), (2, "tilde"), (3, "indented")] {
+            let Block::Code { text, .. } = &b[i] else { panic!("{b:?}") };
+            assert_eq!(text, &format!("https://{host}.example"));
+        }
+        let Block::Paragraph { spans } = &b[4] else { panic!("{b:?}") };
+        assert_eq!(spans[0].link.as_deref(), Some("https://target.example"));
+        assert_eq!(spans[2].link.as_deref(), Some("https://auto.example"));
+        // A literal backtick inside a code fence must not turn following code into prose.
+        let md = "```\n` https://code.example\n```\n\nhttps://prose.example";
+        assert_eq!(crate::chat::linkify(md), "```\n` https://code.example\n```\n\n<https://prose.example>");
     }
 
     #[test]

@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Bare http/https URLs in agent replies are now tappable on the phone, matching the desktop.
+  Existing links and inline/fenced/indented code stay intact on both screens. Fixes #87.
+
 ## [0.67.1] - 2026-10-28
 
 ### Fixed
