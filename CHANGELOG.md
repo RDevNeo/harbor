@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Phone: message text is selectable, as on the desktop. Long-press a word, drag the handles, and
+  the selection's menu offers Mention (just that part goes to your next message, the same excerpt
+  the desktop's "Mention selection" makes) and More… for the message's actions (Quote, Fork…).
+  Links and chat links still open with a tap.
+
 ## [0.73.0] - 2026-10-28
 
 ### Changed

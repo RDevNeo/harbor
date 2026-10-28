@@ -2859,8 +2859,8 @@ impl App {
     pub fn api_route(&mut self, call: &Call, ctx: &egui::Context) -> Reply {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
         // A copy is written on its home PC only (mesh.rs forwards it there while it answers).
-        // (A move says it moves there instead: movechat.rs.)
-        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && p.get(3) != Some(&"move") {
+        // (A move says it moves there instead: movechat.rs. A mention only reads the copy.)
+        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && !matches!(p.get(3), Some(&"move" | &"mention")) {
             if let Some(c) = self.chat_by_ref(p[2]).filter(|c| c.foreign()) {
                 return err(409, format!("{} is off: this chat is read-only until it's back", self.home_name(c)));
             }
@@ -2873,9 +2873,17 @@ impl App {
             },
             // A long-press's Mention: what the composer's draft gets for item `seq` (mentions.rs).
             ("GET", ["v1", "chats", c, "mention"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
-                Some(c) => match call.query("seq").and_then(|s| s.parse().ok()).and_then(|seq| self.api_mention(c, seq)) {
+                Some(c) => match call.query("seq").and_then(|s| s.parse().ok()).and_then(|seq| self.api_mention(c, seq, None)) {
                     Some(m) => ok(json!({ "mention": m })),
                     None => err(404, "that message can't be mentioned"),
+                },
+                None => err(404, "no such chat"),
+            },
+            // The same with a body (0.74): `{seq, text?}`, `text` a selected part of the message.
+            ("POST", ["v1", "chats", c, "mention"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
+                Some(c) => match call.body["seq"].as_u64().and_then(|seq| self.api_mention(c, seq as usize, call.body["text"].as_str())) {
+                    Some(m) => ok(json!({ "mention": m })),
+                    None => err(404, "that message or text can't be mentioned"),
                 },
                 None => err(404, "no such chat"),
             },
@@ -3864,14 +3872,21 @@ impl App {
         ok(json!({ "id": id, "gid": gid }))
     }
 
-    fn api_mention(&mut self, chat: i64, seq: usize) -> Option<crate::mentions::Mention> {
+    /// `text`: a part of the message the phone selected (an excerpt mention), else all of it.
+    fn api_mention(&mut self, chat: i64, seq: usize, text: Option<&str>) -> Option<crate::mentions::Mention> {
         if !self.transcripts.contains_key(&chat) {
             let items = self.store.items(chat);
             self.transcripts.insert(chat, crate::app::Transcript { items, ..Default::default() });
         }
         let items = &self.transcripts[&chat].items;
         let shown = crate::view::project(items, false, &[]);
-        if crate::view::actions(&shown.get(seq)?.card).contains(&crate::view::Action::Mention) { self.mention_of(chat, seq) } else { None }
+        if !crate::view::actions(&shown.get(seq)?.card).contains(&crate::view::Action::Mention) {
+            return None;
+        }
+        match text {
+            Some(t) => self.excerpt_of(chat, seq, t),
+            None => self.mention_of(chat, seq),
+        }
     }
 
     fn api_fork(&mut self, chat: i64, body: &Value) -> Reply {

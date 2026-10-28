@@ -502,8 +502,12 @@ A long-press opens them in a bottom sheet with `time` on top: `user` sends `["co
 lines on top of the composer's draft (then a blank line, then what was there), `fork` is
 `POST …/fork` with the card's `seq`, `mention` adds `GET /v1/chats/{id}/mention?seq=N`'s
 `mention` to the draft's `mentions` (once per message) and sends the draft. Leave out actions
-you don't know; without `actions` (an older hub) offer Copy, and Fork when `forkable`. The phone
-can't select a card's text, so it may add Copy to cards with text.
+you don't know; without `actions` (an older hub) offer Copy, and Fork when `forkable`.
+
+Message text is selectable (0.74), as on the desktop: a long-press on the text selects, and the
+selection's menu adds Mention (when `actions` has `mention`: `POST /v1/chats/{id}/mention`
+`{seq, text}` with the selected text, below) and More… (the long-press sheet). A long-press
+beside the text (a bubble's edge, a tool row, a notice) opens the sheet as before.
 
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
@@ -872,6 +876,11 @@ The mention the desktop's composer gets for card `seq` (its "@" or Mention in yo
 message): `{"mention": {item, from, at, text, len}}`, ready to append to the shared draft's
 `mentions` as is. `404` when that card can't be mentioned (no `mention` among its `actions`).
 Answered by the PC asked, also for another PC's chat (it holds a copy of the transcript).
+
+`POST /v1/chats/{id}/mention` `{"seq": N, "text": "…"}` (0.74) answers the same for a part of the
+message the user selected: an excerpt mention (`excerpt: true`, `text` the selection), the
+desktop's "Mention selection"; a selection of the whole message is the message's mention. Without
+`text`, the whole message. Never forwarded to the chat's home PC (the copy here answers it).
 
 ### `POST /v1/chats/{id}/move`
 

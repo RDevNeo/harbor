@@ -53,6 +53,16 @@ final class Render {
         return this;
     }
 
+    /** Selectable text (a message's): the selection's menu for each text view. */
+    interface Select { android.view.ActionMode.Callback menu(TextView t); }
+    private Select select;
+
+    /** Makes the text selectable with Android's handles; `s` adds to the selection's menu. */
+    Render select(Select s) {
+        this.select = s;
+        return this;
+    }
+
     Render(Context c, View.OnLongClickListener longPress) {
         this.c = c;
         this.longPress = longPress;
@@ -120,15 +130,21 @@ final class Render {
     }
 
     TextView para(String s) {
-        TextView t = Ui.text(c, s, 16, Ui.FG);
-        t.setOnLongClickListener(longPress);
-        return t;
+        return links(Ui.text(c, s, 16, Ui.FG));
     }
 
     private TextView links(TextView t) {
         CharSequence s = t.getText();
-        if (s instanceof Spanned && ((Spanned) s).getSpans(0, s.length(), android.text.style.ClickableSpan.class).length > 0)
-            t.setMovementMethod(LinkMovementMethod.getInstance());
+        boolean linked = s instanceof Spanned && ((Spanned) s).getSpans(0, s.length(), android.text.style.ClickableSpan.class).length > 0;
+        if (select != null) {
+            // A long-press selects (the selection's menu holds the message's actions); links
+            // still open on a tap: LinkMovementMethod set after selectable keeps both.
+            t.setTextIsSelectable(true);
+            t.setCustomSelectionActionModeCallback(select.menu(t));
+            if (linked) t.setMovementMethod(LinkMovementMethod.getInstance());
+            return t;
+        }
+        if (linked) t.setMovementMethod(LinkMovementMethod.getInstance());
         t.setOnLongClickListener(longPress);
         return t;
     }

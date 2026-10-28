@@ -1071,6 +1071,7 @@ public class Chat extends Base {
                 if (!text.isEmpty()) {
                     TextView t = Ui.text(this, text, 16, Ui.FG);
                     t.setMaxWidth(maxBubble());
+                    selectable(t, it, text);
                     bubble.addView(t);
                 }
                 JSONArray files = it.optJSONArray("files");
@@ -1114,7 +1115,8 @@ public class Chat extends Base {
                 String md = it.optString("markdown");
                 View.OnLongClickListener lp = v -> { itemMenu(it, md); return true; };
                 Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info))
-                        .chats(it.optJSONObject("chat_links"), this::openLink);
+                        .chats(it.optJSONObject("chat_links"), this::openLink)
+                        .select(t -> selectMenu(it, md, t));
                 View body = r.text(it);
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
@@ -1192,7 +1194,9 @@ public class Chat extends Base {
                 head.addView(Ui.bold(this, it.optString("from") + " → " + it.optString("to"), 15, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
                 card.addView(head);
                 String text = it.optString("text");
-                card.addView(Ui.text(this, clip(text), 15, Ui.FG), Ui.margins(Ui.fill(), 0, 6, 0, 0));
+                TextView body = Ui.text(this, clip(text), 15, Ui.FG);
+                selectable(body, it, text);
+                card.addView(body, Ui.margins(Ui.fill(), 0, 6, 0, 0));
                 card.setOnLongClickListener(v -> { if (it.has("actions")) itemMenu(it, text); else Ui.copy(this, text); return true; });
                 wrap.addView(card, Ui.fill());
                 break;
@@ -1421,8 +1425,6 @@ public class Chat extends Base {
             if (!text.isEmpty()) ids.add("copy");
             if (it.optBoolean("forkable")) ids.add("fork");
         }
-        // The phone can't select a card's text, so text there can always be copied.
-        if (!text.isEmpty() && !ids.contains("copy")) ids.add(0, "copy");
         String time = it.optString("time", "");
         long at = it.optLong("at");
         if (time.isEmpty() && at > 0) time = android.text.format.DateFormat.getTimeFormat(this).format(new java.util.Date(at * 1000));
@@ -1454,6 +1456,36 @@ public class Chat extends Base {
         if (n > 0) s.show();
     }
 
+    /** A message's text is selectable (Android's handles, as on the desktop): its menu adds
+     *  Mention (just the selection, `actions` permitting) and More… (the long-press sheet). */
+    private android.view.ActionMode.Callback selectMenu(JSONObject it, String whole, TextView t) {
+        final int MENTION = 0x4801, MORE = 0x4802;
+        JSONArray acts = it.optJSONArray("actions");
+        boolean canMention = acts != null && acts.toString().contains("\"mention\"");
+        return new android.view.ActionMode.Callback() {
+            @Override public boolean onCreateActionMode(android.view.ActionMode mode, android.view.Menu menu) {
+                if (canMention) menu.add(0, MENTION, 0, "Mention").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_IF_ROOM);
+                menu.add(0, MORE, 200, "More…").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+                return true;
+            }
+            @Override public boolean onPrepareActionMode(android.view.ActionMode mode, android.view.Menu menu) { return false; }
+            @Override public boolean onActionItemClicked(android.view.ActionMode mode, android.view.MenuItem item) {
+                int a = Math.max(0, Math.min(t.getSelectionStart(), t.getSelectionEnd())), z = Math.max(t.getSelectionStart(), t.getSelectionEnd());
+                String part = t.getText().subSequence(a, Math.min(z, t.length())).toString();
+                if (item.getItemId() == MENTION) { mode.finish(); if (!part.trim().isEmpty()) mention(it.optInt("seq"), part); return true; }
+                if (item.getItemId() == MORE) { mode.finish(); itemMenu(it, whole); return true; }
+                return false;
+            }
+            @Override public void onDestroyActionMode(android.view.ActionMode mode) { }
+        };
+    }
+
+    /** A text view of a message: selectable, with the message's selection menu. */
+    private void selectable(TextView t, JSONObject it, String whole) {
+        t.setTextIsSelectable(true);
+        t.setCustomSelectionActionModeCallback(selectMenu(it, whole, t));
+    }
+
     /** The desktop's mention button is a plain "@" (Lucide has no glyph for it in our subset). */
     private View atSign() {
         TextView t = Ui.bold(this, "@", 20, Ui.FG);
@@ -1474,13 +1506,22 @@ public class Chat extends Base {
 
     /** Mention in your next message: the hub makes the same mention the desktop's composer
      *  gets (`GET …/mention`), and it joins the draft's chips (once, as on the desktop). */
-    private void mention(int seq) {
-        Ui.bg(this, () -> hub.call("GET", "/v1/chats/" + chatId + "/mention?seq=" + seq, null), r -> {
+    private void mention(int seq) { mention(seq, null); }
+
+    /** `part`: text selected in the message (the hub makes it an excerpt mention, as the
+     *  desktop's "Mention selection"; all of the message selected is the message). */
+    private void mention(int seq, String part) {
+        Ui.bg(this, () -> part == null
+                ? hub.call("GET", "/v1/chats/" + chatId + "/mention?seq=" + seq, null)
+                : hub.call("POST", "/v1/chats/" + chatId + "/mention", new JSONObject().put("seq", seq).put("text", part)), r -> {
             JSONObject m = r.optJSONObject("mention");
             if (m == null) return;
+            // Once each, as on the desktop: the same message, or the same excerpt of it.
             for (int i = 0; i < mentions.length(); i++) {
                 JSONObject x = mentions.optJSONObject(i);
-                if (x != null && x.optInt("item", -1) == m.optInt("item") && !x.optBoolean("excerpt")) { focusComposer(); return; }
+                if (x != null && !"chat".equals(x.optString("kind")) && x.optInt("item", -1) == m.optInt("item")
+                        && x.optBoolean("excerpt") == m.optBoolean("excerpt")
+                        && (!m.optBoolean("excerpt") || x.optString("text").equals(m.optString("text")))) { focusComposer(); return; }
             }
             mentions.put(m);
             drawMentions();

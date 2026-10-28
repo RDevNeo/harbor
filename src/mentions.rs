@@ -262,15 +262,20 @@ impl App {
     /// Adds a mention of just `text`, selected in item `i`. A selection of the
     /// whole message is a mention of the message.
     pub fn mention_excerpt(&mut self, chat_id: i64, i: usize, text: &str) {
-        let Some(m) = self.mention_of(chat_id, i) else { return };
-        let text = text.trim();
-        if text.is_empty() {
-            return;
-        }
-        let m = if m.len <= MAX_CHARS && folded(text) == folded(&m.text) { m } else { excerpt(m, text) };
+        let Some(m) = self.excerpt_of(chat_id, i, text) else { return };
         // Straight into its note box: Enter there goes on to the message.
         self.mentions.focus_note = Some(note_id(chat_id, &m));
         add(self.mentions.drafts.entry(chat_id).or_default(), m);
+    }
+
+    /// The mention of `text`, selected in item `i` (the desktop's selection, the phone's).
+    pub fn excerpt_of(&self, chat_id: i64, i: usize, text: &str) -> Option<Mention> {
+        let m = self.mention_of(chat_id, i)?;
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        Some(if m.len <= MAX_CHARS && folded(text) == folded(&m.text) { m } else { excerpt(m, text) })
     }
 
     /// Scrolls the chat to item `i` and highlights it for a moment.
