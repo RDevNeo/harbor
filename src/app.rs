@@ -1823,8 +1823,9 @@ impl App {
             self.team_drawer = false;
         }
         let browser_focused = (0..2).any(|i| focused == Some(Id::NULL.with(("browser-page", i))));
+        let lead_open = matches!(self.view, View::Chat(id) if self.chat(id).is_some_and(|c| c.role == store::Role::Lead));
         let k = &self.keys;
-        let (new, esc, term, digit, sidebar, browser, settings) = ctx.input_mut(|i| {
+        let (new, esc, term, digit, sidebar, team, browser, settings) = ctx.input_mut(|i| {
             let digit = if term_has_focus || blocked {
                 None
             } else {
@@ -1836,12 +1837,17 @@ impl App {
                 k.take(i, "toggle_terminal"),
                 digit,
                 k.take(i, "toggle_sidebar"),
+                // Ctrl+D in a terminal stays its EOF.
+                lead_open && !term_has_focus && !blocked && k.take(i, "toggle_team"),
                 !browser_focused && k.take(i, "toggle_browser"),
                 !blocked && k.take(i, "settings"),
             )
         });
         if sidebar {
             self.toggle_sidebar(ctx);
+        }
+        if team {
+            self.toggle_team();
         }
         // Ctrl+/ anywhere, or `?` with no text field focused: the cheat sheet.
         let sheet = ctx.input_mut(|i| self.keys.take(i, "shortcuts")) || (!ctx.egui_wants_keyboard_input() && ctx.input_mut(|i| self.keys.take(i, "shortcuts_q")));

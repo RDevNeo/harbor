@@ -45,6 +45,7 @@ pub const ACTIONS: &[Action] = &[
     a("stop_turn", "Stop the turn (or take back the last send)", "Thread", "Escape", "chatOpen && !terminalFocus && !popup"),
     fixed("close_drawer", "Close the sidebar or team drawer", "Thread", "Escape", "drawerOpen"),
     a("toggle_terminal", "Open or close the terminal", "Panels", "Ctrl+Backtick", ""),
+    a("toggle_team", "Show or hide the team panel (agents, wake-ups, webhooks)", "Panels", "Ctrl+D", "leadChatOpen && !terminalFocus"),
     a("toggle_browser", "Open or close the browser", "Panels", "Ctrl+Shift+B", "!browserFocus"),
     a("list_search", "Search the list", "Lists", "Ctrl+F", "listOpen"),
     a("list_toggle_panel", "Show or hide the side panel", "Lists", "Ctrl+Alt+B", "listOpen"),

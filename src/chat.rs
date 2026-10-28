@@ -160,7 +160,7 @@ impl App {
                         .enabled(lead)
                         .pressed(lead && self.team_showing())
                         .show(ui)
-                        .tip("Team: agents, processes, wake-ups, webhooks")
+                        .tip(self.key_hint("Team: agents, processes, wake-ups, webhooks", "toggle_team"))
                         .clicked()
                     {
                         self.toggle_team();
