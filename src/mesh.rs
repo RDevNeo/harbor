@@ -2601,7 +2601,7 @@ impl App {
     }
 
     /// The desktop's message for a copy goes to its home PC. False for own chats.
-    /// `mode`: steer or queue while its turn runs (a home PC before 0.69 queues).
+    /// `mode`: steer or queue while its turn runs (a home PC before 0.71 queues).
     pub fn mesh_send(&mut self, chat: i64, text: &str, files: &[PathBuf], mentions: &[crate::mentions::Mention]) -> bool {
         let mode = self.queue.mode.unwrap_or(crate::queue::Mode::Queue);
         let body = json!({ "text": text, "mentions": mentions, "mode": mode.as_str() });
@@ -2609,7 +2609,7 @@ impl App {
     }
 
     pub fn mesh_stop(&mut self, chat: i64) -> bool {
-        // Its home PC holds the queue (0.69); one before that hands it back, unused here.
+        // Its home PC holds the queue (0.71); one before that hands it back, unused here.
         self.mesh_forward(chat, "stop", "POST", &["stop"], json!({ "hold": true }), vec![], None)
     }
 

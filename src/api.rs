@@ -2990,7 +2990,7 @@ impl App {
                 match *action {
                     "send" => self.api_send(c, &call.body, ctx),
                     "stop" => {
-                        // `{"hold": true}` (0.69): the queue waits, held, for Resume. An older app
+                        // `{"hold": true}` (0.71): the queue waits, held, for Resume. An older app
                         // gets what waited behind the turn back, for its composer.
                         let hold = call.body["hold"].as_bool() == Some(true);
                         let returned: Vec<Value> = if hold { vec![] } else { self.take_queue(c).into_iter().map(|q| json!({ "text": q.text, "files": q.files.iter().filter_map(|f| upload_id(f)).collect::<Vec<_>>() })).collect() };
@@ -3732,7 +3732,7 @@ impl App {
         }
         let before = self.queued(chat).iter().filter(|q| q.intent.is_empty()).count();
         let running = self.turns.contains_key(&chat);
-        // Steer or Queue while its turn runs: the phone says which; an app before 0.69 queues.
+        // Steer or Queue while its turn runs: the phone says which; an app before 0.71 queues.
         let mode = body["mode"].as_str().and_then(crate::queue::Mode::parse).unwrap_or(crate::queue::Mode::Queue);
         // Sent: the sender's draft preview goes (its client ends the lease too).
         if !self.sender_device.is_empty() {

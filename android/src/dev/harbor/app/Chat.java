@@ -1475,7 +1475,7 @@ public class Chat extends Base {
 
     /** "Up next · N queued": dashed bubbles under the turn. Tap one to edit it in the composer;
      *  long-press for Steer now / Edit / Move / Remove; its Steer pill steers with it now (Send
-     *  now when the agent isn't running). A hub before 0.69 sends no ids: read-only bubbles. */
+     *  now when the agent isn't running). A hub before 0.71 sends no ids: read-only bubbles. */
     private void drawQueue(List<JSONObject> q, boolean held, boolean canSteer) {
         // An edit whose message started or went: it ends here too.
         if (editId != 0) {
@@ -1696,7 +1696,7 @@ public class Chat extends Base {
     }
 
     private void stop() {
-        // The queue waits, held, for Resume (0.69); an older hub hands it back instead.
+        // The queue waits, held, for Resume (0.71); an older hub hands it back instead.
         Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/stop", new JSONObject().put("hold", true)), r -> {
             // Messages that waited behind the stopped turn come back from an older hub: into the
             // composer, ahead of whatever is being typed.
@@ -1727,7 +1727,7 @@ public class Chat extends Base {
     }
 
     /** `mode`: "steer" or "queue" while the agent works (ignored by an idle chat, and by hubs
-     *  before 0.69, which queue). */
+     *  before 0.71, which queue). */
     private void send(String mode) {
         if (sending) return;
         String text = composer.getText().toString().trim();

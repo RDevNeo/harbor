@@ -460,7 +460,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | kind | what the desktop draws | fields |
 |---|---|---|
 | `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
-| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note}]` (`excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.69, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu) |
+| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note}]` (`excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.71, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu) |
 | `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable`; commit pills in its spans (below) | `markdown`, `blocks` (below), `images`, `at`, `forkable`, `commits` (optional, 0.52) |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
@@ -519,10 +519,10 @@ the desktop shows nothing:
   in (then it's a transcript `user` item). The others are "Up next": dashed right-aligned
   bubbles under the turn, in order, "Sending" once handed to the agent (no controls then).
   `held`: a Stop holds it; `note`: why it's there when it wasn't queued as such ("Steer didn't
-  land: queued", in red); `editing`: some device is editing it. Hubs before 0.69 send only
+  land: queued", in red); `editing`: some device is editing it. Hubs before 0.71 send only
   `text`, `files`, `sending` (no ids: read-only bubbles labelled "Queued").
-- `can_steer` (0.69): whether a message sent now can steer the running turn (Claude, Codex);
-  false or absent: the send button queues. `held` (0.69): a Stop holds the queue; the empty
+- `can_steer` (0.71): whether a message sent now can steer the running turn (Claude, Codex);
+  false or absent: the send button queues. `held` (0.71): a Stop holds the queue; the empty
   composer's button is ▶ Resume queue. `follow_up`: the PC's own Enter setting (`steer` |
   `queue`); the phone keeps its own (Settings › While the agent is running, default Steer).
 - `working: {since_ms, subagents, text}`: the spinner line while the chat's own turn runs;
@@ -676,20 +676,20 @@ Since 0.57 (optional): `"title": "…"` names it in the sidebar (default: the te
 ### `POST /v1/chats/{id}/send`
 
 `{"text": "…", "files": [upload ids], "mode"?: "steer" | "queue"}` → `{"ok": true, "queued":
-false, "steering": false}`. While a turn runs, `mode` says what the message does (0.69; absent:
+false, "steering": false}`. While a turn runs, `mode` says what the message does (0.71; absent:
 queue, as older apps expect): `steer` reaches the running turn now (`steering: true`) when it can
 (`can_steer`), else it queues; `queue` waits for the turn to end (`queued: true`). A message to an
 idle chat starts a turn, and resumes a queue a Stop held (it runs after this one).
 
 ### `POST /v1/chats/{id}/stop`
 
-`{"hold": true}` (0.69) → `{"ok": true, "returned": [], "held": true}`: stops the running turn
+`{"hold": true}` (0.71) → `{"ok": true, "returned": [], "held": true}`: stops the running turn
 (if any); the queue stays, in order, held until `POST …/resume` or the next message sent. Without
 `hold` (older apps) → `{"ok": true, "returned": [{"text": "…", "files": [upload ids]}]}`: messages
 queued behind it are taken out of the queue and returned, oldest first, so the app can put them
 back in its composer (files that weren't phone uploads are left out).
 
-### Steer and the queue (0.69)
+### Steer and the queue (0.71)
 
 While the agent works, a message either **steers** it (reaches the running turn now: Claude takes
 it with `priority: "now"`, ending what it was doing; Codex is stopped and its session resumed

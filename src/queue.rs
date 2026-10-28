@@ -80,7 +80,7 @@ const NOT_LANDED: &str = "Steer didn't land: queued";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Queued {
-    /// Stable within this Harbor (the API's `queue/{id}`); 0 in snapshots before 0.69.
+    /// Stable within this Harbor (the API's `queue/{id}`); 0 in snapshots before 0.71.
     #[serde(default)]
     pub id: u64,
     pub text: String,
@@ -345,7 +345,7 @@ impl App {
     }
 
     pub fn queue_restore(&mut self, v: &Value) {
-        // Before 0.69 the snapshot was the map alone.
+        // Before 0.71 the snapshot was the map alone.
         let (chats, held) = if v.get("chats").is_some() { (&v["chats"], v["held"].clone()) } else { (v, Value::Null) };
         if let Ok(chats) = serde_json::from_value::<HashMap<i64, Vec<Queued>>>(chats.clone()) {
             self.queue.chats = chats;
@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn old_snapshots_restore_with_ids() {
-        // Before 0.69: the map alone, no ids.
+        // Before 0.71: the map alone, no ids.
         let old = json!({ "4": [{ "text": "a", "files": [], "mentions": [], "written": false }, { "text": "b", "files": [], "mentions": [], "written": false }] });
         let mut st = State::default();
         let (chats, _) = (old.clone(), ());
