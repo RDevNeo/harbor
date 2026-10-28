@@ -210,8 +210,9 @@ impl App {
                         ui.label(RichText::new("/").text_style(theme::ts("label-14")).color(t.gray(600)));
                     };
                     // Branch and changes go first when there's no room for them. A chat in its own
-                    // worktree (or a new one headed for one) shows that chip instead of the
-                    // checkout's branch, which isn't where it works (worktree.rs).
+                    // worktree (or a new one headed for one) doesn't show the checkout's branch,
+                    // which isn't where it works: the footer under the composer says where it
+                    // does, and on which branch (worktree.rs).
                     let in_worktree = match chat {
                         Some(c) => self.worktree_marker(c).is_some(),
                         None => self.draft.sel.device.is_empty() && self.ws_info(crate::worktree::Target::Draft(self.draft.repo)).is_some_and(|i| i.new_worktree),
@@ -220,14 +221,12 @@ impl App {
                     let room = ui.available_width();
                     let show_branch = git.is_some() && room >= 260.0;
                     let show_changed = show_branch && git.as_ref().is_some_and(|s| s.changed > 0) && room >= 400.0;
-                    let chip_w = if in_worktree && room >= 200.0 { (room * 0.4).clamp(90.0, 240.0) } else { 0.0 };
                     let git_w = match &git {
                         Some(s) if show_branch => {
                             let font = FontId::monospace(13.0);
                             let bw = ui.painter().layout_no_wrap(format!("{} {}", ic::BRANCH, s.branch), font.clone(), Color32::WHITE).size().x.min(160.0);
                             12.0 + bw + if show_changed { 96.0 } else { 0.0 }
                         }
-                        _ if chip_w > 0.0 => 12.0 + chip_w,
                         _ => 0.0,
                     };
                     let crumbs_w = (room - git_w).max(60.0);
@@ -277,10 +276,6 @@ impl App {
                         if show_changed {
                             w::badge(ui, &format!("{} changed", s.changed), Tone::Amber);
                         }
-                    }
-                    if chip_w > 0.0 {
-                        ui.add_space(6.0);
-                        self.worktree_chip(ui, chat, chip_w);
                     }
                 }
                 ui.advance_cursor_after_rect(row);

@@ -5,6 +5,14 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Desktop: the bar under the composer now looks like the phone's: quiet muted text with no
+  boxes, "Worktree · harbor-a1b2c3" (or "Current checkout", "New worktree") on the left and the
+  branch on the right, with "· 3 changed" when there are uncommitted changes. Clicking either
+  still opens its menu. It also says "Worktree gone" when the chat's worktree was removed, and
+  "Worktree · <name>" for another PC's chat. The header's worktree chip is gone, since the bar
+  says the same thing.
+
 ## [0.72.3] - 2026-10-28
 
 ### Fixed

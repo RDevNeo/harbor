@@ -626,7 +626,22 @@ impl App {
     /// The slim bar under the composer: where the agent works (left) and its branch (right).
     pub fn workspace_bar(&mut self, ui: &mut Ui) {
         let target = self.ws_target();
-        let Some(info) = self.ws_info(target) else { return };
+        let Some(info) = self.ws_info(target) else {
+            // Another PC's chat (or one run on a device) in a worktree: where it works, read-only.
+            if let Target::Chat(id) = target {
+                let marker = self.chat(id).cloned().and_then(|c| self.worktree_marker(&c).map(|m| (m, self.home_name(&c))));
+                if let Some((m, home)) = marker {
+                    let t = self.theme.t;
+                    ui.horizontal(|ui| {
+                        ui.add_space(6.0);
+                        w_small(ui, crate::icons::FOLDER_GIT, &format!("Worktree · {}", m.name), false, &t).tip(format!("Runs in its own worktree on {home}, {}", m.name));
+                    });
+                }
+            }
+            return;
+        };
+        // Its worktree was removed outside Harbor: said in place of the folder, no branch.
+        let gone = info.worktree.as_ref().is_some_and(|w| !w.exists());
         let ctx = ui.ctx().clone();
         let h = self.ws_head(&info.dir, &ctx);
         let t = self.theme.t;
@@ -639,6 +654,7 @@ impl App {
                 w_busy(ui, what, &t);
             } else {
             let (label, tip) = match (&info.worktree, info.new_worktree) {
+                (Some(w), _) if gone => ("Worktree gone".to_string(), format!("This thread's worktree ({}) isn't there anymore. Start a new chat in the project to go on.", w.display())),
                 (Some(w), _) => (
                     format!("Worktree · {}", w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
                     format!("Runs in its own worktree, {}. It's removed with the thread, unless it has uncommitted changes.", w.display()),
@@ -647,7 +663,7 @@ impl App {
                 (None, false) => ("Current checkout".to_string(), format!("Runs in the project's checkout, {}", info.repo.display())),
             };
             let icon = if info.worktree.is_some() || info.new_worktree { crate::icons::FOLDER_GIT } else { crate::icons::FOLDER };
-            let r = w_small(ui, icon, &label, self.popup == Some(Popup::Workspace) && !self.ws.from_header, &t).tip(tip);
+            let r = (if gone { w_small_tinted(ui, icon, &label, self.popup == Some(Popup::Workspace), t.destructive(), &t) } else { w_small(ui, icon, &label, self.popup == Some(Popup::Workspace) && !self.ws.from_header, &t) }).tip(tip);
             if r.clicked() {
                 open = Some((Popup::Workspace, r.rect));
             } else if self.popup == Some(Popup::Workspace) && !self.ws.from_header {
@@ -656,6 +672,9 @@ impl App {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(6.0);
+                if gone {
+                    return;
+                }
                 if let Some((Side::Branch, what)) = &busy {
                     let r = w_busy(ui, what, &t);
                     if self.popup == Some(Popup::Branch) {
@@ -668,7 +687,8 @@ impl App {
                         let base = if info.base.is_empty() { h.as_ref().map(|h| h.label()).unwrap_or_default() } else { info.base.clone() };
                         (format!("from {base}"), "The new worktree's branch starts from this one".to_string())
                     }
-                    Some(h) if h.dirty > 0 => (h.label(), format!("{} uncommitted change{}", h.dirty, if h.dirty == 1 { "" } else { "s" })),
+                    // As the phone's bar: "main  ·  3 changed".
+                    Some(h) if h.dirty > 0 => (format!("{}  ·  {} changed", h.label(), h.dirty), format!("{} uncommitted change{}. Switch or create a branch", h.dirty, if h.dirty == 1 { "" } else { "s" })),
                     Some(h) => (h.label(), "Switch or create a branch".to_string()),
                     None => ("…".to_string(), "Reading the branch…".to_string()),
                 };
@@ -702,60 +722,6 @@ impl App {
         if p == Popup::Branch {
             self.ws_load_branches(dir, ctx);
         }
-    }
-
-    /// The header's chip, next to the chat's title: that the chat works in a worktree and on
-    /// which branch (a new chat: that it will), so it's never mistaken for the checkout. Opens
-    /// the workspace menu under it. `max_w`: its room; None when there's nothing to say.
-    pub fn worktree_chip(&mut self, ui: &mut Ui, chat: Option<&Chat>, max_w: f32) -> Option<egui::Response> {
-        let (label, tone, tip, dir) = self.chip_facts(chat, ui.ctx())?;
-        let t = self.theme.t;
-        let (bg, border, fg) = tone.colors(&t);
-        let font = egui::FontId::new(12.0, crate::theme::medium());
-        let text = format!("{}  {label}", crate::icons::FOLDER_GIT);
-        let g = crate::widgets::truncated(ui, &text, font, fg, (max_w - 20.0).max(24.0));
-        let (rect, r) = ui.allocate_exact_size(egui::vec2(g.size().x + 20.0, 22.0), egui::Sense::click());
-        let open = self.popup == Some(Popup::Workspace) && self.ws.from_header;
-        let edge = if r.hovered() || open { fg } else { border };
-        ui.painter().rect(rect, egui::CornerRadius::same(11), bg, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
-        ui.painter().galley(egui::pos2(rect.left() + 10.0, rect.center().y - g.size().y / 2.0), g, fg);
-        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand).tip(tip);
-        if let Some(dir) = dir {
-            if r.clicked() {
-                let ctx = ui.ctx().clone();
-                self.ws_open(Popup::Workspace, rect, true, dir, &ctx);
-            } else if open {
-                self.popup_anchor = rect;
-            }
-        }
-        Some(r)
-    }
-
-    /// The chip's label, tone and tip, and the folder its menu is for (None: no menu here,
-    /// another PC's chat).
-    fn chip_facts(&self, chat: Option<&Chat>, ctx: &egui::Context) -> Option<(String, crate::widgets::Tone, String, Option<PathBuf>)> {
-        use crate::widgets::Tone;
-        let Some(c) = chat else {
-            // A new chat headed for a new worktree.
-            let info = self.ws_info(Target::Draft(self.draft.repo)).filter(|i| i.new_worktree && self.draft.sel.device.is_empty())?;
-            if let Some((Side::Workspace, what)) = &self.ws.busy {
-                return Some((what.clone(), Tone::Gray, "Making the new chat's worktree".into(), Some(info.dir)));
-            }
-            let base = if info.base.is_empty() { self.ws_head(&info.dir, ctx).map(|h| h.label()).unwrap_or_default() } else { info.base.clone() };
-            let label = if base.is_empty() { "New worktree".to_string() } else { format!("New worktree · from {base}") };
-            return Some((label, Tone::Gray, "The first message makes this chat a worktree of its own (own folder and branch), so parallel agents don't collide.".into(), Some(info.dir)));
-        };
-        let m = self.worktree_marker(c)?;
-        let Some(path) = m.path else {
-            let home = self.home_name(c);
-            return Some((format!("Worktree · {}", m.name), Tone::Blue, format!("Runs in its own worktree on {home}, {}", m.name), None));
-        };
-        if m.gone {
-            return Some(("Worktree gone".into(), Tone::Red, format!("This thread's worktree ({}) isn't there anymore. Start a new chat in the project to go on.", path.display()), Some(path)));
-        }
-        let branch = self.ws_head(&path, ctx).map(|h| h.label()).unwrap_or_default();
-        let label = if branch.is_empty() { format!("Worktree · {}", m.name) } else { format!("Worktree · {branch}") };
-        Some((label, Tone::Blue, format!("Runs in its own worktree, {} (not the project's checkout). It's removed with the thread, unless it has uncommitted changes.", path.display()), Some(path)))
     }
 
     /// The workspace menu (Popup::Workspace). True: close it.
@@ -1118,17 +1084,20 @@ fn w_busy(ui: &mut Ui, text: &str, t: &crate::theme::Tokens) -> egui::Response {
     r
 }
 
-/// A small, quiet trigger of the bar (icon and text, a hover fill).
+/// A quiet trigger of the footer under the composer, as the phone draws it: a muted icon and
+/// text, no box; hovered or open, the text comes up to full strength.
 fn w_small(ui: &mut Ui, icon: &str, text: &str, open: bool, t: &crate::theme::Tokens) -> egui::Response {
-    let label = format!("{icon}  {text}");
-    let galley = ui.painter().layout_no_wrap(label, egui::FontId::proportional(12.5), if open { t.fg() } else { t.subtle() });
+    w_small_tinted(ui, icon, text, open, t.subtle(), t)
+}
+
+fn w_small_tinted(ui: &mut Ui, icon: &str, text: &str, open: bool, rest: egui::Color32, t: &crate::theme::Tokens) -> egui::Response {
+    // Long names are cut in the middle (the phone's ellipsis), the rest of the row stays.
+    let max = (ui.available_width() - 16.0).clamp(80.0, 320.0);
+    let galley = crate::widgets::truncated(ui, &format!("{icon}  {text}"), egui::FontId::proportional(12.5), rest, max);
     let size = galley.size() + egui::vec2(16.0, 8.0);
     let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if r.hovered() || open {
-        ui.painter().rect_filled(rect, 6.0, t.gray(200));
-    }
-    let color = if r.hovered() || open { t.fg() } else { t.subtle() };
+    let color = if r.hovered() || open { if rest == t.subtle() { t.fg() } else { rest } } else { rest };
     ui.painter().galley_with_override_text_color(rect.min + egui::vec2(8.0, 4.0), galley, color);
     r
 }
