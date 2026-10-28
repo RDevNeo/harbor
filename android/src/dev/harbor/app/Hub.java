@@ -1118,10 +1118,11 @@ final class Hub {
     }
 
     /** POST /v1/transcribe: a phrase or a whole dictation (WAV, 16 kHz mono) for the PC the hub
-     *  picks (Voice). `cleanup=0`: the raw words, cleaned up once at the end instead. →
-     *  {text, raw?, host?}; 409 (ApiError) while the PC's model downloads. */
+     *  picks (Voice). `cleanup=0`: the raw words, cleaned up once at the end instead; `commands=1`:
+     *  the spoken commands taken out (`send` when it ended with one). →
+     *  {text, raw?, host?, send?}; 409 (ApiError) while the PC's model downloads. */
     JSONObject transcribe(byte[] wav, String lang, boolean raw, int timeout) throws IOException {
-        Net.Http c = open("POST", "/v1/transcribe?lang=" + URLEncoder.encode(lang == null ? "" : lang, "UTF-8") + (raw ? "&cleanup=0" : ""), timeout);
+        Net.Http c = open("POST", "/v1/transcribe?lang=" + URLEncoder.encode(lang == null ? "" : lang, "UTF-8") + (raw ? "&cleanup=0&commands=1" : ""), timeout);
         try {
             c.header("Content-Type", "audio/wav");
             try (OutputStream o = c.body(wav.length)) { o.write(wav); }

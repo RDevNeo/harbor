@@ -66,6 +66,8 @@ final class Composer {
     void voice(Hub hub) {
         voice = new Voice(a, hub, edit);
         view.addView(voice.strip, view.indexOfChild(row), Ui.fill());
+        // "…press enter" / "enviar" at the end of a dictation: as if send was tapped.
+        voice.onSend = () -> { if (!empty()) send.performClick(); };
         voice.onState = () -> {
             boolean on = voice.active();
             mic.setBackground(Ui.press(on ? Ui.RED : Ui.G100, 0, 22));

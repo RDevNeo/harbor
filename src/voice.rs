@@ -264,6 +264,11 @@ pub fn wav(samples: &[i16], rate: u32) -> Vec<u8> {
 fn transcribe_cli(bin: &Path, model: &Path, wav: &Path, lang: &str) -> Result<String, String> {
     let mut cmd = Command::new(bin);
     cmd.arg("-m").arg(model).arg("-f").arg(wav).args(["-l", lang, "-t", &threads().to_string(), "-nt", "-np"]);
+    // The dictionary's terms as the initial prompt: Whisper leans towards their spellings.
+    let terms: Vec<String> = crate::dictate::dictionary().into_iter().map(|e| e.term).take(40).collect();
+    if !terms.is_empty() {
+        cmd.arg("--prompt").arg(format!("{}.", terms.join(", ")));
+    }
     let out = crate::git::output_within(&mut cmd, TRANSCRIBE_TIMEOUT).map_err(|e| format!("{}: {e}", bin.display()))?;
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
@@ -519,7 +524,8 @@ pub fn megabytes(b: u64) -> String {
 
 /// A finished transcription for a composer, or a recording handed back to wait for a model.
 enum Back {
-    Done(i64, Result<String, String>),
+    /// The text, and whether it ended with the send command.
+    Done(i64, Result<(String, bool), String>),
     Wait(i64, Vec<i16>),
 }
 
@@ -534,6 +540,12 @@ pub struct State {
     pending: Option<(i64, Vec<i16>)>,
     /// When the cleanup account was last mirrored for the API threads.
     account_at: Option<Instant>,
+    /// A dictation that ended with "press enter": its composer sends (chat.rs).
+    pub send: Option<i64>,
+    /// Settings › Voice › Dictionary: the entry being added or edited (its index), its fields.
+    dict_edit: Option<usize>,
+    dict_term: String,
+    dict_sounds: String,
 }
 
 impl App {
@@ -545,6 +557,19 @@ impl App {
         let keep = self.store.get("voice_keep_min").and_then(|v| v.parse().ok()).unwrap_or(5);
         let engine = self.store.get("voice_engine").unwrap_or_default();
         crate::dictate::set(Some(&engine), Some(self.store.get("voice_cleanup").as_deref() != Some("0")), Some(keep), false);
+        let dict = self.store.get("voice_dict").and_then(|d| serde_json::from_str(&d).ok()).map(|v| crate::dictwords::parse(&v)).unwrap_or_default();
+        crate::dictate::set_words(Some(self.store.get("voice_commands").as_deref() != Some("0")), Some(dict), false);
+    }
+
+    /// Settings › Voice's commands switch and dictionary.
+    fn voice_set_words(&self, commands: Option<bool>, dict: Option<Vec<crate::dictwords::Entry>>) {
+        if let Some(c) = commands {
+            self.store.set("voice_commands", if c { "1" } else { "0" });
+        }
+        if let Some(d) = dict {
+            self.store.set("voice_dict", &crate::dictwords::to_json(&d).to_string());
+        }
+        self.voice_load();
     }
 
     pub fn voice_set(&self, lang: Option<&str>, model: Option<&str>) {
@@ -610,8 +635,8 @@ impl App {
         let (lang, _) = config();
         let (ctx, hub) = (ctx.clone(), self.api.hub.clone());
         std::thread::spawn(move || {
-            let back = match crate::dictate::transcribe(&hub, &samples, &lang, crate::dictate::cleanup_on(), false) {
-                Ok(d) => Back::Done(key, Ok(d.text)),
+            let back = match crate::dictate::transcribe(&hub, &samples, &lang, crate::dictate::cleanup_on(), true, false) {
+                Ok(d) => Back::Done(key, Ok((d.text, d.send))),
                 Err(Fail::Wait(_)) => Back::Wait(key, samples),
                 Err(Fail::Err(e)) => Back::Done(key, Err(e)),
             };
@@ -638,9 +663,11 @@ impl App {
             crate::dictate::set_account(a);
         }
         // Settings a phone changed.
-        if let Some((cleanup, keep)) = crate::dictate::take_dirty() {
+        if let Some((cleanup, keep, commands, dict)) = crate::dictate::take_dirty() {
             self.store.set("voice_cleanup", if cleanup { "1" } else { "0" });
             self.store.set("voice_keep_min", &keep.to_string());
+            self.store.set("voice_commands", if commands { "1" } else { "0" });
+            self.store.set("voice_dict", &crate::dictwords::to_json(&dict).to_string());
         }
         if let Some((name, e)) = take_download_error() {
             crate::picker::show_toast(ctx, format!("Couldn't download the {} speech model: {e}", label(&name)));
@@ -672,8 +699,17 @@ impl App {
                 Back::Done(key, r) => {
                     self.voice.busy = None;
                     match r {
-                        Ok(text) if text.trim().is_empty() => crate::picker::show_toast(ctx, "Didn't catch any words.".into()),
-                        Ok(text) => self.voice_insert(ctx, key, &text),
+                        Ok((text, send)) => {
+                            if !text.trim().is_empty() {
+                                self.voice_insert(ctx, key, &text);
+                            }
+                            if send {
+                                self.voice.send = Some(key);
+                                ctx.request_repaint();
+                            } else if text.trim().is_empty() {
+                                crate::picker::show_toast(ctx, "Didn't catch any words.".into());
+                            }
+                        }
                         Err(e) => crate::picker::show_toast(ctx, e),
                     }
                 }
@@ -864,6 +900,12 @@ impl App {
                 self.voice_set_more(None, Some(on), None);
             }
             w::separator(ui);
+            let mut cmds = crate::dictate::commands_on();
+            let changed = w::setting_row(ui, "Voice commands", "End with \"press enter\" or say \"send\" (\"aperta enter\", \"enviar\") as the last sentence to send the message. \"New line\" (\"nova linha\") alone makes a line break. Anywhere else these words are just text.", |ui| w::toggle(ui, &mut cmds).changed());
+            if changed {
+                self.voice_set_words(Some(cmds), None);
+            }
+            w::separator(ui);
             let keeps: [(u64, &str); 5] = [(0, "Off"), (1, "1 min"), (5, "5 min"), (15, "15 min"), (60, "1 h")];
             let cur = keeps.iter().position(|k| k.0 == crate::parakeet::keep_min()).unwrap_or(2);
             w::setting_row(ui, "Keep speech model loaded", "After the last dictation, then it's freed: no memory or CPU while idle.", |ui| {
@@ -873,6 +915,8 @@ impl App {
                 }
             });
         });
+        ui.add_space(12.0);
+        self.voice_dictionary(ui);
         ui.add_space(12.0);
         section(ui, "Language");
         rows(ui, |ui| {
@@ -893,6 +937,77 @@ impl App {
             ),
             "label-12",
         );
+    }
+}
+
+impl App {
+    /// Settings › Voice › Dictionary: names and terms spelled exactly, each with optional
+    /// sound-alikes; add, edit and remove. Phones use this PC's list (GET /v1/voice).
+    fn voice_dictionary(&mut self, ui: &mut egui::Ui) {
+        use crate::pages::{rows, section};
+        use crate::widgets as w;
+        section(ui, "Dictionary");
+        let mut dict = crate::dictate::dictionary();
+        let mut changed = false;
+        let (mut edit, mut remove): (Option<usize>, Option<usize>) = (None, None);
+        rows(ui, |ui| {
+            for (i, e) in dict.iter().enumerate() {
+                if i > 0 {
+                    w::separator(ui);
+                }
+                let desc = if e.sounds.is_empty() { String::new() } else { format!("Sounds like: {}", e.sounds.join(", ")) };
+                w::setting_row(ui, &e.term, &desc, |ui| {
+                    if w::btn("Remove").sm().outline().show(ui).clicked() {
+                        remove = Some(i);
+                    }
+                    if w::btn("Edit").sm().outline().show(ui).clicked() {
+                        edit = Some(i);
+                    }
+                });
+            }
+            if !dict.is_empty() {
+                w::separator(ui);
+            }
+            let title = if self.voice.dict_edit.is_some() { "Edit the word" } else { "Add a word" };
+            let mut save = false;
+            w::setting_row(ui, title, "Spelled exactly like this when you say it (\"SpokPay\"). Sounds like, optional: how it comes out wrong, comma-separated (\"spoke pay\").", |ui| {
+                let label = if self.voice.dict_edit.is_some() { "Save" } else { "Add" };
+                save |= w::btn(label).sm().enabled(!self.voice.dict_term.trim().is_empty()).show(ui).clicked();
+                ui.vertical(|ui| {
+                    let a = w::input(ui, &mut self.voice.dict_term, "Word or name", false, 150.0);
+                    ui.add_space(4.0);
+                    let b = w::input(ui, &mut self.voice.dict_sounds, "Sounds like", false, 150.0);
+                    save |= (a.lost_focus() || b.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.voice.dict_term.trim().is_empty();
+                });
+            });
+            if save {
+                let entry = crate::dictwords::Entry { term: self.voice.dict_term.trim().to_string(), sounds: self.voice.dict_sounds.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() };
+                match self.voice.dict_edit.take().filter(|i| *i < dict.len()) {
+                    Some(i) => dict[i] = entry,
+                    None => dict.push(entry),
+                }
+                self.voice.dict_term.clear();
+                self.voice.dict_sounds.clear();
+                changed = true;
+            }
+        });
+        if let Some(i) = edit {
+            self.voice.dict_edit = Some(i);
+            self.voice.dict_term = dict[i].term.clone();
+            self.voice.dict_sounds = dict[i].sounds.join(", ");
+        }
+        if let Some(i) = remove {
+            dict.remove(i);
+            if self.voice.dict_edit == Some(i) {
+                self.voice.dict_edit = None;
+            }
+            changed = true;
+        }
+        if changed {
+            // Through parse: blanks and duplicates out.
+            let clean = crate::dictwords::parse(&crate::dictwords::to_json(&dict));
+            self.voice_set_words(None, Some(clean));
+        }
     }
 }
 

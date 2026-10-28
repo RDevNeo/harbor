@@ -963,6 +963,24 @@ to another PC; hubs set it when they forward, so requests never loop). The respo
 and may add `raw` (the transcript before cleanup; present when cleanup ran) and `host` (the PC
 that transcribed). The `409` with the model download's progress stays.
 
+#### Dictionary and spoken commands (0.76)
+
+`GET /v1/voice` adds `"commands": true|false` and `"dictionary": [{"term": "SpokPay", "sounds":
+["spoke pay"]}]` (the hub's personal dictionary: exact spellings, optional sound-alikes). `PUT
+/v1/voice/settings` takes either (`dictionary` replaces the whole list; blank and duplicate terms
+are dropped, at most 500 of 60 characters) and answers the new status. Phones keep the last
+dictionary for phrases their offline model transcribes. The hub spells the dictionary's words in
+everything it transcribes (a close spelling counts only for terms of 6+ letters said in two or
+more words, or of 7+ letters) and gives them to the cleanup.
+
+`POST /v1/transcribe?commands=1` (phones that know the reply): when the hub's commands are on, a
+transcript that ends with "press enter" / "hit enter" / "aperta enter" (…), or whose last sentence
+is only "send" / "enter" / "enviar" / "manda" (…), comes back without it and with `"send": true`
+(the text may then be empty); a sentence that is only "new line" / "nova linha" becomes `"\n"`,
+"new paragraph" / "novo parágrafo" `"\n\n"`. The phone then ends the dictation and sends the
+message once the words are in (after the cleanup). The rules are `src/dictwords.rs`; the phone's
+offline copy (`Words.java`) checks the same `android/test/dictation-cases.txt`.
+
 #### `POST /v1/voice/cleanup`
 
 Body `{"text": "…"}` → `{"text": "…"}`. Cleans up dictated text the way the "Clean up dictation"

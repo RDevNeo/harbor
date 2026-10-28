@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Dictation dictionary (desktop Settings › Voice › Dictionary, phone Settings › Dictionary): names
+  and terms the speech model can't know ("SpokPay", "SpokPayCRM") come out spelled exactly, with
+  optional "sounds like" spellings. One list on the PC serves its desktop dictation and its
+  phones (kept on the phone for offline dictation too); the cleanup gets it as well.
+- Voice commands, like Wispr Flow's "press enter": end a dictation with "press enter" (or
+  "aperta enter"), or say just "send" / "enviar" as its last sentence, and the message is sent,
+  without the command. "New line" / "nova linha" said on its own makes a line break. Anywhere
+  else these words stay text. Settings › Voice › Voice commands turns them off.
+
+### Changed
+- The dictation cleanup has an example of mixed Portuguese and English to keep as spoken; when an
+  answer still translates, the raw text is used (now logged).
+
 ## [0.75.0] - 2026-10-28
 
 ### Added

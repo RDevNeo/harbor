@@ -1,0 +1,50 @@
+# Dictation's dictionary and spoken commands: checked by src/dictwords.rs (cargo test) and by
+# WordsTest.java (android/build.sh), so the hub and the phone's offline fallback agree.
+# entry|term|sound-alike,sound-alike   (adds to the dictionary for the dict lines after it)
+# dict|transcript|with the dictionary applied
+# cmd|transcript|text without the commands|1 when it sends
+# "\n" is a line break.
+entry|SpokPay|
+entry|Harbor|
+entry|SpokPayCRM|
+entry|Wispr|whisper flow
+entry|Codex|
+dict|we use spoke pay for that|we use SpokPay for that
+dict|o Spokepay caiu de novo|o SpokPay caiu de novo
+dict|abre o spok pei, por favor|abre o SpokPay, por favor
+dict|the spoke pay CRM is down|the SpokPayCRM is down
+dict|the spokpay crm is down|the SpokPayCRM is down
+dict|SpokPay's checkout|SpokPay's checkout
+dict|spokpay's checkout|SpokPay's checkout
+dict|open harbor on the phone|open Harbor on the phone
+dict|open har bor on the phone|open Harbor on the phone
+dict|the harbour was full|the harbour was full
+dict|I like whisper flow a lot|I like Wispr a lot
+dict|ask codex about it|ask Codex about it
+dict|these codes are wrong|these codes are wrong
+dict|spoke, pay later|spoke, pay later
+dict|nothing to change here|nothing to change here
+dict|SpokPay and Harbor, SpokPayCRM.|SpokPay and Harbor, SpokPayCRM.
+cmd|Fix the login bug. Press enter.|Fix the login bug.|1
+cmd|fix the login bug press enter|fix the login bug|1
+cmd|Corrige o bug do login, aperta enter.|Corrige o bug do login|1
+cmd|Corrige o bug do login. Enviar.|Corrige o bug do login.|1
+cmd|Send.||1
+cmd|Enviar||1
+cmd|Ship it. Send it.|Ship it.|1
+cmd|Dá enter.||1
+cmd|Then press enter to confirm.|Then press enter to confirm.|0
+cmd|I will send it tomorrow.|I will send it tomorrow.|0
+cmd|Preciso enviar o relatório.|Preciso enviar o relatório.|0
+cmd|Vou enviar|Vou enviar|0
+cmd|Type your name and press enter|Type your name and|1
+cmd|presenter|presenter|0
+cmd|First item. New line. Second item.|First item.\nSecond item.|0
+cmd|Primeiro. Nova linha. Segundo.|Primeiro.\nSegundo.|0
+cmd|Intro. New paragraph. Body.|Intro.\n\nBody.|0
+cmd|Add a new line to the file.|Add a new line to the file.|0
+cmd|New line.|\n|0
+cmd|One. New line. Two. Press enter.|One.\nTwo.|1
+cmd|One.\nSend.|One.|1
+cmd|Olha isso, enviar.|Olha isso, enviar.|0
+cmd|Nothing special here|Nothing special here|0

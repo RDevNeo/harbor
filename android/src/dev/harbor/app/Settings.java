@@ -163,7 +163,15 @@ public class Settings extends Base {
         Ui.pool.execute(() -> {
             try {
                 org.json.JSONObject v = hub.call("GET", "/v1/voice", null, 8000);
-                runOnUiThread(() -> { cleanup = v.optBoolean("cleanup"); voiceHost = v.optString("host", hub.label()); cleanRows(); });
+                Voice.keepWords(this, v);
+                runOnUiThread(() -> {
+                    cleanup = v.optBoolean("cleanup");
+                    voiceHost = v.optString("host", hub.label());
+                    // Hubs before 0.76 have no dictionary or commands: their rows stay hidden.
+                    words = v.has("dictionary") ? v.optJSONArray("dictionary") : null;
+                    commands = v.has("commands") ? v.optBoolean("commands") : null;
+                    cleanRows();
+                });
             } catch (Exception e) { /* an older hub: no such call */ }
         });
 
@@ -532,8 +540,10 @@ public class Settings extends Base {
     }
 
     private LinearLayout cleanRow, modelRow;
-    private Boolean cleanup;
+    private Boolean cleanup, commands;
     private String voiceHost;
+    /** The hub's dictionary (GET /v1/voice `dictionary`, 0.76); null on older hubs. */
+    private org.json.JSONArray words;
 
     /** "Clean up dictation": the hub's setting, mirrored. */
     private void cleanRows() {
@@ -546,6 +556,108 @@ public class Settings extends Base {
                 : "Off: the words go in as heard", Ui.FG, v -> toggleCleanup());
         Ui.wrapSub(r, 2);
         cleanRow.addView(r, Ui.fill());
+        if (commands != null) {
+            cleanRow.addView(Ui.gap(this));
+            LinearLayout c = Ui.cardRow(this, Ui.I_SEND, "Voice commands", commands
+                    ? "On: end with \"press enter\" or say \"send\" / \"enviar\" last to send; \"new line\" alone breaks the line"
+                    : "Off: every word goes in as text", Ui.FG, v -> putVoice("commands", !commands));
+            Ui.wrapSub(c, 3);
+            cleanRow.addView(c, Ui.fill());
+        }
+        if (words != null) {
+            cleanRow.addView(Ui.gap(this));
+            int n = words.length();
+            LinearLayout d = Ui.cardRow(this, Ui.I_FILE_TEXT, "Dictionary", n == 0 ? "Names and terms to spell exactly, like SpokPay"
+                    : n + (n == 1 ? " word" : " words") + " · " + termsPreview(), Ui.FG, v -> dictionary());
+            Ui.wrapSub(d, 2);
+            d.addView(Ui.chevron(this));
+            cleanRow.addView(d, Ui.fill());
+        }
+    }
+
+    private String termsPreview() {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < words.length() && b.length() < 60; i++) {
+            if (b.length() > 0) b.append(", ");
+            b.append(words.optJSONObject(i) == null ? "" : words.optJSONObject(i).optString("term"));
+        }
+        return b.toString();
+    }
+
+    /** A hub voice setting (PUT /v1/voice/settings); the rows follow its answer. */
+    private void putVoice(String key, Object value) {
+        Ui.pool.execute(() -> {
+            try {
+                org.json.JSONObject v = hub.call("PUT", "/v1/voice/settings", new org.json.JSONObject().put(key, value));
+                Voice.keepWords(this, v);
+                runOnUiThread(() -> {
+                    if (v.has("commands")) commands = v.optBoolean("commands");
+                    if (v.has("dictionary")) words = v.optJSONArray("dictionary");
+                    cleanRows();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Ui.toast(this, Hub.why(e)));
+            }
+        });
+    }
+
+    /** The dictionary: its words (tap one to edit or remove it), and Add. Kept on the PC, which
+     *  spells them in everything it transcribes for this phone and for itself. */
+    private void dictionary() {
+        int n = words.length();
+        String[] items = new String[n + 1];
+        for (int i = 0; i < n; i++) {
+            org.json.JSONObject e = words.optJSONObject(i);
+            org.json.JSONArray snd = e == null ? null : e.optJSONArray("sounds");
+            items[i] = (e == null ? "" : e.optString("term")) + (snd != null && snd.length() > 0 ? "  ·  sounds like " + join(snd) : "");
+        }
+        items[n] = "+ Add a word";
+        Ui.dialog(this).setTitle("Dictionary")
+                .setItems(items, (x, i) -> editWord(i < n ? i : -1))
+                .setNegativeButton("Close", null).show();
+    }
+
+    private static String join(org.json.JSONArray a) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < a.length(); i++) { if (i > 0) b.append(", "); b.append(a.optString(i)); }
+        return b.toString();
+    }
+
+    /** Add (`at` -1) or edit a word: its exact spelling and, optionally, how it comes out wrong. */
+    private void editWord(int at) {
+        org.json.JSONObject cur = at >= 0 ? words.optJSONObject(at) : null;
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
+        android.widget.EditText term = Ui.input(this, "Word or name, as it's spelled", false);
+        android.widget.EditText sounds = Ui.input(this, "Sounds like (optional, commas)", false);
+        if (cur != null) {
+            term.setText(cur.optString("term"));
+            org.json.JSONArray snd = cur.optJSONArray("sounds");
+            if (snd != null) sounds.setText(join(snd));
+        }
+        box.addView(term, Ui.fill());
+        box.addView(sounds, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+        android.app.AlertDialog.Builder d = Ui.dialog(this).setTitle(at >= 0 ? "Edit word" : "Add a word").setView(box)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (x, w) -> {
+                    String t = term.getText().toString().trim();
+                    if (t.isEmpty()) return;
+                    try {
+                        org.json.JSONObject e = new org.json.JSONObject().put("term", t);
+                        org.json.JSONArray sa = new org.json.JSONArray();
+                        for (String p : sounds.getText().toString().split(",")) if (!p.trim().isEmpty()) sa.put(p.trim());
+                        e.put("sounds", sa);
+                        org.json.JSONArray next = new org.json.JSONArray(words.toString());
+                        if (at >= 0) next.put(at, e); else next.put(e);
+                        putVoice("dictionary", next);
+                    } catch (org.json.JSONException ignored) { }
+                });
+        if (at >= 0) d.setNeutralButton("Remove", (x, w) -> {
+            org.json.JSONArray next = new org.json.JSONArray();
+            for (int i = 0; i < words.length(); i++) if (i != at) next.put(words.opt(i));
+            putVoice("dictionary", next);
+        });
+        d.show();
     }
 
     private void toggleCleanup() {

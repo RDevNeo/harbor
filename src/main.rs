@@ -20,6 +20,7 @@ mod control;
 mod detach;
 mod devices;
 mod dictate;
+mod dictwords;
 mod discover;
 mod favicon;
 mod ghapi;

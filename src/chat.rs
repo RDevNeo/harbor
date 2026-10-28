@@ -970,6 +970,11 @@ impl App {
                 edit_last = ui.input_mut(|i| self.keys.take(i, "edit_queued"));
             }
         }
+        // A dictation that ended with "press enter" / "enviar" (voice.rs): as if Enter was pressed.
+        if self.voice.send == Some(key) && self.popup.is_none() {
+            self.voice.send = None;
+            send = true;
+        }
         let editing = self.queue_editing(key);
         let steerable = key != crate::app::DRAFT && self.can_steer(key);
         // What Enter does now; holding Ctrl previews the other (the icon flips).

@@ -1795,13 +1795,18 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 _ => crate::dictate::cleanup_on(),
             };
             let local = req.query("local") == Some("1");
+            // `commands=1` (0.76): a phone that knows `send` and line breaks in the text.
+            let commands = req.query("commands") == Some("1");
             let samples = match crate::voice::wav_samples(&body) {
                 Ok(s) => s,
                 Err(e) => return send_json(r.get_mut(), 400, &json!({ "error": e })),
             };
-            match crate::dictate::transcribe(&hub, &samples, &lang, cleanup, local) {
+            match crate::dictate::transcribe(&hub, &samples, &lang, cleanup, commands, local) {
                 Ok(d) => {
                     let mut v = json!({ "text": d.text, "host": d.host });
+                    if d.send {
+                        v["send"] = json!(true);
+                    }
                     if let Some(raw) = d.raw {
                         v["raw"] = json!(raw);
                     }
@@ -1823,6 +1828,8 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             };
             if req.method == "PUT" {
                 crate::dictate::set(None, v["cleanup"].as_bool(), v["keep_loaded_min"].as_u64(), true);
+                let dict = v.get("dictionary").filter(|d| d.is_array()).map(crate::dictwords::parse);
+                crate::dictate::set_words(v["commands"].as_bool(), dict, true);
                 wake();
                 send_json(r.get_mut(), 200, &crate::dictate::status(&hub.mesh.me().name))
             } else {

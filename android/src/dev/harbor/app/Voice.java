@@ -43,7 +43,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *  (POST /v1/voice/cleanup) and replace what was dictated, unless it was edited meanwhile. A hub
  *  before 0.55 (404 on GET /v1/voice) gets the whole dictation when you stop, uncleaned. A
  *  phone whose ABI the APK has no sherpa-onnx library for records the whole dictation for the PC.
- *  Asks for the microphone the first time. Never sends anything by itself. Log tag: HarborVoice. */
+ *  Asks for the microphone the first time. The hub spells its dictionary's words and takes the
+ *  spoken commands out (0.76, `commands=1`): a phrase ending with "press enter" or a last one
+ *  that is only "send"/"enviar" ends the dictation and sends the message (`onSend`), "new line"
+ *  alone is a line break. Phrases this phone transcribes itself get the same (Words, with the
+ *  hub's last dictionary). Log tag: HarborVoice. */
 final class Voice {
     static final int PERMISSION = 44;
     /** (code, label): the language setting (Settings › Dictation), kept on this phone. */
@@ -60,6 +64,10 @@ final class Voice {
     private final TextView time, said;
     private final Meter meter;
     Runnable onState;
+    /** Sends the composer's message: a dictation that ended with the send command. */
+    Runnable onSend;
+    /** This dictation said the send command. */
+    private boolean sendAfter;
 
     /** Recording (until stop), then finishing (phrases still out, then the cleanup). */
     private volatile boolean recording;
@@ -127,6 +135,32 @@ final class Voice {
 
     private static String langParam(Context c) { String l = lang(c); return "auto".equals(l) ? "" : l; }
 
+    /** The hub's dictionary and commands switch (GET /v1/voice), kept for offline phrases. */
+    static void keepWords(Context c, JSONObject v) {
+        if (v == null || !v.has("dictionary")) return;
+        org.json.JSONArray d = v.optJSONArray("dictionary");
+        Ui.prefs(c).edit().putString("voice_dict", d == null ? "[]" : d.toString()).putBoolean("voice_commands", v.optBoolean("commands", true)).apply();
+    }
+
+    private static java.util.List<Words.Entry> dictionary(Context c) {
+        java.util.List<Words.Entry> out = new java.util.ArrayList<>();
+        try {
+            org.json.JSONArray d = new org.json.JSONArray(Ui.prefs(c).getString("voice_dict", "[]"));
+            for (int i = 0; i < d.length(); i++) {
+                JSONObject e = d.optJSONObject(i);
+                if (e == null || e.optString("term").isEmpty()) continue;
+                java.util.List<String> snd = new java.util.ArrayList<>();
+                org.json.JSONArray sa = e.optJSONArray("sounds");
+                for (int j = 0; sa != null && j < sa.length(); j++) snd.add(sa.optString(j));
+                out.add(new Words.Entry(e.optString("term"), snd));
+            }
+        } catch (org.json.JSONException ignored) { }
+        return out;
+    }
+
+    /** Spaces and tabs off the ends, line breaks kept ("new line" comes back as "\n"). */
+    private static String strip(String s) { return s.replaceAll("^[ \\t]+|[ \\t]+$", ""); }
+
     /** The mic button: start, or stop (the last phrase is still transcribed). */
     void toggle() {
         long now = SystemClock.uptimeMillis();
@@ -186,6 +220,7 @@ final class Voice {
         warm = false;
         problem = null;
         told = false;
+        sendAfter = false;
         info = null;
         oldHub = false;
         synchronized (held) { held.clear(); }
@@ -203,7 +238,7 @@ final class Voice {
         final boolean phrases = Asr.available();
         log("start, phrases " + phrases + ", offline model " + (Asr.ready(a) ? "ready" : "none"));
         Ui.pool.execute(() -> {
-            try { info = hub.call("GET", "/v1/voice", null, 5000); log("hub voice " + info); }
+            try { info = hub.call("GET", "/v1/voice", null, 5000); log("hub voice " + info); keepWords(a, info); }
             catch (Exception ex) {
                 oldHub = ex instanceof Hub.ApiError && ((Hub.ApiError) ex).code == 404;
                 log("no /v1/voice: " + ex.getMessage() + (oldHub ? " (an older hub)" : ""));
@@ -294,6 +329,7 @@ final class Voice {
             return;
         }
         String text = null, where = null;
+        boolean send = false;
         boolean local = hubFails >= 2 && Asr.ready(a);
         if (!local) {
             final byte[] w = wav(samples);
@@ -307,7 +343,8 @@ final class Voice {
             Future<JSONObject> f = Ui.pool.submit(() -> hub.transcribe(w, langParam(a), raw, (int) budget + 2000));
             try {
                 JSONObject j = f.get(budget, TimeUnit.MILLISECONDS);
-                text = j.optString("text", "").trim();
+                text = strip(j.optString("text", ""));
+                send = j.optBoolean("send");
                 where = j.optString("host", host());
                 hubFails = 0;
                 warm = true;
@@ -330,13 +367,30 @@ final class Voice {
             text = Asr.transcribe(a, samples, langParam(a));
             where = "this phone";
             if (text == null) log("offline model not ready");
+            else {
+                text = Words.apply(text, dictionary(a));
+                if (Ui.prefs(a).getBoolean("voice_commands", true)) {
+                    String[] c = Words.commands(text);
+                    text = strip(c[0]);
+                    send = "1".equals(c[1]);
+                }
+            }
         }
         final String t = text, from = where;
+        final boolean sends = send;
         log("phrase → " + (t == null ? "nothing" : "\"" + t + "\" on " + from));
         Ui.main.post(() -> {
+            if (sends && g == gen) {
+                // "…press enter" / "enviar": the dictation ends here, and the message goes.
+                log("send command");
+                sendAfter = true;
+                stop();
+            }
             if (t != null && !t.isEmpty()) {
                 put(t);
                 if (g == gen && recording) said.setText(t);
+            } else if (sends) {
+                // Only the command: nothing to put in.
             } else if (t == null && problem != null && g == gen && !told) {
                 Ui.toast(a, Asr.available() && !Asr.ready(a) ? problem + " The offline model isn't on this phone yet." : problem);
                 told = true;
@@ -364,7 +418,7 @@ final class Voice {
         // The first dictation asks for the offline model (on Wi-Fi, in the background).
         if (Asr.available() && !Asr.wanted(a) && !Asr.ready(a)) Asr.want(a);
         JSONObject i = info;
-        if (text.isEmpty() || i == null || !i.optBoolean("cleanup")) { done(text.isEmpty()); return; }
+        if (text.isEmpty() || i == null || !i.optBoolean("cleanup")) { done(text.isEmpty() && !sendAfter); return; }
         said.setText("Cleaning up on " + host() + "…");
         Ui.pool.execute(() -> {
             String clean = null;
@@ -422,6 +476,7 @@ final class Voice {
         show(false);
         if (nothing && !told && !a.isFinishing()) Ui.toast(a, "Didn't catch any words");
         problem = null;
+        if (sendAfter && !a.isFinishing() && onSend != null) { sendAfter = false; onSend.run(); }
     }
 
     // ---- into the text ----
@@ -435,11 +490,12 @@ final class Voice {
             mark = new Object();
             e.setSpan(mark, at, at, Spanned.SPAN_MARK_POINT);
         }
-        boolean before = at > 0 && !Character.isWhitespace(e.charAt(at - 1));
-        boolean after = at < e.length() && !Character.isWhitespace(e.charAt(at));
+        boolean before = at > 0 && !Character.isWhitespace(e.charAt(at - 1)) && !text.startsWith("\n");
+        boolean after = at < e.length() && !Character.isWhitespace(e.charAt(at)) && !text.endsWith("\n");
         e.insert(at, (before ? " " : "") + text + (after ? " " : ""));
         edit.setSelection(Math.min(e.length(), at + (before ? 1 : 0) + text.length()));
-        if (dictated.length() > 0) dictated.append(' ');
+        int n = dictated.length();
+        if (n > 0 && dictated.charAt(n - 1) != '\n' && !text.startsWith("\n")) dictated.append(' ');
         dictated.append(text);
     }
 

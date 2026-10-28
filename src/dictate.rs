@@ -28,11 +28,15 @@ struct Settings {
     /// "parakeet" (default) or "whisper".
     engine: String,
     cleanup: bool,
+    /// Spoken commands ("press enter", "new line"; dictwords.rs).
+    commands: bool,
+    /// The personal dictionary (kv `voice_dict`).
+    dict: Vec<crate::dictwords::Entry>,
     /// Changed through the API: the UI thread saves them (`take_dirty`).
     dirty: bool,
 }
 
-static SETTINGS: Mutex<Settings> = Mutex::new(Settings { engine: String::new(), cleanup: true, dirty: false });
+static SETTINGS: Mutex<Settings> = Mutex::new(Settings { engine: String::new(), cleanup: true, commands: true, dict: vec![], dirty: false });
 
 /// The PC's own Claude login, for the cleanup pass: (binary, environment). Mirrored by the UI
 /// thread, which knows the accounts.
@@ -44,6 +48,26 @@ pub fn engine() -> &'static str {
 
 pub fn cleanup_on() -> bool {
     SETTINGS.lock().unwrap().cleanup
+}
+
+pub fn commands_on() -> bool {
+    SETTINGS.lock().unwrap().commands
+}
+
+pub fn dictionary() -> Vec<crate::dictwords::Entry> {
+    SETTINGS.lock().unwrap().dict.clone()
+}
+
+/// Changes the commands setting and the dictionary; `api`: from a phone.
+pub fn set_words(commands: Option<bool>, dict: Option<Vec<crate::dictwords::Entry>>, api: bool) {
+    let mut s = SETTINGS.lock().unwrap();
+    if let Some(c) = commands {
+        s.commands = c;
+    }
+    if let Some(d) = dict {
+        s.dict = d;
+    }
+    s.dirty |= api;
 }
 
 /// Changes the settings; `api`: from a phone (the UI thread then saves them).
@@ -61,10 +85,10 @@ pub fn set(engine: Option<&str>, cleanup: Option<bool>, keep_min: Option<u64>, a
     s.dirty |= api;
 }
 
-/// Settings a phone changed since the last call: (cleanup, keep minutes).
-pub fn take_dirty() -> Option<(bool, u64)> {
+/// Settings a phone changed since the last call: (cleanup, keep minutes, commands, dictionary).
+pub fn take_dirty() -> Option<(bool, u64, bool, Vec<crate::dictwords::Entry>)> {
     let mut s = SETTINGS.lock().unwrap();
-    std::mem::take(&mut s.dirty).then(|| (s.cleanup, crate::parakeet::keep_min()))
+    std::mem::take(&mut s.dirty).then(|| (s.cleanup, crate::parakeet::keep_min(), s.commands, s.dict.clone()))
 }
 
 pub fn set_account(a: Option<(String, Vec<(String, Option<String>)>)>) {
@@ -112,6 +136,8 @@ pub fn status(host: &str) -> Value {
         "cleanup": cleanup_on(),
         "keep_loaded_min": crate::parakeet::keep_min(),
         "host": host,
+        "commands": commands_on(),
+        "dictionary": crate::dictwords::to_json(&dictionary()),
     });
     if let Some(p) = progress {
         v["progress"] = json!(p);
@@ -151,12 +177,13 @@ pub fn local(samples: &[i16], lang: &str) -> Result<String, Fail> {
 
 // ------------------------------------------------------------------ the mesh
 
-/// What a transcription came to: the text, the text before cleanup (when it ran), and the PC
-/// that transcribed it.
+/// What a transcription came to: the text, the text before cleanup (when it ran), the PC
+/// that transcribed it, and whether it ended with the send command.
 pub struct Done {
     pub text: String,
     pub raw: Option<String>,
     pub host: String,
+    pub send: bool,
 }
 
 /// Where to transcribe, best first: `None` is this PC. Pure, for tests: `here` is this PC's
@@ -225,16 +252,21 @@ fn here_score() -> u64 {
     mem_available_mb() + if loaded { crate::parakeet::model_mb() } else { 0 }
 }
 
-/// Transcribes on the best PC (or only here, `local_only`), then cleans up when asked.
-pub fn transcribe(hub: &crate::api::Hub, samples: &[i16], lang: &str, cleanup: bool, local_only: bool) -> Result<Done, Fail> {
+/// Transcribes on the best PC (or only here, `local_only`), spells the dictionary's terms,
+/// takes the spoken commands out (`commands`, when they're on), then cleans up when asked.
+pub fn transcribe(hub: &crate::api::Hub, samples: &[i16], lang: &str, cleanup: bool, commands: bool, local_only: bool) -> Result<Done, Fail> {
     let me = hub.mesh.me().name;
     let me = if me.is_empty() { crate::remote::hostname() } else { me };
     let (text, host) = if local_only { (local(samples, lang)?, me) } else { routed(hub, samples, lang, &me)? };
+    let dict = dictionary();
+    let text = crate::dictwords::apply(&text, &dict);
+    // Before the cleanup, which could reword "press enter" away.
+    let (text, send) = if commands && commands_on() { crate::dictwords::commands(&text) } else { (text, false) };
     if !cleanup || text.trim().is_empty() {
-        return Ok(Done { text, raw: None, host });
+        return Ok(Done { text, raw: None, host, send });
     }
     let clean = cleanup_text(&text);
-    Ok(Done { text: clean, raw: Some(text), host })
+    Ok(Done { text: clean, raw: Some(text), host, send })
 }
 
 fn routed(hub: &crate::api::Hub, samples: &[i16], lang: &str, me: &str) -> Result<(String, String), Fail> {
@@ -288,29 +320,54 @@ Rewrite it as the speaker meant it:
 - Apply spoken self-corrections: when the speaker corrects themselves (\"no wait\", \"I mean\", \"actually\", \"quer dizer\", \"não, espera\"), keep only the corrected version.
 - Fix punctuation, capitalisation and obvious transcription slips; keep paragraph breaks the speaker asked for.
 - Keep everything else the speaker said, in their words: hedges and opinions (\"I think\", \"maybe\") are content, not filler. Keep their tone and meaning. Never translate, summarise, shorten, add content, or answer questions in the text.
-- The speaker may switch languages (for example Portuguese and English) between sentences or inside one. Keep every word in the language it was spoken, even when most of the text is in another language: never translate any part, and never \"fix\" a word into the other language.
+- The speaker may switch languages (for example Portuguese and English) between sentences or inside one. Keep every word in the language it was spoken, even when most of the text is in another language: never translate any part, and never \"fix\" a word into the other language. For example, \"então tipo o deploy failed again and I don't know why\" becomes \"Então o deploy failed again and I don't know why.\": the English stays English.
 
 Reply with only the cleaned text, nothing else.";
 
-/// The text cleaned up by Haiku through the PC's Claude account; the input itself when there's
-/// no account, the call fails or times out, or the answer doesn't look like a cleanup.
-pub fn cleanup_text(text: &str) -> String {
-    let raw = text.trim();
-    if raw.split_whitespace().count() < 3 {
-        return raw.to_string();
+/// The cleanup's instructions, with the dictionary's terms when there are any.
+fn cleanup_system(dict: &[crate::dictwords::Entry]) -> String {
+    if dict.is_empty() {
+        return CLEANUP_SYSTEM.to_string();
     }
-    let Some((bin, env)) = ACCOUNT.lock().unwrap().clone() else { return raw.to_string() };
-    match crate::recap::ask_within(bin, env, CLEANUP_SYSTEM, format!("<dictation>\n{raw}\n</dictation>"), CLEANUP_TIMEOUT) {
-        Ok(t) if plausible(raw, &t) => t.trim().to_string(),
-        _ => raw.to_string(),
+    let terms: Vec<String> = dict.iter().map(|e| if e.sounds.is_empty() { e.term.clone() } else { format!("{} (may sound like: {})", e.term, e.sounds.join(", ")) }).collect();
+    format!(
+        "{CLEANUP_SYSTEM}\n\nThe speaker's dictionary, names and terms spelled exactly like this:\n- {}\nWhen the transcript has a word or a few words that sound like one of these but are spelled differently, write the term exactly as it is here. Change nothing else for it.",
+        terms.join("\n- ")
+    )
+}
+
+/// The text cleaned up by Haiku through the PC's Claude account; the input itself when there's
+/// no account, the call fails or times out, or the answer doesn't look like a cleanup. The
+/// dictionary's terms are spelled exactly either way.
+pub fn cleanup_text(text: &str) -> String {
+    let dict = dictionary();
+    let raw = crate::dictwords::apply(text.trim(), &dict);
+    if raw.split_whitespace().count() < 3 {
+        return raw;
+    }
+    let Some((bin, env)) = ACCOUNT.lock().unwrap().clone() else { return raw };
+    match crate::recap::ask_within(bin, env, &cleanup_system(&dict), format!("<dictation>\n{raw}\n</dictation>"), CLEANUP_TIMEOUT) {
+        Ok(t) if plausible_with(&raw, &t, &dict) => crate::dictwords::apply(t.trim(), &dict),
+        Ok(_) => {
+            eprintln!("harbor: the dictation cleanup changed too much (translated?); kept the raw text");
+            raw
+        }
+        Err(_) => raw,
     }
 }
 
 /// A cleanup only removes and fixes: an empty answer, one much longer than the input, or one with
 /// many words the speaker didn't say (a translation of what they said in another language) is not one.
+#[cfg(test)]
 pub fn plausible(raw: &str, clean: &str) -> bool {
+    plausible_with(raw, clean, &[])
+}
+
+/// …where the dictionary's terms count as said.
+fn plausible_with(raw: &str, clean: &str, dict: &[crate::dictwords::Entry]) -> bool {
     let c = clean.trim();
-    !c.is_empty() && c.chars().count() <= raw.chars().count() * 6 / 5 + 20 && !c.starts_with("<dictation>") && new_words(raw, c) <= (words(c).len() / 6).max(1)
+    let said = std::iter::once(raw.to_string()).chain(dict.iter().map(|e| e.term.clone())).collect::<Vec<_>>().join(" ");
+    !c.is_empty() && c.chars().count() <= raw.chars().count() * 6 / 5 + 20 && !c.starts_with("<dictation>") && new_words(&said, c) <= (words(c).len() / 6).max(1)
 }
 
 /// Lowercase words, without punctuation.
@@ -439,23 +496,23 @@ mod tests {
         let theirs = score(&peer_v.1).expect("peer can transcribe");
         // Much less free memory here: the peer transcribes.
         mem(&(theirs / 4).to_string());
-        let d = transcribe(&hub, &samples, "auto", false, false).unwrap();
+        let d = transcribe(&hub, &samples, "auto", false, false, false).unwrap();
         eprintln!("low memory here → {}: {}", d.host, d.text);
         assert_eq!(d.host, f[2]);
         assert!(!d.text.is_empty());
         // A near tie (within 10%): here. (The peer has the model loaded now: it counts it.)
         let theirs = score(&crate::mesh::http(&b.dest(), "GET", "/mesh/v1/voice", None, ASK_WAIT).unwrap().1).unwrap();
         mem(&(theirs * 95 / 100).to_string());
-        let d = transcribe(&hub, &samples, "auto", false, false).unwrap();
+        let d = transcribe(&hub, &samples, "auto", false, false, false).unwrap();
         eprintln!("near tie → {}", d.host);
         assert_eq!(d.host, "rig-a");
         // `local`: never forwarded.
         mem("1");
-        assert_eq!(transcribe(&hub, &samples, "auto", false, true).unwrap().host, "rig-a");
+        assert_eq!(transcribe(&hub, &samples, "auto", false, false, true).unwrap().host, "rig-a");
         // The peer unreachable: skipped, here as the last resort.
         hub.mesh.peers.lock().unwrap().get_mut("rig-b").unwrap().addr = "127.0.0.1:9".into();
         let t0 = std::time::Instant::now();
-        let d = transcribe(&hub, &samples, "auto", false, false).unwrap();
+        let d = transcribe(&hub, &samples, "auto", false, false, false).unwrap();
         eprintln!("peer down → {} in {:?}", d.host, t0.elapsed());
         assert_eq!(d.host, "rig-a");
     }
@@ -477,6 +534,7 @@ mod tests {
         set_account(None);
     }
 
+    // The Claude tests share the account: run them with --test-threads=1.
     #[test]
     #[ignore = "calls Claude through this PC's account"]
     fn cleanup_with_claude_keeps_mixed_languages() {
@@ -491,6 +549,33 @@ mod tests {
             assert_eq!(new_words(raw, &clean), 0, "{clean}");
         }
         set_account(None);
+    }
+
+    #[test]
+    #[ignore = "calls Claude through this PC's account"]
+    fn cleanup_with_claude_spells_dictionary_terms() {
+        set_account(Some(("claude".into(), vec![])));
+        let dict = crate::dictwords::parse(&json!([{"term": "SpokPay"}, {"term": "SpokPayCRM"}, {"term": "Harbor"}]));
+        set_words(None, Some(dict), false);
+        for (raw, want) in [
+            ("um so the spoke pay checkout is broken and the spook pay see are em too", ["SpokPay", "SpokPayCRM"]),
+            ("então eu abri o harbour no celular e o spock pay não carregou", ["Harbor", "SpokPay"]),
+        ] {
+            let clean = cleanup_text(raw);
+            eprintln!("{raw}\n→ {clean}");
+            for w in want {
+                assert!(clean.contains(w), "{w} missing: {clean}");
+            }
+        }
+        set_words(None, Some(vec![]), false);
+        set_account(None);
+    }
+
+    #[test]
+    fn dictionary_terms_count_as_said() {
+        let dict = crate::dictwords::parse(&json!([{"term": "SpokPayCRM"}]));
+        assert!(plausible_with("open the spook pay see are em", "Open the SpokPayCRM.", &dict));
+        assert!(!plausible("open the spook pay see are em now", "Open the SpokPayCRM thing quickly now."));
     }
 
     #[test]
