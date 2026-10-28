@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-10-28
+
 ### Added
 - Steer and Queue, side by side (modeled on T3 Code), on the desktop, the phone and from other
   PCs. While the agent works, a message either **steers** it (Claude takes it in at once, ending
@@ -1542,7 +1544,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.70.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.71.0...HEAD
+[0.71.0]: https://github.com/RDevNeo/harbor/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/RDevNeo/harbor/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/RDevNeo/harbor/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/RDevNeo/harbor/compare/v0.67.2...v0.68.0
