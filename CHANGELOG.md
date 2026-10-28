@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-10-28
+
 ### Added
 - Phone: snooze a chat. Long-press it in the list for Snooze…, a sheet with the desktop menu's
   presets (1 hour, 3 hours, Tomorrow 9:00, Next week), a field for a time of your own ("5h",
@@ -1677,7 +1679,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.77.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.78.0...HEAD
+[0.78.0]: https://github.com/RDevNeo/harbor/compare/v0.77.0...v0.78.0
 [0.77.0]: https://github.com/RDevNeo/harbor/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/RDevNeo/harbor/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/RDevNeo/harbor/compare/v0.74.2...v0.75.0
