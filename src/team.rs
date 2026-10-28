@@ -39,6 +39,17 @@ pub fn local_hm(ts: i64) -> String {
         .unwrap_or_default()
 }
 
+/// The local zone's offset from UTC at `ts`, in seconds (summer time included).
+pub fn utc_offset(ts: i64) -> i64 {
+    #[allow(unsafe_code)] // localtime_r: the local zone, no crate for it
+    unsafe {
+        let t = ts as libc::time_t;
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm.tm_gmtoff as i64
+    }
+}
+
 /// "11:40 AM" in local time (offset from `date +%z`, read once).
 pub fn clock(ts: i64) -> String {
     static OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();

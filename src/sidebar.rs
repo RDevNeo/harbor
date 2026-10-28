@@ -224,6 +224,7 @@ impl App {
             let c = c.tip("Snooze");
             if c.clicked() {
                 self.snooze_for = key.to_string();
+                self.snooze_text.clear();
                 self.popup = Some(Popup::Snooze);
                 self.popup_anchor = c.rect;
             }
@@ -285,16 +286,40 @@ impl App {
     pub fn snooze_menu(&mut self, ui: &mut Ui) {
         w::subtle(ui, "  Snooze until", "label-12");
         let now = crate::store::now();
+        let off = crate::team::utc_offset(now);
         // Tomorrow 9:00 local time.
-        let hm = crate::team::local_hm(now);
-        let mut parts = hm.split(':').map(|x| x.parse::<i64>().unwrap_or(0));
-        let (h, m) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
-        let tomorrow = now - (h * 3600 + m * 60) - now % 60 + 86400 + 9 * 3600;
+        let tomorrow = now - (now + off).rem_euclid(86400) + 86400 + 9 * 3600;
         let mut pick: Option<Option<i64>> = None;
         for (label, until) in [("1 hour", now + 3600), ("3 hours", now + 3 * 3600), ("Tomorrow, 9:00", tomorrow), ("Next week", tomorrow + 6 * 86400)] {
             if w::menu_item(ui, ic::CLOCK, label, None, false).clicked() {
                 pick = Some(Some(until));
             }
+        }
+        w::separator(ui);
+        // A time typed by hand (parse_snooze): Enter or the check button applies it; text
+        // that doesn't read as a time keeps the field focused and shows what does.
+        let (custom, apply) = ui
+            .horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let r = w::input(ui, &mut self.snooze_text, "Custom: 5h, 2d, 18:00", false, ui.available_width() - 40.0);
+                let custom = parse_snooze(&self.snooze_text, now, off);
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if enter && custom.is_none() {
+                    r.request_focus();
+                }
+                let ok = w::btn(ic::CHECK).muted().icon().enabled(custom.is_some()).show(ui).tip("Snooze until then").clicked();
+                (custom, enter || ok)
+            })
+            .inner;
+        if !self.snooze_text.trim().is_empty() {
+            let line = match custom {
+                Some(until) => format!("  until {}", snooze_label(until, now, off)),
+                None => "  Try 5h, 1h30m, 2d or 18:00".into(),
+            };
+            w::subtle(ui, line, "label-12");
+        }
+        if let Some(until) = custom.filter(|_| apply) {
+            pick = Some(Some(until));
         }
         if self.snoozed.contains_key(&self.snooze_for) {
             w::separator(ui);
@@ -309,6 +334,7 @@ impl App {
                 None => self.snoozed.remove(&key),
             };
             self.save_snoozed();
+            self.snooze_text.clear();
             self.popup = None;
         }
     }
@@ -728,6 +754,91 @@ impl App {
     }
 }
 
+/// When a snooze typed by hand ends (unix s), `off` being the local zone's UTC offset: a
+/// duration ("5h", "90m", "1h30m", "1h30", "1.5h", "2d", "1w"; a bare number is hours) or a
+/// local clock time ("18:00", "6:30pm", "9am", "at 9"), the next time it comes round (today
+/// while still ahead, else tomorrow). None for anything else, under a minute or over a year.
+pub fn parse_snooze(text: &str, now: i64, off: i64) -> Option<i64> {
+    let s = text.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase();
+    if let Some(at) = s.strip_prefix("at") {
+        return clock_time(at, true).map(|t| next_local(t, now, off));
+    }
+    if let Some(t) = clock_time(&s, false) {
+        return Some(next_local(t, now, off));
+    }
+    let secs = duration(s.strip_prefix("in").unwrap_or(&s))?;
+    (60..=365 * 86400).contains(&secs).then_some(now + secs)
+}
+
+/// Seconds after local midnight for "18:00", "6:30pm", "9am" (and a bare "9" when `bare`).
+fn clock_time(s: &str, bare: bool) -> Option<i64> {
+    let (s, half) = match (s.strip_suffix("am"), s.strip_suffix("pm")) {
+        (Some(x), _) => (x, Some(0)),
+        (_, Some(x)) => (x, Some(12)),
+        _ => (s, None),
+    };
+    let (h, m) = match s.split_once(':') {
+        Some((h, m)) if m.len() == 2 => (h, m),
+        None if half.is_some() || bare => (s, "0"),
+        _ => return None,
+    };
+    let digits = |x: &str| !x.is_empty() && x.len() <= 2 && x.bytes().all(|b| b.is_ascii_digit());
+    if !digits(h) || !digits(m) {
+        return None;
+    }
+    let (h, m): (i64, i64) = (h.parse().ok()?, m.parse().ok()?);
+    let h = match half {
+        Some(pm) if (1..=12).contains(&h) => h % 12 + pm,
+        None if h < 24 => h,
+        _ => return None,
+    };
+    (m < 60).then_some(h * 3600 + m * 60)
+}
+
+/// The next moment local clock time `t` (seconds after midnight) comes round after `now`.
+fn next_local(t: i64, now: i64, off: i64) -> i64 {
+    let ahead = t - (now + off).rem_euclid(86400);
+    now + if ahead > 0 { ahead } else { ahead + 86400 }
+}
+
+/// Seconds in "1h30m", "90m", "1.5h", "2d", "1w" (units m, h, d, w, also as "min", "hours",
+/// ...): a bare number is hours, and one after hours is minutes ("1h30").
+fn duration(s: &str) -> Option<i64> {
+    let (mut rest, mut total, mut last) = (s, 0.0, 0.0);
+    while !rest.is_empty() {
+        let n = rest.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len());
+        let (num, tail) = rest.split_at(n);
+        let u = tail.find(|c: char| c.is_ascii_digit() || c == '.').unwrap_or(tail.len());
+        let (unit, tail) = tail.split_at(u);
+        let num: f64 = num.parse().ok()?;
+        let unit = match unit {
+            "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3600.0,
+            "d" | "day" | "days" => 86400.0,
+            "w" | "wk" | "week" | "weeks" => 604800.0,
+            "" if tail.is_empty() && last == 0.0 => 3600.0,
+            "" if tail.is_empty() && last == 3600.0 => 60.0,
+            _ => return None,
+        };
+        (total, last, rest) = (total + num * unit, unit, tail);
+    }
+    total.is_finite().then(|| total.round() as i64)
+}
+
+/// How the snooze menu names a time: "Today, 23:40", "Tomorrow, 9:00", "Thu, 14:00" within
+/// the week, "Mon 9 Nov, 14:00" after; `off` is the local zone's UTC offset.
+pub fn snooze_label(until: i64, now: i64, off: i64) -> String {
+    let (day, t) = ((until + off).div_euclid(86400), (until + off).rem_euclid(86400));
+    let hm = format!("{}:{:02}", t / 3600, t % 3600 / 60);
+    let date = crate::cost::day_label(day);
+    match day - (now + off).div_euclid(86400) {
+        0 => format!("Today, {hm}"),
+        1 => format!("Tomorrow, {hm}"),
+        2..=6 => format!("{}, {hm}", &date[..3]),
+        _ => format!("{date}, {hm}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,5 +915,71 @@ mod tests {
     fn same_update_time_orders_newest_id_first() {
         let t = tree(&[7], &[chat(1, Some(7), Role::Lead, 5), chat(2, Some(7), Role::Lead, 5)], &|_| false);
         assert_eq!(t.projects[0].2, vec![2, 1]);
+    }
+
+    /// Wednesday 2026-10-28 14:20:00 UTC.
+    const NOW: i64 = 1_793_197_200;
+    const H: i64 = 3600;
+
+    #[test]
+    fn snooze_durations() {
+        let p = |s: &str| parse_snooze(s, NOW, 0).map(|t| t - NOW);
+        assert_eq!(p("5h"), Some(5 * H));
+        assert_eq!(p("90m"), Some(90 * 60));
+        assert_eq!(p("1h30m"), Some(90 * 60));
+        assert_eq!(p("1h30"), Some(90 * 60));
+        assert_eq!(p("1.5h"), Some(90 * 60));
+        assert_eq!(p("2d"), Some(48 * H));
+        assert_eq!(p("1w"), Some(7 * 24 * H));
+        assert_eq!(p("1d12h"), Some(36 * H));
+        assert_eq!(p("3"), Some(3 * H));
+        assert_eq!(p(" 2 H 15 min "), Some(2 * H + 15 * 60));
+        assert_eq!(p("45 minutes"), Some(45 * 60));
+        assert_eq!(p("in 5h"), Some(5 * H));
+        assert_eq!(p("365d"), Some(365 * 24 * H));
+        assert_eq!(p("1m"), Some(60));
+    }
+
+    #[test]
+    fn snooze_clock_times_are_the_next_one() {
+        let p = |s: &str| parse_snooze(s, NOW, 0).map(|t| t - NOW);
+        // Still ahead today.
+        assert_eq!(p("18:00"), Some(3 * H + 40 * 60));
+        assert_eq!(p("6pm"), Some(3 * H + 40 * 60));
+        assert_eq!(p("6:30 PM"), Some(4 * H + 10 * 60));
+        assert_eq!(p("at 16"), Some(H + 40 * 60));
+        assert_eq!(p("14:21"), Some(60));
+        // Gone today: tomorrow.
+        assert_eq!(p("9:30"), Some(19 * H + 10 * 60));
+        assert_eq!(p("9am"), Some(18 * H + 40 * 60));
+        assert_eq!(p("14:20"), Some(24 * H));
+        assert_eq!(p("12pm"), Some(21 * H + 40 * 60));
+        assert_eq!(p("12am"), Some(9 * H + 40 * 60));
+        assert_eq!(p("0:00"), Some(9 * H + 40 * 60));
+        // Local time three hours behind UTC: it's 11:20 there.
+        assert_eq!(parse_snooze("18:00", NOW, -3 * H).map(|t| t - NOW), Some(6 * H + 40 * 60));
+        assert_eq!(parse_snooze("9:00", NOW, -3 * H).map(|t| t - NOW), Some(21 * H + 40 * 60));
+        // ... and five and a half ahead: 19:50.
+        assert_eq!(parse_snooze("19:00", NOW, 5 * H + 1800).map(|t| t - NOW), Some(23 * H + 10 * 60));
+    }
+
+    #[test]
+    fn snooze_text_that_is_no_time() {
+        for s in ["", "  ", "abc", "h", "5x", "0", "0h", "0.5m", "-5h", "30s", "366d", "53w", "2y", "1.2.3h", "5h-", "1d30", "25:00", "18:60", "18:5", "13pm", "0am", "18:00pm", "at", "at 5h", "+5h"] {
+            assert_eq!(parse_snooze(s, NOW, 0), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn snooze_labels() {
+        let l = |until: i64| snooze_label(until, NOW, 0);
+        assert_eq!(l(NOW + H), "Today, 15:20");
+        assert_eq!(l(NOW + 9 * H + 39 * 60), "Today, 23:59");
+        assert_eq!(l(NOW + 9 * H + 40 * 60), "Tomorrow, 0:00");
+        assert_eq!(l(NOW + 18 * H + 40 * 60), "Tomorrow, 9:00");
+        assert_eq!(l(NOW + 3 * 24 * H), "Sat, 14:20");
+        assert_eq!(l(NOW + 10 * 24 * H), "Sat 7 Nov, 14:20");
+        // Local time: 11:20 three hours behind UTC, so 22:20 is still today there.
+        assert_eq!(snooze_label(NOW + 11 * H, NOW, -3 * H), "Today, 22:20");
     }
 }

@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Snooze a chat or project until a time you type (desktop): the snooze menu has a field under
+  its presets for a duration ("5h", "90m", "1h30m", "1.5h", "2d", "1w"; a bare number is hours)
+  or a clock time ("18:00", "6pm", "at 9": the next one, today or tomorrow). It shows when the
+  snooze ends as you type ("until Thu, 14:00"); Enter or the check button applies it.
+
 ## [0.74.2] - 2026-10-28
 
 ### Fixed

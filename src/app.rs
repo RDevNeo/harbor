@@ -167,6 +167,8 @@ pub struct App {
     /// Hidden until a time: "c<chat id>" / "r<project id>" → unix seconds.
     pub snoozed: HashMap<String, i64>,
     pub snooze_for: String,
+    /// The snooze menu's custom time as typed ("5h", "18:00"); empty when it opens.
+    pub snooze_text: String,
     pub add_project: Option<crate::addproject::AddProject>,
     /// Project icons: the project's website icon (None = none, use a monogram).
     pub avatars: HashMap<i64, Option<egui::TextureHandle>>,
@@ -353,6 +355,7 @@ impl App {
             failed: HashSet::new(),
             snoozed: HashMap::new(),
             snooze_for: String::new(),
+            snooze_text: String::new(),
             add_project: None,
             avatars: HashMap::new(),
             tx,
