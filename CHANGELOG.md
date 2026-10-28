@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-10-28
+
 ### Added
 - Agents can see the Harbor version on every device (#85): the `machines` server's `list` now
   ends with each PC's Harbor version and update status (managed install or not, latest release,
@@ -1498,7 +1500,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.67.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.68.0...HEAD
+[0.68.0]: https://github.com/RDevNeo/harbor/compare/v0.67.2...v0.68.0
 [0.67.2]: https://github.com/RDevNeo/harbor/compare/v0.67.1...v0.67.2
 [0.67.1]: https://github.com/RDevNeo/harbor/compare/v0.67.0...v0.67.1
 [0.67.0]: https://github.com/RDevNeo/harbor/compare/v0.66.0...v0.67.0
