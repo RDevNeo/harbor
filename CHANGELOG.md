@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-10-28
+
 ### Added
 - Dictation dictionary (desktop Settings › Voice › Dictionary, phone Settings › Dictionary): names
   and terms the speech model can't know ("SpokPay", "SpokPayCRM") come out spelled exactly, with
@@ -1651,7 +1653,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.75.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.76.0...HEAD
+[0.76.0]: https://github.com/RDevNeo/harbor/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/RDevNeo/harbor/compare/v0.74.2...v0.75.0
 [0.74.2]: https://github.com/RDevNeo/harbor/compare/v0.74.1...v0.74.2
 [0.74.1]: https://github.com/RDevNeo/harbor/compare/v0.74.0...v0.74.1
