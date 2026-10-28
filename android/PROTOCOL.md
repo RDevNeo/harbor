@@ -362,7 +362,9 @@ refetch everything.
   "chats": [14, 12]}], "threads": [9], "settled": [3]}`, chat ids in display order. Each project
   lists all its unsettled leads, newest first, as siblings; `threads` are leads with no project
   (or a project the hub doesn't have); `settled` holds every settled lead. Sub-agents and
-  snoozed chats are in none of them; a `snoozed` project shows only while searching. Without
+  snoozed chats are in none of them; a `snoozed` project shows only while searching. From 0.78
+  `snoozed` (optional) lists the snoozed unsettled leads: a search shows the matching ones back
+  in their project (or Threads, when the project isn't in `projects`), as the desktop does. Without
   `tree`, group `chats` by `project_id` and `settled` as before. With `X-Harbor-Ids: global`
   its chats are gids and its projects paths from 0.64.1; hubs 0.55.2 to 0.64.0 left this hub's
   ids there, so when `tree` places none of the chats, ignore it and group as without it.
@@ -421,6 +423,11 @@ refetch everything.
   chat's title, "Worktree · <branch>" (the branch from `GET /v1/workspace`, else the name;
   "Worktree gone"; a new chat headed for one: "New worktree · from <base>"); the phone does the
   same in its list and under its title. Tapping the chip opens the workspace sheet.
+- `snoozed_until_ms` / `snoozed_label` (optional, 0.78; missing: an older hub, so offer no
+  Snooze): the chat is snoozed out of this hub's sidebar until then, and that time as the
+  desktop's row says it ("Tomorrow, 9:00", "Thu, 14:00"); both null when it isn't. Such a chat is
+  in `tree.snoozed`, shown only while searching, its row marked with the clock glyph and the label
+  (see [Snooze](#snooze-078)).
 
 ### `GET /v1/chats/{id}/items?since=<rev>`
 
@@ -912,6 +919,31 @@ change in the next state) with a `notice` (`icon: "monitor"`, "Moved here from �
 notice (`icon: "alert"`, "Couldn't move to …: why"). The target refuses when it has no project
 for the chat's repository (matched by git remote, then folder or project name) or no Claude
 account that can take it. Messages sent while it moves follow it.
+
+### Snooze (0.78)
+
+The desktop sidebar's clock menu ("Snooze until"): a snoozed chat leaves the list until its time
+comes, then comes back unread (`unread: true`). A snooze belongs to the hub's sidebar, which is
+the phone's list: the phone and that PC's desktop hide the same chats, and a snooze from either
+shows on both. It's never forwarded to a copy's home PC (another PC's list, maybe another
+person's, keeps the chat). Offer it on unsettled leads when the chat has `snoozed_until_ms`
+(older hubs: no Snooze).
+
+`GET /v1/snooze?text=<typed>&off=<seconds east of UTC>&chat=<id>` → `{"presets": [{"label":
+"1 hour", "until_ms"}, {"label": "3 hours"}, {"label": "Tomorrow, 9:00"}, {"label": "Next
+week"}], "text": "5h", "until_ms": 1793…|null, "preview": "until Today, 23:40", "snoozed":
+"until Thu, 14:00"|null}`. All parts are optional. `off` is the phone's zone, so clock times and
+labels follow it; without it the hub uses its own. `text` (echoed back, to drop stale answers)
+is the custom field: a duration ("5h", "90m", "1h30m", "1h30", "1.5h", "2d", "1w"; units m, h,
+d, w; a bare number is hours) or a clock time ("18:00", "6pm", "at 9": the next one, today or
+tomorrow). Under a minute or over a year is no time. `preview` is the line under the field:
+"until …" when it reads as a time (`until_ms` set), "Try 5h, 1h30m, 2d or 18:00" when it doesn't,
+"" when empty. `snoozed`: until when `chat` is snoozed now, null when it isn't.
+
+`POST /v1/chats/{id}/snooze` `{"until_ms": N}` (a preset's) or `{"text": "5h", "off": N}` (the
+field's) → `{"ok": true, "snoozed_until_ms", "snoozed_label"}`; `400 {"error"}` for text that
+isn't a time ("Try 5h, 1h30m, 2d or 18:00") or a time not within the next year.
+`DELETE /v1/chats/{id}/snooze` wakes it now → `{"ok": true, "snoozed_until_ms": null, …}`.
 
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 

@@ -2585,7 +2585,7 @@ impl App {
             let n = subs.get(&c.id).copied().unwrap_or(0);
             let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
             let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queue_hash(c.id));
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c))));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -2866,14 +2866,53 @@ impl App {
     pub fn api_route(&mut self, call: &Call, ctx: &egui::Context) -> Reply {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
         // A copy is written on its home PC only (mesh.rs forwards it there while it answers).
-        // (A move says it moves there instead: movechat.rs. A mention only reads the copy.)
-        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && !matches!(p.get(3), Some(&"move" | &"mention")) {
+        // (A move says it moves there instead: movechat.rs. A mention only reads the copy. A
+        // snooze is this PC's sidebar's.)
+        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && !matches!(p.get(3), Some(&"move" | &"mention" | &"snooze")) {
             if let Some(c) = self.chat_by_ref(p[2]).filter(|c| c.foreign()) {
                 return err(409, format!("{} is off: this chat is read-only until it's back", self.home_name(c)));
             }
         }
         match (call.method.as_str(), p.as_slice()) {
             ("GET", ["v1", "state"]) => ok(self.api_state(ctx, &device_id(&call.token))),
+            // The snooze sheet (0.78): the desktop menu's presets and what the typed `text` means,
+            // in the phone's zone (`off`, seconds east of UTC; this PC's without it); `chat`
+            // names a chat to say until when it's snoozed.
+            ("GET", ["v1", "snooze"]) => {
+                let now = store::now();
+                let off = call.query("off").and_then(|s| s.parse().ok()).unwrap_or_else(|| crate::team::utc_offset(now));
+                let text = call.query("text").unwrap_or("");
+                let (until, preview) = crate::sidebar::snooze_preview(text, now, off);
+                let presets: Vec<Value> = crate::sidebar::snooze_presets(now, off).iter().map(|(l, u)| json!({ "label": l, "until_ms": u * 1000 })).collect();
+                let snoozed = call.query("chat").and_then(|c| self.ref_id(c)).and_then(|c| self.snooze_until(&format!("c{c}")));
+                let snoozed = snoozed.map(|u| format!("until {}", crate::sidebar::snooze_label(u, now, off)));
+                ok(json!({ "presets": presets, "text": text, "until_ms": until.map(|u| u * 1000), "preview": preview, "snoozed": snoozed }))
+            }
+            // Snoozes a chat out of this PC's sidebar, which the phone's drawer shows (0.78):
+            // `{until_ms}` (a preset) or `{text, off?}` (the custom field). DELETE wakes it.
+            ("POST", ["v1", "chats", c, "snooze"]) => {
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                let now = store::now();
+                let off = call.body["off"].as_i64().unwrap_or_else(|| crate::team::utc_offset(now));
+                let until = match (call.body["until_ms"].as_i64(), call.body["text"].as_str()) {
+                    (Some(ms), _) => match ms / 1000 {
+                        u if u > now && u <= now + 366 * 86400 => u,
+                        _ => return err(400, "pick a time within the next year"),
+                    },
+                    (None, Some(t)) => match crate::sidebar::parse_snooze(t, now, off) {
+                        Some(u) => u,
+                        None => return err(400, "Try 5h, 1h30m, 2d or 18:00"),
+                    },
+                    _ => return err(400, "until_ms or text"),
+                };
+                self.set_snooze(&format!("c{c}"), Some(until));
+                ok(json!({ "ok": true, "snoozed_until_ms": until * 1000, "snoozed_label": self.snoozed_label(c) }))
+            }
+            ("DELETE", ["v1", "chats", c, "snooze"]) => {
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                self.set_snooze(&format!("c{c}"), None);
+                ok(json!({ "ok": true, "snoozed_until_ms": null, "snoozed_label": null }))
+            }
             ("GET", ["v1", "chats", c, "items"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_items(c, call.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
                 None => err(404, "no such chat"),
@@ -3164,7 +3203,7 @@ impl App {
                             *x = gid(x);
                         }
                     }
-                    for k in ["threads", "settled"] {
+                    for k in ["threads", "settled", "snoozed"] {
                         for x in t.get_mut(k).and_then(|c| c.as_array_mut()).into_iter().flatten() {
                             *x = gid(x);
                         }
@@ -3379,6 +3418,10 @@ impl App {
             // It runs in a worktree of its own (worktree.rs): the folder's name, its path (null
             // for another PC's chat) and whether it's gone (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| json!({ "name": m.name, "path": m.path.map(|p| p.to_string_lossy().into_owned()), "gone": m.gone })),
+            // Snoozed out of this PC's sidebar until then, and that time as its row says it
+            // ("Tomorrow, 9:00"); null when it isn't (optional, 0.78: there = /snooze answers).
+            "snoozed_until_ms": self.snooze_until(&format!("c{}", c.id)).map(|u| u * 1000),
+            "snoozed_label": self.snoozed_label(c.id),
         })
     }
 
@@ -3445,6 +3488,8 @@ impl App {
             "projects": t.projects.iter().map(|(id, snoozed, chats)| json!({ "id": id, "snoozed": snoozed, "chats": chats })).collect::<Vec<_>>(),
             "threads": t.threads,
             "settled": t.settled,
+            // Snoozed chats, out of the lists above: a search shows them in their places (0.78).
+            "snoozed": t.snoozed,
         });
         let accounts: Vec<Value> = self
             .accounts

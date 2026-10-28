@@ -15,7 +15,8 @@ use eframe::egui::{self, Align, CornerRadius, FontId, Id, Layout, Rect, ScrollAr
 /// `tree`), so both place chats the same way. Each project lists all its unsettled leads, newest
 /// first, as siblings (no chat hides behind the project row); leads of no project, or of a
 /// project this PC doesn't have, are Threads; settled leads go to Settled whatever their
-/// project. Sub-agents live inside their lead's chat; snoozed chats stay out until they wake.
+/// project. Sub-agents live inside their lead's chat; snoozed chats stay out until they wake
+/// (or a search shows them, back in their project).
 #[derive(Debug, Default, PartialEq)]
 pub struct Tree {
     /// (project, snoozed, its chats) in the sidebar's order; a snoozed project shows only
@@ -23,6 +24,8 @@ pub struct Tree {
     pub projects: Vec<(i64, bool, Vec<i64>)>,
     pub threads: Vec<i64>,
     pub settled: Vec<i64>,
+    /// Unsettled leads snoozed out of the places above: they show only while searching.
+    pub snoozed: Vec<i64>,
 }
 
 /// The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `snoozed` takes the
@@ -35,6 +38,7 @@ pub fn tree(repos: &[i64], chats: &[crate::store::Chat], snoozed: &dyn Fn(&str) 
         if c.settled {
             t.settled.push(c.id);
         } else if snoozed(&format!("c{}", c.id)) {
+            t.snoozed.push(c.id);
         } else if let Some(p) = t.projects.iter_mut().find(|p| Some(p.0) == c.repo_id) {
             p.2.push(c.id);
         } else {
@@ -103,9 +107,21 @@ impl App {
         }
     }
 
-    /// A chat row's status: its own, else when it was last active.
+    /// A chat row's status: its own, else when it was last active (a snoozed one, shown while
+    /// searching: when it wakes).
     fn chat_status(&self, c: &crate::store::Chat) -> w::Status {
-        self.own_status(c.id, w::Status::Text(ago(c.updated), self.theme.t.gray(800)))
+        let idle = match self.snoozed_label(c.id) {
+            Some(l) => format!("{} {l}", ic::CLOCK),
+            None => ago(c.updated),
+        };
+        self.own_status(c.id, w::Status::Text(idle, self.theme.t.gray(800)))
+    }
+
+    /// When a snoozed chat wakes, as its row says it ("Tomorrow, 9:00"); None when it isn't.
+    pub fn snoozed_label(&self, chat: i64) -> Option<String> {
+        let until = self.snooze_until(&format!("c{chat}"))?;
+        let now = crate::store::now();
+        Some(snooze_label(until, now, crate::team::utc_offset(now)))
     }
 
     /// One chat in the sidebar: title and its status; on hover, snooze and Settle
@@ -259,7 +275,21 @@ impl App {
     }
 
     pub fn is_snoozed(&self, key: &str) -> bool {
-        self.snoozed.get(key).is_some_and(|until| *until > crate::store::now())
+        self.snooze_until(key).is_some()
+    }
+
+    /// When a snooze ("c<chat>" / "r<project>") ends, while it hasn't yet.
+    pub fn snooze_until(&self, key: &str) -> Option<i64> {
+        self.snoozed.get(key).copied().filter(|until| *until > crate::store::now())
+    }
+
+    /// Snoozes `key` until then, or wakes it (None): the desktop's menu and the phone's sheet.
+    pub fn set_snooze(&mut self, key: &str, until: Option<i64>) {
+        match until {
+            Some(until) => self.snoozed.insert(key.to_string(), until),
+            None => self.snoozed.remove(key),
+        };
+        self.save_snoozed();
     }
 
     /// Brings snoozed chats and projects back when their time comes, marked unread.
@@ -287,10 +317,8 @@ impl App {
         w::subtle(ui, "  Snooze until", "label-12");
         let now = crate::store::now();
         let off = crate::team::utc_offset(now);
-        // Tomorrow 9:00 local time.
-        let tomorrow = now - (now + off).rem_euclid(86400) + 86400 + 9 * 3600;
         let mut pick: Option<Option<i64>> = None;
-        for (label, until) in [("1 hour", now + 3600), ("3 hours", now + 3 * 3600), ("Tomorrow, 9:00", tomorrow), ("Next week", tomorrow + 6 * 86400)] {
+        for (label, until) in snooze_presets(now, off) {
             if w::menu_item(ui, ic::CLOCK, label, None, false).clicked() {
                 pick = Some(Some(until));
             }
@@ -311,12 +339,9 @@ impl App {
                 (custom, enter || ok)
             })
             .inner;
-        if !self.snooze_text.trim().is_empty() {
-            let line = match custom {
-                Some(until) => format!("  until {}", snooze_label(until, now, off)),
-                None => "  Try 5h, 1h30m, 2d or 18:00".into(),
-            };
-            w::subtle(ui, line, "label-12");
+        let line = snooze_preview(&self.snooze_text, now, off).1;
+        if !line.is_empty() {
+            w::subtle(ui, format!("  {line}"), "label-12");
         }
         if let Some(until) = custom.filter(|_| apply) {
             pick = Some(Some(until));
@@ -329,11 +354,7 @@ impl App {
         }
         if let Some(p) = pick {
             let key = self.snooze_for.clone();
-            match p {
-                Some(until) => self.snoozed.insert(key, until),
-                None => self.snoozed.remove(&key),
-            };
-            self.save_snoozed();
+            self.set_snooze(&key, p);
             self.snooze_text.clear();
             self.popup = None;
         }
@@ -433,6 +454,8 @@ impl App {
         let tree = self.sidebar_tree();
         let chat = |id: &i64| self.chat(*id).cloned();
         let matches = |c: &crate::store::Chat| q.is_empty() || c.title.to_lowercase().contains(&q);
+        // While searching, snoozed chats show too, back in their places.
+        let asleep: Vec<crate::store::Chat> = if q.is_empty() { vec![] } else { tree.snoozed.iter().filter_map(chat).collect() };
         let mut active: Vec<(Repo, Vec<crate::store::Chat>)> = vec![];
         for (rid, snoozed, ids) in &tree.projects {
             let Some(r) = self.repos.iter().find(|r| r.id == *rid) else { continue };
@@ -440,12 +463,14 @@ impl App {
                 continue;
             }
             let named = r.name.to_lowercase().contains(&q);
-            let cs: Vec<crate::store::Chat> = ids.iter().filter_map(chat).filter(|c| named || matches(c)).collect();
+            let mine = asleep.iter().filter(|c| c.repo_id == Some(*rid)).cloned();
+            let cs: Vec<crate::store::Chat> = ids.iter().filter_map(chat).chain(mine).filter(|c| named || matches(c)).collect();
             if q.is_empty() || named || !cs.is_empty() {
                 active.push((r.clone(), cs));
             }
         }
-        let loose: Vec<crate::store::Chat> = tree.threads.iter().filter_map(chat).filter(|c| matches(c)).collect();
+        let homeless = asleep.iter().filter(|c| !tree.projects.iter().any(|p| Some(p.0) == c.repo_id)).cloned();
+        let loose: Vec<crate::store::Chat> = tree.threads.iter().filter_map(chat).chain(homeless).filter(|c| matches(c)).collect();
         // Only chats settle; projects always stay in the list above.
         let settled_chats: Vec<crate::store::Chat> = tree.settled.iter().filter_map(chat).collect();
         let n_settled = settled_chats.len();
@@ -754,6 +779,25 @@ impl App {
     }
 }
 
+/// The snooze menu's presets, (label, until), `off` being the local zone's UTC offset.
+pub fn snooze_presets(now: i64, off: i64) -> [(&'static str, i64); 4] {
+    // Tomorrow 9:00 local time.
+    let tomorrow = now - (now + off).rem_euclid(86400) + 86400 + 9 * 3600;
+    [("1 hour", now + 3600), ("3 hours", now + 3 * 3600), ("Tomorrow, 9:00", tomorrow), ("Next week", tomorrow + 6 * 86400)]
+}
+
+/// What the snooze menu says under its custom field: when the typed text's snooze ends
+/// ("until Today, 23:40") or, for text that isn't a time, what is; "" while it's empty.
+pub fn snooze_preview(text: &str, now: i64, off: i64) -> (Option<i64>, String) {
+    let until = parse_snooze(text, now, off);
+    let line = match until {
+        Some(u) => format!("until {}", snooze_label(u, now, off)),
+        None if text.trim().is_empty() => String::new(),
+        None => "Try 5h, 1h30m, 2d or 18:00".into(),
+    };
+    (until, line)
+}
+
 /// When a snooze typed by hand ends (unix s), `off` being the local zone's UTC offset: a
 /// duration ("5h", "90m", "1h30m", "1h30", "1.5h", "2d", "1w"; a bare number is hours) or a
 /// local clock time ("18:00", "6:30pm", "9am", "at 9"), the next time it comes round (today
@@ -909,6 +953,8 @@ mod tests {
         let chats = [chat(1, Some(7), Role::Lead, 1), chat(2, Some(7), Role::Lead, 2), chat(3, Some(8), Role::Lead, 3)];
         let t = tree(&[7, 8], &chats, &|k| k == "c2" || k == "r8");
         assert_eq!(t.projects, vec![(7, false, vec![1]), (8, true, vec![3])]);
+        // Out of its project, kept apart for a search.
+        assert_eq!(t.snoozed, vec![2]);
     }
 
     #[test]
@@ -968,6 +1014,17 @@ mod tests {
         for s in ["", "  ", "abc", "h", "5x", "0", "0h", "0.5m", "-5h", "30s", "366d", "53w", "2y", "1.2.3h", "5h-", "1d30", "25:00", "18:60", "18:5", "13pm", "0am", "18:00pm", "at", "at 5h", "+5h"] {
             assert_eq!(parse_snooze(s, NOW, 0), None, "{s:?}");
         }
+    }
+
+    #[test]
+    fn snooze_presets_and_preview() {
+        let p = snooze_presets(NOW, 0).map(|(l, u)| (l, u - NOW));
+        assert_eq!(p, [("1 hour", H), ("3 hours", 3 * H), ("Tomorrow, 9:00", 18 * H + 40 * 60), ("Next week", 6 * 24 * H + 18 * H + 40 * 60)]);
+        // Three hours behind UTC it's 11:20: tomorrow 9:00 there is 21:40 away.
+        assert_eq!(snooze_presets(NOW, -3 * H)[2].1 - NOW, 21 * H + 40 * 60);
+        assert_eq!(snooze_preview("5h", NOW, 0), (Some(NOW + 5 * H), "until Today, 19:20".to_string()));
+        assert_eq!(snooze_preview("5hx", NOW, 0), (None, "Try 5h, 1h30m, 2d or 18:00".to_string()));
+        assert_eq!(snooze_preview("  ", NOW, 0), (None, String::new()));
     }
 
     #[test]

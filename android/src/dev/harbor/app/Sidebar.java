@@ -227,6 +227,12 @@ final class Sidebar {
             }
             loose = pick(byId, tree.optJSONArray("threads"));
             settled = pick(byId, tree.optJSONArray("settled"));
+            // Snoozed chats (0.78): out of the list until they wake; a search shows them back in
+            // their places, as the desktop's does.
+            if (!q.isEmpty()) for (JSONObject c : pick(byId, tree.optJSONArray("snoozed"))) {
+                List<JSONObject> g = groups.get(c.isNull("project_id") ? "" : c.optString("project_id"));
+                (g != null ? g : loose).add(c);
+            }
         } else {
             List<JSONObject> chats = new ArrayList<>(byId.values());
             chats.sort((x, y) -> Long.compare(y.optLong("updated_ms"), x.optLong("updated_ms")));
@@ -540,6 +546,11 @@ final class Sidebar {
             TextView m = Ui.icon(a, Ui.I_FOLDER_GIT, 14, wt.optBoolean("gone") ? Ui.RED : Ui.G700);
             m.setContentDescription("Worktree " + wt.optString("name"));
             r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        }
+        // Snoozed (shown while searching): when it wakes, as the desktop row says it.
+        if (!c.isNull("snoozed_until_ms")) {
+            r.addView(Ui.icon(a, Ui.I_CLOCK, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 8, 0, 0, 0));
+            r.addView(Ui.text(a, c.optString("snoozed_label"), 12, Ui.G600), Ui.margins(Ui.wrap(), 4, 0, 0, 0));
         }
         boolean typing = typing(c, you) != null;
         int q = Hub.queued(c);

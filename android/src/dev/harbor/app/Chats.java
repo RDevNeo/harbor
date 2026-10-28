@@ -98,12 +98,20 @@ public class Chats extends Base {
         boolean settled = c.optBoolean("settled");
         // Sub-agents move with their lead: no "Move to PC…" on them.
         boolean sub = "sub".equals(c.optString("role"));
-        String[] items = sub ? new String[]{"Rename", settled ? "Unsettle" : "Settle", "Delete"}
-                : new String[]{"Rename", settled ? "Unsettle" : "Settle", "Move to PC…", "Delete"};
-        Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items, (d, w) -> {
+        // Snooze, the desktop row's clock: unsettled leads, on hubs that have it (0.78).
+        boolean snooze = !sub && !settled && c.has("snoozed_until_ms");
+        List<String> items = new ArrayList<>();
+        items.add("Rename");
+        items.add(settled ? "Unsettle" : "Settle");
+        if (snooze) items.add(c.isNull("snoozed_until_ms") ? "Snooze…" : "Snoozed · " + c.optString("snoozed_label"));
+        if (!sub) items.add("Move to PC…");
+        items.add("Delete");
+        Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items.toArray(new String[0]), (d, w) -> {
+            String it = items.get(w);
             if (w == 0) rename(a, hub, c, after);
             else if (w == 1) Ui.bg(a, () -> hub.call("PATCH", "/v1/chats/" + id, new JSONObject().put("settled", !settled)), r -> after.run());
-            else if (!sub && w == 2) movePc(a, hub, c, after);
+            else if (it.startsWith("Snooze")) Snooze.sheet(a, hub, c, after);
+            else if (it.equals("Move to PC…")) movePc(a, hub, c, after);
             else Ui.dialog(a).setTitle("Delete this chat?")
                     .setMessage("“" + c.optString("title") + "” and its transcript are removed on the PC. A running turn is stopped first.")
                     .setNegativeButton("Cancel", null)
