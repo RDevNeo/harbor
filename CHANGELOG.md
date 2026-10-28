@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.72.3] - 2026-10-28
+
 ### Fixed
 - Phone: the chat header no longer repeats "Worktree · branch" under the title when the bar under
   the composer already shows the worktree and branch. It still shows for another PC's chat and
@@ -1592,7 +1594,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.72.3...HEAD
+[0.72.3]: https://github.com/RDevNeo/harbor/compare/v0.72.2...v0.72.3
 [0.72.2]: https://github.com/RDevNeo/harbor/compare/v0.72.1...v0.72.2
 [0.72.1]: https://github.com/RDevNeo/harbor/compare/v0.72.0...v0.72.1
 [0.72.0]: https://github.com/RDevNeo/harbor/compare/v0.71.0...v0.72.0
