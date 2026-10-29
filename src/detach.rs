@@ -340,46 +340,157 @@ pub fn run(args: &[String]) {
         use std::os::unix::fs::OpenOptionsExt;
         std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(dir.join(name))
     };
-    let (Ok(out), Ok(err)) = (open("out"), open("err")) else { return };
     let input = spec["input"].as_bool() == Some(true);
-    cmd.stdin(if input { Stdio::piped() } else { Stdio::null() }).stdout(out).stderr(err);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = writeln!(std::fs::OpenOptions::new().append(true).open(dir.join("err")).unwrap(), "{}: {e}", spec["program"].as_str().unwrap_or(""));
-            let _ = std::fs::write(dir.join("exit"), "127");
-            return;
+    let remote = Path::new(spec["program"].as_str().unwrap_or_default()).file_name().is_some_and(|n| n == "ssh");
+    let device = var(DEVICE);
+    cmd.env_remove(DEVICE);
+    // A device ssh couldn't connect to (a changed address, a Wi-Fi blip) is tried again for
+    // a while; ssh resolves its name anew each time. Nothing ran there yet, so it's safe.
+    let started = Instant::now();
+    let mut wait = RETRY_FIRST;
+    let mut tries = 0;
+    let code = loop {
+        tries += 1;
+        let (Ok(out), Ok(err)) = (open("out"), open("err")) else { return };
+        let before = out.metadata().map(|m| m.len()).unwrap_or(0);
+        cmd.stdin(if input { Stdio::piped() } else { Stdio::null() }).stdout(out);
+        cmd.stderr(if remote { Stdio::piped() } else { Stdio::from(err) });
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = writeln!(std::fs::OpenOptions::new().append(true).open(dir.join("err")).unwrap(), "{}: {e}", spec["program"].as_str().unwrap_or(""));
+                let _ = std::fs::write(dir.join("exit"), "127");
+                return;
+            }
+        };
+        let fed = child.stdin.take().map(|sin| feed(sin, &dir));
+        if !remote {
+            break child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
         }
-    };
-    // Input: whatever is appended to `in`, until `in.closed` and all of it is passed on.
-    if let Some(mut sin) = child.stdin.take() {
-        let dir = dir.clone();
-        std::thread::spawn(move || {
-            let mut pos = 0u64;
-            loop {
-                let closed = dir.join("in.closed").exists();
-                let mut chunk = vec![];
-                if let Ok(mut f) = std::fs::File::open(dir.join("in")) {
-                    if f.seek(SeekFrom::Start(pos)).is_ok() {
-                        let _ = f.read_to_end(&mut chunk);
-                    }
-                }
-                if !chunk.is_empty() {
-                    pos += chunk.len() as u64;
-                    if sin.write_all(&chunk).and_then(|_| sin.flush()).is_err() {
-                        return;
-                    }
-                } else if closed {
-                    return; // drops stdin: the agent sees the end of its input
-                } else {
-                    std::thread::sleep(POLL);
+        let held = child.stderr.take().map(|e| pass_stderr(e, &dir, before));
+        let code = wait_remote(&mut child, &dir);
+        if let Some(f) = fed {
+            f.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        // Lines ssh printed before it got anywhere, held back from the chat.
+        let held = held.and_then(|rx| rx.recv_timeout(Duration::from_secs(2)).ok()).unwrap_or_default();
+        let grew = std::fs::metadata(dir.join("out")).map(|m| m.len()).unwrap_or(0) > before;
+        let why = held.iter().rev().find_map(|l| unreachable(l)).filter(|_| code == 255 && !grew);
+        let Some((host, reason)) = why else {
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(dir.join("err")) {
+                for l in &held {
+                    let _ = writeln!(f, "{l}");
                 }
             }
-        });
-    }
-    let remote = Path::new(spec["program"].as_str().unwrap_or_default()).file_name().is_some_and(|n| n == "ssh");
-    let code = if remote { wait_remote(&mut child, &dir) } else { child.wait().ok().and_then(|s| s.code()).unwrap_or(1) };
+            break code;
+        };
+        if started.elapsed() + wait <= RETRY_FOR && !dir.join("stopped").exists() {
+            std::thread::sleep(wait);
+            wait = (wait * 2).min(RETRY_MAX);
+            continue;
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(dir.join("err")) {
+            let _ = writeln!(f, "{}", unreachable_text(device.as_deref().unwrap_or(&host), &host, &reason, tries, started.elapsed()));
+        }
+        break code;
+    };
     let _ = std::fs::write(dir.join("exit"), code.to_string());
+}
+
+/// The env var that names a remote turn's device (agent.rs), for [`unreachable_text`].
+pub const DEVICE: &str = "HARBOR_DEVICE";
+/// How long a device ssh can't connect to is tried again, and the waits between tries.
+const RETRY_FOR: Duration = Duration::from_secs(if cfg!(test) { 2 } else { 30 });
+const RETRY_FIRST: Duration = Duration::from_millis(if cfg!(test) { 100 } else { 1000 });
+const RETRY_MAX: Duration = Duration::from_secs(8);
+
+/// Gives the agent its input: whatever is appended to `in`, from the start, until
+/// `in.closed` and all of it is passed on (or the returned flag is set: ssh is gone).
+fn feed(mut sin: std::process::ChildStdin, dir: &Path) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    let gone = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (dir, flag) = (dir.to_path_buf(), gone.clone());
+    std::thread::spawn(move || {
+        let mut pos = 0u64;
+        while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+            let closed = dir.join("in.closed").exists();
+            let mut chunk = vec![];
+            if let Ok(mut f) = std::fs::File::open(dir.join("in")) {
+                if f.seek(SeekFrom::Start(pos)).is_ok() {
+                    let _ = f.read_to_end(&mut chunk);
+                }
+            }
+            if !chunk.is_empty() {
+                pos += chunk.len() as u64;
+                if sin.write_all(&chunk).and_then(|_| sin.flush()).is_err() {
+                    return;
+                }
+            } else if closed {
+                return; // drops stdin: the agent sees the end of its input
+            } else {
+                std::thread::sleep(POLL);
+            }
+        }
+    });
+    gone
+}
+
+/// Copies ssh's stderr to `<dir>/err` as it comes, except the lines saying it couldn't
+/// connect while nothing came from the device yet (`out` still at `before`): those are
+/// sent once stderr ends, for the runner to try again or say so in plain words.
+fn pass_stderr(e: std::process::ChildStderr, dir: &Path, before: u64) -> std::sync::mpsc::Receiver<Vec<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dir = dir.to_path_buf();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut held = vec![];
+        let mut through = false;
+        let mut f = std::fs::OpenOptions::new().append(true).open(dir.join("err")).ok();
+        for line in std::io::BufReader::new(e).split(b'\n').map_while(Result::ok) {
+            let line = String::from_utf8_lossy(&line).trim_end_matches('\r').to_string();
+            through = through || std::fs::metadata(dir.join("out")).map(|m| m.len()).unwrap_or(0) > before;
+            if !through && unreachable(&line).is_some() {
+                held.push(line);
+                continue;
+            }
+            through = true;
+            if let Some(f) = f.as_mut() {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+        let _ = tx.send(held);
+    });
+    rx
+}
+
+/// ssh's line for a device it couldn't connect to: the host it dialed and why
+/// ("ssh: connect to host H port 22: No route to host", "ssh: Could not resolve hostname
+/// H: …"). None for anything else, such as a refused login.
+pub fn unreachable(line: &str) -> Option<(String, String)> {
+    const WHY: [&str; 7] = ["No route to host", "Connection timed out", "Connection refused", "Network is unreachable", "Host is down", "Operation timed out", "Name or service not known"];
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("ssh: connect to host ") {
+        let (host, why) = rest.split_once(": ")?;
+        let host = host.rsplit_once(" port ").map_or(host, |(h, _)| h);
+        return WHY.iter().any(|w| why.starts_with(w)).then(|| (host.to_string(), why.to_string()));
+    }
+    let rest = line.strip_prefix("ssh: Could not resolve hostname ")?;
+    let (host, why) = rest.split_once(": ").unwrap_or((rest, ""));
+    Some((host.to_string(), if why.is_empty() { "Name or service not known".into() } else { why.to_string() }))
+}
+
+/// The chat's error once a device couldn't be reached.
+fn unreachable_text(name: &str, host: &str, why: &str, tries: u32, took: Duration) -> String {
+    let (what, ask) = match why {
+        w if w.starts_with("No route to host") => ("no route to host", "Is it on and on the same network?"),
+        w if w.starts_with("Connection timed out") || w.starts_with("Operation timed out") => ("it didn't answer", "Is it on, awake and on the same network?"),
+        w if w.starts_with("Connection refused") => ("it refused the connection", "Is its SSH server (Remote Login on a Mac) on?"),
+        w if w.starts_with("Network is unreachable") => ("this PC's network is unreachable", "Is this PC online?"),
+        w if w.starts_with("Host is down") => ("the device is down", "Is it on and on the same network?"),
+        _ => ("its name didn't resolve", "Is it on and on the same network, and is the name right in Settings › Devices?"),
+    };
+    let at = if name.eq_ignore_ascii_case(host) { name.to_string() } else { format!("{name} ({host})") };
+    let tried = if tries > 1 { format!(" (tried {tries} times over {} s)", took.as_secs().max(1)) } else { String::new() };
+    format!("Couldn't reach {at}: {what}{tried}. {ask}")
 }
 
 /// The last line a device's script prints once the agent there has exited, with its exit
@@ -607,6 +718,82 @@ mod tests {
         assert!(follow(&dir, &meta, |l| lines.push(l.to_string()), |_| {}), "the turn ended as a success");
         assert!(!dir.join("stopped").exists());
         assert!(lines.iter().any(|l| l.contains("\"result\"")), "{lines:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ssh_lines_that_mean_the_device_is_out_of_reach() {
+        let r = |l: &str| unreachable(l).map(|(h, w)| format!("{h}|{w}"));
+        assert_eq!(r("ssh: connect to host mac.local port 22: No route to host").as_deref(), Some("mac.local|No route to host"));
+        assert_eq!(r("ssh: connect to host 10.0.0.5 port 2222: Connection timed out\r").as_deref(), Some("10.0.0.5|Connection timed out"));
+        assert_eq!(r("ssh: connect to host box port 22: Connection refused").as_deref(), Some("box|Connection refused"));
+        assert_eq!(r("ssh: connect to host box port 22: Network is unreachable").as_deref(), Some("box|Network is unreachable"));
+        assert_eq!(r("ssh: Could not resolve hostname mac.local: Name or service not known").as_deref(), Some("mac.local|Name or service not known"));
+        assert_eq!(r("ssh: Could not resolve hostname mac.local: Temporary failure in name resolution").as_deref(), Some("mac.local|Temporary failure in name resolution"));
+        // Got there: a login or anything later is no reason to try again.
+        for l in ["user@box: Permission denied (publickey).", "Host key verification failed.", "ssh: connect to host box port 22: Permission denied", "Connection to box closed by remote host.", "error: something"] {
+            assert_eq!(r(l), None, "{l}");
+        }
+        assert_eq!(
+            unreachable_text("Studio-Mac", "studio-mac.local", "No route to host", 4, Duration::from_secs(31)),
+            "Couldn't reach Studio-Mac (studio-mac.local): no route to host (tried 4 times over 31 s). Is it on and on the same network?"
+        );
+        assert_eq!(unreachable_text("box", "box", "Connection refused", 1, Duration::ZERO), "Couldn't reach box: it refused the connection. Is its SSH server (Remote Login on a Mac) on?");
+    }
+
+    /// A fake ssh (named so) that answers on try `ok` (0: never), saying `fail` until then;
+    /// it records its tries and its first line of input.
+    fn flaky_ssh(root: &Path, ok: u32, fail: &str) -> (PathBuf, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = root.join("7-1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ssh = root.join("ssh");
+        let tries = root.join("tries");
+        std::fs::write(
+            &ssh,
+            format!(
+                "#!/bin/sh\necho x >> '{t}'\nn=$(wc -l < '{t}')\nif [ \"$n\" != {ok} ]; then echo '{fail}' >&2; exit 255; fi\nread -r first\necho \"$first\" > '{t}.in'\necho 'Warning: Permanently added box' >&2\nprintf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"duration_ms\":5,\"num_turns\":1}}'\nexit 0\n",
+                t = tries.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = json!([[DEVICE, "Studio-Mac"]]);
+        std::fs::write(dir.join("cmd.json"), json!({ "program": ssh, "args": ["box", "cmd"], "input": true, "env": env }).to_string()).unwrap();
+        std::fs::write(dir.join("in"), "token\nhi\n").unwrap();
+        std::fs::write(dir.join("in.closed"), "").unwrap();
+        (dir, tries.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn a_device_out_of_reach_is_tried_again() {
+        let root = std::env::temp_dir().join(format!("harbor-reach-{}", crate::bridge::token().unwrap()));
+        let tries = |t: &str| std::fs::read_to_string(t).map(|s| s.lines().count()).unwrap_or(0);
+        // Fails twice (its address changed), then answers: the turn runs, with its whole
+        // input, and the chat never sees ssh's failures.
+        let (dir, t) = flaky_ssh(&root, 3, "ssh: connect to host mac.local port 22: No route to host");
+        run(&[dir.to_string_lossy().into_owned()]);
+        assert_eq!(std::fs::read_to_string(dir.join("exit")).unwrap(), "0");
+        assert_eq!(tries(&t), 3);
+        assert_eq!(std::fs::read_to_string(format!("{t}.in")).unwrap(), "token\n");
+        assert_eq!(std::fs::read_to_string(dir.join("err")).unwrap(), "Warning: Permanently added box\n");
+        assert!(std::fs::read_to_string(dir.join("out")).unwrap().contains("\"result\""));
+        let _ = std::fs::remove_dir_all(&root);
+        // Never answers: one plain error, after RETRY_FOR.
+        let (dir, t) = flaky_ssh(&root, 0, "ssh: connect to host mac.local port 22: Connection timed out");
+        let at = Instant::now();
+        run(&[dir.to_string_lossy().into_owned()]);
+        assert!(at.elapsed() < RETRY_FOR + Duration::from_secs(1), "{:?}", at.elapsed());
+        assert_eq!(std::fs::read_to_string(dir.join("exit")).unwrap(), "255");
+        let err = std::fs::read_to_string(dir.join("err")).unwrap();
+        assert!(err.starts_with("Couldn't reach Studio-Mac (mac.local): it didn't answer (tried ") && err.lines().count() == 1, "{err}");
+        assert!(tries(&t) >= 3, "{}", tries(&t));
+        let _ = std::fs::remove_dir_all(&root);
+        // A refused login isn't tried again, and its line is the error.
+        let (dir, t) = flaky_ssh(&root, 0, "user@box: Permission denied (publickey).");
+        run(&[dir.to_string_lossy().into_owned()]);
+        assert_eq!(tries(&t), 1);
+        assert_eq!(std::fs::read_to_string(dir.join("err")).unwrap(), "user@box: Permission denied (publickey).\n");
         let _ = std::fs::remove_dir_all(&root);
     }
 

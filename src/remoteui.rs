@@ -291,6 +291,7 @@ impl App {
         Ok(Some(crate::agent::Remote {
             ssh: remote::ssh_opts(&self.remote, &h),
             host: h.host.clone(),
+            name: h.label().to_string(),
             family: remote::family(&h.os),
             dir,
             setup,

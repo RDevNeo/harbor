@@ -26,6 +26,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - An image or video a reply shows still shows after the agent deletes the file (a screenshot in
   /tmp): when the reply ends Harbor keeps a copy (in its data folder, `media/kept`), and the
   desktop, other PCs and phones read that copy once the file is gone.
+- A chat on a device added by hand no longer dies on a brief network hiccup: when ssh can't
+  connect (no route to host, timed out, refused, unreachable, name not resolved), the turn tries
+  again for about 30 s, resolving the device's name anew each time (a Mac whose `.local` address
+  changed is found at its new one). Nothing ran there yet, so it's safe; a refused login isn't
+  tried again. If the device still can't be reached, the chat says so in plain words on the
+  desktop and the phone ("Couldn't reach My-Mac (my-mac.local): no route to host. Is it on and
+  on the same network?") instead of ssh's raw line.
 
 ## [0.85.0] - 2026-10-28
 

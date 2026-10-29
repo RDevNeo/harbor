@@ -198,6 +198,8 @@ pub struct Remote {
     /// ssh's options and destination.
     pub ssh: Vec<String>,
     pub host: String,
+    /// Its name in Settings › Devices, for errors.
+    pub name: String,
     /// How its shell is spoken to (remote.rs).
     pub family: crate::remote::Family,
     /// The folder there, and what runs before the agent starts.
@@ -607,6 +609,8 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
             .arg(launch.command);
         ssh.current_dir(if spec.cwd.is_dir() { spec.cwd.clone() } else { crate::store::home() });
         ssh.env("PATH", crate::providers::child_path());
+        // For the runner's error if the device can't be reached (it isn't passed on to ssh).
+        ssh.env(crate::detach::DEVICE, &r.name);
         cmd = ssh;
     }
     Ok((cmd, stdin, grant))
@@ -1260,6 +1264,7 @@ mod tests {
         let remote = |token: Option<&str>| Remote {
             ssh: vec!["-o".into(), "BatchMode=yes".into()],
             host: "box".into(),
+            name: "box".into(),
             family: crate::remote::Family::Posix,
             dir: "~".into(),
             setup: crate::remote::profile_setup(account.config_dir.as_deref()),
@@ -1332,7 +1337,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: host.host.clone(), family: crate::remote::Family::Posix, dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: host.host.clone(), name: host.label().into(), family: crate::remote::Family::Posix, dir: "/tmp".into(), setup: vec![], bridge: true, commands: true, workspace: false, token: None, note: "You run on a test device.".into() }),
             trusted: true,
             context: Default::default(),
         };
@@ -1399,7 +1404,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: host.host.clone(), family: crate::remote::Family::Posix, dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: host.host.clone(), name: host.label().into(), family: crate::remote::Family::Posix, dir: crate::remote::remote_dir(&host, Some(&repo)), setup: vec![], bridge: false, commands: false, workspace: true, token: None, note: "You run on a test device.".into() }),
             trusted: true,
             context: Default::default(),
         };
@@ -1477,7 +1482,7 @@ mod tests {
             team: None,
             fast: false,
             base: 0,
-            remote: Some(Remote { ssh, host: dest, family: crate::remote::family(&host.os), dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token, note: "You run on a test device.".into() }),
+            remote: Some(Remote { ssh, host: dest, name: host.label().into(), family: crate::remote::family(&host.os), dir: crate::remote::remote_dir(&host, Some(&dir)), setup: vec![], bridge: false, commands: false, workspace: true, token, note: "You run on a test device.".into() }),
             trusted: true,
             context: Default::default(),
         };
