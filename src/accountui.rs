@@ -123,7 +123,7 @@ impl App {
             });
             if st.signing_in && !st.url.is_empty() {
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     w::subtle(ui, "Waiting for the browser.", "label-13");
                     if w::btn("Open the page again").sm().outline().show(ui).clicked() {
                         crate::git::open_url(&st.url);
@@ -264,7 +264,7 @@ impl App {
                 ui.add_space(6.0);
                 let mut cancel = None;
                 for inv in &d.invites {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         w::subtle(ui, format!("Invited {} · {}", inv.email, ago(inv.at)), "label-13");
                         if w::btn(ic::X).muted().icon_xs().show(ui).tip("Cancel the invitation").clicked() {
                             cancel = Some(inv.id.clone());
@@ -345,7 +345,7 @@ impl App {
         let mut any = false;
         if st.expired && account::signed_in() {
             any = true;
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 w::badge(ui, "Sign in again", Tone::Amber);
                 w::subtle(ui, "Your sign-in ran out. Everything keeps working here; sign in again to sync settings and the workspace.", "label-13");
                 if !st.signing_in && w::btn("Sign in").sm().primary().show(ui).clicked() {
@@ -355,14 +355,14 @@ impl App {
         }
         if st.offline_since > 0 {
             any = true;
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 w::badge(ui, "Offline", Tone::Gray);
                 w::subtle(ui, format!("The account service hasn't answered since {}: working with what this PC has cached.", ago(st.offline_since)), "label-13");
             });
         }
         if !st.error.is_empty() {
             any = true;
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 w::badge(ui, "Account", Tone::Red);
                 w::subtle(ui, &st.error, "label-13");
             });

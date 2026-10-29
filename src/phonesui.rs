@@ -165,7 +165,7 @@ impl App {
         }
         if old > 0 {
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 w::subtle(ui, format!("{old} phone pairing{} from before Google accounts: they can only update the app, then sign in.", if old == 1 { "" } else { "s" }), "label-12");
                 if w::btn("Remove").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() {
                     let mut tokens = hub.tokens.lock().unwrap();

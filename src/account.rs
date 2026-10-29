@@ -51,6 +51,14 @@ const DIR_EVERY: Duration = Duration::from_secs(120);
 const PC_EVERY: Duration = Duration::from_secs(300);
 const SYNC_EVERY: Duration = Duration::from_secs(120);
 
+/// `HARBOR_ACCOUNT_LOG=1`: what the account loop does, on stderr (test rigs).
+fn log(what: impl FnOnce() -> String) {
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var("HARBOR_ACCOUNT_LOG").as_deref() == Ok("1"));
+    if *ON {
+        eprintln!("account: {}", what());
+    }
+}
+
 fn conf(env: &str, default: &str) -> String {
     std::env::var(env).ok().map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
 }
@@ -691,17 +699,19 @@ fn sign_in_flow() -> Result<(), String> {
         }
     };
     let pick = ws.is_empty() && s.account.workspaces.len() > 1;
+    // Everything before the account is published: a running Harbor (this one's loop, or the
+    // desktop when this is `harbor account login`) takes over from there.
+    crate::settingsync::signed_in();
+    if !ws.is_empty() {
+        let _ = register(&sec.token, &ws);
+    }
     set_account(Some(s.account.clone()), Some(ws.clone()));
     set_status(|st| st.pick = pick);
     if !s.joined.is_empty() {
         let joined = format!("You joined {}.", s.joined.join(", "));
         set_status(|st| st.notice = joined);
     }
-    crate::settingsync::signed_in();
     ENABLE.store(true, Ordering::SeqCst);
-    if !ws.is_empty() {
-        let _ = register(&sec.token, &ws);
-    }
     Ok(())
 }
 
@@ -710,10 +720,11 @@ fn set_account(a: Option<Account>, ws: Option<String>) {
     let store = if cfg!(test) { None } else { store::Store::open().ok() };
     let mut l = LIVE.write().unwrap();
     if let Some(s) = &store {
-        s.set("account", &a.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()).unwrap_or_default());
+        // The workspace first: whoever reads kv never sees an account without it.
         if let Some(ws) = &ws {
             s.set("account_ws", ws);
         }
+        s.set("account", &a.as_ref().map(|a| serde_json::to_string(a).unwrap_or_default()).unwrap_or_default());
     }
     l.account = a;
     if let Some(ws) = ws {
@@ -818,8 +829,10 @@ fn run_action(f: impl FnOnce(String) -> Result<(), Fail> + Send + 'static) {
 /// `POST /v1/pcs`: this PC's entry in its workspace's directory (also Option A's check).
 fn register(token: &str, ws: &str) -> Result<(), Fail> {
     let hub = crate::api::HUB.get();
-    let me = hub.map(|h| h.mesh.me()).unwrap_or_default();
-    let port = hub.map(|h| *h.port.lock().unwrap()).unwrap_or(crate::api::DEFAULT_PORT);
+    // From a terminal (no hub running here): the same id and port the desktop uses.
+    let me = hub.map(|h| h.mesh.me()).filter(|m| !m.id.is_empty()).unwrap_or_else(|| crate::mesh::read_me().0);
+    let kv_port = || store::Store::open().ok().and_then(|s| s.get("api_port")).and_then(|p| p.parse().ok());
+    let port = hub.map(|h| *h.port.lock().unwrap()).or_else(kv_port).unwrap_or(crate::api::DEFAULT_PORT);
     let name = if me.name.is_empty() { crate::remote::hostname() } else { me.name.clone() };
     let mut addrs = crate::mesh::my_addrs(port);
     addrs.truncate(16);
@@ -891,16 +904,7 @@ fn fetch_keys() {
 /// Loads what's cached and starts the account loop (once).
 pub fn start(s: &store::Store, wake: impl Fn() + Send + Sync + 'static) {
     let _ = WAKE.set(Box::new(wake));
-    {
-        let mut l = LIVE.write().unwrap();
-        l.account = s.get("account").and_then(|v| serde_json::from_str::<Account>(&v).ok()).filter(|a| !a.id.is_empty());
-        l.ws = s.get("account_ws").unwrap_or_default();
-        l.dir = s.get("account_dir").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
-        let keys: Vec<(String, String)> = s.get("account_keys").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
-        l.fetched_keys = keys.into_iter().filter_map(|(k, x)| b64url_decode(&x).filter(|b| b.len() == 32).map(|b| (k, b))).collect();
-        l.status.pick = l.account.as_ref().is_some_and(|a| l.ws.is_empty() && a.workspaces.len() > 1);
-    }
-    crate::settingsync::load(s);
+    load(s);
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         std::thread::spawn(|| {
@@ -920,6 +924,20 @@ pub fn start(s: &store::Store, wake: impl Fn() + Send + Sync + 'static) {
             }
         });
     });
+}
+
+/// What's cached: who is signed in, this PC's workspace and directory, the keys.
+fn load(s: &store::Store) {
+    {
+        let mut l = LIVE.write().unwrap();
+        l.account = s.get("account").and_then(|v| serde_json::from_str::<Account>(&v).ok()).filter(|a| !a.id.is_empty());
+        l.ws = s.get("account_ws").unwrap_or_default();
+        l.dir = s.get("account_dir").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+        let keys: Vec<(String, String)> = s.get("account_keys").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+        l.fetched_keys = keys.into_iter().filter_map(|(k, x)| b64url_decode(&x).filter(|b| b.len() == 32).map(|b| (k, b))).collect();
+        l.status.pick = l.account.as_ref().is_some_and(|a| l.ws.is_empty() && a.workspaces.len() > 1);
+    }
+    crate::settingsync::load(s);
 }
 
 #[derive(Default)]
@@ -946,6 +964,7 @@ fn follow_kv(t: &mut Timers) {
         l.account.as_ref().map(|a| &a.id) != kv.as_ref().map(|a| &a.id) || l.ws != ws
     };
     if changed {
+        log(|| format!("kv changed: account {:?} ws {ws:?}", kv.as_ref().map(|a| a.email.clone())));
         let came = kv.is_some() && !signed_in();
         {
             let mut l = LIVE.write().unwrap();
@@ -966,6 +985,7 @@ fn follow_kv(t: &mut Timers) {
 
 fn tick(t: &mut Timers) {
     follow_kv(t);
+    log(|| format!("tick: signed in {} ws {:?}", signed_in(), workspace()));
     if due(t.keys, Duration::from_secs(6 * 3600)) && (signed_in() || !workspace().is_empty()) {
         t.keys = Some(Instant::now());
         fetch_keys();
@@ -1009,17 +1029,25 @@ fn tick(t: &mut Timers) {
     if !ws.is_empty() && (due(t.pc, PC_EVERY) || addrs != t.addrs) {
         t.pc = Some(Instant::now());
         t.addrs = addrs;
-        result(register(&token, &ws));
+        let r = register(&token, &ws);
+        log(|| format!("register: {r:?}"));
+        result(r);
     }
     if due(t.dir, DIR_EVERY) {
         t.dir = Some(Instant::now());
-        result(fetch_directory(&token));
+        let r = fetch_directory(&token);
+        log(|| format!("directory: {r:?}"));
+        result(r);
     }
     let pull = due(t.pull, SYNC_EVERY);
     if pull {
         t.pull = Some(Instant::now());
     }
-    result(crate::settingsync::sync(&token, pull));
+    let r = crate::settingsync::sync(&token, pull);
+    if r.is_err() || pull {
+        log(|| format!("settings: {r:?}"));
+    }
+    result(r);
 }
 
 /// `GET`/`PUT /v1/settings` for settingsync.rs.
@@ -1053,11 +1081,7 @@ pub fn cli(args: &[String]) -> i32 {
     };
     match args.first().map(String::as_str).unwrap_or("status") {
         "login" => {
-            start(&s, || {});
-            {
-                let mut l = LIVE.write().unwrap();
-                l.account = None;
-            }
+            load(&s);
             std::thread::spawn(|| {
                 let mut shown = String::new();
                 loop {
@@ -1085,7 +1109,7 @@ pub fn cli(args: &[String]) -> i32 {
             }
         }
         "logout" => {
-            start(&s, || {});
+            load(&s);
             sign_out();
             println!("Signed out. This PC stays in its workspace.");
             0
