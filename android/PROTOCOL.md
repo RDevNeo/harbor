@@ -1292,7 +1292,10 @@ the phone can open or do. With an empty `q`, the recent picks (from any device) 
     {"id": "page:prs", "kind": "page", "page": "prs", "title": "Pull requests", "detail": "GitHub", "icon": "pr"}]}]}
 ```
 
-- `kind`: `chat` (open `chat`), `new_chat` (the new-chat screen in `project`, null for none),
+- `kind`: `chat` (open `chat`), `new_chat` (the new-chat screen in `project`, null for none;
+  with `"main": true`, 0.90, it's the project itself: open the project's main chat as `GET
+  /v1/state` names it in `tree`, or its page, New chat with `"main": true`, while it has none, as
+  the desktop's project row does; older hubs leave `main` out),
   `page` (`prs` or `issues`), `action` (the call below does it: settle or unsettle the open chat,
   fork it after its last reply, fast mode on or off).
 - `icon`: `message`, `bot`, `folder`, `compose`, `archive`, `unarchive`, `fork`, `gauge`, `pr`,

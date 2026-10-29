@@ -142,24 +142,47 @@ public class Chats extends Base {
                 if (x != null && id.equals(x.optString("id"))) c = x;
             }
             if (c == null || !c.has("main")) { older.run(); return; }
-            String pid = c.isNull("project_id") ? "" : c.optString("project_id");
-            String main = null;
+            // The settled chat may still read as main while it's another PC's copy on its way.
+            openMain(a, hub, st, c.isNull("project_id") ? "" : c.optString("project_id"), id);
+        });
+    }
+
+    /** A project picked on this phone (the search's project rows): its main chat opens, or its
+     *  page (New chat starting the main chat) while it has none, as the desktop's project row.
+     *  An older hub, which names no main chats, gets the new-chat screen there as before. */
+    static void openProject(Base a, Hub hub, String pid) {
+        Ui.bg(a, hub::state, st -> {
             JSONObject tree = st.optJSONObject("tree");
             JSONArray tp = tree == null ? null : tree.optJSONArray("projects");
+            boolean mains = false;
             for (int i = 0; tp != null && i < tp.length(); i++) {
                 JSONObject p = tp.optJSONObject(i);
-                if (p != null && !pid.isEmpty() && pid.equals(p.optString("id")) && !p.isNull("main")) main = p.optString("main");
+                mains |= p != null && p.has("main");
             }
-            // The settled chat may still read as main while it's another PC's copy on its way.
-            if (main != null && !main.equals(id)) Chat.open(a, hub, main);
-            else {
-                Intent i = new Intent(a, NewChat.class).putExtra("hub", hub.id);
-                if (!pid.isEmpty()) i.putExtra("project", pid).putExtra("main", true);
-                a.startActivity(i);
-            }
-            if (a instanceof Chat || a instanceof Palette) a.finish();
-            else a.closeDrawer();
+            if (mains) { openMain(a, hub, st, pid, null); return; }
+            a.startActivity(new Intent(a, NewChat.class).putExtra("hub", hub.id).putExtra("project", pid));
+            if (a instanceof Palette) a.finish();
         });
+    }
+
+    /** Opens project `pid`'s main chat as `st` names it (never chat `not`), else its page; ""
+     *  (no project): New chat. A chat screen or the search under it closes. */
+    private static void openMain(Base a, Hub hub, JSONObject st, String pid, String not) {
+        String main = null;
+        JSONObject tree = st.optJSONObject("tree");
+        JSONArray tp = tree == null ? null : tree.optJSONArray("projects");
+        for (int i = 0; tp != null && i < tp.length(); i++) {
+            JSONObject p = tp.optJSONObject(i);
+            if (p != null && !pid.isEmpty() && pid.equals(p.optString("id")) && !p.isNull("main")) main = p.optString("main");
+        }
+        if (main != null && !main.equals(not)) Chat.open(a, hub, main);
+        else {
+            Intent i = new Intent(a, NewChat.class).putExtra("hub", hub.id);
+            if (!pid.isEmpty()) i.putExtra("project", pid).putExtra("main", true);
+            a.startActivity(i);
+        }
+        if (a instanceof Chat || a instanceof Palette) a.finish();
+        else a.closeDrawer();
     }
 
     /** "Move to PC…": a sheet of the mesh's PCs as the chat's home PC lists them (greyed, with

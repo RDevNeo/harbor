@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Phone: a project picked in the search opens the project's main chat, as on the desktop, or the
+  project's page (where the first message starts its main chat) while it has none. "New chat in
+  …" still starts one more chat. With an older Harbor on the PC it opens New chat there as
+  before.
+
 ## [0.89.0] - 2026-10-29
 
 ### Changed

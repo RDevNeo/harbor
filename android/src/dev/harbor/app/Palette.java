@@ -167,6 +167,11 @@ public class Palette extends Base {
         switch (kind) {
             case "chat": Chat.open(this, hub, it.optString("chat")); break;
             case "new_chat": {
+                // A project (hubs from 0.90): its main chat, or its page, as on the desktop.
+                if (it.optBoolean("main") && !it.isNull("project")) {
+                    Chats.openProject(this, hub, it.optString("project"));
+                    return;
+                }
                 Intent i = new Intent(this, NewChat.class).putExtra("hub", hub.id);
                 if (!it.isNull("project")) i.putExtra("project", it.optString("project"));
                 startActivity(i);

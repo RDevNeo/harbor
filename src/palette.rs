@@ -99,7 +99,9 @@ impl Act {
     fn wire(&self) -> Option<Value> {
         Some(match self {
             Act::Chat(id) => json!({ "kind": "chat", "chat": id }),
-            Act::Project(id) => json!({ "kind": "new_chat", "project": id }),
+            // `main` (0.90): the project's main chat opens, or its page while it has none, as
+            // on the desktop; an older app opens the new-chat screen there.
+            Act::Project(id) => json!({ "kind": "new_chat", "project": id, "main": true }),
             Act::NewChat(p) => json!({ "kind": "new_chat", "project": p }),
             Act::Prs => json!({ "kind": "page", "page": "prs" }),
             Act::Issues => json!({ "kind": "page", "page": "issues" }),
@@ -585,5 +587,9 @@ mod tests {
         assert_eq!((v["kind"].as_str(), v["chat"].as_i64(), v["icon"].as_str()), (Some("chat"), Some(4), Some("message")));
         assert!(Item::new("act:sidebar".into(), Section::Actions, ic::PANEL_LEFT, "panel", "S", "", Act::ToggleSidebar).json().is_none());
         assert_eq!(Item::new("new:".into(), Section::Actions, ic::COMPOSE, "compose", "N", "", Act::NewChat(None)).json().unwrap()["project"], Value::Null);
+        // A project opens its main chat; "New chat in …" stays one more chat.
+        let p = Item::new("project:3".into(), Section::Projects, ic::FOLDER, "folder", "P", "", Act::Project(3)).json().unwrap();
+        assert_eq!((p["kind"].as_str(), p["project"].as_i64(), p["main"].as_bool()), (Some("new_chat"), Some(3), Some(true)));
+        assert_eq!(Item::new("new:3".into(), Section::Actions, ic::COMPOSE, "compose", "N", "", Act::NewChat(Some(3))).json().unwrap()["main"], Value::Null);
     }
 }
