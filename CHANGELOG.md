@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-10-29
+
 ### Added
 - Phone: sign in with Android's own Google account picker, inside Harbor: tap Sign in, pick an
   account in the system sheet, done. No website, no redirect (Android 14+, once Harbor's Google
@@ -1896,7 +1898,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.85.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.86.0...HEAD
+[0.86.0]: https://github.com/RDevNeo/harbor/compare/v0.85.1...v0.86.0
 [0.85.1]: https://github.com/RDevNeo/harbor/compare/v0.85.0...v0.85.1
 [0.85.0]: https://github.com/RDevNeo/harbor/compare/v0.84.1...v0.85.0
 [0.84.1]: https://github.com/RDevNeo/harbor/compare/v0.84.0...v0.84.1
