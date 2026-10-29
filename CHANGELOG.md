@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.85.1] - 2026-10-29
+
 ### Changed
 - Agents show images and videos only with markdown in their reply, `![caption](path)`, next to
   the sentence it illustrates: the `show_media` tool is gone, so a lead no longer drops pictures
@@ -1883,7 +1885,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.85.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.85.1...HEAD
+[0.85.1]: https://github.com/RDevNeo/harbor/compare/v0.85.0...v0.85.1
 [0.85.0]: https://github.com/RDevNeo/harbor/compare/v0.84.1...v0.85.0
 [0.84.1]: https://github.com/RDevNeo/harbor/compare/v0.84.0...v0.84.1
 [0.84.0]: https://github.com/RDevNeo/harbor/compare/v0.83.0...v0.84.0
