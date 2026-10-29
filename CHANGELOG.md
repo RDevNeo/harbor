@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-10-29
+
 ### Changed
 - Settling a chat takes you to its project's main chat, on the desktop (its menu, the row's
   Settle, the search, `/settle`) and on the phone (a long press, `/settle`, the search). Settling
@@ -1938,7 +1940,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.88.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.89.0...HEAD
+[0.89.0]: https://github.com/RDevNeo/harbor/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/RDevNeo/harbor/compare/v0.87.0...v0.88.0
 [0.87.0]: https://github.com/RDevNeo/harbor/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/RDevNeo/harbor/compare/v0.85.1...v0.86.0
