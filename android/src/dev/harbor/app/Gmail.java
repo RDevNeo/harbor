@@ -36,6 +36,21 @@ final class Gmail {
     private static Sheet sheet;
     /** Runs when the sheet closes (Settings updates its row). */
     static Runnable changed;
+    /** How a browser sign-in ended while the app wasn't in front (Android drops toasts then):
+     *  said once any screen is back (Base.onResume). */
+    private static volatile String outcome;
+
+    private static void say(Activity a, String msg) {
+        if (Base.resumed > 0) Ui.toast(a.getApplicationContext(), msg);
+        else outcome = msg;
+    }
+
+    static void sayPending(Activity a) {
+        String o = outcome;
+        if (o == null) return;
+        outcome = null;
+        Ui.toast(a, o);
+    }
     /** The PC an account is being picked for (the chooser's result comes back to Settings). */
     private static Hub picking;
     private static String pickingClient;
@@ -178,11 +193,11 @@ final class Gmail {
                 if (!st.getString("state").equals(got[1])) throw new java.io.IOException("Sign-in failed: state mismatch");
                 JSONObject r = hub.call("POST", "/v1/apps/gmail/finish", new JSONObject().put("state", got[1]).put("code", got[0]), 60_000);
                 Ui.main.post(() -> {
-                    Ui.toast(a, "Gmail connected: " + r.optString("email"));
+                    say(a, "Gmail connected: " + r.optString("email"));
                     if (!a.isFinishing() && !a.isDestroyed()) render(a, hub, r);
                 });
             } catch (Exception e) {
-                Ui.main.post(() -> Ui.toast(a, Hub.why(e)));
+                Ui.main.post(() -> say(a, "Gmail: " + Hub.why(e)));
             }
         });
     }

@@ -356,6 +356,7 @@ abstract class Base extends Activity {
         super.onResume();
         resumed++;
         Inbox.resumed(this);
+        Gmail.sayPending(this);
         Alive.calm(this);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
