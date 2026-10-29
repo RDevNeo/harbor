@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- A chat mentioned with `$` is now just its title in your message, written where you typed `$`,
+  highlighted in the composer and a link once sent: a click (a tap on the phone) opens that chat,
+  on whichever PC it is. No more card with a note box in the composer, nor a chip on the message;
+  to drop the mention, delete its title. Older messages show the chat they mentioned as a link
+  on a line of its own, before their text.
+- `@file` and `#123` tags and `/commands` (slash commands and skills) are blue in your messages,
+  on the desktop and the phone, and `/commands` are highlighted in the composer too.
+
 ## [0.93.0] - 2026-10-29
 
 ### Changed

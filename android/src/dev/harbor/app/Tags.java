@@ -21,8 +21,8 @@ import java.util.Map;
  *  project's files (type icon, name, dimmed folder), `#` its GitHub issues and pull requests
  *  (state icon, number, title). The hub ranks them for what's typed (GET /v1/chats/{id}/tags);
  *  a tap puts `@path ` or `#123 ` in, and the text shows its tags highlighted. `$` lists chats
- *  to mention (src/chatmention.rs): a tap takes the `$word` out and adds the chat as a mention
- *  chip. Back, a space or no match closes it. */
+ *  to mention (src/chatmention.rs): a tap writes the chat's title in place of the `$word`,
+ *  highlighted, and adds the chat to the draft's mentions. Back, a space or no match closes it. */
 final class Tags {
     /** An answer is asked again after this long. */
     private static final long FRESH_MS = 15_000;
@@ -59,6 +59,8 @@ final class Tags {
     /** A chat picked from the `$` list (hubs from 0.69): the composer adds it as a mention.
      *  Null: `$` opens nothing here. */
     java.util.function.Consumer<JSONObject> onChat;
+    /** The titles of the chats the draft mentions: highlighted as tags are. */
+    java.util.function.Supplier<java.util.List<String>> titles;
 
     Tags(Activity a, Hub hub, String chat, Composer.Edit edit) {
         this(a, hub, () -> "/v1/chats/" + chat + "/tags?", edit);
@@ -196,10 +198,18 @@ final class Tags {
         return r;
     }
 
+    /** The chat's title in place of the `$word` (hubs from 0.94 send it cut as `label`), and the
+     *  chat to the composer's mentions first, so the title shows highlighted at once. */
     private void acceptChat(JSONObject it) {
-        accept("");
+        String label = it.optString("label", it.optString("title")).trim();
+        TagList.Word w = word;
         if (onChat != null) onChat.accept(it);
+        word = w;
+        accept(label.isEmpty() ? "" : label);
     }
+
+    /** Draws the highlights again (the mentioned chats changed). */
+    void rehighlight() { highlight(edit.getText()); }
 
     /** One row: a file's type icon, name and folder; an issue's or PR's state, number and title. */
     private View row(JSONObject it) {
@@ -262,13 +272,14 @@ final class Tags {
         hide();
     }
 
-    /** The text's tags drawn as the desktop's composer draws them (blue on a light blue). */
+    /** The text's tags, commands and mentioned chats drawn as the desktop's composer draws them
+     *  (blue on a light blue). */
     private void highlight(Editable e) {
         if (highlighting) return;
         highlighting = true;
         for (Object s : e.getSpans(0, e.length(), TagSpan.class)) e.removeSpan(s);
         for (Object s : e.getSpans(0, e.length(), TagBg.class)) e.removeSpan(s);
-        for (int[] t : TagList.tokens(e)) {
+        for (int[] t : TagList.marks(e, titles == null ? null : titles.get())) {
             e.setSpan(new TagSpan(Ui.BLUE), t[0], t[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             e.setSpan(new TagBg((Ui.BLUE & 0x00ffffff) | 0x26000000), t[0], t[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }

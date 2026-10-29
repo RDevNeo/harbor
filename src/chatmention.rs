@@ -1,11 +1,11 @@
 //! Chat mentions (#96): typing `$` at the start of a word in the composer opens a menu of
 //! chats, fuzzy-matched as you type (this project's first, then the others, other PCs' too;
-//! settled ones below the active ones; never the chat itself). Picking one removes the
-//! `$word` and adds the chat as a mention chip next to the message mentions (mentions.rs),
-//! with its own note box. On send the agent gets a quoted block per mentioned chat: title,
-//! project, PC, status, recap, its last turns (user prompts and final answers) within
-//! [`MAX_CHARS`], and its id for `message_chat`. The transcript shows the chip; a click opens
-//! the chat.
+//! settled ones below the active ones; never the chat itself). Picking one writes the chat's
+//! title in place of the `$word`, highlighted, and adds the chat to the message's mentions
+//! (mentions.rs); taking the title out of the text drops it. On send the agent gets a quoted
+//! block per mentioned chat: title, project, PC, status, recap, its last turns (user prompts
+//! and final answers) within [`MAX_CHARS`], and its id for `message_chat`. The transcript
+//! shows the title as a link in the text (usertext.rs); a click opens the chat.
 //!
 //! Another PC's chat is the mesh's copy here (mesh.rs keeps a full copy of every chat), so
 //! its context is read from that copy when the message is sent. The phone asks the same rows,
@@ -94,6 +94,8 @@ impl Cand {
         json!({
             "kind": "chat", "insert": "", "chat": self.gid, "title": self.title, "project": self.project,
             "pc": self.pc, "status": self.status, "updated": self.updated, "line": self.line(),
+            // What the composer writes for it (0.94): the mention's title, a link once sent.
+            "label": crate::usertext::label(&self.title),
         })
     }
 
@@ -335,13 +337,15 @@ impl App {
     }
 
     fn chat_mention_accept(&mut self, ctx: &egui::Context, key: i64, cid: Id, draft: &mut String, w: &Word, c: &Cand) {
-        let (text, cursor) = crate::slash::replace(draft, &crate::slash::Word { start: w.start, end: w.end, query: w.query.clone(), first: false }, "");
+        // The `$word` becomes the chat's title, a link once sent (usertext.rs).
+        let label = crate::usertext::label(&c.title);
+        let (text, cursor) = crate::slash::replace(draft, &crate::slash::Word { start: w.start, end: w.end, query: w.query.clone(), first: false }, &label);
         *draft = text;
         let mut state = egui::text_edit::TextEditState::load(ctx, cid).unwrap_or_default();
         state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(cursor))));
         state.store(ctx, cid);
         ctx.memory_mut(|m| m.request_focus(cid));
-        crate::mentions::add(self.mentions.drafts.entry(key).or_default(), c.mention());
+        crate::mentions::add(self.mentions.drafts.entry(key).or_default(), Mention { title: label, ..c.mention() });
         self.chatm.open = None;
     }
 

@@ -2376,6 +2376,12 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
             if !intent.is_empty() {
                 v["intent"] = json!(intent);
             }
+            // The text as the desktop draws it (0.94, usertext.rs): mentioned chats as links,
+            // tags and commands blue. Left out when it's all plain.
+            let parts = crate::usertext::parts(text, mentions);
+            if !crate::usertext::plain(&parts) {
+                v["parts"] = crate::usertext::wire(&parts);
+            }
             v
         }
         Card::Text { text, at, forkable } => {
@@ -4752,6 +4758,11 @@ mod tests {
         assert_eq!(v["files"], json!(["notes.txt"]));
         assert_eq!(v["images"], json!([{ "name": "photo.jpg", "url": "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512" }]));
         assert_eq!((v["actions"].clone(), v["time"].is_string()), (json!(["copy", "quote", "mention"]), true));
+        assert!(v.get("parts").is_none(), "plain text has no parts");
+        // A mentioned chat's title in the text is a link; a command is marked.
+        let chat: crate::mentions::Mention = serde_json::from_value(json!({ "kind": "chat", "chat": "g-1", "title": "Fix login" })).unwrap();
+        let v = one(Item::User { text: "see Fix login /review".into(), files: vec![], at: 5, mentions: vec![chat], sender: String::new(), intent: String::new() });
+        assert_eq!(v["parts"], json!([{ "text": "see " }, { "text": "Fix login", "kind": "chat", "chat": "g-1" }, { "text": " " }, { "text": "/review", "kind": "command" }]));
         let v = one(Item::Tool { id: "t".into(), name: "mcp__github__get_pr".into(), summary: "ls".into(), input: "x".repeat(CLIP * 2), result: None, is_error: false });
         assert_eq!((v["label"].as_str(), v["done"].as_bool()), (Some("github · get_pr"), Some(false)));
         assert!(v["input"].as_str().unwrap().len() < CLIP + 100);

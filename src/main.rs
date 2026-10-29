@@ -91,6 +91,7 @@ mod usage_ctl;
 mod parakeet;
 mod voice;
 mod update;
+mod usertext;
 mod versions;
 mod view;
 mod waiting;

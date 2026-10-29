@@ -970,7 +970,8 @@ impl App {
         let key = self.key();
         let text = self.drafts.get(&key).map(|s| s.trim().to_string()).unwrap_or_default();
         let files = self.files.get(&key).cloned().unwrap_or_default();
-        let mentions = self.mentions.drafts.get(&key).cloned().unwrap_or_default();
+        // A chat whose title was taken out of the text is no longer mentioned (usertext.rs).
+        let mentions = crate::usertext::kept(&text, self.mentions.drafts.get(&key).cloned().unwrap_or_default());
         if text.is_empty() && files.is_empty() && mentions.is_empty() {
             return;
         }

@@ -510,9 +510,11 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
         .min_scrolled_height(max)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            // `@file` and `#123` tags show highlighted (tags.rs).
+            // `@file` and `#123` tags, `/command`s and mentioned chats show highlighted (tags.rs);
+            // the caller leaves the chats' titles for this frame (`composer_titles`).
             let font = egui::FontSelection::from(theme::ts("copy-14")).resolve(ui.style());
-            let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| crate::tags::layout(ui, buf.as_str(), wrap, font.clone());
+            let titles: Vec<(String, String)> = ui.data(|d| d.get_temp(id.with("chat-titles"))).unwrap_or_default();
+            let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| crate::tags::layout(ui, buf.as_str(), wrap, font.clone(), &titles);
             let out = TextEdit::multiline(text)
                 .id(id)
                 .layouter(&mut layouter)
@@ -542,6 +544,11 @@ pub fn composer(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, rows: 
     let grown = (out.inner_rect.height() - min).max(0.0);
     ui.data_mut(|d| d.insert_temp(id.with("grown"), grown));
     out.inner
+}
+
+/// The mentioned chats' titles (title, global id) the composer `id` highlights this frame.
+pub fn composer_titles(ui: &Ui, id: egui::Id, titles: Vec<(String, String)>) {
+    ui.data_mut(|d| d.insert_temp(id.with("chat-titles"), titles));
 }
 
 /// How much taller than its base rows the composer `id` drew last frame, so a

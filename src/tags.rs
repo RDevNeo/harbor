@@ -54,11 +54,11 @@ impl Word {
 
 const OPENERS: &str = "([{\"'`";
 /// What may end a tag written in a sentence.
-const PUNCT: &[char] = &[',', '.', ';', ':', '!', '?', ')', ']', '}', '"', '\'', '`'];
+pub(crate) const PUNCT: &[char] = &[',', '.', ';', ':', '!', '?', ')', ']', '}', '"', '\'', '`'];
 
 /// Whether a tag may start after `prev` (the char before its trigger): at the start, after
 /// a space, or an opening bracket or quote (not inside an email address or `a#b`).
-fn opens(prev: Option<char>) -> bool {
+pub(crate) fn opens(prev: Option<char>) -> bool {
     prev.is_none_or(|c| c.is_whitespace() || OPENERS.contains(c))
 }
 
@@ -777,18 +777,19 @@ fn row(ui: &Ui, rect: Rect, r: &Row, selected: bool) {
     }
 }
 
-/// The composer's text laid out with its tags highlighted (the composer's layouter).
-pub fn layout(ui: &Ui, text: &str, wrap: f32, font: FontId) -> Arc<egui::Galley> {
+/// The composer's text laid out with its tags, `/command`s and mentioned chats' titles
+/// (`titles`: title, global id) highlighted, the runs its message shows (usertext.rs).
+pub fn layout(ui: &Ui, text: &str, wrap: f32, font: FontId, titles: &[(String, String)]) -> Arc<egui::Galley> {
     let t = w::tokens(ui);
     let color = ui.visuals().override_text_color.unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
     let plain = egui::TextFormat { font_id: font.clone(), color, ..Default::default() };
     let tag = egui::TextFormat { font_id: font, color: t.blue(800), background: t.blue(200), ..Default::default() };
     let mut job = egui::text::LayoutJob::default();
     let mut at = 0;
-    for (i, len) in tokens(text) {
-        job.append(&text[at..i], 0.0, plain.clone());
-        job.append(&text[i..i + len], 0.0, tag.clone());
-        at = i + len;
+    for (a, z, _) in crate::usertext::runs(text, titles) {
+        job.append(&text[at..a], 0.0, plain.clone());
+        job.append(&text[a..z], 0.0, tag.clone());
+        at = z;
     }
     job.append(&text[at..], 0.0, plain);
     job.wrap.max_width = wrap;

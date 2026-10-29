@@ -45,6 +45,16 @@ public class TagTest {
         List<int[]> t = TagList.tokens("é @ñ.");
         same(t.get(0)[0] + "," + t.get(0)[1], "2,4", "UTF-16 indices");
 
+        // src/usertext.rs's cases: commands, and chats' titles before tags.
+        StringBuilder cmd = new StringBuilder();
+        String cs = "/review this, then /plugin:skill. see /tmp/x and a/b and //x and /5 and (/compact) é /ñ";
+        for (int[] r : TagList.commands(cs)) cmd.append(cs, r[0], r[1]).append('|');
+        same(cmd, "/review|/plugin:skill|/compact|", "commands");
+        String ms = "Fix @login page and Fix /go @a";
+        StringBuilder m = new StringBuilder();
+        for (int[] r : TagList.marks(ms, java.util.Arrays.asList("Fix", "Fix @login page"))) m.append(ms, r[0], r[1]).append('|');
+        same(m, "Fix @login page|Fix|/go|@a|", "marks: longer titles first, tags outside them");
+
         if (failed > 0) { System.err.println(failed + " tag test(s) failed"); System.exit(1); }
         System.out.println("tag tests passed");
     }

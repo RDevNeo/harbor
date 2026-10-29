@@ -497,6 +497,10 @@ impl App {
                     // Measured here, not from the transcript's start: the bubble sits against
                     // this row's right edge and never reaches past it, whatever came before.
                     let avail = ui.available_width().min(width);
+                    // Mentioned chats are links in the text (usertext.rs); messages are chips.
+                    let parts = crate::usertext::parts(text, mentions);
+                    let shown_text = crate::usertext::display(&parts);
+                    let chips: Vec<&crate::mentions::Mention> = mentions.iter().filter(|m| !m.is_chat()).collect();
                     let bubble = ui.allocate_ui_with_layout(Vec2::new(avail, 0.0), Layout::right_to_left(Align::Min), |ui| {
                         Frame::new()
                             .fill(t.gray(100))
@@ -505,17 +509,17 @@ impl App {
                             .show(ui, |ui| {
                                 // Hug the text: as wide as its longest line, at most 80%.
                                 let font = ui.style().text_styles.get(&theme::ts("copy-14")).cloned().unwrap_or_default();
-                                let mut need = text.lines().map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), Color32::WHITE).size().x).fold(0.0, f32::max);
+                                let mut need = shown_text.lines().map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), Color32::WHITE).size().x).fold(0.0, f32::max);
                                 let images = shown_images.len();
                                 if images > 0 {
                                     need = need.max(images.min(3) as f32 * (THUMB.x + 8.0) - 8.0);
                                 } else if !files.is_empty() {
                                     need = need.max(220.0);
                                 }
-                                if !mentions.is_empty() {
+                                if !chips.is_empty() {
                                     need = need.max(260.0);
                                 }
-                                for m in mentions.iter().filter(|m| !m.note.trim().is_empty()) {
+                                for m in chips.iter().filter(|m| !m.note.trim().is_empty()) {
                                     let f = ui.style().text_styles.get(&theme::ts("label-13")).cloned().unwrap_or_default();
                                     need = need.max(ui.painter().layout_no_wrap(m.note.trim().to_string(), f, Color32::WHITE).size().x + 26.0);
                                 }
@@ -527,11 +531,11 @@ impl App {
                                 }
                                 ui.set_max_width((need + 2.0).min(avail * 0.8 - 28.0).max(40.0));
                                 ui.vertical(|ui| {
-                                    if mentions.iter().any(|m| !m.note.trim().is_empty()) {
+                                    if chips.iter().any(|m| !m.note.trim().is_empty()) {
                                         // With notes: one mention a row, its note under its chip.
-                                        for m in mentions.iter() {
+                                        for m in chips.iter() {
                                             if let crate::mentions::Click::Open = crate::mentions::chip(ui, m, false) {
-                                                action = Some(MsgAction::Point(m.clone()));
+                                                action = Some(MsgAction::Point((*m).clone()));
                                             }
                                             let note = m.note.trim();
                                             if !note.is_empty() {
@@ -543,12 +547,12 @@ impl App {
                                                 });
                                             }
                                         }
-                                    } else if !mentions.is_empty() {
+                                    } else if !chips.is_empty() {
                                         ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing = Vec2::splat(6.0);
-                                            for m in mentions.iter() {
+                                            for m in chips.iter() {
                                                 if let crate::mentions::Click::Open = crate::mentions::chip(ui, m, false) {
-                                                    action = Some(MsgAction::Point(m.clone()));
+                                                    action = Some(MsgAction::Point((*m).clone()));
                                                 }
                                             }
                                         });
@@ -557,8 +561,12 @@ impl App {
                                         let keys: Vec<String> = shown_images.iter().map(|s| s.to_string()).collect();
                                         crate::images::strip(ui, &keys, THUMB);
                                     }
-                                    if !text.is_empty() {
-                                        ui.add(egui::Label::new(RichText::new(*text).text_style(theme::ts("copy-14"))).wrap());
+                                    if !parts.is_empty() {
+                                        if let Some(gid) = crate::usertext::show(ui, &parts, "copy-14") {
+                                            if let Some(m) = mentions.iter().find(|m| m.is_chat() && m.chat == gid) {
+                                                action = Some(MsgAction::Point(m.clone()));
+                                            }
+                                        }
                                     }
                                     for f in files {
                                         let name = std::path::Path::new(f).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -1066,13 +1074,13 @@ impl App {
                 ui.ctx().request_repaint_after(until.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(50));
             }
             // Mentioned messages, each with a box for a note about it; a click on
-            // one shows its message in the chat.
-            if let Some(ms) = self.mentions.drafts.get_mut(&key).filter(|m| !m.is_empty()) {
+            // one shows its message in the chat. A mentioned chat is its title in the text.
+            if let Some(ms) = self.mentions.drafts.get_mut(&key).filter(|m| m.iter().any(|m| !m.is_chat())) {
                 let mut done = false;
                 let focus = &mut self.mentions.focus_note;
                 ui.scope(|ui| {
                     ui.spacing_mut().item_spacing.y = 8.0;
-                    for (i, m) in ms.iter_mut().enumerate() {
+                    for (i, m) in ms.iter_mut().enumerate().filter(|(_, m)| !m.is_chat()) {
                         match crate::mentions::draft(ui, key, m, focus) {
                             crate::mentions::Click::Remove => unmention = Some(i),
                             crate::mentions::Click::Open => point = Some(m.clone()),
@@ -1112,6 +1120,7 @@ impl App {
             if ghost.is_some() {
                 crate::recap::tint_hint(ui, cid);
             }
+            w::composer_titles(ui, cid, self.mentions.drafts.get(&key).map(|ms| crate::usertext::chat_titles(ms)).unwrap_or_default());
             let input = w::composer(ui, cid, &mut draft, ghost.as_deref().unwrap_or("Ask for changes, send follow-ups, or attach images"), 3);
             if ghost.is_some() && draft.is_empty() {
                 crate::recap::tab_tag(ui, cid, input.rect);

@@ -133,6 +133,7 @@ public class Chat extends Base implements Images.Gallery {
         tags = new Tags(this, hub, chatId, comp.edit);
         // `$`: a chat picked becomes a mention (src/chatmention.rs; its context goes on send).
         tags.onChat = this::mentionChat;
+        tags.titles = this::chatTitles;
         stage.addView(tags.view, Ui.margins(new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM), 12, 12, 12, 6));
         comp.edit.onSelection = () -> { slash.update(); tags.update(); };
         comp.edit.backOpen = () -> slash.open() || tags.open();
@@ -1023,12 +1024,14 @@ public class Chat extends Base implements Images.Gallery {
             JSONArray ms = d.optJSONArray("mentions");
             mentions = ms == null ? new JSONArray() : ms;
             drawMentions();
+            tags.rehighlight();
         } finally {
             applying = false;
         }
     }
 
-    /** A chat from the `$` list: a mention in the draft (once), as the desktop's composer adds it. */
+    /** A chat from the `$` list: a mention in the draft (once), as the desktop's composer adds it.
+     *  Its title (the row's `label`) is what Tags writes in the text: that's the mention. */
     private void mentionChat(JSONObject row) {
         String gid = row.optString("chat");
         if (gid.isEmpty()) return;
@@ -1037,10 +1040,34 @@ public class Chat extends Base implements Images.Gallery {
             if (m != null && "chat".equals(m.optString("kind")) && gid.equals(m.optString("chat"))) return;
         }
         try {
-            mentions.put(new JSONObject().put("kind", "chat").put("chat", gid).put("title", row.optString("title")).put("from", row.optString("line")));
+            String title = row.optString("label", row.optString("title")).trim();
+            mentions.put(new JSONObject().put("kind", "chat").put("chat", gid).put("title", title).put("from", row.optString("line")));
         } catch (Exception ignored) { }
         drawMentions();
         typed();
+    }
+
+    /** The titles of the chats the draft mentions, highlighted in the composer. */
+    private List<String> chatTitles() {
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < mentions.length(); i++) {
+            JSONObject m = mentions.optJSONObject(i);
+            if (m != null && "chat".equals(m.optString("kind"))) out.add(m.optString("title"));
+        }
+        return out;
+    }
+
+    /** The draft's mentions as the message keeps them (src/usertext.rs `kept`): a chat whose
+     *  title was taken out of the text is no longer mentioned. */
+    private JSONArray kept(String text) {
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < mentions.length(); i++) {
+            JSONObject m = mentions.optJSONObject(i);
+            if (m == null) continue;
+            String title = m.optString("title");
+            if (!"chat".equals(m.optString("kind")) || title.trim().isEmpty() || text.contains(title)) out.put(m);
+        }
+        return out;
     }
 
     /** A mentioned chat's chip: tap opens that chat. */
@@ -1050,25 +1077,14 @@ public class Chat extends Base implements Images.Gallery {
     }
 
     /** The messages the draft mentions, as chips over the composer (a tap on ✕ drops one). A
-     *  mentioned chat: tap opens it, long-press drops it. */
+     *  mentioned chat has no chip: it's its title in the text, highlighted. */
     private void drawMentions() {
         comp.mentions.removeAllViews();
+        int chips = 0;
         for (int i = 0; i < mentions.length(); i++) {
             JSONObject m = mentions.optJSONObject(i);
-            if (m == null) continue;
-            if ("chat".equals(m.optString("kind"))) {
-                String line = m.optString("from");
-                TextView t = Ui.text(this, "\uD83D\uDCAC " + m.optString("title") + (line.isEmpty() ? "" : " · " + line), 13, Ui.FG);
-                t.setSingleLine(true);
-                t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                t.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
-                t.setBackground(Ui.round(Ui.G100, 0, 14));
-                final int at = i;
-                t.setOnClickListener(v -> openMentioned(m));
-                t.setOnLongClickListener(v -> { mentions.remove(at); drawMentions(); typed(); return true; });
-                comp.mentions.addView(t, Ui.margins(Ui.fill(), 8, 6, 8, 0));
-                continue;
-            }
+            if (m == null || "chat".equals(m.optString("kind"))) continue;
+            chips++;
             String q = m.optString("text").replaceAll("\\s+", " ").trim();
             if (q.length() > 80) q = q.substring(0, 80) + "…";
             TextView t = Ui.text(this, "❝ " + m.optString("from") + ": " + (m.optBoolean("excerpt") ? "\"" + q + "\"" : q) + "  ✕", 13, Ui.FG);
@@ -1080,7 +1096,7 @@ public class Chat extends Base implements Images.Gallery {
             t.setOnClickListener(v -> { mentions.remove(at); drawMentions(); typed(); });
             comp.mentions.addView(t, Ui.margins(Ui.fill(), 8, 6, 8, 0));
         }
-        comp.mentions.setVisibility(mentions.length() == 0 ? View.GONE : View.VISIBLE);
+        comp.mentions.setVisibility(chips == 0 ? View.GONE : View.VISIBLE);
     }
 
     /** Every image of the chat in the order the cards show them (a card's large ones, then its
@@ -1142,11 +1158,15 @@ public class Chat extends Base implements Images.Gallery {
                 LinearLayout bubble = Ui.col(this);
                 bubble.setBackground(Ui.round(Ui.G100, 0, 20));
                 bubble.setPadding(Ui.dp(16), Ui.dp(11), Ui.dp(16), Ui.dp(11));
+                // The text as the desktop draws it (hubs from 0.94): mentioned chats are links in
+                // it, so only the other mentions are chips.
+                JSONArray parts = it.optJSONArray("parts");
                 JSONArray mentions = it.optJSONArray("mentions");
                 if (mentions != null) for (int i = 0; i < mentions.length(); i++) {
                     JSONObject m = mentions.optJSONObject(i);
                     if (m == null) continue;
                     boolean chat = "chat".equals(m.optString("kind"));
+                    if (chat && parts != null) continue;
                     String said = m.optBoolean("excerpt") ? "\u201c" + m.optString("text") + "\u201d" : m.optString("text");
                     // A mentioned chat (hubs from 0.69): its title; a tap opens it.
                     TextView chip = Ui.subtitle(Ui.text(this, chat ? "\uD83D\uDCAC " + m.optString("title") : m.optString("from") + ": " + said, 13, Ui.G900));
@@ -1165,10 +1185,15 @@ public class Chat extends Base implements Images.Gallery {
                 View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96);
                 if (imgs != null) bubble.addView(imgs, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
                 String text = it.optString("text");
-                if (!text.isEmpty()) {
-                    TextView t = Ui.text(this, text, 16, Ui.FG);
+                CharSequence shown = parts != null ? userText(parts) : text;
+                if (shown.length() > 0) {
+                    TextView t = Ui.text(this, "", 16, Ui.FG);
+                    t.setText(shown);
                     t.setMaxWidth(maxBubble());
                     selectable(t, it, text);
+                    // Chat links open on a tap: LinkMovementMethod after selectable keeps both.
+                    if (shown instanceof android.text.Spanned && ((android.text.Spanned) shown).getSpans(0, shown.length(), android.text.style.ClickableSpan.class).length > 0)
+                        t.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
                     bubble.addView(t);
                 }
                 JSONArray files = it.optJSONArray("files");
@@ -1197,7 +1222,7 @@ public class Chat extends Base implements Images.Gallery {
                 tp.setTextSize(android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 16, getResources().getDisplayMetrics()));
                 tp.setTypeface(Ui.sans);
                 float need = 0;
-                for (String line : text.split("\n")) need = Math.max(need, tp.measureText(line));
+                for (String line : shown.toString().split("\n")) need = Math.max(need, tp.measureText(line));
                 JSONArray ims = it.optJSONArray("images");
                 if (ims != null && ims.length() > 0) need = Math.max(need, Math.min(ims.length(), 3) * Ui.dp(104));
                 if (files != null && files.length() > 0) need = Math.max(need, Ui.dp(160));
@@ -1592,6 +1617,39 @@ public class Chat extends Base implements Images.Gallery {
         t.setCustomSelectionActionModeCallback(selectMenu(it, whole, t));
     }
 
+    /** A user message's `parts` (src/usertext.rs): tags and commands blue, a mentioned chat's
+     *  title a blue underlined link that opens it. */
+    private CharSequence userText(JSONArray parts) {
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject p = parts.optJSONObject(i);
+            if (p == null) continue;
+            int a = sb.length();
+            sb.append(p.optString("text"));
+            int z = sb.length();
+            if (a == z) continue;
+            int f = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE;
+            switch (p.optString("kind")) {
+                case "tag": case "command":
+                    sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.BLUE), a, z, f);
+                    break;
+                case "chat": {
+                    String gid = p.optString("chat");
+                    sb.setSpan(new android.text.style.ClickableSpan() {
+                        @Override public void onClick(View w) {
+                            if (gid.isEmpty()) Ui.toast(Chat.this, "Chat not found");
+                            else if (!gid.equals(chatId)) open(Chat.this, hub, gid);
+                        }
+                        @Override public void updateDrawState(android.text.TextPaint tp) { tp.setColor(Ui.BLUE); tp.setUnderlineText(true); }
+                    }, a, z, f);
+                    break;
+                }
+                default:
+            }
+        }
+        return sb;
+    }
+
     /** The desktop's mention button is a plain "@" (Lucide has no glyph for it in our subset). */
     private View atSign() {
         TextView t = Ui.bold(this, "@", 20, Ui.FG);
@@ -1924,7 +1982,7 @@ public class Chat extends Base implements Images.Gallery {
         comp.busy(true);
         typing(false, false);
         JSONArray files = attach.ids();
-        JSONArray ms = mentions;
+        JSONArray ms = kept(text);
         Ui.pool.execute(() -> {
             String err = null;
             try {
