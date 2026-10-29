@@ -4805,7 +4805,7 @@ mod tests {
             }
         }
         let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
-        assert_eq!(shown, ["user", "text", "message", "tool", "text", "notice", "error"]);
+        assert_eq!(shown, ["user", "notice", "text", "message", "tool", "text", "notice", "error"]);
         assert_eq!(phone[9]["kind"], "hidden");
         assert_eq!(phone[8]["forks_after"], json!([42]));
     }

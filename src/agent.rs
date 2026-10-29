@@ -453,6 +453,8 @@ fn build(spec: &TurnSpec) -> std::io::Result<(Command, Option<String>, Option<cr
                 if !spec.trusted {
                     cmd.args(["--setting-sources", "user"]);
                 }
+                // No effort set: Harbor's default (Medium), not Claude Code's own effortLevel.
+                let effort = effort.or_else(|| (a.kind == Kind::Claude && spec.effort.is_empty()).then(|| crate::providers::default_effort(Kind::Claude)));
                 if let Some(e) = effort {
                     cmd.args(["--effort", e]);
                 }

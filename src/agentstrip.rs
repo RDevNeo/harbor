@@ -193,7 +193,20 @@ pub fn doing(items: &[Item], root: &str) -> String {
 /// The line a finished subagent leaves in its lead's chat: its report's first sentence.
 /// "api finished: Added tests for X". A report that is an error says so.
 pub fn report_line(name: &str, report: &str) -> String {
-    let first = report
+    let sentence = headline(report);
+    if sentence.is_empty() {
+        return format!("{name} finished");
+    }
+    match sentence.strip_prefix("Error: ") {
+        Some(e) => format!("{name} failed: {e}"),
+        None => format!("{name} finished: {sentence}"),
+    }
+}
+
+/// A text's first sentence as one plain line (a report's, a task's): its first line that isn't
+/// a heading or a code fence, without list marks, bold or code ticks, up to ". ", clipped.
+pub fn headline(text: &str) -> String {
+    let first = text
         .lines()
         .map(str::trim)
         .filter(|l| !l.starts_with('#') && !l.starts_with("```"))
@@ -203,13 +216,7 @@ pub fn report_line(name: &str, report: &str) -> String {
     let plain: String = first.replace("**", "").replace('`', "");
     // The first sentence: up to ". " (or the line's end).
     let sentence = plain.split_inclusive(". ").next().unwrap_or(&plain).trim().trim_end_matches('.').trim();
-    if sentence.is_empty() {
-        return format!("{name} finished");
-    }
-    match sentence.strip_prefix("Error: ") {
-        Some(e) => format!("{name} failed: {}", clip(e, REPORT_MAX)),
-        None => format!("{name} finished: {}", clip(sentence, REPORT_MAX)),
-    }
+    clip(sentence, REPORT_MAX)
 }
 
 impl App {

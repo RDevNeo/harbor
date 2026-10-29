@@ -119,10 +119,11 @@ pub fn tools(role: &str) -> Vec<Value> {
                 "Start a subagent that works in the project folder with full tools. Give it a short unique name and a complete, self-contained task. It reports back to you when its turn ends.",
                 json!({
                     "name": prop("string", "Short handle, e.g. 'tests', 'api', 'reviewer'"),
+                    "title": prop("string", "What the work is in a few words, for the user: the chat shows \"<name> started: <title>\", e.g. 'PR status in the composer footer' (default: the task's first sentence)"),
                     "task": prop("string", "What to do, with all context it needs"),
                     "account": prop("string", "Provider account id from list_models (default: your own account)"),
                     "model": prop("string", "Model id from list_models (default: your model)"),
-                    "effort": prop("string", "Reasoning effort, e.g. low/medium/high (optional)"),
+                    "effort": prop("string", "Reasoning effort, e.g. low/medium/high (default: medium on Claude)"),
                 }),
                 &["name", "task"],
             ),

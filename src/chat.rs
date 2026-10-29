@@ -726,8 +726,12 @@ impl App {
                         "users" => ic::USERS,
                         "monitor" => ic::MONITOR,
                         "lock" => ic::LOCK,
+                        // A lead's hand-offs (view::handoff).
+                        "started" => ic::PLAY,
+                        "sent" => ic::SEND,
                         _ => ic::CIRCLE_CHECK,
                     };
+                    let (text, detail) = (text.as_ref(), detail.as_ref());
                     // The pill never grows past the column (a long agent report widened the whole
                     // transcript, and right-aligned bubbles were cut at the edge): the text ends
                     // in "…" and shows whole on hover.
@@ -747,7 +751,7 @@ impl App {
                                         let rest = (column - 24.0 - 19.0 - if chevron { 18.0 } else { 0.0 }).max(40.0);
                                         let g = w::truncated(ui, text, FontId::new(13.0, egui::FontFamily::Proportional), t.fg(), rest);
                                         if g.size().x + 1.0 < ui.painter().layout_no_wrap(text.to_string(), FontId::new(13.0, egui::FontFamily::Proportional), t.fg()).size().x {
-                                            ui.label(g).on_hover_text(*text);
+                                            ui.label(g).on_hover_text(text);
                                         } else {
                                             ui.label(g);
                                         }

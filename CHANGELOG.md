@@ -10,11 +10,24 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   Settings › Built-in browser keeps saying it: phones with a 32-bit Android (the Galaxy A13 and
   other budget phones run one on a 64-bit processor) or Android older than 9 open links in the
   phone's own browser, because the engine is built for 64-bit Android only.
+- Phone: a notice line too long for the screen (an agent's report, a hand-off) wraps instead of
+  pushing its expand arrow off the pill.
 
 ### Added
 - The phone tells its PCs what it is (maker and model, Android version, ABIs, whether its
   built-in browser runs): agents see it in the versions list (`GET /v1/versions`, the
   `machines` list), so a phone-only problem can be diagnosed from the PC.
+- A lead that hands work off now always leaves a line in the chat, so a message answered only by
+  starting agents still shows what happens: "api started: PR status in the composer footer"
+  per agent it starts, and "Sent to api: …" when it passes your words to one. Click or tap the
+  line for the whole task. Desktop and phone. Leads give each agent a short title for it, and
+  their own reply when they hand off is one short line.
+
+### Changed
+- Claude's default effort is Medium (it was High, or Claude Code's own setting): new chats,
+  chats left on the default and agents started without an effort run at Medium, on the desktop
+  and the phone. Chats with a chosen effort keep it; a new-chat pick still on the old default
+  (High) moves to Medium once.
 
 ## [0.83.0] - 2026-10-28
 

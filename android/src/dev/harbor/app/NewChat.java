@@ -120,6 +120,13 @@ public class NewChat extends Base {
         run.device = p.getString("device", d.optString("device"));
         run.account = p.getString("account", d.optString("account"));
         run.model = p.getString("model", d.optString("model"));
+        // Claude's default effort became Medium (0.84): a kept High was the old default, saved
+        // as if picked; dropped once, so new chats take the PC's.
+        if (!p.getBoolean("effort_default_medium", false)) {
+            SharedPreferences.Editor e = p.edit().putBoolean("effort_default_medium", true);
+            if ("claude".equals(run.kind()) && "high".equals(p.getString("effort", ""))) e.remove("effort");
+            e.apply();
+        }
         run.effort = p.getString("effort", d.optString("effort"));
         run.access = p.getString("access", d.optString("access"));
         run.fast = st.optBoolean("fast");

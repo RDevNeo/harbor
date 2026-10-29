@@ -360,8 +360,9 @@ refetch everything.
   and current hubs no longer send it.
 - `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, cursor, grok,
   gemini, meta, opencode). An empty effort list: send `""`. `default_efforts` (optional, older
-  hubs leave it out) is what an empty `effort` means for each kind (the CLI's own default, e.g.
-  `high`): show a chat's or the defaults' `""` as that level, and pick it for a new chat.
+  hubs leave it out) is what an empty `effort` means for each kind (Harbor's `medium` for
+  Claude since 0.84, the CLI's own default for the others): show a chat's or the defaults' `""`
+  as that level, and pick it for a new chat.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
 - `tree` (optional, older hubs leave it out): where the desktop sidebar places each chat, so the
   list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed": false,
@@ -493,7 +494,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | `footer` | nothing since 0.59.2: the end of a turn comes as `hidden` (its usage stays in Usage). Older hubs send its line here; draw nothing | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
 | `chat_link` (0.57) | a divider "`text` · Open chat" linking to another chat: at the top of a chat an agent opened with its `open_chat` tool ("Opened by the agent of “Fix login”"), and in the chat that opened it ("Opened “Docs pass”"). Tap: open `chat`; while `chat` is null (that chat hasn't reached this hub yet) draw just the text | `text`, `chat` (this hub's id, or the gid with `X-Harbor-Ids: global`; null when it isn't here), `gid` |
-| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (0.84, play and send glyphs; older apps: any fallback) are a lead handing work off, which shows nothing else: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown) | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
 | `media` (0.50) | an image or video an agent showed with its `show_media` tool, drawn like a `text` card's `media` | `media` (one entry; absent when the file can't be shown), `caption`, `pending` (the call hasn't answered yet), `images` |

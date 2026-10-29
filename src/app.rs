@@ -314,10 +314,22 @@ impl App {
             "haiku" => "claude-haiku-5-5".to_string(),
             m => m.to_string(),
         };
+        // Claude's default effort became Medium (0.84): a new Claude chat still on the old one
+        // (High, kept as if picked) starts at Medium; any other pick stays. Once.
+        let mut effort = get("default_effort", "");
+        if store.get("effort_default_medium").is_none() {
+            let account = get("default_account", "claude");
+            let claude = accounts.iter().find(|a| a.id == account).is_none_or(|a| a.kind == Kind::Claude);
+            if claude && effort == "high" {
+                effort = providers::default_effort(Kind::Claude).into();
+                store.set("default_effort", &effort);
+            }
+            store.set("effort_default_medium", "1");
+        }
         let sel = Sel {
             account: get("default_account", "claude"),
             model,
-            effort: get("default_effort", ""),
+            effort,
             access: get("default_access", "full"),
             device: get("default_device", ""),
         };

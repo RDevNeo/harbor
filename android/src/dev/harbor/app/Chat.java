@@ -1339,6 +1339,9 @@ public class Chat extends Base implements Images.Gallery {
             case "monitor": glyph = Ui.I_MONITOR; break;
             case "folder": glyph = Ui.I_FOLDER; break;
             case "worktree": glyph = Ui.I_FOLDER_GIT; break;
+            // A lead's hand-offs: "api started: …", "Sent to api: …".
+            case "started": glyph = Ui.I_PLAY; break;
+            case "sent": glyph = Ui.I_SEND; break;
             default: glyph = Ui.I_CIRCLE_CHECK;
         }
         boolean expandable = !detail.isEmpty() && url.isEmpty();
@@ -1346,7 +1349,8 @@ public class Chat extends Base implements Images.Gallery {
         pill.setBackground(Ui.press(Ui.G100, Ui.LINE, 16));
         pill.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
         pill.addView(Ui.icon(this, glyph, 14, Ui.G700));
-        pill.addView(Ui.text(this, it.optString("text"), 14, Ui.FG), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        // Weighted: a line wider than the screen wraps instead of pushing the chevron out.
+        pill.addView(Ui.text(this, it.optString("text"), 14, Ui.FG), Ui.margins(Ui.weight(), 6, 0, 0, 0));
         TextView chev = Ui.icon(this, expanded.contains(seq) ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700);
         if (expandable) pill.addView(chev, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         LinearLayout.LayoutParams pp = Ui.wrap();
