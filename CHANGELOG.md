@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.88.0] - 2026-10-29
+
 ### Added
 - Each project has a main chat again, and now it stays put. Clicking the project opens it and the
   project's row shows its status (working, done, waiting on a limit); writing on the project's
@@ -1929,7 +1931,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.87.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.88.0...HEAD
+[0.88.0]: https://github.com/RDevNeo/harbor/compare/v0.87.0...v0.88.0
 [0.87.0]: https://github.com/RDevNeo/harbor/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/RDevNeo/harbor/compare/v0.85.1...v0.86.0
 [0.85.1]: https://github.com/RDevNeo/harbor/compare/v0.85.0...v0.85.1
