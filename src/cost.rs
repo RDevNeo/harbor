@@ -89,12 +89,6 @@ impl App {
         self.usage_now(ctx).by_chat.get(&id).copied().unwrap_or_default()
     }
 
-    /// What the header says about a chat's usage, and its hover (a lead's adds its agents').
-    pub fn usage_line(&mut self, ctx: &egui::Context, id: i64) -> Option<(String, String)> {
-        self.usage_now(ctx);
-        line(self.chat_usage_known(id), self.team_usage_known(id))
-    }
-
     /// `chat_usage` without summing the store again (the API's: what the desktop last summed).
     pub fn chat_usage_known(&self, id: i64) -> Usage {
         match self.transcripts.get(&id) {
