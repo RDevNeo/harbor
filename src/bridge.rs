@@ -813,7 +813,7 @@ pub fn shell(script: &str, cwd: &Path, limit: Duration) -> (Result<i32, String>,
     });
     let pid = child.id();
     let group = || {
-        let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
+        let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
     };
     let t = Instant::now();
     let status = loop {
@@ -1161,9 +1161,11 @@ done"#,
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
         let sport = server.local_addr().unwrap().port();
         let (tx, curl_left) = std::sync::mpsc::channel();
+        let (came, curl_came) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             for answer in [&b""[..], b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: hi\n\n"] {
                 let (mut c, _) = server.accept().unwrap();
+                let _ = came.send(());
                 let mut b = [0u8; 4096];
                 let _ = c.read(&mut b);
                 c.write_all(answer).unwrap();
@@ -1193,7 +1195,8 @@ done"#,
         };
         // Gone before the server said anything.
         let s = open();
-        std::thread::sleep(Duration::from_millis(300));
+        // Once curl is connected: a fixed wait was not always enough on a busy machine.
+        curl_came.recv_timeout(Duration::from_secs(10)).expect("curl came");
         leave(s);
         // Gone while the stream is quiet.
         let mut s = open();

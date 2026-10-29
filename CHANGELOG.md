@@ -69,6 +69,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 ## [0.84.1] - 2026-10-28
 
 ### Fixed
+- On Ubuntu 22.04 (and other systems with procps-ng 3.3.17), a command an agent ran through
+  Harbor (from a phone or another PC, or the GitHub and shell tools) that timed out or left
+  background processes running could stop Harbor itself instead of only that command.
 - Phone: the built-in browser works on phones with a 32-bit Android too (the Galaxy A13 and other
   budget phones run one on a 64-bit processor): the APK now carries the Servo engine for
   armeabi-v7a as well as arm64-v8a. Links there opened in the phone's own browser. The APK grows
