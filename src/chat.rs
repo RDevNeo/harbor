@@ -173,13 +173,6 @@ impl App {
                     // Other PCs with this chat open (dimmed: their window isn't in front).
                     if let Some(c) = chat {
                         self.mesh_badges(ui, c.id);
-                        // Its tokens and cost so far (a lead's with its agents'), dim (cost.rs).
-                        if row.width() >= 640.0 {
-                            if let Some((label, tip)) = self.usage_line(ui.ctx(), c.id) {
-                                ui.add_space(6.0);
-                                ui.label(RichText::new(label).text_style(theme::ts("label-13-mono")).color(t.gray(800))).tip(tip);
-                            }
-                        }
                     }
                 }
                 let left_rect = Rect::from_min_max(row.min, pos2((right.min_rect().left() - 12.0).max(row.left()), row.bottom()));
