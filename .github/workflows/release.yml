@@ -55,10 +55,11 @@ jobs:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
       - name: Build (on boat)
-        # Harbor's Google Cloud Web client id (repository variable): the phone's own Google account
-        # picker. Through env, not the script, so the step's log never shows it; empty: picker off.
+        # Harbor's Google Cloud Web client id: the phone's own Google account picker. A repository
+        # secret, not a variable: GitHub prints a step's env in its log, masking only secrets.
+        # Missing: picker off.
         env:
-          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ vars.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
         run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" bash .github/boat/build.sh
       - name: Fetch the results
         run: |

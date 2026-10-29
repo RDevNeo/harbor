@@ -75,8 +75,9 @@ Until this is set up, phones sign in in the browser through Clerk. To switch the
    - the Worker: `npx wrangler secret put GOOGLE_WEB_CLIENT_ID` (or Cloudflare dashboard › harbor-accounts ›
      Settings › Variables and Secrets), then `npx wrangler deploy`. Don't also add it to `wrangler.toml`:
      a var with the same name blocks the secret (error 10053);
-   - the phone: the GitHub repository variable `HARBOR_GOOGLE_WEB_CLIENT_ID` (Settings › Secrets and variables ›
-     Actions › Variables). The release workflow passes it to `android/build.sh`; then release.
+   - the phone: the GitHub repository **secret** `HARBOR_GOOGLE_WEB_CLIENT_ID` (Settings › Secrets and variables ›
+     Actions › Secrets; a variable would be printed in the build log). The release workflow passes it to
+     `android/build.sh`; then release.
 6. Clerk: nothing has to change. A phone's Google account becomes the Clerk account with the same verified
    email (made by a sign-in through Clerk, e.g. on a PC); a Google account with no Harbor account yet signs
    in through Clerk in the browser once. Optional, for production: in Clerk › SSO connections › Google, turn
