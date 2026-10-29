@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Phone: sign in with Android's own Google account picker, inside Harbor: tap Sign in, pick an
+  account in the system sheet, done. No website, no redirect (Android 14+, once Harbor's Google
+  Cloud client is set up; until then, and on older Android, the browser sign-in stays, now in a
+  Custom Tab). It's the same account as on your PCs (matched by the verified email).
+
+### Changed
+- Desktop: after signing in in the browser (Harbor's account, or an app like Gmail), Harbor comes
+  back to the front by itself, and the browser shows a small Harbor page instead of a blank one.
+  Also for `harbor account login` while Harbor runs.
+
 ## [0.85.1] - 2026-10-29
 
 ### Changed

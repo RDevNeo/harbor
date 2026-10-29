@@ -58,3 +58,23 @@ subset the Worker uses) and the real Worker under `wrangler dev --local`, driven
   20 members per organization, sessions fixed at 7 days, no MFA.
 - Cloudflare Workers free: 100k requests per day.
 - D1 free: 5M rows read and 100k rows written per day.
+
+## Phone sign-in with Android's own account picker (optional)
+
+Until this is set up, phones sign in in the browser through Clerk. To switch the picker on:
+
+1. Google Cloud console (https://console.cloud.google.com): create (or pick) a project, e.g. "Harbor".
+2. APIs & Services › OAuth consent screen (Google Auth Platform › Branding): app name "Harbor", support
+   email, External, publish to Production (the scopes are only openid/email/profile: no review needed).
+3. Credentials › Create credentials › OAuth client ID › **Web application**, name "Harbor web". No redirect
+   URIs are needed for the picker. Copy its client id (`…apps.googleusercontent.com`).
+4. Credentials › Create credentials › OAuth client ID › **Android**, package name `dev.harbor.app`, SHA-1
+   `4B:E7:4B:5F:50:FD:99:BE:08:1E:C7:F0:CF:99:F4:58:FC:74:B2:B6` (the release key; CI signs with the same).
+   It needs no secret and isn't put anywhere: Google Play services checks the app against it.
+5. Put the **Web** client id in `GOOGLE_WEB_CLIENT_ID` under `[vars]` in `wrangler.toml`, `npx wrangler deploy`,
+   and in the `HARBOR_GOOGLE_WEB_CLIENT_ID` default in `android/build.sh`; release.
+6. Clerk: nothing has to change. A phone's Google account becomes the Clerk account with the same verified
+   email (made by a sign-in through Clerk, e.g. on a PC); a Google account with no Harbor account yet signs
+   in through Clerk in the browser once. Optional, for production: in Clerk › SSO connections › Google, turn
+   on "Use custom credentials" with this same Web client (add Clerk's redirect URI to it), so Google's
+   consent screen says Harbor on desktop too.

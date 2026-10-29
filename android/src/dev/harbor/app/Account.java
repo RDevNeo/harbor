@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Bundle;
 import android.util.Base64;
 
 import org.json.JSONArray;
@@ -46,6 +47,18 @@ final class Account {
     static String clientId() { return Config.CLERK_CLIENT_ID; }
     static String service() { return Config.ACCOUNTS_URL; }
     static String redirect() { return service() + "/oauth/android"; }
+    /** Harbor's Google Cloud Web client id (android/build.sh): set, Android 14+ signs in with
+     *  its own account picker; empty, the browser through Clerk. */
+    static String googleClient() { return Config.GOOGLE_WEB_CLIENT_ID; }
+
+    /** The Worker answered that this Google account must sign in through Clerk once. */
+    static final class NeedBrowser extends IOException {
+        NeedBrowser(String m) { super(m); }
+    }
+
+    /** The end of a sign-in started in the app (the account picker), on the UI thread: null
+     *  when signed in, "" when the person closed the sheet, else why it failed. */
+    interface Done { void done(String error); }
 
     /** Clerk ended the session, or the service refused the sign-in: sign in again. */
     static final class Expired extends IOException {
@@ -139,8 +152,38 @@ final class Account {
         try { return URLEncoder.encode(s, "UTF-8"); } catch (Exception e) { return s; }
     }
 
-    /** Opens Clerk's sign-in in the browser; the answer comes back as harbor://oauth (finish). */
-    static void start(Activity a) {
+    /** Signs in: Android's own Google account sheet where it can (Android 14+, Harbor's Web
+     *  client id set), else Clerk's sign-in in a Custom Tab (the answer comes back as
+     *  harbor://oauth, see finish). `done` hears only the in-app path. */
+    static void start(Activity a, Done done) {
+        if (googleClient().isEmpty() || android.os.Build.VERSION.SDK_INT < 34) { browser(a); done.done(""); return; }
+        byte[] n = new byte[16];
+        new SecureRandom().nextBytes(n);
+        String nonce = b64url(n);
+        GooglePicker.pick(a, googleClient(), nonce, new GooglePicker.Result() {
+            @Override public void token(String idToken) {
+                Context app = a.getApplicationContext();
+                Ui.pool.execute(() -> {
+                    String err = null;
+                    boolean web = false;
+                    try { finishGoogle(app, idToken, nonce); }
+                    catch (NeedBrowser e) { web = true; }
+                    catch (Exception e) { err = Hub.why(e); }
+                    final String fe = err;
+                    final boolean fw = web;
+                    Ui.main.post(() -> {
+                        if (fw) { Ui.toast(a, "First sign-in with this Google account: finish it in the browser."); Account.browser(a); done.done(""); }
+                        else done.done(fe);
+                    });
+                });
+            }
+            @Override public void browser(String why) { Account.browser(a); done.done(""); }
+            @Override public void canceled() { done.done(""); }
+        });
+    }
+
+    /** Clerk's sign-in in a Custom Tab (a plain browser where there's none). */
+    static void browser(Activity a) {
         byte[] v = new byte[32], st = new byte[16];
         SecureRandom r = new SecureRandom();
         r.nextBytes(v);
@@ -151,8 +194,15 @@ final class Account {
                 + "&redirect_uri=" + enc(redirect()) + "&scope=" + enc(SCOPE)
                 + "&code_challenge=" + b64url(sha256(verifier.getBytes(StandardCharsets.US_ASCII)))
                 + "&code_challenge_method=S256&state=" + state + "&prompt=login";
+        // A Custom Tab without androidx.browser: the session extra (a null binder) is what makes
+        // a browser open one; others ignore it and open a normal tab.
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE);
+        Bundle tab = new Bundle();
+        tab.putBinder("android.support.customtabs.extra.SESSION", null);
+        i.putExtras(tab);
+        i.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", Ui.BG);
         try {
-            a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE));
+            a.startActivity(i);
         } catch (Exception e) {
             Ui.toast(a, "No browser to sign in with.");
         }
@@ -222,7 +272,37 @@ final class Account {
         String access = j.optString("access");
         JSONObject body;
         try { body = new JSONObject().put("device", device(access)).put("app", Settings.myName(c)); } catch (JSONException e) { throw new IOException(e); }
-        JSONObject r = http("POST", service() + "/v1/session", access, "application/json", body.toString());
+        adopt(c, j, http("POST", service() + "/v1/session", access, "application/json", body.toString()));
+    }
+
+    /** The account sheet's ID token → POST /v1/session/google: the same account as the PCs'
+     *  (by its verified email), a Harbor token, and a secret that renews it. */
+    static void finishGoogle(Context c, String idToken, String nonce) throws IOException {
+        JSONObject body;
+        try { body = new JSONObject().put("id_token", idToken).put("nonce", nonce).put("device", device(idToken)).put("app", Settings.myName(c)); } catch (JSONException e) { throw new IOException(e); }
+        JSONObject r;
+        try {
+            r = http("POST", service() + "/v1/session/google", null, "application/json", body.toString());
+        } catch (Hub.ApiError e) {
+            if (e.code == 409 || e.code == 404) throw new NeedBrowser(e.getMessage());
+            throw e;
+        }
+        JSONObject j = new JSONObject();
+        try { j.put("grefresh", r.optString("refresh")); } catch (JSONException ignored) { }
+        adopt(c, j, r);
+        directory(c, true);
+    }
+
+    /** POST /v1/session/refresh: a new Harbor token for a phone signed in with the sheet. */
+    private static void refreshGoogle(Context c, JSONObject j) throws IOException {
+        String secret = j.optString("grefresh");
+        JSONObject body;
+        try { body = new JSONObject().put("refresh", secret).put("device", device(secret)).put("app", Settings.myName(c)); } catch (JSONException e) { throw new IOException(e); }
+        adopt(c, j, http("POST", service() + "/v1/session/refresh", null, "application/json", body.toString()));
+    }
+
+    /** Keeps what a session answer says: the account, workspaces, the token, invitations. */
+    private static void adopt(Context c, JSONObject j, JSONObject r) throws IOException {
         JSONObject a = r.optJSONObject("account");
         if (a == null || r.optString("token").isEmpty()) throw new IOException("The account service sent no sign-in.");
         String was = state(c).optString("id");
@@ -280,8 +360,8 @@ final class Account {
             JSONObject j;
             try { j = new JSONObject(s.toString()); } catch (JSONException e) { j = new JSONObject(); }
             try {
-                freshAccess(c, j);
-                session(c, j);
+                if (!j.optString("grefresh").isEmpty()) refreshGoogle(c, j);
+                else { freshAccess(c, j); session(c, j); }
             } catch (Expired e) {
                 edit(c, x -> x.put("expired", true));
                 throw e;

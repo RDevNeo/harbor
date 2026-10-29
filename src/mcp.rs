@@ -699,6 +699,36 @@ fn keep_fresh() {
 }
 
 /// Waits for the browser to come back to the loopback redirect at `want`; returns the code.
+/// The page the browser shows when a sign-in comes back: Harbor's look (rengaf tokens, light
+/// and dark), saying Harbor is back in front; it closes itself where the browser allows it.
+pub fn callback_page(ok: bool, error: &str) -> String {
+    let esc = |t: &str| t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let (title, line) = if ok {
+        ("You're signed in", "Harbor is back in front. You can close this tab.".to_string())
+    } else {
+        ("Sign-in didn't finish", if error.is_empty() { "Go back to Harbor and try again.".to_string() } else { format!("{}. Go back to Harbor and try again.", esc(error)) })
+    };
+    let mark = if ok { "&#10003;" } else { "!" };
+    format!(
+        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harbor</title>
+<style>
+:root{{--bg:#fafafa;--card:#fff;--fg:#171717;--sub:#737373;--border:#e5e5e5;--mark:{mk};--markfg:#fff}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#0a0a0a;--card:#171717;--fg:#ededed;--sub:#a1a1a1;--border:#2e2e2e;--markfg:#0a0a0a}}}}
+*{{box-sizing:border-box}}html,body{{height:100%;margin:0}}
+body{{background:var(--bg);color:var(--fg);font:14px/1.5 Geist,"Geist Sans",Inter,system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center}}
+.card{{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px 36px;max-width:380px;width:calc(100% - 32px);text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04)}}
+.mark{{width:40px;height:40px;border-radius:999px;background:var(--mark);color:var(--markfg);display:inline-flex;align-items:center;justify-content:center;font-size:20px;font-weight:600}}
+.brand{{font-weight:600;letter-spacing:-.01em;color:var(--sub);margin:14px 0 2px}}
+h1{{font-size:20px;letter-spacing:-.02em;margin:0 0 6px}}p{{margin:0;color:var(--sub)}}
+</style>
+<div class="card"><div class="mark">{mark}</div><div class="brand">Harbor</div><h1>{title}</h1><p>{line}</p></div>
+<script>setTimeout(function(){{window.close()}},{close})</script>
+</html>"#,
+        mk = if ok { "#0070f3" } else { "#e5484d" },
+        close = if ok { 600 } else { 600000 },
+    )
+}
+
 pub fn wait_callback(listener: &std::net::TcpListener, want: &str, state: &str, cancel: &AtomicBool) -> Result<String, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let until = Instant::now() + Duration::from_secs(600);
@@ -724,9 +754,14 @@ pub fn wait_callback(listener: &std::net::TcpListener, want: &str, state: &str, 
         }
         let params: HashMap<String, String> = query.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (dec(k), dec(v))).collect();
         let ok = params.get("state").map(String::as_str) == Some(state) && params.contains_key("code");
-        let msg = if ok { "Signed in. You can close this tab and go back to Harbor." } else { "Sign-in failed. Go back to Harbor and try again." };
-        let html = format!("<!doctype html><meta charset=utf-8><title>Harbor</title><body style=\"font:16px system-ui;padding:40px\">{msg}</body>");
+        let err = params.get("error_description").or(params.get("error")).cloned().unwrap_or_default();
+        let html = callback_page(ok, &err);
         let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}", html.len());
+        // Harbor comes back in front by itself (the control socket's focus: Hyprland/Sway raise,
+        // egui focus), from the app or from `harbor account login` while it runs.
+        std::thread::spawn(|| {
+            crate::single::focus_running();
+        });
         if ok {
             return Ok(params["code"].clone());
         }

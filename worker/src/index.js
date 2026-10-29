@@ -259,11 +259,16 @@ async function session(req, env) {
   if (ui.status >= 500 || ui.status === 0) throw unavailable();
   const sub = ui.ok && typeof ui.data?.sub === 'string' ? ui.data.sub : null;
   if (!sub) throw new HttpError(401, 'Your sign-in expired: sign in again.', { signin: true });
+  return json(await issue(env, sub, dev, ui.data.email));
+}
 
+/** Who the account is, its personal workspace, invitations, workspaces, the device, and a
+ *  Harbor token bound to the device: the answer of every way to sign in. */
+async function issue(env, sub, dev, fallbackEmail) {
   const user = must(await clerk(env, 'GET', `/users/${enc2(sub)}`), 'Could not load your account.');
   const emails = user.email_addresses || [];
   const primary = emails.find((e) => e.id === user.primary_email_address_id) || emails[0];
-  const email = (primary?.email_address || ui.data.email || '').toLowerCase();
+  const email = (primary?.email_address || fallbackEmail || '').toLowerCase();
   const verified = emails.filter((e) => e.verification?.status === 'verified').map((e) => e.email_address.toLowerCase());
   const first = user.first_name || email.split('@')[0] || 'My';
   const name = fullName(user) || email.split('@')[0];
@@ -312,7 +317,106 @@ async function session(req, env) {
       if (info) out.pc = { ws: row.ws, ws_name: info.name, owner: info.owner, member: !!mine };
     }
   }
+  return out;
+}
+
+// ---- Android's own Google account picker (Credential Manager): a Google ID token
+
+let googleKeys = null;
+/** Google's signing keys (JWKS), cached for an hour. */
+async function googleJwks(env, kid) {
+  const fresh = googleKeys && Date.now() - googleKeys.at < 3600_000 && googleKeys.keys[kid];
+  if (!fresh) {
+    let r;
+    try {
+      r = await fetch(env.GOOGLE_JWKS_URL || 'https://www.googleapis.com/oauth2/v3/certs');
+    } catch {
+      throw unavailable();
+    }
+    if (!r.ok) throw unavailable();
+    const keys = {};
+    for (const k of (await r.json()).keys || []) keys[k.kid] = k;
+    googleKeys = { at: Date.now(), keys };
+  }
+  return googleKeys.keys[kid];
+}
+
+/** The claims of a Google ID token for Harbor's Web client, after checking its signature
+ *  (RS256, Google's keys), issuer, audience, expiry, nonce and verified email. */
+async function verifyGoogle(env, token, nonce) {
+  const bad = (why) => new HttpError(401, `Google's sign-in couldn't be checked (${why}): try again.`, { signin: true });
+  const parts = String(token).split('.');
+  if (parts.length !== 3) throw bad('format');
+  let head, claims;
+  try {
+    head = JSON.parse(dec.decode(unb64(parts[0])));
+    claims = JSON.parse(dec.decode(unb64(parts[1])));
+  } catch {
+    throw bad('format');
+  }
+  if (head.alg !== 'RS256') throw bad('algorithm');
+  const jwk = await googleJwks(env, head.kid);
+  if (!jwk) throw bad('key');
+  const key = await crypto.subtle.importKey('jwk', { kty: 'RSA', n: jwk.n, e: jwk.e, alg: 'RS256', ext: true }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+  const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, unb64(parts[2]), enc.encode(`${parts[0]}.${parts[1]}`));
+  if (!ok) throw bad('signature');
+  if (claims.iss !== 'accounts.google.com' && claims.iss !== 'https://accounts.google.com') throw bad('issuer');
+  if (claims.aud !== env.GOOGLE_WEB_CLIENT_ID) throw bad('audience');
+  if (!(claims.exp > now())) throw bad('expired');
+  if (nonce && claims.nonce !== nonce) throw bad('nonce');
+  if (claims.email_verified !== true && claims.email_verified !== 'true') throw new HttpError(403, 'That Google account has no verified email.');
+  return claims;
+}
+
+/** A new renewal secret for a phone (only its hash is kept). */
+async function newRefresh(env, fp, sub) {
+  const secret = rand(32);
+  await env.DB.prepare(
+    `INSERT INTO device_refresh (fp,user_id,hash,at) VALUES (?,?,?,?)
+     ON CONFLICT(fp) DO UPDATE SET user_id=excluded.user_id, hash=excluded.hash, at=excluded.at`,
+  )
+    .bind(fp, sub, await sha256hex(enc.encode(secret)), now())
+    .run();
+  return secret;
+}
+
+/** POST /v1/session/google: a phone that picked its Google account in Android's own sheet.
+ *  The ID token's verified email must belong to a Clerk account (made by a sign-in through
+ *  Clerk, e.g. on a PC): then it's that same account. Without one: `browser: true`, sign in
+ *  through Clerk once. */
+async function googleSession(req, env) {
+  if (!env.GOOGLE_WEB_CLIENT_ID) throw new HttpError(404, 'Google sign-in on phones is not set up.', { browser: true });
+  const b = await body(req);
+  if (typeof b.id_token !== 'string' || b.id_token.length > 8192) throw new HttpError(400, 'Missing Google sign-in.');
+  const dev = await checkDevice(b.device, b.id_token);
+  if (dev.kind !== 'phone') throw new HttpError(400, 'Only phones sign in this way.');
+  const claims = await verifyGoogle(env, b.id_token, typeof b.nonce === 'string' ? b.nonce : '');
+  const email = String(claims.email || '').toLowerCase();
+  const list = must(await clerk(env, 'GET', `/users?email_address=${enc2(email)}&limit=10`), 'Could not look up your account.');
+  const users = Array.isArray(list) ? list : list.data || [];
+  const user = users.find((u) => (u.email_addresses || []).some((e) => e.email_address.toLowerCase() === email && e.verification?.status === 'verified'));
+  if (!user) {
+    throw new HttpError(409, 'This Google account has no Harbor account yet: finish the first sign-in in the browser.', { browser: true });
+  }
+  const out = await issue(env, user.id, dev, email);
+  out.refresh = await newRefresh(env, dev.fp, user.id);
   return json(out);
+}
+
+/** POST /v1/session/refresh: a new Harbor token for a phone that signed in with the picker,
+ *  with its renewal secret and the proof it holds its key. */
+async function refreshSession(req, env) {
+  const b = await body(req);
+  if (typeof b.refresh !== 'string' || b.refresh.length !== 64) throw new HttpError(401, 'Sign in again.', { signin: true });
+  const dev = await checkDevice(b.device, b.refresh);
+  const row = await env.DB.prepare(`SELECT user_id, hash FROM device_refresh WHERE fp=?`).bind(dev.fp).first();
+  if (!row || row.hash !== (await sha256hex(enc.encode(b.refresh)))) throw new HttpError(401, 'Your sign-in on this phone ended: sign in again.', { signin: true });
+  const r = await clerk(env, 'GET', `/users/${enc2(row.user_id)}`);
+  if (r.status === 404) {
+    await env.DB.prepare(`DELETE FROM device_refresh WHERE fp=?`).bind(dev.fp).run();
+    throw new HttpError(401, 'That account is gone: sign in again.', { signin: true });
+  }
+  return json(await issue(env, row.user_id, dev, ''));
 }
 
 /** Workspace name and the name of its admin; null when Clerk no longer has it. */
@@ -447,7 +551,7 @@ async function deleteDevice(req, env, fp) {
   }
   if (!allowed) throw new HttpError(403, 'You cannot remove that device.');
   const pc = await env.DB.prepare(`SELECT ws FROM pcs WHERE fp=?`).bind(fp).first();
-  const stmts = [env.DB.prepare(`DELETE FROM devices WHERE fp=?`).bind(fp)];
+  const stmts = [env.DB.prepare(`DELETE FROM devices WHERE fp=?`).bind(fp), env.DB.prepare(`DELETE FROM device_refresh WHERE fp=?`).bind(fp)];
   if (pc && (dev.user_id === p.sub || mine.some((w) => w.id === pc.ws))) stmts.push(env.DB.prepare(`DELETE FROM pcs WHERE fp=?`).bind(fp));
   await env.DB.batch(stmts);
   return json({ ok: true });
@@ -637,6 +741,8 @@ async function route(req, env) {
     return json({ keys: [{ kid: env.HARBOR_KID || 'k1', alg: 'EdDSA', x: k.x }] });
   }
   if (m === 'POST' && path === '/v1/session') return session(req, env);
+  if (m === 'POST' && path === '/v1/session/google') return googleSession(req, env);
+  if (m === 'POST' && path === '/v1/session/refresh') return refreshSession(req, env);
   if (m === 'GET' && path === '/v1/directory') return directory(req, env);
   if (m === 'GET' && path === '/v1/invites') return listInvites(req, env);
   if (m === 'POST' && seg[0] === 'v1' && seg[1] === 'invites' && seg.length === 4 && (seg[3] === 'accept' || seg[3] === 'decline')) {
