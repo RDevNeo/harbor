@@ -5,6 +5,20 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Rename a chat's worktree folder on its own, from the workspace menu under the composer (the
+  left "Worktree · …" chip › Rename worktree…) on the desktop, and the same place on the phone.
+  It stays where it is; a name with "/" or spaces, starting with "." or "-", or already taken is
+  refused in plain words. As with a branch rename, the folder moves at once when nothing works in
+  it, else as soon as nothing does; the chat's Claude sessions come along, the chat shows a line
+  and its agents are told. Once you've named the folder, renaming the branch leaves it be.
+- "Rename branch…" is in the workspace menu too (and the phone's workspace sheet), so both
+  renames are reachable from either chip.
+
+### Fixed
+- A worktree folder still waiting to follow its renamed branch is renamed after a restart too
+  (the plan is kept, not only in memory).
+
 ## [0.91.1] - 2026-10-29
 
 ### Fixed

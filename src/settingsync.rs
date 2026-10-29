@@ -136,6 +136,9 @@ pub const KEYS: &[(&str, Class)] = &[
     ("account_sync_backup", D),
     // Per chat and per project.
     ("worktree:", D),
+    ("worktree_move:", D),
+    ("worktree_named:", D),
+    ("worktree_note:", D),
     ("recap:", D),
     ("recap_users:", D),
     ("suggestion:", D),

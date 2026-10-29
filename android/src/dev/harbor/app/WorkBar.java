@@ -244,8 +244,17 @@ final class WorkBar {
             return;
         }
         if (wt) {
-            opts.add(new Sheet.Option("wt", info.optString("name"), info.optString("path"), true));
-            Sheet.pick(a, "Workspace", "This thread works in its own worktree. It's removed with the thread, unless it has uncommitted changes.", opts, "wt", id -> { });
+            // As the desktop's workspace menu: the folder, and renaming it or its branch.
+            String to = info.isNull("folder_to") ? "" : info.optString("folder_to");
+            opts.add(new Sheet.Option("wt", info.optString("name"), info.optString("path") + (to.isEmpty() ? "" : "\nBecomes " + to + " once nothing works in it."), true));
+            if (info.optBoolean("can_rename")) {
+                opts.add(new Sheet.Option("folder", "Rename worktree…", "Its folder, in the same place", true));
+                opts.add(new Sheet.Option("branch", "Rename branch…", info.optBoolean("folder_named") ? "The folder keeps the name you gave it" : "Its worktree folder follows", true));
+            }
+            Sheet.pick(a, "Workspace", "This thread works in its own worktree. It's removed with the thread, unless it has uncommitted changes.", opts, "wt", id -> {
+                if ("folder".equals(id)) renameFolder(info.optString("name"));
+                else if ("branch".equals(id)) rename(info.optString("branch"));
+            });
             return;
         }
         boolean can = info.optBoolean("can_move");
@@ -323,7 +332,7 @@ final class WorkBar {
                     if (!forBase && info.optBoolean("can_rename")) {
                         String cur = fr.optString("current");
                         LinearLayout rc = Ui.card(a);
-                        rc.addView(Ui.cardRow(a, Ui.I_PEN, "Rename branch…", "Its worktree folder follows", Ui.FG,
+                        rc.addView(Ui.cardRow(a, Ui.I_PEN, "Rename branch…", info.optBoolean("folder_named") ? "The folder keeps the name you gave it" : "Its worktree folder follows", Ui.FG,
                                 v -> { s.dismiss(); rename(cur); }), Ui.fill());
                         list.addView(rc, Ui.margins(Ui.fill(), 0, 12, 0, 0));
                     }
@@ -370,7 +379,9 @@ final class WorkBar {
             c.addView(r, Ui.margins(Ui.fill(), 0, 8, 0, 0));
         }
         String waits = info == null || info.isNull("folder_waits") ? "" : info.optString("folder_waits");
-        TextView n = Ui.text(a, "The worktree's folder follows the new name once nothing works in it" + (waits.isEmpty() ? "" : " (" + waits + " now)") + ".", 13, Ui.G700);
+        boolean named = info != null && info.optBoolean("folder_named");
+        TextView n = Ui.text(a, named ? "The folder keeps its name, " + info.optString("name") + ": you named it."
+                : "The worktree's folder follows the new name once nothing works in it" + (waits.isEmpty() ? "" : " (" + waits + " now)") + ".", 13, Ui.G700);
         n.setPadding(Ui.dp(4), Ui.dp(8), Ui.dp(4), Ui.dp(8));
         c.addView(n, Ui.fill());
         Runnable go = () -> {
@@ -380,6 +391,40 @@ final class WorkBar {
             pending(true, "Renaming to " + name + "…");
             act(() -> hub.call("POST", "/v1/chats/" + chat + "/worktree/rename", new JSONObject().put("branch", name).put("remote", sw != null && sw.isChecked())), r -> {
                 Ui.toast(a, r.optString("said", "On " + r.optString("branch")));
+                load();
+            });
+        };
+        e.setOnEditorActionListener((v, act, ev) -> { go.run(); return true; });
+        c.addView(Ui.button(a, "Rename", true, v -> go.run()), Ui.margins(Ui.wrap(), 0, 4, 0, 0));
+        s.show();
+        e.requestFocus();
+    }
+
+    /** "Rename worktree", as the desktop's form: the folder's new name, in the same place. The
+     *  PC checks it (one plain name, not taken) and moves the folder once nothing works in it;
+     *  from then on a branch rename leaves the folder be. */
+    private void renameFolder(String current) {
+        Sheet s = new Sheet(a, "Rename worktree");
+        LinearLayout c = s.card();
+        c.setPadding(Ui.dp(14), Ui.dp(14), Ui.dp(14), Ui.dp(12));
+        EditText e = Ui.input(a, "New folder name", false);
+        e.setText(current);
+        e.setSelection(e.getText().length());
+        e.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        c.addView(e, Ui.fill());
+        String path = info == null ? "" : info.optString("path");
+        int cut = path.lastIndexOf('/');
+        String where = cut > 0 ? path.substring(0, cut) : "the same folder";
+        TextView n = Ui.text(a, "Stays in " + where + "; renaming the branch leaves it be from now on. It's renamed once nothing works in it.", 13, Ui.G700);
+        n.setPadding(Ui.dp(4), Ui.dp(8), Ui.dp(4), Ui.dp(8));
+        c.addView(n, Ui.fill());
+        Runnable go = () -> {
+            String name = e.getText().toString().trim();
+            if (name.isEmpty() || name.equals(current)) return;
+            s.dismiss();
+            pending(false, "Renaming to " + name + "…");
+            act(() -> hub.call("POST", "/v1/chats/" + chat + "/worktree/rename", new JSONObject().put("folder", name)), r -> {
+                Ui.toast(a, r.optString("said", "Renamed to " + r.optString("name")));
                 load();
             });
         };

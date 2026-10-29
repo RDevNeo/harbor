@@ -781,6 +781,12 @@ impl Store {
         crate::settingsync::changed(k);
     }
 
+    /// Every key starting with `prefix`, with its value (non-empty ones only).
+    pub fn with_prefix(&self, prefix: &str) -> Vec<(String, String)> {
+        let Ok(mut st) = self.db.prepare("SELECT k, v FROM kv WHERE substr(k, 1, length(?1)) = ?1 AND v != ''") else { return vec![] };
+        st.query_map([prefix], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.flatten().collect()).unwrap_or_default()
+    }
+
     /// [`Store::set`] for a setting that came from the account: not sent back.
     pub fn set_quiet(&self, k: &str, v: &str) {
         let _ = self.db.execute("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)", [k, v]);

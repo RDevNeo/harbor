@@ -9,7 +9,9 @@
 //! on branch `harbor/<slug>` ("-2"… when taken; 6 hex when the message gives no words). The
 //! branch menu renames the branch at any time (`ws_rename`; a pushed one on its remote too, or
 //! it stops tracking it); the folder follows once nothing works in it (`ws_moves`: no turn, no
-//! process, no terminal there), and the agents are told on their next turn. Its path is kept in kv
+//! process, no terminal there; kept in kv `worktree_move:<lead>` across restarts), and the agents
+//! are told on their next turn. The workspace menu renames the folder on its own too; once the
+//! user named it (kv `worktree_named:<lead>`), branch renames leave it be. Its path is kept in kv
 //! `worktree:<chat id>`; sub-agents run in their lead's. An existing chat in the checkout can
 //! move to a new worktree when it could move projects (movechat.rs: not running, on this PC,
 //! its Claude sessions copied over); one in a worktree stays there. Deleting the chat removes
@@ -385,6 +387,29 @@ pub fn folder_for(repo: &Path, dir: &Path, branch: &str) -> Option<PathBuf> {
     (1..100).map(|n| if n == 1 { want.clone() } else { format!("{want}-{n}") }).map(|n| parent.join(n)).find(|p| !p.exists())
 }
 
+/// Why `name` can't be a worktree's folder name next to `dir` (None: it can): one plain name,
+/// no path, not taken.
+pub fn folder_name_problem(dir: &Path, name: &str) -> Option<String> {
+    let n = name.trim();
+    if n.is_empty() {
+        return Some("type the folder's new name".into());
+    }
+    if n.contains('/') || n.contains('\\') {
+        return Some("just a name, no “/”: it stays in the same place".into());
+    }
+    if n.starts_with('.') || n.starts_with('-') {
+        return Some(format!("“{n}” can't start with “{}”", &n[..1]));
+    }
+    if n.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Some("no spaces: use “-” instead".into());
+    }
+    if n.len() > 120 {
+        return Some("that name is too long".into());
+    }
+    let to = dir.parent().map(|p| p.join(n))?;
+    (to != dir && to.exists()).then(|| format!("a folder named “{n}” is already there"))
+}
+
 /// Moves worktree `dir` to `to` (as `git worktree move`, but only file operations, so it's
 /// instant and can't race a turn starting): the folder is renamed, and its entry in the
 /// repository's worktree list pointed at it.
@@ -496,16 +521,25 @@ pub struct State {
     pub from_header: bool,
     /// The branch menu's "Rename branch" form, while open.
     pub rename: Option<RenameForm>,
-    /// Leads whose worktree folder is still to follow its renamed branch (→ the branch): moved
-    /// once nothing runs there (`ws_moves`). Not kept across restarts: the folder then keeps
-    /// its name.
+    /// Leads whose worktree folder is still to be renamed (→ its new name, next to it): moved
+    /// once nothing runs there (`ws_moves`). Also in kv `worktree_move:<lead>`, so a restart
+    /// keeps them (read back on the first poll).
     moves: HashMap<i64, String>,
+    moves_loaded: bool,
+}
+
+/// What the rename form renames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RenameKind {
+    Branch,
+    Folder,
 }
 
 /// The rename form: the name typed, whether it's renamed on its remote too, and where the
 /// branch is pushed (None while it's read; Some(None): never pushed).
 #[derive(Clone, Debug)]
 pub struct RenameForm {
+    pub kind: RenameKind,
     pub dir: PathBuf,
     pub name: String,
     pub on_remote: bool,
@@ -517,6 +551,8 @@ pub struct RenameForm {
 /// has, or needn't).
 #[derive(Clone, Debug)]
 pub struct RenameDone {
+    pub kind: RenameKind,
+    /// The branch's rename (a folder rename: empty).
     pub renamed: Renamed,
     pub folder: String,
     pub path: PathBuf,
@@ -526,7 +562,7 @@ pub struct RenameDone {
 impl Default for State {
     fn default() -> Self {
         let (done_tx, done_rx) = channel();
-        Self { draft: DraftWs::default(), done_tx, done_rx, busy: None, heads: Default::default(), menu: None, query: String::new(), error: None, from_header: false, rename: None, moves: HashMap::new() }
+        Self { draft: DraftWs::default(), done_tx, done_rx, busy: None, heads: Default::default(), menu: None, query: String::new(), error: None, from_header: false, rename: None, moves: HashMap::new(), moves_loaded: false }
     }
 }
 
@@ -922,40 +958,120 @@ impl App {
                     }
                     app.notice(lead, "worktree", &format!("Branch renamed · {} → {}", rn.old, rn.branch), &detail);
                     app.ws_note(lead, &format!("the user renamed this worktree's branch from {} to {}.", rn.old, rn.branch));
-                    app.ws.moves.insert(lead, rn.branch.clone());
+                    // The folder follows, unless the user named it themselves.
+                    if !app.ws_folder_named(lead) {
+                        if let Some(to) = folder_for(&info.repo, &info.dir, &rn.branch).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())) {
+                            app.ws_plan_move(lead, &to);
+                        }
+                    }
                     app.pr_want(lead, None, ctx);
                     app.ws_moves();
                 }
                 let path = app.chat(lead).and_then(|c| app.worktree_of(c)).unwrap_or(info.dir.clone());
                 let waits = app.ws.moves.contains_key(&lead).then(|| app.ws_folder_busy(lead, &path)).flatten();
-                RenameDone { folder: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), path, renamed: rn, waits }
+                RenameDone { kind: RenameKind::Branch, folder: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), path, renamed: rn, waits }
             });
             done(app, r, ctx);
         });
     }
 
-    /// Moves the worktree folders still to follow their renamed branches, where nothing runs
-    /// now (every frame; nothing to do almost always).
+    /// Whether the user named the lead's worktree folder themselves: then renaming its branch
+    /// leaves the folder be.
+    pub fn ws_folder_named(&self, lead: i64) -> bool {
+        self.store.get(&format!("worktree_named:{lead}")).is_some_and(|v| v == "1")
+    }
+
+    /// The folder a lead's worktree is still to be renamed to, if any.
+    pub fn ws_folder_to(&self, lead: i64) -> Option<&String> {
+        self.ws.moves.get(&lead)
+    }
+
+    /// The lead's worktree folder is to be renamed to `name` (next to it): now, or once nothing
+    /// works in it. Kept in kv until done.
+    fn ws_plan_move(&mut self, lead: i64, name: &str) {
+        self.store.set(&format!("worktree_move:{lead}"), name);
+        self.ws.moves.insert(lead, name.to_string());
+    }
+
+    fn ws_unplan_move(&mut self, lead: i64) {
+        if self.ws.moves.remove(&lead).is_some() {
+            self.store.set(&format!("worktree_move:{lead}"), "");
+        }
+    }
+
+    /// Renames a chat's worktree folder to `name`, in the same place: at once when nothing
+    /// works in it, else as soon as nothing does (`ws_moves`). From then on a branch rename
+    /// leaves the folder be (kv `worktree_named:<lead>`).
+    pub fn ws_rename_folder(&mut self, chat_id: i64, name: &str) -> Result<RenameDone, String> {
+        let c = self.chat(chat_id).cloned().ok_or("no such chat")?;
+        let lead = if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id };
+        let info = self.ws_info(Target::Chat(chat_id)).ok_or("this chat isn't in a git project on this PC")?;
+        info.rename.clone()?;
+        let name = name.trim().to_string();
+        if let Some(why) = folder_name_problem(&info.dir, &name) {
+            return Err(why);
+        }
+        let current = info.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.store.set(&format!("worktree_named:{lead}"), "1");
+        if name == current {
+            // Named as it is: only a pending move goes.
+            self.ws_unplan_move(lead);
+        } else {
+            self.ws_plan_move(lead, &name);
+            self.ws_moves();
+        }
+        let path = self.chat(lead).and_then(|c| self.worktree_of(c)).unwrap_or(info.dir.clone());
+        let waits = self.ws.moves.contains_key(&lead).then(|| self.ws_folder_busy(lead, &path)).flatten();
+        Ok(RenameDone {
+            kind: RenameKind::Folder,
+            folder: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            path,
+            renamed: Renamed { old: String::new(), branch: String::new(), remote: None },
+            waits: waits.map(|w| format!("{w}; it becomes {name} then")),
+        })
+    }
+
+    /// Renames the worktree folders still to be renamed, where nothing works now (every frame;
+    /// nothing to do almost always). The first call reads back the ones a restart left.
     fn ws_moves(&mut self) {
+        if !self.ws.moves_loaded {
+            self.ws.moves_loaded = true;
+            for (k, v) in self.store.with_prefix("worktree_move:") {
+                if let Some(id) = k.strip_prefix("worktree_move:").and_then(|i| i.parse().ok()) {
+                    self.ws.moves.insert(id, v);
+                }
+            }
+        }
         if self.ws.moves.is_empty() {
             return;
         }
         let leads: Vec<i64> = self.ws.moves.keys().copied().collect();
         for lead in leads {
-            let Some(c) = self.chat(lead).cloned() else {
-                self.ws.moves.remove(&lead);
-                continue;
-            };
-            let Some(dir) = self.worktree_of(&c).filter(|d| d.is_dir()) else {
-                self.ws.moves.remove(&lead);
+            let Some(dir) = self.chat(lead).cloned().and_then(|c| self.worktree_of(&c)).filter(|d| d.is_dir()) else {
+                self.ws_unplan_move(lead);
                 continue;
             };
             if self.ws_folder_busy(lead, &dir).is_some() {
                 continue;
             }
-            let Some(branch) = self.ws.moves.remove(&lead) else { continue };
-            let repo = self.cwd_of(c.repo_id);
-            let Some(to) = folder_for(&repo, &dir, &branch) else { continue };
+            let Some(name) = self.ws.moves.get(&lead).cloned() else { continue };
+            self.ws_unplan_move(lead);
+            let Some(parent) = dir.parent() else { continue };
+            let mut to = parent.join(&name);
+            if to == dir {
+                continue;
+            }
+            // Taken meanwhile: a name the branch gave gets a number; one the user typed is said.
+            if to.exists() {
+                if self.ws_folder_named(lead) {
+                    self.notice(lead, "worktree", "The worktree's folder keeps its name", &format!("Couldn't rename {} to {name}: a folder of that name appeared meanwhile.", crate::app::tilde(&dir)));
+                    continue;
+                }
+                match (2..100).map(|n| parent.join(format!("{name}-{n}"))).find(|p| !p.exists()) {
+                    Some(p) => to = p,
+                    None => continue,
+                }
+            }
             if let Err(e) = self.ws_move_folder(lead, &dir, &to) {
                 self.notice(lead, "worktree", "The worktree's folder keeps its name", &format!("Couldn't rename {} to {}: {e}", crate::app::tilde(&dir), to.display()));
             }
@@ -993,6 +1109,9 @@ impl App {
         let key = format!("worktree:{chat_id}");
         let dir = self.store.get(&key).filter(|p| !p.is_empty()).map(PathBuf::from);
         self.store.set(&key, "");
+        // A reused chat id mustn't inherit its folder's name choice or a pending rename.
+        self.store.set(&format!("worktree_named:{chat_id}"), "");
+        self.ws_unplan_move(chat_id);
         let Some(dir) = dir else { return false };
         let repo = self.cwd_of(c.repo_id);
         self.ws_spawn(ctx, move || remove(&repo, &dir).map_err(|e| (e, dir)), |_, r, ctx| {
@@ -1186,7 +1305,21 @@ impl App {
         let t = self.theme.t;
         let target = self.ws_target();
         let Some(info) = self.ws_info(target) else { return true };
+        if let (Target::Chat(id), Some(_)) = (target, &self.ws.rename) {
+            return self.rename_menu(ctx, id, &info, "workspace", !self.ws.from_header);
+        }
         let error = self.ws.error.clone();
+        // A chat's own worktree: its folder and its branch can be renamed from here too.
+        let lead = match target {
+            Target::Chat(id) => self.chat(id).map(|c| if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id }),
+            Target::Draft(_) => None,
+        };
+        let renames = info.rename.is_ok() && info.worktree.is_some();
+        let on_branch = renames && self.ws_head(&info.dir, ctx).is_some_and(|h| !h.branch.is_empty());
+        let named = lead.is_some_and(|l| self.ws_folder_named(l));
+        let folder_to = lead.and_then(|l| self.ws_folder_to(l).cloned());
+        let busy = self.ws.busy.is_some();
+        let mut start: Option<RenameKind> = None;
         // Over the bar, or under the header's chip.
         let (pick, close) = crate::widgets::popover(ctx, "workspace", self.popup_anchor, 320.0, !self.ws.from_header, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -1205,6 +1338,19 @@ impl App {
                     let name = w.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     crate::widgets::menu_item(ui, crate::icons::FOLDER_GIT, &name, Some(&crate::app::tilde(w)), true)
                         .tip("A thread stays in its worktree. It's removed with the thread, unless it has uncommitted changes.");
+                    if let Some(to) = &folder_to {
+                        note(ui, &format!("Becomes {to} once nothing works in it."), t.subtle());
+                    }
+                    if renames {
+                        crate::widgets::menu_separator(ui);
+                        if ui.add_enabled_ui(!busy, |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename worktree…", Some("Its folder, in the same place"), false)).inner.clicked() {
+                            start = Some(RenameKind::Folder);
+                        }
+                        let desc = if named { "The folder keeps the name you gave it" } else { "Its worktree folder follows" };
+                        if ui.add_enabled_ui(!busy && on_branch, |ui| crate::widgets::menu_item(ui, crate::icons::BRANCH, "Rename branch…", Some(desc), false)).inner.clicked() {
+                            start = Some(RenameKind::Branch);
+                        }
+                    }
                 }
                 (Target::Chat(_), None) => {
                     crate::widgets::menu_item(ui, crate::icons::FOLDER, "Current checkout", Some(&crate::app::tilde(&info.repo)), true);
@@ -1224,6 +1370,10 @@ impl App {
             }
             pick
         });
+        if let Some(kind) = start {
+            self.ws_start_rename(kind, &info, ctx);
+            return false;
+        }
         match (pick, target) {
             (Some(on), Target::Draft(_)) => {
                 self.ws.draft.worktree = on;
@@ -1254,7 +1404,7 @@ impl App {
         let target = self.ws_target();
         let Some(info) = self.ws_info(target) else { return true };
         if let (Target::Chat(id), Some(_)) = (target, &self.ws.rename) {
-            return self.rename_menu(ctx, id, &info);
+            return self.rename_menu(ctx, id, &info, "branch", true);
         }
         let h = self.ws_head(&info.dir, ctx);
         let list = match &self.ws.menu {
@@ -1270,6 +1420,11 @@ impl App {
         let current = if info.new_worktree { if info.base.is_empty() { h.as_ref().map(|h| h.branch.clone()).unwrap_or_default() } else { info.base.clone() } } else { h.as_ref().map(|h| h.branch.clone()).unwrap_or_default() };
         // A thread's own worktree on a branch: it can be renamed (also while its agent works).
         let can_rename = info.rename.is_ok() && h.as_ref().is_some_and(|h| !h.branch.is_empty());
+        let named = match target {
+            Target::Chat(id) => self.chat(id).is_some_and(|c| self.ws_folder_named(if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id })),
+            Target::Draft(_) => false,
+        };
+        let branch_desc = if named { "The folder keeps the name you gave it" } else { "Its worktree folder follows" };
         let mut rename = false;
         let (pick, close) = crate::widgets::popover(ctx, "branch", self.popup_anchor, 340.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -1335,7 +1490,7 @@ impl App {
             }
             if can_rename {
                 crate::widgets::menu_separator(ui);
-                let r = ui.add_enabled_ui(busy.is_none(), |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename branch…", Some("Its worktree folder follows"), false)).inner;
+                let r = ui.add_enabled_ui(busy.is_none(), |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename branch…", Some(branch_desc), false)).inner;
                 if r.clicked() {
                     rename = true;
                 }
@@ -1347,15 +1502,7 @@ impl App {
         });
         self.ws.query = query;
         if rename {
-            self.ws.error = None;
-            let name = h.as_ref().map(|h| h.branch.clone()).unwrap_or_default();
-            self.ws.rename = Some(RenameForm { dir: info.dir.clone(), name, on_remote: true, pushed: None, focus: true });
-            let dir = info.dir.clone();
-            self.ws_spawn(ctx, move || pushed_as(&dir), move |app, p, _| {
-                if let Some(f) = app.ws.rename.as_mut().filter(|f| f.dir == info.dir) {
-                    f.pushed = Some(p);
-                }
-            });
+            self.ws_start_rename(RenameKind::Branch, &info, ctx);
             return false;
         }
         let (row, name) = match pick {
@@ -1380,23 +1527,61 @@ impl App {
         false
     }
 
-    /// The branch menu's rename form: the new name, whether its remote branch is renamed too,
-    /// and where the folder goes. True: close the menu.
-    fn rename_menu(&mut self, ctx: &egui::Context, chat: i64, info: &Info) -> bool {
+    /// Opens the rename form (in whichever menu is open): the branch's (its remote is read on a
+    /// thread) or the worktree folder's.
+    fn ws_start_rename(&mut self, kind: RenameKind, info: &Info, ctx: &egui::Context) {
+        self.ws.error = None;
+        let name = match kind {
+            RenameKind::Branch => self.ws_head(&info.dir, ctx).map(|h| h.branch).unwrap_or_default(),
+            RenameKind::Folder => info.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        };
+        let pushed = if kind == RenameKind::Folder { Some(None) } else { None };
+        self.ws.rename = Some(RenameForm { kind, dir: info.dir.clone(), name, on_remote: true, pushed, focus: true });
+        if kind == RenameKind::Branch {
+            let (dir, read) = (info.dir.clone(), info.dir.clone());
+            self.ws_spawn(ctx, move || pushed_as(&read), move |app, p, _| {
+                if let Some(f) = app.ws.rename.as_mut().filter(|f| f.dir == dir && f.kind == RenameKind::Branch) {
+                    f.pushed = Some(p);
+                }
+            });
+        }
+    }
+
+    /// The rename form, in the branch menu or the workspace menu (`id`, `above` as that
+    /// popover): the branch's new name, whether its remote branch is renamed too and where the
+    /// folder goes; or the worktree folder's new name. True: close the menu.
+    fn rename_menu(&mut self, ctx: &egui::Context, chat: i64, info: &Info, id: &str, above: bool) -> bool {
         let t = self.theme.t;
         let Some(mut form) = self.ws.rename.take() else { return true };
         let busy = self.ws.busy.clone();
         let error = self.ws.error.clone();
-        let current = self.ws_head(&info.dir, ctx).map(|h| h.branch).unwrap_or_default();
         let lead = self.chat(chat).map(|c| if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id }).unwrap_or(chat);
+        let folder_now = info.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let current = match form.kind {
+            RenameKind::Branch => self.ws_head(&info.dir, ctx).map(|h| h.branch).unwrap_or_default(),
+            RenameKind::Folder => folder_now.clone(),
+        };
+        let named = self.ws_folder_named(lead);
         let name = form.name.trim().to_string();
-        let folder = (!name.is_empty()).then(|| folder_for(&info.repo, &info.dir, &name)).flatten().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+        // Where the folder goes: for a branch, the name it gives (unless the user named the
+        // folder); for a folder, what's typed.
+        let folder = match form.kind {
+            RenameKind::Branch if named => None,
+            RenameKind::Branch => (!name.is_empty()).then(|| folder_for(&info.repo, &info.dir, &name)).flatten().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())),
+            RenameKind::Folder => (!name.is_empty() && name != current).then(|| name.clone()),
+        };
         let waits = folder.as_ref().and_then(|_| self.ws_folder_busy(lead, &info.dir));
-        let ready = !name.is_empty() && name != current && busy.is_none() && form.pushed.is_some();
-        let ((submit, cancel), close) = crate::widgets::popover(ctx, "branch", self.popup_anchor, 340.0, true, &t, |ui| {
+        // A folder name that can't be: said under the field as it's typed.
+        let problem = if form.kind == RenameKind::Folder && name != current { folder_name_problem(&info.dir, &name) } else { None };
+        let ready = !name.is_empty() && name != current && busy.is_none() && form.pushed.is_some() && problem.is_none();
+        let (title, hint) = match form.kind {
+            RenameKind::Branch => ("Rename branch", "New branch name"),
+            RenameKind::Folder => ("Rename worktree", "New folder name"),
+        };
+        let ((submit, cancel), close) = crate::widgets::popover(ctx, id, self.popup_anchor, 340.0, above, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            crate::widgets::menu_label(ui, "Rename branch");
-            let r = ui.add(egui::TextEdit::singleline(&mut form.name).hint_text("New branch name").desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
+            crate::widgets::menu_label(ui, title);
+            let r = ui.add(egui::TextEdit::singleline(&mut form.name).hint_text(hint).desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
             if std::mem::take(&mut form.focus) {
                 r.request_focus();
             }
@@ -1421,10 +1606,14 @@ impl App {
                 }
                 Some(None) => {}
             }
-            match (&folder, &waits) {
-                (Some(f), None) => note(ui, &format!("The folder becomes {f}."), t.subtle()),
-                (Some(f), Some(why)) => note(ui, &format!("The folder becomes {f} once nothing works in it ({why} now); the branch is renamed at once."), t.subtle()),
-                (None, _) => {}
+            match (form.kind, &folder, &waits) {
+                (RenameKind::Branch, None, _) if named => note(ui, &format!("The folder keeps its name, {folder_now}: you named it."), t.subtle()),
+                (RenameKind::Branch, Some(f), None) => note(ui, &format!("The folder becomes {f}."), t.subtle()),
+                (RenameKind::Branch, Some(f), Some(why)) => note(ui, &format!("The folder becomes {f} once nothing works in it ({why} now); the branch is renamed at once."), t.subtle()),
+                (RenameKind::Folder, _, _) if problem.is_some() => note(ui, problem.as_deref().unwrap_or(""), t.red(900)),
+                (RenameKind::Folder, Some(_), Some(why)) => note(ui, &format!("Renamed once nothing works in it ({why} now). Stays in {}; renaming the branch leaves it be from now on.", info.dir.parent().map(|p| crate::app::tilde(p)).unwrap_or_default()), t.subtle()),
+                (RenameKind::Folder, _, _) => note(ui, &format!("Stays in {}; renaming the branch leaves it be from now on.", info.dir.parent().map(|p| crate::app::tilde(p)).unwrap_or_default()), t.subtle()),
+                _ => {}
             }
             if let Some((_, what)) = &busy {
                 busy_line(ui, what, &t);
@@ -1446,23 +1635,32 @@ impl App {
         });
         if cancel {
             self.ws.error = None;
+            // Back to the menu it was opened from.
             return false;
         }
         let on_remote = form.on_remote && matches!(form.pushed, Some(Some(_)));
+        let kind = form.kind;
         self.ws.rename = Some(form);
         if submit {
             self.ws.error = None;
-            self.ws_rename(chat, name, on_remote, ctx, |app, r, ctx| match r {
+            let finish = |app: &mut App, r: Result<RenameDone, String>, ctx: &egui::Context| match r {
                 Ok(d) => {
                     app.ws.rename = None;
                     app.ws.menu = None;
-                    if app.popup == Some(Popup::Branch) {
+                    if matches!(app.popup, Some(Popup::Branch | Popup::Workspace)) {
                         app.popup = None;
                     }
                     crate::picker::show_toast(ctx, rename_said(&d));
                 }
                 Err(e) => app.ws.error = Some(e),
-            });
+            };
+            match kind {
+                RenameKind::Branch => self.ws_rename(chat, name, on_remote, ctx, finish),
+                RenameKind::Folder => {
+                    let r = self.ws_rename_folder(chat, &name);
+                    finish(self, r, ctx);
+                }
+            }
             return false;
         }
         if close && self.ws.busy.is_none() {
@@ -1514,6 +1712,8 @@ impl App {
                     Target::Draft(_) => None,
                 };
                 let folder_waits = lead.filter(|l| self.ws.moves.contains_key(l)).and_then(|l| self.ws_folder_busy(l, &info.dir));
+                let folder_to = lead.and_then(|l| self.ws_folder_to(l).cloned());
+                let folder_named = lead.is_some_and(|l| self.ws_folder_named(l));
                 let tx = reply(call);
                 std::thread::spawn(move || {
                     let h = head(&info.dir);
@@ -1536,6 +1736,8 @@ impl App {
                         "rename_why": rename.err(),
                         "pushed": pushed,
                         "folder_waits": folder_waits,
+                        "folder_to": folder_to,
+                        "folder_named": folder_named,
                     })));
                 });
                 Some(None)
@@ -1606,10 +1808,17 @@ impl App {
                 });
                 Some(None)
             }
-            // `{"branch": "<new name>", "remote": bool}`: renames the branch of the chat's worktree.
+            // `{"branch": "<new name>", "remote": bool}`: renames the branch of the chat's worktree;
+            // `{"folder": "<new name>"}`: its folder.
             ("POST", ["v1", "chats", c, "worktree", "rename"]) => {
                 let Some(id) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return Some(Some(err(404, "no such chat"))) };
-                let Some(name) = call.body["branch"].as_str().map(String::from) else { return Some(Some(err(400, "branch: the new name"))) };
+                if let Some(name) = call.body["folder"].as_str() {
+                    return Some(Some(match self.ws_rename_folder(id, name) {
+                        Ok(d) => ok(json!({ "ok": true, "name": d.folder, "path": d.path.to_string_lossy(), "folder_waits": d.waits, "said": rename_said(&d) })),
+                        Err(e) => err(409, e),
+                    }));
+                }
+                let Some(name) = call.body["branch"].as_str().map(String::from) else { return Some(Some(err(400, "branch or folder: the new name"))) };
                 let on_remote = call.body["remote"].as_bool().unwrap_or(true);
                 let tx = reply(call);
                 self.ws_rename(id, name, on_remote, ctx, move |_, r, _| {
@@ -1668,6 +1877,12 @@ impl App {
 /// What a rename did, in a line: "Renamed to harbor/x · folder harbor-x", with what happened
 /// on its remote and whether the folder waits.
 pub fn rename_said(d: &RenameDone) -> String {
+    if d.kind == RenameKind::Folder {
+        return match &d.waits {
+            Some(why) => format!("The worktree folder is renamed once nothing works in it ({why})"),
+            None => format!("Worktree folder renamed to {}", d.folder),
+        };
+    }
     let mut s = format!("Renamed to {}", d.renamed.branch);
     match &d.waits {
         Some(why) => s.push_str(&format!(" · the folder follows once nothing works in it ({why})")),
@@ -1893,5 +2108,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&bare);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_folder_name_is_one_plain_name_not_taken() {
+        let root = std::env::temp_dir().join(format!("harbor-wt-fname-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("app-fix");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(root.join("app-other")).unwrap();
+        let p = |n: &str| folder_name_problem(&dir, n);
+        assert_eq!(p("app-login"), None);
+        assert_eq!(p(" app-fix "), None, "its own name is fine (nothing moves)");
+        assert!(p("").unwrap().contains("type"));
+        assert!(p("a/b").unwrap().contains("no “/”"));
+        assert!(p("..").unwrap().contains("can't start with “.”"));
+        assert!(p("-x").unwrap().contains("can't start with “-”"));
+        assert!(p("my app").unwrap().contains("no spaces"));
+        assert!(p("app-other").unwrap().contains("already there"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

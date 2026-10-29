@@ -870,7 +870,10 @@ a chat also has the hub look up its branch's pull request when it's over a minut
 the chat's JSON `pr` (a state change), not in this answer. Since 0.87 (optional; missing: no
 rename): `can_rename` (a chat in its own worktree, on a branch) with `rename_why` when not,
 `pushed` (`"origin/harbor/x"`: where the branch is pushed, null when never) and `folder_waits`
-(why a renamed branch's folder hasn't followed yet, e.g. "an agent is working in it"; null). Every git call runs off
+(why a renamed branch's folder hasn't followed yet, e.g. "an agent is working in it"; null).
+Since 0.92 (optional): `folder_to` (the name the worktree folder is still to get once nothing
+works in it, null) and `folder_named` (true once the user named the folder: branch renames then
+leave it be). Every git call runs off
 the hub's UI thread, so a big repository answers late but never freezes it: give these calls the
 long timeout, and show a pending chip meanwhile.
 
@@ -899,7 +902,16 @@ through its API (its pull requests follow), elsewhere the new name is pushed and
 stays; with `false` it stops tracking the old remote branch. The worktree's folder follows the
 new name (`<project>-<branch's last words>`) at once when nothing works in it, else once nothing
 does (no turn, process or terminal there; `folder_waits` says what): the chat JSON's `worktree`
-`name`/`path` then change. The chat gets a `worktree` notice for each step.
+`name`/`path` then change. The chat gets a `worktree` notice for each step. Since 0.92 the folder
+only follows while the user hasn't named it (`folder_named`), and a pending move survives a
+restart of the PC.
+
+`POST /v1/chats/{id}/worktree/rename` `{"folder": "<new name>"}` (0.92) → `{"ok": true, "name",
+"path", "folder_waits": "<why>; it becomes <name> then" | null, "said"}`: renames the worktree's
+folder on its own, in the same place (just a name: no `/`, no spaces, not starting with `.` or
+`-`, not taken; `409` says which), at once when nothing works in it, else once nothing does. From
+then on `folder_named` is true. The desktop has it in the workspace menu ("Rename worktree…",
+next to "Rename branch…"); the phone in the workspace sheet, the same place.
 
 ### `POST /v1/chats/{id}/fork`
 
