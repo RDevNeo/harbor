@@ -51,11 +51,6 @@ final class Account {
      *  its own account picker; empty, the browser through Clerk. */
     static String googleClient() { return Config.GOOGLE_WEB_CLIENT_ID; }
 
-    /** The Worker answered that this Google account must sign in through Clerk once. */
-    static final class NeedBrowser extends IOException {
-        NeedBrowser(String m) { super(m); }
-    }
-
     /** The end of a sign-in started in the app (the account picker), on the UI thread: null
      *  when signed in, "" when the person closed the sheet, else why it failed. */
     interface Done { void done(String error); }
@@ -163,20 +158,17 @@ final class Account {
         GooglePicker.pick(a, googleClient(), nonce, new GooglePicker.Result() {
             @Override public void token(String idToken) {
                 Context app = a.getApplicationContext();
+                // An account was picked: from here everything stays in the app (no browser), and
+                // any failure is shown on the sign-in screen with Try again.
                 Ui.pool.execute(() -> {
                     String err = null;
-                    boolean web = false;
                     try { finishGoogle(app, idToken, nonce); }
-                    catch (NeedBrowser e) { web = true; }
                     catch (Exception e) { err = Hub.why(e); }
                     final String fe = err;
-                    final boolean fw = web;
-                    Ui.main.post(() -> {
-                        if (fw) { Ui.toast(a, "First sign-in with this Google account: finish it in the browser."); Account.browser(a); done.done(""); }
-                        else done.done(fe);
-                    });
+                    Ui.main.post(() -> done.done(fe));
                 });
             }
+            // The sheet can't run here (no Google account or provider): the browser, in a Custom Tab.
             @Override public void browser(String why) { Account.browser(a); done.done(""); }
             @Override public void canceled() { done.done(""); }
         });
@@ -284,8 +276,7 @@ final class Account {
         try {
             r = http("POST", service() + "/v1/session/google", null, "application/json", body.toString());
         } catch (Hub.ApiError e) {
-            if (e.code == 409 || e.code == 404) throw new NeedBrowser(e.getMessage());
-            throw e;
+            throw new IOException(e.getMessage() == null || e.getMessage().isEmpty() ? "Signing in didn't work. Try again." : e.getMessage(), e);
         }
         JSONObject j = new JSONObject();
         try { j.put("grefresh", r.optString("refresh")); } catch (JSONException ignored) { }

@@ -381,9 +381,8 @@ async function newRefresh(env, fp, sub) {
 }
 
 /** POST /v1/session/google: a phone that picked its Google account in Android's own sheet.
- *  The ID token's verified email must belong to a Clerk account (made by a sign-in through
- *  Clerk, e.g. on a PC): then it's that same account. Without one: `browser: true`, sign in
- *  through Clerk once. */
+ *  The ID token's verified email finds the Clerk account (the one a PC's sign-in through Clerk
+ *  made, or one made here for a new Google account): the phone never needs the browser. */
 async function googleSession(req, env) {
   if (!env.GOOGLE_WEB_CLIENT_ID) throw new HttpError(404, 'Google sign-in on phones is not set up.', { browser: true });
   const b = await body(req);
@@ -392,15 +391,36 @@ async function googleSession(req, env) {
   if (dev.kind !== 'phone') throw new HttpError(400, 'Only phones sign in this way.');
   const claims = await verifyGoogle(env, b.id_token, typeof b.nonce === 'string' ? b.nonce : '');
   const email = String(claims.email || '').toLowerCase();
-  const list = must(await clerk(env, 'GET', `/users?email_address=${enc2(email)}&limit=10`), 'Could not look up your account.');
-  const users = Array.isArray(list) ? list : list.data || [];
-  const user = users.find((u) => (u.email_addresses || []).some((e) => e.email_address.toLowerCase() === email && e.verification?.status === 'verified'));
+  let user = await userByEmail(env, email);
+  // A Google account that never signed in to Harbor: its Clerk account is made here, so the
+  // phone never needs the browser. Clerk links the same person's later Google sign-in through
+  // Clerk (a PC) to it: same verified email (Clerk's account linking).
   if (!user) {
-    throw new HttpError(409, 'This Google account has no Harbor account yet: finish the first sign-in in the browser.', { browser: true });
+    const r = await clerk(env, 'POST', '/users', {
+      email_address: [email],
+      first_name: String(claims.given_name || '').slice(0, 100) || undefined,
+      last_name: String(claims.family_name || '').slice(0, 100) || undefined,
+      skip_password_requirement: true,
+    });
+    const code = clerkCode(r);
+    if (r.ok) user = r.data;
+    // Made meanwhile (another device signing in at the same moment): that one.
+    else if (code === 'form_identifier_exists') user = await userByEmail(env, email);
+    else if (code === 'form_param_unknown' || code === 'form_param_format_invalid') {
+      throw new HttpError(503, "Harbor can't create accounts for new Google accounts yet: email addresses must be turned on in Harbor's Clerk settings. Sign in with a Google account that already uses Harbor, or try again later.");
+    } else throw clerkFail(r, 'Could not create your Harbor account.');
+    if (!user) throw new HttpError(503, 'Could not create your Harbor account. Try again.');
   }
   const out = await issue(env, user.id, dev, email);
   out.refresh = await newRefresh(env, dev.fp, user.id);
   return json(out);
+}
+
+/** The Clerk user with this verified email, or null. */
+async function userByEmail(env, email) {
+  const list = must(await clerk(env, 'GET', `/users?email_address=${enc2(email)}&limit=10`), 'Could not look up your account.');
+  const users = Array.isArray(list) ? list : list.data || [];
+  return users.find((u) => (u.email_addresses || []).some((e) => e.email_address.toLowerCase() === email && e.verification?.status === 'verified')) || null;
 }
 
 /** POST /v1/session/refresh: a new Harbor token for a phone that signed in with the picker,
