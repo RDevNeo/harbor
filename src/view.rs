@@ -44,8 +44,6 @@ pub enum Card<'a> {
     },
     Message { from: &'a str, to: &'a str, text: &'a str },
     Error { text: &'a str },
-    /// An image or video an agent showed with the `show_media` tool (its input, JSON).
-    Media { input: &'a str, caption: String, pending: bool },
 }
 
 /// What a message offers: the desktop's hover bar, the phone's long-press sheet (served as
@@ -92,8 +90,8 @@ pub fn actions(card: &Card) -> Vec<Action> {
     }
 }
 
-/// The tool that puts an image or video in the reply.
-pub const SHOW_MEDIA: &str = "mcp__harbor__show_media";
+/// An old transcript's `show_media` call: still shown, as a tool card with its file.
+const OLD_SHOW_MEDIA: &str = "mcp__harbor__show_media";
 /// A lead's tools that hand work off: each leaves a line in its chat ([`handoff`]).
 pub const SPAWN_AGENT: &str = "mcp__harbor__spawn_agent";
 pub const MESSAGE_AGENT: &str = "mcp__harbor__message_agent";
@@ -141,7 +139,7 @@ pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     }
     for (i, item) in items.iter().enumerate() {
         out[i] = match item {
-            Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != SHOW_MEDIA || *is_error),
+            Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != OLD_SHOW_MEDIA || *is_error),
             Item::Thinking { .. } => true,
             Item::Notice { icon, .. } => icon == "bot",
             Item::Text { text, .. } => text.trim().is_empty(),
@@ -276,11 +274,6 @@ fn card<'a>(item: &'a Item, forkable: bool) -> Card<'a> {
         },
         Item::Text { text, at } => Card::Text { text, at: *at, forkable },
         Item::Thinking { text } => Card::Thinking { text },
-        // Shown media; a call that failed stays a tool card, with its error.
-        Item::Tool { name, input, result, is_error: false, .. } if name == SHOW_MEDIA => {
-            let v: serde_json::Value = serde_json::from_str(input).unwrap_or_default();
-            Card::Media { input, caption: v["caption"].as_str().unwrap_or("").to_string(), pending: result.is_none() }
-        }
         Item::Tool { name, summary, input, result, is_error, .. } => Card::Tool { label: tool_label(name), summary, input, result: result.as_deref(), is_error: *is_error },
         // A turn's end draws nothing: its usage line ("4.3s · 189k in · $3.96") stays in Usage.
         Item::Result { .. } => Card::Hidden,
@@ -304,7 +297,7 @@ fn card<'a>(item: &'a Item, forkable: bool) -> Card<'a> {
 }
 
 /// The images and videos a card shows: a user's attached images, what a reply shows
-/// (markdown images) or names, what a tool read or wrote, what `show_media` showed. `find`
+/// (markdown images) or names, what a tool read or wrote. `find`
 /// lists the media of a text (media.rs `find`, resolved against the chat's folder).
 pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media> {
     match card {
@@ -321,7 +314,6 @@ pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media
             all.iter_mut().for_each(|m| m.shown = false);
             all
         }
-        Card::Media { input, .. } => find(&crate::media::tool_markdown(input)).into_iter().take(1).collect(),
         _ => vec![],
     }
 }
@@ -386,7 +378,6 @@ pub fn kind(c: &Card) -> &'static str {
         Card::Notice { .. } => "notice",
         Card::Message { .. } => "message",
         Card::Error { .. } => "error",
-        Card::Media { .. } => "media",
     }
 }
 
@@ -527,24 +518,22 @@ mod tests {
     }
 
     #[test]
-    fn shown_media_is_a_card_even_for_a_lead() {
-        let tool = |result: Option<&str>, is_error: bool| Item::Tool { id: "m".into(), name: SHOW_MEDIA.into(), summary: String::new(), input: r#"{"path":"out/demo.mp4","caption":"Demo"}"#.into(), result: result.map(String::from), is_error };
-        let items = vec![tool(Some("Shown"), false), tool(None, false), tool(Some("no such file"), true)];
+    fn an_old_show_media_call_is_a_tool_card_with_its_file() {
+        let tool = |result: Option<&str>, is_error: bool| Item::Tool { id: "m".into(), name: OLD_SHOW_MEDIA.into(), summary: String::new(), input: r#"{"path":"out/demo.png","caption":"Demo"}"#.into(), result: result.map(String::from), is_error };
+        let items = vec![tool(Some("Shown in the chat: /p/out/demo.png (image, 0.1 MB)."), false), tool(Some("no such file"), true)];
         let cards = project(&items, true, &[]);
         let kinds: Vec<&str> = cards.iter().map(|c| kind(&c.card)).collect();
-        // A failed call stays a tool card (a lead hides it, like its other Harbor calls).
-        assert_eq!(kinds, ["media", "media", "hidden"]);
-        assert_eq!(cards[0].card, Card::Media { input: r#"{"path":"out/demo.mp4","caption":"Demo"}"#, caption: "Demo".into(), pending: false });
-        assert!(matches!(cards[1].card, Card::Media { pending: true, .. }));
-        // It resolves as the markdown image it stands for; a tool's named files aren't "shown".
+        // A lead hides its Harbor calls, but not this one (unless it failed).
+        assert_eq!(kinds, ["tool", "hidden"]);
+        // Its file, from the call's answer, as a thumbnail: a tool's named files aren't "shown".
         let mut asked = vec![];
         let m = media(&cards[0].card, &mut |t| {
             asked.push(t.to_string());
-            vec![Media { path: "/p/out/demo.mp4".into(), caption: "Demo".into(), video: true, shown: true, url: None }]
+            vec![Media { path: "/p/out/demo.png".into(), caption: String::new(), video: false, shown: true, url: None }]
         });
-        assert_eq!((asked[0].as_str(), m.len()), ("![Demo](<out/demo.mp4>)", 1));
-        let t = Card::Tool { label: "Bash".into(), summary: "", input: "x", result: None, is_error: false };
-        assert!(media(&t, &mut |_| vec![Media { path: "/a.png".into(), caption: String::new(), video: false, shown: true, url: None }]).iter().all(|m| !m.shown));
+        assert!(asked.iter().any(|a| a.contains("/p/out/demo.png")));
+        assert_eq!(m.len(), 1);
+        assert!(!m[0].shown);
     }
 
     #[test]

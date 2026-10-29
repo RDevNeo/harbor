@@ -1213,21 +1213,25 @@ public class Chat extends Base implements Images.Gallery {
                 Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info))
                         .chats(it.optJSONObject("chat_links"), this::openLink)
                         .select(t -> selectMenu(it, md, t));
-                View body = r.text(it);
+                // Images on their own line sit next to their text; the rest go after it.
+                JSONArray media = it.optJSONArray("media");
+                View body = r.text(it, here -> Media.list(this, hub, here, media));
+                JSONArray rest = media;
+                if (body == null) body = r.text(it);
+                else {
+                    rest = new JSONArray();
+                    for (int i = 0; i < media.length(); i++) {
+                        JSONObject m = media.optJSONObject(i);
+                        if (m != null && !m.has("after")) rest.put(m);
+                    }
+                }
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
                 wrap.addView(body, Ui.fill());
-                View shown = Media.list(this, hub, it.optJSONArray("media"));
+                View shown = Media.list(this, hub, rest, media);
                 if (shown != null) wrap.addView(shown, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 View imgs = Images.strip(this, hub, notShown(it), 120);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-                break;
-            }
-            case "media": {
-                // An image or video an agent showed (show_media).
-                View shown = Media.list(this, hub, it.optJSONArray("media"));
-                if (shown != null) wrap.addView(shown, Ui.fill());
-                else wrap.addView(Ui.text(this, "Can't show this file here", 13, Ui.G700), Ui.fill());
                 break;
             }
             case "thinking":

@@ -354,6 +354,16 @@ impl App {
         self.worktree_of(c).unwrap_or_else(|| self.cwd_of(c.repo_id))
     }
 
+    /// Where a chat's replies' relative media paths start: its folder, or for another PC's
+    /// chat its folder there (its files are fetched from there).
+    pub fn media_cwd(&self, id: i64) -> Option<PathBuf> {
+        let c = self.chat(id)?;
+        if c.foreign() {
+            return self.mesh.status.get(&id)?.cwd.as_ref().map(PathBuf::from);
+        }
+        Some(self.chat_cwd(c))
+    }
+
     /// The bar's facts for a target; None outside a git project (no bar then).
     pub fn ws_info(&self, target: Target) -> Option<Info> {
         let (repo_id, chat) = match target {

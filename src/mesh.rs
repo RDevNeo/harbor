@@ -469,6 +469,8 @@ pub struct Remote {
     pub worktree: Option<String>,
     /// Its branch's pull request (chatpr.rs).
     pub pr: Option<crate::chatpr::ChatPr>,
+    /// The folder it runs in there: where its replies' relative media paths start.
+    pub cwd: Option<String>,
 }
 
 /// Messages from the peer workers to the UI thread.
@@ -2285,6 +2287,7 @@ impl App {
                 draft: api::SharedDraft::from_json(&m["draft"]),
                 worktree: m["worktree"].as_str().filter(|w| !w.is_empty()).map(String::from),
                 pr: crate::chatpr::ChatPr::from_json(&m["pr"]),
+                cwd: m["cwd"].as_str().filter(|w| w.starts_with('/')).map(String::from),
             },
         );
         self.api_touch(id);
@@ -2443,6 +2446,8 @@ impl App {
             "worktree": self.worktree_marker(c).map(|m| m.name),
             // Its branch's pull request (optional, 0.83).
             "pr": self.chat_pr(c).map(|p| p.json()),
+            // Its folder, for the relative paths of the images its replies show (optional, 0.84).
+            "cwd": self.chat_cwd(c).to_string_lossy(),
         })
     }
 

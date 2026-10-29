@@ -1,9 +1,6 @@
-//! Images and videos an agent shows in a reply: `![caption](path-or-url)` in its text, or the
-//! `show_media` tool. This finds them in a reply, resolves where they are (an absolute path, a
-//! path relative to the chat's folder, `file://`, `~/`, or an https URL downloaded into a cache)
-//! and decides what may be shown: only real image and video files (by extension AND by their
-//! first bytes), within a size cap, never inside key folders like `~/.ssh`. The desktop
-//! (chat.rs, images.rs) and the phone API (api.rs `/v1/image`, `/v1/media`) both go through it.
+//! Images and videos in replies (`![caption](path-or-url)`). Only real image and video files
+//! are shown or served: by extension AND first bytes, within a size cap, never inside key
+//! folders like `~/.ssh`.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -30,7 +27,7 @@ pub struct Media {
     pub path: String,
     pub caption: String,
     pub video: bool,
-    /// Shown on purpose (markdown image or `show_media`): drawn large. Otherwise a file the
+    /// Shown on purpose (a markdown image): drawn large. Otherwise a file the
     /// text only names, drawn as a small thumbnail like before.
     pub shown: bool,
     /// The https URL it came from.
@@ -138,6 +135,76 @@ pub fn strip_refs(md: &str) -> std::borrow::Cow<'_, str> {
     }
     out.push_str(&md[at..]);
     out.into()
+}
+
+/// A piece of a reply, in order: its text, or images it shows on their own (a paragraph of only
+/// `![…](…)`, as written), drawn there, next to the text they illustrate.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Part<'a> {
+    Text(&'a str),
+    Media(&'a str),
+}
+
+/// A reply cut at its paragraphs of only images (outside lists, quotes and tables). An image
+/// inside a sentence stays in its text part (`strip_refs` takes it out; it's drawn after the
+/// reply).
+pub fn parts(md: &str) -> Vec<Part<'_>> {
+    use pulldown_cmark::{Event as E, Options, Parser, Tag, TagEnd};
+    if !md.contains("![") {
+        return vec![Part::Text(md)];
+    }
+    let mut out = vec![];
+    let (mut at, mut depth, mut image) = (0, 0usize, 0usize);
+    // The top-level paragraph being read: where it starts, whether it has an image Harbor
+    // shows, and whether it has anything else.
+    let mut para: Option<(usize, bool, bool)> = None;
+    for (ev, r) in Parser::new_ext(md, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH).into_offset_iter() {
+        match ev {
+            E::Start(Tag::Paragraph) if depth == 0 => {
+                para = Some((r.start, false, false));
+                depth += 1;
+            }
+            E::End(TagEnd::Paragraph) if depth == 1 => {
+                depth -= 1;
+                if let Some((start, true, false)) = para.take() {
+                    if !md[at..start].trim().is_empty() {
+                        out.push(Part::Text(&md[at..start]));
+                    }
+                    out.push(Part::Media(&md[start..r.end]));
+                    at = r.end;
+                }
+            }
+            E::Start(Tag::Image { dest_url, .. }) => {
+                if let Some(p) = para.as_mut().filter(|_| image == 0) {
+                    if kind(&dest_url).is_some() { p.1 = true } else { p.2 = true }
+                }
+                image += 1;
+                depth += 1;
+            }
+            E::End(TagEnd::Image) => {
+                image -= 1;
+                depth -= 1;
+            }
+            E::Start(_) => {
+                if let Some(p) = para.as_mut().filter(|_| image == 0) {
+                    p.2 = true;
+                }
+                depth += 1;
+            }
+            E::End(_) => depth -= 1,
+            E::SoftBreak | E::HardBreak => {}
+            E::Text(t) if image > 0 || t.trim().is_empty() => {}
+            _ => {
+                if let Some(p) = para.as_mut().filter(|_| image == 0) {
+                    p.2 = true;
+                }
+            }
+        }
+    }
+    if !md[at..].trim().is_empty() || out.is_empty() {
+        out.push(Part::Text(&md[at..]));
+    }
+    out
 }
 
 fn pct_decode(s: &str) -> String {
@@ -265,14 +332,6 @@ pub fn find(text: &str, cwd: Option<&Path>) -> Vec<Media> {
     out
 }
 
-/// A `show_media` call's input as the markdown image it stands for (so it resolves the same way).
-pub fn tool_markdown(input: &str) -> String {
-    let v: serde_json::Value = serde_json::from_str(input).unwrap_or_default();
-    let path = v["path"].as_str().unwrap_or("");
-    let caption = v["caption"].as_str().unwrap_or("").replace(['[', ']', '\n'], " ");
-    format!("![{caption}](<{}>)", path.replace(['<', '>', '\n'], ""))
-}
-
 // ---------------------------------------------------------------- checking
 
 /// Whether a file's first bytes are an image (Some(false)) or a video (Some(true)).
@@ -290,14 +349,21 @@ pub fn sniff(head: &[u8]) -> Option<bool> {
     (lower.starts_with('<') && lower.contains("<svg") && !h.contains(&0)).then_some(false)
 }
 
-/// A file Harbor may show or serve: its kind (true for video), or why not.
+/// A file Harbor may show or serve: its kind (true for video), or why not. A file that's gone
+/// is checked as its kept copy (`located`).
 pub fn check(path: &Path) -> Result<bool, String> {
     let s = path.to_string_lossy();
-    let video = kind(&s).ok_or("not an image or video")?;
+    kind(&s).ok_or("not an image or video")?;
     if !path.is_absolute() || !allowed(path) {
         return Err("not a file Harbor shows".into());
     }
-    let meta = std::fs::metadata(path).map_err(|_| "no such file".to_string())?;
+    check_file(path, &located(path))
+}
+
+/// `check` of the file `path` names, read at `file`.
+fn check_file(path: &Path, file: &Path) -> Result<bool, String> {
+    let video = is_video(&path.to_string_lossy());
+    let meta = std::fs::metadata(file).map_err(|_| "no such file".to_string())?;
     if !meta.is_file() {
         return Err("not a file".into());
     }
@@ -306,11 +372,62 @@ pub fn check(path: &Path) -> Result<bool, String> {
         return Err(format!("too large ({} MB, at most {} MB)", meta.len() >> 20, cap >> 20));
     }
     let mut head = vec![0u8; 1024];
-    let n = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)).map_err(|e| e.to_string())?;
+    let n = std::fs::File::open(file).and_then(|mut f| f.read(&mut head)).map_err(|e| e.to_string())?;
     match sniff(&head[..n]) {
         Some(v) if v == video => Ok(video),
         _ => Err(format!("its contents aren't a{}", if video { " video" } else { "n image" })),
     }
+}
+
+/// Where a reply's local file is kept once the reply ends: one copy per path, the newest.
+pub fn kept_path(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    cache_dir().join("kept").join(format!("{}.{}", short_hash(&s), ext(&s)))
+}
+
+/// The file to read for a path a reply shows: the path itself, or its kept copy once it's gone
+/// (an agent's screenshot in /tmp, cleaned up since).
+pub fn located(path: &Path) -> std::borrow::Cow<'_, Path> {
+    if path.exists() || !path.is_absolute() || kind(&path.to_string_lossy()).is_none() {
+        return path.into();
+    }
+    let k = kept_path(path);
+    if k.is_file() { k.into() } else { path.into() }
+}
+
+/// Keeps a copy of the local files a finished reply shows (its `![caption](path)` images), so
+/// they still show here, on other PCs and on phones after the files are gone. Copies off the
+/// calling thread.
+pub fn keep(text: &str, cwd: Option<&Path>) {
+    let files: Vec<PathBuf> = find(text, cwd).into_iter().filter(|m| m.shown && m.url.is_none()).map(|m| PathBuf::from(m.path)).filter(|p| !p.starts_with(cache_dir())).collect();
+    if !files.is_empty() {
+        std::thread::spawn(move || files.iter().for_each(|f| _ = keep_one(f)));
+    }
+}
+
+fn keep_one(path: &Path) -> Result<(), String> {
+    if !path.is_file() || !allowed(path) {
+        return Err("not a file Harbor shows".into());
+    }
+    check_file(path, path)?;
+    let to = kept_path(path);
+    let (from_meta, to_meta) = (std::fs::metadata(path).map_err(|e| e.to_string())?, std::fs::metadata(&to).ok());
+    // Kept already, and not changed since.
+    if to_meta.is_some_and(|t| t.len() == from_meta.len() && from_meta.modified().ok() <= t.modified().ok()) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(cache_dir().join("kept")).map_err(|e| e.to_string())?;
+    let part = to.with_extension("part");
+    std::fs::copy(path, &part).map_err(|e| e.to_string())?;
+    std::fs::rename(&part, &to).map_err(|e| e.to_string())
+}
+
+/// A video of another PC's chat, saved here to play: where it is.
+pub fn save_remote(path: &str, bytes: &[u8]) -> Option<PathBuf> {
+    let to = cache_dir().join("remote").join(format!("{}.{}", short_hash(path), ext(path)));
+    std::fs::create_dir_all(to.parent()?).ok()?;
+    std::fs::write(&to, bytes).ok()?;
+    Some(to)
 }
 
 // ---------------------------------------------------------------- https downloads
@@ -454,6 +571,7 @@ fn run(mut cmd: Command, limit: Duration) -> Result<(bool, String), String> {
 /// A JPEG of a video's first moments (ffmpeg), cached; None without ffmpeg or for a bad file.
 pub fn poster(video: &Path) -> Option<PathBuf> {
     check(video).ok().filter(|v| *v)?;
+    let video = &*located(video);
     let meta = std::fs::metadata(video).ok()?;
     let stamp = meta.modified().ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
     let out = cache_dir().join("posters").join(format!("{}.jpg", short_hash(&format!("{}|{}|{stamp}", video.display(), meta.len()))));
@@ -478,6 +596,7 @@ pub fn poster(video: &Path) -> Option<PathBuf> {
 /// else ImageMagick); None without either.
 pub fn svg_png(svg: &Path, px: u32) -> Option<Vec<u8>> {
     check(svg).ok().filter(|v| !*v)?;
+    let svg = &*located(svg);
     let tmp = cache_dir().join("svg").join(format!("{}-{px}.png", short_hash(&svg.to_string_lossy())));
     std::fs::create_dir_all(tmp.parent()?).ok()?;
     let mut a = Command::new("rsvg-convert");
@@ -523,6 +642,26 @@ mod tests {
         assert_eq!(refs(md), [("The chart".to_string(), "out/chart.png".to_string()), (String::new(), "a b.mp4".to_string())]);
         assert_eq!(strip_refs("a ![c](x.png) b ![l](logo)"), "a  b ![l](logo)");
         assert_eq!(strip_refs("no images"), "no images");
+    }
+
+    #[test]
+    fn cuts_a_reply_at_its_images() {
+        let md = "The chart:\n\n![Chart](out/c.png)\n\nAnd ![inline](x.png) in a line.\n\n- ![in a list](l.png)\n\n![a](a.png)\n![b](b.mp4)\n\nEnd.";
+        assert_eq!(
+            parts(md),
+            [
+                Part::Text("The chart:\n\n"),
+                Part::Media("![Chart](out/c.png)\n"),
+                Part::Text("\nAnd ![inline](x.png) in a line.\n\n- ![in a list](l.png)\n\n"),
+                Part::Media("![a](a.png)\n![b](b.mp4)\n"),
+                Part::Text("\nEnd."),
+            ]
+        );
+        assert_eq!(parts("no images"), [Part::Text("no images")]);
+        assert_eq!(parts("![only](a.png)"), [Part::Media("![only](a.png)")]);
+        // Not media Harbor shows, or a link around it: stays text.
+        assert_eq!(parts("![logo](logo)"), [Part::Text("![logo](logo)")]);
+        assert_eq!(parts("[![c](a.png)](https://x.y)"), [Part::Text("[![c](a.png)](https://x.y)")]);
     }
 
     #[test]
@@ -572,6 +711,27 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_file_shows_after_it_is_gone() {
+        let d = tmp("keep");
+        std::fs::write(d.join("shot.png"), PNG).unwrap();
+        let shot = d.join("shot.png");
+        keep_one(&shot).unwrap();
+        // Still there: read where it is.
+        assert_eq!(located(&shot), shot.as_path());
+        std::fs::remove_file(&shot).unwrap();
+        // Gone: read (and checked, and served) from its copy.
+        let kept = located(&shot).into_owned();
+        assert!(kept.starts_with(cache_dir()) && kept != shot);
+        assert_eq!(check(&shot), Ok(false));
+        assert_eq!(std::fs::read(&kept).unwrap(), PNG);
+        // Only real media are kept, never what's in key folders.
+        std::fs::write(d.join("fake.png"), b"not a png").unwrap();
+        assert!(keep_one(&d.join("fake.png")).is_err());
+        assert!(keep_one(Path::new("/home/x/.ssh/id.png")).is_err());
+        let _ = std::fs::remove_file(kept);
+    }
+
+    #[test]
     fn find_lists_shown_media_then_named_files() {
         let d = tmp("find");
         std::fs::write(d.join("a.png"), PNG).unwrap();
@@ -587,9 +747,4 @@ mod tests {
         assert_eq!(m[0].name(), "v.mp4");
     }
 
-    #[test]
-    fn a_tool_call_reads_as_markdown() {
-        assert_eq!(tool_markdown(r#"{"path":"out/a b.png","caption":"A [b]"}"#), "![A  b ](<out/a b.png>)");
-        assert_eq!(refs(&tool_markdown(r#"{"path":"/x/(1).mp4"}"#)), [(String::new(), "/x/(1).mp4".to_string())]);
-    }
 }

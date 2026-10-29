@@ -81,8 +81,8 @@ struct Cache {
     bytes: HashMap<String, Arc<[u8]>>,
     queue: VecDeque<Job>,
     workers: usize,
-    /// Where images drawn now come from when they aren't on this disk (see [`set_source`]).
-    source: Option<Fetch>,
+    /// Where images drawn now come from: another PC's (see [`set_source`]).
+    source: Option<Source>,
     /// Image → where to fetch it, for images of another PC's chat.
     remote: HashMap<String, Fetch>,
 }
@@ -91,10 +91,18 @@ struct Cache {
 /// PC a mirrored chat runs on (mesh.rs `home_image`). Runs on a decode worker; may block.
 pub type Fetch = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
-/// Images drawn until the next call come from `source` when their file isn't here: a chat of
-/// another PC names that PC's files (an attachment its sender uploaded there, a screenshot its
-/// agent took). None for this PC's own chats.
-pub fn set_source(ctx: &egui::Context, source: Option<Fetch>) {
+/// Where the images and videos of another PC's chat come from.
+#[derive(Clone)]
+pub struct Source {
+    /// An image (a video's poster), at most `mesh::REMOTE_IMAGE_PX`.
+    pub image: Fetch,
+    /// A video's file, to play.
+    pub video: Fetch,
+}
+
+/// Images and videos drawn until the next call come from another PC's chat (an attachment its
+/// sender uploaded there, a screenshot its agent took). None for this PC's own chats.
+pub fn set_source(ctx: &egui::Context, source: Option<Source>) {
     lock(&shared(ctx)).source = source;
 }
 
@@ -114,14 +122,14 @@ fn lock(s: &Shared) -> MutexGuard<'_, Cache> {
 }
 
 fn stamp(key: &str) -> Option<SystemTime> {
-    std::fs::metadata(key).and_then(|m| m.modified()).ok()
+    std::fs::metadata(crate::media::located(Path::new(key))).and_then(|m| m.modified()).ok()
 }
 
 /// Queues a decode; workers start on demand and stop when the queue is empty.
 fn request(ctx: &egui::Context, s: &Shared, c: &mut Cache, job: Job) {
     let real = job.key.strip_prefix(MID).unwrap_or(&job.key);
-    if let Some(src) = c.source.clone() {
-        if !c.bytes.contains_key(real) && !c.remote.contains_key(real) && !Path::new(real).exists() {
+    if let Some(src) = c.source.as_ref().map(|s| s.image.clone()) {
+        if !c.bytes.contains_key(real) && !c.remote.contains_key(real) {
             c.remote.insert(real.to_string(), src);
         }
     }
@@ -183,13 +191,17 @@ fn worker(ctx: egui::Context, s: Shared) {
 }
 
 /// The bytes of an image of another PC's chat, fetched from that PC and kept, so the
-/// thumbnail, the inline size and the lightbox fetch it once. None for a file of this PC.
+/// thumbnail, the inline size and the lightbox fetch it once. None for a file of this PC (or
+/// one that PC didn't give but that's here).
 fn fetched(s: &Shared, key: &str) -> Option<Result<Arc<[u8]>, String>> {
     let fetch = lock(s).remote.get(key).cloned()?;
-    if Path::new(key).exists() {
-        return None;
-    }
-    let Some(bytes) = fetch(key) else { return Some(Err("the PC this chat runs on is off or doesn't have it".into())) };
+    let Some(bytes) = fetch(key) else {
+        if crate::media::located(Path::new(key)).exists() {
+            lock(s).remote.remove(key);
+            return None;
+        }
+        return Some(Err("the PC this chat runs on is off or doesn't have it".into()));
+    };
     let bytes: Arc<[u8]> = bytes.into();
     lock(s).bytes.insert(key.to_string(), bytes.clone());
     Some(Ok(bytes))
@@ -215,11 +227,12 @@ fn decode(key: &str, bytes: Option<Arc<[u8]>>, cap: u32) -> Result<(ColorImage, 
     let mut reader = match &bytes {
         Some(b) => image::ImageReader::new(std::io::Cursor::new(b.to_vec())).with_guessed_format(),
         None => {
-            let len = std::fs::metadata(key).map_err(|e| e.to_string())?.len();
+            let file = crate::media::located(Path::new(key));
+            let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
             if len > MAX_BYTES {
                 return Err(format!("too large ({} MB)", len >> 20));
             }
-            std::fs::read(key).map(|b| image::ImageReader::new(std::io::Cursor::new(b))).map_err(|e| e.to_string())?.with_guessed_format()
+            std::fs::read(&file).map(|b| image::ImageReader::new(std::io::Cursor::new(b))).map_err(|e| e.to_string())?.with_guessed_format()
         }
     }
     .map_err(|e| e.to_string())?;
@@ -458,9 +471,9 @@ pub fn widen(ctx: &egui::Context, keys: Vec<String>) {
     if !c.open.as_ref().is_some_and(|k| keys.contains(k)) {
         return;
     }
-    if let Some(src) = c.source.clone() {
+    if let Some(src) = c.source.as_ref().map(|s| s.image.clone()) {
         for k in &keys {
-            if !c.bytes.contains_key(k) && !c.remote.contains_key(k) && !Path::new(k).exists() {
+            if !c.bytes.contains_key(k) && !c.remote.contains_key(k) {
                 c.remote.insert(k.clone(), src.clone());
             }
         }
@@ -707,8 +720,10 @@ pub fn failed(ui: &mut Ui, key: &str, max: Vec2, why: &str) -> bool {
 /// a click plays it in the system's player.
 pub fn video(ui: &mut Ui, key: &str, max: Vec2) -> Response {
     let mid = format!("{MID}{key}");
+    // Another PC's chat: its PC checks the file (its poster comes from there, or says why not).
+    let away = lock(&shared(ui.ctx())).source.as_ref().map(|s| s.video.clone()).filter(|_| !crate::media::located(Path::new(key)).exists());
     // A file that isn't there (or isn't a video) can't play: say so, like a broken image.
-    if let Err(e) = checked(ui.ctx(), key) {
+    if let Err(e) = if away.is_some() { Ok(true) } else { checked(ui.ctx(), key) } {
         let (rect, resp) = ui.allocate_exact_size(vec2(max.x.min(360.0), 44.0), Sense::hover());
         if cant_load(ui, rect, Id::NULL.with(("media-retry", key)), &e) {
             forget(ui.ctx(), &mid);
@@ -749,7 +764,18 @@ pub fn video(ui: &mut Ui, key: &str, max: Vec2) -> Response {
     }
     let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{}\nPlay in your video player", name(key)));
     if resp.clicked() {
-        crate::git::open_url(key);
+        match away {
+            // Fetched from its PC into a file here first.
+            Some(fetch) => {
+                let key = key.to_string();
+                std::thread::spawn(move || {
+                    if let Some(file) = fetch(&key).and_then(|b| crate::media::save_remote(&key, &b)) {
+                        crate::git::open_url(&file.to_string_lossy());
+                    }
+                });
+            }
+            None => crate::git::open_url(&crate::media::located(Path::new(key)).to_string_lossy()),
+        }
     }
     resp
 }
@@ -824,10 +850,11 @@ mod tests {
         let ctx = egui::Context::default();
         let asked = Arc::new(Mutex::new(Vec::<String>::new()));
         let log = asked.clone();
-        set_source(&ctx, Some(Arc::new(move |p: &str| {
+        let image: Fetch = Arc::new(move |p: &str| {
             log.lock().unwrap().push(p.to_string());
             (p == "/home-pc/uploads/1-photo.png").then(|| png(40, 30))
-        })));
+        });
+        set_source(&ctx, Some(Source { image, video: Arc::new(|_: &str| None) }));
         assert!(matches!(settled(&ctx, "/home-pc/uploads/1-photo.png"), Slot::Ready { dims: [40, 30], .. }));
         assert!(matches!(settled(&ctx, &format!("{MID}/home-pc/uploads/1-photo.png")), Slot::Ready { dims: [40, 30], .. }));
         assert_eq!(*asked.lock().unwrap(), ["/home-pc/uploads/1-photo.png"]);
@@ -836,7 +863,8 @@ mod tests {
             Slot::Failed(e) => assert!(e.contains("off"), "{e}"),
             _ => panic!("drew an image the PC doesn't have"),
         }
-        // A file of this PC is read here, not fetched; this PC's own chats fetch nothing.
+        // A path that PC doesn't have but this one does is read here; this PC's own chats fetch
+        // nothing.
         let dir = std::env::temp_dir().join(format!("harbor-img-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let local = dir.join("here.png");
@@ -844,7 +872,7 @@ mod tests {
         assert!(matches!(settled(&ctx, local.to_str().unwrap()), Slot::Ready { dims: [8, 8], .. }));
         set_source(&ctx, None);
         assert!(matches!(settled(&ctx, "/home-pc/uploads/3-other.png"), Slot::Failed(_)));
-        assert_eq!(asked.lock().unwrap().len(), 2);
+        assert_eq!(asked.lock().unwrap().len(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

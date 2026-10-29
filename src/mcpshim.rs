@@ -52,15 +52,6 @@ pub fn tools(role: &str) -> Vec<Value> {
             &[],
         ),
         tool(
-            "show_media",
-            "Show the user an image (png, jpg, gif, webp, svg) or a video (mp4, webm, mov) in your reply, inline in the chat on their PC and phone. Call it once per file.",
-            json!({
-                "path": prop("string", "The file: absolute, relative to the project, or an https URL"),
-                "caption": prop("string", "A short caption (optional)"),
-            }),
-            &["path"],
-        ),
-        tool(
             "list_secrets",
             "Keys the user saved in Harbor for agents (API keys, tokens): their names, what they're for and whether you may use them now; never the values.",
             json!({}),

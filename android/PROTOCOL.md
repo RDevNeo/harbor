@@ -436,18 +436,24 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (0.84, play and send glyphs; older apps: any fallback) are a lead handing work off, which shows nothing else: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown) | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
-| `media` (0.50) | an image or video an agent showed with its `show_media` tool, drawn like a `text` card's `media` | `media` (one entry; absent when the file can't be shown), `caption`, `pending` (the call hasn't answered yet), `images` |
+| `media` (0.50–0.83) | an image or video an agent showed with its `show_media` tool. Hubs from 0.84 don't send it (agents put `![caption](path)` in their reply instead; an old transcript's call comes as a `tool` card with its file in `images`); from older hubs draw it like a `text` card's `media`, or skip it | `media` (one entry), `caption`, `pending`, `images` |
 
-Optional on `text`, `tool` and `media` cards (0.50): `media: [{name, caption, kind, url, poster?}]`,
+Optional on `text` and `tool` cards (0.50): `media: [{name, caption, kind, url, poster?}]`,
 the images and videos the card shows large, in order: a reply's markdown images
-(`![caption](path or https URL)`), `show_media`, and any video a reply or tool names. `kind` is
+(`![caption](path or https URL)`: an absolute path, a path relative to the chat's folder, or an
+https URL, resolved by the chat's own PC even when another PC answers), and any video a reply or
+tool names. `caption` is the image's alt text: draw it small under the image or video (empty: no
+caption). `after` (0.84, `text` cards): an image on its own line in the reply goes right after
+that many of the card's `blocks` (0: before the first), next to the text it illustrates; draw
+media without `after` after the text. `kind` is
 `image` (`url` = `/v1/image?…&max=512`; ask a bigger `max` for the inline copy, open the viewer
 on tap) or `video` (`url` = `/v1/media?…`, the file itself; `poster` = `/v1/image?…` of the video,
 a JPEG of its first frame, `404` when the PC has no ffmpeg). Draw the `images` not in `media` (same
 `url`) as the strip; older apps ignore `media` and still get every image in `images`. A video
 plays from a local copy (download it with the token, then a player); a media item that can't
 load shows a small "can't load" tile that retries on tap. `blocks` leave out the markdown images
-that `media` draws.
+that `media` draws. A reply's local files are kept by its PC when the reply ends (0.84), so
+their `url`s keep working after the agent deletes them (a screenshot in /tmp).
 
 Optional on `text` cards (0.70): `chat_links: {"<link as written>": {title, chat, missing}}`, the
 chat links the reply names (`harbor://chat/<gid>`, optionally `?pc=<PC name>`; agents write them
@@ -1031,7 +1037,8 @@ most that many pixels on its longer side (16–2048); without, the file as it is
 (png, jpg, gif, webp, …); `404` otherwise. An upload's `path` works too. Card URLs carry
 `&chat=<gid>`: when the chat runs on another PC of the mesh, the PC answering fetches the image
 from there (its paths are that PC's files). When an image can't be had, show its tile with a way
-to try again.
+to try again. From 0.84 a chat of another PC asks that PC first, even when a file of the same path
+is here, and a file a reply showed that's since deleted comes from the copy its PC kept.
 
 ### `GET /v1/media?path=<absolute path>` (0.50)
 

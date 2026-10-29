@@ -1743,24 +1743,22 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             let max = req.query("max").and_then(|m| m.parse().ok());
             // Another PC's chat (a copy here): its images are that PC's files.
             let chat = req.query("chat").and_then(|c| c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)));
-            if !Path::new(path).is_file() {
-                if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_image(hub, c, path, max)) {
-                    let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
-                    let _ = w.write_all(&bytes);
-                    return;
-                }
+            // Asked of its home PC first: the same path here (a /tmp/shot.png) may be another file.
+            if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_image(hub, c, path, max)) {
+                let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
+                let _ = w.write_all(&bytes);
+                return;
             }
             serve_image(w, path, max)
         }
         ("GET", ["v1", "media"]) => {
             let path = req.query("path").unwrap_or("");
             let chat = req.query("chat").and_then(|c| c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)));
-            if !Path::new(path).is_file() {
-                if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_media(hub, c, path)) {
-                    let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
-                    let _ = w.write_all(&bytes);
-                    return;
-                }
+            // Asked of its home PC first: the same path here (a /tmp/shot.png) may be another file.
+            if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_media(hub, c, path)) {
+                let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
+                let _ = w.write_all(&bytes);
+                return;
             }
             serve_media(w, path)
         }
@@ -1935,7 +1933,7 @@ fn serve_image(w: &mut impl Write, path: &str, max: Option<u32>) {
     } else if crate::media::is_svg(path) {
         crate::media::svg_png(p, max.unwrap_or(1024).clamp(16, 2048))
     } else {
-        std::fs::read(p).ok()
+        std::fs::read(crate::media::located(p)).ok()
     };
     let Some(bytes) = bytes else {
         return send_json(w, 404, &json!({ "error": if video { "no preview of this video" } else { "unreadable image" } }));
@@ -1975,7 +1973,7 @@ fn serve_media(w: &mut impl Write, path: &str) {
     if let Err(e) = crate::media::check(p) {
         return send_json(w, 404, &json!({ "error": format!("no such media: {e}") }));
     }
-    let Ok(mut f) = std::fs::File::open(p) else { return send_json(w, 404, &json!({ "error": "unreadable file" })) };
+    let Ok(mut f) = std::fs::File::open(crate::media::located(p)) else { return send_json(w, 404, &json!({ "error": "unreadable file" })) };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if w.write_all(response(200, crate::media::mime(path), len as usize, "").as_bytes()).is_err() {
         return;
@@ -2363,7 +2361,9 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
     // Every image, as older phones draw them (a strip); newer ones draw `media` large and the
     // rest of `images` as the strip.
     let images: Vec<Value> = all.iter().filter(|m| !m.video).map(|m| json!({ "name": if m.url.is_some() { m.name() } else { file_name(&m.path) }, "url": image_url(&m.path) })).collect();
-    let media: Vec<Value> = all.iter().filter(|m| m.shown || m.video).map(media_json).collect();
+    let mut media: Vec<Value> = all.iter().filter(|m| m.shown || m.video).map(media_json).collect();
+    // Images on their own line in a reply: (path, how many of its `blocks` come before it).
+    let mut placed: Vec<(String, usize)> = vec![];
     let mut v = match &s.card {
         Card::Hidden => json!({}),
         Card::User { text, files, mentions, at, sender, intent, .. } => {
@@ -2379,9 +2379,19 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
             v
         }
         Card::Text { text, at, forkable } => {
-            let stripped = crate::media::strip_refs(text);
             // A chat link reads as its chat's title, as on the desktop.
-            let md = crate::chatlink::labelled(&stripped, &|u| links.get(u).and_then(|l| l["title"].as_str()).unwrap_or(u).to_string());
+            let label = |md: &str| crate::chatlink::labelled(&crate::media::strip_refs(md), &|u| links.get(u).and_then(|l| l["title"].as_str()).unwrap_or(u).to_string()).into_owned();
+            let md = label(text);
+            let parts = crate::media::parts(text);
+            if parts.len() > 1 {
+                let mut n = 0;
+                for p in parts {
+                    match p {
+                        crate::media::Part::Text(t) => n += blocks(&label(t)).len(),
+                        crate::media::Part::Media(t) => placed.extend(find(t).into_iter().filter(|m| m.shown).map(|m| (m.path, n))),
+                    }
+                }
+            }
             let mut b = blocks(&md);
             crate::commits::mark(&mut b, commits);
             let mut v = json!({ "markdown": text, "blocks": b, "images": images, "at": at, "forkable": forkable });
@@ -2404,8 +2414,12 @@ pub fn card_json(s: &crate::view::Shown, rev: u64, find: &mut dyn FnMut(&str) ->
         Card::Notice { icon, text, detail, markdown, url } => json!({ "icon": icon, "text": text, "detail": clipped(detail), "detail_markdown": markdown, "url": url }),
         Card::Message { from, to, text } => json!({ "from": from, "to": to, "text": clipped(text) }),
         Card::Error { text } => json!({ "text": clipped(text) }),
-        Card::Media { caption, pending, .. } => json!({ "caption": caption, "pending": pending, "images": images }),
     };
+    for (m, j) in all.iter().filter(|m| m.shown || m.video).zip(media.iter_mut()) {
+        if let Some((_, n)) = placed.iter().find(|(p, _)| *p == m.path) {
+            j["after"] = json!(n);
+        }
+    }
     if !media.is_empty() {
         v["media"] = json!(media);
     }
@@ -3619,7 +3633,7 @@ impl App {
         // Image addresses name the chat: a copy of another PC's chat fetches them from there.
         let gid = self.chat(chat).map(|c| c.gid.clone()).unwrap_or_default();
         // Where relative media paths in its replies start.
-        let cwd = self.chat(chat).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c));
+        let cwd = self.media_cwd(chat);
         let (dir, wake) = (self.commit_dir(chat), self.chat_waker(chat));
         // The chats each reply links to (chatlink.rs), as this PC finds them.
         let links: Vec<serde_json::Map<String, Value>> = cards
@@ -4746,6 +4760,62 @@ mod tests {
         let plain = vec![Item::Text { text: "hi".into(), at: 1 }];
         let cards = crate::view::project(&plain, false, &[]);
         assert!(card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new(), &Default::default()).get("media").is_none());
+    }
+
+    /// A reply showing a /tmp screenshot and a project-relative image: the addresses the phone
+    /// (and another PC, `/mesh/v1/image` and `/media` serve the same) gets, and the bytes they
+    /// serve, also once the /tmp file is deleted.
+    #[test]
+    fn a_replys_images_are_served_even_after_their_temp_file_is_gone() {
+        let root = std::env::temp_dir().join(format!("harbor-reply-media-{}", std::process::id()));
+        let (proj, tmp) = (root.join("proj"), root.join("tmp"));
+        std::fs::create_dir_all(proj.join("out")).unwrap();
+        std::fs::create_dir_all(&tmp).unwrap();
+        let png = |w: u32, h: u32| {
+            let mut out = std::io::Cursor::new(vec![]);
+            image::RgbImage::new(w, h).write_to(&mut out, image::ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        std::fs::write(proj.join("out/chart.png"), png(40, 20)).unwrap();
+        let shot = tmp.join("shot.png");
+        std::fs::write(&shot, png(30, 30)).unwrap();
+        let text = format!("The chart:\n\n![Weekly chart](out/chart.png)\n\nAnd the page:\n\n![Login page]({})", shot.display());
+        let items = vec![Item::Text { text: text.clone(), at: 1 }];
+        let cards = crate::view::project(&items, false, &[]);
+        let v = with_chat(card_json(&cards[0], 1, &mut |t| crate::media::find(t, Some(&proj)), &HashMap::new(), &Default::default()), "g1".into());
+        let media = v["media"].as_array().unwrap();
+        assert_eq!(media.iter().map(|m| m["caption"].as_str().unwrap()).collect::<Vec<_>>(), ["Weekly chart", "Login page"]);
+        // Each goes after the paragraph that introduces it.
+        assert_eq!(media.iter().map(|m| m["after"].as_u64().unwrap()).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(v["blocks"].as_array().unwrap().len(), 2);
+        let path_of = |url: &str| url_decode(url.split("path=").nth(1).unwrap().split('&').next().unwrap());
+        let paths: Vec<String> = media.iter().map(|m| path_of(m["url"].as_str().unwrap())).collect();
+        assert_eq!(paths, [proj.join("out/chart.png").to_string_lossy(), shot.to_string_lossy()]);
+        let get = |path: &str, max: Option<u32>| {
+            let mut out = vec![];
+            serve_image(&mut out, path, max);
+            out
+        };
+        let ok = |r: &[u8]| r.starts_with(b"HTTP/1.1 200");
+        assert!(ok(&get(&paths[0], Some(512))) && ok(&get(&paths[1], Some(512))));
+        // The reply ends: its files are kept; the agent cleans up /tmp; it still serves.
+        crate::media::keep(&text, Some(&proj));
+        let kept = crate::media::kept_path(&shot);
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while !kept.is_file() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::fs::remove_file(&shot).unwrap();
+        let full = get(&paths[1], None);
+        assert!(ok(&full) && full.ends_with(&png(30, 30)), "{}", String::from_utf8_lossy(&full[..60.min(full.len())]));
+        let mut file = vec![];
+        serve_media(&mut file, &paths[1]);
+        assert!(ok(&file) && String::from_utf8_lossy(&file).contains("image/png"));
+        // A path no reply showed stays gone.
+        assert!(get(&tmp.join("other.png").to_string_lossy(), None).starts_with(b"HTTP/1.1 404"));
+        let _ = std::fs::remove_file(kept);
+        let _ = std::fs::remove_file(crate::media::kept_path(&proj.join("out/chart.png")));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The phone gets the desktop's projection of a chat, card for card: the same cards hidden,
