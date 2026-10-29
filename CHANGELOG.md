@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-10-29
+
 ### Changed
 - A chat mentioned with `$` is now just its title in your message, written where you typed `$`,
   highlighted in the composer and a link once sent: a click (a tap on the phone) opens that chat,
@@ -1995,7 +1997,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.93.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.94.0...HEAD
+[0.94.0]: https://github.com/RDevNeo/harbor/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/RDevNeo/harbor/compare/v0.92.0...v0.93.0
 [0.92.0]: https://github.com/RDevNeo/harbor/compare/v0.91.1...v0.92.0
 [0.91.1]: https://github.com/RDevNeo/harbor/compare/v0.91.0...v0.91.1
