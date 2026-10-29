@@ -43,9 +43,40 @@ public class Browser extends Activity implements Engine.Client {
     /** Opens `url` in the built-in browser, or in the phone's own when this phone can't run it. */
     static void open(Context c, String url) {
         if (!Engine.available(c)) { external(c, url); return; }
+        if (failedBefore(c)) {
+            Ui.toast(c, "The built-in browser stopped last time; opening it in your browser.");
+            external(c, url);
+            return;
+        }
         Intent i = new Intent(c, Browser.class).putExtra(EXTRA_URL, url);
         if (!(c instanceof Activity)) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try { c.startActivity(i); } catch (Exception e) { external(c, url); }
+    }
+
+    /** Written while the engine starts, deleted once it answers: still there (and from this
+     *  app version) means the browser process died starting, so links go to the phone's
+     *  browser until the next update. */
+    private static java.io.File starting(Context c) { return new java.io.File(c.getFilesDir(), "browser-starting"); }
+
+    private static long versionCode(Context c) {
+        try { return c.getPackageManager().getPackageInfo(c.getPackageName(), 0).getLongVersionCode(); } catch (Exception e) { return 0; }
+    }
+
+    static boolean failedBefore(Context c) {
+        java.io.File f = starting(c);
+        if (!f.isFile()) return false;
+        try {
+            String v = new String(java.nio.file.Files.readAllBytes(f.toPath())).trim();
+            if (v.equals(String.valueOf(versionCode(c)))) return true;
+        } catch (Exception ignored) {}
+        f.delete();
+        return false;
+    }
+
+    private void markStarting(boolean on) {
+        java.io.File f = starting(this);
+        if (!on) { f.delete(); return; }
+        try { java.nio.file.Files.write(f.toPath(), String.valueOf(versionCode(this)).getBytes()); } catch (Exception ignored) {}
     }
 
     static void external(Context c, String url) {
@@ -126,6 +157,7 @@ public class Browser extends Activity implements Engine.Client {
             address.setEnabled(false);
             return;
         }
+        markStarting(true);
         Engine.start(this, this);
         page = new Page(this);
         body.addView(page, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -146,6 +178,8 @@ public class Browser extends Activity implements Engine.Client {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        // Closed normally: not a failed start.
+        if (isFinishing() && page != null) markStarting(false);
         // The engine lives in this process only: closing the browser frees all of it.
         if (isFinishing()) Ui.main.postDelayed(() -> android.os.Process.killProcess(android.os.Process.myPid()), 300);
     }
@@ -153,6 +187,7 @@ public class Browser extends Activity implements Engine.Client {
     // ---- Engine.Client (main thread)
 
     @Override public void url(String u) {
+        markStarting(false);
         url = u;
         if (!address.hasFocus()) address.setText(u);
     }
