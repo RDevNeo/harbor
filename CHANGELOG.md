@@ -13,6 +13,9 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   agents' instructions say so. An image on its own line is drawn right there in the reply, on
   the desktop and the phone, instead of after all of its text. An old chat's `show_media` call
   shows as a tool card with its file.
+- Release workflow: the aarch64 and Android browser engines compile on boat.dev sandboxes too
+  (aarch64 cross-compiled, Android with the NDK), like everything else; GitHub's runners only look
+  up the cached engines, sign and publish.
 
 ### Fixed
 - A reply's images and videos show on every PC and phone of the mesh: a path relative to the

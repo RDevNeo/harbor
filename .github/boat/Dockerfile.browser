@@ -1,10 +1,11 @@
-# The Servo engine's build environment on a boat.dev sandbox (see browser.sh). Servo's prebuilt
-# SpiderMonkey needs glibc 2.39 (Ubuntu 24.04).
+# The Servo engine's build environment on a boat.dev sandbox: browser.sh (x86_64) and
+# browser-android.sh (the NDK brings its own compilers). Servo's prebuilt SpiderMonkey needs glibc
+# 2.39 (Ubuntu 24.04).
 FROM ubuntu:24.04
 RUN sed -i 's#http://[a-z.]*archive.ubuntu.com#http://fr.archive.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential clang llvm-dev libclang-dev cmake python3 pkg-config m4 gperf curl ca-certificates git \
       libfontconfig-dev libfreetype-dev libx11-dev libxkbcommon-dev libwayland-dev libegl-dev libgl-dev \
-      libgles-dev libudev-dev libdbus-1-dev libunwind-dev \
+      libgles-dev libudev-dev libdbus-1-dev libunwind-dev unzip \
  && rm -rf /var/lib/apt/lists/*
