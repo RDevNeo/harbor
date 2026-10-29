@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Phone sign-in uses Android's own Google account picker (Android 14+): pick your account in
+  the system sheet inside Harbor, no browser. Older Android and Google accounts that never signed
+  in to Harbor still sign in in the browser once.
+
 ## [0.90.0] - 2026-10-29
 
 ### Changed

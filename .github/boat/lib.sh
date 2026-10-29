@@ -51,7 +51,9 @@ toolchain() {
 # unit tests (android/test) run as part of it.
 apk_unsigned() {
   mkdir -p "$cache/android"
-  run_in "$1" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps \
+  # HARBOR_GOOGLE_WEB_CLIENT_ID passes through when set (the release's repository variable): the
+  # phone's Google account picker; unset, android/build.sh builds with it off.
+  run_in "$1" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps -e HARBOR_GOOGLE_WEB_CLIENT_ID \
     -e UNSIGNED=1 -e OUT="$2" -- bash -euo pipefail -c '
     sdk=/c/android/sdk sm=/c/android/sdk/cmdline-tools/latest/bin/sdkmanager
     if [ ! -x "$sm" ]; then
