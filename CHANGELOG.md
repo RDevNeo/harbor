@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-10-29
+
 ### Changed
 - Phone: a project picked in the search opens the project's main chat, as on the desktop, or the
   project's page (where the first message starts its main chat) while it has none. "New chat in
@@ -1946,7 +1948,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.89.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.90.0...HEAD
+[0.90.0]: https://github.com/RDevNeo/harbor/compare/v0.89.0...v0.90.0
 [0.89.0]: https://github.com/RDevNeo/harbor/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/RDevNeo/harbor/compare/v0.87.0...v0.88.0
 [0.87.0]: https://github.com/RDevNeo/harbor/compare/v0.86.0...v0.87.0
