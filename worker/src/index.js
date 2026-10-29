@@ -270,28 +270,9 @@ async function session(req, env) {
 
   await ensurePersonal(env, sub, first);
 
-  const joined = [];
-  if (verified.length) {
-    const ph = verified.map(() => '?').join(',');
-    const { results } = await env.DB.prepare(`SELECT * FROM invites WHERE status='pending' AND email IN (${ph})`)
-      .bind(...verified)
-      .all();
-    for (const inv of results) {
-      const r = await clerk(env, 'POST', `/organizations/${enc2(inv.ws)}/memberships`, { user_id: sub, role: 'org:member' });
-      const already = clerkCode(r) === 'already_a_member_in_organization';
-      if (!r.ok && !already) continue;
-      await env.DB.prepare(`UPDATE invites SET status='accepted' WHERE id=?`).bind(inv.id).run();
-      if (!already) joined.push({ id: inv.ws });
-      if (inv.clerk_id) {
-        await clerk(env, 'POST', `/organizations/${enc2(inv.ws)}/invitations/${enc2(inv.clerk_id)}/revoke`, {
-          requesting_user_id: inv.inviter,
-        }).catch(() => {});
-      }
-    }
-  }
-
+  // Invitations wait for the person to accept them in Harbor (GET /v1/invites); nothing joins here.
+  const pending = await pendingFor(env, sub, verified);
   const workspaces = await userMemberships(env, sub);
-  for (const j of joined) j.name = workspaces.find((w) => w.id === j.id)?.name || '';
 
   await env.DB.prepare(
     `INSERT INTO devices (fp,user_id,kind,name,seen) VALUES (?,?,?,?,?)
@@ -320,7 +301,8 @@ async function session(req, env) {
     token,
     exp,
     device: { fp: dev.fp },
-    joined,
+    joined: [],
+    invites: pending,
   };
   if (dev.kind === 'pc') {
     const row = await env.DB.prepare(`SELECT ws FROM pcs WHERE fp=?`).bind(dev.fp).first();
@@ -525,7 +507,7 @@ async function requireOwner(env, sub, ws) {
 
 async function invite(req, env, ws) {
   const p = await harborAuth(req, env);
-  await requireOwner(env, p.sub, ws);
+  const w = await requireOwner(env, p.sub, ws);
   const b = await body(req);
   const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
   if (email.length > 254 || !EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address.');
@@ -542,14 +524,17 @@ async function invite(req, env, ws) {
     role: 'org:member',
     redirect_url: `${env.PUBLIC_URL}/invite`,
   });
-  // A Clerk outage still records the invite: the person joins on first sign-in either way.
-  if (!r.ok && r.status < 500) throw clerkFail(r, 'Could not send the invitation.');
+  // Clerk only emails invitations on instances that accept email addresses (a Google-only one
+  // answers invitations_not_supported), and may be down: the invitation is Harbor's either way,
+  // waiting in the invitee's Harbor once they sign in with that address.
+  const unsupported = clerkCode(r) === 'invitations_not_supported';
+  if (!r.ok && r.status < 500 && !unsupported) throw clerkFail(r, 'Could not send the invitation.');
 
   const row = { id: `inv_${rand(8)}`, email, at: now() };
-  await env.DB.prepare(`INSERT INTO invites (id,ws,email,inviter,clerk_id,status,at) VALUES (?,?,?,?,?,'pending',?)`)
-    .bind(row.id, ws, email, p.sub, r.ok ? r.data?.id || null : null, row.at)
+  await env.DB.prepare(`INSERT INTO invites (id,ws,email,inviter,clerk_id,status,at,ws_name,inviter_name) VALUES (?,?,?,?,?,'pending',?,?,?)`)
+    .bind(row.id, ws, email, p.sub, r.ok ? r.data?.id || null : null, row.at, w.name || '', p.name || '')
     .run();
-  return json({ invite: row });
+  return json({ invite: { ...row, emailed: r.ok } });
 }
 
 async function deleteInvite(req, env, ws, id) {
@@ -578,6 +563,66 @@ async function deleteMember(req, env, ws, user) {
   const r = await clerk(env, 'DELETE', `/organizations/${enc2(ws)}/memberships/${enc2(user)}`);
   if (!r.ok && r.status !== 404) throw clerkFail(r, 'Could not remove that member.');
   return json({ ok: true });
+}
+
+/** The verified addresses of an account (Clerk's user record). */
+async function verifiedEmails(env, sub) {
+  const user = must(await clerk(env, 'GET', `/users/${enc2(sub)}`), 'Could not load your account.');
+  return (user.email_addresses || []).filter((e) => e.verification?.status === 'verified').map((e) => e.email_address.toLowerCase());
+}
+
+/** Invitations waiting for this account (to one of its verified addresses), with the names to show. */
+async function pendingFor(env, sub, verified) {
+  if (!verified.length) return [];
+  const ph = verified.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(`SELECT * FROM invites WHERE status='pending' AND email IN (${ph}) ORDER BY at`).bind(...verified).all();
+  const mine = new Set((await userMemberships(env, sub)).map((w) => w.id));
+  const out = [];
+  for (const inv of results) {
+    // Already in that workspace (joined another way, e.g. through Clerk's own link): settled.
+    if (mine.has(inv.ws)) {
+      await env.DB.prepare(`UPDATE invites SET status='accepted' WHERE id=?`).bind(inv.id).run();
+      continue;
+    }
+    let wsName = inv.ws_name, by = inv.inviter_name;
+    if (!wsName) {
+      const r = await clerk(env, 'GET', `/organizations/${enc2(inv.ws)}`);
+      if (r.status === 404) {
+        await env.DB.prepare(`UPDATE invites SET status='revoked' WHERE id=?`).bind(inv.id).run();
+        continue;
+      }
+      wsName = r.ok ? r.data.name : '';
+    }
+    if (!by && inv.inviter) {
+      const r = await clerk(env, 'GET', `/users/${enc2(inv.inviter)}`);
+      if (r.ok) by = fullName(r.data) || '';
+    }
+    out.push({ id: inv.id, ws: inv.ws, ws_name: wsName, inviter_name: by, email: inv.email, at: inv.at });
+  }
+  return out;
+}
+
+async function listInvites(req, env) {
+  const p = await harborAuth(req, env);
+  return json({ invites: await pendingFor(env, p.sub, await verifiedEmails(env, p.sub)) });
+}
+
+/** Accept (join the workspace) or decline one of the account's own pending invitations. */
+async function answerInvite(req, env, id, accept) {
+  const p = await harborAuth(req, env);
+  const inv = await env.DB.prepare(`SELECT * FROM invites WHERE id=? AND status='pending'`).bind(id).first();
+  if (!inv) throw new HttpError(404, 'That invitation is no longer waiting.');
+  if (!(await verifiedEmails(env, p.sub)).includes(inv.email)) throw new HttpError(403, 'That invitation is for another address.');
+  if (accept) {
+    const r = await clerk(env, 'POST', `/organizations/${enc2(inv.ws)}/memberships`, { user_id: p.sub, role: 'org:member' });
+    if (!r.ok && clerkCode(r) !== 'already_a_member_in_organization') throw clerkFail(r, 'Could not join that workspace.');
+  }
+  await env.DB.prepare(`UPDATE invites SET status=? WHERE id=?`).bind(accept ? 'accepted' : 'declined', id).run();
+  if (inv.clerk_id) {
+    await clerk(env, 'POST', `/organizations/${enc2(inv.ws)}/invitations/${enc2(inv.clerk_id)}/revoke`, { requesting_user_id: inv.inviter }).catch(() => {});
+  }
+  const workspaces = await userMemberships(env, p.sub);
+  return json({ ok: true, workspaces, joined: accept ? workspaces.find((w) => w.id === inv.ws) || null : null });
 }
 
 function invitePage() {
@@ -610,6 +655,10 @@ async function route(req, env) {
   }
   if (m === 'POST' && path === '/v1/session') return session(req, env);
   if (m === 'GET' && path === '/v1/directory') return directory(req, env);
+  if (m === 'GET' && path === '/v1/invites') return listInvites(req, env);
+  if (m === 'POST' && seg[0] === 'v1' && seg[1] === 'invites' && seg.length === 4 && (seg[3] === 'accept' || seg[3] === 'decline')) {
+    return answerInvite(req, env, seg[2], seg[3] === 'accept');
+  }
   if (m === 'POST' && path === '/v1/pcs') return putPc(req, env);
   if (m === 'DELETE' && seg[0] === 'v1' && seg[1] === 'pcs' && seg.length === 3) return deletePc(req, env, seg[2]);
   if (m === 'DELETE' && seg[0] === 'v1' && seg[1] === 'devices' && seg.length === 3) return deleteDevice(req, env, seg[2]);

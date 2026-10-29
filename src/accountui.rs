@@ -52,9 +52,14 @@ impl App {
         self.favorites = get("favorites").split(',').filter_map(|x| x.split_once('|')).map(|(a, m)| (a.to_string(), m.to_string())).collect();
         self.queue.default = None;
         let mut sel = self.draft.sel.clone();
-        for (k, v) in [("default_account", &mut sel.account), ("default_model", &mut sel.model), ("default_effort", &mut sel.effort), ("default_access", &mut sel.access)] {
-            if let Some(x) = self.store.get(k).filter(|x| !x.is_empty()) {
-                *v = x;
+        // Another PC's default account may not exist here: then this PC's defaults stay.
+        let acct = self.store.get("default_account").filter(|a| self.account(a).is_some());
+        if let Some(a) = acct {
+            sel.account = a;
+            for (k, v) in [("default_model", &mut sel.model), ("default_effort", &mut sel.effort), ("default_access", &mut sel.access)] {
+                if let Some(x) = self.store.get(k).filter(|x| !x.is_empty()) {
+                    *v = x;
+                }
             }
         }
         self.draft.sel = sel;
@@ -144,6 +149,38 @@ impl App {
                 }
             });
         });
+
+        // Invitations to other workspaces: only Accept joins.
+        let pending = account::invites();
+        if !pending.is_empty() {
+            section(ui, "Invitations");
+            w::card(ui).inner_margin(Margin::ZERO).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                for (i, inv) in pending.iter().enumerate() {
+                    if i > 0 {
+                        w::separator(ui);
+                    }
+                    egui::Frame::new().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                w::text(ui, format!("{}  {}", ic::USERS, if inv.ws_name.is_empty() { "A workspace" } else { &inv.ws_name }), "strong-14");
+                                let by = if inv.inviter_name.is_empty() { String::new() } else { format!("{} invited ", inv.inviter_name) };
+                                w::subtle(ui, format!("{by}{} · {}", inv.email, ago(inv.at)), "label-12");
+                            });
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if w::btn("Decline").sm().variant(w::Variant::GhostDestructive).show(ui).clicked() && !st.busy {
+                                    account::decline_invite(inv.id.clone());
+                                }
+                                if w::btn("Accept").sm().primary().show(ui).tip("Join this workspace: its PCs and chats reach you on every device. This PC stays in its workspace.").clicked() && !st.busy {
+                                    account::accept_invite(inv.id.clone());
+                                }
+                            });
+                        });
+                    });
+                }
+            });
+        }
 
         let ws = account::workspace();
         let dir = account::directory();
@@ -254,7 +291,7 @@ impl App {
                 send = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 send |= w::btn(&format!("{}  Invite", ic::PLUS)).sm().primary().show(ui).clicked();
             });
-            w::subtle(ui, "They get an email from Harbor's sign-in service. Once they sign in with Google using that address, on a PC or phone, they're in: full control of this workspace's PCs and chats. Only owners invite and remove people.", "label-12");
+            w::subtle(ui, "Once they sign in to Harbor with Google using that address, on a PC or phone, the invitation waits there; when they accept, they have full control of this workspace's PCs and chats. Only owners invite and remove people.", "label-12");
             if send && email.contains('@') && !st.busy {
                 account::invite(d.ws.id.clone(), email.trim().to_lowercase());
                 email.clear();

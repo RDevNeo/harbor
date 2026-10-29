@@ -337,6 +337,13 @@ def main():
     check("invite: existing member refused (409)", st == 409, js)
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     check("directory: owner sees the pending invite", [i["email"] for i in d["workspaces"][0]["invites"]] == ["pat@example.com"], d)
+    check("invite: emailed through Clerk when it can", inv.get("emailed") is True, inv)
+    http("POST", CLERK + "/test/invitations", {"on": False})
+    st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "nomail@example.com"}, token=sam_pc)
+    check("invite: a Google-only Clerk (invitations_not_supported) still records it, emailed:false",
+          st == 200 and js["invite"]["emailed"] is False, js)
+    http("POST", CLERK + "/test/invitations", {"on": True})
+    http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=sam_pc)
     st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "gone@example.com"}, token=sam_pc)
     st2, js2, _, _ = http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=alice_t)
     check("invite delete: non-owner refused", st2 == 403)
@@ -345,8 +352,20 @@ def main():
 
     pat_dev = Device("phone", "pat-phone")
     pj, _ = sess_ok("pat@example.com", pat_dev)
-    check("invitee's first session auto-joins (joined)",
-          pj["joined"] == [{"id": sam_ws, "name": "Sam's workspace"}] and len(pj["workspaces"]) == 2, pj["joined"])
+    check("invitee's first session joins nothing by itself, lists the invitation",
+          pj["joined"] == [] and len(pj["workspaces"]) == 1 and [i["ws"] for i in pj["invites"]] == [sam_ws]
+          and pj["invites"][0]["ws_name"] == "Sam's workspace" and pj["invites"][0]["inviter_name"] == "Sam Rig", pj)
+    st, li, _, _ = http("GET", W + "/v1/invites", token=pj["token"])
+    check("GET /v1/invites: the invitee's pending invitation", st == 200 and [i["ws"] for i in li["invites"]] == [sam_ws], li)
+    st, js, _, _ = http("GET", W + "/v1/invites", token=alice_t)
+    check("GET /v1/invites: nobody else sees it", st == 200 and js["invites"] == [], js)
+    st, js, _, _ = http("POST", W + f"/v1/invites/{li['invites'][0]['id']}/accept", token=alice_t)
+    check("accept: someone else's invitation refused (403)", st == 403, js)
+    st, js, _, _ = http("POST", W + f"/v1/invites/{li['invites'][0]['id']}/accept", token=pj["token"])
+    check("accept: joins the workspace", st == 200 and js["joined"]["id"] == sam_ws and len(js["workspaces"]) == 2, js)
+    st, js2, _, _ = http("POST", W + f"/v1/invites/{li['invites'][0]['id']}/accept", token=pj["token"])
+    check("accept again: 404 (no longer waiting)", st == 404, js2)
+    pj = sess_ok("pat@example.com", pat_dev)[0]
     sam_role = [w for w in pj["workspaces"] if w["id"] == sam_ws][0]
     check("invitee is a plain member of the joined workspace", sam_role["role"] == "member" and not sam_role["personal"])
     pat_t = pj["token"]
@@ -395,6 +414,8 @@ def main():
     check("left workspace is gone from the session (and invite not re-applied)", [w["id"] for w in pj3["workspaces"]].count(sam_ws) == 0, pj3["workspaces"])
     st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "pat@example.com"}, token=sam_pc)
     pj4, _ = sess_ok("pat@example.com", Device("phone", "pat-4"))
+    http("POST", W + f"/v1/invites/{pj4['invites'][0]['id']}/accept", token=pj4["token"])
+    pj4, _ = sess_ok("pat@example.com", Device("phone", "pat-4"))
     pat_t = pj4["token"]
     pat_uid = pj4["account"]["id"]
     st, js, _, _ = http("DELETE", W + f"/v1/workspaces/{sam_ws}/members/{sam_ws}", token=pat_t)
@@ -405,7 +426,15 @@ def main():
     check("removed member's directory no longer lists that workspace", all(w["id"] != sam_ws for w in d["workspaces"]))
     http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "alice@example.com"}, token=sam_pc)
     aj, _ = sess_ok("alice@example.com", Device("phone", "a2"))
-    check("second invitee joins", [j["id"] for j in aj["joined"]] == [sam_ws])
+    st, js, _, _ = http("POST", W + f"/v1/invites/{aj['invites'][0]['id']}/decline", token=aj["token"])
+    check("decline: answered, nothing joined", st == 200 and js["joined"] is None and sam_ws not in [w["id"] for w in js["workspaces"]], js)
+    st, js, _, _ = http("GET", W + "/v1/invites", token=aj["token"])
+    check("declined invitation is gone", js["invites"] == [], js)
+    http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "alice@example.com"}, token=sam_pc)
+    aj, _ = sess_ok("alice@example.com", Device("phone", "a2"))
+    st, js, _, _ = http("POST", W + f"/v1/invites/{aj['invites'][0]['id']}/accept", token=aj["token"])
+    aj, _ = sess_ok("alice@example.com", Device("phone", "a2"))
+    check("second invitee accepts and joins", sam_ws in [w["id"] for w in aj["workspaces"]])
     alice_personal = [w for w in aj["workspaces"] if w["personal"]][0]["id"]
     alice_uid = aj["account"]["id"]
     st, js, _, _ = http("DELETE", W + f"/v1/workspaces/{sam_ws}/members/{alice_uid}", token=aj["token"])
@@ -423,6 +452,7 @@ def main():
     http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "pat@example.com"}, token=sam_pc)
     pdev = Device("phone", "pat-lost")
     pj5, _ = sess_ok("pat@example.com", pdev)
+    http("POST", W + f"/v1/invites/{pj5['invites'][0]['id']}/accept", token=pj5["token"])
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     check("directory lists the member's device", pdev.fp in d["workspaces"][0]["devices"])
     st, js, _, _ = http("DELETE", W + f"/v1/devices/{pdev.fp}", token=eve_pc)

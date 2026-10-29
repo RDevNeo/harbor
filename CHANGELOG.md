@@ -10,13 +10,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   the sign-in runs in the browser (PKCE, no secret in the app) and `harbor account login` does it
   from a terminal. Each account gets its own workspace, and a PC you sign in on joins it (you
   pick one when you're in several). Settings › Account (desktop) and Settings (phone) show the
-  workspace's people and PCs; owners invite people by email, and an invited person who signs
-  in with that address, on a PC or a phone, controls all of the workspace's PCs and chats.
-  Owners remove people, anyone leaves a workspace that isn't their own.
+  workspace's people and PCs; owners invite people by email. The invited person finds the
+  invitation in Harbor once they sign in with that address, on a PC (a pop-up and Settings ›
+  Account) or a phone (the start screen and Settings), and only Accept joins: then they control
+  all of the workspace's PCs and chats; Decline turns it down. Owners remove people, anyone
+  leaves a workspace that isn't their own.
 - Settings follow the account: theme, density, keybindings, run defaults, notifications, voice,
   recaps and suggestions, limits and caps, follow-up, updates… are the same on every PC you sign
   in on. Machine-bound settings stay on each PC (network, ports, router, mesh keys, phones,
-  windows and sidebars, the last chat, tokens).
+  windows and sidebars, the last chat, tokens). Nothing is lost: at a PC's first sign-in its own
+  settings stay and go up to the account, and any value a later sync replaces is kept on the PC.
+  Updating, signing in, accepting an invitation, switching workspace or signing out never touch
+  chats, projects or history, and never stop a running agent.
 - `worker/`: the account service, a Cloudflare Worker (free tier) holding Clerk's secret key:
   workspaces, invitations, settings and each workspace's PC directory, and the Harbor tokens
   every PC checks offline. Deploy steps in `worker/README.md`.

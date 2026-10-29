@@ -235,8 +235,8 @@ final class Account {
             j.put("expired", false);
             // The same account: its directory stays until the new one comes.
             if (was.equals(a.optString("id")) && state(c).optJSONObject("dir") != null) j.put("dir", state(c).optJSONObject("dir"));
-            JSONArray joined = r.optJSONArray("joined");
-            if (joined != null && joined.length() > 0) j.put("joined", joined);
+            JSONArray inv = r.optJSONArray("invites");
+            if (inv != null) j.put("invites", inv);
         } catch (JSONException ignored) { }
         save(c, j);
     }
@@ -312,6 +312,33 @@ final class Account {
         dirAt = System.currentTimeMillis();
         edit(c, j -> j.put("dir", d));
         hubs(c, d);
+        // Invitations waiting for this account (only Accept joins).
+        try {
+            JSONArray inv = http("GET", service() + "/v1/invites", tok, null, null).optJSONArray("invites");
+            if (inv != null) edit(c, j -> j.put("invites", inv));
+        } catch (Hub.ApiError e) {
+            if (e.code != 404) throw e; // a service before invitations in Harbor
+        }
+    }
+
+    /** Invitations to workspaces waiting for this account: [{id, ws, ws_name, inviter_name, email, at}]. */
+    static JSONArray invites(Context c) {
+        JSONArray a = state(c).optJSONArray("invites");
+        return a == null ? new JSONArray() : a;
+    }
+
+    /** Accepts (joins that workspace: its PCs show up) or declines an invitation. Returns the
+     *  joined workspace's name, or null. Nothing on the phone or the PCs is lost either way. */
+    static String answer(Context c, String id, boolean accept) throws IOException {
+        JSONObject r = http("POST", service() + "/v1/invites/" + enc(id) + (accept ? "/accept" : "/decline"), token(c), null, null);
+        edit(c, j -> {
+            JSONArray a = j.optJSONArray("invites"), keep = new JSONArray();
+            if (a != null) for (int i = 0; i < a.length(); i++) if (!id.equals(a.optJSONObject(i).optString("id"))) keep.put(a.optJSONObject(i));
+            j.put("invites", keep);
+        });
+        JSONObject joined = r.optJSONObject("joined");
+        if (accept) renew(c, true); // a token naming the new workspace, and its PCs
+        return joined == null ? null : joined.optString("name");
     }
 
     /** Each workspace with PCs is a hub: its first PC (the one used last, else the newest)
@@ -389,23 +416,18 @@ final class Account {
         Hub.states.clear();
     }
 
-    /** Workspaces joined by an invitation at the last sign-in (shown once). */
-    static String takeJoined(Context c) {
-        JSONArray j = state(c).optJSONArray("joined");
-        if (j == null || j.length() == 0) return null;
-        List<String> n = new ArrayList<>();
-        for (int i = 0; i < j.length(); i++) n.add(j.optJSONObject(i) == null ? "" : j.optJSONObject(i).optString("name"));
-        edit(c, x -> x.remove("joined"));
-        return android.text.TextUtils.join(", ", n);
-    }
-
     // ---- workspace actions (owners invite and remove; anyone leaves) ----
 
-    static void invite(Context c, String ws, String email) throws IOException {
+    /** Invites someone by email; true when Clerk emailed them (a Google-only Clerk doesn't:
+     *  the invitation then waits in their Harbor once they sign in with that address). */
+    static boolean invite(Context c, String ws, String email) throws IOException {
+        JSONObject r;
         try {
-            http("POST", service() + "/v1/workspaces/" + enc(ws) + "/invites", token(c), "application/json", new JSONObject().put("email", email.trim().toLowerCase(Locale.ROOT)).toString());
+            r = http("POST", service() + "/v1/workspaces/" + enc(ws) + "/invites", token(c), "application/json", new JSONObject().put("email", email.trim().toLowerCase(Locale.ROOT)).toString());
         } catch (JSONException e) { throw new IOException(e); }
         directory(c, true);
+        JSONObject i = r.optJSONObject("invite");
+        return i != null && i.optBoolean("emailed");
     }
 
     static void cancelInvite(Context c, String ws, String id) throws IOException {

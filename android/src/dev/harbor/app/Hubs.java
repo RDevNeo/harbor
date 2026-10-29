@@ -82,10 +82,8 @@ public class Hubs extends Base {
                     busy = false;
                     error = fe;
                     render();
-                    String joined = fe == null ? Account.takeJoined(this) : null;
-                    if (joined != null) Ui.toast(this, "You joined " + joined);
                     List<Hub> all = Hub.all(this);
-                    if (fe == null && all.size() == 1) open(all.get(0).id);
+                    if (fe == null && all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
                 });
             });
             return true;
@@ -126,6 +124,7 @@ public class Hubs extends Base {
         ac.addView(acct, Ui.fill());
         list.addView(ac, Ui.margins(Ui.fill(), 0, 8, 0, 0));
         if (error != null) list.addView(Ui.text(this, error, 14, Ui.RED), Ui.margins(Ui.fill(), 4, 12, 4, 0));
+        invitations();
         List<Hub> hubs = Hub.all(this);
         list.addView(Ui.text(this, "Your workspaces", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
         if (hubs.isEmpty()) {
@@ -141,6 +140,45 @@ public class Hubs extends Base {
             c.addView(hubRow(h), Ui.fill());
         }
         list.addView(c, Ui.fill());
+    }
+
+    /** Invitations waiting for this account: a card each, Accept or Decline (nothing joins
+     *  until Accept). */
+    private void invitations() {
+        org.json.JSONArray inv = Account.invites(this);
+        if (inv.length() == 0) return;
+        list.addView(Ui.text(this, "Invitations", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
+        for (int i = 0; i < inv.length(); i++) {
+            JSONObject x = inv.optJSONObject(i);
+            if (x == null) continue;
+            LinearLayout c = Ui.card(this);
+            String ws = x.optString("ws_name").isEmpty() ? "A workspace" : x.optString("ws_name");
+            String by = x.optString("inviter_name").isEmpty() ? "" : x.optString("inviter_name") + " invited " + x.optString("email") + ". ";
+            c.addView(Ui.cardRow(this, Ui.I_USERS, "Join " + ws + "?", by + "You'd share all of its PCs and chats.", Ui.FG, null), Ui.fill());
+            LinearLayout b = Ui.row(this);
+            b.setPadding(Ui.dp(14), 0, Ui.dp(14), Ui.dp(14));
+            String id = x.optString("id");
+            b.addView(Ui.button(this, "Accept", true, v -> answer(id, true)), Ui.weight());
+            b.addView(Ui.button(this, "Decline", false, v -> answer(id, false)), Ui.margins(Ui.weight(), 10, 0, 0, 0));
+            c.addView(b, Ui.fill());
+            list.addView(c, Ui.margins(Ui.fill(), 0, 0, 0, 10));
+        }
+    }
+
+    private void answer(String id, boolean accept) {
+        busy = true;
+        render();
+        Ui.pool.execute(() -> {
+            String e = null, joined = null;
+            try { joined = Account.answer(this, id, accept); } catch (Exception x) { e = Hub.why(x); }
+            final String fe = e, fj = joined;
+            Ui.main.post(() -> {
+                busy = false;
+                error = fe;
+                if (fj != null) Ui.toast(this, "You joined " + fj);
+                render();
+            });
+        });
     }
 
     private void recheck() {

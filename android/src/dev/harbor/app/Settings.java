@@ -179,6 +179,21 @@ public class Settings extends Base {
     private void workspaceRows() {
         acctCard.removeAllViews();
         acctCard.addView(Ui.cardRow(this, Ui.I_USER, Account.name(this), "Signed in with Google · " + Account.email(this), Ui.FG, null), Ui.fill());
+        // Invitations to other workspaces: tap to accept or decline.
+        org.json.JSONArray pend = Account.invites(this);
+        for (int i = 0; i < pend.length(); i++) {
+            JSONObject x = pend.optJSONObject(i);
+            if (x == null) continue;
+            String wsn = x.optString("ws_name").isEmpty() ? "a workspace" : x.optString("ws_name");
+            String iid = x.optString("id");
+            acctCard.addView(Ui.gap(this));
+            LinearLayout r = Ui.cardRow(this, Ui.I_USERS, "Invitation to " + wsn, (x.optString("inviter_name").isEmpty() ? "" : "From " + x.optString("inviter_name") + " · ") + "tap to accept or decline", Ui.FG,
+                    v -> Ui.dialog(this).setTitle("Join " + wsn + "?").setMessage("You'd share all of its PCs and chats, on every device. Nothing on this phone or your PCs changes.")
+                            .setNegativeButton("Decline", (d, w) -> act(() -> Account.answer(this, iid, false), null))
+                            .setPositiveButton("Accept", (d, w) -> act(() -> Account.answer(this, iid, true), "Joined " + wsn)).show());
+            r.addView(Ui.chevron(this));
+            acctCard.addView(r, Ui.fill());
+        }
         String ws = Account.wsOf(hub);
         JSONObject w = ws == null ? null : Account.workspace(this, ws);
         if (w == null) return;
@@ -231,12 +246,12 @@ public class Settings extends Base {
         FrameLayout f = new FrameLayout(this);
         f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
         f.addView(e);
-        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("They get an email. Once they sign in with Google using that address, they control all of this workspace's PCs and chats.")
+        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("Once they sign in to Harbor with Google using that address, the invitation waits there; when they accept, they control all of this workspace's PCs and chats.")
                 .setView(f).setNegativeButton("Cancel", null)
                 .setPositiveButton("Invite", (d, x) -> {
                     String m = e.getText().toString().trim();
                     if (!m.contains("@")) { Ui.toast(this, "Type an email address"); return; }
-                    act(() -> Account.invite(this, ws, m), "Invited " + m);
+                    act(() -> { if (!Account.invite(this, ws, m)) runOnUiThread(() -> Ui.toast(this, "No email was sent: tell them to sign in to Harbor with " + m + ".")); }, "Invited " + m);
                 }).show();
     }
 

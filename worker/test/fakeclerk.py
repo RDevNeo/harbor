@@ -125,6 +125,9 @@ def api(method, parts, body):
                 return err("resource_not_found", "Membership not found.", 404)
             return 200, {"deleted": True}
         if parts[2:] == ["invitations"] and method == "POST":
+            # Like a real Google-only instance (no email addresses): POST /test/invitations {"on": false}.
+            if S.get("no_invitations"):
+                return err("invitations_not_supported", "Invitations are only supported on instances that accept email addresses.")
             email = (body.get("email_address") or "").lower()
             if not email:
                 return err("form_param_missing", "email_address is required.")
@@ -272,6 +275,9 @@ class H(BaseHTTPRequestHandler):
             if not b.get("email"):
                 return 400, {"error": "email required"}
             return 200, make_user(b["email"], b.get("first_name", ""), b.get("last_name", ""))
+        if what == "invitations" and m == "POST":
+            S["no_invitations"] = not b.get("on", True)
+            return 200, {"ok": True}
         if what == "login" and m == "POST":
             S["next_login"] = b.get("email")
             return 200, {"ok": True}

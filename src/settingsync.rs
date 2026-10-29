@@ -7,8 +7,9 @@
 //!
 //! Sync is per key, newest wins: each device keeps when its value of a key last changed (kv
 //! `account_sync`, ms) and sends the keys changed here (`PUT /v1/settings`); the service keeps
-//! the newest of each and answers with them all. A device that signs in for the first time
-//! takes the account's settings and adds only the keys the account doesn't have yet.
+//! the newest of each and answers with them all. Nothing a PC has is lost: at its first sign-in
+//! its own settings win and go up to the account (it only takes the account's values for keys
+//! it never set), and every value a later sync replaces is kept in kv `account_sync_backup`.
 
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -125,6 +126,7 @@ pub const KEYS: &[(&str, Class)] = &[
     ("account_dir", D),
     ("account_keys", D),
     ("account_sync", D),
+    ("account_sync_backup", D),
     // Per chat and per project.
     ("worktree:", D),
     ("recap:", D),
@@ -197,7 +199,9 @@ pub fn apply(s: &crate::store::Store, remote: &Map<String, Value>) -> bool {
             continue;
         }
         let v = e["v"].as_str().unwrap_or("");
-        if v.len() <= MAX_VALUE && s.get(k).as_deref().unwrap_or("") != v {
+        let had = s.get(k).unwrap_or_default();
+        if v.len() <= MAX_VALUE && had != v {
+            backup(s, k, &had);
             s.set_quiet(k, v);
             changed = true;
         }
@@ -210,6 +214,23 @@ pub fn apply(s: &crate::store::Store, remote: &Map<String, Value>) -> bool {
     changed
 }
 
+/// Keeps what a key held before the account replaced it (kv `account_sync_backup`: key → the
+/// last value this PC had of its own).
+fn backup(s: &crate::store::Store, key: &str, had: &str) {
+    if had.is_empty() {
+        return;
+    }
+    let mut b: Map<String, Value> = s.get("account_sync_backup").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    b.insert(key.to_string(), json!(had));
+    s.set_quiet("account_sync_backup", &serde_json::to_string(&b).unwrap_or_default());
+}
+
+/// At the first sign-in: the account's values for the keys this PC never set (`own` are the
+/// ones it has).
+fn first_fill(own: &[&str], remote: Map<String, Value>) -> Map<String, Value> {
+    remote.into_iter().filter(|(k, _)| !own.contains(&k.as_str())).collect()
+}
+
 /// One round with the service: a first sync after signing in, the keys changed here, and the
 /// account's (with `pull`, or when something was sent).
 pub fn sync(token: &str, pull: bool) -> Result<(), crate::account::Fail> {
@@ -218,16 +239,16 @@ pub fn sync(token: &str, pull: bool) -> Result<(), crate::account::Fail> {
     if first {
         let v = crate::account::settings_call(token, None)?;
         let remote = v["settings"].as_object().cloned().unwrap_or_default();
-        apply(&s, &remote);
-        // What the account doesn't have yet goes up from here.
+        // This PC's own settings win and go up; the account's fill only what it never set.
         let t = now_ms();
+        let own: Vec<&str> = KEYS.iter().filter(|(k, c)| *c == Class::Account && !k.ends_with(':') && !k.ends_with('_') && s.get(k).is_some_and(|v| !v.is_empty())).map(|(k, _)| *k).collect();
+        let fill = first_fill(&own, remote);
+        apply(&s, &fill);
         let mut dirty = DIRTY.lock().unwrap();
         let mut at = AT.lock().unwrap();
-        for (k, c) in KEYS {
-            if *c == Class::Account && !k.ends_with(':') && !k.ends_with('_') && !remote.contains_key(*k) && s.get(k).is_some_and(|v| !v.is_empty()) {
-                dirty.insert(k.to_string(), t);
-                at.insert(k.to_string(), t);
-            }
+        for k in own {
+            dirty.insert(k.to_string(), t);
+            at.insert(k.to_string(), t);
         }
         // Done once, also for an account with nothing and a PC with defaults only.
         at.insert(SYNCED.into(), t);
@@ -328,6 +349,27 @@ mod tests {
         missing.sort();
         missing.dedup();
         assert!(missing.is_empty(), "kv keys not in settingsync::KEYS (pick Account or Device): {missing:?}");
+    }
+
+    #[test]
+    fn first_sign_in_keeps_this_pcs_settings() {
+        let remote: Map<String, Value> = serde_json::from_value(json!({ "theme": { "v": "light", "at": 9 }, "density": { "v": "compact", "at": 9 } })).unwrap();
+        let fill = first_fill(&["theme"], remote);
+        assert!(!fill.contains_key("theme"), "this PC's theme stays (and goes up)");
+        assert!(fill.contains_key("density"), "a key it never set comes from the account");
+    }
+
+    #[test]
+    fn replaced_values_are_backed_up() {
+        let s = crate::store::Store::open_temp();
+        s.set_quiet("voice_lang2", "pt");
+        let remote: Map<String, Value> = serde_json::from_value(json!({ "voice_lang2": { "v": "en", "at": i64::MAX - 1 } })).unwrap();
+        AT.lock().unwrap().remove("voice_lang2");
+        apply(&s, &remote);
+        assert_eq!(s.get("voice_lang2").as_deref(), Some("en"));
+        let b: Value = serde_json::from_str(&s.get("account_sync_backup").unwrap()).unwrap();
+        assert_eq!(b["voice_lang2"], "pt", "the PC's own value is kept");
+        AT.lock().unwrap().remove("voice_lang2");
     }
 
     #[test]

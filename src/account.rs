@@ -49,7 +49,7 @@ const ISSUER: &str = "harbor-accounts";
 const RENEW_AFTER: i64 = 24 * 3600;
 const DIR_EVERY: Duration = Duration::from_secs(120);
 const PC_EVERY: Duration = Duration::from_secs(300);
-const SYNC_EVERY: Duration = Duration::from_secs(120);
+const SYNC_EVERY: Duration = Duration::from_secs(60);
 
 /// `HARBOR_ACCOUNT_LOG=1`: what the account loop does, on stderr (test rigs).
 fn log(what: impl FnOnce() -> String) {
@@ -143,6 +143,21 @@ pub struct Invite {
     pub at: i64,
 }
 
+/// An invitation waiting for this account (`GET /v1/invites`): only Accept joins.
+#[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PendingInvite {
+    pub id: String,
+    pub ws: String,
+    #[serde(default)]
+    pub ws_name: String,
+    #[serde(default)]
+    pub inviter_name: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub at: i64,
+}
+
 /// One workspace in the directory.
 #[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Dir {
@@ -216,6 +231,8 @@ pub struct Live {
     /// This PC's workspace (kv `account_ws`): kept across a sign-out.
     pub ws: String,
     pub dir: Directory,
+    /// Invitations waiting for this account to accept or decline them.
+    pub invites: Vec<PendingInvite>,
     /// Keys fetched from the service (only used while no keys ship, see [`KEYS`]).
     pub fetched_keys: Vec<(String, Vec<u8>)>,
     pub status: Status,
@@ -277,6 +294,12 @@ pub fn workspace() -> String {
 
 pub fn directory() -> Directory {
     LIVE.read().unwrap().dir.clone()
+}
+
+/// Invitations waiting for this account.
+pub fn invites() -> Vec<PendingInvite> {
+    let l = LIVE.read().unwrap();
+    if l.account.is_some() { l.invites.clone() } else { vec![] }
 }
 
 /// This PC's workspace as the directory has it.
@@ -580,7 +603,7 @@ struct Session {
     /// This PC's workspace as the service has it: (id, name, its owner, whether this account is
     /// a member of it).
     pc: Option<(String, String, String, bool)>,
-    joined: Vec<String>,
+    invites: Vec<PendingInvite>,
 }
 
 /// The proof that this PC holds its TLS key, for the service: a signature over the time and
@@ -609,8 +632,8 @@ fn session(access: &str) -> Result<Session, Fail> {
         let g = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         (g("ws"), g("ws_name"), g("owner"), p.get("member").and_then(Value::as_bool).unwrap_or(false))
     });
-    let joined = v["joined"].as_array().into_iter().flatten().filter_map(|j| j["name"].as_str().map(String::from)).collect();
-    Ok(Session { account, token, exp: v["exp"].as_i64().unwrap_or(store::now() + 7 * 86400), pc, joined })
+    let invites = v["invites"].as_array().into_iter().flatten().filter_map(|i| serde_json::from_value(i.clone()).ok()).collect();
+    Ok(Session { account, token, exp: v["exp"].as_i64().unwrap_or(store::now() + 7 * 86400), pc, invites })
 }
 
 // ================================================================== sign-in
@@ -707,10 +730,7 @@ fn sign_in_flow() -> Result<(), String> {
     }
     set_account(Some(s.account.clone()), Some(ws.clone()));
     set_status(|st| st.pick = pick);
-    if !s.joined.is_empty() {
-        let joined = format!("You joined {}.", s.joined.join(", "));
-        set_status(|st| st.notice = joined);
-    }
+    LIVE.write().unwrap().invites = s.invites;
     ENABLE.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -778,7 +798,53 @@ pub fn leave_workspace() {
 }
 
 pub fn invite(ws: String, email: String) {
-    run_action(move |token| service("POST", &format!("/v1/workspaces/{ws}/invites"), &token, Some(&json!({ "email": email.trim() }))).map(|_| ()));
+    run_action(move |token| {
+        let v = service("POST", &format!("/v1/workspaces/{ws}/invites"), &token, Some(&json!({ "email": email.trim() })))?;
+        // Clerk emails invitations only where it accepts email addresses; else they find it in Harbor.
+        let note = if v["invite"]["emailed"] == true {
+            format!("Invited {}: they got an email.", email.trim())
+        } else {
+            format!("Invited {}. No email was sent: tell them to sign in to Harbor with that address, where the invitation waits.", email.trim())
+        };
+        set_status(|st| st.notice = note);
+        Ok(())
+    });
+}
+
+/// Accepts an invitation made to this account: it joins that workspace (the PC stays in its
+/// own; Settings › Account moves it). Nothing else changes here: chats and running turns stay.
+pub fn accept_invite(id: String) {
+    answer_invite(id, true);
+}
+
+pub fn decline_invite(id: String) {
+    answer_invite(id, false);
+}
+
+fn answer_invite(id: String, accept: bool) {
+    run_action(move |token| {
+        let v = service("POST", &format!("/v1/invites/{id}/{}", if accept { "accept" } else { "decline" }), &token, None)?;
+        LIVE.write().unwrap().invites.retain(|i| i.id != id);
+        if let Some(name) = v["joined"]["name"].as_str() {
+            let note = format!("You joined {name}. Its PCs and chats reach you on your phone; to move this PC there, use Settings › Account.");
+            set_status(|st| st.notice = note);
+        }
+        // A token that names the new workspace.
+        RENEW.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+}
+
+fn fetch_invites(token: &str) -> Result<(), Fail> {
+    let v = service("GET", "/v1/invites", token, None)?;
+    let list: Vec<PendingInvite> = v["invites"].as_array().into_iter().flatten().filter_map(|i| serde_json::from_value(i.clone()).ok()).collect();
+    let mut l = LIVE.write().unwrap();
+    if l.invites != list {
+        l.invites = list;
+        drop(l);
+        wake_ui();
+    }
+    Ok(())
 }
 
 pub fn cancel_invite(ws: String, id: String) {
@@ -821,6 +887,7 @@ fn run_action(f: impl FnOnce(String) -> Result<(), Fail> + Send + 'static) {
         });
         if let Some(t) = harbor_token() {
             let _ = fetch_directory(&t);
+            let _ = fetch_invites(&t);
         }
         poke();
     });
@@ -1003,6 +1070,7 @@ fn tick(t: &mut Timers) {
                 sec.token_at = now;
                 save_secrets(&sec);
                 set_account(Some(s.account), None);
+                LIVE.write().unwrap().invites = s.invites;
                 set_status(|st| {
                     st.expired = false;
                     st.offline_since = 0;
@@ -1035,7 +1103,7 @@ fn tick(t: &mut Timers) {
     }
     if due(t.dir, DIR_EVERY) {
         t.dir = Some(Instant::now());
-        let r = fetch_directory(&token);
+        let r = fetch_directory(&token).and_then(|_| fetch_invites(&token));
         log(|| format!("directory: {r:?}"));
         result(r);
     }
