@@ -81,6 +81,20 @@ for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
   tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$W/lib/$abi" --strip-components=3 "./jniLibs/$abi/libsherpa-onnx-jni.so"
 done
 
+# The built-in browser's engine (android/servo: Servo as libharborservo.so), built separately with
+# the NDK (android/servo/build.sh, or CI's cached build): $SERVO_LIBS/<abi>/libharborservo.so
+# with its libc++_shared.so,
+# default android/servo/out. Packaged for each of ANDROID_ABIS it exists for (arm64-v8a and
+# armeabi-v7a in releases; each ABI folder must hold every library: Android installs one). SERVO_REQUIRED=1 (releases) fails without the arm64 one.
+SERVO_LIBS=${SERVO_LIBS:-$HERE/servo/out}
+for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
+  if [ -f "$SERVO_LIBS/$abi/libharborservo.so" ]; then
+    cp "$SERVO_LIBS/$abi/libharborservo.so" "$SERVO_LIBS/$abi/libc++_shared.so" "$W/lib/$abi/"
+  elif [ "$abi" = arm64-v8a ] && [ -n "${SERVO_REQUIRED:-}" ]; then
+    echo "no browser engine at $SERVO_LIBS/$abi/libharborservo.so" >&2; exit 1
+  fi
+done
+
 # Where the app signs in (Config.java): RDevNeo's Clerk app and account service by default.
 CLERK_URL=${HARBOR_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
 CLERK_CLIENT=${HARBOR_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}

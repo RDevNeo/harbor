@@ -396,18 +396,15 @@ pub fn efforts(kind: Kind) -> &'static [(&'static str, &'static str, &'static st
     }
 }
 
-/// The effort each CLI uses when none is passed, from its own settings.
+/// The effort a chat with none set runs with: Harbor's own for Claude (Medium, passed to every
+/// turn, whatever Claude Code's effortLevel says), the CLI's own setting for the others.
 pub fn default_effort(kind: Kind) -> &'static str {
-    static CLAUDE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
     static CODEX: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
     let pick = |v: Option<String>, fallback: &'static str| -> &'static str {
         v.and_then(|v| efforts(kind).iter().find(|e| e.0 == v).map(|e| e.0)).unwrap_or(fallback)
     };
     match kind {
-        Kind::Claude => CLAUDE.get_or_init(|| {
-            let v = read_json(&home().join(".claude/settings.json")).and_then(|j| j["effortLevel"].as_str().map(String::from));
-            pick(v, "high")
-        }),
+        Kind::Claude => "medium",
         Kind::Codex => CODEX.get_or_init(|| {
             let text = std::fs::read_to_string(home().join(".codex/config.toml")).unwrap_or_default();
             let v = text.lines().find_map(|l| l.strip_prefix("model_reasoning_effort").map(|r| r.trim_start_matches([' ', '=']).trim().trim_matches('"').to_string()));

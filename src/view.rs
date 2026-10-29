@@ -2,6 +2,8 @@
 //! the phone API (api.rs) sends them, so a chat looks the same on both: the same items hidden
 //! (a lead's coordination), the same labels, dividers and images.
 
+use std::borrow::Cow;
+
 use crate::media::Media;
 use crate::mentions::Mention;
 use crate::store::Item;
@@ -33,8 +35,8 @@ pub enum Card<'a> {
     ChatLink { gid: &'a str, text: &'a str },
     Notice {
         icon: &'a str,
-        text: &'a str,
-        detail: &'a str,
+        text: Cow<'a, str>,
+        detail: Cow<'a, str>,
         /// The detail is markdown (an agent's report), not plain text.
         markdown: bool,
         /// A process's address: the notice opens it instead of expanding.
@@ -92,6 +94,9 @@ pub fn actions(card: &Card) -> Vec<Action> {
 
 /// The tool that puts an image or video in the reply.
 pub const SHOW_MEDIA: &str = "mcp__harbor__show_media";
+/// A lead's tools that hand work off: each leaves a line in its chat ([`handoff`]).
+pub const SPAWN_AGENT: &str = "mcp__harbor__spawn_agent";
+pub const MESSAGE_AGENT: &str = "mcp__harbor__message_agent";
 
 /// A card and where it is: `seq` is the item's index in the transcript, `forks_after` the
 /// chats forked from it ("Conversation fork" dividers drawn right after it).
@@ -127,44 +132,83 @@ pub fn tool_label(name: &str) -> String {
 }
 
 /// Which items a transcript hides. Only a lead's: its coordination is invisible (tool calls
-/// to Harbor, thinking, agents' reports), and so is the text of turns that hand work off
-/// (only an acknowledgement).
+/// to Harbor, thinking, agents' reports). What it says when it hands work off shows, so the
+/// user hears what happens next, and so does a line per hand-off ([`handoff`]).
 pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     let mut out = vec![false; items.len()];
     if !lead {
         return out;
-    }
-    // Lead turns that hand work off.
-    let mut handoff = vec![false; items.len()];
-    let mut start = 0;
-    for (i, it) in items.iter().enumerate() {
-        if matches!(it, Item::Result { .. }) || i + 1 == items.len() {
-            let delegated = items[start..=i].iter().any(|x| matches!(x, Item::Tool { name, .. } if name == "mcp__harbor__spawn_agent" || name == "mcp__harbor__message_agent"));
-            handoff[start..=i].fill(delegated);
-            start = i + 1;
-        }
     }
     for (i, item) in items.iter().enumerate() {
         out[i] = match item {
             Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != SHOW_MEDIA || *is_error),
             Item::Thinking { .. } => true,
             Item::Notice { icon, .. } => icon == "bot",
-            Item::Text { text, .. } => text.trim().is_empty() || handoff[i],
+            Item::Text { text, .. } => text.trim().is_empty(),
             _ => false,
         };
     }
     out
 }
 
+/// Whether each item is in a turn that answers the user: the user wrote since the last turn
+/// ended (a turn an agent's report started is the lead's coordination).
+fn answers_user(items: &[Item]) -> Vec<bool> {
+    let mut on = false;
+    items
+        .iter()
+        .map(|it| {
+            let now = on || matches!(it, Item::User { .. });
+            on = now && !matches!(it, Item::Result { .. });
+            now
+        })
+        .collect()
+}
+
+/// A lead handing work off, as one line in its chat (its other Harbor calls stay hidden), so
+/// a turn that only delegates still shows what happens: "api started: PR status in the
+/// footer" for spawn_agent (its `title`, else the task's first sentence), "Sent to api: …" for
+/// message_agent in a turn that answers the user. It opens on the whole task or message. A
+/// call that failed shows nothing.
+fn handoff(item: &Item, answers_user: bool) -> Option<Card<'_>> {
+    let Item::Tool { name, input, result, is_error: false, .. } = item else { return None };
+    if name != SPAWN_AGENT && !(name == MESSAGE_AGENT && answers_user) {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(input).ok()?;
+    let arg = |k: &str| v[k].as_str().unwrap_or("").trim().to_string();
+    let (icon, text, detail) = match name.as_str() {
+        SPAWN_AGENT => {
+            // Its name once spawned (Harbor makes a taken one unique: "api-2").
+            let agent = result.as_deref().and_then(|r| r.strip_prefix("Spawned '")?.split_once('\'')).map(|(n, _)| n.to_string()).unwrap_or_else(|| arg("name"));
+            let task = arg("task");
+            let title = Some(arg("title")).filter(|t| !t.is_empty()).map(|t| crate::agentstrip::headline(&t)).unwrap_or_else(|| crate::agentstrip::headline(&task));
+            let who = if agent.is_empty() { "Started".to_string() } else { format!("{agent} started") };
+            ("started", if title.is_empty() { who } else { format!("{who}: {title}") }, task)
+        }
+        _ => {
+            let text = arg("text");
+            ("sent", format!("Sent to {}: {}", arg("agent"), crate::agentstrip::headline(&text)), text)
+        }
+    };
+    Some(Card::Notice { icon, text: Cow::Owned(text), detail: Cow::Owned(detail), markdown: true, url: None })
+}
+
 /// The transcript as cards. `forks` are (item index, forked chat) pairs.
 pub fn project<'a>(items: &'a [Item], lead: bool, forks: &[(usize, i64)]) -> Vec<Shown<'a>> {
     let hide = hidden(items, lead);
     let forkable = crate::fork::forkable(items);
+    let user = if lead { answers_user(items) } else { vec![] };
     let mut out: Vec<Shown> = items
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let card = if hide[i] { Card::Hidden } else { card(item, forkable[i].is_some()) };
+            let card = if hide[i] {
+                // Only a lead hides items; its hand-offs show as a line instead.
+                handoff(item, user.get(i).copied().unwrap_or(false)).unwrap_or(Card::Hidden)
+            } else {
+                card(item, forkable[i].is_some())
+            };
             let forks_after = forks.iter().filter(|(at, _)| *at == i).map(|(_, f)| *f).collect();
             Shown { seq: i, card, forks_after, group: None }
         })
@@ -249,8 +293,8 @@ fn card<'a>(item: &'a Item, forkable: bool) -> Card<'a> {
         }
         Item::Notice { icon, text, detail } => Card::Notice {
             icon,
-            text,
-            detail,
+            text: Cow::Borrowed(text),
+            detail: Cow::Borrowed(detail),
             markdown: icon == "bot" || icon == "report",
             url: (icon == "process" && detail.starts_with("http")).then_some(detail.as_str()),
         },
@@ -282,6 +326,24 @@ pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media
     }
 }
 
+/// Every image of a chat's cards in the order they show (a card's large ones, then its strip),
+/// each once: what the image viewer browses with ← → or a swipe, whichever image it opened on.
+/// The phone builds the same list from the cards' `media` and `images` (PROTOCOL.md).
+pub fn gallery(cards: &[Shown], find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = vec![];
+    for s in cards {
+        let media = media(&s.card, find);
+        let images = media.iter().filter(|m| !m.video);
+        for m in images.clone().filter(|m| m.shown).chain(images.filter(|m| !m.shown)) {
+            if seen.insert(m.path.clone()) {
+                out.push(m.path.clone());
+            }
+        }
+    }
+    out
+}
+
 /// A lead's turn that delegates, one that answers, and the cards around them (tests here and
 /// in api.rs check the desktop's and the phone's projections of it).
 #[cfg(test)]
@@ -291,7 +353,14 @@ pub fn fixture() -> Vec<Item> {
     vec![
         Item::User { text: "build it".into(), files: vec!["/tmp/shot.png".into(), "/tmp/notes.txt".into()], at: 1, mentions: vec![], sender: String::new(), intent: String::new() },
         Item::Thinking { text: "hmm".into() },
-        tool("mcp__harbor__spawn_agent", Some("ok")),
+        Item::Tool {
+            id: "s".into(),
+            name: SPAWN_AGENT.into(),
+            summary: "s".into(),
+            input: r#"{"name":"worker","title":"Build it","task":"Build it.\n\nAll the details."}"#.into(),
+            result: Some("Spawned 'worker' on Claude / Opus 5.5. It reports back to you when its turn ends.".into()),
+            is_error: false,
+        },
         Item::Text { text: "Started a worker.".into(), at: 2 },
         result(),
         Item::Message { from: "worker".into(), to: "lead".into(), text: "done".into() },
@@ -355,6 +424,26 @@ mod tests {
     }
 
     #[test]
+    fn the_gallery_is_every_image_of_the_chat_in_order() {
+        let m = |path: &str, shown: bool, video: bool| Media { path: path.into(), caption: String::new(), video, shown, url: None };
+        let items = vec![
+            Item::User { text: "look".into(), files: vec!["/p/a.png".into(), "/p/notes.txt".into(), "/p/b.png".into()], at: 0, mentions: vec![], sender: String::new(), intent: String::new() },
+            Item::Text { text: "reply".into(), at: 0 },
+            Item::Tool { id: "t".into(), name: "Read".into(), summary: String::new(), input: "read".into(), result: Some("ok".into()), is_error: false },
+            Item::Result { cost_usd: 0.0, duration_ms: 0, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() },
+        ];
+        let cards = project(&items, false, &[]);
+        let mut find = |t: &str| match t {
+            // A reply names a file first and shows two (and a video): the shown ones come first.
+            "reply" => vec![m("/p/named.png", false, false), m("/p/c.png", true, false), m("/p/run.mp4", true, true), m("/p/d.png", true, false), m("/p/a.png", false, false)],
+            "read" => vec![m("/p/e.png", true, false)],
+            _ => vec![],
+        };
+        assert_eq!(gallery(&cards, &mut find), ["/p/a.png", "/p/b.png", "/p/c.png", "/p/d.png", "/p/named.png", "/p/e.png"]);
+        assert!(gallery(&cards[3..], &mut find).is_empty());
+    }
+
+    #[test]
     fn tool_label_accepts_empty_and_non_ascii_names() {
         assert_eq!(tool_label("mcp__harbor__spawn_agent"), "Spawn agent");
         assert_eq!(tool_label("mcp__harbor__"), "mcp__harbor__");
@@ -367,7 +456,10 @@ mod tests {
         let items = fixture();
         let cards = project(&items, true, &[(8, 42)]);
         let kinds: Vec<&str> = cards.iter().map(|s| kind(&s.card)).collect();
-        assert_eq!(kinds, ["user", "hidden", "hidden", "hidden", "hidden", "message", "hidden", "tool", "text", "hidden", "notice", "error"]);
+        assert_eq!(kinds, ["user", "hidden", "notice", "text", "hidden", "message", "hidden", "tool", "text", "hidden", "notice", "error"]);
+        // The hand-off is one line that opens on the task.
+        let Card::Notice { icon, text, detail, markdown, url } = &cards[2].card else { panic!() };
+        assert_eq!((*icon, text.as_ref(), detail.as_ref(), *markdown, *url), ("started", "worker started: Build it", "Build it.\n\nAll the details.", true, None));
         assert_eq!(cards[8].forks_after, [42]);
         assert!(matches!(cards[8].card, Card::Text { forkable: true, .. }));
         let Card::User { files, images, .. } = &cards[0].card else { panic!() };
@@ -385,7 +477,53 @@ mod tests {
         ];
         let cards = project(&items, true, &[]);
         assert_eq!(cards[0].card, Card::Hidden);
-        assert!(matches!(cards[1].card, Card::Notice { text: "api finished: added tests", markdown: true, .. }));
+        assert!(matches!(&cards[1].card, Card::Notice { text, markdown: true, .. } if text == "api finished: added tests"));
+    }
+
+    #[test]
+    fn a_lead_says_what_it_handed_off() {
+        let call = |name: &str, input: &str, result: Option<&str>, is_error: bool| Item::Tool { id: name.into(), name: name.into(), summary: String::new(), input: input.into(), result: result.map(String::from), is_error };
+        let user = Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new(), intent: String::new() };
+        let end = Item::Result { cost_usd: 0.0, duration_ms: 0, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() };
+        let text_of = |c: &Card| match c {
+            Card::Notice { text, .. } => text.to_string(),
+            c => kind(c).to_string(),
+        };
+        let items = vec![
+            user.clone(),
+            // No title: the task's first sentence; the name Harbor gave it once spawned.
+            call(SPAWN_AGENT, &serde_json::json!({ "name": "api", "task": "## Task\n**Add** the `status` field. Then test it." }).to_string(), Some("Spawned 'api-2' on Claude / Opus 5.5."), false),
+            // Still starting: the name it asked for.
+            call(SPAWN_AGENT, r#"{"name":"ui","title":"PR status in the footer","task":"x"}"#, None, false),
+            call(SPAWN_AGENT, r#"{"name":"db","task":"x"}"#, Some("unknown account"), true),
+            call(MESSAGE_AGENT, r#"{"agent":"api","text":"Also make it blue. Thanks."}"#, Some("ok"), false),
+            call("mcp__harbor__list_agents", "{}", Some("ok"), false),
+            end.clone(),
+            // A turn an agent's report started: its messages are coordination, its spawns not.
+            Item::Notice { icon: "report".into(), text: "api finished".into(), detail: String::new() },
+            call(MESSAGE_AGENT, r#"{"agent":"api","text":"Now the docs."}"#, Some("ok"), false),
+            call(SPAWN_AGENT, r#"{"name":"docs","task":"Write the docs."}"#, Some("Spawned 'docs' on Claude / Opus 5.5."), false),
+            end,
+        ];
+        let shown: Vec<String> = project(&items, true, &[]).iter().map(|s| text_of(&s.card)).collect();
+        assert_eq!(
+            shown,
+            [
+                "user",
+                "api-2 started: Add the status field",
+                "ui started: PR status in the footer",
+                "hidden",
+                "Sent to api: Also make it blue",
+                "hidden",
+                "hidden",
+                "api finished",
+                "hidden",
+                "docs started: Write the docs",
+                "hidden"
+            ]
+        );
+        // Not a lead: its tool calls are tool cards.
+        assert!(project(&items, false, &[]).iter().all(|s| !matches!(&s.card, Card::Notice { icon, .. } if *icon == "started" || *icon == "sent")));
     }
 
     #[test]

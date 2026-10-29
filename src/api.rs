@@ -368,6 +368,9 @@ pub struct PairedPhone {
     pub app: i64,
     /// The account signed in on it ("" for a pairing from before accounts).
     pub owner: String,
+    /// What the phone says it is (`X-Harbor-Platform`, apps from 0.84): model, Android version,
+    /// ABIs and whether its built-in browser runs ("" when unknown).
+    pub platform: String,
     /// When its app last said it's alive from the background (`POST /v1/alive`), here or on
     /// another PC of the mesh (0: never): reachable, even with the app closed.
     pub alive: i64,
@@ -387,6 +390,8 @@ pub struct Sighting {
     pub app: i64,
     /// Its last background ping there (0: none, or a PC before 0.37.1).
     pub alive: i64,
+    /// See [`PairedPhone::platform`] ("" from a PC before 0.84).
+    pub platform: String,
 }
 
 /// What the listener threads and the UI thread share.
@@ -401,6 +406,8 @@ pub struct Hub {
     pub ips: Mutex<HashMap<String, String>>,
     /// Token → its app's versionCode (see [`PairedPhone::app`]): this session only.
     pub apps: Mutex<HashMap<String, i64>>,
+    /// Token → what its phone says it is (`X-Harbor-Platform`): this session only.
+    pub platforms: Mutex<HashMap<String, String>>,
     /// Token → (unix s, the ping's own ms) of its app's last background ping (`POST /v1/alive`):
     /// this session only. Each ping's time must be later than the last (no replays).
     pub alive: Mutex<HashMap<String, (i64, u64)>>,
@@ -438,6 +445,7 @@ impl Hub {
             alive: Mutex::new(HashMap::new()),
             ips: Mutex::new(HashMap::new()),
             apps: Mutex::new(HashMap::new()),
+            platforms: Mutex::new(HashMap::new()),
             elsewhere: Mutex::new(HashMap::new()),
             remembered: Mutex::new(HashMap::new()),
             inbox: Mutex::new(vec![]),
@@ -707,6 +715,7 @@ impl Hub {
         let seen = self.seen.lock().unwrap().clone();
         let ips = self.ips.lock().unwrap().clone();
         let apps = self.apps.lock().unwrap().clone();
+        let platforms = self.platforms.lock().unwrap().clone();
         let alive = self.alive.lock().unwrap().clone();
         let mut out: Vec<PairedPhone> = vec![];
         for t in tokens.iter().filter(|t| !t.group.is_empty()) {
@@ -715,8 +724,12 @@ impl Hub {
             let ip = ips.get(&t.token).cloned().unwrap_or_default();
             let app = apps.get(&t.token).copied().unwrap_or(0);
             let pinged = alive.get(&t.token).map_or(0, |a| a.0);
+            let platform = platforms.get(&t.token).cloned().unwrap_or_default();
             match out.iter_mut().find(|p| p.group == t.group) {
                 Some(p) => {
+                    if !platform.is_empty() && (p.platform.is_empty() || at > p.seen) {
+                        p.platform = platform;
+                    }
                     p.app = p.app.max(app);
                     p.alive = p.alive.max(pinged);
                     if p.owner.is_empty() {
@@ -732,7 +745,7 @@ impl Hub {
                         p.name = name;
                     }
                 }
-                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), owner: t.account_name.clone(), alive: pinged }),
+                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), owner: t.account_name.clone(), alive: pinged, platform }),
             }
         }
         // Not seen in this run: what an earlier one saw.
@@ -747,6 +760,9 @@ impl Hub {
                     }
                 }
                 p.alive = p.alive.max(r.alive);
+                if p.platform.is_empty() {
+                    p.platform = r.platform.clone();
+                }
             }
         }
         out
@@ -757,21 +773,21 @@ impl Hub {
         let v: Value = s.get(PHONES_SEEN).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
         let mut m = self.remembered.lock().unwrap();
         for (group, x) in v.as_object().into_iter().flatten() {
-            m.insert(group.clone(), Sighting { group: group.clone(), name: x["name"].as_str().unwrap_or("").into(), seen: x["seen"].as_i64().unwrap_or(0), app: x["app"].as_i64().unwrap_or(0), alive: x["alive"].as_i64().unwrap_or(0) });
+            m.insert(group.clone(), Sighting { group: group.clone(), name: x["name"].as_str().unwrap_or("").into(), seen: x["seen"].as_i64().unwrap_or(0), app: x["app"].as_i64().unwrap_or(0), alive: x["alive"].as_i64().unwrap_or(0), platform: x["platform"].as_str().unwrap_or("").into() });
         }
     }
 
     /// Keeps the phones' last-seen times and app versions for the next run: written when an
     /// app version or name changes, or a phone was seen 5 minutes past what's kept.
     pub fn remember_phones(&self, s: &store::Store) {
-        let now: HashMap<String, Sighting> = self.local_phones().into_iter().filter(|p| p.seen > 0 || p.alive > 0 || p.app > 0).map(|p| (p.group.clone(), Sighting { group: p.group, name: p.name, seen: p.seen, app: p.app, alive: p.alive })).collect();
+        let now: HashMap<String, Sighting> = self.local_phones().into_iter().filter(|p| p.seen > 0 || p.alive > 0 || p.app > 0).map(|p| (p.group.clone(), Sighting { group: p.group, name: p.name, seen: p.seen, app: p.app, alive: p.alive, platform: p.platform })).collect();
         let mut kept = self.remembered.lock().unwrap();
         let stale = now.len() != kept.len()
-            || now.iter().any(|(g, n)| kept.get(g).is_none_or(|k| k.app != n.app || k.name != n.name || n.seen.max(n.alive) - k.seen.max(k.alive) >= 300));
+            || now.iter().any(|(g, n)| kept.get(g).is_none_or(|k| k.app != n.app || k.name != n.name || k.platform != n.platform || n.seen.max(n.alive) - k.seen.max(k.alive) >= 300));
         if !stale {
             return;
         }
-        let v: serde_json::Map<String, Value> = now.iter().map(|(g, p)| (g.clone(), json!({ "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive }))).collect();
+        let v: serde_json::Map<String, Value> = now.iter().map(|(g, p)| (g.clone(), json!({ "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive, "platform": p.platform }))).collect();
         s.set(PHONES_SEEN, &Value::Object(v).to_string());
         *kept = now;
     }
@@ -1403,7 +1419,7 @@ pub fn caller(hub: &Hub, peer: &Peer, req: &Request) -> Result<(String, Option<L
     hub.auth(t, &peer.via).map(|l| (t.to_string(), Some(l))).map_err(|e| (401, e))
 }
 
-/// What a phone paired before accounts is told (Harbor for Android before 0.80 shows it).
+/// What a phone paired before accounts is told (Harbor for Android before 0.85 shows it).
 pub const OLD_PAIRING: &str = "This PC now uses Google accounts: update Harbor on this phone (Settings › Update), then sign in with Google.";
 /// How long a background ping may wait for a notification, and how often the app pings.
 pub const ALIVE_WAIT_MS: u64 = 240_000;
@@ -1653,6 +1669,10 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         let mut apps = hub.apps.lock().unwrap();
         let had = apps.get(&token).copied().unwrap_or(0);
         apps.insert(token.clone(), said.unwrap_or(had.max(APP_INBOX)));
+    }
+    // What the phone is (0.84): "Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a, …".
+    if let Some(p) = req.header("x-harbor-platform").map(|p| p.chars().filter(|c| !c.is_control()).take(240).collect::<String>()).filter(|p| !p.trim().is_empty()) {
+        hub.platforms.lock().unwrap().insert(token.clone(), p);
     }
     let w = r.get_mut();
     match (req.method.as_str(), segs.as_slice()) {
@@ -2552,7 +2572,7 @@ impl App {
             let n = subs.get(&c.id).copied().unwrap_or(0);
             let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
             let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queue_hash(c.id));
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id))));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id), self.chat_pr(c).map(|p| (p.number, p.state)))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -3386,6 +3406,9 @@ impl App {
             // It runs in a worktree of its own (worktree.rs): the folder's name, its path (null
             // for another PC's chat) and whether it's gone (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| json!({ "name": m.name, "path": m.path.map(|p| p.to_string_lossy().into_owned()), "gone": m.gone })),
+            // The pull request of the branch it works on (chatpr.rs): number, state, the
+            // footer's label, title and url; null when it has none (optional, 0.83).
+            "pr": self.chat_pr(c).map(|p| p.json()),
             // Snoozed out of this PC's sidebar until then, and that time as its row says it
             // ("Tomorrow, 9:00"); null when it isn't (optional, 0.78: there = /snooze answers).
             "snoozed_until_ms": self.snooze_until(&format!("c{}", c.id)).map(|u| u * 1000),
@@ -3614,9 +3637,8 @@ impl App {
             _ => Default::default(),
         };
         let links_of = |c: &crate::view::Shown| &links[c.seq];
-        // An item's version includes how it shows: hidden later (a lead's turn delegating),
-        // forkable once its turn ends, a fork made from it, the commits it names, the run of
-        // tool calls it folds into.
+        // An item's version includes how it shows: forkable once its turn ends, a fork made
+        // from it, the commits it names, the run of tool calls it folds into.
         let hashes: Vec<u64> = if fresh {
             vec![]
         } else {
@@ -4387,6 +4409,9 @@ mod tests {
         assert_eq!(call(port, "POST /v1/chats HTTP/1.1\r\nAuthorization: Bearer tok\r\nContent-Length: 3\r\n\r\n{x}").0, 400);
         let (st, v) = call(port, "GET /v1/app HTTP/1.1\r\nAuthorization: Bearer tok\r\n\r\n");
         assert_eq!((st, v["url"].as_str()), (200, Some("/app.apk")));
+        // What the phone is (0.84), kept per pairing token; control characters dropped.
+        call(port, "GET /v1/app HTTP/1.1\r\nAuthorization: Bearer tok\r\nX-Harbor-Platform: Samsung SM-A135M, Android 12 (SDK 31)\tABIs armeabi-v7a\r\n\r\n");
+        assert_eq!(hub.platforms.lock().unwrap()["tok"], "Samsung SM-A135M, Android 12 (SDK 31)ABIs armeabi-v7a");
         // The APK needs no token, also for a HEAD first (404 here when this PC has none).
         let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
         c.write_all(b"HEAD /app.apk HTTP/1.1\r\n\r\n").unwrap();
@@ -4521,7 +4546,7 @@ mod tests {
         assert_eq!((app("ga"), app("gb"), app("gc")), (18001, APP_INBOX, 0));
         // Another PC saw phone c more recently (with a newer app): online there, via that PC.
         let later = store::now() + 1;
-        hub.elsewhere.lock().unwrap().insert("pc:acer".into(), ("acer".into(), vec![Sighting { group: "gc".into(), name: "A13".into(), seen: later, app: 16002, alive: 0 }, Sighting { group: "zz".into(), name: "not ours".into(), seen: later, app: 1, alive: 0 }]));
+        hub.elsewhere.lock().unwrap().insert("pc:acer".into(), ("acer".into(), vec![Sighting { group: "gc".into(), name: "A13".into(), seen: later, app: 16002, alive: 0, platform: String::new() }, Sighting { group: "zz".into(), name: "not ours".into(), seen: later, app: 1, alive: 0, platform: String::new() }]));
         let p = hub.paired_phones();
         assert_eq!(p.len(), 3, "only pairings this PC has");
         assert_eq!((p[0].group.as_str(), p[0].seen, p[0].via.as_str(), p[0].name.as_str(), p[0].app), ("gc", later, "acer", "A13", 16002));
@@ -4750,7 +4775,7 @@ mod tests {
             }
         }
         let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
-        assert_eq!(shown, ["user", "message", "tool", "text", "notice", "error"]);
+        assert_eq!(shown, ["user", "notice", "text", "message", "tool", "text", "notice", "error"]);
         assert_eq!(phone[9]["kind"], "hidden");
         assert_eq!(phone[8]["forks_after"], json!([42]));
     }

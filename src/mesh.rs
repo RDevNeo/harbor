@@ -30,7 +30,7 @@
 //!   127.0.0.1, `HARBOR_MESH_PEERS=host:port,…` adds addresses to try, and
 //!   `HARBOR_MESH_ID`/`HARBOR_MESH_NAME` set this instance's identity.)
 //!
-//! - **Workspaces (0.80).** The PCs of one workspace (account.rs) are on each other's lists
+//! - **Workspaces (0.85).** The PCs of one workspace (account.rs) are on each other's lists
 //!   without pairing: the account service's directory gives their keys and addresses.
 //!
 //! Chats travel; settings follow the account instead (settingsync.rs). The wire format is in
@@ -467,6 +467,8 @@ pub struct Remote {
     pub draft: Option<api::SharedDraft>,
     /// The name of its worktree there, when it runs in one (worktree.rs).
     pub worktree: Option<String>,
+    /// Its branch's pull request (chatpr.rs).
+    pub pr: Option<crate::chatpr::ChatPr>,
 }
 
 /// Messages from the peer workers to the UI thread.
@@ -685,6 +687,7 @@ fn phones_loop(hub: Arc<api::Hub>) {
                     seen: s["seen"].as_i64().unwrap_or(0).min(store::now()),
                     app: s["app"].as_i64().unwrap_or(0),
                     alive: s["alive"].as_i64().unwrap_or(0).min(store::now()),
+                    platform: s["platform"].as_str().unwrap_or("").chars().take(240).collect(),
                 })
                 .filter(|s| !s.group.is_empty())
                 .collect();
@@ -905,7 +908,7 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
         }
         // Where this PC saw the phones (Devices on the others), and the phone app it serves.
         ("GET", ["mesh", "v1", "phones"]) => {
-            let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0 || p.alive > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive })).collect();
+            let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0 || p.alive > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive, "platform": p.platform })).collect();
             let about = shared.about.lock().unwrap().clone();
             ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c), "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"] }))
         }
@@ -2281,6 +2284,7 @@ impl App {
                 viewing,
                 draft: api::SharedDraft::from_json(&m["draft"]),
                 worktree: m["worktree"].as_str().filter(|w| !w.is_empty()).map(String::from),
+                pr: crate::chatpr::ChatPr::from_json(&m["pr"]),
             },
         );
         self.api_touch(id);
@@ -2437,6 +2441,8 @@ impl App {
             "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
             // Its worktree's name, when it runs in one (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| m.name),
+            // Its branch's pull request (optional, 0.83).
+            "pr": self.chat_pr(c).map(|p| p.json()),
         })
     }
 

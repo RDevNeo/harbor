@@ -31,6 +31,8 @@ pub struct PhoneVersion {
     pub seen: i64,
     /// The PC it was last seen at ("" for this one).
     pub via: String,
+    /// What the phone says it is (model, Android, ABIs, built-in browser; "" when unknown).
+    pub platform: String,
 }
 
 /// "0.66.0" from versionCode 66000 (Cargo.toml's version is the APK's versionName).
@@ -137,6 +139,9 @@ pub fn phone_line(p: &PhoneVersion, served: i64) -> String {
     } else {
         s.push_str(", not seen yet");
     }
+    if !p.platform.is_empty() {
+        s.push_str(&format!("; {}", p.platform));
+    }
     s
 }
 
@@ -163,7 +168,7 @@ pub fn gather(hub: &crate::api::Hub) -> (Vec<PcVersion>, Vec<PhoneVersion>) {
         peers.sort_by(|a, b| b.online.cmp(&a.online).then(a.name.cmp(&b.name)));
         pcs.extend(peers.into_iter().map(|p| PcVersion { id: p.id, name: p.name, me: false, online: p.online, seen: p.seen, version: p.version, update: p.update }));
     }
-    let mut phones: Vec<PhoneVersion> = hub.paired_phones().into_iter().map(|p| PhoneVersion { name: if p.name.is_empty() { "Phone".into() } else { p.name }, app: p.app, seen: p.seen.max(p.alive), via: p.via }).collect();
+    let mut phones: Vec<PhoneVersion> = hub.paired_phones().into_iter().map(|p| PhoneVersion { name: if p.name.is_empty() { "Phone".into() } else { p.name }, app: p.app, seen: p.seen.max(p.alive), via: p.via, platform: p.platform }).collect();
     // Phones paired with another PC only.
     let known: std::collections::HashSet<String> = hub.local_phones().into_iter().map(|p| p.group).collect();
     let elsewhere = hub.elsewhere.lock().unwrap().clone();
@@ -172,6 +177,9 @@ pub fn gather(hub: &crate::api::Hub) -> (Vec<PcVersion>, Vec<PhoneVersion>) {
         for s in sightings.iter().filter(|s| !known.contains(&s.group)) {
             let e = extra.entry(s.group.clone()).or_default();
             e.app = e.app.max(s.app);
+            if !s.platform.is_empty() && (e.platform.is_empty() || s.seen.max(s.alive) >= e.seen) {
+                e.platform = s.platform.clone();
+            }
             let seen = s.seen.max(s.alive);
             if seen >= e.seen {
                 e.seen = seen;
@@ -200,7 +208,7 @@ pub fn api_json(hub: &crate::api::Hub) -> Value {
     json!({
         "newest": newest,
         "pcs": pcs.iter().map(|p| json!({ "name": p.name, "self": p.me, "online": p.me || p.online, "seen": p.seen, "version": p.version, "line": pc_line(p, &newest) })).collect::<Vec<_>>(),
-        "phones": phones.iter().map(|p| json!({ "name": p.name, "app": p.app, "app_version": if p.app > 0 { code_name(p.app) } else { String::new() }, "seen": p.seen, "via": p.via, "line": phone_line(p, served) })).collect::<Vec<_>>(),
+        "phones": phones.iter().map(|p| json!({ "name": p.name, "app": p.app, "app_version": if p.app > 0 { code_name(p.app) } else { String::new() }, "seen": p.seen, "via": p.via, "platform": p.platform, "line": phone_line(p, served) })).collect::<Vec<_>>(),
     })
 }
 
@@ -254,8 +262,10 @@ mod tests {
     fn phone_lines() {
         let now = crate::store::now();
         assert_eq!(code_name(66001), "0.66.1");
-        assert_eq!(phone_line(&PhoneVersion { name: "p".into(), app: 66000, seen: now, via: String::new() }, 66000), "app 0.66.0 (66000), seen just now");
-        assert_eq!(phone_line(&PhoneVersion { name: "p".into(), app: 64001, seen: now - 300, via: "lab".into() }, 66000), "app 0.64.1 (64001), 0.66.0 available, seen 5m ago at lab");
+        assert_eq!(phone_line(&PhoneVersion { name: "p".into(), app: 66000, seen: now, via: String::new(), platform: String::new() }, 66000), "app 0.66.0 (66000), seen just now");
+        assert_eq!(phone_line(&PhoneVersion { name: "p".into(), app: 64001, seen: now - 300, via: "lab".into(), platform: String::new() }, 66000), "app 0.64.1 (64001), 0.66.0 available, seen 5m ago at lab");
+        let p = PhoneVersion { name: "p".into(), app: 84000, seen: now, via: String::new(), platform: "Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a".into() };
+        assert_eq!(phone_line(&p, 0), "app 0.84.0 (84000), seen just now; Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a");
         assert_eq!(phone_line(&PhoneVersion::default(), 0), "app version unknown (older than 0.17), not seen yet");
         assert_eq!(phone_short(0), None);
         assert_eq!(phone_short(66000).as_deref(), Some("app 0.66.0"));

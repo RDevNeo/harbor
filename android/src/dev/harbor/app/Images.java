@@ -35,8 +35,11 @@ import java.util.List;
 /** Images in a chat: thumbnails the hub serves (/v1/image?…&max=512, with the token) in the
  *  strip under a user message, a reply or a tool, like the desktop's; thumbnails of what the
  *  composer is about to send (a local file); and the full-screen viewer a tap opens (pinch or
- *  double-tap to zoom, swipe to the next one, Back to close). */
+ *  double-tap to zoom, swipe or the side buttons to the previous or next one, Back to close). */
 final class Images {
+    /** A screen whose images the viewer browses as one gallery (a chat: all of its images, in
+     *  order), whichever of them it opened on. */
+    interface Gallery { List<Src> gallery(); }
     private static final LruCache<String, Bitmap> cache = new LruCache<String, Bitmap>(24 << 20) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
     };
@@ -50,6 +53,7 @@ final class Images {
         Src(Hub hub, String url, String name) { this.hub = hub; this.url = url; this.uri = null; this.name = name; }
         Src(Uri uri, String name) { this.hub = null; this.url = null; this.uri = uri; this.name = name; }
         String key(int px) { return hub != null ? hub.id + sized(url, px) : uri + "@" + px; }
+        boolean same(Src o) { return hub != null ? o.hub == hub && url.equals(o.url) : uri.equals(o.uri); }
     }
 
     /** url with its max= set to px. */
@@ -91,7 +95,7 @@ final class Images {
                     miss.setVisibility(View.GONE);
                     iv.setContentDescription(s.name);
                     load(a, hub, s.url, iv, failed);
-                } else view(a, all, at);
+                } else open(a, all, at);
             });
         }
         h.addView(row);
@@ -188,6 +192,18 @@ final class Images {
 
     // ---- the viewer ----
 
+    /** A tap on group[at] (a card's images): the viewer on all of the screen's images when it
+     *  has a gallery with this one in it, else on the group. */
+    static void open(Activity a, List<Src> group, int at) {
+        if (a instanceof Gallery) {
+            List<Src> all = ((Gallery) a).gallery();
+            for (int i = 0; i < all.size(); i++) {
+                if (all.get(i).same(group.get(at))) { view(a, all, i); return; }
+            }
+        }
+        view(a, group, at);
+    }
+
     /** Full screen over everything, starting at all[at]. */
     static void view(Activity a, List<Src> all, int at) {
         // Not a fullscreen theme: that keeps the window out of a camera cutout, and the page
@@ -216,21 +232,49 @@ final class Images {
         bar.addView(count);
         f.addView(bar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         int[] i = {at};
+        boolean[] chrome = {true}; // the bar and the side buttons; a tap on the image hides them
+        View[] sides = new View[2];
         Runnable show = () -> {
             Src s = all.get(i[0]);
             name.setText(s.name);
             count.setText(all.size() > 1 ? (i[0] + 1) + " / " + all.size() : "");
-            big(a, s, z);
+            bar.setVisibility(chrome[0] ? View.VISIBLE : View.GONE);
+            // A side's button only while there's an image that way.
+            sides[0].setVisibility(chrome[0] && i[0] > 0 ? View.VISIBLE : View.GONE);
+            sides[1].setVisibility(chrome[0] && i[0] < all.size() - 1 ? View.VISIBLE : View.GONE);
         };
-        z.onSwipe = dir -> {
-            int n = i[0] + dir;
-            if (n < 0 || n >= all.size()) return;
-            i[0] = n;
-            show.run();
+        Zoom.Swipe go = new Zoom.Swipe() {
+            @Override public boolean can(int dir) { int n = i[0] + dir; return n >= 0 && n < all.size(); }
+            @Override public void to(int dir) {
+                if (!can(dir)) return;
+                i[0] += dir;
+                show.run();
+                big(a, all.get(i[0]), z);
+                z.setAlpha(0.4f);
+                z.animate().alpha(1).setDuration(160).start();
+            }
         };
-        z.onTap = () -> bar.setVisibility(bar.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+        for (int k = 0; k < 2; k++) {
+            int dir = k == 0 ? -1 : 1;
+            FrameLayout b = Ui.roundButton(a, k == 0 ? Ui.I_CHEV_LEFT : Ui.I_CHEV_RIGHT, 0x66000000, 0xffffffff, 44, v -> go.to(dir));
+            b.setContentDescription(k == 0 ? "Previous image" : "Next image");
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Ui.dp(44), Ui.dp(44), (k == 0 ? Gravity.START : Gravity.END) | Gravity.CENTER_VERTICAL);
+            lp.leftMargin = lp.rightMargin = Ui.dp(10);
+            f.addView(b, lp);
+            sides[k] = b;
+        }
+        z.onSwipe = go;
+        z.onTap = () -> { chrome[0] = !chrome[0]; show.run(); };
+        // A keyboard's ← → too (a tablet or a Chromebook).
+        d.setOnKeyListener((x, code, e) -> {
+            if (e.getAction() != android.view.KeyEvent.ACTION_DOWN) return false;
+            if (code == android.view.KeyEvent.KEYCODE_DPAD_LEFT) { go.to(-1); return true; }
+            if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) { go.to(1); return true; }
+            return false;
+        });
         d.setContentView(f);
         show.run();
+        big(a, all.get(i[0]), z);
         d.show();
     }
 
@@ -254,17 +298,26 @@ final class Images {
     /** An image that fits the screen and zooms: pinch, double-tap, drag while zoomed; a swipe
      *  sideways at fit size goes to the previous or next one; a tap shows or hides the bar. */
     static final class Zoom extends ImageView {
-        interface Swipe { void to(int dir); }
+        /** dir -1: the previous image, 1: the next one. */
+        interface Swipe { boolean can(int dir); void to(int dir); }
         Swipe onSwipe;
         Runnable onTap;
         private final Matrix m = new Matrix();
         private float fit = 1; // the scale that fits the view
         private final ScaleGestureDetector pinch;
         private final GestureDetector gestures;
+        private final int slop;
+        // A sideways drag at fit size: the image follows the finger; let go far or fast enough
+        // and the next image that way comes, else it springs back (past either end it only gives
+        // a little). Two fingers or a zoomed image never swipe.
+        private float downX, downY, dragX;
+        private boolean dragging, multi;
+        private int flung;
 
         Zoom(Context c) {
             super(c);
             setScaleType(ScaleType.MATRIX);
+            slop = android.view.ViewConfiguration.get(c).getScaledTouchSlop();
             pinch = new ScaleGestureDetector(c, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 @Override public boolean onScale(ScaleGestureDetector g) {
                     zoomBy(g.getScaleFactor(), g.getFocusX(), g.getFocusY());
@@ -280,8 +333,8 @@ final class Images {
                     return true;
                 }
                 @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
-                    if (zoomed() || onSwipe == null || Math.abs(vx) < 800 || Math.abs(vx) < 1.5f * Math.abs(vy)) return false;
-                    onSwipe.to(vx < 0 ? 1 : -1);
+                    if (!dragging || Math.abs(vx) < 800 || Math.abs(vx) < 1.5f * Math.abs(vy)) return false;
+                    flung = vx < 0 ? 1 : -1;
                     return true;
                 }
                 @Override public boolean onDoubleTap(MotionEvent e) {
@@ -350,7 +403,34 @@ final class Images {
 
         @Override public boolean onTouchEvent(MotionEvent e) {
             pinch.onTouchEvent(e);
+            int act = e.getActionMasked();
+            if (act == MotionEvent.ACTION_DOWN) {
+                downX = e.getX();
+                downY = e.getY();
+                dragX = 0;
+                dragging = multi = false;
+                flung = 0;
+            } else if (act == MotionEvent.ACTION_POINTER_DOWN) {
+                multi = true;
+                if (dragging) { dragging = false; fitIn(); }
+            } else if (act == MotionEvent.ACTION_MOVE) {
+                float dx = e.getX() - downX, dy = e.getY() - downY;
+                if (!dragging && !multi && onSwipe != null && !zoomed() && Math.abs(dx) > slop && Math.abs(dx) > 1.5f * Math.abs(dy)) dragging = true;
+                if (dragging) {
+                    float to = onSwipe.can(dx < 0 ? 1 : -1) ? dx : dx / 3;
+                    m.postTranslate(to - dragX, 0);
+                    dragX = to;
+                    setImageMatrix(m);
+                }
+            }
+            // (Its fling, on the lift, comes before the lift is handled below.)
             gestures.onTouchEvent(e);
+            if ((act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) && dragging) {
+                dragging = false;
+                int dir = flung != 0 ? flung : Math.abs(dragX) > getWidth() * 0.2f ? (dragX < 0 ? 1 : -1) : 0;
+                if (act == MotionEvent.ACTION_UP && dir != 0 && onSwipe.can(dir)) onSwipe.to(dir);
+                else fitIn();
+            }
             return true;
         }
     }

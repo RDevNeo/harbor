@@ -467,6 +467,15 @@ fn field_frame(ui: &Ui, focused: bool, margin: Margin) -> Frame {
 
 /// `Input`: h-9 rounded-md border px-3, focus ring. `mono` is the code/ID variant.
 pub fn input(ui: &mut Ui, text: &mut String, hint: &str, mono: bool, width: f32) -> Response {
+    input_as(ui, text, hint, mono, false, width)
+}
+
+/// [`input`] for a key or password: what's typed shows as dots.
+pub fn password(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    input_as(ui, text, hint, true, true, width)
+}
+
+fn input_as(ui: &mut Ui, text: &mut String, hint: &str, mono: bool, password: bool, width: f32) -> Response {
     let id = ui.next_auto_id();
     let focused = ui.memory(|m| m.has_focus(id));
     let font = if mono { theme::ts("label-13-mono") } else { theme::ts("label-14") };
@@ -474,6 +483,7 @@ pub fn input(ui: &mut Ui, text: &mut String, hint: &str, mono: bool, width: f32)
         .id(id)
         .hint_text(WidgetText::from(hint).color(tokens(ui).gray(900)))
         .font(font)
+        .password(password)
         .desired_width(width)
         .frame(field_frame(ui, focused, Margin::symmetric(12, 8)))
         .show(ui)

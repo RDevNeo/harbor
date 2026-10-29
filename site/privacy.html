@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · Harbor</title>
+<meta name="description" content="How Harbor, the open-source desktop and Android app for coding agents, handles your data, including Google user data from the Gmail integration.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/Geist-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="/fonts/Geist-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav wrap">
+  <a class="brand" href="/"><img src="/favicon.svg" alt="" width="24" height="24">Harbor</a>
+  <nav>
+    <a href="/#features">Features</a>
+    <a href="/#install">Install</a>
+    <a href="https://github.com/RDevNeo/harbor">GitHub</a>
+  </nav>
+</header>
+
+<main class="doc wrap">
+  <h1>Privacy policy</h1>
+  <p class="meta">Effective 28 October 2026</p>
+
+  <p>Harbor is a desktop app for Linux and a companion Android app for working with AI coding agents such as Claude Code and Codex. It is free, open-source software made by the Harbor open-source project. All of its code is public at <a href="https://github.com/RDevNeo/harbor">github.com/RDevNeo/harbor</a>, so you can check everything this page says.</p>
+
+  <h2 id="summary">Summary</h2>
+  <ul>
+    <li>Harbor runs on your own devices. <b>The Harbor project runs no server that receives your data</b>: no accounts, no analytics, no telemetry, no crash reporting, no ads.</li>
+    <li>Your chats, settings and sign-ins are stored on your own computer. They go to your other devices only when you pair them with each other.</li>
+    <li>When you use a service through Harbor, such as an AI provider, GitHub or Gmail, Harbor talks to that service directly from your device, with your own account. That service's own privacy policy then applies.</li>
+    <li>Google user data is used only to do what you ask your AI agent to do with your mail. It is never sold, used for ads or used to train AI models.</li>
+  </ul>
+
+  <h2 id="who">Who we are</h2>
+  <p>Harbor is developed in the open by the Harbor open-source project. It is published under the MIT license at <a href="https://github.com/RDevNeo/harbor">github.com/RDevNeo/harbor</a>. There is no company behind it that collects or processes user data. In this policy, "Harbor", "we" and "us" mean that project and the software it publishes.</p>
+
+  <h2 id="data">What Harbor stores, and where</h2>
+  <p>Harbor keeps everything it needs in its data folders on the computer it runs on: your projects, chats and their transcripts (including what agents' tools returned), settings, and the sign-ins you give it. Sign-ins to apps, like Gmail, are kept in a private folder only your user account can open (permissions 0700, files 0600). We never receive any of this.</p>
+  <p>The Android app stores its pairing keys and settings on the phone. It reads and writes your chats on your paired computers, not on any server of ours.</p>
+
+  <h2 id="network">What leaves your device</h2>
+  <p>Harbor makes these network connections. Every one goes directly from your device to the party named, never to a server of ours.</p>
+  <ul>
+    <li><b>Your AI agents.</b> Harbor runs the agent programs you installed and chose: Claude Code, Codex, Gemini, Cursor and others. Your messages, and whatever the agent reads while working (files, tool results, and mail if you use the Gmail integration), go to that agent's provider under your own account and that provider's terms. Harbor also uses your own Claude account for a few small helpers you can see in the app. Examples are the short "where things stand" recap of a chat, the suggested next message, and tidying up dictated text. For a Claude account Harbor signed in to, it also refreshes that account's sign-in with Anthropic.</li>
+    <li><b>Your own devices.</b> PCs you pair with each other keep a copy of each other's chats. Phones you pair read and send messages through your PCs. These connections run directly between your devices, encrypted with mutual TLS and keys pinned at pairing. If one of your PCs can't reach another directly, a third PC you paired may pass the encrypted traffic along without being able to read it. A chat started from someone else's PC that you paired never gets your app sign-ins (like Gmail).</li>
+    <li><b>Voice input.</b> Speech is transcribed on your own devices with an on-device model. The model is downloaded once from Hugging Face. A phone may send a recording to your own PC to transcribe. No audio goes to any outside speech service.</li>
+    <li><b>Updates.</b> Harbor checks GitHub for new releases of itself and downloads them from GitHub, verifying their signature. Phones get their updates from your own PC. Harbor also asks the npm registry for the latest version number of each agent program you installed.</li>
+    <li><b>Reaching your PCs from outside.</b> To let your phone reach your PC away from home, Harbor can ask your home router to open its port (UPnP/NAT-PMP/PCP). It can also look up your public IP address with api.ipify.org or icanhazip.com. Only devices you paired get an answer on that port.</li>
+    <li><b>Webhooks (off unless you turn them on).</b> If you turn on public webhooks, Harbor gets a TLS certificate from Let's Encrypt. Its default name is an sslip.io name made from your public IP address.</li>
+    <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex and Gmail are used only after you sign in to them in Harbor. They are reached directly with your own sign-in.</li>
+    <li><b>Project icons.</b> To show a project's icon, Harbor may fetch the favicon from that project's own website.</li>
+    <li><b>The optional browser panel</b> loads the pages you open in it, like any browser.</li>
+  </ul>
+
+  <h3>This website</h3>
+  <p>This website is hosted on Vercel. It uses no cookies and no analytics. As with any website, Vercel's servers handle your requests and may keep technical logs such as IP addresses under <a href="https://vercel.com/legal/privacy-policy">Vercel's privacy policy</a>. The "Download for Android" link fetches the latest app from Harbor's GitHub releases and passes it on to you.</p>
+
+  <h2 id="google">Google user data (Gmail integration)</h2>
+  <p>Harbor has an optional Gmail integration. It lets the AI agents you run in Harbor work with your Gmail when you ask them to. It is off until you sign in to Gmail under Settings › Integrations › Apps in the desktop app, using your own Google account.</p>
+
+  <h3>Scopes and why they are needed</h3>
+  <ul>
+    <li><code>https://www.googleapis.com/auth/gmail.modify</code> lets agents search and read your messages, conversations and attachments; send mail and replies; create, update, send and delete drafts; add and remove labels (moving, archiving, marking read or unread, starring); move mail to and from the trash; and manage your labels. Harbor does not ask for full mail access (<code>https://mail.google.com/</code>), so it cannot permanently delete mail.</li>
+    <li><code>https://www.googleapis.com/auth/gmail.settings.basic</code> lets agents list, create and delete Gmail filters.</li>
+  </ul>
+
+  <h3>How Google data is accessed and stored</h3>
+  <ul>
+    <li>Harbor gets your mail directly from Google's Gmail API onto your own computer. No server of ours sits in between.</li>
+    <li>The sign-in tokens are stored only on that computer, in Harbor's private folder, which only your user account can open. They are never put in agents' configuration, environment or command lines.</li>
+    <li>Harbor calls Gmail only when an agent you are running uses one of its Gmail tools. Agents do that when you ask them to work with your mail. Harbor does not read, scan or index your mail in the background.</li>
+    <li>Attachments an agent downloads are saved as files on that computer, where the agent or you choose.</li>
+  </ul>
+
+  <h3>How Google data is used and shared</h3>
+  <ul>
+    <li>Google user data is used only to provide the Gmail features you use: doing what you ask your AI agent to do with your mail.</li>
+    <li>What an agent reads from Gmail becomes part of that chat. Like the rest of the chat, it is sent to the AI provider whose agent you chose and run under your own account (for example Anthropic for Claude Code, OpenAI for Codex). It is stored in the chat history on your computer and on the devices you paired. Harbor transfers Google user data to no one else.</li>
+    <li>Google user data is never sold. It is never used for advertising, never used to determine credit-worthiness or lending, and never used by Harbor to develop, improve or train generalized AI or machine-learning models.</li>
+    <li>No person at the Harbor project can read your Google user data. We have no copy of it.</li>
+  </ul>
+  <p class="callout">Harbor's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+  <h3>Keeping and deleting Google data</h3>
+  <ul>
+    <li><b>Sign out</b> on the Gmail card asks Google to revoke Harbor's access and deletes the tokens from your computer. Harbor keeps only the OAuth client ID and secret you entered, for the next sign-in.</li>
+    <li>You can also revoke access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+    <li>Mail that agents read stays in your chat histories until you delete those chats. Downloaded attachments stay until you delete the files. Uninstalling Harbor and deleting its data folders removes everything Harbor stored.</li>
+    <li>What your AI provider keeps is governed by that provider's own terms and settings.</li>
+  </ul>
+
+  <h2 id="security">Security</h2>
+  <p>Connections between your devices use mutual TLS with keys pinned at pairing. Phones can additionally require a screen lock or biometrics. Connections to Google and other services use HTTPS. Sign-ins are kept in owner-only files, and updates are verified against a signature before they are installed. No software is perfectly secure. You can report a security problem through the GitHub repository.</p>
+
+  <h2 id="children">Children</h2>
+  <p>Harbor is a developer tool and is not directed at children under 13 (or the minimum age in your country). We do not knowingly collect data from children. In fact, we collect no personal data at all.</p>
+
+  <h2 id="changes">Changes to this policy</h2>
+  <p>If Harbor's handling of data changes, we will update this page and its effective date. The full history of this page is public in the <a href="https://github.com/RDevNeo/harbor/commits/main/site/privacy.html">GitHub repository</a>.</p>
+
+  <h2 id="contact">Contact</h2>
+  <p>For questions about this policy or your data, open an issue at <a href="https://github.com/RDevNeo/harbor/issues">github.com/RDevNeo/harbor/issues</a>.</p>
+</main>
+
+<footer class="wrap">
+  <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>; the browser helper is <a href="https://github.com/RDevNeo/harbor/tree/main/browser">MIT</a> (it links Servo, MPL-2.0).
+  Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
+  <p>No cookies, no analytics. <a href="/privacy">Privacy</a> · <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
+</footer>
+</body>
+</html>

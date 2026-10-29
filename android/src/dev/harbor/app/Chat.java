@@ -26,7 +26,7 @@ import java.util.TreeMap;
 /** One chat: the transcript (refetched from the last revision whenever the hub says the chat
  *  changed, so streaming text grows in place), and the composer with attachments, Send, Stop.
  *  The chat list slides in from the left, its team (Team) from the right. */
-public class Chat extends Base {
+public class Chat extends Base implements Images.Gallery {
     private String chatId;
     private WorkBar work;
     private ScrollView scroll;
@@ -48,7 +48,8 @@ public class Chat extends Base {
     private JSONObject bars;        // the items reply's "status": queue, working, waiting, limit
     private TextView workingText;   // "Working… · 12s", ticking
     private Boolean stripOpen;      // the agent strip unfolded (null: the hub's default)
-    private final java.util.List<TextView> stripTimes = new java.util.ArrayList<>(); // its elapsed labels
+    private final Map<String, View[]> stripRows = new java.util.HashMap<>(); // agent id → its row's idle and asking parts
+    private String stripAsk = "";   // the agent whose row asks "Stop api?" ("": none)
     private boolean running;
     /** The queued message being edited in this composer (0: none), its text then, and the
      *  draft set aside meanwhile (PROTOCOL.md "Steer and the queue"). */
@@ -268,7 +269,7 @@ public class Chat extends Base {
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
         comp.who(Sidebar.typingWho(c, st == null ? "" : st.optString("you", "")));
-        work.marker(c.optJSONObject("worktree"), c.optString("home_name", ""));
+        work.marker(c.optJSONObject("worktree"), c.optJSONObject("pr"), c.optString("home_name", ""));
         applyDraft(c.optJSONObject("draft"));
         drawBars();
     }
@@ -586,16 +587,14 @@ public class Chat extends Base {
     }
 
     /** The desktop's agent strip over the composer (agentstrip.rs, PROTOCOL.md "status.agents"):
-     *  one row per running sub-agent, "name · doing · 2m", folded into "3 agents working" from
-     *  three on. Tapping a row opens the agent; tapping the title folds or unfolds. */
+     *  folded into one title row from three agents on, a per-screen choice the hub only defaults. */
     private void strip(JSONObject s) {
-        stripTimes.clear();
-        Ui.main.removeCallbacks(stripTicker);
+        stripRows.clear();
         JSONArray rows = s == null ? null : s.optJSONArray("rows");
-        if (rows == null || rows.length() == 0) return;
+        if (rows == null || rows.length() == 0) { stripAsk(""); return; }
         boolean folded = s.optBoolean("folded");
         boolean open = !folded || (stripOpen != null && stripOpen);
-        // The rows, and Stop all in the top row's corner (`POST stop_all`, as the waiting bar's was).
+        // The rows, and Stop all in the top row's corner (`POST stop_all`), which asks first.
         LinearLayout outer = Ui.row(this);
         outer.setGravity(Gravity.TOP);
         outer.setBackground(Ui.round(Ui.BG2, Ui.LINE, 12));
@@ -605,7 +604,7 @@ public class Chat extends Base {
         TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.G700);
         stop.setBackground(Ui.press(0, 0, 8));
         stop.setContentDescription("Stop all");
-        stop.setOnClickListener(v -> post("stop_all"));
+        stop.setOnClickListener(v -> stopAll(rows.length()));
         outer.addView(stop, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
         if (s.optBoolean("header", folded)) {
             LinearLayout h = Ui.row(this);
@@ -636,51 +635,128 @@ public class Chat extends Base {
         }
         if (open) for (int i = 0; i < rows.length(); i++) {
             JSONObject r = rows.optJSONObject(i);
-            if (r == null) continue;
-            LinearLayout row = Ui.row(this);
-            row.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
-            row.setBackground(Ui.press(0, 0, 8));
-            row.addView(Ui.accountMark(this, r.optString("logo"), r.optString("badge"), 18));
-            // Name and what it's doing first; its tokens and cost (agentstrip.rs) on a dim line
-            // under them, so a narrow screen never squeezes the doing text out.
-            LinearLayout text = Ui.col(this);
-            LinearLayout top = Ui.row(this);
-            TextView name = Ui.subtitle(Ui.bold(this, r.optString("name"), 14, Ui.FG));
-            name.setMaxWidth(Ui.dp(140));
-            top.addView(name, Ui.wrap());
-            top.addView(Ui.subtitle(Ui.text(this, "  ·  " + r.optString("doing"), 14, Ui.G700)), Ui.weight());
-            text.addView(top, Ui.fill());
-            String usage = r.optString("usage");
-            if (!usage.isEmpty()) {
-                TextView u = Ui.subtitle(Ui.text(this, usage, 11, Ui.G600));
-                u.setTypeface(Ui.mono);
-                text.addView(u, Ui.fill());
-            }
-            row.addView(text, Ui.margins(Ui.weight(), 8, 0, 0, 0));
-            TextView time = Ui.text(this, "", 12, Ui.G700);
-            time.setTypeface(Ui.mono);
-            time.setTag(r.optLong("since_ms"));
-            stripTimes.add(time);
-            row.addView(time, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-            String id = r.optString("id");
-            row.setOnClickListener(v -> open(this, hub, id));
-            box.addView(row, Ui.fill());
+            if (r != null) box.addView(stripRow(r, i), Ui.fill());
         }
         status.addView(outer, Ui.margins(Ui.fill(), 0, 4, 0, 4));
-        stripTick();
+        // A "Stop api?" whose agent finished (or folded away) goes with it.
+        stripAsk(stripRows.containsKey(stripAsk) ? stripAsk : "");
     }
 
-    private final Runnable stripTicker = this::stripTick;
+    /** One agent: mark, name and its working dot, and a stop icon that turns the row into
+     *  "Stop api? Cancel / Stop" (the desktop's on hover; a phone has none, so it stays). */
+    private View stripRow(JSONObject r, int nth) {
+        String id = r.optString("id");
+        String name = r.optString("name");
+        LinearLayout row = Ui.row(this);
+        row.setPadding(Ui.dp(8), Ui.dp(2), Ui.dp(2), Ui.dp(2));
+        row.setMinimumHeight(Ui.dp(40));
+        row.setBackground(Ui.press(0, 0, 8));
+        row.addView(Ui.accountMark(this, r.optString("logo"), r.optString("badge"), 18));
+        // Name and dot together, the name giving way on a narrow screen (a wrap-content row
+        // shrinks its weighted child only when it overflows).
+        LinearLayout idle = Ui.row(this);
+        LinearLayout named = Ui.row(this);
+        named.addView(Ui.subtitle(Ui.bold(this, name, 14, Ui.FG)), new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        named.addView(new Pulse(this, nth * 0.37f), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
+        idle.addView(named, Ui.weight());
+        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.G700);
+        stop.setBackground(Ui.press(0, 0, 8));
+        stop.setContentDescription("Stop " + name);
+        stop.setOnClickListener(v -> stripAsk(id));
+        idle.addView(stop, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+        row.addView(idle, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        LinearLayout ask = Ui.row(this);
+        ask.addView(Ui.subtitle(Ui.text(this, "Stop " + name + "?", 14, Ui.G700)), Ui.weight());
+        ask.addView(small("Cancel", () -> stripAsk("")), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        TextView yes = small("Stop", () -> {
+            stripAsk("");
+            Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + id + "/stop", null), x -> load(false));
+        });
+        yes.setTextColor(Ui.RED);
+        yes.setBackground(Ui.press(Ui.RED_BG, 0, 14));
+        ask.addView(yes, Ui.margins(Ui.wrap(), 6, 0, 4, 0));
+        row.addView(ask, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        stripRows.put(id, new View[]{idle, ask});
+        // Touching another row answers an open "Stop api?" with Cancel.
+        row.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN && !stripAsk.isEmpty() && !stripAsk.equals(id)) stripAsk("");
+            return false;
+        });
+        row.setOnClickListener(v -> open(this, hub, id));
+        // The desktop's hover: model, task and how long it has run.
+        row.setOnLongClickListener(v -> {
+            long secs = Math.max(0, (System.currentTimeMillis() - r.optLong("since_ms")) / 1000);
+            String el = secs < 60 ? secs + "s" : secs < 3600 ? secs / 60 + "m" : secs / 3600 + "h " + secs % 3600 / 60 + "m";
+            String task = r.optString("task");
+            Ui.dialog(this).setTitle(name)
+                    .setMessage(r.optString("model") + (task.isEmpty() ? "" : "\n\n" + task) + "\n\nWorking for " + el)
+                    .setNegativeButton("Close", null)
+                    .setPositiveButton("Open", (d, w) -> open(this, hub, id))
+                    .show();
+            return true;
+        });
+        return row;
+    }
 
-    /** The strip's "40s", "2m", "1h 5m" (agentstrip::short_elapsed), counted here. */
-    private void stripTick() {
-        Ui.main.removeCallbacks(stripTicker);
-        if (stripTimes.isEmpty() || isFinishing()) return;
-        for (TextView t : stripTimes) {
-            long s = Math.max(0, (System.currentTimeMillis() - (Long) t.getTag()) / 1000);
-            t.setText(s < 60 ? s + "s" : s < 3600 ? s / 60 + "m" : s / 3600 + "h " + s % 3600 / 60 + "m");
+    /** Opens the "Stop api?" of the agent `id` ("": none), one at a time; it cancels itself
+     *  after a few seconds untouched. */
+    private void stripAsk(String id) {
+        // Redrawn with the same one open (a refresh), its countdown goes on.
+        if (!id.equals(stripAsk)) {
+            Ui.main.removeCallbacks(stripAskEnd);
+            if (!id.isEmpty()) Ui.main.postDelayed(stripAskEnd, 5000);
         }
-        Ui.main.postDelayed(stripTicker, 1000);
+        stripAsk = id;
+        for (Map.Entry<String, View[]> e : stripRows.entrySet()) {
+            boolean asking = e.getKey().equals(id);
+            e.getValue()[0].setVisibility(asking ? View.GONE : View.VISIBLE);
+            e.getValue()[1].setVisibility(asking ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private final Runnable stripAskEnd = () -> stripAsk("");
+
+    /** Stop all asks first, as the desktop's dialog does (undo.rs `stop_all_dialog`); the lead's
+     *  queued messages wait, held, for Resume. */
+    private void stopAll(int n) {
+        String subs = n == 1 ? "1 running sub-agent" : n + " running sub-agents";
+        android.app.AlertDialog d = Ui.dialog(this).setTitle(running ? "Stop the main agent and " + subs + "?" : "Stop " + subs + "?")
+                .setMessage("Sub-agent queues are cleared; your queued messages wait until you resume. Finished work and transcripts stay.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Stop all", (x, w) -> Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + chatId + "/stop_all", new JSONObject().put("hold", true)), r -> load(false)))
+                .show();
+        d.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setTextColor(Ui.RED);
+    }
+
+    /** The strip's working dot (agentstrip::working_dot); `offset` keeps a row out of step with
+     *  its neighbours. It reposts a frame only while drawn, so it rests off screen or in the background. */
+    static final class Pulse extends View {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final float offset;
+
+        Pulse(Context c, float offset) {
+            super(c);
+            this.offset = offset;
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas c) {
+            float phase = (android.os.SystemClock.uptimeMillis() / 1600f + offset) % 1f;
+            float ease = 1 - (1 - phase) * (1 - phase) * (1 - phase);
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            paint.setColor(Ui.GREEN);
+            paint.setAlpha(Math.round(255 * 0.5f * (1 - ease)));
+            c.drawCircle(cx, cy, Ui.dp(4) * (0.6f + 1.4f * ease) * 1.25f, paint);
+            paint.setAlpha(255);
+            c.drawCircle(cx, cy, Ui.dp(3.5f), paint);
+            if (isShown()) postInvalidateDelayed(50);
+        }
+
+        @Override
+        public void onVisibilityAggregated(boolean visible) {
+            super.onVisibilityAggregated(visible);
+            if (visible) invalidate();
+        }
     }
 
     private TextView small(String label, Runnable on) {
@@ -1006,6 +1082,27 @@ public class Chat extends Base {
         comp.mentions.setVisibility(mentions.length() == 0 ? View.GONE : View.VISIBLE);
     }
 
+    /** Every image of the chat in the order the cards show them (a card's large ones, then its
+     *  strip), each once, as the desktop's viewer browses them (view.rs `gallery`): a tap on
+     *  any of them opens the viewer here, and swipes go on to the others. */
+    @Override public List<Images.Src> gallery() {
+        List<Images.Src> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (JSONObject it : items.values()) {
+            if ("hidden".equals(it.optString("kind"))) continue;
+            JSONArray media = it.optJSONArray("media"), rest = notShown(it);
+            for (JSONArray list : new JSONArray[]{media, rest}) {
+                for (int i = 0; list != null && i < list.length(); i++) {
+                    JSONObject m = list.optJSONObject(i);
+                    if (m == null || list == media && !"image".equals(m.optString("kind"))) continue;
+                    String url = m.optString("url");
+                    if (!url.isEmpty() && seen.add(url)) out.add(new Images.Src(hub, url, m.optString("name")));
+                }
+            }
+        }
+        return out;
+    }
+
     /** A card's `images` without those its `media` already draws large. */
     private static JSONArray notShown(JSONObject it) {
         JSONArray images = it.optJSONArray("images"), media = it.optJSONArray("media");
@@ -1242,6 +1339,9 @@ public class Chat extends Base {
             case "monitor": glyph = Ui.I_MONITOR; break;
             case "folder": glyph = Ui.I_FOLDER; break;
             case "worktree": glyph = Ui.I_FOLDER_GIT; break;
+            // A lead's hand-offs: "api started: …", "Sent to api: …".
+            case "started": glyph = Ui.I_PLAY; break;
+            case "sent": glyph = Ui.I_SEND; break;
             default: glyph = Ui.I_CIRCLE_CHECK;
         }
         boolean expandable = !detail.isEmpty() && url.isEmpty();
@@ -1249,7 +1349,8 @@ public class Chat extends Base {
         pill.setBackground(Ui.press(Ui.G100, Ui.LINE, 16));
         pill.setPadding(Ui.dp(12), Ui.dp(6), Ui.dp(12), Ui.dp(6));
         pill.addView(Ui.icon(this, glyph, 14, Ui.G700));
-        pill.addView(Ui.text(this, it.optString("text"), 14, Ui.FG), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
+        // Weighted: a line wider than the screen wraps instead of pushing the chevron out.
+        pill.addView(Ui.text(this, it.optString("text"), 14, Ui.FG), Ui.margins(Ui.weight(), 6, 0, 0, 0));
         TextView chev = Ui.icon(this, expanded.contains(seq) ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700);
         if (expandable) pill.addView(chev, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
         LinearLayout.LayoutParams pp = Ui.wrap();
@@ -1257,7 +1358,8 @@ public class Chat extends Base {
         wrap.addView(pill, pp);
         if (!url.isEmpty()) {
             pill.setOnClickListener(v -> {
-                try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (Exception e) { Ui.copy(this, url); }
+                if (Render.web(url)) Browser.open(this, url);
+                else try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (Exception e) { Ui.copy(this, url); }
             });
         } else if (expandable) {
             final View[] body = {null};

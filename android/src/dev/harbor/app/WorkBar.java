@@ -1,6 +1,8 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -16,21 +18,22 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The two chips under the composer, the desktop's workspace and branch bar (src/worktree.rs):
+/** The chips under the composer, the desktop's workspace and branch bar (src/worktree.rs):
  *  where the agent works (Current checkout, New worktree, or the chat's worktree) and its branch,
- *  each with a bottom sheet. The PC reads git, ranks the branches and does the switching
- *  (android/PROTOCOL.md, GET /v1/workspace). Hidden outside a git project, and on hubs without it. */
+ *  each with a bottom sheet, and the branch's pull request (chat JSON `pr`, src/chatpr.rs; a tap
+ *  opens it). The PC reads git, ranks the branches and does the switching (android/PROTOCOL.md,
+ *  GET /v1/workspace). Hidden outside a git project, and on hubs without it. */
 final class WorkBar {
     final LinearLayout view;
     private final Activity a;
     private final Hub hub;
-    private final LinearLayout ws, br;
+    private final LinearLayout ws, br, prc;
     /** The chat it's for; null: a new chat (then `project`, `worktree` and `base` are its picks). */
     String chat;
     String project = "";
     boolean worktree;
     String base = "";
-    private JSONObject info, marker;
+    private JSONObject info, marker, pr;
     private String home = "";
     private boolean loaded; // the hub has answered /v1/workspace once
     private int gen;
@@ -43,10 +46,18 @@ final class WorkBar {
         view.setPadding(Ui.dp(6), Ui.dp(2), Ui.dp(6), 0);
         ws = chip(Ui.I_FOLDER);
         br = chip(Ui.I_BRANCH);
+        prc = chip(Ui.I_PR_OPEN);
         ws.setOnClickListener(v -> pickWorkspace());
         br.setOnClickListener(v -> pickBranch());
-        view.addView(ws, new LinearLayout.LayoutParams(-2, Ui.dp(34)));
-        view.addView(new View(a), new LinearLayout.LayoutParams(0, 1, 1));
+        prc.setOnClickListener(v -> openPr());
+        prc.setOnLongClickListener(v -> { if (pr != null) Ui.toast(a, pr.optString("label") + "\n" + pr.optString("title")); return true; });
+        prc.setVisibility(View.GONE);
+        // On a narrow phone the workspace's label is cut first: the PR and the branch stay whole.
+        LinearLayout left = Ui.row(a);
+        left.setGravity(Gravity.CENTER_VERTICAL);
+        left.addView(ws, new LinearLayout.LayoutParams(-2, Ui.dp(34)));
+        view.addView(left, new LinearLayout.LayoutParams(0, Ui.dp(34), 1));
+        view.addView(prc, new LinearLayout.LayoutParams(-2, Ui.dp(34)));
         view.addView(br, new LinearLayout.LayoutParams(-2, Ui.dp(34)));
         view.setVisibility(View.GONE);
     }
@@ -104,7 +115,9 @@ final class WorkBar {
     private void show(JSONObject r) {
         info = r;
         boolean git = r != null && r.optBoolean("git");
+        ws.setVisibility(View.VISIBLE);
         br.setVisibility(View.VISIBLE);
+        showPr();
         ws.setOnClickListener(v -> pickWorkspace());
         tint(ws, Ui.G700);
         // As the desktop: "gone" only where the workspace is this PC's (a device's chat has its
@@ -122,6 +135,13 @@ final class WorkBar {
             br.setVisibility(View.GONE);
             String on = home.isEmpty() ? "the PC it runs on" : home;
             ws.setOnClickListener(v -> Ui.toast(a, "Runs in its own worktree on " + on + ", " + marker.optString("name")));
+            return;
+        }
+        // Another PC's chat in its checkout: only its PR, as the desktop's footer.
+        if (!git && chat != null && pr != null) {
+            view.setVisibility(View.VISIBLE);
+            ws.setVisibility(View.GONE);
+            br.setVisibility(View.GONE);
             return;
         }
         if (!git) { view.setVisibility(View.GONE); return; }
@@ -143,11 +163,47 @@ final class WorkBar {
         ((TextView) c.getChildAt(1)).setTextColor(color);
     }
 
-    /** The chat's "worktree" from the hub's state (null: none, or a hub older than 0.66). */
-    void marker(JSONObject w, String home) {
+    /** The chat's "worktree" and "pr" from the hub's state (null: none, or a hub older than
+     *  0.66 / 0.83). */
+    void marker(JSONObject w, JSONObject pr, String home) {
         marker = w;
+        this.pr = pr;
         this.home = home;
         if (loaded) show(info);
+    }
+
+    /** A PR's state as its icon and colour (the desktop's, chatpr.rs). */
+    static String prGlyph(JSONObject p) {
+        switch (p.optString("state")) {
+            case "merged": return Ui.I_MERGE;
+            case "closed": return Ui.I_PR_CLOSED;
+            case "draft": return Ui.I_PR_DRAFT;
+            default: return Ui.I_PR_OPEN;
+        }
+    }
+
+    static int prColor(JSONObject p) {
+        switch (p.optString("state")) {
+            case "merged": return GhList.purple();
+            case "closed": return Ui.RED;
+            case "draft": return Ui.G600;
+            default: return Ui.GREEN;
+        }
+    }
+
+    /** The branch's pull request: its state's icon in the state's colour and the hub's label
+     *  ("PR #123 · Merged"), muted like the other chips. */
+    private void showPr() {
+        if (pr == null) { prc.setVisibility(View.GONE); return; }
+        label(prc, prGlyph(pr), pr.optString("label"));
+        ((TextView) prc.getChildAt(0)).setTextColor(prColor(pr));
+        prc.setVisibility(View.VISIBLE);
+    }
+
+    private void openPr() {
+        String url = pr == null ? "" : pr.optString("url");
+        if (url.isEmpty()) return;
+        try { a.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception e) { Ui.copy(a, url); }
     }
 
 

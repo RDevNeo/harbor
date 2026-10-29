@@ -1,4 +1,4 @@
-//! Settings follow the account (0.80): what a person chooses (theme, density, keys, run
+//! Settings follow the account (0.85): what a person chooses (theme, density, keys, run
 //! defaults, notifications, voice, recaps, limits…) is the same on every PC they sign in on.
 //! What belongs to the machine stays: its TLS identity and ports, the network and router, the
 //! mesh and its keys, phones' pairings, windows and sidebars, the last chat, per-chat and
@@ -119,6 +119,12 @@ pub const KEYS: &[(&str, Class)] = &[
     ("provider_updates_dismissed", D),
     ("owner_toast_dismissed", D),
     ("agent_settle", D),
+    // Per chat (by local id), and one-time migrations of this PC's database.
+    ("chat_prs", D),
+    ("effort_default_medium", D),
+    // Secrets and who may use them: never leave the PC.
+    ("secret_asks", D),
+    ("secret_grants", D),
     ("auto_handled", D),
     // The account's own state (account.rs, this file).
     ("account", D),

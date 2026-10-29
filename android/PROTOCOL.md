@@ -18,7 +18,7 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   The phone checks that the hub's certificate has the fingerprint from its workspace's
   directory ([Accounts](#accounts)), and nothing else (no CA, no names); it shows its own
   certificate. The handshake signatures are checked against that same key.
-- **Who calls** (from 0.80): every call but `GET /app.apk` carries
+- **Who calls** (from 0.85): every call but `GET /app.apk` carries
   `Authorization: Bearer <Harbor token>`, the phone's Google sign-in ([Accounts](#accounts)). The
   hub checks it itself, offline, on every call: signed by the account service, not expired,
   `kind: "phone"`, `dev` = the fingerprint of this connection's client key, and the hub's
@@ -30,6 +30,11 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   derives the versionName from it. From 0.68 the hub keeps each phone's last-seen time and app
   version across restarts (kv `phones_seen`) and agents read them (`GET /v1/versions`, the
   `machines` `list` tool, the who-is-who note).
+  From app 0.84, `X-Harbor-Platform: <what the phone is>` (free text, at most 240 characters:
+  maker and model, Android version and SDK, ABIs, and whether the built-in browser runs, e.g.
+  `Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a, armeabi, browser: no (32-bit
+  Android)`): kept with the phone like its version, shared with the mesh (`/mesh/v1/phones`
+  `platform`) and shown in `GET /v1/versions` (`phones[].platform`, appended to `line`).
 - **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
   answers plain HTTP on its Tailscale interface, from Tailscale addresses (apps before 0.13; they
@@ -52,7 +57,7 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
 
 ## Accounts
 
-From 0.80 every device, each Harbor desktop and each phone, signs in with Google. There's no
+From 0.85 every device, each Harbor desktop and each phone, signs in with Google. There's no
 pairing: a phone signs in, gets the PCs of its workspaces from the account service, and connects
 to them directly (pinned TLS, the fingerprint from the directory). Code: `src/account.rs`,
 `src/settingsync.rs`, `src/accountui.rs` (desktop), `Account.java` (phone), `worker/` (the
@@ -171,12 +176,12 @@ token until it expires; when it's refused (`401 signin`) the app shows its sign-
 Signing a PC out keeps it in its workspace (its people still reach it); only a member takes it
 out (Settings › Account › Take this PC out).
 
-### Phones from before 0.80
+### Phones from before 0.85
 
 Pairing tokens from before accounts (kv `api_tokens` without `account`) still get `GET /v1/app`
 and `GET /app.apk` (also from the internet), so the old app updates itself; everything else is
 `401` `{"error": "This PC now uses Google accounts: update Harbor on this phone…", "signin": true, "upgrade": true}`.
-The 0.80 app forgets its pairings and shows "Sign in with Google". A 0.80 app with a PC that
+The 0.85 app forgets its pairings and shows "Sign in with Google". A 0.85 app with a PC that
 hasn't updated finds no PCs in its directory and says so.
 
 ### Background pings (online with the app closed)
@@ -197,6 +202,7 @@ short list of notes (a day, 200 at most; `src/notify.rs`) for what matters:
 | `kind` | when | key |
 |---|---|---|
 | `input` | a lead chat's turn ends with a question, or a chat waits for you after a usage limit (`act: "continue"`) | `chat:<gid>` |
+| `input` | an agent asks for a key, to use one or to write one to a .env file (answered on the PC, never on the phone) | `secret:<gid>:<ask id>` |
 | `done` | a lead chat's turn ends (once its sub-agents are done), or stops with an error | `chat:<gid>` |
 | `agent` | a sub-agent's turn ends (apps show it only when asked) | `chat:<gid>` |
 | `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` |
@@ -293,8 +299,9 @@ refetch everything.
   and current hubs no longer send it.
 - `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, cursor, grok,
   gemini, meta, opencode). An empty effort list: send `""`. `default_efforts` (optional, older
-  hubs leave it out) is what an empty `effort` means for each kind (the CLI's own default, e.g.
-  `high`): show a chat's or the defaults' `""` as that level, and pick it for a new chat.
+  hubs leave it out) is what an empty `effort` means for each kind (Harbor's `medium` for
+  Claude since 0.84, the CLI's own default for the others): show a chat's or the defaults' `""`
+  as that level, and pick it for a new chat.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
 - `tree` (optional, older hubs leave it out): where the desktop sidebar places each chat, so the
   list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed": false,
@@ -362,6 +369,19 @@ refetch everything.
   chat's title, "Worktree · <branch>" (the branch from `GET /v1/workspace`, else the name;
   "Worktree gone"; a new chat headed for one: "New worktree · from <base>"); the phone does the
   same in its list and under its title. Tapping the chip opens the workspace sheet.
+- `pr` (optional, 0.83; null or missing: none, or an older hub): the pull request of the branch
+  the chat works on (sub-agents: their lead's), `{"number": 123, "state": "open" | "draft" |
+  "merged" | "closed", "label": "PR #123 · Open", "title": "Fix the login", "url":
+  "https://github.com/o/r/pull/123"}`. The hub looks it up with the GitHub CLI off its UI thread
+  (src/chatpr.rs): while the chat is shown on the desktop or a phone asks
+  `GET /v1/workspace?chat=` (at most once a minute), after each of its turns, and every few minutes
+  for open ones; another PC's chat has it as its home PC says. None for the default branch, a
+  branch never pushed, a project without a GitHub remote, or without `gh`. The desktop shows
+  `label` in the footer under the composer, left of the branch, its icon in the state's colour
+  (git-pull-request `U+E555` green, pr-draft `U+E35B` grey, git-merge `U+E0E4` purple, pr-closed
+  `U+E35A` red; a click opens `url`), and, for a chat with a `worktree` (a checkout's branch is
+  every chat's there), the same icon after the title on its sidebar row; the phone does the same
+  in its footer chips (tap: open `url`, long-press: the title) and list.
 - `snoozed_until_ms` / `snoozed_label` (optional, 0.78; missing: an older hub, so offer no
   Snooze): the chat is snoozed out of this hub's sidebar until then, and that time as the
   desktop's row says it ("Tomorrow, 9:00", "Thu, 14:00"); both null when it isn't. Such a chat is
@@ -413,7 +433,7 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 | `footer` | nothing since 0.59.2: the end of a turn comes as `hidden` (its usage stays in Usage). Older hubs send its line here; draw nothing | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
 | `chat_link` (0.57) | a divider "`text` · Open chat" linking to another chat: at the top of a chat an agent opened with its `open_chat` tool ("Opened by the agent of “Fix login”"), and in the chat that opened it ("Opened “Docs pass”"). Tap: open `chat`; while `chat` is null (that chat hasn't reached this hub yet) draw just the text | `text`, `chat` (this hub's id, or the gid with `X-Harbor-Ids: global`; null when it isn't here), `gid` |
-| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (0.84, play and send glyphs; older apps: any fallback) are a lead handing work off, which shows nothing else: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown) | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
 | `media` (0.50) | an image or video an agent showed with its `show_media` tool, drawn like a `text` card's `media` | `media` (one entry; absent when the file can't be shown), `caption`, `pending` (the call hasn't answered yet), `images` |
@@ -458,6 +478,12 @@ beside the text (a bubble's edge, a tool row, a notice) opens the sheet as befor
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 
+The image viewer browses the whole chat (0.82), as the desktop's does (view.rs `gallery`): a
+tap on any image opens it on that image, and previous/next go through every image of the
+chat's cards in `seq` order, skipping `hidden` ones; within a card its `media` of kind `image`
+come first, then its other `images`; an image (same `url`) already listed earlier is left out.
+Nothing new on the wire: the list comes from the cards the app already has.
+
 #### Status
 
 `status` is the bars the desktop shows under the transcript; each part is null or empty when
@@ -492,16 +518,21 @@ the desktop shows nothing:
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
   sub-agent: its account mark (the provider logo `logo`, a file in the APK's `assets/logos/`,
   48×48 RGBA when 9216 bytes, else an alpha mask in the text colour; `badge` in its corner),
-  `name` in semibold, "  ·  `doing`" ("running tests", "editing src/chat.rs") and the time since
-  `since_ms` on the right ("40s", "2m", "1h 5m"), after `usage` and "  ·  " when it isn't empty
-  (its tokens and cost so far, "12.4k tok · $0.18"; since 0.39). Tapping a row opens that agent's chat
-  (`id`). When `folded` (three or more agents) a header row comes first: the agents' logos
+  `name` in semibold and a green working dot right after it, with a ring that swells and fades
+  every 1.6 s (rows out of step); then a stop icon. The stop icon turns the row into "Stop
+  `name`?" with **Cancel** and a red **Stop** (`POST /v1/chats/{id}/stop` of that agent), one row
+  at a time; it cancels itself after 5 s or when another row is touched. Tapping a row opens that
+  agent's chat (`id`); a long press shows `model`, `task` and "Working for 2m" (since `since_ms`).
+  `doing` ("running tests") and `usage` ("12.4k tok · $0.18", since 0.39) are still sent for
+  older apps, which show them in the row with the elapsed time; this app doesn't. When `folded`
+  (three or more agents) a header row comes first: the agents' logos
   overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
   only once it is tapped open (a per-screen choice). `header` (default `folded`): draw that
   title row even unfolded (no chevron; a tap opens the Agents panel), as `title` then says
   what's queued ("1 agent working  ·  2 queued"). A stop icon sits in the top right corner of
-  the box, beside the first row: **Stop all** (`POST /v1/chats/{id}/stop_all`). `doing` is the
-  hub's own reading of each agent's latest step; the phone shows it as is.
+  the box, beside the first row: **Stop all**, which asks first ("Stop 3 running sub-agents?",
+  "Stop the main agent and …" while the lead's own turn runs) and then sends
+  `POST /v1/chats/{id}/stop_all` with `{"hold": true}`.
 - `recap: "…"` (optional string, missing when there is none; older hubs never send it): the
   session recap (Claude Code's "away summary"), drawn after the agent strip, right over the
   composer: "recap: " in semibold then the text in italics, both gray-900, wrapping. The hub
@@ -792,7 +823,9 @@ chip reads "Worktree · <name>" since 0.66) and for New chat with `worktree=1` (
 `detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
 a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
 switched now (an agent is working there), null when it can. `pending` (0.37.2, optional): what git is
-doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Every git call runs off
+doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Since 0.83 asking for
+a chat also has the hub look up its branch's pull request when it's over a minute old; it comes in
+the chat's JSON `pr` (a state change), not in this answer. Every git call runs off
 the hub's UI thread, so a big repository answers late but never freezes it: give these calls the
 long timeout, and show a pending chip meanwhile.
 
@@ -1486,7 +1519,7 @@ The PCs this hub shares chats with: its workspace's (also ones it hasn't reached
 directory) and any paired by hand. Each is only reached pinned to its own `fp`; entries are `ip`,
 `ip:port` or `[ipv6]:port` (the port of the first, or its own). A PC without an `fp` runs Harbor
 before 0.13: skip it. `host`/`ip` are for apps before 0.13. The phone's Harbor token works on
-every PC of its workspace, so there are no tokens here (before 0.80 each entry had one, minted
+every PC of its workspace, so there are no tokens here (before 0.85 each entry had one, minted
 for the phone's pairing); the app adds these addresses to what the directory says (they're
 fresher on the local network). `phones: false`: that PC's phone access is off (it would drop the
 phone): skip it.
@@ -1650,8 +1683,8 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
   or has open (`view: true`, `kind` `focused`/`away`) one of this PC's chats on another hub.
   Leases last 6 s (typing) and 15 s (open) unless renewed; the chats list carries them as
   `typing` and `viewing`.
-- `POST /mesh/v1/mint` (before 0.80): minted phone tokens for pairings; gone, a 0.80 PC answers `404`.
-- `POST /mesh/v1/revoke` `{groups: […]}`: pairings (from before 0.80) removed on another PC; their tokens here go too.
+- `POST /mesh/v1/mint` (before 0.85): minted phone tokens for pairings; gone, a 0.85 PC answers `404`.
+- `POST /mesh/v1/revoke` `{groups: […]}`: pairings (from before 0.85) removed on another PC; their tokens here go too.
 - `GET /mesh/v1/phones` → `{phones: [{group, name, seen, app, alive}], apk, owner, github, owner_suggested}` (`alive`: unix s of its last background ping, from 0.37.1; `owner`, `github` from 0.44, `owner_suggested` from 0.47, as in `hello`): where this PC saw the
   phones (unix `seen`, `app` its versionCode, 0 unknown) and the versionCode of the phone app it
   serves. Each PC asks the others every 15 s: a phone that talks to another PC shows online

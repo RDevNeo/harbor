@@ -42,6 +42,123 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 - Phone pairing (three factors, the presence key, `/v1/pair/*`, `/v1/session/*`,
   `/mesh/v1/mint`) and the in-app QR scanner.
 
+## [0.84.1] - 2026-10-28
+
+### Fixed
+- Phone: the built-in browser works on phones with a 32-bit Android too (the Galaxy A13 and other
+  budget phones run one on a 64-bit processor): the APK now carries the Servo engine for
+  armeabi-v7a as well as arm64-v8a. Links there opened in the phone's own browser. The APK grows
+  by about 40 MB.
+
+## [0.84.0] - 2026-10-28
+
+### Fixed
+- Phone: when web links can't open in the built-in browser, the phone says why, once, and
+  Settings › Built-in browser keeps saying it: phones with a 32-bit Android (the Galaxy A13 and
+  other budget phones run one on a 64-bit processor) or Android older than 9 open links in the
+  phone's own browser, because the engine is built for 64-bit Android only.
+- Phone: a notice line too long for the screen (an agent's report, a hand-off) wraps instead of
+  pushing its expand arrow off the pill.
+
+### Added
+- The phone tells its PCs what it is (maker and model, Android version, ABIs, whether its
+  built-in browser runs): agents see it in the versions list (`GET /v1/versions`, the
+  `machines` list), so a phone-only problem can be diagnosed from the PC.
+- A lead that hands work off now always leaves a line in the chat, so a message answered only by
+  starting agents still shows what happens: "api started: PR status in the composer footer"
+  per agent it starts, and "Sent to api: …" when it passes your words to one. Click or tap the
+  line for the whole task. Desktop and phone. Leads give each agent a short title for it, and
+  their own reply when they hand off is one short line.
+
+### Changed
+- Claude's default effort is Medium (it was High, or Claude Code's own setting): new chats,
+  chats left on the default and agents started without an effort run at Medium, on the desktop
+  and the phone. Chats with a chosen effort keep it; a new-chat pick still on the old default
+  (High) moves to Medium once.
+
+## [0.83.0] - 2026-10-28
+
+### Added
+- A chat's pull request shows under its composer: the footer row says "PR #123 · Open" (Draft,
+  Merged or Closed) left of the branch, with the state's icon in its colour, and a click opens
+  it on GitHub. A chat in its own worktree gets the same icon on its sidebar row. Harbor finds
+  the PR of the branch the chat works on with the GitHub CLI, in the background: when the chat
+  is shown, after each of its turns, and every few minutes for open ones, so a merge on GitHub
+  shows up too. Nothing shows without `gh`, for the default branch or a branch never pushed.
+  The phone shows it the same way in its footer chips (tap opens it, long-press shows the
+  title) and its chat list.
+
+## [0.82.0] - 2026-10-28
+
+### Added
+- The image viewer goes through every image of the chat, not only the ones of the message you
+  opened: ← → (or the side buttons) on the desktop, a swipe or the side buttons on the phone,
+  with a "3 / 7" counter. The buttons hide at the first and last image; on the phone a swipe
+  only turns the page when the image isn't zoomed.
+
+### Fixed
+- → in the desktop's image viewer no longer fills the composer with the suggested prompt.
+
+## [0.81.0] - 2026-10-28
+
+### Added
+- Phone: a built-in browser. Web links in chats (and Browser in the drawer) open in Servo, the
+  engine of the desktop's browser pane, drawing straight into the screen: no WebView, Chromium or
+  GeckoView. URL bar, back, forward, reload, touch scrolling, taps, the soft keyboard and
+  rotation; ↗ opens the page in the phone's own browser. It runs in a process of its own, so its
+  memory goes when it closes and a crash there leaves the chats running. On 64-bit ARM phones
+  with Android 9+ (the APK grows by about 40 MB); elsewhere links open in the phone's browser as
+  before.
+
+## [0.80.0] - 2026-10-28
+
+### Added
+- Secrets (Settings › Secrets): keys such as `BOAT_API_KEY` that agents use without seeing
+  them. Add one as a name and a value; the list shows only names, and a saved value can be
+  replaced or deleted, never shown again. Values stay on this PC, in an owner-only file
+  outside Harbor's database: never in a chat, never synced to other PCs or phones.
+- Every use of a key needs your approval. An agent asks with `request_secret_access(names,
+  reason, minutes)`; a card in the chat says who wants which keys, why and for how long
+  (15 minutes when it doesn't say, a day at most), and you Allow it as asked or for less (5
+  min, 1 h), or Deny. What's allowed shows under the chat and in
+  Settings › Secrets › Allowed now ("BOAT_API_KEY allowed · 12m left"), each with Revoke.
+  The agent is told when it's allowed, denied, revoked or over.
+- `run_with_secrets(command, secrets)` runs a command on this PC with allowed keys in its
+  environment (never the agent's own) and returns its output with their values hidden, as
+  they are and in common encodings (base64, URL, hex, JSON); without an approval it's
+  refused. Hiding them stops accidental leaks only: a command made to change a key can
+  still get it out, and Settings says so. `list_secrets` gives the names, what each is
+  for and what the chat may use now.
+- Agents ask for keys you don't have yet with `request_secret(name, reason, how_to_get)`:
+  the card says where to get it (links open in the browser) and has a field for it (shown
+  as dots, never in the transcript). Saving it can also let the agent use it right away,
+  for the time it asked or less; "Save only, no access" keeps it without allowing any use.
+  Your phone gets a notification.
+- Keys in .env files: an agent may ask for a key to go into the project's `.env`,
+  `.env.local`, `.env.production`… (`env_file` on request_secret, or
+  `write_secret_to_env(name, file)` for a saved one). You pick Harbor, the file or both;
+  Harbor writes the `VAR=value` line itself, quoted when needed, replacing the old one and
+  keeping the rest, in a new file only you can read. Only files named `.env` or `.env.*`
+  inside the chat's project (no symlinks out of it). The card warns when git doesn't ignore
+  the file and adds it to .gitignore if you leave that on. A .env file is plain text the
+  agent's own tools can read: writing one is your call.
+- The agents' instructions say to ask for keys this way, never in the chat.
+- Paste a key into the composer (`sk-`, `ghp_`, `github_pat_`, `boat_`, `AKIA`…) and a line
+  over it offers to save it as a secret: the message then names the secret instead.
+
+### Changed
+- The running-agent strip over a lead's composer is quieter: each agent shows its logo, name and
+  a soft pulsing green dot while it works; tokens, cost and what it's doing left the row (the
+  hover still has its model, task and how long it has run). Each row's Stop shows on hover (or
+  from the keyboard) and asks in place, "Stop api? Cancel / Stop"; Cancel, Esc or moving away
+  leaves it running.
+- A lead's reply when it hands work to its agents shows in the chat (it was hidden), and the
+  lead says in a line or two what it understood and what happens next.
+- Phone: the running-agent rows over a lead's composer match: logo, name and the pulsing green
+  dot, no tokens, cost, activity or timer. Each row's stop icon asks in place first, "Stop api?
+  Cancel / Stop"; it cancels itself after a few seconds or when another row is touched.
+  Long-press a row for its model, task and how long it has run. Stop all asks first too.
+
 ## [0.79.0] - 2026-10-28
 
 ### Changed
@@ -1732,7 +1849,13 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.79.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.84.1...HEAD
+[0.84.1]: https://github.com/RDevNeo/harbor/compare/v0.84.0...v0.84.1
+[0.84.0]: https://github.com/RDevNeo/harbor/compare/v0.83.0...v0.84.0
+[0.83.0]: https://github.com/RDevNeo/harbor/compare/v0.82.0...v0.83.0
+[0.82.0]: https://github.com/RDevNeo/harbor/compare/v0.81.0...v0.82.0
+[0.81.0]: https://github.com/RDevNeo/harbor/compare/v0.80.0...v0.81.0
+[0.80.0]: https://github.com/RDevNeo/harbor/compare/v0.79.0...v0.80.0
 [0.79.0]: https://github.com/RDevNeo/harbor/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/RDevNeo/harbor/compare/v0.77.0...v0.78.0
 [0.77.0]: https://github.com/RDevNeo/harbor/compare/v0.76.0...v0.77.0

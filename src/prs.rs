@@ -839,7 +839,7 @@ fn avatar(url: &str) -> Option<egui::ColorImage> {
 
 // ------------------------------------------------------------------ ui
 
-fn merged_color(t: &theme::Tokens) -> Color32 {
+pub(crate) fn merged_color(t: &theme::Tokens) -> Color32 {
     if t.dark { Color32::from_rgb(196, 181, 253) } else { Color32::from_rgb(124, 58, 237) }
 }
 

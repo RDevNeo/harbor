@@ -57,6 +57,7 @@ pub enum Tab {
     Limits,
     Integrations,
     Webhooks,
+    Secrets,
     Devices,
     Phones,
     Voice,
@@ -212,6 +213,8 @@ pub struct App {
     pub pending: HashMap<i64, Vec<String>>,
     /// Shared projects being cloned here, and the turns waiting for them (clone.rs).
     pub clones: crate::clone::State,
+    /// Settings › Secrets and the agents' asks waiting for the user (secrets.rs).
+    pub secrets: crate::secrets::State,
     pub auto_turns: HashMap<i64, VecDeque<Instant>>,
     /// Projects whose automatic turns hit the hourly limit.
     pub paused: HashSet<i64>,
@@ -270,6 +273,8 @@ pub struct App {
     pub devices_ui: crate::remoteui::State,
     /// The workspace and branch bar under the composer (worktree.rs).
     pub ws: crate::worktree::State,
+    /// The pull request of each chat's branch (chatpr.rs).
+    pub chatpr: crate::chatpr::State,
     /// The composer's mic (voice.rs).
     pub voice: crate::voice::State,
     /// Settings › Usage totals, summed off the UI thread.
@@ -310,10 +315,22 @@ impl App {
             "haiku" => "claude-haiku-5-5".to_string(),
             m => m.to_string(),
         };
+        // Claude's default effort became Medium (0.84): a new Claude chat still on the old one
+        // (High, kept as if picked) starts at Medium; any other pick stays. Once.
+        let mut effort = get("default_effort", "");
+        if store.get("effort_default_medium").is_none() {
+            let account = get("default_account", "claude");
+            let claude = accounts.iter().find(|a| a.id == account).is_none_or(|a| a.kind == Kind::Claude);
+            if claude && effort == "high" {
+                effort = providers::default_effort(Kind::Claude).into();
+                store.set("default_effort", &effort);
+            }
+            store.set("effort_default_medium", "1");
+        }
         let sel = Sel {
             account: get("default_account", "claude"),
             model,
-            effort: get("default_effort", ""),
+            effort,
             access: get("default_access", "full"),
             device: get("default_device", ""),
         };
@@ -392,6 +409,7 @@ impl App {
             profile: Default::default(),
             pending: HashMap::new(),
             clones: Default::default(),
+            secrets: Default::default(),
             auto_turns: HashMap::new(),
             paused: HashSet::new(),
             timers: vec![],
@@ -427,6 +445,7 @@ impl App {
             remote: Default::default(),
             devices_ui: Default::default(),
             ws: Default::default(),
+            chatpr: Default::default(),
             voice: Default::default(),
             usage_totals: Default::default(),
             sender: String::new(),
@@ -449,6 +468,8 @@ impl App {
             }
         }
         app.timers = app.store.timers();
+        app.secrets.asks = crate::secrets::load_asks(&app.store);
+        app.secrets.grants = crate::secrets::load_grants(&app.store);
         app.webhooks = app.store.webhooks();
         app.sync_tokens();
         app.order_by_activity = app.store.get("order_by_activity").as_deref() == Some("1");
@@ -495,6 +516,7 @@ impl App {
         crate::theme::set_compact(app.store.get("density").as_deref() == Some("compact"));
         app.load_cursor_models();
         app.load_snoozed();
+        app.load_chat_prs();
         app
     }
 
@@ -1357,6 +1379,8 @@ impl App {
                 if let Some(c) = self.chat_mut(id) {
                     c.updated = store::now();
                 }
+                // It may have opened or merged a PR (chatpr.rs).
+                self.pr_want(id, None, ctx);
                 self.persist(id);
                 if let Some(r) = self.chat(id).and_then(|c| c.repo_id) {
                     self.refresh_git(r);
@@ -1598,6 +1622,9 @@ impl App {
         if let Some(next) = self.fire_timers(ctx) {
             ctx.request_repaint_after(next);
         }
+        if let Some(next) = self.expire_grants(ctx) {
+            ctx.request_repaint_after(next);
+        }
         if let Some(next) = self.fire_limit_timers(ctx) {
             ctx.request_repaint_after(next);
         }
@@ -1623,6 +1650,7 @@ impl App {
         self.mesh_tick(ctx);
         self.account_tick(ctx);
         self.ws_poll(ctx);
+        self.pr_sweep(ctx);
         self.voice_poll(ctx);
         self.queue_drain(ctx);
         self.queue_edit_check(ctx);
@@ -1644,6 +1672,8 @@ impl App {
         let ctx = ui.ctx().clone();
         self.theme.refresh(&ctx);
         ctx.data_mut(|d| d.insert_temp(Id::NULL, TokensCell(self.theme.t)));
+        // The open image viewer's ← → Esc, before the composer or a terminal sees them.
+        crate::images::take_keys(&ctx);
         self.shortcuts(&ctx);
 
         let t = self.theme.t;
@@ -1833,6 +1863,9 @@ impl App {
         if (self.sidebar_drawer || self.team_drawer) && !blocked && self.popup.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
             self.sidebar_drawer = false;
             self.team_drawer = false;
+        }
+        if !blocked && self.popup.is_none() {
+            crate::agentstrip::esc_cancels_stop(ctx);
         }
         let browser_focused = (0..2).any(|i| focused == Some(Id::NULL.with(("browser-page", i))));
         let lead_open = matches!(self.view, View::Chat(id) if self.chat(id).is_some_and(|c| c.role == store::Role::Lead));

@@ -354,6 +354,8 @@ impl App {
             std::sync::Arc::new(move |path: &str| crate::mesh::home_image(&hub, id, path, Some(crate::mesh::REMOTE_IMAGE_PX)).map(|(_, b)| b)) as crate::images::Fetch
         });
         crate::images::set_source(ui.ctx(), source);
+        // (A click on the composer's attachments isn't one of the chat's images.)
+        crate::images::take_opened(ui.ctx());
         let out = ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
@@ -365,10 +367,25 @@ impl App {
                     ui.add_space(24.0);
                 });
             });
+        // An image of the chat opened: ← → browse all of the chat's images, not only its message's.
+        if crate::images::take_opened(ui.ctx()).is_some() {
+            let all = self.chat_images(ui.ctx(), id);
+            crate::images::widen(ui.ctx(), all);
+        }
         crate::images::set_source(ui.ctx(), None);
         // Scrolled up to older messages: an automatic update waits (reload.rs), as the restart
         // would bring the transcript back to its end.
         self.reading_back = out.state.clamped_offset().y + out.inner_rect.height() < out.content_size.y - 48.0;
+    }
+
+    /// Every image of chat `id`, in order (view.rs `gallery`): what the lightbox browses.
+    fn chat_images(&mut self, ctx: &egui::Context, id: i64) -> Vec<String> {
+        let forks = self.forks_of(id);
+        let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
+        let cwd = self.chat(id).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c).to_string_lossy().into_owned()).unwrap_or_default();
+        let Some(tr) = self.transcripts.get(&id) else { return vec![] };
+        let cards = crate::view::project(&tr.items, lead, &forks);
+        crate::view::gallery(&cards, &mut |t| crate::images::media_in(ctx, t, &cwd))
     }
 
     fn transcript(&mut self, ui: &mut Ui, id: i64, _running: Option<u64>) {
@@ -708,8 +725,13 @@ impl App {
                         "worktree" => ic::FOLDER_GIT,
                         "users" => ic::USERS,
                         "monitor" => ic::MONITOR,
+                        "lock" => ic::LOCK,
+                        // A lead's hand-offs (view::handoff).
+                        "started" => ic::PLAY,
+                        "sent" => ic::SEND,
                         _ => ic::CIRCLE_CHECK,
                     };
+                    let (text, detail) = (text.as_ref(), detail.as_ref());
                     // The pill never grows past the column (a long agent report widened the whole
                     // transcript, and right-aligned bubbles were cut at the edge): the text ends
                     // in "…" and shows whole on hover.
@@ -729,7 +751,7 @@ impl App {
                                         let rest = (column - 24.0 - 19.0 - if chevron { 18.0 } else { 0.0 }).max(40.0);
                                         let g = w::truncated(ui, text, FontId::new(13.0, egui::FontFamily::Proportional), t.fg(), rest);
                                         if g.size().x + 1.0 < ui.painter().layout_no_wrap(text.to_string(), FontId::new(13.0, egui::FontFamily::Proportional), t.fg()).size().x {
-                                            ui.label(g).on_hover_text(*text);
+                                            ui.label(g).on_hover_text(text);
                                         } else {
                                             ui.label(g);
                                         }
@@ -924,6 +946,7 @@ impl App {
             self.recap_line(ui, id);
         }
         self.trust_bar(ui);
+        self.pasted_key_line(ui);
         let t = self.theme.t;
         let key = self.key();
         let cid = Id::NULL.with(("composer", key));

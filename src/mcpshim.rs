@@ -60,6 +60,57 @@ pub fn tools(role: &str) -> Vec<Value> {
             }),
             &["path"],
         ),
+        tool(
+            "list_secrets",
+            "Keys the user saved in Harbor for agents (API keys, tokens): their names, what they're for and whether you may use them now; never the values.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "request_secret",
+            "Ask the user for a key you need (an API key, a token) instead of asking in the chat, also one they still have to create: say where to get it in how_to_get. Harbor shows them a card with a field for it, outside the chat; they may keep it in Harbor (and let you use it for `minutes`), write it to the project's .env file you name, or both. Returns at once; you get a '[secret NAME]' message when they answer. You never see the value.",
+            json!({
+                "name": prop("string", "Environment variable name, e.g. 'STRIPE_SECRET_KEY'"),
+                "reason": prop("string", "What it's for, shown to the user, e.g. 'To test the payments integration'"),
+                "how_to_get": prop("string", "Where and how to get it (shown with clickable links), e.g. 'https://dashboard.stripe.com/test/apikeys: copy the Secret key (test mode)'"),
+                "minutes": prop("number", "How long you need to use it once saved (default 15, at most 1440)"),
+                "env_file": prop("string", "A .env file in the project to write it to, when the project reads it from one, e.g. '.env.local'"),
+                "env_var": prop("string", "The variable's name in that file (default: name)"),
+            }),
+            &["name", "reason"],
+        ),
+        tool(
+            "request_secret_access",
+            "Ask the user to let you use saved keys for a while: every use of a key needs it. Harbor shows them a card with your reason and the time; they may shorten it or say no. Returns at once; you get a '[secret …]' message when they answer, and another when the time is up.",
+            json!({
+                "names": { "type": "array", "items": { "type": "string" }, "description": "Names from list_secrets" },
+                "reason": prop("string", "Why, shown to the user, e.g. 'To test the Boat API'"),
+                "minutes": prop("number", "How long you need them (default 15, at most 1440)"),
+            }),
+            &["names", "reason"],
+        ),
+        tool(
+            "write_secret_to_env",
+            "Ask the user to let Harbor write a saved key to a .env file of the project (.env, .env.local, .env.production…), for code that reads it from there. Harbor writes the VAR=value line itself; you never see the value. Returns at once; you get a '[secret NAME]' message when it's written or refused.",
+            json!({
+                "name": prop("string", "The secret's name, from list_secrets"),
+                "file": prop("string", "The .env file, relative to the project, e.g. '.env.local'"),
+                "var": prop("string", "The variable's name in that file (default: name)"),
+                "reason": prop("string", "Why, shown to the user"),
+            }),
+            &["name", "file"],
+        ),
+        tool(
+            "run_with_secrets",
+            "Run a shell command on this PC with saved keys as environment variables (refer to them as $NAME), once the user allowed you to use them (request_secret_access). Its output comes back with their values hidden, as is and in common encodings (base64, URL, hex, JSON). That stops accidental leaks only: never try to get a value out (printing it changed, writing it to a file). Waits for the command, up to `timeout` seconds; use it for short commands, not servers.",
+            json!({
+                "command": prop("string", "Shell command (bash), e.g. 'boat deploy --prod'"),
+                "secrets": { "type": "array", "items": { "type": "string" }, "description": "Names of the secrets to set, from list_secrets" },
+                "cwd": prop("string", "Folder, relative to the project (default: project root)"),
+                "timeout": prop("number", "Seconds before it's stopped (default 50, at most 110)"),
+            }),
+            &["command", "secrets"],
+        ),
     ];
     if role == "lead" {
         v.extend([
@@ -68,10 +119,11 @@ pub fn tools(role: &str) -> Vec<Value> {
                 "Start a subagent that works in the project folder with full tools. Give it a short unique name and a complete, self-contained task. It reports back to you when its turn ends.",
                 json!({
                     "name": prop("string", "Short handle, e.g. 'tests', 'api', 'reviewer'"),
+                    "title": prop("string", "What the work is in a few words, for the user: the chat shows \"<name> started: <title>\", e.g. 'PR status in the composer footer' (default: the task's first sentence)"),
                     "task": prop("string", "What to do, with all context it needs"),
                     "account": prop("string", "Provider account id from list_models (default: your own account)"),
                     "model": prop("string", "Model id from list_models (default: your model)"),
-                    "effort": prop("string", "Reasoning effort, e.g. low/medium/high (optional)"),
+                    "effort": prop("string", "Reasoning effort, e.g. low/medium/high (default: medium on Claude)"),
                 }),
                 &["name", "task"],
             ),

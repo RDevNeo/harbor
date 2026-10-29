@@ -49,7 +49,7 @@ import javax.security.auth.x500.X500Principal;
  *  the phone shows its own, an EC key made in the Android Keystore on first use that never
  *  leaves it. The account's Harbor token is bound to that key (Account), so a copied token
  *  alone gets nothing. Exceptions, both decided in Addr.how (Hub only ever asks for pinned
- *  connections since 0.80; these stay for test rigs):
+ *  connections since 0.85; these stay for test rigs):
  *  - loopback in plain HTTP without a key (adb reverse, test rigs);
  *  - a hub without a key learned once over Tailscale's VPN to a tailnet address.
  *  The platform HTTP stack gets no cleartext at all (res/xml/network.xml): Clerk and the

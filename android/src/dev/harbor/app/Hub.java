@@ -54,7 +54,7 @@ final class Hub {
     String fp = ""; // the first PC's key (fingerprint): only it may answer
     final List<String> addrs = new ArrayList<>(); // every address the PC has said it has
 
-    /** Another PC of the workspace (its token field is unused since 0.80: the account's works everywhere). */
+    /** Another PC of the workspace (its token field is unused since 0.85: the account's works everywhere). */
     static final class Ep {
         String pid, name, host, ip, token, fp = "";
         int port;
@@ -509,6 +509,15 @@ final class Hub {
         c.header("Authorization", "Bearer " + (Ui.app == null ? "" : Account.token(Ui.app)));
         c.header("X-Harbor-Device", deviceName());
         c.header("X-Harbor-App", String.valueOf(appCode()));
+        c.header("X-Harbor-Platform", platform());
+    }
+
+    private static String platform;
+
+    /** What this phone is (Engine.platform), worked out once per process. */
+    static String platform() {
+        if (platform == null) platform = Engine.platform(Ui.app);
+        return platform.replaceAll("[\\r\\n]", " ");
     }
 
     /** One background ping (Alive): the PC calls go to first, then the others, until one takes

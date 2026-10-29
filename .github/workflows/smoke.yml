@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   # Every distro image at once, as containers on one boat.dev sandbox (.github/boat/smoke.sh).
@@ -54,5 +55,7 @@ jobs:
           boat exec "${{ steps.boat.outputs.id }}" -- tar -xzf dist.tgz
           .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- bash .github/boat/smoke.sh
       - name: Delete the sandbox
-        if: always() && steps.boat.outputs.id != ''
-        run: boat delete "${{ steps.boat.outputs.id }}" --yes --json
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/boat/cleanup.sh

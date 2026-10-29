@@ -167,6 +167,7 @@ final class Sidebar {
         list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
+        if (Engine.available(a)) list.addView(nav(Ui.I_GLOBE, "Browser", null, Ui.FG, v -> Browser.open(a, "")), Ui.inset());
         // Which PC answers: worth a word with several paired, or when another of the mesh does.
         String via = a.hub.viaName();
         String pc = !via.isEmpty() ? a.hub.label() + " · via " + via : Hub.all(a).size() > 1 ? a.hub.label() : null;
@@ -545,6 +546,14 @@ final class Sidebar {
         if (wt != null) {
             TextView m = Ui.icon(a, Ui.I_FOLDER_GIT, 14, wt.optBoolean("gone") ? Ui.RED : Ui.G700);
             m.setContentDescription("Worktree " + wt.optString("name"));
+            r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        }
+        // Its branch's pull request (the desktop row's PR mark): the state's icon and colour; only
+        // for a chat in its own worktree, as the desktop's.
+        JSONObject pr = wt == null ? null : c.optJSONObject("pr");
+        if (pr != null) {
+            TextView m = Ui.icon(a, WorkBar.prGlyph(pr), 14, WorkBar.prColor(pr));
+            m.setContentDescription(pr.optString("label"));
             r.addView(m, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
         }
         // Snoozed (shown while searching): when it wakes, as the desktop row says it.

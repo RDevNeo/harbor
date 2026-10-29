@@ -36,11 +36,23 @@ runs:
       run: |
         set -eu
         boat=$HOME/.local/bin/boat
-        new() { "$boat" new --type "$TYPE" --no-env --ttl 7200 --name "ci-harbor-$GITHUB_RUN_ID-$GITHUB_JOB" --json "$@" | tee /dev/stderr | jq -r 'select(.event == "ready") | .id'; }
+        # The name finds the sandbox again: .github/boat/cleanup.sh deletes by it.
+        name="ci-harbor-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+        echo "BOAT_SANDBOX=$name" >> "$GITHUB_ENV"
+        named() { "$boat" list --all --json | jq -r --arg n "$name" '[.sandboxes[] | select(.name == $n)][0].id // empty'; }
+        new() { "$boat" new --type "$TYPE" --no-env --ttl 7200 --name "$name" --json "$@" | tee /dev/stderr | jq -r 'select(.event == "ready") | .id'; }
+        # A create that times out on the way back may still have made the sandbox: take that one
+        # instead of a second. Only a snapshot that keeps failing falls back to a clean sandbox.
         id=""
-        [ -z "$FROM" ] || id=$(new --from "$FROM" || true)
-        [ -n "$id" ] || id=$(new)
+        for try in 1 2 3; do
+          id=$(named)
+          [ -z "$id" ] || break
+          if [ -n "$FROM" ] && [ "$try" -lt 3 ]; then id=$(new --from "$FROM" || true); else id=$(new || true); fi
+          [ -z "$id" ] || break
+          sleep 10
+        done
         test -n "$id"
+        for try in $(seq 30); do "$boat" exec "$id" --timeout 60 -- true >/dev/null 2>&1 && break; sleep 5; done
         echo "id=$id" >> "$GITHUB_OUTPUT"
     - name: Copy the source
       shell: bash

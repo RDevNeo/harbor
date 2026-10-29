@@ -84,7 +84,7 @@ final class Media {
             if (miss.getVisibility() == View.VISIBLE) {
                 miss.setVisibility(View.GONE);
                 Images.load(a, hub, url, iv, failed);
-            } else if (!gallery.isEmpty()) Images.view(a, gallery, idx);
+            } else if (!gallery.isEmpty()) Images.open(a, gallery, idx);
         });
         return f;
     }

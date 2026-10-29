@@ -65,7 +65,7 @@ public class Hubs extends Base {
         }
     }
 
-    /** harbor://oauth: the sign-in's answer. A pairing link (before 0.80) gets a note. */
+    /** harbor://oauth: the sign-in's answer. A pairing link (before 0.85) gets a note. */
     private boolean handleLink(Intent i) {
         if (i == null || !Intent.ACTION_VIEW.equals(i.getAction()) || i.getData() == null) return false;
         if (Account.isCallback(i)) {
@@ -128,7 +128,7 @@ public class Hubs extends Base {
         List<Hub> hubs = Hub.all(this);
         list.addView(Ui.text(this, "Your workspaces", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 20, 6, 8));
         if (hubs.isEmpty()) {
-            list.addView(Ui.text(this, busy ? "Looking for your PCs…" : "No PCs in your workspaces yet. Open Harbor 0.80 or newer on a PC and sign in there with this account, or ask whoever invited you to sign in on theirs.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
+            list.addView(Ui.text(this, busy ? "Looking for your PCs…" : "No PCs in your workspaces yet. Open Harbor 0.85 or newer on a PC and sign in there with this account, or ask whoever invited you to sign in on theirs.", 15, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 16));
             if (!busy) list.addView(Ui.button(this, "Check again", false, v -> recheck()), Ui.fill());
             return;
         }

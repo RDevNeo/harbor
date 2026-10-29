@@ -425,6 +425,9 @@ impl App {
         if call.tool == "open_chat" {
             return self.open_chat(call, ctx);
         }
+        if call.tool == "run_with_secrets" {
+            return self.run_with_secrets(call);
+        }
         let r = self.tool(call.chat_id, &call.tool, &call.args, ctx);
         let _ = call.reply.send(match r {
             Ok(t) => (true, t),
@@ -566,6 +569,10 @@ impl App {
                 let q = self.pending.remove(&chat_id).unwrap_or_default();
                 Ok(if q.is_empty() { "No new messages.".into() } else { q.join("\n\n") })
             }
+            "list_secrets" => Ok(self.list_secrets(&me)),
+            "request_secret" => self.request_secret(&me, a),
+            "request_secret_access" => self.request_secret_access(&me, a),
+            "write_secret_to_env" => self.write_secret_to_env(&me, a),
             _ if !is_lead => Err(format!("'{tool}' is only available to the lead")),
             "spawn_agent" => {
                 let mut name: String = arg(a, "name").chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').take(24).collect();
@@ -594,7 +601,7 @@ impl App {
                 // A subagent gets the lead's access, never more.
                 let access = sub_access(&me.access, acc.kind).ok_or_else(|| format!("{} has no {} access; pick another account", acc.kind.label(), crate::providers::access_label(Kind::Claude, &me.access)))?;
                 let pre = matches!(acc.kind, Kind::Claude | Kind::Grok | Kind::Meta);
-                let title: String = task.lines().next().unwrap_or("").chars().take(80).collect();
+                let title: String = Some(arg(a, "title").trim()).filter(|t| !t.is_empty()).unwrap_or_else(|| task.lines().next().unwrap_or("")).chars().take(80).collect();
                 let chat = self.store.create_chat(Chat {
                     id: 0,
                     repo_id,
@@ -785,14 +792,15 @@ Be smart about effort. Handle simple things yourself, right away:\n\
 - answering questions, explaining code, looking something up in the project or on a website (Read, Grep, Glob, WebFetch, WebSearch, MCP tools);\n\
 - quick checks with Bash (git status, curl a URL, list files);\n\
 - starting a dev server or other long-running command with harbor start_process (read package.json / README first to find the right command; never run it in Bash, your shell dies with your turn).\n\
-Delegate with spawn_agent when the work changes code or files, takes many steps, or needs a long investigation. Give each subagent a short name and a complete, self-contained task; run independent work in parallel.\n\
+Delegate with spawn_agent when the work changes code or files, takes many steps, or needs a long investigation. Give each subagent a short name, a title of a few words (the user sees it) and a complete, self-contained task; run independent work in parallel. Claude subagents run at medium effort unless you pass effort (high for hard design or debugging).\n\
 For an independent topic that deserves its own thread (the user asks for a separate chat, or a side task they'll want to follow on its own), open_chat(prompt) opens a new chat in the sidebar whose agent starts on it at once; spawn_agent is for work that serves this chat. list_chats / message_chat follow up on chats.\n\
 Every chat (sub-agent ones too) has a link, harbor://chat/<id>?pc=<PC>: put it in your reply to point the user at a chat (Harbor shows it as the chat's title; a click or tap opens it). find_chats(query) finds chats by title or agent name across all projects and PCs and gives their links; list_chats and list_agents give links too. Never make one up.\n\
+Keys (API keys, tokens, passwords): never ask the user to paste one into the chat, and never print one. list_secrets shows the keys saved in Harbor (names only). A missing one: request_secret(name, reason, how_to_get) asks the user for it outside the chat, with a link to where they get it; add env_file when the project reads it from a .env file. Using a saved one needs the user's approval each time: request_secret_access(names, reason, minutes) with a short honest reason and only the minutes you need, then run_with_secrets(command, secrets) runs a command with them as environment variables and their values hidden in its output. write_secret_to_env(name, file) asks to put a saved key in a .env file. Wait for the [secret …] message before using one. Don't put keys in files yourself or in start_process.\n\
 Other harbor tools: message_agent / list_agents / read_agent / stop_agent; list_models (pick cheaper models for simple work, spread load across accounts with spare quota); list_processes / process_logs / stop_process; snooze(minutes, reason) to wake yourself later (not to wait for subagents: their reports wake you); create_webhook / list_webhooks / delete_webhook.\n\
 To show the user an image or video, call harbor show_media(path, caption) or put ![caption](path) in your reply (absolute path, path in the project, or an https URL; png, jpg, gif, webp, svg, mp4, webm, mov): it appears inline in the chat.\n\
-Messages that start with [agent …], [message from …], [process …], [wake] or [webhook …] come from Harbor, not the user.\n\
+Messages that start with [agent …], [message from …], [process …], [secret …], [wake] or [webhook …] come from Harbor, not the user.\n\
 Never ask the user anything before working: make reasonable assumptions. Ask only when truly blocked.\n\
-Talking to the user: never mention subagents, their names or delegating. When you hand work off, reply with nothing at all. Otherwise answer directly and briefly, as if you did the work yourself."
+Talking to the user: never mention subagents, their names or delegating. When you hand work off or pass the user's words on (spawn_agent, message_agent), still reply with one short line: what you understood and what happens next (\"On it: PR status in the composer footer, on desktop and phone.\"). Otherwise answer directly and briefly, as if you did the work yourself."
     )
 }
 
@@ -802,6 +810,7 @@ fn sub_prompt(name: &str, project: &str, path: &str, mates: &[String]) -> String
         "You are \"{name}\", a subagent in the team working on the project \"{project}\" ({path}), led by the lead agent.\n\
 Do your task completely with your own tools. Don't stop to ask questions: make reasonable assumptions and state them in your summary. Teammates: {mates}.\n\
 Your shell's background jobs die when your turn ends. For anything long-running or slow (dev servers, watchers, data pulls, long builds), use harbor start_process(name, command) instead and end your turn; you'll get a [process …] message when it prints a URL or exits. Check it with process_logs.\n\
+Keys (API keys, tokens): never ask for one in the chat or print one. list_secrets shows the saved ones (names only); request_secret(name, reason, how_to_get, env_file?) asks the user for a missing one; request_secret_access(names, reason, minutes) asks to use saved ones for a while, then run_with_secrets(command, secrets) runs a command with them set and their values hidden; write_secret_to_env(name, file) asks to put one in a .env file. A [secret …] message brings each answer.\n\
 Use the harbor tools to coordinate: send_message(to, text) to a teammate or to \"lead\", read_messages() to check for messages, list_agents() to see the team.\n\
 To show the user an image or video, call harbor show_media(path, caption) or put ![caption](path) in your reply (absolute path, path in the project, or an https URL; png, jpg, gif, webp, svg, mp4, webm, mov): it appears inline in the chat.\n\
 Messages starting with [message from …] come from teammates or the lead.\n\

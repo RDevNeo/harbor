@@ -66,7 +66,7 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 const LOG_MAX: u64 = 8 * 1024 * 1024;
 const LOG_KEEP: u64 = 1024 * 1024;
 
-fn signal_group(sig: &str, pgid: u32) {
+pub fn signal_group(sig: &str, pgid: u32) {
     let _ = Command::new("kill").args([sig, "--", &format!("-{pgid}")]).stderr(Stdio::null()).status();
 }
 
