@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-10-28
+
 ### Added
 - The image viewer goes through every image of the chat, not only the ones of the message you
   opened: ← → (or the side buttons) on the desktop, a swipe or the side buttons on the phone,
@@ -1764,7 +1766,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.81.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.82.0...HEAD
+[0.82.0]: https://github.com/RDevNeo/harbor/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/RDevNeo/harbor/compare/v0.80.0...v0.81.0
 [0.80.0]: https://github.com/RDevNeo/harbor/compare/v0.79.0...v0.80.0
 [0.79.0]: https://github.com/RDevNeo/harbor/compare/v0.78.0...v0.79.0
