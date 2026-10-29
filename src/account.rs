@@ -34,15 +34,15 @@ use std::sync::{Condvar, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Clerk's Frontend API of RDevNeo's Clerk app (OAuth endpoints). A placeholder until it exists.
-pub const CLERK_URL: &str = "https://clerk.harbor.example";
+pub const CLERK_URL: &str = "https://maximum-feline-2818.clerk.accounts.dev";
 /// The OAuth application Harbor signs in with (a public client: PKCE, no secret).
-pub const CLIENT_ID: &str = "harbor-oauth-client-id";
+pub const CLIENT_ID: &str = "FWUnta6BgUIwVT9O";
 /// Harbor's account service (worker/).
-pub const ACCOUNTS_URL: &str = "https://accounts.harbor.example";
+pub const ACCOUNTS_URL: &str = "https://harbor-accounts.rdevneo.workers.dev";
 /// The public keys the service signs Harbor tokens with: (kid, base64url Ed25519 key), from
 /// `npm run keygen` in worker/. Empty: this build trusts the keys the service serves (over
 /// HTTPS) at `/v1/keys`; a release build lists them here.
-pub const KEYS: &[(&str, &str)] = &[];
+pub const KEYS: &[(&str, &str)] = &[("k1", "AKiosel0Qd-0CFV2NmRpLpM8zchoVP1iDrpt_OgyoII")];
 const SCOPE: &str = "openid profile email offline_access";
 const ISSUER: &str = "harbor-accounts";
 /// A Harbor token lasts 7 days; a new one is asked for once a day.

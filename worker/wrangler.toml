@@ -3,15 +3,15 @@ main = "src/index.js"
 compatibility_date = "2026-10-01"
 
 [vars]
-CLERK_FRONTEND_URL = "https://clerk.harbor.example"
+CLERK_FRONTEND_URL = "https://maximum-feline-2818.clerk.accounts.dev"
 CLERK_API_URL = "https://api.clerk.com/v1"
 HARBOR_KID = "k1"
 APP_REDIRECT = "harbor://oauth"
 TOKEN_DAYS = "7"
-PUBLIC_URL = "https://accounts.harbor.example"
+PUBLIC_URL = "https://harbor-accounts.rdevneo.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "harbor-accounts"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "e2c5b9ac-4f42-4d02-b694-459c666ab61f"
 migrations_dir = "migrations"

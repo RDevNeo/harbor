@@ -82,9 +82,9 @@ for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
 done
 
 # Where the app signs in (Config.java): RDevNeo's Clerk app and account service by default.
-CLERK_URL=${HARBOR_CLERK_URL:-https://clerk.harbor.example}
-CLERK_CLIENT=${HARBOR_CLERK_CLIENT_ID:-harbor-oauth-client-id}
-ACCOUNTS_URL=${HARBOR_ACCOUNTS_URL:-https://accounts.harbor.example}
+CLERK_URL=${HARBOR_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
+CLERK_CLIENT=${HARBOR_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}
+ACCOUNTS_URL=${HARBOR_ACCOUNTS_URL:-https://harbor-accounts.rdevneo.workers.dev}
 for v in "$CLERK_URL" "$CLERK_CLIENT" "$ACCOUNTS_URL"; do
   case "$v" in *[\\\"]*|"") echo "bad accounts setting: $v" >&2; exit 1 ;; esac
 done
