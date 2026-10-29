@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-10-28
+
 ### Added
 - A chat's pull request shows under its composer: the footer row says "PR #123 · Open" (Draft,
   Merged or Closed) left of the branch, with the state's icon in its colour, and a click opens
@@ -1776,7 +1778,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.82.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.83.0...HEAD
+[0.83.0]: https://github.com/RDevNeo/harbor/compare/v0.82.0...v0.83.0
 [0.82.0]: https://github.com/RDevNeo/harbor/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/RDevNeo/harbor/compare/v0.80.0...v0.81.0
 [0.80.0]: https://github.com/RDevNeo/harbor/compare/v0.79.0...v0.80.0
