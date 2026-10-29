@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.92.0] - 2026-10-29
+
 ### Added
 - Rename a chat's worktree folder on its own, from the workspace menu under the composer (the
   left "Worktree · …" chip › Rename worktree…) on the desktop, and the same place on the phone.
@@ -1976,7 +1978,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.91.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.92.0...HEAD
+[0.92.0]: https://github.com/RDevNeo/harbor/compare/v0.91.1...v0.92.0
 [0.91.1]: https://github.com/RDevNeo/harbor/compare/v0.91.0...v0.91.1
 [0.91.0]: https://github.com/RDevNeo/harbor/compare/v0.90.0...v0.91.0
 [0.90.0]: https://github.com/RDevNeo/harbor/compare/v0.89.0...v0.90.0
