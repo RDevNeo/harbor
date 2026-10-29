@@ -10,7 +10,7 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   the sign-in runs in the browser (PKCE, no secret in the app) and `harbor account login` does it
   from a terminal. Each account gets its own workspace, and a PC you sign in on joins it (you
   pick one when you're in several). Settings › Account (desktop) and Settings (phone) show the
-  workspace's people and PCs; owners invite people by email. The invited person finds the
+  workspace's people and PCs; owners invite people by email (no email is sent). The invited person finds the
   invitation in Harbor once they sign in with that address, on a PC (a pop-up and Settings ›
   Account) or a phone (the start screen and Settings), and only Accept joins: then they control
   all of the workspace's PCs and chats; Decline turns it down. Owners remove people, anyone

@@ -1,7 +1,7 @@
 # Harbor accounts (Cloudflare Worker)
 
 Harbor's account API. Clerk handles Google sign-in and organizations (= workspaces); this Worker
-holds the Clerk secret, keeps invites, per-account settings and each workspace's PC directory in
+holds the Clerk secret, keeps invites (its own, accepted inside Harbor; Clerk's need an email-enabled instance), per-account settings and each workspace's PC directory in
 D1, and issues Harbor tokens (Ed25519 JWTs) that every PC verifies offline. No build step, no
 runtime dependencies.
 
@@ -17,7 +17,8 @@ Wire format: see "Accounts" in `android/PROTOCOL.md`.
 - `GET|PUT /v1/settings`: per-account settings, newest write per key wins
 - `POST /v1/workspaces/{ws}/invites`, `DELETE .../invites/{id}`, `DELETE .../members/{user}`
 - `GET /oauth/android`: bounces the OAuth redirect to `harbor://oauth`
-- `GET /invite`: landing page for invitation emails
+- `GET /v1/invites`, `POST /v1/invites/{id}/accept|decline`: the signed-in account's pending invitations
+- `GET /invite`: a landing page (unused while invitations aren't emailed)
 
 ## Deploy
 

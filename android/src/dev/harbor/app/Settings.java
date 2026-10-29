@@ -226,7 +226,7 @@ public class Settings extends Base {
         }
         if (owner) {
             acctCard.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, Ui.I_PLUS, "Invite someone", "By email: they sign in with Google using it, on a PC or phone", Ui.FG, v -> invite(ws));
+            LinearLayout r = Ui.cardRow(this, Ui.I_PLUS, "Invite someone", "By their Google account's email: they'll see it in Harbor", Ui.FG, v -> invite(ws));
             r.addView(Ui.chevron(this));
             acctCard.addView(r, Ui.fill());
         }
@@ -246,12 +246,12 @@ public class Settings extends Base {
         FrameLayout f = new FrameLayout(this);
         f.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), 0);
         f.addView(e);
-        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("Once they sign in to Harbor with Google using that address, the invitation waits there; when they accept, they control all of this workspace's PCs and chats.")
+        Ui.dialog(this).setTitle("Invite to this workspace").setMessage("They'll see the invitation in Harbor when they sign in with that Google account (no email is sent). Once they accept, they control all of this workspace's PCs and chats.")
                 .setView(f).setNegativeButton("Cancel", null)
                 .setPositiveButton("Invite", (d, x) -> {
                     String m = e.getText().toString().trim();
                     if (!m.contains("@")) { Ui.toast(this, "Type an email address"); return; }
-                    act(() -> { if (!Account.invite(this, ws, m)) runOnUiThread(() -> Ui.toast(this, "No email was sent: tell them to sign in to Harbor with " + m + ".")); }, "Invited " + m);
+                    act(() -> Account.invite(this, ws, m), "Invited " + m + ": they'll see it in Harbor when they sign in with that Google account.");
                 }).show();
     }
 

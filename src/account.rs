@@ -799,13 +799,9 @@ pub fn leave_workspace() {
 
 pub fn invite(ws: String, email: String) {
     run_action(move |token| {
-        let v = service("POST", &format!("/v1/workspaces/{ws}/invites"), &token, Some(&json!({ "email": email.trim() })))?;
-        // Clerk emails invitations only where it accepts email addresses; else they find it in Harbor.
-        let note = if v["invite"]["emailed"] == true {
-            format!("Invited {}: they got an email.", email.trim())
-        } else {
-            format!("Invited {}. No email was sent: tell them to sign in to Harbor with that address, where the invitation waits.", email.trim())
-        };
+        service("POST", &format!("/v1/workspaces/{ws}/invites"), &token, Some(&json!({ "email": email.trim() })))?;
+        // No email goes out: the invitation waits in their Harbor.
+        let note = format!("Invited {}: they'll see it in Harbor when they sign in with that Google account.", email.trim());
         set_status(|st| st.notice = note);
         Ok(())
     });

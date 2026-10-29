@@ -518,36 +518,21 @@ async function invite(req, env, ws) {
   const dup = await env.DB.prepare(`SELECT id FROM invites WHERE ws=? AND email=? AND status='pending'`).bind(ws, email).first();
   if (dup) throw new HttpError(409, 'That person has already been invited.');
 
-  const r = await clerk(env, 'POST', `/organizations/${enc2(ws)}/invitations`, {
-    email_address: email,
-    inviter_user_id: p.sub,
-    role: 'org:member',
-    redirect_url: `${env.PUBLIC_URL}/invite`,
-  });
-  // Clerk only emails invitations on instances that accept email addresses (a Google-only one
-  // answers invitations_not_supported), and may be down: the invitation is Harbor's either way,
-  // waiting in the invitee's Harbor once they sign in with that address.
-  const unsupported = clerkCode(r) === 'invitations_not_supported';
-  if (!r.ok && r.status < 500 && !unsupported) throw clerkFail(r, 'Could not send the invitation.');
-
+  // Harbor's own invitation (Clerk's need an email-enabled instance): it waits in the invitee's
+  // Harbor once they sign in with a Google account whose verified email is this one.
   const row = { id: `inv_${rand(8)}`, email, at: now() };
-  await env.DB.prepare(`INSERT INTO invites (id,ws,email,inviter,clerk_id,status,at,ws_name,inviter_name) VALUES (?,?,?,?,?,'pending',?,?,?)`)
-    .bind(row.id, ws, email, p.sub, r.ok ? r.data?.id || null : null, row.at, w.name || '', p.name || '')
+  await env.DB.prepare(`INSERT INTO invites (id,ws,email,inviter,status,at,ws_name,inviter_name) VALUES (?,?,?,?,'pending',?,?,?)`)
+    .bind(row.id, ws, email, p.sub, row.at, w.name || '', p.name || '')
     .run();
-  return json({ invite: { ...row, emailed: r.ok } });
+  return json({ invite: row });
 }
 
 async function deleteInvite(req, env, ws, id) {
   const p = await harborAuth(req, env);
   await requireOwner(env, p.sub, ws);
-  const row = await env.DB.prepare(`SELECT clerk_id FROM invites WHERE id=? AND ws=? AND status='pending'`).bind(id, ws).first();
+  const row = await env.DB.prepare(`SELECT id FROM invites WHERE id=? AND ws=? AND status='pending'`).bind(id, ws).first();
   if (!row) throw new HttpError(404, 'That invitation does not exist.');
-  await env.DB.prepare(`UPDATE invites SET status='revoked' WHERE id=?`).bind(id).run();
-  if (row.clerk_id) {
-    await clerk(env, 'POST', `/organizations/${enc2(ws)}/invitations/${enc2(row.clerk_id)}/revoke`, {
-      requesting_user_id: p.sub,
-    }).catch(() => {});
-  }
+  await env.DB.prepare(`DELETE FROM invites WHERE id=?`).bind(id).run();
   return json({ ok: true });
 }
 
@@ -581,14 +566,14 @@ async function pendingFor(env, sub, verified) {
   for (const inv of results) {
     // Already in that workspace (joined another way, e.g. through Clerk's own link): settled.
     if (mine.has(inv.ws)) {
-      await env.DB.prepare(`UPDATE invites SET status='accepted' WHERE id=?`).bind(inv.id).run();
+      await env.DB.prepare(`DELETE FROM invites WHERE id=?`).bind(inv.id).run();
       continue;
     }
     let wsName = inv.ws_name, by = inv.inviter_name;
     if (!wsName) {
       const r = await clerk(env, 'GET', `/organizations/${enc2(inv.ws)}`);
       if (r.status === 404) {
-        await env.DB.prepare(`UPDATE invites SET status='revoked' WHERE id=?`).bind(inv.id).run();
+        await env.DB.prepare(`DELETE FROM invites WHERE id=?`).bind(inv.id).run();
         continue;
       }
       wsName = r.ok ? r.data.name : '';
@@ -617,10 +602,8 @@ async function answerInvite(req, env, id, accept) {
     const r = await clerk(env, 'POST', `/organizations/${enc2(inv.ws)}/memberships`, { user_id: p.sub, role: 'org:member' });
     if (!r.ok && clerkCode(r) !== 'already_a_member_in_organization') throw clerkFail(r, 'Could not join that workspace.');
   }
-  await env.DB.prepare(`UPDATE invites SET status=? WHERE id=?`).bind(accept ? 'accepted' : 'declined', id).run();
-  if (inv.clerk_id) {
-    await clerk(env, 'POST', `/organizations/${enc2(inv.ws)}/invitations/${enc2(inv.clerk_id)}/revoke`, { requesting_user_id: inv.inviter }).catch(() => {});
-  }
+  // Answered either way: the invitation is gone.
+  await env.DB.prepare(`DELETE FROM invites WHERE id=?`).bind(id).run();
   const workspaces = await userMemberships(env, p.sub);
   return json({ ok: true, workspaces, joined: accept ? workspaces.find((w) => w.id === inv.ws) || null : null });
 }

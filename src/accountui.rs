@@ -291,7 +291,7 @@ impl App {
                 send = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 send |= w::btn(&format!("{}  Invite", ic::PLUS)).sm().primary().show(ui).clicked();
             });
-            w::subtle(ui, "Once they sign in to Harbor with Google using that address, on a PC or phone, the invitation waits there; when they accept, they have full control of this workspace's PCs and chats. Only owners invite and remove people.", "label-12");
+            w::subtle(ui, "They'll see the invitation in Harbor when they sign in with that Google account, on a PC or phone (no email is sent). Once they accept, they have full control of this workspace's PCs and chats. Only owners invite and remove people.", "label-12");
             if send && email.contains('@') && !st.busy {
                 account::invite(d.ws.id.clone(), email.trim().to_lowercase());
                 email.clear();

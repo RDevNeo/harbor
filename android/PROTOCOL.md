@@ -74,9 +74,10 @@ service).
   organizations: each account gets its own at its first sign-in (`personal`), and owners
   (`org:admin`) invite people by email. The invitation waits in the invited person's Harbor
   (desktop and phone) once they sign in with that address (Google addresses are verified),
-  and only their **Accept** joins the workspace; Decline turns it down. Clerk also emails it
-  where the Clerk instance accepts email addresses (a Google-only instance answers
-  `invitations_not_supported`: no email, the invitation is Harbor's alone). Roles: `owner`
+  and only their **Accept** joins the workspace (the Worker adds the membership through Clerk's
+  Backend API); Decline turns it down. Invitations are the Worker's own (D1, keyed by lowercase
+  email), not Clerk's: Clerk only has those on instances that accept email addresses. No email
+  is sent. Roles: `owner`
   (invites, removes) and `member`; both control every PC and chat of the workspace.
 
 ### Harbor tokens
@@ -134,8 +135,7 @@ phone): then `403`/`401`. A PC in no workspace, or in another one, takes nobody 
 Also on the service (all with the Harbor token): `DELETE /v1/pcs/{fp}` (a member takes a PC
 out), `DELETE /v1/devices/{fp}` (sign a device out: its own account, or an owner of a workspace
 its account is in), `POST /v1/workspaces/{ws}/invites {"email"}`,
-`DELETE /v1/workspaces/{ws}/invites/{id}` (owners; the invite answer has `emailed`: whether
-Clerk sent an email), `DELETE /v1/workspaces/{ws}/members/{user}`
+`DELETE /v1/workspaces/{ws}/invites/{id}` (owners; cancelling deletes it), `DELETE /v1/workspaces/{ws}/members/{user}`
 (owners remove others; anyone leaves a workspace that isn't their own), and settings:
 `GET /v1/settings` / `PUT /v1/settings {"set": {"<kv key>": {"v": "<value>", "at": <ms>}}}` →
 `{"settings": {…}, "at"}`, newest `at` per key wins (`src/settingsync.rs` lists which keys
@@ -152,6 +152,8 @@ follow the account; machine-bound ones never travel). Errors are `{"error"}`; `4
   "role", "personal"}}`: joins that workspace as a member. Then ask for a new Harbor token
   (`POST /v1/session`): the old one doesn't name the workspace, so its PCs refuse it until then.
 - `POST /v1/invites/{id}/decline` → `{"ok": true, "workspaces": [...], "joined": null}`.
+- Accepted, declined or cancelled, the invitation is deleted. Only a **verified** email of the
+  signed-in Clerk user matches (`email_addresses[].verification.status == "verified"`).
 - `404` the invitation isn't waiting any more, `403` it's for another address.
 
 Desktop: a pop-up (top right, Accept / Decline) and Settings › Account › Invitations; the list

@@ -418,16 +418,13 @@ final class Account {
 
     // ---- workspace actions (owners invite and remove; anyone leaves) ----
 
-    /** Invites someone by email; true when Clerk emailed them (a Google-only Clerk doesn't:
-     *  the invitation then waits in their Harbor once they sign in with that address). */
-    static boolean invite(Context c, String ws, String email) throws IOException {
-        JSONObject r;
+    /** Invites someone by email. No email goes out: the invitation waits in their Harbor once
+     *  they sign in with a Google account whose verified email is this one. */
+    static void invite(Context c, String ws, String email) throws IOException {
         try {
-            r = http("POST", service() + "/v1/workspaces/" + enc(ws) + "/invites", token(c), "application/json", new JSONObject().put("email", email.trim().toLowerCase(Locale.ROOT)).toString());
+            http("POST", service() + "/v1/workspaces/" + enc(ws) + "/invites", token(c), "application/json", new JSONObject().put("email", email.trim().toLowerCase(Locale.ROOT)).toString());
         } catch (JSONException e) { throw new IOException(e); }
         directory(c, true);
-        JSONObject i = r.optJSONObject("invite");
-        return i != null && i.optBoolean("emailed");
     }
 
     static void cancelInvite(Context c, String ws, String id) throws IOException {
