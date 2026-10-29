@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.91.1] - 2026-10-29
+
 ### Fixed
 - Phone: after you pick your Google account in Android's sheet, sign-in never opens the browser.
   A Google account that never used Harbor gets its Harbor account right there, and any problem
@@ -1960,7 +1962,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.91.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.91.1...HEAD
+[0.91.1]: https://github.com/RDevNeo/harbor/compare/v0.91.0...v0.91.1
 [0.91.0]: https://github.com/RDevNeo/harbor/compare/v0.90.0...v0.91.0
 [0.90.0]: https://github.com/RDevNeo/harbor/compare/v0.89.0...v0.90.0
 [0.89.0]: https://github.com/RDevNeo/harbor/compare/v0.88.0...v0.89.0
