@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-10-29
+
 ### Added
 - A chat's worktree is named for what it's about: its title or first message, a few words of
   it, so "Main thread per project" works in `<project>-main-thread-per-project` on branch
@@ -1915,7 +1917,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.86.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.87.0...HEAD
+[0.87.0]: https://github.com/RDevNeo/harbor/compare/v0.86.0...v0.87.0
 [0.86.0]: https://github.com/RDevNeo/harbor/compare/v0.85.1...v0.86.0
 [0.85.1]: https://github.com/RDevNeo/harbor/compare/v0.85.0...v0.85.1
 [0.85.0]: https://github.com/RDevNeo/harbor/compare/v0.84.1...v0.85.0
