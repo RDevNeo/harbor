@@ -147,7 +147,31 @@ its account is in), `POST /v1/workspaces/{ws}/invites {"email"}`,
 follow the account; machine-bound ones never travel). Errors are `{"error"}`; `401` with
 `signin: true` means sign in again.
 
-### Invitations (accept in Harbor)
+### Phones: Android's own Google account picker (0.86)
+
+With Harbor's Google Cloud **Web client id** set (`HARBOR_GOOGLE_WEB_CLIENT_ID` in
+android/build.sh, `GOOGLE_WEB_CLIENT_ID` in the Worker), a phone on Android 14+ signs in without
+any website: Sign in shows Android's own "choose an account" sheet (framework
+`android.credentials.CredentialManager`, option type
+`com.google.android.libraries.identity.googleid.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL` with the Web
+client id and a nonce, `GooglePicker.java`), and Google Play services hands the app an ID token
+for that Web client. Empty id, older Android, no Google account or no provider: the browser
+flow above, in a Custom Tab.
+
+- `POST /v1/session/google` (no bearer) `{"id_token": "<Google ID token>", "nonce": "<the
+  request's>", "device": {<device proof over the ID token>}, "app"}` → the `/v1/session` answer
+  plus `"refresh": "<64 hex>"`. The Worker checks the token against Google's keys
+  (`https://www.googleapis.com/oauth2/v3/certs`, RS256): issuer `accounts.google.com`, `aud` =
+  the Web client id, not expired, the nonce, `email_verified`. It then finds the Clerk account
+  with that **verified** email: the same account the PCs signed into through Clerk. `409`
+  `{"browser": true}`: no Harbor account has that email yet; the phone signs in through Clerk
+  in the browser once (a Google-only Clerk instance doesn't let the Worker make accounts).
+  `404 {"browser": true}`: not set up on this Worker.
+- `POST /v1/session/refresh` (no bearer) `{"refresh": "<the secret>", "device": {<device proof
+  over the secret>}}` → a new `/v1/session` answer. The secret works only with the device key it
+  was issued to; signing the phone out (`DELETE /v1/devices/{fp}`) ends it (`401 signin`).
+
+
 
 - `GET /v1/invites` (Harbor token) → `{"invites": [{"id": "inv_…", "ws": "org_…", "ws_name":
   "Sam's workspace", "inviter_name": "Sam Rig", "email": "pat@example.com", "at": <unix s>}]}`:

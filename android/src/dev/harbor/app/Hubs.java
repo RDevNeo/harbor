@@ -111,7 +111,21 @@ public class Hubs extends Base {
             if (busy) {
                 list.addView(Ui.text(this, "Signing in…", 15, Ui.G700), Ui.margins(Ui.fill(), 4, 0, 4, 12));
             } else {
-                list.addView(Ui.button(this, "Sign in with Google", true, v -> Account.start(this)), Ui.fill());
+                list.addView(Ui.button(this, "Sign in with Google", true, v -> {
+                    busy = true;
+                    error = null;
+                    render();
+                    // The account sheet answers here; the browser comes back as harbor://oauth.
+                    Account.start(this, err -> {
+                        busy = false;
+                        error = err == null || err.isEmpty() ? null : err;
+                        render();
+                        if (err == null) {
+                            List<Hub> all = Hub.all(this);
+                            if (all.size() == 1 && Account.invites(this).length() == 0) open(all.get(0).id);
+                        }
+                    });
+                }), Ui.fill());
             }
             if (error != null) list.addView(Ui.text(this, error, 14, Ui.RED), Ui.margins(Ui.fill(), 4, 14, 4, 0));
             TextView how = Ui.text(this, "No pairing codes: once you're signed in, the PCs of your workspaces show up here and connect directly, encrypted with each PC's own key.", 13, Ui.G700);

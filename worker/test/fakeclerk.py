@@ -75,8 +75,15 @@ def add_member(org, uid, role):
     return m
 
 
+QUERY = {}
+
+
 def api(method, parts, body):
     """Backend API under /v1; parts excludes the leading v1."""
+    if parts == ["users"] and method == "GET":
+        # Like Clerk: a plain array of the users with that email address.
+        want = (QUERY.get("email_address") or "").lower()
+        return 200, [u for u in S["users"].values() if any(e["email_address"].lower() == want for e in u["email_addresses"])]
     if parts[:1] == ["users"] and len(parts) == 2 and method == "GET":
         u = S["users"].get(parts[1])
         return (200, u) if u else err("resource_not_found", "User not found.", 404)
@@ -207,7 +214,11 @@ class H(BaseHTTPRequestHandler):
         return a[7:] if a.lower().startswith("bearer ") else ""
 
     def dispatch(self, m, path, parts, q, body):
+        if path == "/google/certs" and m == "GET":
+            return 200, {"keys": S.get("google_jwks", [])}, {}
         if parts[:1] == ["v1"]:
+            QUERY.clear()
+            QUERY.update(q)
             if self.bearer() != SECRET:
                 return (*err("authorization_invalid", "Invalid secret key.", 401), {})
             return (*api(m, parts[1:], body), {})
@@ -275,6 +286,9 @@ class H(BaseHTTPRequestHandler):
             if not b.get("email"):
                 return 400, {"error": "email required"}
             return 200, make_user(b["email"], b.get("first_name", ""), b.get("last_name", ""))
+        if what == "google-jwks" and m == "POST":
+            S["google_jwks"] = b.get("keys", [])
+            return 200, {"ok": True}
         if what == "invitations" and m == "POST":
             S["no_invitations"] = not b.get("on", True)
             return 200, {"ok": True}

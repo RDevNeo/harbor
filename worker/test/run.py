@@ -144,6 +144,26 @@ class Device:
                 "ts": ts, "sig": base64.b64encode(sig).decode()}
 
 
+GKEY = None
+
+
+def google_token(email, aud="web-client.apps.example", nonce="n1", verified=True, exp_in=600, iss="https://accounts.google.com", key=None):
+    """A Google ID token signed with the test's own RSA key (served as Google's JWKS by the fake)."""
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    global GKEY
+    if GKEY is None:
+        GKEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        n = GKEY.public_key().public_numbers()
+        jwk = {"kty": "RSA", "kid": "g1", "alg": "RS256", "use": "sig",
+               "n": b64u(n.n.to_bytes((n.n.bit_length() + 7) // 8, "big")), "e": b64u(n.e.to_bytes(3, "big"))}
+        http("POST", CLERK + "/test/google-jwks", {"keys": [jwk]})
+    head = b64u(json.dumps({"alg": "RS256", "kid": "g1", "typ": "JWT"}).encode())
+    body = b64u(json.dumps({"iss": iss, "aud": aud, "sub": "1234", "email": email, "email_verified": verified,
+                            "nonce": nonce, "iat": int(time.time()), "exp": int(time.time()) + exp_in}).encode())
+    sig = (key or GKEY).sign(f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    return f"{head}.{body}.{b64u(sig)}"
+
+
 def session(ct, dev, **kw):
     return http("POST", W + "/v1/session", {"device": dev.proof(ct, **kw), "app": "0.80.0"}, token=ct)
 
@@ -176,7 +196,8 @@ def main():
                                               serialization.NoEncryption())).decode()
     with open(os.path.join(WORKER, ".dev.vars"), "w") as f:
         f.write(f"CLERK_FRONTEND_URL={CLERK}\nCLERK_API_URL={CLERK}/v1\nCLERK_SECRET_KEY=sk_test_fake\n"
-                f"HARBOR_SIGNING_KEY={pkcs8}\nPUBLIC_URL={W}\n")
+                f"HARBOR_SIGNING_KEY={pkcs8}\nPUBLIC_URL={W}\n"
+                f"GOOGLE_WEB_CLIENT_ID=web-client.apps.example\nGOOGLE_JWKS_URL={CLERK}/google/certs\n")
     shutil.rmtree(os.path.join(WORKER, ".wrangler/state"), ignore_errors=True)
     m = subprocess.run(["nice", "-n", "19", "npx", "wrangler", "d1", "migrations", "apply", "harbor-accounts", "--local"],
                        cwd=WORKER, env=ENV, capture_output=True, text=True, timeout=300)
@@ -218,6 +239,7 @@ def main():
     st, js, _, _ = session(ct, pc)
     check("session (pc, DER sig) ok", st == 200 and js["account"]["email"] == "sam@example.com", js)
     sam_pc = js["token"]
+    sam_j = js
     ws0 = js["workspaces"]
     check("personal workspace: one, owner, personal, named after first name",
           len(ws0) == 1 and ws0[0]["role"] == "owner" and ws0[0]["personal"] and ws0[0]["name"] == "Sam's workspace", ws0)
@@ -434,6 +456,46 @@ def main():
     check("members: leaving (self) ok", st == 200, js)
     st, js, _, _ = http("DELETE", W + f"/v1/workspaces/{alice_personal}/members/{alice_uid}", token=aj["token"])
     check("members: cannot leave own personal workspace (409)", st == 409, js)
+
+    # Android's own Google account picker: a Google ID token instead of Clerk OAuth
+    gdev = Device("phone", "g-phone")
+    tok = google_token("sam@example.com")
+    st, js, _, _ = http("POST", W + "/v1/session/google", {"id_token": tok, "nonce": "n1", "device": gdev.proof(tok)})
+    check("google: a verified email of an existing account signs the phone in as that account",
+          st == 200 and js["account"]["email"] == "sam@example.com" and js["account"]["id"] == sam_j["account"]["id"]
+          and sam_ws in [w["id"] for w in js["workspaces"]] and len(js.get("refresh", "")) == 64, js)
+    p = json.loads(unb64u(js["token"].split(".")[1]))
+    check("google: the Harbor token is bound to the phone's key", p["dev"] == gdev.fp and p["kind"] == "phone", p)
+    g_refresh = js["refresh"]
+    st, js2, _, _ = http("POST", W + "/v1/session/refresh", {"refresh": g_refresh, "device": gdev.proof(g_refresh)})
+    check("refresh: a new Harbor token for the same account", st == 200 and js2["account"]["id"] == js["account"]["id"], js2)
+    other = Device("phone", "thief")
+    st, js2, _, _ = http("POST", W + "/v1/session/refresh", {"refresh": g_refresh, "device": other.proof(g_refresh)})
+    check("refresh: another device with the secret is refused (401)", st == 401, js2)
+    st, js2, _, _ = http("POST", W + "/v1/session/refresh", {"refresh": "0" * 64, "device": gdev.proof("0" * 64)})
+    check("refresh: a wrong secret is refused (401)", st == 401, js2)
+    for name, t, n in [("wrong audience", google_token("sam@example.com", aud="someone-else"), "n1"),
+                       ("wrong nonce", google_token("sam@example.com"), "n2"),
+                       ("expired", google_token("sam@example.com", exp_in=-10), "n1"),
+                       ("wrong issuer", google_token("sam@example.com", iss="https://evil.example"), "n1")]:
+        st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": n, "device": gdev.proof(t)})
+        check(f"google: {name} refused (401)", st == 401, js2)
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    forged = google_token("sam@example.com", key=_rsa.generate_private_key(public_exponent=65537, key_size=2048))
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": forged, "nonce": "n1", "device": gdev.proof(forged)})
+    check("google: a token not signed by Google's key refused (401)", st == 401, js2)
+    t = google_token("sam@example.com", verified=False)
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": gdev.proof(t)})
+    check("google: an unverified email refused (403)", st == 403, js2)
+    t = google_token("newcomer@example.com")
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": gdev.proof(t)})
+    check("google: no Harbor account yet → 409 browser:true (first sign-in through Clerk)", st == 409 and js2.get("browser") is True, js2)
+    t = google_token("sam@example.com")
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": gdev.proof(google_token("sam@example.com", nonce="x"))})
+    check("google: the device proof must sign this very token (400)", st == 400, js2)
+    st, _, _, _ = http("DELETE", W + f"/v1/devices/{gdev.fp}", token=js["token"])
+    st2, js2, _, _ = http("POST", W + "/v1/session/refresh", {"refresh": g_refresh, "device": gdev.proof(g_refresh)})
+    check("signing the phone out ends its renewal (401)", st == 200 and st2 == 401, (st, js2))
 
     # device removal
     ext = Device("phone", "lost")

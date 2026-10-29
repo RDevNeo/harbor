@@ -16,7 +16,7 @@
 # OUT=<path> writes the APK elsewhere. UNSIGNED=1 stops before signing (CI signs it elsewhere).
 #
 # Accounts (Account.java, android/PROTOCOL.md "Accounts"): HARBOR_CLERK_URL, HARBOR_CLERK_CLIENT_ID
-# and HARBOR_ACCOUNTS_URL replace the built-in values (test builds against fakes; an http:// URL
+# HARBOR_ACCOUNTS_URL and HARBOR_GOOGLE_WEB_CLIENT_ID replace the built-in values (test builds against fakes; an http:// URL
 # to 127.0.0.1 also lets the app talk plain HTTP to loopback, for `adb reverse`).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -99,6 +99,10 @@ done
 CLERK_URL=${HARBOR_CLERK_URL:-https://maximum-feline-2818.clerk.accounts.dev}
 CLERK_CLIENT=${HARBOR_CLERK_CLIENT_ID:-FWUnta6BgUIwVT9O}
 ACCOUNTS_URL=${HARBOR_ACCOUNTS_URL:-https://harbor-accounts.rdevneo.workers.dev}
+# Harbor's Google Cloud Web client id: set, Android 14+ signs in with its own account picker
+# (Credential Manager); empty, the browser through Clerk. Fill it once the Google Cloud clients exist.
+GOOGLE_WEB_CLIENT=${HARBOR_GOOGLE_WEB_CLIENT_ID-}
+case "$GOOGLE_WEB_CLIENT" in *[\\\"]*) echo "bad Google client id" >&2; exit 1 ;; esac
 for v in "$CLERK_URL" "$CLERK_CLIENT" "$ACCOUNTS_URL"; do
   case "$v" in *[\\\"]*|"") echo "bad accounts setting: $v" >&2; exit 1 ;; esac
 done
@@ -111,6 +115,7 @@ final class Config {
     static final String CLERK_URL = "${CLERK_URL%/}";
     static final String CLERK_CLIENT_ID = "$CLERK_CLIENT";
     static final String ACCOUNTS_URL = "${ACCOUNTS_URL%/}";
+    static final String GOOGLE_WEB_CLIENT_ID = "$GOOGLE_WEB_CLIENT";
 }
 JAVA
 cp -r "$HERE/res" "$W/res"
