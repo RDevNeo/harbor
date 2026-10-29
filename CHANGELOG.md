@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-10-29
+
 ### Added
 - Several Gmail accounts at once: the Gmail card lists each connected account with its own Sign
   out, Add account (Google's account chooser) and Make default. Agents' Gmail tools take an
@@ -2007,7 +2009,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.94.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.95.0...HEAD
+[0.95.0]: https://github.com/RDevNeo/harbor/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/RDevNeo/harbor/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/RDevNeo/harbor/compare/v0.92.0...v0.93.0
 [0.92.0]: https://github.com/RDevNeo/harbor/compare/v0.91.1...v0.92.0
