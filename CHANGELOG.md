@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.91.0] - 2026-10-29
+
 ### Changed
 - Phone sign-in uses Android's own Google account picker (Android 14+): pick your account in
   the system sheet inside Harbor, no browser. Older Android and Google accounts that never signed
@@ -1953,7 +1955,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.90.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.91.0...HEAD
+[0.91.0]: https://github.com/RDevNeo/harbor/compare/v0.90.0...v0.91.0
 [0.90.0]: https://github.com/RDevNeo/harbor/compare/v0.89.0...v0.90.0
 [0.89.0]: https://github.com/RDevNeo/harbor/compare/v0.88.0...v0.89.0
 [0.88.0]: https://github.com/RDevNeo/harbor/compare/v0.87.0...v0.88.0
