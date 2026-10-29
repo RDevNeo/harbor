@@ -3,9 +3,9 @@ main = "src/index.js"
 compatibility_date = "2026-10-01"
 
 [vars]
-# Harbor's Google Cloud Web client id: phones then sign in with Android's own account picker
-# (POST /v1/session/google). Empty: phones use the browser through Clerk.
-GOOGLE_WEB_CLIENT_ID = ""
+# GOOGLE_WEB_CLIENT_ID (Harbor's Google Cloud Web client id, for phones' own Google account picker,
+# POST /v1/session/google) is a secret: `npx wrangler secret put GOOGLE_WEB_CLIENT_ID`. Never add
+# it here as a var: a var of the same name blocks the secret (error 10053). Unset: picker off.
 CLERK_FRONTEND_URL = "https://maximum-feline-2818.clerk.accounts.dev"
 CLERK_API_URL = "https://api.clerk.com/v1"
 HARBOR_KID = "k1"
