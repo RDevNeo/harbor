@@ -33,11 +33,16 @@ final class Media {
 
     /** The media of a card, one under the other, or null when there are none. */
     static View list(Activity a, Hub hub, JSONArray media) {
+        return list(a, hub, media, media);
+    }
+
+    /** Some of a card's media ({@code media}), browsing all its images ({@code all}) in the viewer. */
+    static View list(Activity a, Hub hub, JSONArray media, JSONArray all) {
         if (media == null || media.length() == 0) return null;
         LinearLayout col = Ui.col(a);
         List<Images.Src> gallery = new ArrayList<>();
-        for (int i = 0; i < media.length(); i++) {
-            JSONObject m = media.optJSONObject(i);
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject m = all.optJSONObject(i);
             if (m != null && "image".equals(m.optString("kind")) && !m.optString("url").isEmpty()) gallery.add(new Images.Src(hub, m.optString("url"), m.optString("name")));
         }
         for (int i = 0; i < media.length(); i++) {

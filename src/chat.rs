@@ -349,9 +349,12 @@ impl App {
             .show(ui, |ui| centered(ui, CONTENT_W, |ui| self.composer(ui, running)));
 
         // Another PC's chat names that PC's files: its images come from there (mesh.rs).
-        let source: Option<crate::images::Fetch> = self.chat(id).filter(|c| c.foreign()).map(|_| {
-            let hub = self.api.hub.clone();
-            std::sync::Arc::new(move |path: &str| crate::mesh::home_image(&hub, id, path, Some(crate::mesh::REMOTE_IMAGE_PX)).map(|(_, b)| b)) as crate::images::Fetch
+        let source = self.chat(id).filter(|c| c.foreign()).map(|_| {
+            let (hub, hub2) = (self.api.hub.clone(), self.api.hub.clone());
+            crate::images::Source {
+                image: std::sync::Arc::new(move |path: &str| crate::mesh::home_image(&hub, id, path, Some(crate::mesh::REMOTE_IMAGE_PX)).map(|(_, b)| b)),
+                video: std::sync::Arc::new(move |path: &str| crate::mesh::home_media(&hub2, id, path).map(|(_, b)| b)),
+            }
         });
         crate::images::set_source(ui.ctx(), source);
         // (A click on the composer's attachments isn't one of the chat's images.)
@@ -382,7 +385,7 @@ impl App {
     fn chat_images(&mut self, ctx: &egui::Context, id: i64) -> Vec<String> {
         let forks = self.forks_of(id);
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
-        let cwd = self.chat(id).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c).to_string_lossy().into_owned()).unwrap_or_default();
+        let cwd = self.media_cwd(id).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let Some(tr) = self.transcripts.get(&id) else { return vec![] };
         let cards = crate::view::project(&tr.items, lead, &forks);
         crate::view::gallery(&cards, &mut |t| crate::images::media_in(ctx, t, &cwd))
@@ -395,8 +398,8 @@ impl App {
         ui.spacing_mut().item_spacing.y = if crate::theme::compact() { 8.0 } else { 12.0 };
         let width = ui.available_width();
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
-        // Where relative media paths in replies start (another PC's chat: nowhere here).
-        let cwd = self.chat(id).filter(|c| !c.foreign()).map(|c| self.chat_cwd(c).to_string_lossy().into_owned()).unwrap_or_default();
+        // Where relative media paths in replies start (another PC's chat: its folder there).
+        let cwd = self.media_cwd(id).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         // The same cards the phone gets (view.rs): what's hidden, dividers.
         let cards = crate::view::project(&tr.items, lead, &forks);
         // Tool calls fold behind one chevron row per run, closed until clicked.
@@ -575,13 +578,29 @@ impl App {
                     }
                 }
                 Card::Text { text, at, .. } => {
-                    let stripped = crate::media::strip_refs(text);
-                    let md = linkify(&stripped);
-                    // Chat links read as their chat's title (a click opens it: app.rs route_links).
-                    let md = crate::chatlink::labelled(&md, &|u| self.link_target(u).title).into_owned();
+                    let label = |md: &str| {
+                        let stripped = crate::media::strip_refs(md);
+                        let md = linkify(&stripped);
+                        // Chat links read as their chat's title (a click opens it: app.rs route_links).
+                        crate::chatlink::labelled(&md, &|u| self.link_target(u).title).into_owned()
+                    };
+                    let md = label(text);
                     let dir = if crate::commits::maybe(&md) { commit_dir.get_or_insert_with(|| self.commit_dir(id)).clone() } else { None };
                     let commits = crate::commits::of_text(dir.as_deref(), &md, commit_wake.clone());
-                    let md = crate::commits::pills_md(&md, &commits);
+                    // Images on their own line are drawn where they are, next to their text; the
+                    // rest after it.
+                    let parts = crate::media::parts(text);
+                    let parts: Vec<Result<String, &str>> = parts
+                        .iter()
+                        .map(|p| match p {
+                            crate::media::Part::Text(_) if parts.len() == 1 => Ok(crate::commits::pills_md(&md, &commits).into_owned()),
+                            crate::media::Part::Text(s) => Ok(crate::commits::pills_md(&label(s), &commits).into_owned()),
+                            crate::media::Part::Media(s) => Err(*s),
+                        })
+                        .collect();
+                    let ctx = ui.ctx().clone();
+                    let media = crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd));
+                    let mut placed: Vec<String> = vec![];
                     // The transcript's 12px item spacing pushes list text below its
                     // number/bullet; markdown gets its own tighter spacing.
                     let r = ui
@@ -597,27 +616,40 @@ impl App {
                             if let Some(fg) = fg {
                                 ui.visuals_mut().widgets.noninteractive.fg_stroke.color = fg;
                             }
-                            // Its own id scope: egui_commonmark numbers tables from 0 in every
-                            // viewer, so two messages' tables shared an id and their grids and
-                            // scroll bars overwrote each other's state, repainting every frame.
-                            for c in commits.values() {
-                                self.md.add_link_hook(format!("{}{}", crate::commits::SCHEME, c.sha));
-                            }
-                            let from = ui.ctx().graphics(|g| g.get(ui.layer_id()).map_or(0, |l| l.next_idx().0));
-                            ui.push_id(("md", id, i), |ui| CommonMarkViewer::new().show(ui, &mut self.md, &md));
-                            crate::commits::paint_pills(ui, from, &commits, &t);
-                            for c in commits.values() {
-                                let hook = format!("{}{}", crate::commits::SCHEME, c.sha);
-                                if self.md.get_link_hook(&hook) == Some(true) {
-                                    action = Some(MsgAction::Commit(c.sha.clone()));
+                            for (k, part) in parts.iter().enumerate() {
+                                let md = match part {
+                                    Ok(md) => md,
+                                    Err(images) => {
+                                        let here: Vec<crate::media::Media> = crate::images::media_in(&ctx, images, &cwd).into_iter().filter(|m| m.shown).collect();
+                                        placed.extend(here.iter().map(|m| m.path.clone()));
+                                        ui.add_space(4.0);
+                                        media_view(ui, &here, 0.0);
+                                        ui.add_space(4.0);
+                                        continue;
+                                    }
+                                };
+                                // Its own id scope: egui_commonmark numbers tables from 0 in every
+                                // viewer, so two messages' tables shared an id and their grids and
+                                // scroll bars overwrote each other's state, repainting every frame.
+                                for c in commits.values() {
+                                    self.md.add_link_hook(format!("{}{}", crate::commits::SCHEME, c.sha));
                                 }
-                                self.md.remove_link_hook(&hook);
+                                let from = ui.ctx().graphics(|g| g.get(ui.layer_id()).map_or(0, |l| l.next_idx().0));
+                                ui.push_id(("md", id, i, k), |ui| CommonMarkViewer::new().show(ui, &mut self.md, md));
+                                crate::commits::paint_pills(ui, from, &commits, &t);
+                                for c in commits.values() {
+                                    let hook = format!("{}{}", crate::commits::SCHEME, c.sha);
+                                    if self.md.get_link_hook(&hook) == Some(true) {
+                                        action = Some(MsgAction::Commit(c.sha.clone()));
+                                    }
+                                    self.md.remove_link_hook(&hook);
+                                }
                             }
                         })
                         .response
                         .rect;
-                    let ctx = ui.ctx().clone();
-                    media_view(ui, &crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd)), 0.0);
+                    let rest: Vec<crate::media::Media> = media.into_iter().filter(|m| !placed.contains(&m.path)).collect();
+                    media_view(ui, &rest, 0.0);
                     let acts = crate::view::actions(&shown.card);
                     if let Some(a) = hover_actions(ui, r, false, *at, &buttons_of(&acts)) {
                         action = Some(msg_action(acts[a], text, i));
@@ -684,15 +716,6 @@ impl App {
                     // Images the tool read or wrote (a Read of a .png, a screenshot).
                     let ctx = ui.ctx().clone();
                     media_view(ui, &crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd)), 30.0);
-                }
-                // An image or video an agent showed (show_media).
-                Card::Media { .. } => {
-                    let ctx = ui.ctx().clone();
-                    let media = crate::view::media(&shown.card, &mut |t| crate::images::media_in(&ctx, t, &cwd));
-                    if media.is_empty() {
-                        w::subtle(ui, format!("{}  Can't show this file here", ic::ALERT), "label-12");
-                    }
-                    media_view(ui, &media, 0.0);
                 }
                 // The top of a fork: back to the reply it was forked from.
                 Card::ForkedFrom { chat, seq } => {

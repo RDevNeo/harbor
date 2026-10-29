@@ -1249,6 +1249,8 @@ impl App {
         let started_at = self.turns.get(&id).map(|(_, s)| *s);
         // A turn cut off by a restart that continues isn't reported as failed.
         let resumes = matches!(ev, Event::Exited { .. }) && self.resumes(id);
+        // Where a finished reply's relative media paths start (a chat on another device: its files are there).
+        let reply_cwd = matches!(ev, Event::TextFinal(_) | Event::Exited { .. }).then(|| self.chat(id).filter(|c| c.device.is_empty()).map(|c| self.chat_cwd(c))).flatten();
         let tr = self.transcripts.get_mut(&id).unwrap();
         match ev {
             Event::Session(sid) => {
@@ -1268,11 +1270,15 @@ impl App {
                     tr.pending_text = Some(tr.items.len() - 1);
                 }
             },
-            Event::TextFinal(full) => match tr.pending_text.take().and_then(|i| tr.items.get_mut(i)) {
-                Some(Item::Text { text, .. }) => *text = full,
-                _ if !full.trim().is_empty() => tr.items.push(Item::Text { text: full, at: store::now() }),
-                _ => {}
-            },
+            Event::TextFinal(full) => {
+                // The files it shows are kept, so they outlive a cleaned-up /tmp (media.rs).
+                crate::media::keep(&full, reply_cwd.as_deref());
+                match tr.pending_text.take().and_then(|i| tr.items.get_mut(i)) {
+                    Some(Item::Text { text, .. }) => *text = full,
+                    _ if !full.trim().is_empty() => tr.items.push(Item::Text { text: full, at: store::now() }),
+                    _ => {}
+                }
+            }
             Event::ThinkingDelta(d) => match tr.pending_thinking.and_then(|i| tr.items.get_mut(i)) {
                 Some(Item::Thinking { text }) => text.push_str(&d),
                 _ => {
@@ -1338,6 +1344,13 @@ impl App {
             }
             Event::UserEcho(_) | Event::Limit { .. } | Event::Quota(_) => {}
             Event::Exited { ok, .. } => {
+                // The turn's replies, for an agent that only streams them (kept once: unchanged files are skipped).
+                let turn = tr.items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |u| u + 1);
+                for it in &tr.items[turn..] {
+                    if let Item::Text { text, .. } = it {
+                        crate::media::keep(text, reply_cwd.as_deref());
+                    }
+                }
                 let stopped = self.turns.remove(&id).is_none();
                 let failed = !stopped && !resumes && (!tr.got_result || matches!(tr.items.last(), Some(Item::Error { .. })));
                 if !tr.got_result && !stopped && !resumes {

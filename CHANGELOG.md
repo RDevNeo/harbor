@@ -5,6 +5,25 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Agents show images and videos only with markdown in their reply, `![caption](path)`, next to
+  the sentence it illustrates: the `show_media` tool is gone, so a lead no longer drops pictures
+  into the middle of a turn. The path is absolute, relative to the project, or an https URL
+  (PNG, JPEG, GIF, WebP, SVG, MP4, WebM, MOV); the alt text shows as a caption under it. The
+  agents' instructions say so. An image on its own line is drawn right there in the reply, on
+  the desktop and the phone, instead of after all of its text. An old chat's `show_media` call
+  shows as a tool card with its file.
+
+### Fixed
+- A reply's images and videos show on every PC and phone of the mesh: a path relative to the
+  project now resolves in another PC's copy of the chat too (each PC tells the others the
+  chat's folder), a video of another PC's chat plays on the desktop (fetched from there first),
+  and a chat of another PC asks that PC for a file even when this PC has one at the same path
+  (two `/tmp/screenshot.png`s were mixed up).
+- An image or video a reply shows still shows after the agent deletes the file (a screenshot in
+  /tmp): when the reply ends Harbor keeps a copy (in its data folder, `media/kept`), and the
+  desktop, other PCs and phones read that copy once the file is gone.
+
 ## [0.85.0] - 2026-10-28
 
 ### Added

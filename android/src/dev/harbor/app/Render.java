@@ -77,6 +77,37 @@ final class Render {
         return col;
     }
 
+    /** A reply's blocks with the media it shows on their own line drawn among them: an item
+     *  with `after` (0.84) right after that many blocks, by {@code place}. Null when none is
+     *  placed (older hubs): draw its media after the text. */
+    View text(JSONObject item, java.util.function.Function<JSONArray, View> place) {
+        JSONArray blocks = item.optJSONArray("blocks"), media = item.optJSONArray("media");
+        if (blocks == null || media == null) return null;
+        boolean any = false;
+        for (int j = 0; j < media.length(); j++) {
+            JSONObject m = media.optJSONObject(j);
+            if (m != null && m.has("after")) any = true;
+        }
+        if (!any) return null;
+        LinearLayout col = Ui.col(c);
+        for (int i = 0; i <= blocks.length(); i++) {
+            JSONArray here = new JSONArray();
+            for (int j = 0; j < media.length(); j++) {
+                JSONObject m = media.optJSONObject(j);
+                if (m != null && m.optInt("after", -1) == i) here.put(m);
+            }
+            View shown = here.length() == 0 ? null : place.apply(here);
+            if (shown != null) col.addView(shown, Ui.margins(Ui.fill(), 0, col.getChildCount() == 0 ? 0 : 10, 0, 0));
+            JSONObject b = i < blocks.length() ? blocks.optJSONObject(i) : null;
+            View v = b == null ? null : block(b);
+            if (v == null) continue;
+            LinearLayout.LayoutParams p = Ui.fill();
+            if (col.getChildCount() > 0) p.topMargin = Ui.dp(shown != null ? 10 : 8);
+            col.addView(v, p);
+        }
+        return col;
+    }
+
     void blocks(LinearLayout into, JSONArray blocks) {
         for (int i = 0; i < blocks.length(); i++) {
             JSONObject b = blocks.optJSONObject(i);
