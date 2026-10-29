@@ -163,9 +163,11 @@ flow above, in a Custom Tab.
   plus `"refresh": "<64 hex>"`. The Worker checks the token against Google's keys
   (`https://www.googleapis.com/oauth2/v3/certs`, RS256): issuer `accounts.google.com`, `aud` =
   the Web client id, not expired, the nonce, `email_verified`. It then finds the Clerk account
-  with that **verified** email: the same account the PCs signed into through Clerk. `409`
-  `{"browser": true}`: no Harbor account has that email yet; the phone signs in through Clerk
-  in the browser once (a Google-only Clerk instance doesn't let the Worker make accounts).
+  with that **verified** email: the same account the PCs signed into through Clerk. A Google
+  account with no Harbor account yet gets one made there (Backend API `POST /users`, the email
+  verified; a PC's later Google sign-in through Clerk is linked to it by that verified email),
+  so the phone never needs the browser once an account was picked. `503`: Clerk refuses to make
+  accounts (its email-address setting is off): the phone shows the error with Try again.
   `404 {"browser": true}`: not set up on this Worker.
 - `POST /v1/session/refresh` (no bearer) `{"refresh": "<the secret>", "device": {<device proof
   over the secret>}}` → a new `/v1/session` answer. The secret works only with the device key it

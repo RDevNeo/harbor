@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: after you pick your Google account in Android's sheet, sign-in never opens the browser.
+  A Google account that never used Harbor gets its Harbor account right there, and any problem
+  shows in the app with Try again. The browser is only for phones where the sheet can't run.
+
 ## [0.91.0] - 2026-10-29
 
 ### Changed

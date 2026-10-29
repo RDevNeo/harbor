@@ -80,6 +80,23 @@ QUERY = {}
 
 def api(method, parts, body):
     """Backend API under /v1; parts excludes the leading v1."""
+    if parts == ["users"] and method == "POST":
+        # Like Clerk: email_address is refused unless the instance has email addresses on
+        # (POST /test/email-identifier {"on": false}); a taken address is form_identifier_exists.
+        if S.get("no_email_identifier"):
+            return err("form_param_unknown", "email_address is not a valid parameter for this request.")
+        emails = body.get("email_address") or []
+        email = (emails[0] if isinstance(emails, list) and emails else "").lower()
+        if not email:
+            return err("form_param_missing", "email_address is required.")
+        if S.get("race"):
+            # Another device made it a moment earlier.
+            S["race"] = False
+            make_user(email, body.get("first_name") or "", body.get("last_name") or "")
+        if user_by_email(email):
+            return err("form_identifier_exists", "That email address is taken. Please try another.", 422)
+        S["created"] = S.get("created", 0) + 1
+        return 200, make_user(email, body.get("first_name") or "", body.get("last_name") or "")
     if parts == ["users"] and method == "GET":
         # Like Clerk: a plain array of the users with that email address.
         want = (QUERY.get("email_address") or "").lower()
@@ -286,6 +303,12 @@ class H(BaseHTTPRequestHandler):
             if not b.get("email"):
                 return 400, {"error": "email required"}
             return 200, make_user(b["email"], b.get("first_name", ""), b.get("last_name", ""))
+        if what == "email-identifier" and m == "POST":
+            S["no_email_identifier"] = not b.get("on", True)
+            return 200, {"ok": True}
+        if what == "race" and m == "POST":
+            S["race"] = True
+            return 200, {"ok": True}
         if what == "google-jwks" and m == "POST":
             S["google_jwks"] = b.get("keys", [])
             return 200, {"ok": True}

@@ -487,9 +487,34 @@ def main():
     t = google_token("sam@example.com", verified=False)
     st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": gdev.proof(t)})
     check("google: an unverified email refused (403)", st == 403, js2)
+    http("POST", CLERK + "/test/email-identifier", {"on": False})
     t = google_token("newcomer@example.com")
     st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": gdev.proof(t)})
-    check("google: no Harbor account yet → 409 browser:true (first sign-in through Clerk)", st == 409 and js2.get("browser") is True, js2)
+    check("google: new account but Clerk refuses email addresses → clear 503, never browser:true",
+          st == 503 and not js2.get("browser") and "Clerk" in js2.get("error", ""), js2)
+    http("POST", CLERK + "/test/email-identifier", {"on": True})
+    ndev = Device("phone", "newcomer-phone")
+    t = google_token("newcomer@example.com")
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": ndev.proof(t)})
+    check("google: a new Google account gets its Harbor account here (no browser)",
+          st == 200 and js2["account"]["email"] == "newcomer@example.com" and len(js2["workspaces"]) == 1
+          and js2["workspaces"][0]["personal"] and len(js2.get("refresh", "")) == 64, js2)
+    newcomer_id = js2["account"]["id"]
+    _, stt, _, _ = http("GET", CLERK + "/test/state")
+    created = stt.get("created", 0)
+    t = google_token("newcomer@example.com")
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": Device("phone", "n2").proof(t)})
+    _, stt, _, _ = http("GET", CLERK + "/test/state")
+    check("google: the next sign-in finds the same account (made once)", st == 200 and js2["account"]["id"] == newcomer_id and stt.get("created", 0) == created, js2)
+    http("POST", CLERK + "/test/race", {})
+    t = google_token("racer@example.com")
+    st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": Device("phone", "racer").proof(t)})
+    _, stt, _, _ = http("GET", CLERK + "/test/state")
+    racers = [u for u in stt["users"].values() if u["email_addresses"][0]["email_address"] == "racer@example.com"]
+    check("google: made by another device meanwhile (email taken) → that same account", st == 200 and len(racers) == 1 and js2["account"]["id"] == racers[0]["id"], js2)
+    ct_new = login("newcomer@example.com")[0]
+    st, js2, _, _ = session(ct_new, Device("pc", "newcomer-pc"))
+    check("a later sign-in through Clerk (a PC) lands on the account the phone made", st == 200 and js2["account"]["id"] == newcomer_id, js2)
     t = google_token("sam@example.com")
     st, js2, _, _ = http("POST", W + "/v1/session/google", {"id_token": t, "nonce": "n1", "device": gdev.proof(google_token("sam@example.com", nonce="x"))})
     check("google: the device proof must sign this very token (400)", st == 400, js2)
