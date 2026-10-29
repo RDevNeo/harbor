@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Several Gmail accounts at once: the Gmail card lists each connected account with its own Sign
+  out, Add account (Google's account chooser) and Make default. Agents' Gmail tools take an
+  `account` (an address; the default one when left out), `accounts` lists them, and `search`
+  can look in all of them. A sign-in from before moves over as it is.
+- Connect Gmail from the phone: Settings › Apps › Gmail lists the PC's accounts, signs one out,
+  sets the default, and adds one with Android's own account sheet (tap, pick, approve). The PC
+  keeps the sign-in, since agents run there. Where the sheet can't be used, Google's page opens
+  in the browser. Hub API: `/v1/apps/gmail` (android/PROTOCOL.md).
+
 ## [0.94.0] - 2026-10-29
 
 ### Changed

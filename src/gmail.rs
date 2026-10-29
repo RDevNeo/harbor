@@ -7,13 +7,17 @@
 //! header from a 0600 file in the store. Tools call Gmail's REST API and answer in compact
 //! text: bodies decoded from MIME (text/plain first, else the HTML as text), attachments
 //! listed with their ids. Search uses Gmail's own query syntax.
+//!
+//! Several Google accounts can be signed in at once: every tool takes `account` (an address;
+//! default: the default account), `accounts` lists them, and `search` also takes "all".
 
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// The server's name, as the agent sees it (`mcp__gmail__search`…), and the app's id.
@@ -123,7 +127,7 @@ fn label_props(extra: Value) -> Value {
 }
 
 pub fn tools() -> Vec<Value> {
-    vec![
+    let mut v = vec![
         tool(
             "search",
             "Search the user's Gmail with Gmail's search syntax: from:, to:, subject:, is:unread, is:starred, has:attachment, label:, in:inbox, in:sent, newer_than:7d, after:2026/01/31, \"exact phrase\", OR, -word. Newest first: ids, date, sender, subject, labels and a snippet. threads: true lists whole conversations instead of single messages.",
@@ -222,10 +226,61 @@ pub fn tools() -> Vec<Value> {
             })),
             &["action"],
         ),
-    ]
+    ];
+    // Every tool works in one of the connected accounts.
+    for t in &mut v {
+        let all = if t["name"] == "search" { "; \"all\" searches every account" } else { "" };
+        t["inputSchema"]["properties"]["account"] = s(&format!("Gmail account to use, by address (default: the default account; see accounts){all}"));
+    }
+    v.push(tool("accounts", "The Gmail accounts connected in Harbor, the default (what tools use without account) first.", json!({}), &[]));
+    v
+}
+
+/// The account the tool call at hand works in (tools run one at a time; their threads read it).
+static ACCOUNT: Mutex<String> = Mutex::new(String::new());
+
+fn current() -> String {
+    ACCOUNT.lock().unwrap().clone()
+}
+
+fn use_account(e: &str) {
+    *ACCOUNT.lock().unwrap() = e.to_string();
+}
+
+const SIGN_IN: &str = "Gmail isn't signed in. The user can sign in under Settings › Integrations › Apps in Harbor (desktop) or Settings › Apps (phone).";
+
+/// The account a call asked for (an address in any case; empty: the default, `accounts[0]`).
+fn resolve(asked: &str, accounts: &[String]) -> Result<String, String> {
+    let Some(first) = accounts.first() else { return Err(SIGN_IN.into()) };
+    let asked = asked.trim();
+    if asked.is_empty() {
+        return Ok(first.clone());
+    }
+    accounts
+        .iter()
+        .find(|e| e.eq_ignore_ascii_case(asked))
+        .cloned()
+        .ok_or_else(|| format!("No Gmail account {asked} is connected. Connected: {}. Leave account out for the default ({first}).", accounts.join(", ")))
+}
+
+fn list_accounts(accounts: &[String]) -> Result<String, String> {
+    let Some(first) = accounts.first() else { return Err(SIGN_IN.into()) };
+    let mut out = format!("{} Gmail account{} connected; tools use {first} unless you pass account:\n", accounts.len(), if accounts.len() == 1 { "" } else { "s" });
+    for (i, e) in accounts.iter().enumerate() {
+        out += &format!("- {e}{}\n", if i == 0 { " (default)" } else { "" });
+    }
+    Ok(out)
 }
 
 fn call_tool(name: &str, a: &Value) -> Result<String, String> {
+    let accounts = crate::mcp::google_accounts(NAME);
+    if name == "accounts" {
+        return list_accounts(&accounts);
+    }
+    if name == "search" && opt(a, "account").eq_ignore_ascii_case("all") {
+        return search_all(a, &accounts);
+    }
+    use_account(&resolve(opt(a, "account"), &accounts)?);
     match name {
         "search" => search(a),
         "get_message" => get_message(a),
@@ -270,33 +325,7 @@ fn request(method: &str, url: &str, body: Option<(&str, &[u8])>) -> Result<Value
     let mut failed: Option<String> = None;
     loop {
         let (hdr, tok) = auth_header(failed.as_deref())?;
-        let mut cmd = Command::new("curl");
-        cmd.args(["-sS", "-m", "300", "-X", method, "-H"]).arg(format!("@{}", hdr.display()));
-        cmd.args(["-H", "Accept: application/json", "-w", "\n%{http_code}"]);
-        match body {
-            Some((t, _)) => cmd.args(["-H", &format!("Content-Type: {t}"), "--data-binary", "@-"]),
-            // Google answers a POST without a length with 411.
-            None if method != "GET" && method != "DELETE" => cmd.args(["-H", "Content-Length: 0"]),
-            None => &mut cmd,
-        };
-        cmd.arg(url).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut c = cmd.spawn().map_err(|e| format!("curl: {e}"))?;
-        let sin = c.stdin.take();
-        let data = body.map(|(_, b)| b.to_vec()).unwrap_or_default();
-        let writer = std::thread::spawn(move || {
-            if let Some(mut sin) = sin {
-                let _ = sin.write_all(&data);
-            }
-        });
-        let out = c.wait_with_output().map_err(|e| e.to_string())?;
-        let _ = writer.join();
-        let text = &out.stdout;
-        let cut = text.iter().rposition(|b| *b == b'\n').unwrap_or(0);
-        let code: u16 = String::from_utf8_lossy(&text[(cut + 1).min(text.len())..]).trim().parse().unwrap_or(0);
-        if code == 0 {
-            return Err(format!("Gmail didn't answer: {}", String::from_utf8_lossy(&out.stderr).trim()));
-        }
-        let v: Value = serde_json::from_slice(&text[..cut]).unwrap_or(Value::Null);
+        let (code, v) = curl(&hdr, method, url, body)?;
         if code == 401 && failed.is_none() {
             failed = Some(tok);
             continue;
@@ -306,10 +335,41 @@ fn request(method: &str, url: &str, body: Option<(&str, &[u8])>) -> Result<Value
         }
         let msg = v["error"]["message"].as_str().or(v["error_description"].as_str()).or(v["error"].as_str()).unwrap_or("");
         return Err(match code {
-            401 => format!("Gmail refused the sign-in ({msg}). Sign in to Gmail again under Settings › Integrations › Apps in Harbor."),
+            401 => format!("Gmail refused the sign-in of {} ({msg}). Sign in to it again in Harbor (Settings › Integrations › Apps).", current()),
             _ => format!("Gmail: {msg} ({code})"),
         });
     }
+}
+
+/// curl with the Authorization header from the file `hdr`: (HTTP status, JSON body).
+fn curl(hdr: &std::path::Path, method: &str, url: &str, body: Option<(&str, &[u8])>) -> Result<(u16, Value), String> {
+    let mut cmd = Command::new("curl");
+    cmd.args(["-sS", "-m", "300", "-X", method, "-H"]).arg(format!("@{}", hdr.display()));
+    cmd.args(["-H", "Accept: application/json", "-w", "\n%{http_code}"]);
+    match body {
+        Some((t, _)) => cmd.args(["-H", &format!("Content-Type: {t}"), "--data-binary", "@-"]),
+        // Google answers a POST without a length with 411.
+        None if method != "GET" && method != "DELETE" => cmd.args(["-H", "Content-Length: 0"]),
+        None => &mut cmd,
+    };
+    cmd.arg(url).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut c = cmd.spawn().map_err(|e| format!("curl: {e}"))?;
+    let sin = c.stdin.take();
+    let data = body.map(|(_, b)| b.to_vec()).unwrap_or_default();
+    let writer = std::thread::spawn(move || {
+        if let Some(mut sin) = sin {
+            let _ = sin.write_all(&data);
+        }
+    });
+    let out = c.wait_with_output().map_err(|e| e.to_string())?;
+    let _ = writer.join();
+    let text = &out.stdout;
+    let cut = text.iter().rposition(|b| *b == b'\n').unwrap_or(0);
+    let code: u16 = String::from_utf8_lossy(&text[(cut + 1).min(text.len())..]).trim().parse().unwrap_or(0);
+    if code == 0 {
+        return Err(format!("Gmail didn't answer: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok((code, serde_json::from_slice(&text[..cut]).unwrap_or(Value::Null)))
 }
 
 /// The header file for curl, with a fresh token; `failed` is a token Gmail just refused, so
@@ -317,19 +377,14 @@ fn request(method: &str, url: &str, body: Option<(&str, &[u8])>) -> Result<Value
 fn auth_header(failed: Option<&str>) -> Result<(PathBuf, String), String> {
     static LOCK: Mutex<()> = Mutex::new(());
     let _g = LOCK.lock().unwrap();
-    let gone = || {
-        if crate::mcp::signed_in(NAME) {
-            "Gmail's sign-in has expired or was revoked. Sign in to Gmail again under Settings › Integrations › Apps in Harbor."
-        } else {
-            "Gmail isn't signed in. The user can sign in under Settings › Integrations › Apps in Harbor."
-        }
-        .to_string()
-    };
-    let mut tok = crate::mcp::fresh_token(NAME, false).ok_or_else(gone)?;
+    let account = current();
+    let gone = || format!("The sign-in of {account} has expired or was revoked. Sign in to it again in Harbor (Settings › Integrations › Apps).");
+    let mut tok = crate::mcp::fresh_token_for(NAME, &account, false).ok_or_else(gone)?;
     if failed == Some(tok.as_str()) {
-        tok = crate::mcp::fresh_token(NAME, true).ok_or_else(gone)?;
+        tok = crate::mcp::fresh_token_for(NAME, &account, true).ok_or_else(gone)?;
     }
-    let p = crate::mcp::private_dir(crate::mcp::dir().join("run")).join("gmail.hdr");
+    let key: String = account.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() || "@._-".contains(c) { c } else { '_' }).collect();
+    let p = crate::mcp::private_dir(crate::mcp::dir().join("run")).join(format!("gmail.{key}.hdr"));
     let line = format!("Authorization: Bearer {tok}\n");
     if std::fs::read_to_string(&p).ok().as_deref() != Some(line.as_str()) {
         crate::mcp::write_private(&p, &line).map_err(|e| e.to_string())?;
@@ -355,46 +410,48 @@ fn each<T: Sync>(items: &[T], f: impl Fn(&T) -> Result<Value, String> + Sync) ->
     slots.into_iter().map(|m| m.into_inner().unwrap().unwrap_or_else(|| Err("not fetched".into()))).collect()
 }
 
-/// The signed-in address (Gmail's profile). For the sign-in, which also learns from it
-/// whether the user's Cloud project has the Gmail API enabled.
-pub fn email() -> Result<String, String> {
-    let v = call("GET", "/profile", None)?;
+/// The address a new sign-in's token belongs to (Gmail's profile), before it is saved: the
+/// sign-in also learns from it whether the Cloud project has the Gmail API enabled.
+pub fn profile_email(token: &str) -> Result<String, String> {
+    let name = format!("gmail-signin-{}.hdr", crate::store::random_hex(8).map_err(|e| e.to_string())?);
+    let p = crate::mcp::private_dir(crate::mcp::dir().join("run")).join(name);
+    crate::mcp::write_private(&p, &format!("Authorization: Bearer {token}\n")).map_err(|e| e.to_string())?;
+    let r = curl(&p, "GET", &format!("{API}/profile"), None);
+    let _ = std::fs::remove_file(&p);
+    let (code, v) = r?;
+    if !(200..300).contains(&code) {
+        return Err(format!("Gmail: {} ({code})", v["error"]["message"].as_str().unwrap_or("")));
+    }
     v["emailAddress"].as_str().map(String::from).ok_or_else(|| "Gmail sent no address.".into())
 }
 
-/// [`email`], once per server.
+/// The account at hand's address, lowercase.
 fn me() -> String {
-    static ME: OnceLock<String> = OnceLock::new();
-    if let Some(m) = ME.get() {
-        return m.clone();
-    }
-    match email() {
-        Ok(e) => ME.get_or_init(|| e.to_lowercase()).clone(),
-        Err(_) => String::new(),
-    }
+    current().to_lowercase()
 }
 
 type Labels = Vec<(String, String)>;
 
-static LABELS: LazyLock<Mutex<Option<(Instant, Labels)>>> = LazyLock::new(Default::default);
+static LABELS: LazyLock<Mutex<HashMap<String, (Instant, Labels)>>> = LazyLock::new(Default::default);
 
-/// The user's labels: (id, name). Cached for a minute.
+/// The account's labels: (id, name). Cached for a minute.
 fn labels() -> Labels {
+    let account = current();
     let mut c = LABELS.lock().unwrap();
-    if let Some((at, l)) = c.as_ref() {
+    if let Some((at, l)) = c.get(&account) {
         if at.elapsed() < Duration::from_secs(60) {
             return l.clone();
         }
     }
     let Ok(v) = call("GET", "/labels", None) else { return vec![] };
     let l: Vec<(String, String)> = v["labels"].as_array().into_iter().flatten().filter_map(|x| Some((x["id"].as_str()?.to_string(), x["name"].as_str()?.to_string()))).collect();
-    *c = Some((Instant::now(), l.clone()));
+    c.insert(account, (Instant::now(), l.clone()));
     l
 }
 
 /// After a label changed: the next [`labels`] fetches them again.
 fn forget_labels() {
-    *LABELS.lock().unwrap() = None;
+    LABELS.lock().unwrap().remove(&current());
 }
 
 // ------------------------------------------------------------------ arguments
@@ -444,6 +501,19 @@ fn label_names(ids: &Value, labels: &[(String, String)]) -> String {
         .map(|i| labels.iter().find(|(id, _)| id == i).map(|(_, n)| n.as_str()).unwrap_or(i))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// `search` in every connected account, one section each.
+fn search_all(a: &Value, accounts: &[String]) -> Result<String, String> {
+    if accounts.is_empty() {
+        return Err(SIGN_IN.into());
+    }
+    let mut out = String::new();
+    for e in accounts {
+        use_account(e);
+        out += &format!("## {e}\n{}\n", search(a).unwrap_or_else(|err| err));
+    }
+    Ok(out)
 }
 
 fn search(a: &Value) -> Result<String, String> {
@@ -1532,6 +1602,24 @@ mod tests {
         assert_eq!(cc, "bo@example.com, Jane <JANE@example.com>");
         assert_eq!(re_subject("Lunch"), "Re: Lunch");
         assert_eq!(re_subject("RE: Lunch"), "RE: Lunch");
+    }
+
+    #[test]
+    fn accounts_and_their_errors() {
+        let acc = vec!["ana@example.com".to_string(), "Work@Example.com".to_string()];
+        assert_eq!(resolve("", &acc).unwrap(), "ana@example.com");
+        assert_eq!(resolve(" work@example.com ", &acc).unwrap(), "Work@Example.com");
+        let e = resolve("bo@example.com", &acc).unwrap_err();
+        assert!(e.contains("No Gmail account bo@example.com is connected") && e.contains("ana@example.com, Work@Example.com") && e.contains("default (ana@example.com)"), "{e}");
+        assert!(resolve("", &[]).unwrap_err().contains("isn't signed in"));
+        let l = list_accounts(&acc).unwrap();
+        assert!(l.starts_with("2 Gmail accounts connected") && l.contains("- ana@example.com (default)\n- Work@Example.com\n"), "{l}");
+        assert!(list_accounts(&[]).is_err());
+        // Every tool takes account; search also "all"; agents can list the accounts.
+        let t = tools();
+        assert!(t.iter().all(|t| t["name"] == "accounts" || t["inputSchema"]["properties"]["account"]["type"] == "string"));
+        assert!(t.iter().find(|t| t["name"] == "search").unwrap()["inputSchema"]["properties"]["account"]["description"].as_str().unwrap().contains("\"all\""));
+        assert!(t.iter().any(|t| t["name"] == "accounts"));
     }
 
     #[test]

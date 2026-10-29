@@ -10,9 +10,10 @@ binfmt
 # Once, before the parallel builds: rustup doesn't take two installs at a time.
 toolchain "$core" --target aarch64-unknown-linux-gnu
 
-# Harbor's Google OAuth client (mcp.rs option_env!), when release.yml passes it: by name only, so
-# the values never show on a command line.
-google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET)
+# Harbor's Google OAuth clients (mcp.rs option_env!: the Desktop one, and the Web one phones get
+# Gmail codes for), when release.yml passes them: by name only, so the values never show on a
+# command line.
+google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOGLE_WEB_CLIENT_ID -e HARBOR_GOOGLE_WEB_CLIENT_SECRET)
 
 # One target dir each: cargo locks a target dir for the whole build.
 x86_64() {

@@ -1677,6 +1677,40 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     let w = r.get_mut();
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["v1", "app"]) => send_json(w, 200, &app_info()),
+        // The Gmail app's accounts on this PC (0.95, mcp.rs): a phone lists them, adds one (a
+        // code from Android's account sheet, or its browser sign-in) or signs one out. On this
+        // connection's thread: an exchange with Google takes a moment.
+        ("GET", ["v1", "apps", "gmail"]) => send_json(w, 200, &gmail_info()),
+        ("POST", ["v1", "apps", "gmail", action]) => {
+            let body: Value = read_body(&mut r, req.len, 64 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            let s = |k: &str| body[k].as_str().unwrap_or("").trim().to_string();
+            let id = crate::gmail::NAME;
+            let known = |e: &str| crate::mcp::google_accounts(id).iter().any(|x| x.eq_ignore_ascii_case(e));
+            let done: Result<Value, String> = match *action {
+                "code" => crate::mcp::google_phone_code(id, &s("code")).map(|e| json!({ "email": e })),
+                "start" => crate::mcp::google_phone_start(id, &s("redirect_uri")).map(|(url, state)| json!({ "url": url, "state": state })),
+                "finish" => crate::mcp::google_phone_finish(id, &s("state"), &s("code")).map(|e| json!({ "email": e })),
+                "default" if known(&s("email")) => {
+                    crate::mcp::set_google_default(id, &s("email"));
+                    Ok(json!({}))
+                }
+                "signout" if known(&s("email")) => {
+                    crate::mcp::sign_out_account(id, &s("email"));
+                    Ok(json!({}))
+                }
+                "default" | "signout" => Err("That account isn't connected here.".into()),
+                _ => return send_json(r.get_mut(), 404, &json!({ "error": "no such call" })),
+            };
+            match done {
+                Ok(mut v) => {
+                    if let (Some(o), Value::Object(info)) = (v.as_object_mut(), gmail_info()) {
+                        o.extend(info);
+                    }
+                    send_json(r.get_mut(), 200, &v)
+                }
+                Err(e) => send_json(r.get_mut(), 409, &json!({ "error": e })),
+            }
+        }
         // Every PC's Harbor and every phone's app (versions.rs, 0.68).
         ("GET", ["v1", "versions"]) => send_json(w, 200, &crate::versions::api_json(hub)),
         ("GET", ["v1", "events"]) => {
@@ -1874,6 +1908,15 @@ fn mention_json(m: &crate::mentions::Mention) -> Value {
         v["title"] = json!(m.title);
     }
     v
+}
+
+/// The Gmail app here, for a phone: its accounts (the default first), the Web client a phone
+/// asks Android's account sheet for a code for (null: this PC can't take such codes, so the
+/// browser), and whether this PC can run a browser sign-in for the phone.
+fn gmail_info() -> Value {
+    let id = crate::gmail::NAME;
+    let accounts: Vec<Value> = crate::mcp::google_accounts(id).iter().enumerate().map(|(i, e)| json!({ "email": e, "default": i == 0 })).collect();
+    json!({ "accounts": accounts, "web_client_id": crate::mcp::google_web_client_id(), "browser": crate::mcp::google_desktop_client(id).is_some() })
 }
 
 fn app_info() -> Value {

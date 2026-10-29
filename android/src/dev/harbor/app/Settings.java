@@ -19,7 +19,8 @@ import org.json.JSONObject;
  *  app and its update, the PC's address and version, the account and the workspace's people
  *  (owners invite by email), color mode, sign out. */
 public class Settings extends Base {
-    private TextView updateNote, hubVersion, badge;
+    private TextView updateNote, hubVersion, badge, gmailSub;
+    private LinearLayout gmailCard;
     private View updateBtn;
     private LinearLayout autoRow, whyRow;
     private long available;
@@ -123,6 +124,20 @@ public class Settings extends Base {
                 runOnUiThread(() -> people.setVisibility(View.VISIBLE));
             } catch (Exception e) { /* an older hub: no such call */ }
         });
+
+        // Apps agents on this PC use (Gmail, 0.95: GET /v1/apps/gmail; hidden on older hubs).
+        LinearLayout apps = card(col);
+        apps.setVisibility(View.GONE);
+        LinearLayout gm = Ui.cardRow(this, Ui.I_PLUG, "Gmail", "…", Ui.FG, v -> {
+            Gmail.changed = this::gmailRow;
+            Gmail.show(this, hub);
+        });
+        gm.addView(Ui.chevron(this));
+        Ui.wrapSub(gm, 2);
+        apps.addView(Ui.label(this, "Apps"), Ui.fill());
+        apps.addView(gm, Ui.fill());
+        gmailSub = (TextView) ((LinearLayout) gm.getChildAt(1)).getChildAt(1);
+        gmailCard = apps;
 
         LinearLayout look = card(col);
         LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
@@ -855,6 +870,7 @@ public class Settings extends Base {
         if (hub == null) return;
         autoRows(); // back from Android's "Install unknown apps"
         checkUpdates();
+        gmailRow(); // back from Google's page or the account sheet
         // An install that fails after its download (Android or Play Protect refused it).
         Update.changed = () -> { if (!isFinishing()) { autoRows(); checkUpdates(); } };
     }
@@ -863,6 +879,26 @@ public class Settings extends Base {
     protected void onPause() {
         super.onPause();
         Update.changed = null;
+    }
+
+    /** The Apps card's Gmail row: the PC's accounts; the card stays hidden on hubs before 0.95. */
+    private void gmailRow() {
+        if (gmailCard == null) return;
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject r = hub.get("/v1/apps/gmail");
+                runOnUiThread(() -> {
+                    gmailSub.setText(Gmail.summary(r));
+                    gmailCard.setVisibility(View.VISIBLE);
+                });
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (Gmail.result(this, req, res, data)) gmailRow();
     }
 
     /** The PC's version, and the newest app any PC offers (tap the Update row to ask again). */

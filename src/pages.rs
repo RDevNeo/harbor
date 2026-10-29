@@ -929,7 +929,10 @@ impl App {
         let secret_id = Id::NULL.with(("app-secret", a.id));
         let mut secret: String = ui.data(|d| d.get_temp(secret_id)).unwrap_or_default();
         // Harbor's own Google client signs in with one click, unless the user saved their own.
-        let builtin = matches!(a.auth, mcp::Auth::Google { .. }) && mcp::google_builtin() && mcp::google_client(a.id).0.is_empty();
+        let google = matches!(a.auth, mcp::Auth::Google { .. });
+        let builtin = google && mcp::google_builtin() && mcp::google_client(a.id).0.is_empty();
+        // A Google app can have several accounts, each listed under the card's head.
+        let accounts = if google { mcp::google_accounts(a.id) } else { vec![] };
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if pending.is_some() {
@@ -940,6 +943,15 @@ impl App {
                 } else if key.is_some() {
                     if w::btn("Cancel").sm().ghost().show(ui).clicked() {
                         key = None;
+                    }
+                } else if signed && google {
+                    // The same one-click sign-in; Google shows its account chooser first.
+                    if w::btn(&format!("{}  Add account", ic::PLUS)).sm().ghost().show(ui).tip("Connect another Google account").clicked() {
+                        if mcp::google_desktop_client(a.id).is_some() {
+                            mcp::sign_in(a.id, ctx.clone());
+                        } else {
+                            (key, secret) = (Some(String::new()), String::new());
+                        }
                     }
                 } else if signed {
                     if w::btn("Sign out").sm().ghost().show(ui).clicked() {
@@ -973,6 +985,7 @@ impl App {
                         Some(_) => ("Finish in your browser…".to_string(), t.blue(900)),
                         None if key.is_some() && matches!(a.auth, mcp::Auth::Google { .. }) => ("Add your Google OAuth client below".to_string(), t.subtle()),
                         None if key.is_some() => ("Paste an API key below".to_string(), t.subtle()),
+                        None if accounts.len() > 1 => (format!("{} accounts", accounts.len()), t.subtle()),
                         None if signed => (mcp::account(a.id).map(|u| format!("Signed in as {u}")).unwrap_or_else(|| a.about.into()), t.subtle()),
                         None => (a.about.to_string(), t.subtle()),
                     };
@@ -1071,6 +1084,28 @@ impl App {
             if save {
                 let _ = mcp::save_key(a.id, k);
                 key = None;
+            }
+        }
+        // Each Google account: the default (what agents use when they name none), sign-out.
+        if pending.is_none() && key.is_none() && !accounts.is_empty() {
+            ui.add_space(6.0);
+            for (i, e) in accounts.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if w::btn("Sign out").sm().ghost().show(ui).tip(&format!("Sign {e} out: agents lose its mail")).clicked() {
+                            mcp::sign_out_account(a.id, e);
+                        }
+                        if i == 0 {
+                            w::badge(ui, if accounts.len() > 1 { "Default" } else { "Signed in" }, Tone::Green);
+                        } else if w::btn("Make default").sm().ghost().show(ui).tip("Agents use the default account when they name none").clicked() {
+                            mcp::set_google_default(a.id, e);
+                        }
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            let wdt = ui.available_width().max(20.0);
+                            ui.label(w::truncated(ui, e, theme::ts("label-13").resolve(ui.style()), t.fg(), wdt));
+                        });
+                    });
+                });
             }
         }
         ui.data_mut(|d| match key {

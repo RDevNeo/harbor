@@ -1530,6 +1530,40 @@ on a PC picks Automatically / Ask me, and "Auto-update all" turns it on for ever
 the desktop's Settings › Devices has Auto-update per PC and "Auto-update all PCs" (through
 `/mesh/v1/call`).
 
+### Gmail (0.95): `GET /v1/apps/gmail`, `POST /v1/apps/gmail/{code,start,finish,default,signout}`
+
+The Gmail app's Google accounts on this PC (mcp.rs, gmail.rs): agents running here use them. Hubs
+before 0.95 answer `404`; the phone then hides Settings › Apps. Every answer below (errors
+aside) is this object, plus `email` after a sign-in:
+
+`{"accounts": [{"email": "ana@example.com", "default": true}, …], "web_client_id": "…apps.googleusercontent.com" | null, "browser": true}`
+
+- `accounts`: the default (what agents use when a tool names no `account`) first.
+- `web_client_id`: the Google Cloud Web client this PC can take a code for. Null: it can't (a
+  build without that client's secret), so use the browser.
+- `browser`: this PC can run a browser sign-in for the phone (Harbor's built-in Google client,
+  or the user's own). False with a null `web_client_id`: connect Gmail on the PC.
+
+Adding an account, with Android's own account sheet: `AccountManager.newChooseAccountIntent`
+(Google accounts), then `getAuthToken(account, "oauth2:server:client_id:<web_client_id>:api_scope:<scopes>")`
+with the activity (Google's consent screen shows when needed). The token is a one-time server code. Invalidate it at once, then
+`POST /v1/apps/gmail/code` `{"code": "…"}`. The PC exchanges it with the Web client's secret
+(`redirect_uri` empty) and keeps the refresh token; nothing stays on the phone. Scopes:
+`https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic`.
+
+The browser instead (no `web_client_id`, no Google account on the phone, or Google refused):
+the phone listens on `127.0.0.1:<port>` and sends `POST /v1/apps/gmail/start`
+`{"redirect_uri": "http://127.0.0.1:<port>/"}` (nothing else is accepted). The answer is
+`{"url": "https://accounts.google.com/…", "state": "…"}`: Google's page, with its account chooser,
+for the PC's Desktop client. Open it in a Custom Tab (`&login_hint=` may name the account). The
+browser comes back to the phone's port with `code` and `state`; check `state`, then
+`POST /v1/apps/gmail/finish` `{"state": "…", "code": "…"}` within 15 minutes.
+The PC exchanges it with the PKCE verifier it kept.
+
+`POST /v1/apps/gmail/default` `{"email"}` makes an account the default; `POST /v1/apps/gmail/signout`
+`{"email"}` signs one out (Google revokes the grant). An unknown account, a failed exchange or an
+expired start: `409 {"error": "…"}`.
+
 ### `GET /v1/app`
 
 `{"version_code": 7000, "url": "/app.apk", "hub": {…}}`; `version_code` 0: the hub has no app

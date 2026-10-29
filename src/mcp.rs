@@ -171,6 +171,9 @@ struct Cred {
     /// Who signed in (Gmail's address), for the card.
     #[serde(default)]
     account: String,
+    /// When it signed in (Unix seconds): a Google app lists its accounts in that order.
+    #[serde(default)]
+    added: i64,
 }
 
 fn cred_path(id: &str) -> PathBuf {
@@ -205,6 +208,7 @@ pub fn signed_in(id: &str) -> bool {
     match app(id).map(|a| &a.auth) {
         Some(Auth::Github) => gh_token().is_some(),
         Some(Auth::Convex) => convex_token().is_some(),
+        Some(Auth::Google { .. }) => !google_accounts(id).is_empty(),
         Some(_) => load(id).is_some(),
         None => false,
     }
@@ -220,6 +224,7 @@ pub fn github_user() -> Option<String> {
 pub fn account(id: &str) -> Option<String> {
     match app(id)?.auth {
         Auth::Github => github_user(),
+        Auth::Google { .. } => google_accounts(id).into_iter().next(),
         _ => load(id).map(|c| c.account).filter(|a| !a.is_empty()),
     }
 }
@@ -230,7 +235,9 @@ fn token(id: &str) -> Option<String> {
         Auth::Github => gh_token(),
         Auth::Convex => convex_token(),
         Auth::Key { .. } => load(id).map(|c| c.access_token),
-        Auth::OAuth | Auth::Google { .. } => fresh_token(id, false),
+        Auth::OAuth => fresh_token(id, false),
+        // Harbor's own server (gmail.rs) refreshes each account itself: this only says one is there.
+        Auth::Google { .. } => google_accounts(id).first().and_then(|e| load_account(id, e)).map(|c| c.access_token),
     }
 }
 
@@ -240,6 +247,15 @@ pub fn fresh_token(id: &str, force: bool) -> Option<String> {
     let c = load(id)?;
     if force || c.expires_at > 0 && store::now() > c.expires_at - 120 {
         return refresh(id, &c).ok().map(|c| c.access_token);
+    }
+    Some(c.access_token)
+}
+
+/// [`fresh_token`] for one account of a Google app.
+pub fn fresh_token_for(id: &str, email: &str, force: bool) -> Option<String> {
+    let c = load_account(id, email)?;
+    if force || c.expires_at > 0 && store::now() > c.expires_at - 120 {
+        return refresh_to(&account_path(id, email), &c).ok().map(|c| c.access_token);
     }
     Some(c.access_token)
 }
@@ -254,14 +270,11 @@ pub fn sign_out(id: &str) {
             let _ = std::fs::remove_file(convex_home().join(".convex/config.json"));
         }
         Some(Auth::Google { .. }) => {
-            // Google keeps a grant until it is revoked; the user's own client stays for the next sign-in.
+            for e in google_accounts(id) {
+                sign_out_account(id, &e);
+            }
+            // The user's own client stays for the next sign-in.
             if let Some(c) = load_any(id) {
-                let t = if c.refresh_token.is_empty() { c.access_token.clone() } else { c.refresh_token.clone() };
-                if !t.is_empty() {
-                    std::thread::spawn(move || {
-                        let _ = http("POST", GOOGLE_REVOKE, Some("application/x-www-form-urlencoded"), Some(&form(&[("token", &t)])));
-                    });
-                }
                 match own_client((c.client_id, c.client_secret), GOOGLE_BUILTIN) {
                     (cid, _) if cid.is_empty() => {
                         let _ = std::fs::remove_file(cred_path(id));
@@ -342,6 +355,212 @@ fn parse_google_client(client_id: &str, secret: &str) -> Option<(String, String)
         Err(_) => (client_id.trim().to_string(), secret.trim().to_string()),
     };
     (cid.ends_with(".apps.googleusercontent.com") && !secret.trim().is_empty()).then(|| (cid, secret.trim().to_string()))
+}
+
+// ------------------------------------------------------------------ Google accounts
+
+/// A Google app's signed-in accounts, a file each in `<id>.accounts/` (and `default` there: the
+/// address agents get when they name none). `<id>.json` keeps only the user's own OAuth client;
+/// a sign-in from before several accounts moves over on first use ([`migrate_in`]).
+fn accounts_dir_in(base: &Path, id: &str) -> PathBuf {
+    base.join(format!("{id}.accounts"))
+}
+
+/// "Ana@Example.com" → "ana@example.com.json".
+fn account_file(email: &str) -> String {
+    let e: String = email.trim().to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() || "@._+-".contains(c) { c } else { '_' }).collect();
+    format!("{e}.json")
+}
+
+fn account_path(id: &str, email: &str) -> PathBuf {
+    private_dir(accounts_dir_in(&dir(), id)).join(account_file(email))
+}
+
+fn load_account(id: &str, email: &str) -> Option<Cred> {
+    serde_json::from_str(&std::fs::read_to_string(account_path(id, email)).ok()?).ok().filter(|c: &Cred| !c.access_token.is_empty())
+}
+
+/// Moves a single sign-in from before several accounts into `<id>.accounts/`; `<id>.json` keeps
+/// the user's own client, if any.
+fn migrate_in(base: &Path, id: &str, builtin: Option<(&str, &str)>) {
+    let old = base.join(format!("{id}.json"));
+    let Some(mut c) = std::fs::read_to_string(&old).ok().and_then(|t| serde_json::from_str::<Cred>(&t).ok()) else { return };
+    if c.access_token.is_empty() {
+        return;
+    }
+    if c.account.is_empty() {
+        c.account = "unknown".into();
+    }
+    if c.added == 0 {
+        c.added = store::now();
+    }
+    let d = private_dir(accounts_dir_in(base, id));
+    if write_private(&d.join(account_file(&c.account)), &serde_json::to_string_pretty(&c).unwrap_or_default()).is_err() {
+        return;
+    }
+    let _ = match own_client((c.client_id, c.client_secret), builtin) {
+        (cid, _) if cid.is_empty() => std::fs::remove_file(&old),
+        (client_id, client_secret) => write_private(&old, &serde_json::to_string_pretty(&Cred { client_id, client_secret, ..Default::default() }).unwrap_or_default()),
+    };
+}
+
+/// The accounts in `base`, the default first, then in the order they signed in.
+fn accounts_in(base: &Path, id: &str) -> Vec<Cred> {
+    let d = accounts_dir_in(base, id);
+    let mut v: Vec<Cred> = std::fs::read_dir(&d)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| serde_json::from_str::<Cred>(&std::fs::read_to_string(e.path()).ok()?).ok())
+        .filter(|c| !c.access_token.is_empty() && !c.account.is_empty())
+        .collect();
+    let def = std::fs::read_to_string(d.join("default")).unwrap_or_default().trim().to_lowercase();
+    v.sort_by_key(|c| (c.account.to_lowercase() != def, c.added, c.account.to_lowercase()));
+    v
+}
+
+/// The addresses signed in to a Google app, the default (agents' when they name none) first.
+pub fn google_accounts(id: &str) -> Vec<String> {
+    let base = dir();
+    migrate_in(&base, id, GOOGLE_BUILTIN);
+    accounts_in(&base, id).into_iter().map(|c| c.account).collect()
+}
+
+/// Makes `email` the account agents use when they name none.
+pub fn set_google_default(id: &str, email: &str) {
+    let d = private_dir(accounts_dir_in(&dir(), id));
+    let _ = write_private(&d.join("default"), email.trim());
+}
+
+/// Signs one account out: Google revokes the grant, the tokens go.
+pub fn sign_out_account(id: &str, email: &str) {
+    let p = account_path(id, email);
+    if let Some(c) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Cred>(&t).ok()) {
+        let t = if c.refresh_token.is_empty() { c.access_token } else { c.refresh_token };
+        if !t.is_empty() {
+            std::thread::spawn(move || {
+                let _ = http("POST", GOOGLE_REVOKE, Some("application/x-www-form-urlencoded"), Some(&form(&[("token", &t)])));
+            });
+        }
+    }
+    let _ = std::fs::remove_file(&p);
+    let def = accounts_dir_in(&dir(), id).join("default");
+    if std::fs::read_to_string(&def).is_ok_and(|d| d.trim().eq_ignore_ascii_case(email.trim())) {
+        let _ = std::fs::remove_file(def);
+    }
+}
+
+/// Harbor's Google Cloud Web client (release builds, like [`GOOGLE_BUILTIN`]): it takes the
+/// one-time codes phones get from Android's own account sheet. Same project as the Desktop client.
+const GOOGLE_WEB: Option<(&str, &str)> = match (option_env!("HARBOR_GOOGLE_WEB_CLIENT_ID"), option_env!("HARBOR_GOOGLE_WEB_CLIENT_SECRET")) {
+    (Some(id), Some(secret)) if !id.is_empty() && !secret.is_empty() => Some((id, secret)),
+    _ => None,
+};
+
+/// The Web client a phone asks Android for a code for, when this PC can take that code.
+pub fn google_web_client_id() -> Option<&'static str> {
+    GOOGLE_WEB.map(|(id, _)| id)
+}
+
+/// The Desktop client a browser sign-in uses: the user's own, else Harbor's.
+pub fn google_desktop_client(id: &str) -> Option<(String, String)> {
+    pick_client(google_client(id), GOOGLE_BUILTIN)
+}
+
+/// A Google authorization code exchanged with `client` for tokens, checked and saved as one
+/// more account (the same address replaces its older sign-in). `redirect` is the one the code
+/// was made for ("" for a phone's server code). Returns the address.
+pub fn google_save_code(id: &str, scope: &str, client: (String, String), code: &str, redirect: &str, verifier: &str) -> Result<String, String> {
+    let (client_id, client_secret) = client;
+    let body = form(&[
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", &client_id),
+        ("client_secret", &client_secret),
+        ("code_verifier", verifier),
+    ]);
+    // A phone's server code goes with an empty redirect_uri (form() leaves empty values out).
+    let body = format!("{body}&redirect_uri={}", enc(redirect));
+    let (status, t) = http("POST", GOOGLE_TOKEN, Some("application/x-www-form-urlencoded"), Some(&body))?;
+    let mut c = Cred { client_id, client_secret, token_endpoint: GOOGLE_TOKEN.into(), ..Default::default() };
+    apply_token(&mut c, status, &t)?;
+    // Google's consent page lets people untick scopes.
+    let missing = missing_scopes(scope, t["scope"].as_str());
+    if missing.iter().any(|s| s.ends_with("gmail.modify")) {
+        return Err("Google didn't grant access to the mail: sign in again and tick every box.".into());
+    }
+    if c.refresh_token.is_empty() {
+        return Err("Google sent no refresh token: remove Harbor at myaccount.google.com/permissions and sign in again.".into());
+    }
+    // Also tells a client whose project hasn't enabled the Gmail API, before any agent tries.
+    c.account = crate::gmail::profile_email(&c.access_token)?;
+    c.added = store::now();
+    write_private(&account_path(id, &c.account), &serde_json::to_string_pretty(&c).unwrap_or_default()).map_err(|e| e.to_string())?;
+    Ok(c.account)
+}
+
+/// A phone's browser sign-in (when Android's own sheet can't): the Desktop client's flow,
+/// redirected to the phone's own loopback. Kept until [`google_phone_finish`], 15 minutes at most.
+struct PhoneFlow {
+    verifier: String,
+    redirect: String,
+    client: (String, String),
+    at: Instant,
+}
+
+static PHONE_FLOWS: LazyLock<Mutex<HashMap<String, PhoneFlow>>> = LazyLock::new(Default::default);
+
+/// Only the phone's own loopback, `http://127.0.0.1:<port>/`.
+fn phone_redirect_ok(r: &str) -> bool {
+    r.strip_prefix("http://127.0.0.1:").and_then(|p| p.strip_suffix('/')).is_some_and(|p| p.parse::<u16>().is_ok_and(|n| n > 0))
+}
+
+/// Starts a phone's browser sign-in: (Google's page with its account chooser, state).
+pub fn google_phone_start(id: &str, redirect: &str) -> Result<(String, String), String> {
+    let Some(Auth::Google { scope, .. }) = app(id).map(|a| &a.auth) else { return Err("not a Google app".into()) };
+    if !phone_redirect_ok(redirect) {
+        return Err("redirect_uri must be http://127.0.0.1:<port>/".into());
+    }
+    let client = google_desktop_client(id).ok_or("This PC's Harbor has no Google client: sign in on the PC first.")?;
+    let verifier = b64url(&random(32)?);
+    let state = b64url(&random(16)?);
+    let url = google_auth_url(&client.0, redirect, scope, &verifier, &state);
+    let mut flows = PHONE_FLOWS.lock().unwrap();
+    flows.retain(|_, f| f.at.elapsed() < Duration::from_secs(900));
+    flows.insert(state.clone(), PhoneFlow { verifier, redirect: redirect.into(), client, at: Instant::now() });
+    Ok((url, state))
+}
+
+/// Finishes a phone's browser sign-in with the code its loopback got. Returns the address.
+pub fn google_phone_finish(id: &str, state: &str, code: &str) -> Result<String, String> {
+    let Some(Auth::Google { scope, .. }) = app(id).map(|a| &a.auth) else { return Err("not a Google app".into()) };
+    let f = PHONE_FLOWS.lock().unwrap().remove(state).filter(|f| f.at.elapsed() < Duration::from_secs(900)).ok_or("That sign-in expired: start again.")?;
+    google_save_code(id, scope, f.client, code, &f.redirect, &f.verifier)
+}
+
+/// A phone's one-time server code from Android's account sheet, for the Web client.
+pub fn google_phone_code(id: &str, code: &str) -> Result<String, String> {
+    let Some(Auth::Google { scope, .. }) = app(id).map(|a| &a.auth) else { return Err("not a Google app".into()) };
+    let (cid, secret) = GOOGLE_WEB.ok_or("This PC's Harbor can't take a code from the phone's account sheet.")?;
+    google_save_code(id, scope, (cid.into(), secret.into()), code, "", "")
+}
+
+/// Google's sign-in page: offline access (a refresh token), the account chooser first.
+fn google_auth_url(client_id: &str, redirect: &str, scope: &str, verifier: &str, state: &str) -> String {
+    let q = form(&[
+        ("response_type", "code"),
+        ("client_id", client_id),
+        ("redirect_uri", redirect),
+        ("scope", scope),
+        ("code_challenge", &b64url(&sha256(verifier.as_bytes()))),
+        ("code_challenge_method", "S256"),
+        ("state", state),
+        ("access_type", "offline"),
+        // The chooser, so another account can be added; consent, so Google sends a refresh token.
+        ("prompt", "select_account consent"),
+    ]);
+    format!("{GOOGLE_AUTH}?{q}")
 }
 
 // ------------------------------------------------------------------ sign-in flows
@@ -632,52 +851,16 @@ const GOOGLE_REVOKE: &str = "https://oauth2.googleapis.com/revoke";
 /// built-in one. A refresh token only comes with `access_type=offline`, and again on a later
 /// sign-in with `prompt=consent`.
 fn google_login(id: &str, scope: &str, cancel: &AtomicBool, update: &dyn Fn(Pending)) -> Result<(), String> {
-    let (client_id, client_secret) = pick_client(google_client(id), GOOGLE_BUILTIN).ok_or("Add your OAuth client first.")?;
+    let client = google_desktop_client(id).ok_or("Add your OAuth client first.")?;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let redirect = format!("http://127.0.0.1:{}/", listener.local_addr().map_err(|e| e.to_string())?.port());
     let verifier = b64url(&random(32)?);
     let state = b64url(&random(16)?);
-    let q = form(&[
-        ("response_type", "code"),
-        ("client_id", &client_id),
-        ("redirect_uri", &redirect),
-        ("scope", scope),
-        ("code_challenge", &b64url(&sha256(verifier.as_bytes()))),
-        ("code_challenge_method", "S256"),
-        ("state", &state),
-        ("access_type", "offline"),
-        ("prompt", "consent"),
-    ]);
-    let auth_url = format!("{GOOGLE_AUTH}?{q}");
+    let auth_url = google_auth_url(&client.0, &redirect, scope, &verifier, &state);
     crate::git::open_url(&auth_url);
     update(Pending { code: None, url: Some(auth_url) });
     let code = wait_callback(&listener, "/", &state, cancel)?;
-    let body = form(&[
-        ("grant_type", "authorization_code"),
-        ("code", &code),
-        ("redirect_uri", &redirect),
-        ("client_id", &client_id),
-        ("client_secret", &client_secret),
-        ("code_verifier", &verifier),
-    ]);
-    let (status, t) = http("POST", GOOGLE_TOKEN, Some("application/x-www-form-urlencoded"), Some(&body))?;
-    let mut c = Cred { client_id, client_secret, token_endpoint: GOOGLE_TOKEN.into(), ..Default::default() };
-    apply_token(&mut c, status, &t)?;
-    // Google's consent page lets people untick scopes.
-    let missing = missing_scopes(scope, t["scope"].as_str());
-    if missing.iter().any(|s| s.ends_with("gmail.modify")) {
-        return Err("Google didn't grant access to your mail: sign in again and tick every box.".into());
-    }
-    save(id, &c)?;
-    // A client whose project hasn't enabled the Gmail API signs in fine and fails on first use.
-    match crate::gmail::email() {
-        Ok(e) => c.account = e,
-        Err(e) => {
-            let _ = save(id, &Cred { client_id: c.client_id, client_secret: c.client_secret, ..Default::default() });
-            return Err(e);
-        }
-    }
-    save(id, &c)
+    google_save_code(id, scope, client, &code, &redirect, &verifier).map(|_| ())
 }
 
 /// The scopes asked for that the token answer's `scope` doesn't list (none when it has none).
@@ -700,6 +883,11 @@ fn apply_token(c: &mut Cred, status: u16, t: &Value) -> Result<(), String> {
 }
 
 fn refresh(id: &str, c: &Cred) -> Result<Cred, String> {
+    refresh_to(&cred_path(id), c)
+}
+
+/// Refreshes `c` and saves it to `path`.
+fn refresh_to(path: &Path, c: &Cred) -> Result<Cred, String> {
     if c.refresh_token.is_empty() {
         return Err("expired".into());
     }
@@ -713,7 +901,7 @@ fn refresh(id: &str, c: &Cred) -> Result<Cred, String> {
     let (status, t) = http("POST", &c.token_endpoint, Some("application/x-www-form-urlencoded"), Some(&body))?;
     let mut n = c.clone();
     apply_token(&mut n, status, &t)?;
-    save(id, &n)?;
+    write_private(path, &serde_json::to_string_pretty(&n).unwrap_or_default()).map_err(|e| e.to_string())?;
     Ok(n)
 }
 
@@ -723,11 +911,22 @@ fn keep_fresh() {
     STARTED.call_once(|| {
         std::thread::spawn(|| {
             loop {
-                for a in APPS.iter().filter(|a| matches!(a.auth, Auth::OAuth | Auth::Google { .. })) {
-                    if let Some(c) = load(a.id) {
-                        if c.expires_at > 0 && c.expires_at - store::now() < 15 * 60 {
-                            let _ = refresh(a.id, &c);
+                let soon = |c: &Cred| c.expires_at > 0 && c.expires_at - store::now() < 15 * 60;
+                for a in APPS {
+                    match a.auth {
+                        Auth::OAuth => {
+                            if let Some(c) = load(a.id).filter(soon) {
+                                let _ = refresh(a.id, &c);
+                            }
                         }
+                        Auth::Google { .. } => {
+                            for e in google_accounts(a.id) {
+                                if let Some(c) = load_account(a.id, &e).filter(soon) {
+                                    let _ = refresh_to(&account_path(a.id, &e), &c);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 std::thread::sleep(Duration::from_secs(300));
@@ -1173,6 +1372,52 @@ mod tests {
         assert_eq!(own_client(("harbor.apps.googleusercontent.com".into(), "harbor-secret".into()), builtin), none);
         assert_eq!(own_client(own.clone(), builtin), own);
         assert_eq!(own_client(own.clone(), None), own);
+    }
+
+    #[test]
+    fn google_accounts_migrate_and_order() {
+        let base = std::env::temp_dir().join(format!("harbor-mcp-test-{}", store::random_hex(6).unwrap()));
+        std::fs::create_dir_all(&base).unwrap();
+        let old = base.join("gmail.json");
+        let builtin = Some(("harbor.apps.googleusercontent.com", "s"));
+        // A sign-in from before several accounts, with Harbor's client: moved, the old file gone.
+        let c = Cred { access_token: "a1".into(), refresh_token: "r1".into(), client_id: "harbor.apps.googleusercontent.com".into(), account: "Ana@Example.com".into(), ..Default::default() };
+        write_private(&old, &serde_json::to_string(&c).unwrap()).unwrap();
+        migrate_in(&base, "gmail", builtin);
+        assert!(!old.exists());
+        let moved = accounts_in(&base, "gmail");
+        assert_eq!(moved.len(), 1);
+        assert_eq!((moved[0].account.as_str(), moved[0].refresh_token.as_str()), ("Ana@Example.com", "r1"));
+        assert!(moved[0].added > 0);
+        assert!(base.join("gmail.accounts/ana@example.com.json").exists());
+        // Again: nothing to do.
+        migrate_in(&base, "gmail", builtin);
+        assert_eq!(accounts_in(&base, "gmail").len(), 1);
+        // The user's own client stays in gmail.json, without tokens.
+        let own = Cred { access_token: "a2".into(), client_id: "mine.apps.googleusercontent.com".into(), client_secret: "x".into(), account: "bo@example.com".into(), added: 1, ..Default::default() };
+        write_private(&old, &serde_json::to_string(&own).unwrap()).unwrap();
+        migrate_in(&base, "gmail", builtin);
+        let kept: Cred = serde_json::from_str(&std::fs::read_to_string(&old).unwrap()).unwrap();
+        assert_eq!((kept.client_id.as_str(), kept.access_token.as_str()), ("mine.apps.googleusercontent.com", ""));
+        // Order: by sign-in time, the default first.
+        let names = |b: &Path| accounts_in(b, "gmail").into_iter().map(|c| c.account).collect::<Vec<_>>();
+        assert_eq!(names(&base), vec!["bo@example.com", "Ana@Example.com"]);
+        write_private(&base.join("gmail.accounts/default"), "ana@example.com").unwrap();
+        assert_eq!(names(&base), vec!["Ana@Example.com", "bo@example.com"]);
+        // A file without tokens (or address) isn't an account.
+        write_private(&base.join("gmail.accounts/x.json"), r#"{"access_token":"","account":"x@example.com"}"#).unwrap();
+        assert_eq!(names(&base).len(), 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn google_account_files_and_phone_redirects() {
+        assert_eq!(account_file(" Ana.B+x@Example.com "), "ana.b+x@example.com.json");
+        assert_eq!(account_file("../../etc/passwd"), ".._.._etc_passwd.json");
+        assert!(phone_redirect_ok("http://127.0.0.1:43123/"));
+        assert!(!phone_redirect_ok("http://127.0.0.1:43123/x") && !phone_redirect_ok("https://evil.example/") && !phone_redirect_ok("http://127.0.0.1:0/"));
+        let u = google_auth_url("cid", "http://127.0.0.1:1/", "s1 s2", "v", "st");
+        assert!(u.contains("prompt=select_account%20consent") && u.contains("access_type=offline") && u.contains("state=st"), "{u}");
     }
 
     #[test]

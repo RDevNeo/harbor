@@ -11,7 +11,9 @@
 # ANDROID_KEYSTORE (base64 of the app's signing keystore), ANDROID_KEYSTORE_PASS,
 # ANDROID_KEY_ALIAS. Every APK must be signed with that same key, or phones can't update.
 # GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET (optional): Harbor's Google OAuth Desktop client,
-# compiled into the desktop builds for the Gmail app's one-click sign-in.
+# compiled into the desktop builds for the Gmail app's one-click sign-in. HARBOR_GOOGLE_WEB_CLIENT_SECRET
+# (optional): the secret of the Web client (HARBOR_GOOGLE_WEB_CLIENT_ID), so a PC can take the
+# one-time code a phone gets from Android's account sheet for Gmail.
 name: release
 
 # Pushes to main (each publish.sh) build everything except Servo (see browser.yml) but sign or
@@ -66,7 +68,8 @@ jobs:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" bash .github/boat/build.sh
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh
       - name: Fetch the results
         run: |
           set -eu
