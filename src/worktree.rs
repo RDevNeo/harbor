@@ -4,8 +4,12 @@
 //! change it, as T3 Code's does.
 //!
 //! A new chat picks "Current checkout" or "New worktree" before its first message; the
-//! worktree is made from the branch picked (default: the checkout's), as
-//! `<data dir>/worktrees/<project>-<6 hex>` on branch `harbor/<6 hex>`. Its path is kept in kv
+//! worktree is made from the branch picked (default: the checkout's), named for what the chat is
+//! about (its title or first message, a few words: `slug`), as `<data dir>/worktrees/<project>-<slug>`
+//! on branch `harbor/<slug>` ("-2"… when taken; 6 hex when the message gives no words). The
+//! branch menu renames the branch at any time (`ws_rename`; a pushed one on its remote too, or
+//! it stops tracking it); the folder follows once nothing works in it (`ws_moves`: no turn, no
+//! process, no terminal there), and the agents are told on their next turn. Its path is kept in kv
 //! `worktree:<chat id>`; sub-agents run in their lead's. An existing chat in the checkout can
 //! move to a new worktree when it could move projects (movechat.rs: not running, on this PC,
 //! its Claude sessions copied over); one in a worktree stays there. Deleting the chat removes
@@ -147,19 +151,110 @@ pub fn root() -> PathBuf {
     store::data_dir().join("worktrees")
 }
 
-/// Makes a worktree of `repo` in `root` on a new branch `harbor/<id>` from `base` (a branch,
-/// or "" for the checkout's HEAD). Returns its folder.
-fn add_in(root: &Path, repo: &Path, base: &str) -> Result<PathBuf, String> {
-    let project: String = repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into()).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect();
+/// Words that say little about what a chat is about, left out of its worktree's name.
+const FILLER: &[&str] = &[
+    "a", "an", "the", "to", "of", "and", "or", "in", "on", "at", "by", "for", "from", "with", "into", "as", "is", "are", "be", "it", "its", "that", "this", "these",
+    "there", "here", "so", "i", "im", "me", "my", "we", "our", "you", "your", "can", "could", "would", "should", "please", "pls", "lets", "let", "just", "also", "now",
+    "then", "when", "where", "what", "how", "why", "do", "does", "some", "all", "about", "hey", "hi", "ok", "okay",
+    // Portuguese, as people write to Harbor in it too.
+    "o", "os", "as", "um", "uma", "de", "da", "do", "das", "dos", "e", "que", "para", "pra", "por", "com", "em", "no", "na", "nos", "nas", "eu", "voce", "quero",
+    "queria", "preciso", "pode", "favor", "se", "isso", "esse", "essa", "ao", "aos",
+];
+
+/// Up to five meaningful words of what a chat is about (its title or first message), as a
+/// branch and folder name: "Fix the login bug where users…" → "fix-login-bug-users". Only
+/// a-z, 0-9 and "-" (accents folded), so it's always a valid ref. "" when nothing's left.
+pub fn slug(about: &str) -> String {
+    let line = about.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let fold = |c: char| -> Option<char> {
+        let c = c.to_lowercase().next().unwrap_or(c);
+        Some(match c {
+            'a'..='z' | '0'..='9' => c,
+            'á' | 'à' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            _ => return None,
+        })
+    };
+    // Links and apostrophes ("let's", "don't") aren't words of their own.
+    let words: Vec<String> = line
+        .split_whitespace()
+        .filter(|w| !w.contains("://"))
+        .flat_map(|w| w.replace(['\'', '’'], "").chars().map(|c| fold(c).unwrap_or(' ')).collect::<String>().split(' ').map(String::from).collect::<Vec<_>>())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let kept: Vec<&String> = words.iter().filter(|w| !FILLER.contains(&w.as_str())).collect();
+    let pick = if kept.is_empty() { words.iter().collect() } else { kept };
+    let mut out = String::new();
+    for w in pick.into_iter().take(5) {
+        if !out.is_empty() && out.len() + 1 + w.len() > 32 {
+            break;
+        }
+        if !out.is_empty() {
+            out.push('-');
+        }
+        out.extend(w.chars().take(32));
+    }
+    out
+}
+
+/// The project's part of its worktrees' folder names.
+fn project_part(repo: &Path) -> String {
+    repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into()).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect()
+}
+
+/// A branch as the end of a folder name: "harbor/fix-login" → "fix-login", "feature/a b" →
+/// "feature-a-b".
+fn folder_part(branch: &str) -> String {
+    let b = branch.strip_prefix("harbor/").unwrap_or(branch);
+    let s: String = b.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '.' { c.to_ascii_lowercase() } else { '-' }).collect();
+    s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-").trim_matches('.').to_string()
+}
+
+/// Whether `name` is `want` or `want-<n>` (a name made unique).
+fn is_named(name: &str, want: &str) -> bool {
+    name == want || name.strip_prefix(want).and_then(|r| r.strip_prefix('-')).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Every branch name the repository knows, local and remote ("harbor/x" for "origin/harbor/x" too).
+fn taken_branches(repo: &Path) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Ok(b) = branches(repo) {
+        set.extend(b.local);
+        set.extend(b.remote.iter().filter_map(|r| r.split_once('/').map(|(_, n)| n.to_string())));
+    }
+    set
+}
+
+/// Makes a worktree of `repo` in `root` on a new branch `harbor/<slug of about>` from `base`
+/// (a branch, or "" for the checkout's HEAD), in `<project>-<slug>`; "-2", "-3"… when the
+/// folder or the branch is taken (here or on a remote), 6 hex when `about` says nothing.
+/// Returns its folder.
+fn add_in(root: &Path, repo: &Path, base: &str, about: &str) -> Result<PathBuf, String> {
+    let project = project_part(repo);
+    let s = slug(about);
+    let taken = taken_branches(repo);
     let mut last = String::new();
-    for _ in 0..4 {
-        let id: String = store::new_uuid().chars().filter(|c| c.is_ascii_hexdigit()).take(6).collect();
+    let mut n = 1;
+    let mut tries = 0;
+    while tries < 4 && n < 100 {
+        let id = match (s.is_empty(), n) {
+            (true, _) => store::new_uuid().chars().filter(|c| c.is_ascii_hexdigit()).take(6).collect(),
+            (false, 1) => s.clone(),
+            (false, n) => format!("{s}-{n}"),
+        };
+        n += 1;
         let dir = root.join(format!("{project}-{id}"));
-        if dir.exists() {
+        let branch = format!("harbor/{id}");
+        if dir.exists() || taken.contains(&branch) {
             continue;
         }
+        tries += 1;
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-        let branch = format!("harbor/{id}");
         let d = dir.to_string_lossy().into_owned();
         let mut args = vec!["worktree", "add", "-b", branch.as_str(), d.as_str()];
         if !base.is_empty() {
@@ -171,6 +266,144 @@ fn add_in(root: &Path, repo: &Path, base: &str) -> Result<PathBuf, String> {
         }
     }
     Err(format!("couldn't make a worktree: {last}"))
+}
+
+/// Where a branch is pushed: its upstream (remote, branch there) or, without one, a remote
+/// that has a branch of its name. Whether it has an upstream.
+fn pushed(dir: &Path, branch: &str) -> Option<(String, String, bool)> {
+    let cfg = |k: &str| git(dir, &["config", "--get", &format!("branch.{branch}.{k}")], GIT_TIMEOUT).ok().filter(|v| !v.is_empty());
+    if let (Some(remote), Some(merge)) = (cfg("remote").filter(|r| r != "."), cfg("merge")) {
+        return Some((remote, merge.strip_prefix("refs/heads/").unwrap_or(&merge).to_string(), true));
+    }
+    let remotes = git(dir, &["remote"], GIT_TIMEOUT).ok()?;
+    remotes.lines().map(str::trim).filter(|r| !r.is_empty()).find(|r| git(dir, &["rev-parse", "--verify", "--quiet", &format!("refs/remotes/{r}/{branch}")], GIT_TIMEOUT).is_ok()).map(|r| (r.to_string(), branch.to_string(), false))
+}
+
+/// What the rename form says about the branch on its remote: "origin/harbor/x", or None when
+/// it was never pushed.
+pub fn pushed_as(dir: &Path) -> Option<String> {
+    let h = head(dir)?;
+    if h.branch.is_empty() {
+        return None;
+    }
+    pushed(dir, &h.branch).map(|(r, b, _)| format!("{r}/{b}"))
+}
+
+/// A branch renamed: from what, to what, and what happened on its remote (None: never pushed).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Renamed {
+    pub old: String,
+    pub branch: String,
+    pub remote: Option<String>,
+}
+
+/// Renames the branch checked out in `dir` to `new`. When it was pushed and `on_remote`: on
+/// GitHub through its API (its pull requests follow), elsewhere (or when gh can't) the new
+/// name is pushed and the old one left there; else it stops tracking the old remote branch,
+/// so a plain `git push` can't go there under the old name.
+pub fn rename_branch(dir: &Path, new: &str, on_remote: bool) -> Result<Renamed, String> {
+    let new = new.trim();
+    let h = head(dir).ok_or_else(|| format!("{} isn't a git worktree", dir.display()))?;
+    if h.branch.is_empty() {
+        return Err(format!("it's detached at {}: switch to a branch first", h.detached));
+    }
+    let old = h.branch;
+    if new == old {
+        return Ok(Renamed { old: old.clone(), branch: old, remote: None });
+    }
+    if !valid_branch(dir, new) {
+        return Err(format!("“{new}” isn't a valid branch name"));
+    }
+    if git(dir, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{new}")], GIT_TIMEOUT).is_ok() {
+        return Err(format!("a branch named “{new}” already exists"));
+    }
+    let up = pushed(dir, &old);
+    git(dir, &["branch", "-m", &old, new], GIT_TIMEOUT)?;
+    let remote = up.map(|(remote, there, tracked)| {
+        if !on_remote {
+            if tracked {
+                let _ = git(dir, &["branch", "--unset-upstream", new], GIT_TIMEOUT);
+            }
+            return format!("{remote}/{there} keeps its name; push again to publish {new}");
+        }
+        let repo = git(dir, &["remote", "get-url", &remote], GIT_TIMEOUT).ok().and_then(|u| crate::prs::github_repo(&u));
+        let gh = match &repo {
+            Some(r) => gh_rename(r, &there, new),
+            None => Err(String::new()),
+        };
+        match gh {
+            Ok(()) => {
+                let _ = git(dir, &["fetch", &remote, &format!("+refs/heads/{new}:refs/remotes/{remote}/{new}")], ADD_TIMEOUT);
+                let _ = git(dir, &["update-ref", "-d", &format!("refs/remotes/{remote}/{there}")], GIT_TIMEOUT);
+                let _ = git(dir, &["branch", &format!("--set-upstream-to={remote}/{new}"), new], GIT_TIMEOUT);
+                format!("Renamed on GitHub too ({remote}/{new}); its pull requests follow")
+            }
+            Err(why) => {
+                let why = if why.is_empty() { String::new() } else { format!(" (GitHub: {why})") };
+                match git(dir, &["push", "-u", &remote, new], ADD_TIMEOUT) {
+                    Ok(_) => format!("Pushed as {remote}/{new}; {remote}/{there} is still there{why}"),
+                    Err(e) => format!("Renamed here only: pushing it failed: {e}{why}"),
+                }
+            }
+        }
+    });
+    Ok(Renamed { old, branch: new.to_string(), remote })
+}
+
+/// Renames branch `old` of GitHub repo `repo` ("owner/name") to `new`, with gh.
+fn gh_rename(repo: &str, old: &str, new: &str) -> Result<(), String> {
+    let mut cmd = Command::new("gh");
+    cmd.args(["api", "-X", "POST", &format!("repos/{repo}/branches/{old}/rename"), "-f", &format!("new_name={new}")])
+        .env("PATH", crate::providers::child_path())
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("NO_COLOR", "1");
+    let out = match crate::git::output_within(&mut cmd, ADD_TIMEOUT) {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("gh isn't installed".into()),
+        Err(e) => return Err(format!("gh: {e}")),
+    };
+    if out.status.success() {
+        return Ok(());
+    }
+    let e = String::from_utf8_lossy(&out.stderr);
+    Err(e.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("gh failed").to_string())
+}
+
+/// The folder a worktree of `repo` on `branch` should have, next to `dir` (None: its name
+/// already fits, or the branch gives no name). Made unique with "-2", "-3"….
+pub fn folder_for(repo: &Path, dir: &Path, branch: &str) -> Option<PathBuf> {
+    let part = folder_part(branch);
+    if part.is_empty() {
+        return None;
+    }
+    let want = format!("{}-{part}", project_part(repo));
+    let name = dir.file_name()?.to_string_lossy().into_owned();
+    if is_named(&name, &want) {
+        return None;
+    }
+    let parent = dir.parent()?;
+    (1..100).map(|n| if n == 1 { want.clone() } else { format!("{want}-{n}") }).map(|n| parent.join(n)).find(|p| !p.exists())
+}
+
+/// Moves worktree `dir` to `to` (as `git worktree move`, but only file operations, so it's
+/// instant and can't race a turn starting): the folder is renamed, and its entry in the
+/// repository's worktree list pointed at it.
+pub fn move_dir(dir: &Path, to: &Path) -> Result<(), String> {
+    let link = std::fs::read_to_string(dir.join(".git")).map_err(|e| format!("{} isn't a worktree: {e}", dir.display()))?;
+    let admin = link.trim().strip_prefix("gitdir:").map(str::trim).ok_or_else(|| format!("{} isn't a worktree", dir.display()))?;
+    let admin = if Path::new(admin).is_absolute() { PathBuf::from(admin) } else { std::fs::canonicalize(dir.join(admin)).unwrap_or_else(|_| dir.join(admin)) };
+    if admin.join("locked").exists() {
+        return Err("git has it locked (`git worktree unlock`)".into());
+    }
+    if to.exists() {
+        return Err(format!("{} already exists", to.display()));
+    }
+    std::fs::rename(dir, to).map_err(|e| format!("couldn't rename the folder: {e}"))?;
+    if let Err(e) = std::fs::write(admin.join("gitdir"), format!("{}\n", to.join(".git").display())) {
+        let _ = std::fs::rename(to, dir);
+        return Err(format!("couldn't update git's worktree list: {e}"));
+    }
+    Ok(())
 }
 
 /// A worktree just made: its folder, its branch and the branch it started from.
@@ -200,14 +433,15 @@ impl Made {
     }
 }
 
-/// Makes a worktree of `repo` on a new branch `harbor/<id>` from `base` (a branch, or "" for
-/// the checkout's HEAD), in Harbor's data folder; with what the chat's line says about it.
-pub fn make(repo: &Path, base: &str) -> Result<Made, String> {
-    make_in(&root(), repo, base)
+/// Makes a worktree of `repo` on a new branch named for what the chat is about (`about`: its
+/// title or first message; `harbor/<slug>`) from `base` (a branch, or "" for the checkout's
+/// HEAD), in Harbor's data folder; with what the chat's line says about it.
+pub fn make(repo: &Path, base: &str, about: &str) -> Result<Made, String> {
+    make_in(&root(), repo, base, about)
 }
 
-fn make_in(root: &Path, repo: &Path, base: &str) -> Result<Made, String> {
-    let dir = add_in(root, repo, base)?;
+fn make_in(root: &Path, repo: &Path, base: &str, about: &str) -> Result<Made, String> {
+    let dir = add_in(root, repo, base, about)?;
     let branch = head(&dir).map(|h| h.label()).unwrap_or_default();
     let base = if base.is_empty() { head(repo).map(|h| h.label()).unwrap_or_default() } else { base.to_string() };
     Ok(Made { dir, branch, base })
@@ -260,12 +494,39 @@ pub struct State {
     pub error: Option<String>,
     /// The workspace menu was opened from the header's chip (it opens under it), not the bar.
     pub from_header: bool,
+    /// The branch menu's "Rename branch" form, while open.
+    pub rename: Option<RenameForm>,
+    /// Leads whose worktree folder is still to follow its renamed branch (→ the branch): moved
+    /// once nothing runs there (`ws_moves`). Not kept across restarts: the folder then keeps
+    /// its name.
+    moves: HashMap<i64, String>,
+}
+
+/// The rename form: the name typed, whether it's renamed on its remote too, and where the
+/// branch is pushed (None while it's read; Some(None): never pushed).
+#[derive(Clone, Debug)]
+pub struct RenameForm {
+    pub dir: PathBuf,
+    pub name: String,
+    pub on_remote: bool,
+    pub pushed: Option<Option<String>>,
+    focus: bool,
+}
+
+/// A rename done: the branch, the folder's name now, and why it hasn't followed yet (None: it
+/// has, or needn't).
+#[derive(Clone, Debug)]
+pub struct RenameDone {
+    pub renamed: Renamed,
+    pub folder: String,
+    pub path: PathBuf,
+    pub waits: Option<String>,
 }
 
 impl Default for State {
     fn default() -> Self {
         let (done_tx, done_rx) = channel();
-        Self { draft: DraftWs::default(), done_tx, done_rx, busy: None, heads: Default::default(), menu: None, query: String::new(), error: None, from_header: false }
+        Self { draft: DraftWs::default(), done_tx, done_rx, busy: None, heads: Default::default(), menu: None, query: String::new(), error: None, from_header: false, rename: None, moves: HashMap::new() }
     }
 }
 
@@ -316,6 +577,8 @@ pub struct Info {
     pub can_move: Result<(), String>,
     /// Why the branch can't be switched now (None: it can).
     pub branch_lock: Option<String>,
+    /// Whether its branch can be renamed here (Err: why not): a chat in its own worktree.
+    pub rename: Result<(), String>,
 }
 
 impl App {
@@ -389,6 +652,7 @@ impl App {
                 base: self.ws.draft.base.clone(),
                 can_move: Err("a new chat".into()),
                 branch_lock: None,
+                rename: Err("a new chat: it's named after its first message".into()),
             },
             Some(c) => {
                 let wt = self.worktree_of(c);
@@ -401,6 +665,11 @@ impl App {
                     base: String::new(),
                     can_move: if wt.is_some() { Err("it already has its own worktree".into()) } else { self.movable(lead).map(|_| ()) },
                     branch_lock: running.then(|| "An agent is working here: switch branches once it stops.".to_string()),
+                    rename: match &wt {
+                        None => Err("it runs in the project's checkout: only a thread's own worktree is renamed here".into()),
+                        Some(w) if !w.is_dir() => Err("its worktree isn't there anymore".into()),
+                        Some(_) => Ok(()),
+                    },
                     worktree: wt,
                 }
             }
@@ -459,6 +728,7 @@ impl App {
         while let Ok(f) = self.ws.done_rx.try_recv() {
             f(self, ctx);
         }
+        self.ws_moves();
     }
 
     /// The new chat's bar asks for a new worktree (and it can have one): where to make it.
@@ -479,7 +749,8 @@ impl App {
             return;
         }
         self.ws.busy = Some((Side::Workspace, "Creating worktree…".into()));
-        self.ws_spawn(ctx, move || make(&repo, &base), move |app, r, ctx| {
+        let about = held.text.clone();
+        self.ws_spawn(ctx, move || make(&repo, &base, &about), move |app, r, ctx| {
             app.ws.busy = None;
             match r {
                 Ok(made) => {
@@ -533,7 +804,8 @@ impl App {
         }
         self.ws.busy = Some((Side::Workspace, "Creating worktree…".into()));
         let repo = info.repo.clone();
-        self.ws_spawn(ctx, move || make(&repo, ""), move |app, r, ctx| {
+        let about = self.chat(chat_id).map(|c| c.title.clone()).unwrap_or_default();
+        self.ws_spawn(ctx, move || make(&repo, "", &about), move |app, r, ctx| {
             app.ws.busy = None;
             let r = r.and_then(|made| match app.ws_moved(chat_id, &made) {
                 Ok(()) => Ok(made.dir),
@@ -564,6 +836,147 @@ impl App {
         self.store.set(&format!("worktree:{chat_id}"), &made.dir.to_string_lossy());
         let (text, detail) = made.notice("Moved to a new worktree");
         self.notice(chat_id, "worktree", &text, &detail);
+        Ok(())
+    }
+
+    /// The chat and its sub-agents.
+    fn ws_tree(&self, lead: i64) -> Vec<i64> {
+        std::iter::once(lead).chain(self.subs_of(lead).into_iter().map(|s| s.id)).collect()
+    }
+
+    /// Why a lead's worktree folder can't move now (None: it can): something works in it.
+    pub fn ws_folder_busy(&self, lead: i64, dir: &Path) -> Option<String> {
+        let ids = self.ws_tree(lead);
+        if ids.iter().any(|i| self.is_running(*i)) {
+            return Some("an agent is working in it".into());
+        }
+        if self.moving_to(lead).is_some() {
+            return Some("the thread is moving to another PC".into());
+        }
+        if let Some(p) = self.procs.iter().find(|p| ids.contains(&p.lead) || ids.contains(&p.owner)) {
+            return Some(format!("its process “{}” is running", p.name));
+        }
+        let term = [crate::surface::Dock::Right, crate::surface::Dock::Bottom]
+            .iter()
+            .any(|d| self.pane(*d).surfaces.iter().any(|s| matches!(s, crate::surface::Surface::Terminal(t) if t.alive() && t.cwd.starts_with(dir))));
+        term.then(|| "a terminal is open in it".into())
+    }
+
+    /// Something the chat's agents are told at the start of their next turn (`ws_take_note`):
+    /// its worktree's branch or folder changed under them.
+    fn ws_note(&mut self, lead: i64, text: &str) {
+        for id in self.ws_tree(lead) {
+            let k = format!("worktree_note:{id}");
+            let old = self.store.get(&k).unwrap_or_default();
+            self.store.set(&k, &if old.is_empty() { text.to_string() } else { format!("{old}\n{text}") });
+        }
+    }
+
+    /// What goes before a turn's prompt about its worktree having changed ("" if nothing).
+    /// A slash command's turn leaves it for the next one (it must come first).
+    pub fn ws_take_note(&mut self, chat_id: i64, prompt: &str) -> String {
+        if prompt.starts_with('/') {
+            return String::new();
+        }
+        let k = format!("worktree_note:{chat_id}");
+        let n = self.store.get(&k).unwrap_or_default();
+        if n.is_empty() {
+            return n;
+        }
+        self.store.set(&k, "");
+        format!("[Harbor: {n}]\n\n")
+    }
+
+    /// Renames the branch of a chat's worktree (on a thread: it may push); its folder follows
+    /// at once when nothing runs there, else as soon as nothing does (`ws_moves`): moving a
+    /// folder under a working agent, a dev server or a shell would pull it from under them.
+    pub fn ws_rename(&mut self, chat_id: i64, name: String, on_remote: bool, ctx: &egui::Context, done: impl FnOnce(&mut App, Result<RenameDone, String>, &egui::Context) + Send + 'static) {
+        let Some(c) = self.chat(chat_id).cloned() else { return done(self, Err("no such chat".into()), ctx) };
+        let lead = if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id };
+        let info = match self.ws_info(Target::Chat(chat_id)).ok_or_else(|| "this chat isn't in a git project on this PC".to_string()).and_then(|i| i.rename.clone().map(|_| i)) {
+            Ok(i) => i,
+            Err(e) => return done(self, Err(e), ctx),
+        };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return done(self, Err("type the branch's new name".into()), ctx);
+        }
+        if self.ws.busy.is_some() {
+            return done(self, Err("git is still busy here".into()), ctx);
+        }
+        self.ws.busy = Some((Side::Branch, format!("Renaming to {name}…")));
+        let dir = info.dir.clone();
+        self.ws_spawn(ctx, move || rename_branch(&dir, &name, on_remote), move |app, r, ctx| {
+            app.ws.busy = None;
+            app.ws_refresh(&info.dir);
+            let r = r.map(|rn| {
+                if rn.old != rn.branch {
+                    let mut detail = format!("Branch: {} (was {})", rn.branch, rn.old);
+                    if let Some(n) = &rn.remote {
+                        detail.push_str(&format!("\n{n}."));
+                    }
+                    app.notice(lead, "worktree", &format!("Branch renamed · {} → {}", rn.old, rn.branch), &detail);
+                    app.ws_note(lead, &format!("the user renamed this worktree's branch from {} to {}.", rn.old, rn.branch));
+                    app.ws.moves.insert(lead, rn.branch.clone());
+                    app.pr_want(lead, None, ctx);
+                    app.ws_moves();
+                }
+                let path = app.chat(lead).and_then(|c| app.worktree_of(c)).unwrap_or(info.dir.clone());
+                let waits = app.ws.moves.contains_key(&lead).then(|| app.ws_folder_busy(lead, &path)).flatten();
+                RenameDone { folder: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), path, renamed: rn, waits }
+            });
+            done(app, r, ctx);
+        });
+    }
+
+    /// Moves the worktree folders still to follow their renamed branches, where nothing runs
+    /// now (every frame; nothing to do almost always).
+    fn ws_moves(&mut self) {
+        if self.ws.moves.is_empty() {
+            return;
+        }
+        let leads: Vec<i64> = self.ws.moves.keys().copied().collect();
+        for lead in leads {
+            let Some(c) = self.chat(lead).cloned() else {
+                self.ws.moves.remove(&lead);
+                continue;
+            };
+            let Some(dir) = self.worktree_of(&c).filter(|d| d.is_dir()) else {
+                self.ws.moves.remove(&lead);
+                continue;
+            };
+            if self.ws_folder_busy(lead, &dir).is_some() {
+                continue;
+            }
+            let Some(branch) = self.ws.moves.remove(&lead) else { continue };
+            let repo = self.cwd_of(c.repo_id);
+            let Some(to) = folder_for(&repo, &dir, &branch) else { continue };
+            if let Err(e) = self.ws_move_folder(lead, &dir, &to) {
+                self.notice(lead, "worktree", "The worktree's folder keeps its name", &format!("Couldn't rename {} to {}: {e}", crate::app::tilde(&dir), to.display()));
+            }
+        }
+    }
+
+    /// Moves a lead's worktree folder to `to`: its agents' Claude sessions are copied to where
+    /// the new folder's are looked for first, then the folder moves and the chat follows.
+    fn ws_move_folder(&mut self, lead: i64, dir: &Path, to: &Path) -> Result<(), String> {
+        let ids = self.ws_tree(lead);
+        for id in &ids {
+            let Some(c) = self.chat(*id).cloned() else { continue };
+            let Some(acc) = self.account(&c.account).cloned() else { continue };
+            if acc.kind == crate::providers::Kind::Claude && c.started && !c.session_id.is_empty() {
+                crate::movechat::ensure_session(&acc.config_dir, &c.session_id, to).map_err(|e| format!("couldn't copy {}'s session: {e}", c.name))?;
+            }
+        }
+        move_dir(dir, to)?;
+        self.store.set(&format!("worktree:{lead}"), &to.to_string_lossy());
+        for id in &ids {
+            crate::workspace::forget(*id);
+        }
+        self.ws_refresh(dir);
+        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.notice(lead, "worktree", &format!("Worktree folder renamed · {} → {}", name(dir), name(to)), &format!("Folder: {}", crate::app::tilde(to)));
+        self.ws_note(lead, &format!("this thread's worktree folder moved from {} to {}: work there now, nothing is left under the old path.", dir.display(), to.display()));
         Ok(())
     }
 
@@ -757,6 +1170,7 @@ impl App {
         self.picker.just_opened = true;
         self.ws.error = None;
         self.ws.query.clear();
+        self.ws.rename = None;
         if p == Popup::Branch {
             self.ws_load_branches(dir, ctx);
         }
@@ -834,6 +1248,9 @@ impl App {
         let t = self.theme.t;
         let target = self.ws_target();
         let Some(info) = self.ws_info(target) else { return true };
+        if let (Target::Chat(id), Some(_)) = (target, &self.ws.rename) {
+            return self.rename_menu(ctx, id, &info);
+        }
         let h = self.ws_head(&info.dir, ctx);
         let list = match &self.ws.menu {
             Some((d, b)) if *d == info.dir => b.clone(),
@@ -846,6 +1263,9 @@ impl App {
         let mut query = std::mem::take(&mut self.ws.query);
         let error = self.ws.error.clone();
         let current = if info.new_worktree { if info.base.is_empty() { h.as_ref().map(|h| h.branch.clone()).unwrap_or_default() } else { info.base.clone() } } else { h.as_ref().map(|h| h.branch.clone()).unwrap_or_default() };
+        // A thread's own worktree on a branch: it can be renamed (also while its agent works).
+        let can_rename = info.rename.is_ok() && h.as_ref().is_some_and(|h| !h.branch.is_empty());
+        let mut rename = false;
         let (pick, close) = crate::widgets::popover(ctx, "branch", self.popup_anchor, 340.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut pick: Option<Result<Row, String>> = None;
@@ -908,12 +1328,31 @@ impl App {
                     }
                 }
             }
+            if can_rename {
+                crate::widgets::menu_separator(ui);
+                let r = ui.add_enabled_ui(busy.is_none(), |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename branch…", Some("Its worktree folder follows"), false)).inner;
+                if r.clicked() {
+                    rename = true;
+                }
+            }
             if let Some(e) = &error {
                 note(ui, e, t.red(900));
             }
             pick
         });
         self.ws.query = query;
+        if rename {
+            self.ws.error = None;
+            let name = h.as_ref().map(|h| h.branch.clone()).unwrap_or_default();
+            self.ws.rename = Some(RenameForm { dir: info.dir.clone(), name, on_remote: true, pushed: None, focus: true });
+            let dir = info.dir.clone();
+            self.ws_spawn(ctx, move || pushed_as(&dir), move |app, p, _| {
+                if let Some(f) = app.ws.rename.as_mut().filter(|f| f.dir == info.dir) {
+                    f.pushed = Some(p);
+                }
+            });
+            return false;
+        }
         let (row, name) = match pick {
             Some(Ok(row)) => (Some(row), None),
             Some(Err(name)) => (None, Some(name)),
@@ -933,6 +1372,98 @@ impl App {
                 app.ws_load_branches(dir, ctx);
             }
         });
+        false
+    }
+
+    /// The branch menu's rename form: the new name, whether its remote branch is renamed too,
+    /// and where the folder goes. True: close the menu.
+    fn rename_menu(&mut self, ctx: &egui::Context, chat: i64, info: &Info) -> bool {
+        let t = self.theme.t;
+        let Some(mut form) = self.ws.rename.take() else { return true };
+        let busy = self.ws.busy.clone();
+        let error = self.ws.error.clone();
+        let current = self.ws_head(&info.dir, ctx).map(|h| h.branch).unwrap_or_default();
+        let lead = self.chat(chat).map(|c| if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id }).unwrap_or(chat);
+        let name = form.name.trim().to_string();
+        let folder = (!name.is_empty()).then(|| folder_for(&info.repo, &info.dir, &name)).flatten().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+        let waits = folder.as_ref().and_then(|_| self.ws_folder_busy(lead, &info.dir));
+        let ready = !name.is_empty() && name != current && busy.is_none() && form.pushed.is_some();
+        let ((submit, cancel), close) = crate::widgets::popover(ctx, "branch", self.popup_anchor, 340.0, true, &t, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            crate::widgets::menu_label(ui, "Rename branch");
+            let r = ui.add(egui::TextEdit::singleline(&mut form.name).hint_text("New branch name").desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
+            if std::mem::take(&mut form.focus) {
+                r.request_focus();
+            }
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(6.0);
+            match &form.pushed {
+                None => busy_line(ui, "Checking its remote…", &t),
+                Some(Some(up)) => {
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        crate::widgets::toggle(ui, &mut form.on_remote);
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(format!("Also rename {up}")).size(13.0).color(t.fg()));
+                    });
+                    ui.add_space(4.0);
+                    let say = if form.on_remote {
+                        "On GitHub it's renamed there and its pull requests follow; on other remotes the new name is pushed and the old one stays."
+                    } else {
+                        "The remote branch keeps its old name; this one stops tracking it."
+                    };
+                    note(ui, say, t.subtle());
+                }
+                Some(None) => {}
+            }
+            match (&folder, &waits) {
+                (Some(f), None) => note(ui, &format!("The folder becomes {f}."), t.subtle()),
+                (Some(f), Some(why)) => note(ui, &format!("The folder becomes {f} once nothing works in it ({why} now); the branch is renamed at once."), t.subtle()),
+                (None, _) => {}
+            }
+            if let Some((_, what)) = &busy {
+                busy_line(ui, what, &t);
+            }
+            if let Some(e) = &error {
+                note(ui, e, t.red(900));
+            }
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(4.0);
+                    let submit = crate::widgets::btn("Rename").primary().sm().enabled(ready).show(ui).clicked() || (enter && ready);
+                    let cancel = crate::widgets::btn("Cancel").outline().sm().show(ui).clicked();
+                    (submit, cancel)
+                })
+                .inner
+            })
+            .inner
+        });
+        if cancel {
+            self.ws.error = None;
+            return false;
+        }
+        let on_remote = form.on_remote && matches!(form.pushed, Some(Some(_)));
+        self.ws.rename = Some(form);
+        if submit {
+            self.ws.error = None;
+            self.ws_rename(chat, name, on_remote, ctx, |app, r, ctx| match r {
+                Ok(d) => {
+                    app.ws.rename = None;
+                    app.ws.menu = None;
+                    if app.popup == Some(Popup::Branch) {
+                        app.popup = None;
+                    }
+                    crate::picker::show_toast(ctx, rename_said(&d));
+                }
+                Err(e) => app.ws.error = Some(e),
+            });
+            return false;
+        }
+        if close && self.ws.busy.is_none() {
+            self.ws.rename = None;
+            return true;
+        }
         false
     }
 
@@ -972,9 +1503,17 @@ impl App {
                 let base = q("base").unwrap_or("").to_string();
                 // Work git is doing for the desktop's bar now ("Creating worktree…").
                 let pending = self.ws.busy.as_ref().map(|(_, w)| w.clone());
+                // A renamed branch's folder still to follow it: why it waits.
+                let lead = match target {
+                    Target::Chat(id) => self.chat(id).map(|c| if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id }),
+                    Target::Draft(_) => None,
+                };
+                let folder_waits = lead.filter(|l| self.ws.moves.contains_key(l)).and_then(|l| self.ws_folder_busy(l, &info.dir));
                 let tx = reply(call);
                 std::thread::spawn(move || {
                     let h = head(&info.dir);
+                    let rename = info.rename.clone().and_then(|_| if h.as_ref().is_some_and(|h| h.branch.is_empty()) { Err("it's detached: switch to a branch first".to_string()) } else { Ok(()) });
+                    let pushed = rename.is_ok().then(|| pushed_as(&info.dir)).flatten();
                     let name = info.worktree.as_ref().and_then(|w| w.file_name()).map(|n| n.to_string_lossy().into_owned());
                     let _ = tx.send(ok(json!({
                         "git": true,
@@ -988,6 +1527,10 @@ impl App {
                         "move_why": info.can_move.err(),
                         "branch_lock": if new_worktree { None } else { info.branch_lock },
                         "pending": pending,
+                        "can_rename": rename.is_ok(),
+                        "rename_why": rename.err(),
+                        "pushed": pushed,
+                        "folder_waits": folder_waits,
                     })));
                 });
                 Some(None)
@@ -1058,6 +1601,23 @@ impl App {
                 });
                 Some(None)
             }
+            // `{"branch": "<new name>", "remote": bool}`: renames the branch of the chat's worktree.
+            ("POST", ["v1", "chats", c, "worktree", "rename"]) => {
+                let Some(id) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return Some(Some(err(404, "no such chat"))) };
+                let Some(name) = call.body["branch"].as_str().map(String::from) else { return Some(Some(err(400, "branch: the new name"))) };
+                let on_remote = call.body["remote"].as_bool().unwrap_or(true);
+                let tx = reply(call);
+                self.ws_rename(id, name, on_remote, ctx, move |_, r, _| {
+                    let _ = tx.send(match r {
+                        Ok(d) => ok(json!({
+                            "ok": true, "branch": d.renamed.branch, "old": d.renamed.old, "remote": d.renamed.remote,
+                            "name": d.folder, "path": d.path.to_string_lossy(), "folder_waits": d.waits, "said": rename_said(&d),
+                        })),
+                        Err(e) => err(409, e),
+                    });
+                });
+                Some(None)
+            }
             // A new chat in a new worktree: made on a thread, then the chat starts there.
             ("POST", ["v1", "chats"]) if call.body["worktree"].as_bool() == Some(true) && call.body["device"].as_str().unwrap_or("").is_empty() => {
                 let repo = match self.api_create_repo(&call.body) {
@@ -1070,7 +1630,9 @@ impl App {
                 let base = call.body["base"].as_str().unwrap_or("").to_string();
                 let call = call.clone();
                 let repo_dir = info.repo.clone();
-                self.ws_spawn(ctx, move || make(&repo_dir, &base), move |app, r, ctx| {
+                // Named as the chat will be: its title, else its first message.
+                let about = [&call.body["title"], &call.body["text"]].iter().filter_map(|v| v.as_str()).find(|t| !t.trim().is_empty()).unwrap_or("").to_string();
+                self.ws_spawn(ctx, move || make(&repo_dir, &base, &about), move |app, r, ctx| {
                     let reply = match r {
                         Err(e) => err(409, e),
                         Ok(made) => {
@@ -1096,6 +1658,20 @@ impl App {
             _ => None,
         }
     }
+}
+
+/// What a rename did, in a line: "Renamed to harbor/x · folder harbor-x", with what happened
+/// on its remote and whether the folder waits.
+pub fn rename_said(d: &RenameDone) -> String {
+    let mut s = format!("Renamed to {}", d.renamed.branch);
+    match &d.waits {
+        Some(why) => s.push_str(&format!(" · the folder follows once nothing works in it ({why})")),
+        None => s.push_str(&format!(" · folder {}", d.folder)),
+    }
+    if let Some(r) = &d.renamed.remote {
+        s.push_str(&format!(". {r}"));
+    }
+    s
 }
 
 /// "Switching to main…" with a spinner.
@@ -1203,14 +1779,14 @@ mod tests {
         assert_eq!(head(&d).unwrap().branch, "wip/one");
         // A worktree from main, then removed (clean), its merged branch with it.
         let root = d.with_extension("wts");
-        let wt = add_in(&root, &d, "main").unwrap();
+        let wt = add_in(&root, &d, "main", "").unwrap();
         let h = head(&wt).unwrap();
         assert!(h.branch.starts_with("harbor/"));
         remove(&d, &wt).unwrap();
         assert!(!wt.exists());
         assert!(!branches(&d).unwrap().local.contains(&h.branch));
         // Uncommitted changes keep it.
-        let wt = add_in(&root, &d, "").unwrap();
+        let wt = add_in(&root, &d, "", "").unwrap();
         std::fs::write(wt.join("new.txt"), "x").unwrap();
         let e = remove(&d, &wt).unwrap_err();
         assert!(e.contains("1 uncommitted change"), "{e}");
@@ -1224,15 +1800,93 @@ mod tests {
         let d = repo("made");
         let root = d.with_extension("wts");
         // From the checkout's branch (""): that's its base.
-        let m = make_in(&root, &d, "").unwrap();
-        let id = m.name().rsplit('-').next().unwrap().to_string();
-        assert_eq!((m.branch.clone(), m.base.as_str()), (format!("harbor/{id}"), "main"));
+        let m = make_in(&root, &d, "", "Fix the login bug").unwrap();
+        assert_eq!((m.branch.as_str(), m.base.as_str()), ("harbor/fix-login-bug", "main"));
         let (text, detail) = m.notice("Working in a new worktree");
-        assert_eq!(text, format!("Working in a new worktree · {} on branch harbor/{id} (from main)", m.name()));
-        assert!(detail.contains(&format!("Branch: harbor/{id} (from main)")), "{detail}");
-        let m = make_in(&root, &d, "feature/login").unwrap();
+        assert_eq!(text, format!("Working in a new worktree · {} on branch harbor/fix-login-bug (from main)", m.name()));
+        assert!(detail.contains("Branch: harbor/fix-login-bug (from main)"), "{detail}");
+        let m = make_in(&root, &d, "feature/login", "").unwrap();
         assert_eq!(m.base, "feature/login");
+        // Nothing to name it after: 6 hex, as before.
+        let id = m.branch.strip_prefix("harbor/").unwrap();
+        assert!(id.len() == 6 && id.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn names_come_from_what_the_chat_is_about() {
+        assert_eq!(slug("Main thread per project"), "main-thread-per-project");
+        assert_eq!(slug("Fix the login bug where users get logged out"), "fix-login-bug-users-get");
+        assert_eq!(slug("\n  Can you make the sidebar's chips blue? https://example.com/x"), "make-sidebars-chips-blue");
+        assert_eq!(slug("Quero que a migração funcione"), "migracao-funcione");
+        assert_eq!(slug("the and of"), "the-and-of", "only filler: kept rather than nothing");
+        assert_eq!(slug("日本語"), "");
+        assert_eq!(slug("supercalifragilisticexpialidocious and more").len(), 32);
+        assert_eq!(folder_part("harbor/fix-login"), "fix-login");
+        assert_eq!(folder_part("Feature/A b"), "feature-a-b");
+        assert!(is_named("app-fix", "app-fix") && is_named("app-fix-2", "app-fix") && !is_named("app-fix-it", "app-fix"));
+    }
+
+    #[test]
+    fn named_worktrees_are_unique_and_their_folder_follows_a_rename() {
+        let d = repo("names");
+        let root = d.with_extension("wts");
+        let proj = project_part(&d);
+        let a = make_in(&root, &d, "", "Main thread per project").unwrap();
+        assert_eq!((a.branch.clone(), a.name()), ("harbor/main-thread-per-project".to_string(), format!("{proj}-main-thread-per-project")));
+        let b = make_in(&root, &d, "", "Main thread per project").unwrap();
+        assert_eq!((b.branch.clone(), b.name()), ("harbor/main-thread-per-project-2".to_string(), format!("{proj}-main-thread-per-project-2")));
+        // A branch only on a remote is taken too.
+        git(&d, &["update-ref", "refs/remotes/origin/harbor/sidebar", "HEAD"], GIT_TIMEOUT).unwrap();
+        assert_eq!(make_in(&root, &d, "", "Sidebar").unwrap().branch, "harbor/sidebar-2");
+        // Bad and taken names are refused, plainly.
+        assert!(rename_branch(&a.dir, "bad..name", false).unwrap_err().contains("isn't a valid branch name"));
+        assert!(rename_branch(&a.dir, "main", false).unwrap_err().contains("already exists"));
+        let r = rename_branch(&a.dir, " harbor/per-project-lead ", false).unwrap();
+        assert_eq!(r, Renamed { old: "harbor/main-thread-per-project".into(), branch: "harbor/per-project-lead".into(), remote: None });
+        assert_eq!(head(&a.dir).unwrap().branch, "harbor/per-project-lead");
+        // The folder follows: git finds it at its new place, and removes it from there.
+        let to = folder_for(&d, &a.dir, &r.branch).unwrap();
+        assert_eq!(to.file_name().unwrap().to_string_lossy(), format!("{proj}-per-project-lead"));
+        move_dir(&a.dir, &to).unwrap();
+        assert!(!a.dir.exists());
+        assert_eq!(head(&to).unwrap().branch, "harbor/per-project-lead");
+        let list = git(&d, &["worktree", "list", "--porcelain"], GIT_TIMEOUT).unwrap();
+        assert!(list.contains(&format!("worktree {}", to.display())), "{list}");
+        assert_eq!(folder_for(&d, &to, &r.branch), None, "already named for it");
+        // A taken folder gets a number.
+        assert_eq!(folder_for(&d, &b.dir, "harbor/per-project-lead").unwrap().file_name().unwrap().to_string_lossy(), format!("{proj}-per-project-lead-2"));
+        remove(&d, &to).unwrap();
+        assert!(!to.exists());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_pushed_branch_is_renamed_on_its_remote_or_let_go() {
+        let d = repo("push");
+        let bare = d.with_extension("git");
+        let _ = std::fs::remove_dir_all(&bare);
+        assert!(Command::new("git").args(["init", "-q", "--bare"]).arg(&bare).status().unwrap().success());
+        git(&d, &["remote", "add", "origin", &bare.to_string_lossy()], GIT_TIMEOUT).unwrap();
+        let root = d.with_extension("wts");
+        let m = make_in(&root, &d, "", "Push branch").unwrap();
+        assert_eq!(pushed_as(&m.dir), None);
+        git(&m.dir, &["push", "-q", "-u", "origin", "harbor/push-branch"], ADD_TIMEOUT).unwrap();
+        assert_eq!(pushed_as(&m.dir).as_deref(), Some("origin/harbor/push-branch"));
+        // Not GitHub: the new name is pushed and tracked; the old one stays there.
+        let r = rename_branch(&m.dir, "harbor/pushed", true).unwrap();
+        assert!(r.remote.as_deref().is_some_and(|s| s.starts_with("Pushed as origin/harbor/pushed; origin/harbor/push-branch is still there")), "{:?}", r.remote);
+        assert_eq!(pushed_as(&m.dir).as_deref(), Some("origin/harbor/pushed"));
+        let there = git(&bare, &["branch", "--format=%(refname:short)"], GIT_TIMEOUT).unwrap();
+        assert!(there.contains("harbor/pushed") && there.contains("harbor/push-branch"), "{there}");
+        // Here only: it stops tracking the remote branch, which keeps its name.
+        let r = rename_branch(&m.dir, "harbor/local-only", false).unwrap();
+        assert_eq!(r.remote.as_deref(), Some("origin/harbor/pushed keeps its name; push again to publish harbor/local-only"));
+        assert_eq!(pushed_as(&m.dir), None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&bare);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

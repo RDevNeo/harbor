@@ -1094,6 +1094,8 @@ impl App {
         if self.limit_guard(chat_id, &prompt, &files) {
             return;
         }
+        // Its worktree's branch or folder changed since its last turn: it's told first (worktree.rs).
+        let prompt = format!("{}{prompt}", self.ws_take_note(chat_id, &prompt));
         let Some(chat) = self.chat(chat_id).cloned() else { return };
         let Some(account) = self.account(&chat.account).cloned() else { return };
         if !self.transcripts.contains_key(&chat_id) {

@@ -834,8 +834,10 @@ uncommitted changes: then it's kept, and the PC says so (a toast and a desktop n
 
 The desktop's bar under the composer (src/worktree.rs), as two chips under the phone's composer
 and New chat screen. Where the agent works: the project's own checkout, or a git worktree of its
-own (`<Harbor data>/worktrees/<project>-<6 hex>`, branch `harbor/<6 hex>`) so parallel agents don't
-collide. Hubs before 0.37 answer `404`: show no chips.
+own (`<Harbor data>/worktrees/<project>-<name>`, branch `harbor/<name>`) so parallel agents don't
+collide. Since 0.87 `<name>` is a few words of the chat's title or first message
+("main-thread-per-project", "-2"… when taken), before that 6 hex. Hubs before 0.37 answer `404`:
+show no chips.
 
 `GET /v1/workspace?chat=<id>` (a chat) or `?project=<id>&worktree=0|1&base=<branch>` (New chat,
 with its picks) →
@@ -855,7 +857,10 @@ a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why
 switched now (an agent is working there), null when it can. `pending` (0.37.2, optional): what git is
 doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Since 0.83 asking for
 a chat also has the hub look up its branch's pull request when it's over a minute old; it comes in
-the chat's JSON `pr` (a state change), not in this answer. Every git call runs off
+the chat's JSON `pr` (a state change), not in this answer. Since 0.87 (optional; missing: no
+rename): `can_rename` (a chat in its own worktree, on a branch) with `rename_why` when not,
+`pushed` (`"origin/harbor/x"`: where the branch is pushed, null when never) and `folder_waits`
+(why a renamed branch's folder hasn't followed yet, e.g. "an agent is working in it"; null). Every git call runs off
 the hub's UI thread, so a big repository answers late but never freezes it: give these calls the
 long timeout, and show a pending chip meanwhile.
 
@@ -873,6 +878,18 @@ the pick is only the `base` of `POST /v1/chats`: nothing is sent.
 `POST /v1/chats/{id}/worktree` → `{"ok": true, "name", "path"}`: the chat (and its sub-agents) moves
 to a new worktree from the checkout's branch; `409` with why not (`move_why`). A chat in a
 worktree stays there.
+
+`POST /v1/chats/{id}/worktree/rename` (0.87) `{"branch": "<new name>", "remote": true}` →
+`{"ok": true, "branch", "old", "remote": "<what happened there>" | null, "name", "path",
+"folder_waits": "<why>" | null, "said": "Renamed to harbor/x · folder app-x"}` (show `said`). The
+branch of the chat's worktree is renamed at once, also while its agent works; `409` with git's
+or the hub's reason (not a worktree chat, a bad or taken name, git busy). When the branch was
+pushed (`pushed` above) and `remote` is true (the default) it's renamed there too: on GitHub
+through its API (its pull requests follow), elsewhere the new name is pushed and the old one
+stays; with `false` it stops tracking the old remote branch. The worktree's folder follows the
+new name (`<project>-<branch's last words>`) at once when nothing works in it, else once nothing
+does (no turn, process or terminal there; `folder_waits` says what): the chat JSON's `worktree`
+`name`/`path` then change. The chat gets a `worktree` notice for each step.
 
 ### `POST /v1/chats/{id}/fork`
 

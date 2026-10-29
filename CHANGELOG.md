@@ -5,6 +5,23 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A chat's worktree is named for what it's about: its title or first message, a few words of
+  it, so "Main thread per project" works in `<project>-main-thread-per-project` on branch
+  `harbor/main-thread-per-project` instead of `harbor/3c88d2` (accents folded, filler words left
+  out; "-2", "-3"… when the name is taken here or on a remote; 6 hex as before when the message
+  has no words to use). Also for "Move to a new worktree" (the chat's title) and chats a phone
+  starts.
+- Rename a worktree's branch at any time, on the desktop (the branch menu under the composer ›
+  Rename branch…) and the phone (the branch sheet, the same place): names git won't take or
+  that are taken are refused in plain words. A pushed branch is renamed on its remote too (on
+  GitHub through its API, so its pull requests follow; elsewhere the new name is pushed and the
+  old one left), or, with that switched off, stops tracking the old remote branch. The
+  worktree's folder follows the new name at once when nothing works in it, else as soon as
+  nothing does (no turn, process or terminal there): moving it under a working agent or a dev
+  server would pull the folder from under them. The chat's Claude sessions come along, the chat
+  shows a line for each change, and its agents are told on their next turn.
+
 ## [0.86.0] - 2026-10-29
 
 ### Added

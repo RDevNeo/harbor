@@ -7,8 +7,10 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -317,6 +319,14 @@ final class WorkBar {
                                 v -> { s.dismiss(); create(name); }), Ui.fill());
                         list.addView(cc, Ui.fill());
                     }
+                    // The chat's own worktree: its branch can be renamed (also while its agent works).
+                    if (!forBase && info.optBoolean("can_rename")) {
+                        String cur = fr.optString("current");
+                        LinearLayout rc = Ui.card(a);
+                        rc.addView(Ui.cardRow(a, Ui.I_PEN, "Rename branch…", "Its worktree folder follows", Ui.FG,
+                                v -> { s.dismiss(); rename(cur); }), Ui.fill());
+                        list.addView(rc, Ui.margins(Ui.fill(), 0, 12, 0, 0));
+                    }
                 });
             });
         };
@@ -336,6 +346,47 @@ final class WorkBar {
             Ui.toast(a, "On " + r.optString("branch"));
             load();
         });
+    }
+
+    /** "Rename branch", as the desktop's form (worktree.rs rename_menu): the new name, and for a
+     *  pushed branch whether it's renamed on its remote too. The PC renames the branch at once
+     *  and moves the worktree's folder once nothing works in it. */
+    private void rename(String current) {
+        Sheet s = new Sheet(a, "Rename branch");
+        LinearLayout c = s.card();
+        c.setPadding(Ui.dp(14), Ui.dp(14), Ui.dp(14), Ui.dp(12));
+        EditText e = Ui.input(a, "New branch name", false);
+        e.setText(current);
+        e.setSelection(e.getText().length());
+        e.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        c.addView(e, Ui.fill());
+        String up = info == null || info.isNull("pushed") ? "" : info.optString("pushed");
+        final Switch sw = up.isEmpty() ? null : new Switch(a);
+        if (sw != null) {
+            sw.setChecked(true);
+            LinearLayout r = Ui.cardRow(a, Ui.I_BRANCH, "Also rename " + up,
+                    "On GitHub it's renamed there and its pull requests follow; on other remotes the new name is pushed and the old one stays.", Ui.FG, v -> sw.toggle());
+            r.addView(sw);
+            c.addView(r, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        }
+        String waits = info == null || info.isNull("folder_waits") ? "" : info.optString("folder_waits");
+        TextView n = Ui.text(a, "The worktree's folder follows the new name once nothing works in it" + (waits.isEmpty() ? "" : " (" + waits + " now)") + ".", 13, Ui.G700);
+        n.setPadding(Ui.dp(4), Ui.dp(8), Ui.dp(4), Ui.dp(8));
+        c.addView(n, Ui.fill());
+        Runnable go = () -> {
+            String name = e.getText().toString().trim();
+            if (name.isEmpty() || name.equals(current)) return;
+            s.dismiss();
+            pending(true, "Renaming to " + name + "…");
+            act(() -> hub.call("POST", "/v1/chats/" + chat + "/worktree/rename", new JSONObject().put("branch", name).put("remote", sw != null && sw.isChecked())), r -> {
+                Ui.toast(a, r.optString("said", "On " + r.optString("branch")));
+                load();
+            });
+        };
+        e.setOnEditorActionListener((v, act, ev) -> { go.run(); return true; });
+        c.addView(Ui.button(a, "Rename", true, v -> go.run()), Ui.margins(Ui.wrap(), 0, 4, 0, 0));
+        s.show();
+        e.requestFocus();
     }
 
     private void create(String name) {
