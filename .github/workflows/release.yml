@@ -10,6 +10,8 @@
 # BOAT_API_KEY (a boat.dev API key that can create, use and delete sandboxes);
 # ANDROID_KEYSTORE (base64 of the app's signing keystore), ANDROID_KEYSTORE_PASS,
 # ANDROID_KEY_ALIAS. Every APK must be signed with that same key, or phones can't update.
+# GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET (optional): Harbor's Google OAuth Desktop client,
+# compiled into the desktop builds for the Gmail app's one-click sign-in.
 name: release
 
 # Pushes to main (each publish.sh) build everything except Servo (see browser.yml) but sign or
@@ -57,10 +59,14 @@ jobs:
       - name: Build (on boat)
         # Harbor's Google Cloud Web client id: the phone's own Google account picker. A repository
         # secret, not a variable: GitHub prints a step's env in its log, masking only secrets.
-        # Missing: picker off.
+        # Missing: picker off. Harbor's Google OAuth Desktop client (the Gmail app's one-click
+        # sign-in, mcp.rs) is baked into both desktop builds the same way; missing (forks): each
+        # user brings their own client.
         env:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" bash .github/boat/build.sh
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" bash .github/boat/build.sh
       - name: Fetch the results
         run: |
           set -eu

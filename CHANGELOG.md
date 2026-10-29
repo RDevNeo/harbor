@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Gmail signs in with one click: the Gmail card's "Sign in with Google" uses Harbor's own Google
+  client, so there's no Google Cloud project to set up. Google may first say it hasn't verified
+  the app (Advanced › Go to Harbor). Your own OAuth client is still an option (the settings button
+  on the card) and is used whenever you saved one. Desktop only: phones have no app sign-ins.
+
 ## [0.92.0] - 2026-10-29
 
 ### Added

@@ -254,7 +254,7 @@ pub fn sign_out(id: &str) {
             let _ = std::fs::remove_file(convex_home().join(".convex/config.json"));
         }
         Some(Auth::Google { .. }) => {
-            // Google keeps a grant until it is revoked; the client stays for the next sign-in.
+            // Google keeps a grant until it is revoked; the user's own client stays for the next sign-in.
             if let Some(c) = load_any(id) {
                 let t = if c.refresh_token.is_empty() { c.access_token.clone() } else { c.refresh_token.clone() };
                 if !t.is_empty() {
@@ -262,7 +262,14 @@ pub fn sign_out(id: &str) {
                         let _ = http("POST", GOOGLE_REVOKE, Some("application/x-www-form-urlencoded"), Some(&form(&[("token", &t)])));
                     });
                 }
-                let _ = save(id, &Cred { client_id: c.client_id, client_secret: c.client_secret, ..Default::default() });
+                match own_client((c.client_id, c.client_secret), GOOGLE_BUILTIN) {
+                    (cid, _) if cid.is_empty() => {
+                        let _ = std::fs::remove_file(cred_path(id));
+                    }
+                    (client_id, client_secret) => {
+                        let _ = save(id, &Cred { client_id, client_secret, ..Default::default() });
+                    }
+                }
             }
         }
         _ => {
@@ -275,9 +282,42 @@ pub fn save_key(id: &str, key: &str) -> Result<(), String> {
     save(id, &Cred { access_token: key.trim().into(), ..Default::default() })
 }
 
-/// The OAuth client a Google app signs in with: (client id, secret); empty when none yet.
+/// Harbor's own Google OAuth client (Desktop app), baked into release builds from the
+/// repository's secrets (release.yml); builds without them ask for the user's own client.
+/// Google treats an installed app's secret as public: PKCE is what protects the sign-in.
+const GOOGLE_BUILTIN: Option<(&str, &str)> = match (option_env!("HARBOR_GOOGLE_CLIENT_ID"), option_env!("HARBOR_GOOGLE_CLIENT_SECRET")) {
+    (Some(id), Some(secret)) if !id.is_empty() && !secret.is_empty() => Some((id, secret)),
+    _ => None,
+};
+
+/// Whether this build has Harbor's own Google client: one click to sign in.
+pub fn google_builtin() -> bool {
+    GOOGLE_BUILTIN.is_some()
+}
+
+/// The user's own OAuth client for a Google app: (client id, secret); empty when none.
 pub fn google_client(id: &str) -> (String, String) {
-    load_any(id).map(|c| (c.client_id, c.client_secret)).unwrap_or_default()
+    own_client(load_any(id).map(|c| (c.client_id, c.client_secret)).unwrap_or_default(), GOOGLE_BUILTIN)
+}
+
+/// A stored client, unless it is the built-in one (a sign-in with it stores it too).
+fn own_client(c: (String, String), builtin: Option<(&str, &str)>) -> (String, String) {
+    if builtin.is_some_and(|(id, _)| id == c.0) { Default::default() } else { c }
+}
+
+/// The client a sign-in uses: the user's own when saved, else the built-in one.
+fn pick_client(own: (String, String), builtin: Option<(&str, &str)>) -> Option<(String, String)> {
+    if !own.0.is_empty() {
+        return Some(own);
+    }
+    builtin.map(|(id, secret)| (id.to_string(), secret.to_string()))
+}
+
+/// Forgets the user's own client while signed out: the next sign-in uses Harbor's.
+pub fn forget_google_client(id: &str) {
+    if load(id).is_none() {
+        let _ = std::fs::remove_file(cred_path(id));
+    }
 }
 
 /// Saves the user's Google OAuth client for the next [`sign_in`]. `client_id` may also be
@@ -588,13 +628,11 @@ const GOOGLE_AUTH: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_REVOKE: &str = "https://oauth2.googleapis.com/revoke";
 
-/// Google's loopback flow with the client saved by [`save_google_client`]. A refresh token
-/// only comes with `access_type=offline`, and again on a later sign-in with `prompt=consent`.
+/// Google's loopback flow with the client saved by [`save_google_client`], else Harbor's
+/// built-in one. A refresh token only comes with `access_type=offline`, and again on a later
+/// sign-in with `prompt=consent`.
 fn google_login(id: &str, scope: &str, cancel: &AtomicBool, update: &dyn Fn(Pending)) -> Result<(), String> {
-    let (client_id, client_secret) = google_client(id);
-    if client_id.is_empty() {
-        return Err("Add your OAuth client first.".into());
-    }
+    let (client_id, client_secret) = pick_client(google_client(id), GOOGLE_BUILTIN).ok_or("Add your OAuth client first.")?;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let redirect = format!("http://127.0.0.1:{}/", listener.local_addr().map_err(|e| e.to_string())?.port());
     let verifier = b64url(&random(32)?);
@@ -1119,6 +1157,22 @@ mod tests {
         assert_eq!(parse_google_client("not-a-client", "s"), None);
         let file = format!(r#"{{"installed":{{"client_id":"{id}","client_secret":"from-file","redirect_uris":["http://localhost"]}}}}"#);
         assert_eq!(parse_google_client(&file, ""), Some((id.into(), "from-file".into())));
+    }
+
+    #[test]
+    fn google_client_choice() {
+        let builtin = Some(("harbor.apps.googleusercontent.com", "harbor-secret"));
+        let own = ("mine.apps.googleusercontent.com".to_string(), "my-secret".to_string());
+        let none = (String::new(), String::new());
+        // The user's own client beats the built-in one; without either there's only the form.
+        assert_eq!(pick_client(own.clone(), builtin), Some(own.clone()));
+        assert_eq!(pick_client(none.clone(), builtin), Some(("harbor.apps.googleusercontent.com".into(), "harbor-secret".into())));
+        assert_eq!(pick_client(own.clone(), None), Some(own.clone()));
+        assert_eq!(pick_client(none.clone(), None), None);
+        // The built-in client stored by a sign-in with it isn't the user's own.
+        assert_eq!(own_client(("harbor.apps.googleusercontent.com".into(), "harbor-secret".into()), builtin), none);
+        assert_eq!(own_client(own.clone(), builtin), own);
+        assert_eq!(own_client(own.clone(), None), own);
     }
 
     #[test]

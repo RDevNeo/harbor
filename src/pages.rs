@@ -928,6 +928,8 @@ impl App {
         // A Google app's form: the client ID goes in `key`, its secret here.
         let secret_id = Id::NULL.with(("app-secret", a.id));
         let mut secret: String = ui.data(|d| d.get_temp(secret_id)).unwrap_or_default();
+        // Harbor's own Google client signs in with one click, unless the user saved their own.
+        let builtin = matches!(a.auth, mcp::Auth::Google { .. }) && mcp::google_builtin() && mcp::google_client(a.id).0.is_empty();
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if pending.is_some() {
@@ -944,6 +946,13 @@ impl App {
                         mcp::sign_out(a.id);
                     }
                     w::badge(ui, "Signed in", Tone::Green);
+                } else if builtin {
+                    if w::btn("Sign in with Google").sm().primary().show(ui).clicked() {
+                        mcp::sign_in(a.id, ctx.clone());
+                    }
+                    if w::btn(ic::SETTINGS).muted().icon_xs().show(ui).tip("Use your own OAuth client").clicked() {
+                        (key, secret) = (Some(String::new()), String::new());
+                    }
                 } else if w::btn("Sign in").sm().primary().show(ui).clicked() {
                     match a.auth {
                         mcp::Auth::Key { .. } => key = Some(String::new()),
@@ -999,6 +1008,11 @@ impl App {
                     }
                 });
             }
+            // Harbor's client isn't verified by Google (yet): its consent page warns first.
+            if builtin {
+                ui.add_space(6.0);
+                w::subtle(ui, "If Google says it hasn't verified this app, click Advanced, then Go to Harbor.", "label-12");
+            }
         } else if let (Some(k), mcp::Auth::Google { help, .. }) = (&mut key, &a.auth) {
             ui.add_space(8.0);
             let ready = mcp::valid_google_client(k, &secret);
@@ -1019,14 +1033,21 @@ impl App {
                 });
             });
             ui.add_space(6.0);
-            w::subtle(
-                ui,
-                "Gmail needs your own OAuth client. In Google Cloud console: create a project, enable the Gmail API, set the OAuth consent screen to In production (sign-ins in Testing end after 7 days), then Credentials › Create OAuth client ID › Desktop app.",
-                "label-12",
-            );
+            let how = "In Google Cloud console: create a project, enable the Gmail API, set the OAuth consent screen to In production (sign-ins in Testing end after 7 days), then Credentials › Create OAuth client ID › Desktop app.";
+            let mut harbors = false;
+            if mcp::google_builtin() {
+                w::subtle(ui, &format!("Sign in through your own Google Cloud project instead of Harbor's. {how}"), "label-12");
+                ui.add_space(4.0);
+                harbors = w::btn("Use Harbor's client").sm().ghost().show(ui).clicked();
+            } else {
+                w::subtle(ui, &format!("Gmail needs your own OAuth client. {how}"), "label-12");
+            }
             if go {
                 let _ = mcp::save_google_client(a.id, k, &secret);
                 mcp::sign_in(a.id, ctx.clone());
+                key = None;
+            } else if harbors {
+                mcp::forget_google_client(a.id);
                 key = None;
             }
         } else if let Some(k) = &mut key {

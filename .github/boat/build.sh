@@ -10,9 +10,13 @@ binfmt
 # Once, before the parallel builds: rustup doesn't take two installs at a time.
 toolchain "$core" --target aarch64-unknown-linux-gnu
 
+# Harbor's Google OAuth client (mcp.rs option_env!), when release.yml passes it: by name only, so
+# the values never show on a command line.
+google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET)
+
 # One target dir each: cargo locks a target dir for the whole build.
 x86_64() {
-  run_in "$core" "${rust[@]}" -e CARGO_TARGET_DIR=/c/target -e HARBOR_GIT_SHA -- bash -euo pipefail -c '
+  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target -e HARBOR_GIT_SHA -- bash -euo pipefail -c '
     cargo test --locked -- update::
     cargo build --release --locked
     ldd /c/target/release/harbor
@@ -21,7 +25,7 @@ x86_64() {
 }
 aarch64() {
   local t=aarch64-unknown-linux-gnu T=AARCH64_UNKNOWN_LINUX_GNU
-  run_in "$core" "${rust[@]}" -e CARGO_TARGET_DIR=/c/target-aarch64 -e HARBOR_GIT_SHA \
+  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target-aarch64 -e HARBOR_GIT_SHA \
     -e CARGO_BUILD_TARGET=$t -e CARGO_TARGET_${T}_LINKER=aarch64-linux-gnu-gcc \
     -e QEMU_LD_PREFIX=/usr/aarch64-linux-gnu \
     -e CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc -e CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
