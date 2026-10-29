@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-10-28
+
 ### Added
 - Phone: a built-in browser. Web links in chats (and Browser in the drawer) open in Servo, the
   engine of the desktop's browser pane, drawing straight into the screen: no WebView, Chromium or
@@ -1753,7 +1755,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.80.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.81.0...HEAD
+[0.81.0]: https://github.com/RDevNeo/harbor/compare/v0.80.0...v0.81.0
 [0.80.0]: https://github.com/RDevNeo/harbor/compare/v0.79.0...v0.80.0
 [0.79.0]: https://github.com/RDevNeo/harbor/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/RDevNeo/harbor/compare/v0.77.0...v0.78.0
