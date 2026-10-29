@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: the built-in browser works on phones with a 32-bit Android too (the Galaxy A13 and other
+  budget phones run one on a 64-bit processor): the APK now carries the Servo engine for
+  armeabi-v7a as well as arm64-v8a. Links there opened in the phone's own browser. The APK grows
+  by about 40 MB.
+
 ## [0.84.0] - 2026-10-28
 
 ### Fixed

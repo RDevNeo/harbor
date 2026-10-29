@@ -80,8 +80,8 @@ done
 # The built-in browser's engine (android/servo: Servo as libharborservo.so), built separately with
 # the NDK (android/servo/build.sh, or CI's cached build): $SERVO_LIBS/<abi>/libharborservo.so
 # with its libc++_shared.so,
-# default android/servo/out. Packaged for each of ANDROID_ABIS it exists for (arm64-v8a in
-# releases; Engine.supported). SERVO_REQUIRED=1 (releases) fails without the arm64 one.
+# default android/servo/out. Packaged for each of ANDROID_ABIS it exists for (arm64-v8a and
+# armeabi-v7a in releases; each ABI folder must hold every library: Android installs one). SERVO_REQUIRED=1 (releases) fails without the arm64 one.
 SERVO_LIBS=${SERVO_LIBS:-$HERE/servo/out}
 for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
   if [ -f "$SERVO_LIBS/$abi/libharborservo.so" ]; then

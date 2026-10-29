@@ -135,9 +135,12 @@ jobs:
           mkdir -p art/harbor-android
           # The built-in browser's engine (browser.yml engine-android) goes in before signing,
           # with its id (assets/servo.id: the next release reuses it from this APK).
-          if [ "${{ needs.browser.outputs.found-android }}" = "true" ] && [ -f art/harbor-servo-android/arm64-v8a/libharborservo.so ]; then
-            (cd art/harbor-servo-android && mkdir -p lib assets && cp -r arm64-v8a lib/ && cp servo.id assets/servo.id \
-              && zip -q -r ../harbor-android-unsigned/harbor-android-unsigned.apk lib/arm64-v8a/libharborservo.so lib/arm64-v8a/libc++_shared.so assets/servo.id)
+          # Each ABI's folder must hold every library the app loads on it: Android installs one
+          # folder (the phone's primary ABI) and nothing from the others.
+          if [ "${{ needs.browser.outputs.found-android }}" = "true" ] && [ -f art/harbor-servo-android/arm64-v8a/libharborservo.so ] \
+             && [ -f art/harbor-servo-android/armeabi-v7a/libharborservo.so ]; then
+            (cd art/harbor-servo-android && mkdir -p lib assets && cp -r arm64-v8a armeabi-v7a lib/ && cp servo.id assets/servo.id \
+              && zip -q -r ../harbor-android-unsigned/harbor-android-unsigned.apk lib/*/libharborservo.so lib/*/libc++_shared.so assets/servo.id)
             "$bt/zipalign" -f 4 art/harbor-android-unsigned/harbor-android-unsigned.apk /tmp/aligned.apk
             mv /tmp/aligned.apk art/harbor-android-unsigned/harbor-android-unsigned.apk
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then

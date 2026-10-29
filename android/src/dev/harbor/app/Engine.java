@@ -12,7 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *  `:browser` process (Browser), on one thread of its own: every native call below is made on
  *  that thread (`post`). Servo draws with its own GL into the screen's SurfaceView.
  *
- *  The library ships for arm64-v8a (and x86_64 in emulator builds); on any other ABI, or before
+ *  The library ships for arm64-v8a and armeabi-v7a (32-bit Android, like the Galaxy A13), and
+ *  x86_64 in emulator builds; on any other ABI, or before
  *  Android 9, `supported` is false and links open in the phone's browser instead. */
 final class Engine {
     /** What the screen hears back (on the main thread). */

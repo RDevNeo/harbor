@@ -232,7 +232,7 @@ jobs:
           path: out/
 
   # The phone app's engine: android/servo as libharborservo.so (+ the NDK's libc++_shared.so) for
-  # arm64-v8a, built with the NDK
+  # arm64-v8a and armeabi-v7a (phones with a 32-bit Android, like the Galaxy A13), built with the NDK
   # on this runner. Its id is the tree hash of android/servo. Looked up like the desktop's: the
   # actions cache, then the latest release's APK (if its signature checks out and its
   # assets/servo.id matches). release.yml puts it into the APK before signing.
@@ -253,8 +253,10 @@ jobs:
         id: bin
         if: ${{ !inputs.force }}
         with:
-          path: out/arm64-v8a
-          key: harbor-servo-android-${{ steps.id.outputs.id }}
+          path: |
+            out/arm64-v8a
+            out/armeabi-v7a
+          key: harbor-servo-android-2abi-${{ steps.id.outputs.id }}
       - name: Reuse the latest release's engine
         id: prev
         if: steps.bin.outputs.cache-hit != 'true' && !inputs.force
@@ -262,7 +264,7 @@ jobs:
           MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
           MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
         run: |
-          mkdir -p out/arm64-v8a /tmp/prev
+          mkdir -p out/arm64-v8a out/armeabi-v7a /tmp/prev
           curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
           echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
           tar -xzf /tmp/minisign.tgz -C /tmp 2>/dev/null
@@ -270,12 +272,14 @@ jobs:
              && tc="$(/tmp/minisign-linux/x86_64/minisign -VQm /tmp/prev/harbor-android.apk -p packaging/minisign.pub)" \
              && case "$tc" in "harbor v"*" harbor-android.apk") true ;; *) false ;; esac \
              && [ "$(unzip -p /tmp/prev/harbor-android.apk assets/servo.id 2>/dev/null)" = "${{ steps.id.outputs.id }}" ] \
-             && unzip -p /tmp/prev/harbor-android.apk lib/arm64-v8a/libharborservo.so > out/arm64-v8a/libharborservo.so \
-             && unzip -p /tmp/prev/harbor-android.apk lib/arm64-v8a/libc++_shared.so > out/arm64-v8a/libc++_shared.so \
-             && [ -s out/arm64-v8a/libharborservo.so ] && [ -s out/arm64-v8a/libc++_shared.so ]; then
+             && (for abi in arm64-v8a armeabi-v7a; do
+                   for so in libharborservo.so libc++_shared.so; do
+                     unzip -p /tmp/prev/harbor-android.apk "lib/$abi/$so" > "out/$abi/$so" && [ -s "out/$abi/$so" ] || exit 1
+                   done
+                 done); then
             echo "hit=true" >> "$GITHUB_OUTPUT"
           else
-            rm -f out/arm64-v8a/*.so
+            rm -f out/*/*.so
           fi
       - name: Compile?
         id: need
@@ -290,7 +294,7 @@ jobs:
         if: steps.need.outputs.build == 'true'
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK" >/dev/null
-          rustup toolchain install stable --profile minimal --target aarch64-linux-android >/dev/null && rustup default stable >/dev/null
+          rustup toolchain install stable --profile minimal --target aarch64-linux-android --target armv7-linux-androideabi >/dev/null && rustup default stable >/dev/null
           cargo install --locked cargo-ndk >/dev/null
           df -h / "$RUNNER_TEMP"
       - name: Build libharborservo.so
@@ -302,21 +306,23 @@ jobs:
           set -eu
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK"
           rustc --version
-          s=$(date +%s); LOCKED=1 ABIS=arm64-v8a android/servo/build.sh
-          echo "::notice::libharborservo.so (arm64-v8a) built in $(( $(date +%s) - s ))s"
-          mkdir -p out && cp -r android/servo/out/arm64-v8a out/
+          s=$(date +%s); LOCKED=1 ABIS="arm64-v8a armeabi-v7a" android/servo/build.sh
+          echo "::notice::libharborservo.so (arm64-v8a, armeabi-v7a) built in $(( $(date +%s) - s ))s"
+          mkdir -p out && cp -r android/servo/out/arm64-v8a android/servo/out/armeabi-v7a out/
           df -h /
       - uses: actions/cache/save@v6
         if: steps.need.outputs.build == 'true'
         continue-on-error: true
         with:
-          path: out/arm64-v8a
-          key: harbor-servo-android-${{ steps.id.outputs.id }}
+          path: |
+            out/arm64-v8a
+            out/armeabi-v7a
+          key: harbor-servo-android-2abi-${{ steps.id.outputs.id }}
       - name: Engine found
         id: done
         if: steps.bin.outputs.cache-hit == 'true' || steps.prev.outputs.hit == 'true' || steps.need.outputs.build == 'true'
         run: |
-          ls -la out/arm64-v8a/libharborservo.so && echo "${{ steps.id.outputs.id }}" > out/servo.id
+          ls -la out/arm64-v8a/libharborservo.so out/armeabi-v7a/libharborservo.so && echo "${{ steps.id.outputs.id }}" > out/servo.id
           echo "found=true" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         if: steps.done.outputs.found == 'true'
