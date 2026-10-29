@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.84.1] - 2026-10-28
+
 ### Fixed
 - Phone: the built-in browser works on phones with a 32-bit Android too (the Galaxy A13 and other
   budget phones run one on a 64-bit processor): the APK now carries the Servo engine for
@@ -1810,7 +1812,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.84.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.84.1...HEAD
+[0.84.1]: https://github.com/RDevNeo/harbor/compare/v0.84.0...v0.84.1
 [0.84.0]: https://github.com/RDevNeo/harbor/compare/v0.83.0...v0.84.0
 [0.83.0]: https://github.com/RDevNeo/harbor/compare/v0.82.0...v0.83.0
 [0.82.0]: https://github.com/RDevNeo/harbor/compare/v0.81.0...v0.82.0
