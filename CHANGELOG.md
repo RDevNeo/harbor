@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- The image viewer goes through every image of the chat, not only the ones of the message you
+  opened: ← → (or the side buttons) on the desktop, a swipe or the side buttons on the phone,
+  with a "3 / 7" counter. The buttons hide at the first and last image; on the phone a swipe
+  only turns the page when the image isn't zoomed.
+
+### Fixed
+- → in the desktop's image viewer no longer fills the composer with the suggested prompt.
+
 ## [0.81.0] - 2026-10-28
 
 ### Added
@@ -15,13 +24,6 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
   memory goes when it closes and a crash there leaves the chats running. On 64-bit ARM phones
   with Android 9+ (the APK grows by about 40 MB); elsewhere links open in the phone's browser as
   before.
-- The image viewer goes through every image of the chat, not only the ones of the message you
-  opened: ← → (or the side buttons) on the desktop, a swipe or the side buttons on the phone,
-  with a "3 / 7" counter. The buttons hide at the first and last image; on the phone a swipe
-  only turns the page when the image isn't zoomed.
-
-### Fixed
-- → in the desktop's image viewer no longer fills the composer with the suggested prompt.
 
 ## [0.80.0] - 2026-10-28
 

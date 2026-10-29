@@ -520,7 +520,7 @@ beside the text (a bubble's edge, a tool row, a notice) opens the sheet as befor
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 
-The image viewer browses the whole chat (0.81), as the desktop's does (view.rs `gallery`): a
+The image viewer browses the whole chat (0.82), as the desktop's does (view.rs `gallery`): a
 tap on any image opens it on that image, and previous/next go through every image of the
 chat's cards in `seq` order, skipping `hidden` ones; within a card its `media` of kind `image`
 come first, then its other `images`; an image (same `url`) already listed earlier is left out.
