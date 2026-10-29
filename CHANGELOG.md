@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-10-28
+
 ### Added
 - Google accounts (through Clerk) on every PC and phone. Harbor opens on "Sign in with Google";
   the sign-in runs in the browser (PKCE, no secret in the app) and `harbor account login` does it
@@ -1849,7 +1851,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.84.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.85.0...HEAD
+[0.85.0]: https://github.com/RDevNeo/harbor/compare/v0.84.1...v0.85.0
 [0.84.1]: https://github.com/RDevNeo/harbor/compare/v0.84.0...v0.84.1
 [0.84.0]: https://github.com/RDevNeo/harbor/compare/v0.83.0...v0.84.0
 [0.83.0]: https://github.com/RDevNeo/harbor/compare/v0.82.0...v0.83.0
