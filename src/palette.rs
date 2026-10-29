@@ -77,7 +77,7 @@ impl Section {
 /// What picking an item does.
 #[derive(Clone, PartialEq)]
 pub enum Act {
-    /// Opens a project: its latest chat, else a new one there.
+    /// Opens a project: its main chat, else its page (sidebar.rs `open_project`).
     Project(i64),
     Chat(i64),
     NewChat(Option<i64>),
@@ -290,13 +290,7 @@ impl App {
     /// Does what an item says. Returns the chat to open on the phone (a fork), if any.
     fn palette_run(&mut self, act: &Act, ctx: &egui::Context, here: bool) -> Option<i64> {
         match *act {
-            Act::Project(r) => {
-                let latest = self.chats.iter().filter(|c| c.repo_id == Some(r) && c.role != Role::Sub && !c.settled).max_by_key(|c| c.updated).map(|c| c.id);
-                match latest {
-                    Some(id) => self.open(View::Chat(id)),
-                    None => self.new_draft(Some(r)),
-                }
-            }
+            Act::Project(r) => self.open_project(r),
             Act::Chat(id) => self.open(View::Chat(id)),
             Act::NewChat(r) => {
                 self.new_draft(r);
@@ -305,6 +299,8 @@ impl App {
             Act::Prs => self.open_prs(None),
             Act::Issues => self.open_issues(None),
             Act::Settings(t) => self.open(View::Settings(t)),
+            // Settled here, the window lands on its project's main chat (the phone's call: the phone does).
+            Act::Settle(id, true) if here => self.settle_and_go(id),
             Act::Settle(id, on) => self.set_chat_settled(id, on),
             Act::Fork(id) => {
                 let seq = self.last_forkable(id)?;

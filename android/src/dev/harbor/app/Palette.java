@@ -151,6 +151,11 @@ public class Palette extends Base {
             Ui.bg(this, () -> hub.call("POST", "/v1/palette/run", body), r -> {
                 String toast = r.optString("toast");
                 if (!toast.isEmpty()) Ui.toast(this, toast);
+                // This chat settled: on to its project's main chat, as the desktop does.
+                if (chat != null && it.optString("id").startsWith("act:settle:")) {
+                    Chats.landAfterSettle(this, hub, chat, this::finish);
+                    return;
+                }
                 String open = r.isNull("open") ? "" : r.optString("open");
                 if (!open.isEmpty()) Chat.open(this, hub, open);
                 finish();

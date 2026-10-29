@@ -111,7 +111,8 @@ public class Chats extends Base {
         Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items.toArray(new String[0]), (d, w) -> {
             String it = items.get(w);
             if (w == 0) rename(a, hub, c, after);
-            else if (w == 1) Ui.bg(a, () -> hub.call("PATCH", "/v1/chats/" + id, new JSONObject().put("settled", !settled)), r -> after.run());
+            else if (w == 1) Ui.bg(a, () -> hub.call("PATCH", "/v1/chats/" + id, new JSONObject().put("settled", !settled)),
+                    r -> { if (settled) after.run(); else landAfterSettle(a, hub, id, after); });
             else if (it.startsWith("Snooze")) Snooze.sheet(a, hub, c, after);
             else if (it.equals("Move to PC…")) movePc(a, hub, c, after);
             else if (it.equals("Make main chat")) Ui.bg(a, () -> hub.call("POST", "/v1/chats/" + id + "/main", new JSONObject()),
@@ -125,6 +126,40 @@ public class Chats extends Base {
                     }))
                     .show();
         }).show();
+    }
+
+    /** After a chat is settled on this phone: its project's main chat opens, as the desktop does
+     *  after its own (hubs from 0.88, whose state names main chats). With none yet, or when the
+     *  settled chat was the main chat (which frees the project), New chat starts the project's
+     *  main chat; a chat of no project lands on New chat. From a chat screen or the search, that
+     *  screen closes; an older hub runs `older` instead. */
+    static void landAfterSettle(Base a, Hub hub, String id, Runnable older) {
+        Ui.bg(a, hub::state, st -> {
+            JSONObject c = null;
+            JSONArray cs = st.optJSONArray("chats");
+            for (int i = 0; cs != null && i < cs.length(); i++) {
+                JSONObject x = cs.optJSONObject(i);
+                if (x != null && id.equals(x.optString("id"))) c = x;
+            }
+            if (c == null || !c.has("main")) { older.run(); return; }
+            String pid = c.isNull("project_id") ? "" : c.optString("project_id");
+            String main = null;
+            JSONObject tree = st.optJSONObject("tree");
+            JSONArray tp = tree == null ? null : tree.optJSONArray("projects");
+            for (int i = 0; tp != null && i < tp.length(); i++) {
+                JSONObject p = tp.optJSONObject(i);
+                if (p != null && !pid.isEmpty() && pid.equals(p.optString("id")) && !p.isNull("main")) main = p.optString("main");
+            }
+            // The settled chat may still read as main while it's another PC's copy on its way.
+            if (main != null && !main.equals(id)) Chat.open(a, hub, main);
+            else {
+                Intent i = new Intent(a, NewChat.class).putExtra("hub", hub.id);
+                if (!pid.isEmpty()) i.putExtra("project", pid).putExtra("main", true);
+                a.startActivity(i);
+            }
+            if (a instanceof Chat || a instanceof Palette) a.finish();
+            else a.closeDrawer();
+        });
     }
 
     /** "Move to PC…": a sheet of the mesh's PCs as the chat's home PC lists them (greyed, with

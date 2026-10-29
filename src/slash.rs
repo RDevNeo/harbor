@@ -806,7 +806,7 @@ impl App {
                     self.fork_from(key, seq);
                 }
             }
-            Harbor::Settle => self.set_chat_settled(key, true),
+            Harbor::Settle => self.settle_and_go(key),
             Harbor::ClearQueue => {
                 self.take_queue(key);
                 ctx.request_repaint();

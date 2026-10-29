@@ -889,8 +889,9 @@ public class Chat extends Base implements Images.Gallery {
                     if (slash.elsewhere() || r.optString("id").isEmpty()) { refreshState(); Ui.toast(this, "Forked: the new chat is in the list"); }
                     else open(this, hub, r.optString("id"));
                 } else if ("settle".equals(command)) {
-                    refreshState();
                     Ui.toast(this, "Settled");
+                    // On to its project's main chat, as the desktop does.
+                    Chats.landAfterSettle(this, hub, chatId, this::refreshState);
                 } else {
                     int n = r.optInt("dropped");
                     Ui.toast(this, n == 1 ? "Dropped 1 waiting message" : "Dropped " + n + " waiting messages");

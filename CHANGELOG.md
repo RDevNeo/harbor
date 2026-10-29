@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Settling a chat takes you to its project's main chat, on the desktop (its menu, the row's
+  Settle, the search, `/settle`) and on the phone (a long press, `/settle`, the search). Settling
+  the main chat itself frees the project: its page opens, where the next message starts a new
+  main chat. A chat of no project lands on New chat. Settling on one device doesn't move the
+  others.
+
 ## [0.88.0] - 2026-10-29
 
 ### Added

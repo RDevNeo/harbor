@@ -100,13 +100,31 @@ impl App {
     /// Opens the project's main chat, or its page while it has none: the first message
     /// written there starts the main chat.
     pub fn open_project(&mut self, repo: i64) {
-        match self.main_chat(repo) {
-            Some(id) => self.open(View::Chat(id)),
-            None => {
-                self.new_draft(Some(repo));
-                self.set_draft_main(true);
-            }
+        self.open_main(Some(repo), None);
+    }
+
+    /// `open_project`, but never chat `not` (just settled: another PC's copy stays unsettled
+    /// here until its PC says so); a chat of no project lands on New thread.
+    fn open_main(&mut self, repo: Option<i64>, not: Option<i64>) {
+        match repo {
+            Some(r) => match self.main_chat(r).filter(|m| Some(*m) != not) {
+                Some(id) => self.open(View::Chat(id)),
+                None => {
+                    self.new_draft(Some(r));
+                    self.set_draft_main(true);
+                }
+            },
+            None => self.new_draft(None),
         }
+    }
+
+    /// Settles a chat from this window (its menu or row, the palette, /settle) and lands on
+    /// its project's main chat, as the phone does after its own. The main chat itself, once
+    /// settled, frees the project: its page opens, where the next message starts a new one.
+    pub fn settle_and_go(&mut self, id: i64) {
+        let repo = self.chat(id).and_then(|c| c.repo_id).filter(|r| self.repo(*r).is_some());
+        self.set_chat_settled(id, true);
+        self.open_main(repo, Some(id));
     }
 
     /// A chat's sidebar status, its own and its subagents' (not other chats'):
@@ -210,7 +228,11 @@ impl App {
                 self.dialog = Some(Dialog::Rename { chat: c.id, title: c.title.clone() });
             }
             if ui.button(if c.settled { "Unsettle" } else { "Settle" }).clicked() {
-                self.set_chat_settled(c.id, !c.settled);
+                if c.settled {
+                    self.set_chat_settled(c.id, false);
+                } else {
+                    self.settle_and_go(c.id);
+                }
             }
             // The project's row opens it from then on (a project's chats only).
             if c.role == Role::Lead && c.repo_id.is_some_and(|r| self.repo(r).is_some()) {
@@ -273,7 +295,12 @@ impl App {
             let sr = Rect::from_min_size(pos2(left - sw, rect.center().y - 14.0), Vec2::new(sw, 28.0));
             let b = w::overlay(ui, sr, |ui| w::btn(&label).muted().xs().show(ui));
             if b.clicked() {
-                self.set_chat_settled(key[1..].parse().unwrap_or(0), !settled);
+                let id = key[1..].parse().unwrap_or(0);
+                if settled {
+                    self.set_chat_settled(id, false);
+                } else {
+                    self.settle_and_go(id);
+                }
             }
             used += sw + 4.0;
             left = sr.left();
@@ -792,7 +819,7 @@ impl App {
                     self.dialog = Some(Dialog::Rename { chat: m.id, title: m.title.clone() });
                 }
                 if ui.button("Settle main chat").on_hover_text("It goes to Settled; the project's next message starts a new main chat").clicked() {
-                    self.set_chat_settled(m.id, true);
+                    self.settle_and_go(m.id);
                 }
             }
             ui.separator();

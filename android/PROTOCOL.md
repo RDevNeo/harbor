@@ -988,6 +988,13 @@ The phone draws the main chat as its project's header: a tap opens it (with no m
 chat for that project, sending `"main": true`), its status (spinner, unread dot) on the header,
 a long press its chat menu; the chevron and count fold the project's other chats.
 
+Settling a chat lands on its project's main chat (0.89), on the device that settled it: the
+desktop after its menu, row button, palette or `/settle`; the phone after its menu's Settle, the
+chat's `/settle` or the search's Settle this chat, by asking `GET /v1/state` again (the main chat
+of the chat's `project_id` in `tree`). With none, or when the settled chat was the main chat
+(which frees the project), the project's page opens: New chat with `"main": true`. A chat of no
+project lands on New chat. Settling from another device never moves this one.
+
 `POST /v1/chats/{id}/main` → `{"ok": true, "chat"}`: the chat becomes its project's main chat (a
 settled one is unsettled first, a snoozed one woken). `409 {"error"}` when it can't be one (no
 project, a sub-agent). Offer "Make main chat" on unsettled-or-settled leads with a project when
