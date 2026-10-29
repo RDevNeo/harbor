@@ -109,7 +109,7 @@ impl ChatPr {
         json!({ "number": self.number, "state": self.state.key(), "label": self.label(), "title": self.title, "url": self.url })
     }
 
-    /// A peer's `pr` (None when it has none, or is older than 0.82).
+    /// A peer's `pr` (None when it has none, or is older than 0.83).
     pub fn from_json(v: &Value) -> Option<ChatPr> {
         let state = match v["state"].as_str()? {
             "open" => PrState::Open,

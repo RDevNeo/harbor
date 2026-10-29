@@ -424,7 +424,7 @@ refetch everything.
   chat's title, "Worktree · <branch>" (the branch from `GET /v1/workspace`, else the name;
   "Worktree gone"; a new chat headed for one: "New worktree · from <base>"); the phone does the
   same in its list and under its title. Tapping the chip opens the workspace sheet.
-- `pr` (optional, 0.82; null or missing: none, or an older hub): the pull request of the branch
+- `pr` (optional, 0.83; null or missing: none, or an older hub): the pull request of the branch
   the chat works on (sub-agents: their lead's), `{"number": 123, "state": "open" | "draft" |
   "merged" | "closed", "label": "PR #123 · Open", "title": "Fix the login", "url":
   "https://github.com/o/r/pull/123"}`. The hub looks it up with the GitHub CLI off its UI thread
@@ -878,7 +878,7 @@ chip reads "Worktree · <name>" since 0.66) and for New chat with `worktree=1` (
 `detached at <sha>` when detached. `can_move`/`move_why`: whether a chat in the checkout can move to
 a new worktree now (not while running, not a sub-agent, …). `branch_lock`: why the branch can't be
 switched now (an agent is working there), null when it can. `pending` (0.37.2, optional): what git is
-doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Since 0.82 asking for
+doing there for the PC's own bar ("Creating worktree…"); ask again shortly. Since 0.83 asking for
 a chat also has the hub look up its branch's pull request when it's over a minute old; it comes in
 the chat's JSON `pr` (a state change), not in this answer. Every git call runs off
 the hub's UI thread, so a big repository answers late but never freezes it: give these calls the

@@ -3419,7 +3419,7 @@ impl App {
             // for another PC's chat) and whether it's gone (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| json!({ "name": m.name, "path": m.path.map(|p| p.to_string_lossy().into_owned()), "gone": m.gone })),
             // The pull request of the branch it works on (chatpr.rs): number, state, the
-            // footer's label, title and url; null when it has none (optional, 0.82).
+            // footer's label, title and url; null when it has none (optional, 0.83).
             "pr": self.chat_pr(c).map(|p| p.json()),
             // Snoozed out of this PC's sidebar until then, and that time as its row says it
             // ("Tomorrow, 9:00"); null when it isn't (optional, 0.78: there = /snooze answers).

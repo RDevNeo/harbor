@@ -2532,7 +2532,7 @@ impl App {
             "viewing": self.api.hub.viewing(c.id).into_iter().map(|t| json!({ "device": t.device, "kind": t.kind, "label": t.label })).collect::<Vec<_>>(),
             // Its worktree's name, when it runs in one (optional, 0.66).
             "worktree": self.worktree_marker(c).map(|m| m.name),
-            // Its branch's pull request (optional, 0.82).
+            // Its branch's pull request (optional, 0.83).
             "pr": self.chat_pr(c).map(|p| p.json()),
         })
     }

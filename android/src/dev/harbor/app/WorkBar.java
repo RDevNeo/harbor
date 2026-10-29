@@ -164,7 +164,7 @@ final class WorkBar {
     }
 
     /** The chat's "worktree" and "pr" from the hub's state (null: none, or a hub older than
-     *  0.66 / 0.82). */
+     *  0.66 / 0.83). */
     void marker(JSONObject w, JSONObject pr, String home) {
         marker = w;
         this.pr = pr;
