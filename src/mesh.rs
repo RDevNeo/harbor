@@ -3227,8 +3227,8 @@ fn for_home(method: &str, p: &[&str]) -> bool {
     }
     // A copy doesn't move from here (movechat.rs says so).
     // A mention is made from this PC's copy of the transcript.
-    // A snooze is this PC's sidebar's (what the phone's drawer shows), not the chat's.
-    (matches!(method, "POST" | "PATCH" | "DELETE") && !matches!(p.get(3), Some(&"move" | &"mention" | &"snooze"))) || (method == "GET" && matches!(p.get(3), Some(&"slash" | &"commit" | &"move_targets")))
+    // A snooze and the main chat are this PC's sidebar's (what the phone's drawer shows), not the chat's.
+    (matches!(method, "POST" | "PATCH" | "DELETE") && !matches!(p.get(3), Some(&"move" | &"mention" | &"snooze" | &"main"))) || (method == "GET" && matches!(p.get(3), Some(&"slash" | &"commit" | &"move_targets")))
 }
 
 /// The upload files of a phone's body, as files here.

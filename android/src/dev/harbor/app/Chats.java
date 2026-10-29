@@ -104,6 +104,8 @@ public class Chats extends Base {
         items.add("Rename");
         items.add(settled ? "Unsettle" : "Settle");
         if (snooze) items.add(c.isNull("snoozed_until_ms") ? "Snooze…" : "Snoozed · " + c.optString("snoozed_label"));
+        // Hubs from 0.88 say which chat is its project's main chat: any other lead of a project can become it.
+        if (!sub && c.has("main") && !c.optBoolean("main") && !c.isNull("project_id")) items.add("Make main chat");
         if (!sub) items.add("Move to PC…");
         items.add("Delete");
         Ui.dialog(a).setTitle(c.optString("title", "Chat")).setItems(items.toArray(new String[0]), (d, w) -> {
@@ -112,6 +114,8 @@ public class Chats extends Base {
             else if (w == 1) Ui.bg(a, () -> hub.call("PATCH", "/v1/chats/" + id, new JSONObject().put("settled", !settled)), r -> after.run());
             else if (it.startsWith("Snooze")) Snooze.sheet(a, hub, c, after);
             else if (it.equals("Move to PC…")) movePc(a, hub, c, after);
+            else if (it.equals("Make main chat")) Ui.bg(a, () -> hub.call("POST", "/v1/chats/" + id + "/main", new JSONObject()),
+                    r -> { Ui.toast(a, "Its project's header opens it now"); after.run(); });
             else Ui.dialog(a).setTitle("Delete this chat?")
                     .setMessage("“" + c.optString("title") + "” and its transcript are removed on the PC. A running turn is stopped first.")
                     .setNegativeButton("Cancel", null)

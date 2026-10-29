@@ -401,6 +401,13 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
         }
         db.execute_batch("PRAGMA user_version=8;")?;
     }
+    // A project's main chat (0.88): the chat its row opens and its page writes to (team.rs
+    // `main_chat`); 0 while it has none. Added by name, not by version, so it doesn't race
+    // other migrations.
+    let has_main: bool = db.query_row("SELECT COUNT(*) FROM pragma_table_info('repos') WHERE name='main_chat'", [], |r| r.get::<_, i64>(0))? > 0;
+    if !has_main {
+        db.execute_batch("ALTER TABLE repos ADD COLUMN main_chat INTEGER NOT NULL DEFAULT 0;")?;
+    }
     Ok(())
 }
 
@@ -502,6 +509,17 @@ impl Store {
     /// This PC's folder for a shared project (None: back to its own `path`).
     pub fn set_repo_local(&self, id: i64, local: Option<&std::path::Path>) {
         let _ = self.db.execute("UPDATE repos SET local=?2 WHERE id=?1", params![id, local.map(|l| l.to_string_lossy().into_owned()).unwrap_or_default()]);
+    }
+
+    /// Each project's main chat, project → chat (only projects that have one).
+    pub fn main_chats(&self) -> HashMap<i64, i64> {
+        let Ok(mut st) = self.db.prepare_cached("SELECT id, main_chat FROM repos WHERE main_chat != 0") else { return HashMap::new() };
+        st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).map(|rows| rows.flatten().collect()).unwrap_or_default()
+    }
+
+    /// Makes `chat` the project's main chat (None: it has none).
+    pub fn set_main_chat(&self, repo: i64, chat: Option<i64>) {
+        let _ = self.db.execute("UPDATE repos SET main_chat=?2 WHERE id=?1", params![repo, chat.unwrap_or(0)]);
     }
 
     pub fn save_repo_meta(&self, r: &Repo) {
@@ -693,6 +711,8 @@ impl Store {
 
     pub fn delete_chat(&self, id: i64) {
         let _ = self.db.execute("DELETE FROM chats WHERE id=?1", [id]);
+        // Nor be a project's main chat: the next one is started fresh.
+        let _ = self.db.execute("UPDATE repos SET main_chat=0 WHERE main_chat=?1", [id]);
         // Ids can be reused: a new chat with this one must not look saved.
         self.saved.borrow_mut().remove(&id);
     }
@@ -901,6 +921,42 @@ mod tests {
         fresh.save_items(b, &items[..1]);
         assert_eq!(texts(&fresh, b), ["one"]);
         drop((s, fresh));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_deleted_main_chat_is_forgotten() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-main-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harbor.db");
+        let s = Store::open_at(&path).unwrap();
+        let repo = s.add_repo(&dir).unwrap();
+        let chat = |s: &Store| {
+            s.create_chat(Chat {
+                id: 0, repo_id: Some(repo), title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
+                model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Lead,
+                parent: None, name: String::new(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0,
+            })
+            .id
+        };
+        assert!(s.main_chats().is_empty());
+        let a = chat(&s);
+        s.set_main_chat(repo, Some(a));
+        assert_eq!(s.main_chats(), HashMap::from([(repo, a)]));
+        // Kept across a restart (and the column isn't added twice).
+        drop(s);
+        let s = Store::open_at(&path).unwrap();
+        assert_eq!(s.main_chats().get(&repo), Some(&a));
+        // Deleted, its id may come back for a new chat: that one isn't main.
+        s.delete_chat(a);
+        assert!(s.main_chats().is_empty());
+        let b = chat(&s);
+        assert_eq!(b, a, "sqlite reuses the last id");
+        assert!(s.main_chats().is_empty());
+        s.set_main_chat(repo, Some(b));
+        s.set_main_chat(repo, None);
+        assert!(s.main_chats().is_empty());
+        drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

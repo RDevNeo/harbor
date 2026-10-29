@@ -2869,8 +2869,8 @@ impl App {
         let p: Vec<&str> = call.path.iter().map(String::as_str).collect();
         // A copy is written on its home PC only (mesh.rs forwards it there while it answers).
         // (A move says it moves there instead: movechat.rs. A mention only reads the copy. A
-        // snooze is this PC's sidebar's.)
-        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && !matches!(p.get(3), Some(&"move" | &"mention" | &"snooze")) {
+        // snooze and the main chat are this PC's sidebar's.)
+        if call.method != "GET" && p.len() > 2 && p[1] == "chats" && !matches!(p.get(3), Some(&"move" | &"mention" | &"snooze" | &"main")) {
             if let Some(c) = self.chat_by_ref(p[2]).filter(|c| c.foreign()) {
                 return err(409, format!("{} is off: this chat is read-only until it's back", self.home_name(c)));
             }
@@ -2914,6 +2914,18 @@ impl App {
                 let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
                 self.set_snooze(&format!("c{c}"), None);
                 ok(json!({ "ok": true, "snoozed_until_ms": null, "snoozed_label": null }))
+            }
+            // "Make main chat" (0.88): the chat becomes its project's main chat in this PC's
+            // sidebar (what the phone's drawer shows), the project row's own.
+            ("POST", ["v1", "chats", c, "main"]) => {
+                let Some(c) = self.ref_id(c).filter(|c| self.chat(*c).is_some()) else { return err(404, "no such chat") };
+                match self.make_main(c) {
+                    Ok(()) => {
+                        let chat = self.chat(c).map(|ch| self.chat_json(ch)).unwrap_or_default();
+                        ok(json!({ "ok": true, "chat": chat }))
+                    }
+                    Err(e) => err(409, e),
+                }
             }
             ("GET", ["v1", "chats", c, "items"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
                 Some(c) => ok(self.api_items(c, call.query("since").and_then(|s| s.parse().ok()).unwrap_or(0))),
@@ -3201,6 +3213,9 @@ impl App {
                 if let Some(t) = v.get_mut("tree") {
                     for pr in t.get_mut("projects").and_then(|p| p.as_array_mut()).into_iter().flatten() {
                         pr["id"] = path(&pr["id"]);
+                        if pr.get("main").is_some() {
+                            pr["main"] = gid(&pr["main"]);
+                        }
                         for x in pr.get_mut("chats").and_then(|c| c.as_array_mut()).into_iter().flatten() {
                             *x = gid(x);
                         }
@@ -3255,7 +3270,7 @@ impl App {
                 }
             }
             ("POST", ["v1", "palette", "run"]) => v["open"] = gid(&v["open"]),
-            ("PATCH", _) | ("POST", ["v1", "chats", _, "slash" | "move"]) => {
+            ("PATCH", _) | ("POST", ["v1", "chats", _, "slash" | "move" | "main"]) => {
                 if v["chat"].is_object() {
                     chat(&mut v["chat"]);
                 }
@@ -3393,6 +3408,9 @@ impl App {
             "writable": self.writable_chat(c),
             "role": match c.role { store::Role::Lead => "lead", store::Role::Sub => "sub", store::Role::Chat => "chat" },
             "parent": c.parent,
+            // Its project's main chat (0.88), the project row's own: hubs that send it take
+            // `POST /v1/chats/<id>/main`.
+            "main": c.repo_id.is_some_and(|r| self.main_chat(r) == Some(c.id)),
             "typing": self.typing_json(c.id),
             "draft": self.draft_json(c.id),
             // Finished while nobody had it open, not opened since (the sidebar's blue dot), and
@@ -3490,7 +3508,8 @@ impl App {
         // Where each chat sits, as the desktop sidebar places it (sidebar.rs `tree`; older hubs leave it out).
         let t = self.sidebar_tree();
         let tree = json!({
-            "projects": t.projects.iter().map(|(id, snoozed, chats)| json!({ "id": id, "snoozed": snoozed, "chats": chats })).collect::<Vec<_>>(),
+            // `main` (0.88): the project's main chat, which is the project row itself (null: none yet).
+            "projects": t.projects.iter().map(|p| json!({ "id": p.id, "snoozed": p.snoozed, "main": p.main, "chats": p.chats })).collect::<Vec<_>>(),
             "threads": t.threads,
             "settled": t.settled,
             // Snoozed chats, out of the lists above: a search shows them in their places (0.78).
@@ -3904,7 +3923,20 @@ impl App {
         }
         let model = str_or("model", if account == d.account { &d.model } else { "" });
         let sel = Sel { account, model, effort: effort.clone(), access: access.clone(), device: device.clone() };
+        // `main` (0.88): written on the project's page, so its main chat: the message goes to
+        // it when the project has one (started meanwhile elsewhere), else this chat becomes it.
+        let main = repo.filter(|_| body["main"].as_bool() == Some(true));
+        if let Some(m) = main.and_then(|r| self.main_chat(r)) {
+            if !text.is_empty() || !files.is_empty() {
+                self.send_to(m, text, files, vec![], ctx);
+            }
+            let gid = self.chat(m).map(|c| c.gid.clone()).unwrap_or_default();
+            return ok(json!({ "id": m, "gid": gid }));
+        }
         let id = self.new_thread_with(repo, &text, sel);
+        if main.is_some() {
+            self.adopt_main(main, id);
+        }
         self.ws_attach(id, wt);
         if let Some(c) = self.chat_mut(id) {
             c.effort = effort;

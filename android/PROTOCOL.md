@@ -338,6 +338,11 @@ refetch everything.
   `tree`, group `chats` by `project_id` and `settled` as before. With `X-Harbor-Ids: global`
   its chats are gids and its projects paths from 0.64.1; hubs 0.55.2 to 0.64.0 left this hub's
   ids there, so when `tree` places none of the chats, ignore it and group as without it.
+  From 0.88 each project has `main` (a chat id, or null while it has none; missing: an older hub):
+  its main chat, which is the project row itself and in none of the lists (see
+  [Main chat](#main-chat-088)).
+- `main` (optional, 0.88; missing: an older hub, so offer no Make main chat): the chat is its
+  project's main chat on this hub (see [Main chat](#main-chat-088)).
 - `fast` is hub-wide (not per chat); `chat.fast` mirrors it.
 - `devices[0]` is always the hub itself (`id: ""`). Icons: monitor, laptop, terminal, house,
   globe, bot, hammer, gauge. `online` may be null (unknown). `hub: true`: another PC of the mesh
@@ -683,6 +688,9 @@ the folder (older hubs answer `409`).
 Since 0.57 (optional): `"title": "…"` names it in the sidebar (default: the text's first line), and
 `"opened_from": {"gid", "title"}` (sent by a hub whose agent opened the chat on this PC with
 `open_chat`) puts a `chat_link` card back to that chat at its top. Phones don't need either.
+Since 0.88 (optional): `"main": true` (with a project) is written on the project's page: the chat
+becomes the project's main chat, or, when the project has one already, the message goes to that
+chat and its id comes back (older hubs ignore it and start one more chat).
 
 ### `POST /v1/chats/{id}/send`
 
@@ -963,6 +971,27 @@ tomorrow). Under a minute or over a year is no time. `preview` is the line under
 field's) → `{"ok": true, "snoozed_until_ms", "snoozed_label"}`; `400 {"error"}` for text that
 isn't a time ("Try 5h, 1h30m, 2d or 18:00") or a time not within the next year.
 `DELETE /v1/chats/{id}/snooze` wakes it now → `{"ok": true, "snoozed_until_ms": null, …}`.
+
+### Main chat (0.88)
+
+Each project has one main chat: the chat its sidebar row opens and whose status it shows, the one
+its page writes to, and the one webhooks wake. The project's other chats are rows under it (a
+project's New chat still starts one more). It's picked by hand ("Make main chat") or started by
+the first message on the project's page (the desktop's project row while it has none, the
+phone's project header: New chat with `"main": true`), and it never changes by itself: other
+chats settling or snoozing leave it be. Settled, moved to another project or deleted, the project
+has none (`tree.projects[].main` null) until the next message on its page starts a new one
+(Unsettle makes a settled one main again while no new one was started). Like a snooze, it
+belongs to the hub's sidebar: never forwarded to a copy's home PC.
+
+The phone draws the main chat as its project's header: a tap opens it (with no main chat yet: New
+chat for that project, sending `"main": true`), its status (spinner, unread dot) on the header,
+a long press its chat menu; the chevron and count fold the project's other chats.
+
+`POST /v1/chats/{id}/main` → `{"ok": true, "chat"}`: the chat becomes its project's main chat (a
+settled one is unsettled first, a snoozed one woken). `409 {"error"}` when it can't be one (no
+project, a sub-agent). Offer "Make main chat" on unsettled-or-settled leads with a project when
+the chat has `main: false`.
 
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 

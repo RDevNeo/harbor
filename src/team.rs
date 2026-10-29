@@ -80,15 +80,43 @@ pub fn until(ts: i64) -> String {
 impl App {
     // ------------------------------------------------------------ structure
 
-    /// A project's most recently active chat (webhooks and notices go there).
+    /// A project's most recently active chat.
     pub fn lead_of(&self, repo: i64) -> Option<i64> {
         self.chats.iter().filter(|c| c.role == Role::Lead && c.repo_id == Some(repo)).max_by_key(|c| c.updated).map(|c| c.id)
     }
 
-    /// The chat clicking a project opens: its newest unsettled one. It still has its own row
-    /// under the project, like the project's other chats (sidebar.rs `tree`).
-    pub fn main_thread(&self, repo: i64) -> Option<i64> {
-        self.chats.iter().filter(|c| c.role == Role::Lead && c.repo_id == Some(repo) && !c.settled).max_by_key(|c| (c.updated, c.id)).map(|c| c.id)
+    /// A project's main chat: the one its sidebar row opens and shows, its page writes to, and
+    /// webhooks wake. Picked by hand or started on first use, and kept: other chats settling
+    /// or snoozing never change it. None while the project has none, or while its main chat is
+    /// settled or moved to another project (Unsettle brings it back, unless a new main chat
+    /// was started meanwhile); deleting it forgets it (store.rs).
+    pub fn main_chat(&self, repo: i64) -> Option<i64> {
+        self.store.main_chats().get(&repo).copied().filter(|id| crate::sidebar::is_main_of(self.chat(*id), repo))
+    }
+
+    /// Makes `chat` its project's main chat (from a chat row's menu, or the phone's): the chat
+    /// leaves its own row for the project's. A settled chat comes back first; a snoozed one
+    /// wakes. Err says why a chat can't be one.
+    pub fn make_main(&mut self, chat: i64) -> Result<(), &'static str> {
+        let Some(c) = self.chat(chat).cloned() else { return Err("no such chat") };
+        let Some(repo) = c.repo_id.filter(|r| self.repo(*r).is_some()) else { return Err("only a chat in a project can be its main chat") };
+        if c.role != Role::Lead {
+            return Err("a sub-agent can't be a project's main chat");
+        }
+        if c.settled {
+            self.set_chat_settled(chat, false);
+        }
+        self.set_snooze(&format!("c{chat}"), None);
+        self.store.set_main_chat(repo, Some(chat));
+        Ok(())
+    }
+
+    /// A chat started from a project's page (the project row's draft) becomes its main chat
+    /// when it still has none.
+    pub fn adopt_main(&mut self, repo: Option<i64>, chat: i64) {
+        if let Some(r) = repo.filter(|r| self.main_chat(*r).is_none()) {
+            self.store.set_main_chat(r, Some(chat));
+        }
     }
 
     /// The chats of a project (or the project-less ones), newest first. Each is a
@@ -99,9 +127,9 @@ impl App {
         v
     }
 
-    /// The project's thread, created on first use.
+    /// The project's main chat, started on first use (a webhook's, named after the project).
     pub fn ensure_lead(&mut self, repo: i64) -> i64 {
-        if let Some(id) = self.lead_of(repo) {
+        if let Some(id) = self.main_chat(repo) {
             return id;
         }
         let name = self.repo(repo).map(|r| r.name.clone()).unwrap_or_default();
@@ -130,6 +158,7 @@ impl App {
         });
         let id = chat.id;
         self.chats.push(chat);
+        self.store.set_main_chat(repo, Some(id));
         id
     }
 
@@ -239,7 +268,7 @@ impl App {
             if q.len() >= AUTO_TURNS_PER_HOUR {
                 if !self.paused.contains(&project) {
                     self.paused.insert(project);
-                    if let Some(lead) = self.lead_of(project) {
+                    if let Some(lead) = self.main_chat(project).or_else(|| self.lead_of(project)) {
                         self.notice(lead, "alert", "Automatic turns paused: more than 60 in the last hour. Send a message to resume.", "");
                     }
                 }

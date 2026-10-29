@@ -108,6 +108,7 @@ pub const KEYS: &[(&str, Class)] = &[
     ("agents_settled_open", D),
     ("last_chat", D),
     ("draft_repo", D),
+    ("draft_main", D),
     ("snoozed", D),
     ("palette_recent", D),
     ("browser_last", D),

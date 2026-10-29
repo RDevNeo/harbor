@@ -156,6 +156,7 @@ impl App {
         json!({
             "view": view,
             "draft_repo": self.draft.repo,
+            "draft_main": self.draft.main,
             "drafts": self.drafts.iter().filter(|(_, t)| !t.is_empty()).map(|(k, t)| (k.to_string(), Value::String(t.clone()))).collect::<serde_json::Map<String, Value>>(),
             "panes": panes,
             "max": self.surface_max.map(|d| d.idx()),
@@ -171,6 +172,7 @@ impl App {
         self.store.set("reload_state", "");
         let Ok(v) = serde_json::from_str::<Value>(&text) else { return };
         self.draft.repo = v["draft_repo"].as_i64();
+        self.draft.main = v["draft_main"].as_bool().unwrap_or(false);
         if let Some(m) = v["drafts"].as_object() {
             for (k, t) in m {
                 if let (Ok(k), Some(t)) = (k.parse::<i64>(), t.as_str()) {

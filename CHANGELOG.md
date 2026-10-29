@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Each project has a main chat again, and now it stays put. Clicking the project opens it and the
+  project's row shows its status (working, done, waiting on a limit); writing on the project's
+  page starts it the first time and goes to it after that, instead of starting one more chat each
+  time. The project's other chats are rows under it, and the project's + still starts a separate
+  one. Any chat of a project can become its main chat: Make main chat in its menu (a long press
+  on the phone). It never changes by itself: other chats settling or snoozing leave it be.
+  Settled (Settle main chat in the project's menu), moved or deleted, the project's next message
+  starts a new one; Unsettle brings it back while none was started. Webhooks wake the main chat.
+  The phone shows it the same way: the project's header opens it and shows its status, and its
+  count and chevron fold the other chats.
+
 ## [0.87.0] - 2026-10-29
 
 ### Added

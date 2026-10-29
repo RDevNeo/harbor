@@ -95,6 +95,11 @@ impl App {
                     self.popup = if self.popup == Some(Popup::Project) { None } else { Some(Popup::Project) };
                     self.popup_anchor = rect;
                 }
+                // The project's page: this message starts its main chat.
+                if self.draft.main && self.draft.repo.is_some() {
+                    ui.add_space(4.0);
+                    w::subtle(ui, "Starts the project's main chat: its row opens it from now on", "label-13");
+                }
             });
             ui.add_space(18.0);
             self.composer(ui, None);
@@ -245,7 +250,8 @@ impl App {
                     let rest = |ui: &Ui| ui.available_width() - git_w;
                     match chat {
                         None => {
-                            crumb(ui, "", "New thread", true, rest(ui));
+                            let main = self.draft.main && self.draft.repo.is_some();
+                            crumb(ui, "", if main { "Main chat" } else { "New thread" }, true, rest(ui));
                         }
                         Some(c) => match c.role {
                             Role::Lead => {
@@ -1389,6 +1395,8 @@ impl App {
                     Some(Some(repo)) => {
                         self.draft.repo = repo;
                         self.store.set("draft_repo", &repo.map(|r| r.to_string()).unwrap_or_default());
+                        // A project picked here gets one more chat, not its main one.
+                        self.set_draft_main(false);
                         self.popup = None;
                         // Stay on the draft: the first message starts a chat in that project.
                         self.focus_composer = true;

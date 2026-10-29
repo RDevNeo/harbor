@@ -131,8 +131,13 @@ final class Sidebar {
         if (a instanceof GhList) a.finish(); else a.closeDrawer();
     }
 
-    private void newChat() {
-        a.startActivity(new Intent(a, NewChat.class).putExtra("hub", a.hub.id));
+    private void newChat() { newChat(null, false); }
+
+    /** New chat, in `project` when given; `main`: it starts that project's main chat. */
+    private void newChat(String project, boolean main) {
+        Intent i = new Intent(a, NewChat.class).putExtra("hub", a.hub.id);
+        if (project != null) i.putExtra("project", project).putExtra("main", main);
+        a.startActivity(i);
         if (current != null) a.closeDrawer();
     }
 
@@ -212,6 +217,9 @@ final class Sidebar {
         // project under Threads; settled chats fold into Settled at the end. Projects never
         // settle (an older hub's project `settled` is ignored).
         LinkedHashMap<String, List<JSONObject>> groups = new LinkedHashMap<>();
+        // Each project's main chat (hubs from 0.88, which send `main` in `tree`): its header.
+        Map<String, JSONObject> mains = new java.util.HashMap<>();
+        Set<String> withMains = new HashSet<>();
         List<JSONObject> loose = new ArrayList<>(), settled = new ArrayList<>();
         JSONObject tree = st.optJSONObject("tree");
         // Hubs 0.55.2 to 0.64.0 send it with their own ids though the chats come by gid: none
@@ -225,6 +233,9 @@ final class Sidebar {
                 JSONObject p = tp.optJSONObject(i);
                 if (p == null || (p.optBoolean("snoozed") && q.isEmpty())) continue;
                 groups.put(p.optString("id"), pick(byId, p.optJSONArray("chats")));
+                if (p.has("main")) withMains.add(p.optString("id"));
+                JSONObject m = p.isNull("main") ? null : byId.get(p.optString("main"));
+                if (m != null) mains.put(p.optString("id"), m);
             }
             loose = pick(byId, tree.optJSONArray("threads"));
             settled = pick(byId, tree.optJSONArray("settled"));
@@ -250,15 +261,16 @@ final class Sidebar {
         }
         boolean first = true;
         for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
-            if (g.getValue().isEmpty()) continue;
+            JSONObject main = mains.get(g.getKey());
+            if (g.getValue().isEmpty() && main == null) continue;
             if (!first) divider();
             first = false;
-            group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty());
+            group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty(), main, withMains.contains(g.getKey()));
         }
         if (!loose.isEmpty()) {
             if (!first) divider();
             first = false;
-            group("", "Threads", loose, you, q.isEmpty());
+            group("", "Threads", loose, you, q.isEmpty(), null, false);
         }
         if (!settled.isEmpty()) {
             if (!first) divider();
@@ -458,7 +470,9 @@ final class Sidebar {
         JSONArray tp = tree.optJSONArray("projects");
         for (int i = 0; tp != null && i < tp.length(); i++) {
             JSONObject p = tp.optJSONObject(i);
-            if (p != null) lists.add(p.optJSONArray("chats"));
+            if (p == null) continue;
+            lists.add(p.optJSONArray("chats"));
+            if (!p.isNull("main") && p.has("main")) lists.add(new JSONArray().put(p.optString("main")));
         }
         lists.add(tree.optJSONArray("threads"));
         lists.add(tree.optJSONArray("settled"));
@@ -470,28 +484,69 @@ final class Sidebar {
     private Set<String> folded() { return new HashSet<>(Ui.prefs(a).getStringSet("folded-" + a.hub.id, new HashSet<>())); }
 
     /** A project's header (folder, name, count, chevron) and its chats. A tap folds it; a folded
-     *  project with a chat at work keeps a dot on its header. Searching shows every match. */
-    private void group(String key, String name, List<JSONObject> cs, String you, boolean foldable) {
+     *  project with a chat at work keeps a dot on its header. Searching shows every match.
+     *  With main chats (`mains`, hubs from 0.88) the header is the project's main chat, as the
+     *  desktop's project row: a tap opens it (none yet: New chat starts it), it shows the main
+     *  chat's status, a long press its menu, and the count and chevron fold. */
+    private void group(String key, String name, List<JSONObject> cs, String you, boolean foldable, JSONObject main, boolean mains) {
         Set<String> f = folded();
         boolean fold = foldable && f.contains(key);
         LinearLayout h = Ui.row(a);
         h.setPadding(Ui.dp(12), Ui.dp(10), Ui.dp(12), Ui.dp(6));
-        h.setBackground(Ui.press(0, 0, 10));
+        String mainId = main == null ? null : main.optString("id");
+        h.setBackground(mainId != null && mainId.equals(current) ? Ui.press(Ui.G100, 0, 10) : Ui.press(0, 0, 10));
         h.addView(Ui.icon(a, key.isEmpty() ? Ui.I_CHAT : Ui.I_FOLDER, 14, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 2, 0, 8, 0));
-        h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
+        h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, mains ? Ui.FG : Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
+        if (main != null) status(h, main, you);
         boolean busy = false;
         for (JSONObject c : cs) busy |= working(c) || Hub.queued(c) > 0;
         if (fold && busy) h.addView(Ui.dot(a, Ui.BLUE, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 8, 0, 0, 0));
-        h.addView(Ui.text(a, String.valueOf(cs.size()), 12, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-        h.addView(Ui.icon(a, fold ? Ui.I_RIGHT : Ui.I_DOWN, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 6, 0, 0, 0));
-        h.setContentDescription((name == null ? "Project" : name) + ", " + cs.size() + (fold ? " chats, folded" : " chats"));
-        if (foldable) h.setOnClickListener(v -> {
-            if (!f.remove(key)) f.add(key);
-            Ui.prefs(a).edit().putStringSet("folded-" + a.hub.id, f).apply();
-            render(st);
-        });
+        // The fold toggle: the whole header, or with main chats only the count and chevron.
+        LinearLayout toggle = mains ? Ui.row(a) : h;
+        if (cs.isEmpty() && mains) toggle = null; // nothing to fold
+        else {
+            toggle.addView(Ui.text(a, String.valueOf(cs.size()), 12, Ui.G600), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+            toggle.addView(Ui.icon(a, fold ? Ui.I_RIGHT : Ui.I_DOWN, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 6, 0, 0, 0));
+            if (toggle != h) {
+                toggle.setPadding(Ui.dp(4), Ui.dp(4), 0, Ui.dp(4));
+                toggle.setBackground(Ui.press(0, 0, 10));
+                toggle.setContentDescription(cs.size() + (fold ? " more chats, folded" : " more chats"));
+                h.addView(toggle, Ui.wrap());
+            }
+            if (foldable) toggle.setOnClickListener(v -> {
+                if (!f.remove(key)) f.add(key);
+                Ui.prefs(a).edit().putStringSet("folded-" + a.hub.id, f).apply();
+                render(st);
+            });
+        }
+        if (mains) {
+            h.setContentDescription((name == null ? "Project" : name) + (main != null ? ", main chat" : ", start its main chat"));
+            h.setOnClickListener(v -> { if (main != null) open(mainId); else newChat(key, true); });
+            if (main != null) h.setOnLongClickListener(v -> { Chats.menu(a, a.hub, main, a::refresh, a::refresh); return true; });
+        } else {
+            h.setContentDescription((name == null ? "Project" : name) + ", " + cs.size() + (fold ? " chats, folded" : " chats"));
+        }
         list.addView(h, Ui.inset());
         if (!fold) for (JSONObject c : cs) list.addView(chatRow(c, you), Ui.inset());
+    }
+
+    /** A chat's status at the end of its row (or its project's header, for a main chat): who's
+     *  typing, the spinner while it works, queued, failed, unread. */
+    private void status(LinearLayout r, JSONObject c, String you) {
+        boolean typing = typing(c, you) != null;
+        int q = Hub.queued(c);
+        if (typing) {
+            r.addView(Ui.text(a, "typing…", 12, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        } else if (working(c)) {
+            r.addView(Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        } else if (q > 0) {
+            r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
+        } else if (c.optBoolean("failed")) {
+            r.addView(Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
+        } else if (c.optBoolean("unread")) {
+            // Finished while nobody had it open (the desktop sidebar's blue dot).
+            r.addView(Ui.dot(a, Ui.BLUE, 6), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(6), Ui.dp(6)), 10, 0, 4, 0));
+        }
     }
 
     private View nav(String glyph, String title, String value, int color, View.OnClickListener on) {
@@ -561,20 +616,7 @@ final class Sidebar {
             r.addView(Ui.icon(a, Ui.I_CLOCK, 13, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 8, 0, 0, 0));
             r.addView(Ui.text(a, c.optString("snoozed_label"), 12, Ui.G600), Ui.margins(Ui.wrap(), 4, 0, 0, 0));
         }
-        boolean typing = typing(c, you) != null;
-        int q = Hub.queued(c);
-        if (typing) {
-            r.addView(Ui.text(a, "typing…", 12, Ui.BLUE), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-        } else if (working(c)) {
-            r.addView(Ui.icon(a, Ui.I_LOADER, 14, Ui.BLUE), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
-        } else if (q > 0) {
-            r.addView(Ui.dot(a, Ui.AMBER, 8), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(8), Ui.dp(8)), 10, 0, 2, 0));
-        } else if (c.optBoolean("failed")) {
-            r.addView(Ui.icon(a, Ui.I_CIRCLE_X, 14, Ui.RED), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 8, 0, 0, 0));
-        } else if (c.optBoolean("unread")) {
-            // Finished while nobody had it open (the desktop sidebar's blue dot).
-            r.addView(Ui.dot(a, Ui.BLUE, 6), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(6), Ui.dp(6)), 10, 0, 4, 0));
-        }
+        status(r, c, you);
         r.setOnClickListener(v -> open(id));
         r.setOnLongClickListener(v -> { Chats.menu(a, a.hub, c, a::refresh, a::refresh); return true; });
         return r;

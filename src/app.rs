@@ -125,6 +125,9 @@ pub struct Sel {
 pub struct Draft {
     pub repo: Option<i64>,
     pub sel: Sel,
+    /// The project's page (its row clicked while it has no main chat): the first message
+    /// starts the project's main chat instead of one more chat.
+    pub main: bool,
 }
 
 #[derive(Default)]
@@ -340,7 +343,7 @@ impl App {
             .map(|(a, m)| (a.to_string(), m.to_string()))
             .collect();
         let collapsed = get("collapsed", "").split(',').filter_map(|x| x.parse().ok()).collect();
-        let draft = Draft { repo: get("draft_repo", "").parse().ok(), sel };
+        let draft = Draft { repo: get("draft_repo", "").parse().ok(), sel, main: get("draft_main", "") == "1" };
         let store_ref = &store;
         let api = crate::api::Local::new(Arc::new(crate::api::Hub::new(
             crate::api::load_tokens(store_ref),
@@ -771,10 +774,19 @@ impl App {
     pub fn new_draft(&mut self, repo: Option<i64>) {
         self.draft.repo = repo;
         self.store.set("draft_repo", &repo.map(|r| r.to_string()).unwrap_or_default());
+        self.set_draft_main(false);
         if let Some(r) = repo {
             self.collapsed.remove(&r);
         }
         self.open(View::Draft);
+    }
+
+    /// Whether the draft is its project's page (see `Draft::main`).
+    pub fn set_draft_main(&mut self, main: bool) {
+        if self.draft.main != main {
+            self.draft.main = main;
+            self.store.set("draft_main", if main { "1" } else { "" });
+        }
     }
 
     /// Reads a project's git status on a thread (it can take seconds in a big tree);
@@ -962,7 +974,9 @@ impl App {
         if text.is_empty() && files.is_empty() && mentions.is_empty() {
             return;
         }
-        if key == DRAFT && self.mesh_create(&text, &files) {
+        // The project's page, its main chat started meanwhile (on the phone): the message joins it.
+        let joins_main = key == DRAFT && self.draft.main && self.draft.repo.and_then(|r| self.main_chat(r)).is_some();
+        if key == DRAFT && !joins_main && self.mesh_create(&text, &files) {
             // The Device picked is another PC's Harbor: the chat starts there.
             self.drafts.remove(&key);
             self.files.remove(&key);
@@ -971,19 +985,31 @@ impl App {
         }
         // "New worktree" under the composer: made on a thread; the message goes once it's ready
         // (or back into the composer if it can't be made).
-        if key == DRAFT {
+        if key == DRAFT && !joins_main {
             if let Some((repo_dir, base)) = self.ws_wants_worktree(self.draft.repo, &self.draft.sel.device.clone()) {
                 self.drafts.remove(&key);
                 self.files.remove(&key);
                 self.mentions.drafts.remove(&key);
-                let held = crate::worktree::Held { repo: self.draft.repo, text, files, mentions };
+                let held = crate::worktree::Held { repo: self.draft.repo, main: self.draft.main, text, files, mentions };
                 self.ws_send_in_worktree(ctx, repo_dir, base, held);
                 return;
             }
         }
         let chat_id = if key == DRAFT {
-            // A project can hold several chats: every send from the draft starts one.
-            let id = self.new_thread(self.draft.repo, &text);
+            // A project can hold several chats: every send from New chat starts one. Its page
+            // writes to its main chat: started by the first message (or, started meanwhile on
+            // another device, joined).
+            let main = self.draft.repo.filter(|_| self.draft.main);
+            let id = match main.and_then(|r| self.main_chat(r)) {
+                Some(id) => id,
+                None => {
+                    let id = self.new_thread(self.draft.repo, &text);
+                    if main.is_some() {
+                        self.adopt_main(main, id);
+                    }
+                    id
+                }
+            };
             self.view = View::Chat(id);
             self.store.set("last_chat", &id.to_string());
             id

@@ -551,6 +551,8 @@ pub enum Side {
 /// back in the composer if it can't be made.
 pub struct Held {
     pub repo: Option<i64>,
+    /// From the project's page: the chat becomes its main chat (app.rs `Draft::main`).
+    pub main: bool,
     pub text: String,
     pub files: Vec<PathBuf>,
     pub mentions: Vec<crate::mentions::Mention>,
@@ -755,6 +757,9 @@ impl App {
             match r {
                 Ok(made) => {
                     let id = app.new_thread(held.repo, &held.text);
+                    if held.main {
+                        app.adopt_main(held.repo, id);
+                    }
                     app.ws_attach(id, Some(made));
                     // Still on the new chat: follow it there.
                     if app.view == View::Draft {

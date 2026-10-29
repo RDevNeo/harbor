@@ -27,7 +27,10 @@ public class NewChat extends Base {
     private Attach attach;
     private Run run;
     private WorkBar work;
-    private TextView project;
+    private TextView project, mainNote;
+    /** Opened from a project's header while it has no main chat (hubs from 0.88): the first
+     *  message starts that project's main chat, as on the desktop's project page. */
+    private String mainOf;
     private boolean starting;
     private Slash slash;
     private Tags tags;
@@ -54,6 +57,10 @@ public class NewChat extends Base {
         pp.topMargin = Ui.dp(10);
         pp.gravity = Gravity.CENTER_HORIZONTAL;
         mid.addView(project, pp);
+        mainNote = Ui.text(this, "Starts the project's main chat: its header opens it from now on", 13, Ui.G600);
+        mainNote.setGravity(Gravity.CENTER);
+        mainNote.setVisibility(View.GONE);
+        mid.addView(mainNote, Ui.margins(Ui.fill(), 0, 4, 0, 0));
         // The prompt, and the slash and tag menus floating over its bottom, as in a chat.
         FrameLayout stage = new FrameLayout(this);
         stage.addView(mid, frameFill());
@@ -133,6 +140,7 @@ public class NewChat extends Base {
         // Started from elsewhere (a pull request's Review with an agent): its project.
         String asked = getIntent().getStringExtra("project");
         if (asked != null) run.project = asked;
+        if (asked != null && getIntent().getBooleanExtra("main", false)) mainOf = asked;
         run.normalize();
         show();
     }
@@ -189,12 +197,16 @@ public class NewChat extends Base {
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, "", "");
         comp.pill.setText(run.pill());
         project.setText(run.projectLabel() + "  ▾");
+        mainNote.setVisibility(main() ? View.VISIBLE : View.GONE);
         // A worktree is this PC's: not for a chat that runs on another device.
         work.project = run.device.isEmpty() ? run.project : "";
         work.load();
         String k = run.kind();
         comp.edit.setHint("Chat with " + (k.isEmpty() ? "Claude" : Character.toUpperCase(k.charAt(0)) + k.substring(1)) + "…");
     }
+
+    /** This message starts the project's main chat (another project picked: one more chat). */
+    private boolean main() { return mainOf != null && !mainOf.isEmpty() && mainOf.equals(run.project); }
 
     private void change(String field, Object v) {
         switch (field) {
@@ -242,6 +254,7 @@ public class NewChat extends Base {
                     .put("account", run.account).put("model", run.model).put("effort", run.effort).put("access", run.access)
                     .put("fast", run.fast).put("text", text).put("files", attach.ids());
             if (work.worktree && run.device.isEmpty()) body.put("worktree", true).put("base", work.base);
+            if (main()) body.put("main", true);
         } catch (Exception ignored) { }
         // The PC makes the worktree first: the chip says so meanwhile.
         if (work.worktree && run.device.isEmpty()) work.pending(false, "Creating worktree…");

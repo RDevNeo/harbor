@@ -12,35 +12,58 @@ use std::collections::HashMap;
 use eframe::egui::{self, Align, CornerRadius, FontId, Id, Layout, Rect, ScrollArea, Sense, Stroke, Ui, Vec2, pos2};
 
 /// Where every chat sits in the sidebar: one list for the desktop and the phone (`/v1/state`
-/// `tree`), so both place chats the same way. Each project lists all its unsettled leads, newest
-/// first, as siblings (no chat hides behind the project row); leads of no project, or of a
-/// project this PC doesn't have, are Threads; settled leads go to Settled whatever their
-/// project. Sub-agents live inside their lead's chat; snoozed chats stay out until they wake
-/// (or a search shows them, back in their project).
+/// `tree`), so both place chats the same way. A project's main chat (team.rs `main_chat`) is
+/// the project's own row; its other unsettled leads, newest first, are rows under it; leads of
+/// no project, or of a project this PC doesn't have, are Threads; settled leads go to Settled
+/// whatever their project. Sub-agents live inside their lead's chat; snoozed chats stay out
+/// until they wake (or a search shows them, back in their project).
 #[derive(Debug, Default, PartialEq)]
 pub struct Tree {
-    /// (project, snoozed, its chats) in the sidebar's order; a snoozed project shows only
-    /// while searching.
-    pub projects: Vec<(i64, bool, Vec<i64>)>,
+    /// The projects in the sidebar's order.
+    pub projects: Vec<Place>,
     pub threads: Vec<i64>,
     pub settled: Vec<i64>,
     /// Unsettled leads snoozed out of the places above: they show only while searching.
     pub snoozed: Vec<i64>,
 }
 
-/// The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `snoozed` takes the
+/// A project in the sidebar `Tree`.
+#[derive(Debug, Default, PartialEq)]
+pub struct Place {
+    pub id: i64,
+    /// Snoozed: it shows only while searching.
+    pub snoozed: bool,
+    /// Its main chat, drawn as the project row itself (in none of the lists).
+    pub main: Option<i64>,
+    /// Its other chats, each on a row of its own.
+    pub chats: Vec<i64>,
+}
+
+/// Whether `c` can be project `repo`'s main chat now: an unsettled lead of that project.
+pub fn is_main_of(c: Option<&crate::store::Chat>, repo: i64) -> bool {
+    c.is_some_and(|c| c.role == Role::Lead && c.repo_id == Some(repo) && !c.settled)
+}
+
+/// The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `mains` is each
+/// project's main chat as stored (one that no longer qualifies is ignored), `snoozed` takes the
 /// sidebar's keys, "r<project>" and "c<chat>".
-pub fn tree(repos: &[i64], chats: &[crate::store::Chat], snoozed: &dyn Fn(&str) -> bool) -> Tree {
+pub fn tree(repos: &[i64], chats: &[crate::store::Chat], mains: &HashMap<i64, i64>, snoozed: &dyn Fn(&str) -> bool) -> Tree {
     let mut leads: Vec<&crate::store::Chat> = chats.iter().filter(|c| c.role == Role::Lead).collect();
     leads.sort_by_key(|c| (std::cmp::Reverse(c.updated), std::cmp::Reverse(c.id)));
-    let mut t = Tree { projects: repos.iter().map(|r| (*r, snoozed(&format!("r{r}")), vec![])).collect(), ..Default::default() };
+    let main = |r: i64| mains.get(&r).copied().filter(|m| is_main_of(chats.iter().find(|c| c.id == *m), r));
+    let mut t = Tree {
+        projects: repos.iter().map(|r| Place { id: *r, snoozed: snoozed(&format!("r{r}")), main: main(*r), chats: vec![] }).collect(),
+        ..Default::default()
+    };
     for c in leads {
         if c.settled {
             t.settled.push(c.id);
+        } else if t.projects.iter().any(|p| p.main == Some(c.id)) {
+            // The project row is the main chat.
         } else if snoozed(&format!("c{}", c.id)) {
             t.snoozed.push(c.id);
-        } else if let Some(p) = t.projects.iter_mut().find(|p| Some(p.0) == c.repo_id) {
-            p.2.push(c.id);
+        } else if let Some(p) = t.projects.iter_mut().find(|p| Some(p.id) == c.repo_id) {
+            p.chats.push(c.id);
         } else {
             t.threads.push(c.id);
         }
@@ -56,7 +79,7 @@ impl App {
             repos.sort_by_key(|r| std::cmp::Reverse(self.activity(r.id)));
         }
         let ids: Vec<i64> = repos.iter().map(|r| r.id).collect();
-        tree(&ids, &self.chats, &|k| self.is_snoozed(k))
+        tree(&ids, &self.chats, &self.store.main_chats(), &|k| self.is_snoozed(k))
     }
 
     /// Last activity of a project: its newest chat (lead, subagents or old chats).
@@ -74,11 +97,15 @@ impl App {
             .min()
     }
 
-    /// Opens the project's newest chat, or a new one if it has none.
+    /// Opens the project's main chat, or its page while it has none: the first message
+    /// written there starts the main chat.
     pub fn open_project(&mut self, repo: i64) {
-        match self.main_thread(repo) {
+        match self.main_chat(repo) {
             Some(id) => self.open(View::Chat(id)),
-            None => self.new_draft(Some(repo)),
+            None => {
+                self.new_draft(Some(repo));
+                self.set_draft_main(true);
+            }
         }
     }
 
@@ -184,6 +211,12 @@ impl App {
             }
             if ui.button(if c.settled { "Unsettle" } else { "Settle" }).clicked() {
                 self.set_chat_settled(c.id, !c.settled);
+            }
+            // The project's row opens it from then on (a project's chats only).
+            if c.role == Role::Lead && c.repo_id.is_some_and(|r| self.repo(r).is_some()) {
+                if ui.button("Make main chat").on_hover_text("The project's row opens this chat, and what you write on the project's page goes here").clicked() {
+                    let _ = self.make_main(c.id);
+                }
             }
             self.move_menu(ui, c);
             self.move_pc_menu(ui, c);
@@ -469,19 +502,20 @@ impl App {
         // While searching, snoozed chats show too, back in their places.
         let asleep: Vec<crate::store::Chat> = if q.is_empty() { vec![] } else { tree.snoozed.iter().filter_map(chat).collect() };
         let mut active: Vec<(Repo, Vec<crate::store::Chat>)> = vec![];
-        for (rid, snoozed, ids) in &tree.projects {
-            let Some(r) = self.repos.iter().find(|r| r.id == *rid) else { continue };
-            if *snoozed && q.is_empty() {
+        for p in &tree.projects {
+            let Some(r) = self.repos.iter().find(|r| r.id == p.id) else { continue };
+            if p.snoozed && q.is_empty() {
                 continue;
             }
-            let named = r.name.to_lowercase().contains(&q);
-            let mine = asleep.iter().filter(|c| c.repo_id == Some(*rid)).cloned();
-            let cs: Vec<crate::store::Chat> = ids.iter().filter_map(chat).chain(mine).filter(|c| named || matches(c)).collect();
+            // A search finds a project by its name, or its main chat's title.
+            let named = r.name.to_lowercase().contains(&q) || p.main.and_then(|m| self.chat(m)).is_some_and(|m| !q.is_empty() && matches(m));
+            let mine = asleep.iter().filter(|c| c.repo_id == Some(p.id)).cloned();
+            let cs: Vec<crate::store::Chat> = p.chats.iter().filter_map(chat).chain(mine).filter(|c| named || matches(c)).collect();
             if q.is_empty() || named || !cs.is_empty() {
                 active.push((r.clone(), cs));
             }
         }
-        let homeless = asleep.iter().filter(|c| !tree.projects.iter().any(|p| Some(p.0) == c.repo_id)).cloned();
+        let homeless = asleep.iter().filter(|c| !tree.projects.iter().any(|p| Some(p.id) == c.repo_id)).cloned();
         let loose: Vec<crate::store::Chat> = tree.threads.iter().filter_map(chat).chain(homeless).filter(|c| matches(c)).collect();
         // Only chats settle; projects always stay in the list above.
         let settled_chats: Vec<crate::store::Chat> = tree.settled.iter().filter_map(chat).collect();
@@ -667,8 +701,13 @@ impl App {
             dragging = handle.dragged();
             handle.on_hover_cursor(if dragging { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         }
-        // Selected while a new chat for it is open (its chats highlight their own rows).
-        let selected = self.view == View::Draft && self.draft.repo == Some(r.id);
+        // Selected while its main chat or its page is open (its other chats highlight their own rows).
+        let main = self.main_chat(r.id);
+        let selected = match self.view {
+            View::Chat(id) => main == Some(id),
+            View::Draft => self.draft.repo == Some(r.id) && self.draft.main,
+            _ => false,
+        };
         let p = ui.painter();
         if selected || hovering {
             p.rect_filled(rect, CornerRadius::same(crate::theme::RADIUS_MD), t.accent());
@@ -692,8 +731,13 @@ impl App {
                 p.text(ir.center(), egui::Align2::CENTER_CENTER, letter, FontId::new(10.5, crate::theme::semibold()), t.fg());
             }
         }
-        // Right side: snoozed, else nothing. Its chats show their status on their own rows.
-        let status = if snoozed { w::Status::Text(ic::ALARM.to_string(), t.subtle()) } else { w::Status::Text(String::new(), t.gray(800)) };
+        // Right side: its main chat's status (working, also while its subagents do, waiting
+        // on a limit, done / failed), else snoozed, else nothing. Other chats show on their own rows.
+        let idle = if snoozed { w::Status::Text(ic::ALARM.to_string(), t.subtle()) } else { w::Status::Text(String::new(), t.gray(800)) };
+        let status = match main {
+            Some(id) => self.own_status(id, idle),
+            None => idle,
+        };
         let rx = if hovering {
             rect.right() - 28.0
         } else {
@@ -738,6 +782,17 @@ impl App {
             if let Some(Some(url)) = self.git.get(&id).map(|s| s.as_ref().and_then(|s| s.remote.clone())) {
                 if ui.button(format!("{}  Open remote", ic::EXTERNAL)).clicked() {
                     git::open_url(&url);
+                }
+            }
+            // Its main chat's own actions (the row is the chat). Settled, it leaves the row: the
+            // next message on the project's page starts a new main chat.
+            if let Some(m) = main.and_then(|m| self.chat(m)).cloned() {
+                ui.separator();
+                if ui.button("Rename main chat").clicked() {
+                    self.dialog = Some(Dialog::Rename { chat: m.id, title: m.title.clone() });
+                }
+                if ui.button("Settle main chat").on_hover_text("It goes to Settled; the project's next message starts a new main chat").clicked() {
+                    self.set_chat_settled(m.id, true);
                 }
             }
             ui.separator();
@@ -923,6 +978,14 @@ mod tests {
         }
     }
 
+    fn place(id: i64, snoozed: bool, main: Option<i64>, chats: Vec<i64>) -> Place {
+        Place { id, snoozed, main, chats }
+    }
+
+    fn none() -> HashMap<i64, i64> {
+        HashMap::new()
+    }
+
     #[test]
     fn every_open_lead_is_a_sibling_row_of_its_project() {
         // The reported case: older chats settled, so the oldest open lead (once the project
@@ -936,10 +999,48 @@ mod tests {
         remote.device = "ssh:1".into();
         let mut sub2 = chat(5, Some(6), Role::Sub, 50);
         sub2.parent = Some(4);
-        let t = tree(&[6], &[old, oldest_open, sub, remote, sub2], &|_| false);
-        assert_eq!(t.projects, vec![(6, false, vec![4, 2])]);
+        let t = tree(&[6], &[old, oldest_open, sub, remote, sub2], &none(), &|_| false);
+        assert_eq!(t.projects, vec![place(6, false, None, vec![4, 2])]);
         assert!(t.threads.is_empty());
         assert_eq!(t.settled, vec![1]);
+    }
+
+    #[test]
+    fn the_main_chat_is_the_project_row_and_stays_put() {
+        let chats = [chat(1, Some(6), Role::Lead, 10), chat(2, Some(6), Role::Lead, 20), chat(3, Some(6), Role::Lead, 30)];
+        let mains = HashMap::from([(6, 1)]);
+        // The oldest is main: not a row of its own, whatever the others do.
+        let t = tree(&[6], &chats, &mains, &|_| false);
+        assert_eq!(t.projects, vec![place(6, false, Some(1), vec![3, 2])]);
+        // Others settling or snoozing don't change it.
+        let mut settled = chats.clone();
+        settled[1].settled = true;
+        let t = tree(&[6], &settled, &mains, &|k| k == "c3");
+        assert_eq!(t.projects, vec![place(6, false, Some(1), vec![])]);
+        assert_eq!((t.settled, t.snoozed), (vec![2], vec![3]));
+        // Snoozed itself, it's still the project row.
+        let t = tree(&[6], &chats, &mains, &|k| k == "c1");
+        assert_eq!(t.projects[0].main, Some(1));
+        assert!(t.snoozed.is_empty());
+    }
+
+    #[test]
+    fn a_main_chat_that_no_longer_qualifies_is_none() {
+        let mut settled = chat(1, Some(6), Role::Lead, 10);
+        settled.settled = true;
+        let moved = chat(2, Some(7), Role::Lead, 20);
+        let mut sub = chat(3, Some(8), Role::Sub, 30);
+        sub.parent = Some(2);
+        let mains = HashMap::from([(6, 1), (7, 9), (8, 3), (9, 2)]);
+        let t = tree(&[6, 7, 8, 9], &[settled, moved, sub], &mains, &|_| false);
+        // Settled: in Settled, and its project has no main chat (the next message starts one).
+        assert_eq!(t.settled, vec![1]);
+        assert_eq!(t.projects.iter().map(|p| p.main).collect::<Vec<_>>(), vec![None, None, None, None]);
+        // Moved to project 7: a row there, not 9's main chat; a deleted one (9) or a sub-agent is none.
+        assert_eq!(t.projects[1].chats, vec![2]);
+        assert!(is_main_of(Some(&chat(5, Some(6), Role::Lead, 1)), 6));
+        assert!(!is_main_of(Some(&chat(5, None, Role::Lead, 1)), 6));
+        assert!(!is_main_of(None, 6));
     }
 
     #[test]
@@ -954,8 +1055,8 @@ mod tests {
             settled_loose,
             chat(5, Some(7), Role::Chat, 9),
         ];
-        let t = tree(&[7, 8], &chats, &|_| false);
-        assert_eq!(t.projects, vec![(7, false, vec![3]), (8, false, vec![])]);
+        let t = tree(&[7, 8], &chats, &none(), &|_| false);
+        assert_eq!(t.projects, vec![place(7, false, None, vec![3]), place(8, false, None, vec![])]);
         assert_eq!(t.threads, vec![2, 1]);
         assert_eq!(t.settled, vec![4]);
     }
@@ -963,16 +1064,16 @@ mod tests {
     #[test]
     fn snoozed_chats_and_projects() {
         let chats = [chat(1, Some(7), Role::Lead, 1), chat(2, Some(7), Role::Lead, 2), chat(3, Some(8), Role::Lead, 3)];
-        let t = tree(&[7, 8], &chats, &|k| k == "c2" || k == "r8");
-        assert_eq!(t.projects, vec![(7, false, vec![1]), (8, true, vec![3])]);
+        let t = tree(&[7, 8], &chats, &none(), &|k| k == "c2" || k == "r8");
+        assert_eq!(t.projects, vec![place(7, false, None, vec![1]), place(8, true, None, vec![3])]);
         // Out of its project, kept apart for a search.
         assert_eq!(t.snoozed, vec![2]);
     }
 
     #[test]
     fn same_update_time_orders_newest_id_first() {
-        let t = tree(&[7], &[chat(1, Some(7), Role::Lead, 5), chat(2, Some(7), Role::Lead, 5)], &|_| false);
-        assert_eq!(t.projects[0].2, vec![2, 1]);
+        let t = tree(&[7], &[chat(1, Some(7), Role::Lead, 5), chat(2, Some(7), Role::Lead, 5)], &none(), &|_| false);
+        assert_eq!(t.projects[0].chats, vec![2, 1]);
     }
 
     /// Wednesday 2026-10-28 14:20:00 UTC.
