@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-10-29
+
 ### Changed
 - Gmail signs in with one click: the Gmail card's "Sign in with Google" uses Harbor's own Google
   client, so there's no Google Cloud project to set up. Google may first say it hasn't verified
@@ -1984,7 +1986,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.92.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.93.0...HEAD
+[0.93.0]: https://github.com/RDevNeo/harbor/compare/v0.92.0...v0.93.0
 [0.92.0]: https://github.com/RDevNeo/harbor/compare/v0.91.1...v0.92.0
 [0.91.1]: https://github.com/RDevNeo/harbor/compare/v0.91.0...v0.91.1
 [0.91.0]: https://github.com/RDevNeo/harbor/compare/v0.90.0...v0.91.0
