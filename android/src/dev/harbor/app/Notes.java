@@ -129,12 +129,12 @@ final class Notes {
         nm.notify(tag, 1, b.build());
     }
 
-    /** Reply: typed in the notification, sent into the chat. With three factors Android
-     *  unlocks the phone first (the presence key signs only after an unlock). */
+    /** Reply: typed in the notification, sent into the chat. Android unlocks the phone first
+     *  (12+): a locked phone's notification can't drive the PCs. */
     private static Notification.Action replyAction(Context c, Hub h, String chat, String tag, int code) {
         RemoteInput ri = new RemoteInput.Builder(NoteAction.TEXT).setLabel("Reply to the chat").build();
         Notification.Action.Builder a = new Notification.Action.Builder(null, "Reply", act(c, h, chat, tag, NoteAction.REPLY, code + 1, true)).addRemoteInput(ri);
-        if (Build.VERSION.SDK_INT >= 31) a.setAuthenticationRequired(h.factors() == 3);
+        if (Build.VERSION.SDK_INT >= 31) a.setAuthenticationRequired(true);
         return a.build();
     }
 

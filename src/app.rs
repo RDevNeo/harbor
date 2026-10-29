@@ -48,6 +48,7 @@ pub enum View {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab {
+    Account,
     General,
     Notifications,
     Appearance,
@@ -489,6 +490,11 @@ impl App {
         crate::hookcert::start(app.hook_tokens.clone(), inc_tx.clone(), wake.clone());
         app.hook_port = control::start_hooks(inc_tx, app.hook_tokens.clone(), wake);
         app.check_funnel();
+        // The account: who is signed in, this PC's workspace and its directory (account.rs).
+        crate::account::start(&app.store, {
+            let ctx = ctx.clone();
+            move || ctx.request_repaint()
+        });
         app.mesh_load();
         if app.store.get("api_enabled").as_deref() == Some("1") {
             app.api_set_enabled(true, ctx);
@@ -1642,6 +1648,7 @@ impl App {
         self.notify_tick(ctx, focused && !hidden && !crate::background::hidden());
         self.wake_snoozed(ctx);
         self.mesh_tick(ctx);
+        self.account_tick(ctx);
         self.ws_poll(ctx);
         self.pr_sweep(ctx);
         self.voice_poll(ctx);
@@ -1671,6 +1678,11 @@ impl App {
 
         let t = self.theme.t;
         crate::picker::toast(&ctx, &t);
+        // Every device signs in (account.rs): until then only the sign-in page.
+        if crate::account::gate() {
+            self.signin_page(ui);
+            return;
+        }
         self.update_toasts(&ctx);
         let narrow = self.sidebar_narrow(&ctx);
         if !narrow {

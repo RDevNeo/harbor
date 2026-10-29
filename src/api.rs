@@ -4,12 +4,12 @@
 //! thread per connection, no async runtime. It listens on every interface on port 47930 (kv
 //! `api_port`; `HARBOR_LISTEN=addr,…` picks addresses instead) and speaks mutual TLS with
 //! pinned certificates (tls.rs) to everything but 127.0.0.1: a phone pins this PC's key from
-//! the pairing QR and shows its own, which the hub binds to the pairing's token on first use.
-//! Every request but `GET /app.apk` also carries `Authorization: Bearer <token>`; tokens are
-//! made and revoked in Settings › Phones and kept in kv (`api_tokens`). A TLS client without a
-//! known key gets nothing but the APK and PC pairing (mesh.rs). Plain HTTP is answered on
-//! 127.0.0.1 only, and on this PC's Tailscale interface for clients that haven't upgraded yet
-//! (`tls::legacy`).
+//! its workspace's directory and shows its own. Every request but `GET /app.apk` carries
+//! `Authorization: Bearer <Harbor token>`: the phone's Google sign-in, signed by the account
+//! service and bound to the phone's key, which this PC checks itself, offline (account.rs).
+//! Only members of this PC's workspace get in. Pairing tokens from before accounts (kv
+//! `api_tokens`) only let an old app update itself. Plain HTTP is answered on 127.0.0.1 only,
+//! and on this PC's Tailscale interface for clients that haven't upgraded yet (`tls::legacy`).
 //!
 //! Calls that read or change chats go to the UI thread as `Incoming::Api` and are answered in
 //! its update loop, so `App` keeps a single owner. `GET /v1/events` (the long-poll), uploads and
@@ -58,72 +58,26 @@ const CLIP: usize = 16 << 10;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct Token {
+    /// This PC's own handle for the phone (never shown to it): seen, inbox and Devices go by it.
     pub token: String,
     /// What the phone calls itself (`X-Harbor-Device`), once it has connected.
     #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub created: i64,
-    /// The pairing it belongs to: a phone paired once gets a token from each PC in the mesh
-    /// (mesh.rs), all with the same group, so removing the phone on one PC removes it on all.
+    /// The phone: the fingerprint of its key for a signed-in phone (the same on every PC of the
+    /// workspace), a pairing's group before accounts.
     #[serde(default)]
     pub group: String,
-    /// The fingerprint of the phone's key (tls.rs): bound on its first TLS call, and from then
-    /// on the token only works with that key.
+    /// The fingerprint of the phone's key (tls.rs).
     #[serde(default)]
     pub fp: String,
-    /// The pairing secret (hex), made when the phone paired with the codes confirmed on the PC
-    /// (phoneauth.rs). Empty: a pairing from before three factors, which must upgrade.
+    /// The account signed in on the phone (account.rs): its id and name. Empty: a pairing from
+    /// before accounts, good only for updating the app.
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub secret: String,
-    /// The phone's presence key (SubjectPublicKeyInfo, hex): it signs each session's challenge.
+    pub account: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub presence: String,
-    /// The phone binds its calls to the TLS connection (exporter): every call must.
-    #[serde(default)]
-    pub binding: bool,
-    /// Confirmed on the PC as a phone without a screen lock: two factors (TLS key and pairing
-    /// secret), no presence key. Never set by the phone alone (phoneauth.rs).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub nolock: bool,
-    /// When the factors last changed (unix s): the other PCs of the mesh take the newest.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub keys_at: i64,
-    /// A pairing code shown on the PC, not used yet: good for pairing only, for 10 minutes.
-    #[serde(default)]
-    pub ticket: bool,
-}
-
-fn is_zero(n: &i64) -> bool {
-    *n == 0
-}
-
-impl Token {
-    /// Three factors: a session is needed for every call.
-    pub fn three(&self) -> bool {
-        !self.secret.is_empty() && !self.presence.is_empty()
-    }
-
-    /// Two factors: a phone without a screen lock, confirmed on the PC as one. Sessions too.
-    pub fn two(&self) -> bool {
-        !self.secret.is_empty() && self.presence.is_empty() && self.nolock
-    }
-
-    /// A pairing with a secret (two or three factors): every call needs a session.
-    pub fn secured(&self) -> bool {
-        self.three() || self.two()
-    }
-
-    /// 3, 2, or 0 for a pairing from before three factors.
-    pub fn factors(&self) -> u8 {
-        if self.three() {
-            3
-        } else if self.two() {
-            2
-        } else {
-            0
-        }
-    }
+    pub account_name: String,
 }
 
 #[derive(Default)]
@@ -412,8 +366,8 @@ pub struct PairedPhone {
     /// Its app's versionCode: what it says (`X-Harbor-App`, apps from 0.19), at least
     /// [`APP_INBOX`] for an app that picks up sends, 0 when unknown (an older app).
     pub app: i64,
-    /// Its pairing's factors here (Token::factors): 2 for a phone without a screen lock.
-    pub factors: u8,
+    /// The account signed in on it ("" for a pairing from before accounts).
+    pub owner: String,
     /// What the phone says it is (`X-Harbor-Platform`, apps from 0.84): model, Android version,
     /// ABIs and whether its built-in browser runs ("" when unknown).
     pub platform: String,
@@ -475,8 +429,6 @@ pub struct Hub {
     pub tokens_dirty: AtomicBool,
     /// Pairings removed (groups), shared with peers so a removed phone is out everywhere.
     pub revoked: Mutex<Vec<String>>,
-    /// Phones' sessions, handshakes and pairings waiting for a confirmation (phoneauth.rs).
-    pub auth3: crate::phoneauth::State,
     /// Notifications for phones and this desktop (notify.rs).
     pub notes: crate::notify::Notes,
 }
@@ -504,7 +456,6 @@ impl Hub {
             mesh: Default::default(),
             tokens_dirty: AtomicBool::new(false),
             revoked: Mutex::new(vec![]),
-            auth3: Default::default(),
             notes: Default::default(),
         }
     }
@@ -512,10 +463,6 @@ impl Hub {
     /// Phones or the mesh are on: the listener answers and changes are counted.
     pub fn active(&self) -> bool {
         self.enabled.load(Ordering::Relaxed) || self.mesh.on.load(Ordering::Relaxed)
-    }
-
-    pub fn mesh_revoked(&self, group: &str) -> bool {
-        self.revoked.lock().unwrap().iter().any(|g| g == group)
     }
 
     pub fn rev(&self) -> u64 {
@@ -785,7 +732,9 @@ impl Hub {
                     }
                     p.app = p.app.max(app);
                     p.alive = p.alive.max(pinged);
-                    p.factors = p.factors.max(t.factors());
+                    if p.owner.is_empty() {
+                        p.owner = t.account_name.clone();
+                    }
                     if at > p.seen {
                         p.seen = at;
                         p.ip = ip;
@@ -796,7 +745,7 @@ impl Hub {
                         p.name = name;
                     }
                 }
-                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), factors: t.factors(), alive: pinged, platform }),
+                None => out.push(PairedPhone { group: t.group.clone(), name, seen: at, ip, app, via: String::new(), owner: t.account_name.clone(), alive: pinged, platform }),
             }
         }
         // Not seen in this run: what an earlier one saw.
@@ -920,43 +869,58 @@ impl Hub {
         self.auth(token, &Via::Loopback).is_ok()
     }
 
-    /// What `token` alone may do over this connection (phoneauth::Level). Over TLS the phone's
-    /// key must be the one bound to the token, and a token not bound yet (a phone upgrading from
-    /// before 0.13) is bound to the key it's first used with; a pairing code is bound when the
-    /// pairing is confirmed. Plain: loopback always (test rigs, `adb reverse`); the legacy
-    /// tailnet path only for tokens no key is bound to yet.
-    pub fn auth(&self, token: &str, via: &Via) -> Result<crate::phoneauth::Level, &'static str> {
-        use crate::phoneauth::Level;
-        let mut tokens = self.tokens.lock().unwrap();
+    /// A pairing token from before accounts: over loopback (test rigs, this PC's own tools) it
+    /// still works in full; elsewhere it only lets the old app update itself
+    /// ([`Level::Legacy`]), then the phone signs in with Google.
+    pub fn auth(&self, token: &str, via: &Via) -> Result<Level, &'static str> {
+        let tokens = self.tokens.lock().unwrap();
         // Every stored token is compared in full, so the time taken says nothing about it.
-        let at = tokens.iter().enumerate().fold(None, |hit, (i, t)| if same(t.token.as_bytes(), token.as_bytes()) { Some(i) } else { hit });
-        let Some(t) = at.map(|i| &mut tokens[i]) else { return Err("unknown token: pair this phone again in Harbor › Settings › Phones") };
-        if t.ticket && store::now() - t.created > crate::phoneauth::TICKET_TTL {
-            return Err("this pairing code has expired: make a new one in Harbor › Settings › Phones");
+        // A signed-in phone's handle is never a credential.
+        let hit = tokens.iter().filter(|t| t.account.is_empty()).fold(false, |hit, t| same(t.token.as_bytes(), token.as_bytes()) | hit);
+        if !hit {
+            return Err("unknown token: sign in with Google in Harbor for Android");
         }
-        let level = if t.ticket {
-            Level::Ticket
-        } else if t.secured() {
-            Level::Session
-        } else {
-            Level::Legacy
-        };
         match via {
             Via::Loopback => Ok(Level::Loopback),
-            Via::Tls(Some(_)) if t.ticket => Ok(Level::Ticket),
-            Via::Tls(Some(fp)) if t.fp.is_empty() => {
-                t.fp = fp.clone();
-                self.tokens_dirty.store(true, Ordering::SeqCst);
-                Ok(level)
-            }
-            Via::Tls(Some(fp)) if t.fp == *fp => Ok(level),
-            Via::Tls(Some(_)) => Err("this pairing belongs to another phone: pair this one in Harbor › Settings › Phones"),
-            Via::Tls(None) => Err("this app has no key of its own: update it"),
-            Via::Legacy if t.fp.is_empty() && !t.ticket => Ok(Level::Legacy),
-            Via::Legacy => Err("this phone now connects with its own key: update the app"),
+            Via::Tls(_) | Via::Legacy => Ok(Level::Legacy),
             Via::Refused => Err("plain HTTP isn't answered here: use TLS"),
         }
     }
+
+    /// Who a phone's message comes from: "Pixel 8 (Sam Rig)" for a signed-in phone.
+    pub fn caller_label(&self, token: &str, device: &str) -> String {
+        let phone = if device.is_empty() { "Phone" } else { device };
+        match self.tokens.lock().unwrap().iter().find(|t| t.token == token && !t.account_name.is_empty()) {
+            Some(t) => format!("{phone} ({})", t.account_name),
+            None => phone.to_string(),
+        }
+    }
+
+    /// The handle of a signed-in phone (key `fp`, account `c`): made the first time it calls.
+    pub fn account_phone(&self, c: &crate::account::Claims, fp: &str) -> String {
+        let mut tokens = self.tokens.lock().unwrap();
+        let name = if c.name.is_empty() { c.email.clone() } else { c.name.clone() };
+        if let Some(t) = tokens.iter_mut().find(|t| !t.account.is_empty() && t.fp == fp) {
+            if t.account != c.sub || t.account_name != name {
+                (t.account, t.account_name) = (c.sub.clone(), name);
+                self.tokens_dirty.store(true, Ordering::SeqCst);
+            }
+            return t.token.clone();
+        }
+        let token = new_token().unwrap_or_else(|_| format!("acct-{fp}"));
+        tokens.push(Token { token: token.clone(), name: String::new(), created: store::now(), group: fp.to_string(), fp: fp.to_string(), account: c.sub.clone(), account_name: name });
+        self.tokens_dirty.store(true, Ordering::SeqCst);
+        token
+    }
+}
+
+/// What a call with a pairing token from before accounts may do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Level {
+    /// Plain HTTP from this PC: everything.
+    Loopback,
+    /// From a phone: check for an update and download the app.
+    Legacy,
 }
 
 /// Constant-time equality.
@@ -973,12 +937,6 @@ pub fn new_token() -> std::io::Result<String> {
 
 pub fn load_tokens(s: &store::Store) -> Vec<Token> {
     let mut v: Vec<Token> = s.get("api_tokens").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    // Pairing codes nobody used in time.
-    let n = v.len();
-    v.retain(|t| !t.ticket || store::now() - t.created <= crate::phoneauth::TICKET_TTL);
-    if v.len() != n {
-        save_tokens(s, &v);
-    }
     // Tokens from before pairings had groups: each its own.
     if v.iter().any(|t| t.group.is_empty()) {
         for t in v.iter_mut().filter(|t| t.group.is_empty()) {
@@ -1028,8 +986,7 @@ pub struct Local {
 
 #[derive(Default)]
 pub struct PhonesUi {
-    /// The token whose pairing QR is shown, with its textures (pairing, install).
-    pub pairing: Option<(String, Option<egui::TextureHandle>, Option<egui::TextureHandle>)>,
+    /// The app's download link as a QR code.
     pub install_qr: Option<(String, egui::TextureHandle)>,
 }
 
@@ -1071,8 +1028,6 @@ pub struct Request {
     pub method: String,
     pub path: String,
     pub query: Vec<(String, String)>,
-    /// The request target exactly as sent (path and query): what a phone's MAC covers.
-    pub target: String,
     pub headers: Vec<(String, String)>,
     pub len: usize,
     /// `Transfer-Encoding: chunked` (only [`read_head_chunked`] lets it through).
@@ -1174,7 +1129,7 @@ pub fn read_head_chunked(r: &mut impl BufRead) -> Result<Request, (u16, &'static
         })
         .collect();
     // Paths keep their '+' (only queries use it for spaces).
-    let mut req = Request { method: method.to_ascii_uppercase(), path: decode_path(path), query, target: target.to_string(), ..Default::default() };
+    let mut req = Request { method: method.to_ascii_uppercase(), path: decode_path(path), query, ..Default::default() };
     for _ in 0..100 {
         let l = line(r, 8192)?;
         if l.is_empty() {
@@ -1380,7 +1335,7 @@ pub fn start(hub: Arc<Hub>, tx: Sender<crate::control::Incoming>, wake: impl Fn(
     // Keys known here, for handshakes from the internet (tls::KnownClient).
     {
         let hub = hub.clone();
-        let _ = crate::tls::KNOWN.set(Box::new(move |fp: &str| hub.tokens.lock().unwrap().iter().any(|t| t.fp == fp) || hub.mesh.allowed_fp(fp).is_some()));
+        let _ = crate::tls::KNOWN.set(Box::new(move |fp: &str| hub.tokens.lock().unwrap().iter().any(|t| t.fp == fp) || hub.mesh.allowed_fp(fp).is_some() || crate::account::known_device(fp)));
     }
     // The key is made now (not on the first phone), so the pairing QR can show it.
     if let Err(e) = crate::tls::my_server() {
@@ -1445,27 +1400,67 @@ pub fn phone_addrs(port: u16) -> Vec<String> {
     v
 }
 
-/// Whether `/app.apk` is served: to anyone on this network, and from the internet only with a
-/// session (or to a phone paired before three factors, so it can update and then upgrade).
-fn apk_allowed(public: bool, who: &Result<(String, Option<crate::phoneauth::Level>), &str>) -> bool {
-    !public || matches!(who, Ok((_, None | Some(crate::phoneauth::Level::Legacy))))
+/// Whether `/app.apk` is served: to anyone on this network, and from the internet to a
+/// signed-in phone (or one paired before accounts, so it can update and then sign in).
+fn apk_allowed(public: bool, who: &Result<(String, Option<Level>), (u16, &str)>) -> bool {
+    !public || matches!(who, Ok((_, None | Some(Level::Legacy))))
 }
 
-/// Who makes a call: the pairing token and, for a token alone, what it may do (None: a session
-/// with all three factors).
-pub fn caller(hub: &Hub, peer: &Peer, req: &Request) -> Result<(String, Option<crate::phoneauth::Level>), &'static str> {
-    if req.header("x-harbor-session").is_some() {
-        let Via::Tls(Some(fp)) = &peer.via else { return Err("a session without TLS") };
-        let token = hub.auth3.verify(req, fp, &crate::tls::my_fp(), peer.x.as_ref())?;
-        // Revoked meanwhile (here or on another PC of the mesh): its sessions end now.
-        if !hub.tokens.lock().unwrap().iter().any(|t| t.token == token && t.secured() && t.fp == *fp) {
-            hub.auth3.drop_token(&token);
-            return Err("session of a removed pairing");
-        }
-        return Ok((token, None));
+/// Who makes a call: a signed-in phone (its Harbor token, checked here offline, bound to the
+/// TLS key of this connection: None), or a pairing token from before accounts at its level.
+/// Refused: the status (401: sign in again, 403: not this PC's workspace) and why.
+pub fn caller(hub: &Hub, peer: &Peer, req: &Request) -> Result<(String, Option<Level>), (u16, &'static str)> {
+    let t = req.bearer().ok_or((401, "no token"))?;
+    if crate::account::is_token(t) {
+        let Via::Tls(Some(fp)) = &peer.via else { return Err((401, "a sign-in needs the phone's own key (TLS)")) };
+        let c = crate::account::admit(t, fp).map_err(|e| (if e.contains("workspace") || e.contains("removed") { 403 } else { 401 }, e))?;
+        return Ok((hub.account_phone(&c, fp), None));
     }
-    let t = req.bearer().ok_or("no token")?;
-    hub.auth(t, &peer.via).map(|l| (t.to_string(), Some(l)))
+    hub.auth(t, &peer.via).map(|l| (t.to_string(), Some(l))).map_err(|e| (401, e))
+}
+
+/// What a phone paired before accounts is told (Harbor for Android before 0.85 shows it).
+pub const OLD_PAIRING: &str = "This PC now uses Google accounts: update Harbor on this phone (Settings › Update), then sign in with Google.";
+/// How long a background ping may wait for a notification, and how often the app pings.
+pub const ALIVE_WAIT_MS: u64 = 240_000;
+pub const ALIVE_EVERY_S: u64 = 900;
+
+/// The sentence a refused phone gets.
+fn refused_text(status: u16, why: &str) -> String {
+    let mut w = why.to_string();
+    if let Some(c) = w.get(..1) {
+        w = c.to_uppercase() + &w[1..];
+    }
+    if status == 401 && !w.contains("sign in") { format!("{w}. Sign in again in Harbor for Android.") } else { format!("{w}.") }
+}
+
+/// Calls refused lately (unix s, why), newest last: Settings › Phones shows a few.
+pub static REFUSED: Mutex<Vec<(i64, String)>> = Mutex::new(vec![]);
+
+fn note_refused(ip: std::net::IpAddr, why: &str) {
+    let mut log = REFUSED.lock().unwrap();
+    let line = format!("{ip}: {why}");
+    // The same refusal again (an app retrying): only its time moves.
+    log.retain(|(_, l)| *l != line);
+    log.push((store::now(), line));
+    let n = log.len();
+    if n > 20 {
+        log.drain(..n - 20);
+    }
+}
+
+/// `POST /v1/alive` from a signed-in phone: recorded for Devices, and the notifications since
+/// `since` (0: none yet, it starts from now).
+fn alive(hub: &Hub, token: &str, body: &Value) -> Value {
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    hub.alive.lock().unwrap().insert(token.to_string(), (store::now(), now_ms));
+    let mut out = json!({ "ok": true, "every_s": ALIVE_EVERY_S });
+    if let Some(since) = body["since"].as_u64() {
+        let (notes, last) = if since == 0 { (vec![], hub.notes.last()) } else { hub.notes.wait(since, Duration::from_millis(body["wait_ms"].as_u64().unwrap_or(0).min(ALIVE_WAIT_MS))) };
+        out["notes"] = json!(notes);
+        out["last"] = json!(last);
+    }
+    out
 }
 
 /// How a connection reached the listener.
@@ -1486,8 +1481,6 @@ pub enum Via {
 pub struct Peer {
     pub ip: std::net::IpAddr,
     pub via: Via,
-    /// The TLS exporter of the connection (phoneauth::EXPORTER_LABEL).
-    pub x: Option<[u8; 32]>,
 }
 
 /// Phones' connections at once (each long-polls on one).
@@ -1568,8 +1561,6 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         return;
     };
-    // Only this TLS connection has it: phones bind their calls' MACs to it (phoneauth.rs).
-    let x = conn.exporter();
     let via = if conn.is_tls() {
         Via::Tls(conn.peer_fp())
     } else if ip.is_loopback() {
@@ -1583,7 +1574,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     // gets an answer: pairing and the APK are for the local network.
     if public {
         let known = match &via {
-            Via::Tls(Some(fp)) => hub.tokens.lock().unwrap().iter().any(|t| t.fp == *fp) || hub.mesh.allowed_fp(fp).is_some(),
+            Via::Tls(Some(fp)) => hub.tokens.lock().unwrap().iter().any(|t| t.fp == *fp) || hub.mesh.allowed_fp(fp).is_some() || crate::account::known_device(fp),
             _ => false,
         };
         if !known {
@@ -1591,7 +1582,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         crate::portmap::reached(ip);
     }
-    let peer = Peer { ip, via, x };
+    let peer = Peer { ip, via };
     let mut r = BufReader::new(conn);
     let req = match read_head(&mut r) {
         Ok(q) => q,
@@ -1646,44 +1637,26 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     if !hub.enabled.load(Ordering::SeqCst) {
         return; // phones are off: closed without a word
     }
-    use crate::phoneauth::Level;
-    // Who calls: a session (all three factors, every call MACed), or a token alone at its level.
+    // Who calls: a signed-in phone, or a pairing from before accounts.
     let who = caller(hub, &peer, &req);
     if matches!(req.method.as_str(), "GET" | "HEAD") && segs == ["app.apk"] && apk_allowed(public, &who) {
         return serve_apk(r.get_mut(), req.method == "HEAD");
     }
     let (token, level) = match who {
         Ok(w) => w,
-        Err(why) => {
+        Err((status, why)) => {
             FAILS.hit(ip);
-            hub.auth3.note(ip, why);
-            return send_json(r.get_mut(), 401, &json!({ "error": crate::phoneauth::REFUSED, "rekey": true }));
+            note_refused(ip, why);
+            return send_json(r.get_mut(), status, &json!({ "error": refused_text(status, why), "signin": status == 401 }));
         }
     };
-    if let Some(level) = level.filter(|l| *l != Level::Loopback) {
-        // Pairing, the upgrade and starting a session: the token, the TLS key and the codes or
-        // the session's proofs (phoneauth.rs).
-        if req.method == "POST" && (matches!(segs.as_slice(), ["v1", "pair" | "session", _]) || segs == ["v1", "alive"]) {
-            let Ok(body) = read_body(&mut r, req.len, 16 << 10) else { return send_json(r.get_mut(), 400, &json!({ "error": "bad body" })) };
-            let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-            let reply = crate::phoneauth::serve(hub, &peer, peer.x.as_ref(), &req, &segs, &token, level, &body, wake);
-            if reply.status == 401 {
-                FAILS.hit(ip);
-            }
-            return send_json(r.get_mut(), reply.status, &reply.body);
-        }
-        // A pairing from before three factors may still update the app, then upgrade.
-        if level == Level::Legacy && req.method == "GET" && segs == ["v1", "app"] {
+    if level == Some(Level::Legacy) {
+        // A pairing from before accounts may still update the app, then sign in.
+        if req.method == "GET" && segs == ["v1", "app"] {
             return send_json(r.get_mut(), 200, &app_info());
         }
-        FAILS.hit(ip);
-        hub.auth3.note(ip, if level == Level::Legacy { "a pairing from before three factors" } else { "a token without a session" });
-        let body = if level == Level::Legacy {
-            json!({ "error": "This PC now asks for three factors: open Harbor on the phone and confirm the code it shows here, in Settings › Phones.", "upgrade": true })
-        } else {
-            json!({ "error": crate::phoneauth::REFUSED, "rekey": true })
-        };
-        return send_json(r.get_mut(), 401, &body);
+        note_refused(ip, "a pairing from before accounts");
+        return send_json(r.get_mut(), 401, &json!({ "error": OLD_PAIRING, "signin": true, "upgrade": true }));
     }
     let device: String = req.header("x-harbor-device").unwrap_or("").chars().take(60).collect();
     let global = req.header("x-harbor-ids") == Some("global");
@@ -1730,19 +1703,13 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             send_json(r.get_mut(), if found { 200 } else { 404 }, &if found { json!({ "ok": true }) } else { json!({ "error": "nothing waits with that id" }) });
         }
         // The PCs of the mesh, with this phone's token on each (mesh.rs).
-        ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub, &token, None)),
-        // A phone without a screen lock has one now: its presence key, the third factor.
-        ("POST", ["v1", "pair", "presence"]) => {
+        ("GET", ["v1", "hubs"]) => send_json(w, 200, &crate::mesh::hubs(hub)),
+        // The app, in the background: it's installed and can reach this PC (Devices), and takes
+        // the notifications since `since`, waiting up to `wait_ms` for one (notify.rs).
+        ("POST", ["v1", "alive"]) => {
             let body: Value = read_body(&mut r, req.len, 4096).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-            let reply = crate::phoneauth::add_presence(hub, &peer, &req, &token, &body);
-            send_json(r.get_mut(), reply.status, &reply.body)
-        }
-        // The phone hands each other PC its own pairing secret (derived from this one's).
-        ("POST", ["v1", "hubs"]) => {
-            let body: Value = read_body(&mut r, req.len, 64 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-            let empty = serde_json::Map::new();
-            let secrets = body["secrets"].as_object().unwrap_or(&empty);
-            send_json(r.get_mut(), 200, &crate::mesh::hubs(hub, &token, Some(secrets)));
+            let reply = alive(hub, &token, &body);
+            send_json(r.get_mut(), 200, &reply)
         }
         ("POST", ["v1", "chats", c, "typing"]) => {
             let Some(chat) = c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)) else { return send_json(w, 404, &json!({ "error": "no such chat" })) };
@@ -2871,8 +2838,9 @@ impl App {
             }
             return;
         }
-        // What the phone sends says it came from the phone.
-        self.sender = if call.device.is_empty() { "Phone".into() } else { call.device.clone() };
+        // What the phone sends says it came from the phone, and whose it is: a workspace has
+        // several people, and chats record who started them.
+        self.sender = self.api.hub.caller_label(&call.token, &call.device);
         self.sender_device = device_id(&call.token);
         let mut r = self.api_route(&call, ctx);
         self.sender.clear();
@@ -4116,33 +4084,35 @@ mod tests {
     }
 
     #[test]
-    fn the_app_from_the_internet_only_with_a_session() {
-        use crate::phoneauth::Level;
+    fn the_app_from_the_internet_only_signed_in() {
         let t = |l: Option<Level>| Ok(("tok".to_string(), l));
-        assert!(apk_allowed(false, &Err("no token")) && apk_allowed(false, &t(Some(Level::Ticket))), "this network: anyone");
-        assert!(apk_allowed(true, &t(None)), "the internet: a session");
-        assert!(apk_allowed(true, &t(Some(Level::Legacy))), "or a pairing from before three factors, to update and upgrade");
-        assert!(!apk_allowed(true, &Err("bad MAC")) && !apk_allowed(true, &t(Some(Level::Session))) && !apk_allowed(true, &t(Some(Level::Ticket))));
+        assert!(apk_allowed(false, &Err((401, "no token"))) && apk_allowed(false, &t(Some(Level::Loopback))), "this network: anyone");
+        assert!(apk_allowed(true, &t(None)), "the internet: a signed-in phone");
+        assert!(apk_allowed(true, &t(Some(Level::Legacy))), "or a pairing from before accounts, to update and sign in");
+        assert!(!apk_allowed(true, &Err((401, "expired"))));
     }
 
     #[test]
-    fn tokens_bind_to_the_phone_key() {
-        let hub = Hub::new(vec![Token { token: "tok".into(), name: String::new(), created: 0, group: "g".repeat(16), fp: String::new(), ..Default::default() }], DEFAULT_PORT);
-        let (a, b) = ("a".repeat(64), "b".repeat(64));
-        // Not bound yet: plain over the tailnet still works (a phone before 0.13).
-        assert!(hub.auth("tok", &Via::Legacy).is_ok());
-        assert!(hub.auth("tok", &Via::Tls(None)).is_err(), "TLS needs the phone's key");
+    fn old_pairings_only_update_the_app() {
+        let hub = Hub::new(vec![Token { token: "tok".into(), group: "g".repeat(16), ..Default::default() }], DEFAULT_PORT);
+        assert_eq!(hub.auth("tok", &Via::Tls(Some("a".repeat(64)))), Ok(Level::Legacy));
+        assert_eq!(hub.auth("tok", &Via::Legacy), Ok(Level::Legacy));
+        assert_eq!(hub.auth("tok", &Via::Loopback), Ok(Level::Loopback), "127.0.0.1 is this PC");
         assert!(hub.auth("tok", &Via::Refused).is_err());
-        // The first key it's used with is its key from then on.
-        assert!(hub.auth("tok", &Via::Tls(Some(a.clone()))).is_ok());
-        assert_eq!(hub.tokens.lock().unwrap()[0].fp, a);
-        assert!(hub.tokens_dirty.load(Ordering::SeqCst), "the binding is saved");
-        assert!(hub.auth("tok", &Via::Tls(Some(a.clone()))).is_ok());
-        assert!(hub.auth("tok", &Via::Tls(Some(b.clone()))).is_err(), "another phone with the same token");
-        assert!(hub.auth("tok", &Via::Legacy).is_err(), "no going back to plain once it has a key");
-        assert!(hub.auth("tok", &Via::Loopback).is_ok(), "127.0.0.1 is this PC");
-        assert!(hub.auth("nope", &Via::Tls(Some(a))).is_err());
-        assert!(hub.auth("", &Via::Loopback).is_err());
+        assert!(hub.auth("nope", &Via::Loopback).is_err() && hub.auth("", &Via::Loopback).is_err());
+    }
+
+    #[test]
+    fn signed_in_phones_get_a_handle_that_is_no_credential() {
+        let hub = Hub::new(vec![], DEFAULT_PORT);
+        let c = crate::account::Claims { sub: "user_1".into(), name: "Sam".into(), ..Default::default() };
+        let fp = "f".repeat(64);
+        let h = hub.account_phone(&c, &fp);
+        assert_eq!(hub.account_phone(&c, &fp), h, "the same phone, the same handle");
+        assert_eq!(hub.group_of(&h), fp, "a phone is its key on every PC");
+        assert!(hub.tokens_dirty.load(Ordering::SeqCst));
+        assert!(hub.auth(&h, &Via::Loopback).is_err(), "the handle never works as a bearer token");
+        assert_eq!(hub.local_phones()[0].owner, "Sam");
     }
 
     #[test]

@@ -11,9 +11,13 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
   (button, paste or drag and drop).
 - **Remote devices**: a chat can run its Claude Code agent on another PC (your paired PCs show up by
   themselves, others are added by SSH). See below.
+- **Accounts and workspaces**: every PC and phone signs in with Google (through Clerk; the account
+  service is `worker/`). Each account has a workspace; invite people by email and they control
+  its PCs and chats from their own PCs and phones. Settings follow your account.
 - **Your phone and other PCs**: Harbor for Android (`android/`) and Harbor on your other PCs share
-  chats over your own network, every connection mutual TLS pinned to each device's own key; pair a
-  phone with a QR code and a PC with a one-time code (`harbor mesh pair`). PCs find each other on
+  chats over your own network, every connection mutual TLS pinned to each device's own key. The
+  PCs and phones of a workspace find each other through it: no pairing (PCs outside it can still
+  pair with a one-time code, `harbor mesh pair`). PCs find each other on
   the network, ask the router to open Harbor's port (UPnP, NAT-PMP, PCP; or use a port forward you
   set: `harbor net forward <port>`, `harbor net name <ddns name>`; `harbor net` shows the result), use IPv6 directly and go through another PC when they can't reach each other. No VPN
   or other software. The phone has the same built-in browser (Servo) for links in chats.

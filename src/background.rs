@@ -174,9 +174,6 @@ impl App {
         self.avatars.clear();
         self.prs.avatars.clear();
         self.devices_ui.icons.clear();
-        if let Some(p) = &mut self.api.ui.pairing {
-            (p.1, p.2) = (None, None);
-        }
         self.api.ui.install_qr = None;
         // (Browser engines were stopped with the last window; they start with a new texture.)
     }

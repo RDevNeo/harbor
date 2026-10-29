@@ -87,6 +87,9 @@ impl App {
         if let Some(h) = self.profile_toast(ctx, &t, y) {
             y += h + 8.0;
         }
+        if let Some(h) = self.invite_toast(ctx, &t, y) {
+            y += h + 8.0;
+        }
         self.provider_toast(ctx, &t, y);
     }
 
@@ -145,6 +148,34 @@ impl App {
             Click::Secondary => crate::git::open_url(&notes_url(&v)),
             Click::Close => self.store.set(HARBOR_DISMISSED, &v),
             Click::None => {}
+        }
+        Some(h)
+    }
+
+    /// An invitation to a workspace, waiting for this account (account.rs): Accept joins it,
+    /// Decline turns it down, the close hides it until Harbor restarts (Settings › Account keeps it).
+    fn invite_toast(&mut self, ctx: &egui::Context, t: &Tokens, y: f32) -> Option<f32> {
+        let hidden = egui::Id::NULL.with("invite-toast-hidden");
+        let gone: Vec<String> = ctx.data(|d| d.get_temp(hidden)).unwrap_or_default();
+        let inv = crate::account::invites().into_iter().find(|i| !gone.contains(&i.id))?;
+        let by = if inv.inviter_name.is_empty() { String::new() } else { format!("{} invited you", inv.inviter_name) };
+        let title = format!("Join {}?", if inv.ws_name.is_empty() { "a workspace" } else { &inv.ws_name });
+        let body = format!("{}{}. You'd share all of its PCs and chats, on every device. Nothing here changes: this PC stays in its workspace.", by, if by.is_empty() { format!("An invitation to {}", inv.email) } else { format!(" ({})", inv.email) });
+        let icon = |p: &egui::Painter, r: Rect| {
+            p.rect_filled(r, CornerRadius::same(8), t.blue(200));
+            ic::glyph(p, r.center(), ic::USERS, 16.0, t.blue(900));
+        };
+        let busy = crate::account::status().busy;
+        let (click, h) = toast(ctx, t, "invite-toast", y, icon, &title, &body, Some(("Accept", !busy)), "Decline");
+        match click {
+            Click::Primary => crate::account::accept_invite(inv.id),
+            Click::Secondary if !busy => crate::account::decline_invite(inv.id),
+            Click::Close => {
+                let mut g = gone;
+                g.push(inv.id);
+                ctx.data_mut(|d| d.insert_temp(hidden, g));
+            }
+            _ => {}
         }
         Some(h)
     }

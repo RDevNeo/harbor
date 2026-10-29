@@ -165,7 +165,7 @@ pub struct State {
     /// The mode of the message `send_to` handles now (None: queue); set by its caller.
     pub mode: Option<Mode>,
     /// kv `follow_up`, read once.
-    default: Option<Mode>,
+    pub default: Option<Mode>,
     edit: Option<Edit>,
     /// "Show all N queued" unfolded, per chat.
     unfolded: BTreeSet<i64>,

@@ -425,7 +425,8 @@ pub fn device_note(project: Option<&Path>, workspace: bool) -> String {
 /// This PC's owner as it tells the mesh: what the user typed (Settings › Devices, the phone),
 /// else what profile.rs detected, else the account's full name.
 pub fn owner(s: &Store) -> String {
-    pick(s.get(OWNER_KEY), crate::profile::load(s).map(|d| d.me.owner), crate::profile::full_name)
+    // Signed in (account.rs): the account's own name beats any guess.
+    pick(s.get(OWNER_KEY), crate::account::owner_name().or_else(|| crate::profile::load(s).map(|d| d.me.owner)), crate::profile::full_name)
 }
 
 /// The GitHub login: typed, else detected, else Harbor's GitHub sign-in.
@@ -440,9 +441,10 @@ pub fn pick(typed: Option<String>, detected: Option<String>, fallback: impl FnOn
     ok(typed).or_else(|| ok(detected)).unwrap_or_else(fallback)
 }
 
-/// The user has said who owns this PC: typed a name, or confirmed the detected one.
+/// The user has said who owns this PC: typed a name, confirmed the detected one, or signed in
+/// (then nothing needs detecting).
 pub fn confirmed(s: &Store) -> bool {
-    s.get(OWNER_KEY).is_some_and(|t| !t.trim().is_empty())
+    s.get(OWNER_KEY).is_some_and(|t| !t.trim().is_empty()) || crate::account::signed_in()
 }
 
 /// Confirm: what shows now (detected or fallback) becomes the user's own, in the fields that

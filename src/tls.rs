@@ -49,6 +49,19 @@ impl Identity {
     fn key(&self) -> PrivateKeyDer<'static> {
         PrivateKeyDer::Pkcs8(self.key.clone_key())
     }
+
+    /// The key's SubjectPublicKeyInfo (DER): its fingerprint is [`Identity::fp`].
+    pub fn spki(&self) -> Option<&[u8]> {
+        spki(&self.cert)
+    }
+
+    /// An ECDSA P-256 / SHA-256 signature (DER) with this Harbor's key: the account service
+    /// checks that a PC holds the key it signs in with (account.rs).
+    pub fn sign(&self, msg: &[u8]) -> Option<Vec<u8>> {
+        let rng = ring::rand::SystemRandom::new();
+        let kp = ring::signature::EcdsaKeyPair::from_pkcs8(&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING, self.key.secret_pkcs8_der(), &rng).ok()?;
+        kp.sign(&rng, msg).ok().map(|s| s.as_ref().to_vec())
+    }
 }
 
 /// A new key and a self-signed certificate for it (valid for a century: the key is the identity).
@@ -452,15 +465,6 @@ impl Conn {
         match self {
             Conn::Plain(_) | Conn::Tls(None) => None,
             Conn::Tls(Some(t)) => t.conn.peer_certificates().and_then(|c| c.first()).and_then(|c| cert_fp(c)),
-        }
-    }
-
-    /// 32 bytes of keying material only this TLS connection has (RFC 5705 / RFC 8446 §7.5,
-    /// no context): phones bind their request MACs to the connection with it (phoneauth.rs).
-    pub fn exporter(&self) -> Option<[u8; 32]> {
-        match self {
-            Conn::Tls(Some(t)) => t.conn.export_keying_material([0u8; 32], crate::phoneauth::EXPORTER_LABEL, None).ok(),
-            _ => None,
         }
     }
 
