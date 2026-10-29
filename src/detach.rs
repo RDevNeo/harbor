@@ -320,11 +320,23 @@ pub fn run(args: &[String]) {
     // read here so it stays out of cmd.json, and this PC's sign-ins may be off.
     let var = |k: &str| spec["env"].as_array().into_iter().flatten().find(|kv| kv[0] == k).and_then(|kv| kv[1].as_str().map(String::from));
     let signed_in = var(crate::agent::GUEST_APPS).as_deref() != Some("0");
+    // The overlay holding the turn's login for the commands it runs, while it runs (oauth.rs).
+    let mut lent = None;
     if let Some(login) = var(crate::agent::GUEST_LOGIN) {
         cmd.env_remove(crate::agent::GUEST_LOGIN).env_remove(crate::agent::GUEST_APPS);
         let dir = (!login.is_empty()).then(|| PathBuf::from(login));
-        if let Some(t) = crate::oauth::token(dir.as_deref()) {
-            cmd.env("CLAUDE_CODE_OAUTH_TOKEN", t);
+        let overlay = var("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+        match crate::oauth::token(dir.as_deref()) {
+            Some(t) => {
+                lent = overlay.filter(|o| crate::oauth::lend(o, dir.as_deref(), &t).is_ok()).map(Lent);
+                cmd.env("CLAUDE_CODE_OAUTH_TOKEN", t);
+            }
+            // Not signed in here: no login left from an earlier turn runs it as someone else.
+            None => {
+                if let Some(o) = overlay.filter(|o| !overlay_in_use(o)) {
+                    crate::oauth::unlend(&o);
+                }
+            }
         }
     }
     if spec["agent_env"].as_bool() == Some(true) {
@@ -359,6 +371,7 @@ pub fn run(args: &[String]) {
             Ok(c) => c,
             Err(e) => {
                 let _ = writeln!(std::fs::OpenOptions::new().append(true).open(dir.join("err")).unwrap(), "{}: {e}", spec["program"].as_str().unwrap_or(""));
+                drop(lent);
                 let _ = std::fs::write(dir.join("exit"), "127");
                 return;
             }
@@ -394,6 +407,7 @@ pub fn run(args: &[String]) {
         }
         break code;
     };
+    drop(lent);
     let _ = std::fs::write(dir.join("exit"), code.to_string());
 }
 
@@ -491,6 +505,27 @@ fn unreachable_text(name: &str, host: &str, why: &str, tries: u32, took: Duratio
     let at = if name.eq_ignore_ascii_case(host) { name.to_string() } else { format!("{name} ({host})") };
     let tried = if tries > 1 { format!(" (tried {tries} times over {} s)", took.as_secs().max(1)) } else { String::new() };
     format!("Couldn't reach {at}: {what}{tried}. {ask}")
+}
+
+/// A turn's login lent to its overlay (oauth.rs), taken out when the turn is done, unless
+/// another turn still runs there.
+struct Lent(PathBuf);
+
+impl Drop for Lent {
+    fn drop(&mut self) {
+        if !overlay_in_use(&self.0) {
+            crate::oauth::unlend(&self.0);
+        }
+    }
+}
+
+/// Another live turn runs in this overlay profile (chats commanded from the same PC share it).
+fn overlay_in_use(overlay: &Path) -> bool {
+    let me = std::process::id();
+    runners().into_iter().filter(|r| r.2 != me).any(|(_, dir, _)| {
+        let spec = std::fs::read_to_string(dir.join("cmd.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).unwrap_or_default();
+        spec["env"].as_array().into_iter().flatten().any(|kv| kv[0] == "CLAUDE_CONFIG_DIR" && kv[1].as_str().map(Path::new) == Some(overlay))
+    })
 }
 
 /// The last line a device's script prints once the agent there has exited, with its exit
@@ -794,6 +829,43 @@ mod tests {
         run(&[dir.to_string_lossy().into_owned()]);
         assert_eq!(tries(&t), 1);
         assert_eq!(std::fs::read_to_string(dir.join("err")).unwrap(), "user@box: Permission denied (publickey).\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_guest_turns_commands_run_as_its_account() {
+        let root = std::env::temp_dir().join(format!("harbor-guest-run-{}", crate::bridge::token().unwrap()));
+        let (dir, acct, overlay) = (root.join("9-1"), root.join("acct"), root.join("guests/pc-b"));
+        for d in [&dir, &acct, &overlay] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let expires = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64 + 3_600_000;
+        let login = json!({ "claudeAiOauth": { "accessToken": "sk-ant-oat01-guest", "refreshToken": "sk-ant-ort01-guest", "expiresAt": expires, "scopes": ["user:inference"] } });
+        std::fs::write(acct.join(".credentials.json"), login.to_string()).unwrap();
+        // The agent, and a command it runs: Claude Code keeps the token from that one, which
+        // has only the overlay to sign in from.
+        let agent = "printf 'token=%s login=%s\\n' \"$CLAUDE_CODE_OAUTH_TOKEN\" \"${HARBOR_GUEST_LOGIN-none}\"; env -u CLAUDE_CODE_OAUTH_TOKEN sh -c 'cat \"$CLAUDE_CONFIG_DIR/.credentials.json\"; stat -c \" mode=%a\" \"$CLAUDE_CONFIG_DIR/.credentials.json\"'";
+        let turn = |dir: &Path| {
+            let env = json!([["CLAUDE_CONFIG_DIR", overlay], [crate::agent::GUEST_LOGIN, acct], ["CLAUDE_CODE_OAUTH_TOKEN", null]]);
+            std::fs::write(dir.join("cmd.json"), json!({ "program": "sh", "args": ["-c", agent], "env": env, "input": false }).to_string()).unwrap();
+            run(&[dir.to_string_lossy().into_owned()]);
+            std::fs::read_to_string(dir.join("out")).unwrap_or_default()
+        };
+        let out = turn(&dir);
+        assert!(out.starts_with("token=sk-ant-oat01-guest login=none\n"), "{out}");
+        let flat: String = out.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(flat.contains("\"accessToken\":\"sk-ant-oat01-guest\"") && out.contains(" mode=600"), "{out}");
+        assert!(!out.contains("sk-ant-ort01"), "the refresh token stays with the account: {out}");
+        assert!(!std::fs::read_to_string(dir.join("cmd.json")).unwrap().contains("sk-ant-oat01"));
+        // Taken out when the turn ends.
+        assert!(!overlay.join(".credentials.json").exists());
+        // An account not signed in here: a login left in the overlay doesn't stand in for it.
+        std::fs::remove_file(acct.join(".credentials.json")).unwrap();
+        std::fs::write(overlay.join(".credentials.json"), login.to_string()).unwrap();
+        let dir = root.join("9-2");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = turn(&dir);
+        assert!(out.starts_with("token= login=none\n") && !out.contains("sk-ant-"), "{out}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

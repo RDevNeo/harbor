@@ -189,7 +189,8 @@ pub struct Context {
 
 /// Set in a guest turn's environment for its runner (detach.rs), which takes them out again:
 /// the account's config dir to read the login from (passed as `CLAUDE_CODE_OAUTH_TOKEN`, so it
-/// never lands in the turn's files), and "0" when this PC's sign-ins are off for it.
+/// never lands in the turn's files; lent to the overlay while it runs, oauth.rs), and "0"
+/// when this PC's sign-ins are off for it.
 pub const GUEST_LOGIN: &str = "HARBOR_GUEST_LOGIN";
 pub const GUEST_APPS: &str = "HARBOR_GUEST_APPS";
 

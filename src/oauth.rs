@@ -122,6 +122,31 @@ fn lock(path: &Path) -> Option<std::fs::File> {
     Some(f)
 }
 
+/// A guest chat's login for the commands it runs (meshctx.rs): Claude Code keeps
+/// `CLAUDE_CODE_OAUTH_TOKEN` from them, so a `claude` a hook or script starts reads it here.
+pub fn lend(overlay: &Path, config_dir: Option<&Path>, token: &str) -> std::io::Result<()> {
+    let src: Value = std::fs::read_to_string(credentials_path(config_dir)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let from = &src["claudeAiOauth"];
+    let mut login = json!({ "accessToken": token, "scopes": ["user:inference"] });
+    // When it is, and what kind of login it is (the CLI checks both); nothing else.
+    if from["accessToken"].as_str() == Some(token) {
+        for k in ["expiresAt", "scopes", "subscriptionType", "rateLimitTier"] {
+            if !from[k].is_null() {
+                login[k] = from[k].clone();
+            }
+        }
+    }
+    let path = credentials_path(Some(overlay));
+    let _lock = lock(&path);
+    write(&path, &json!({ "claudeAiOauth": login }))
+}
+
+pub fn unlend(overlay: &Path) {
+    let path = credentials_path(Some(overlay));
+    let _lock = lock(&path);
+    let _ = std::fs::remove_file(&path);
+}
+
 /// Exchanges a refresh token with Anthropic's OAuth endpoint, through `curl` (Harbor has
 /// no HTTP client). The body goes on curl's stdin: a token on a command line shows in `ps`.
 fn request_refresh(refresh_token: &str) -> Option<Value> {
@@ -256,5 +281,35 @@ mod tests {
         assert_eq!(epoch_ms(&json!(1_700_000_000)), 1_700_000_000_000);
         assert_eq!(epoch_ms(&json!("1700000000000")), 1_700_000_000_000);
         assert_eq!(epoch_ms(&Value::Null), 0);
+    }
+
+    #[test]
+    fn a_lent_login_is_the_access_token_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = dir();
+        let acct = d.join("acct");
+        let overlay = d.join("overlay");
+        std::fs::create_dir_all(&acct).unwrap();
+        std::fs::create_dir_all(&overlay).unwrap();
+        creds(&acct, 1_700_003_600_000);
+        lend(&overlay, Some(&acct), "sk-ant-oat01-old").unwrap();
+        let p = overlay.join(".credentials.json");
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(!text.contains("sk-ant-ort01") && !text.contains("refresh") && !text.contains("mcpOAuth"), "{text}");
+        let login = &serde_json::from_str::<Value>(&text).unwrap()["claudeAiOauth"];
+        assert_eq!(login["accessToken"], "sk-ant-oat01-old");
+        assert_eq!(login["expiresAt"], 1_700_003_600_000i64);
+        assert_eq!(login["scopes"], json!(["user:inference"]));
+        assert_eq!(login["subscriptionType"], "max");
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        // A token that isn't the file's (refreshed meanwhile): its expiry and kind aren't known.
+        lend(&overlay, Some(&acct), "sk-ant-oat01-other").unwrap();
+        let login = serde_json::from_str::<Value>(&std::fs::read_to_string(&p).unwrap()).unwrap()["claudeAiOauth"].clone();
+        assert_eq!(login, json!({ "accessToken": "sk-ant-oat01-other", "scopes": ["user:inference"] }));
+        unlend(&overlay);
+        assert!(!p.exists());
+        // The account's own login is untouched.
+        assert!(std::fs::read_to_string(acct.join(".credentials.json")).unwrap().contains("sk-ant-ort01-old"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

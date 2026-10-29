@@ -11,7 +11,8 @@
 //!   `memory_id` naming that memory folder there. Settings › Devices can stop sending it.
 //! - **The home PC runs the turn in an overlay.** A chat commanded from another PC runs with
 //!   `CLAUDE_CONFIG_DIR` at `<data>/guests/<peer>/` ([`apply`] writes the context there), the
-//!   account's login passed as `CLAUDE_CODE_OAUTH_TOKEN` (the overlay holds no credentials).
+//!   account's login passed as `CLAUDE_CODE_OAUTH_TOKEN`, lent to the overlay while the turn
+//!   runs (oauth.rs `lend`).
 //!   The host's own instructions, memory, skills and settings don't load. The host's GitHub
 //!   and app sign-ins are its owner's: off for the guest unless both say the same GitHub login.
 //! - **Memory goes home.** After the turn the overlay's memory folder is compared with what
