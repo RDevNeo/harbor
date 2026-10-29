@@ -27,7 +27,12 @@ The contract between Harbor for Android and a desktop Harbor (the "hub"). Implem
   The versionCode is the whole app version (`major*1000000 + minor*1000 + patch`, the
   versionName is Cargo.toml's version), so the hub derives the versionName from it. From 0.68
   the hub keeps each phone's last-seen time and app version across restarts (kv `phones_seen`)
-  and agents read them (`GET /v1/versions`, the `machines` `list` tool, the who-is-who note).
+  and agents read them (`GET /v1/versions`, the `machines` `list` tool, the who-is-who note). From
+  app 0.84, `X-Harbor-Platform: <what the phone is>` (free text, at most 240 characters:
+  maker and model, Android version and SDK, ABIs, and whether the built-in browser runs, e.g.
+  `Samsung SM-A135M, Android 12 (SDK 31), ABIs armeabi-v7a, armeabi, browser: no (32-bit
+  Android)`): kept with the phone like its version, shared with the mesh (`/mesh/v1/phones`
+  `platform`) and shown in `GET /v1/versions` (`phones[].platform`, appended to `line`).
 - **Plain HTTP** is answered only from 127.0.0.1 (`adb reverse`, test rigs). Elsewhere it gets
   `426` and nothing else. One exception while users upgrade: a hub that still has Tailscale
   answers plain HTTP on its Tailscale interface, from Tailscale addresses, for tokens no key is

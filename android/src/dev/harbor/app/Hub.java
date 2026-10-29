@@ -575,6 +575,15 @@ final class Hub {
         }
         c.header("X-Harbor-Device", deviceName());
         c.header("X-Harbor-App", String.valueOf(appCode()));
+        c.header("X-Harbor-Platform", platform());
+    }
+
+    private static String platform;
+
+    /** What this phone is (Engine.platform), worked out once per process. */
+    static String platform() {
+        if (platform == null) platform = Engine.platform(Ui.app);
+        return platform.replaceAll("[\\r\\n]", " ");
     }
 
     // ---- sessions (three factors) ----

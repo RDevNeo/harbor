@@ -681,6 +681,7 @@ fn phones_loop(hub: Arc<api::Hub>) {
                     seen: s["seen"].as_i64().unwrap_or(0).min(store::now()),
                     app: s["app"].as_i64().unwrap_or(0),
                     alive: s["alive"].as_i64().unwrap_or(0).min(store::now()),
+                    platform: s["platform"].as_str().unwrap_or("").chars().take(240).collect(),
                 })
                 .filter(|s| !s.group.is_empty())
                 .collect();
@@ -901,7 +902,7 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
         }
         // Where this PC saw the phones (Devices on the others), and the phone app it serves.
         ("GET", ["mesh", "v1", "phones"]) => {
-            let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0 || p.alive > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive })).collect();
+            let phones: Vec<Value> = hub.local_phones().iter().filter(|p| p.seen > 0 || p.alive > 0).map(|p| json!({ "group": p.group, "name": p.name, "seen": p.seen, "app": p.app, "alive": p.alive, "platform": p.platform })).collect();
             let about = shared.about.lock().unwrap().clone();
             ok(json!({ "phones": phones, "apk": crate::update::apk().map_or(0, |(_, c)| c), "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"] }))
         }

@@ -42,7 +42,19 @@ public class Browser extends Activity implements Engine.Client {
 
     /** Opens `url` in the built-in browser, or in the phone's own when this phone can't run it. */
     static void open(Context c, String url) {
-        if (!Engine.available(c)) { external(c, url); return; }
+        if (!Engine.available(c)) {
+            // Once per app version: say why the link opens outside (Settings › Built-in browser
+            // keeps saying it).
+            String why = Engine.unavailable(c);
+            android.content.SharedPreferences p = c.getSharedPreferences("browser", Context.MODE_PRIVATE);
+            String key = "told_" + versionCode(c);
+            if (why != null && !p.getBoolean(key, false)) {
+                p.edit().putBoolean(key, true).apply();
+                Ui.toast(c, "Opening in your browser. " + why);
+            }
+            if (Render.web(url)) external(c, url);
+            return;
+        }
         if (failedBefore(c)) {
             Ui.toast(c, "The built-in browser stopped last time; opening it in your browser.");
             external(c, url);

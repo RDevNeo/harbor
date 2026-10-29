@@ -77,6 +77,13 @@ public class Settings extends Base {
         app.addView(Ui.gap(this));
         app.addView(Ui.cardRow(this, Ui.I_PHONE, "Harbor for Android", myName(this) + " (" + myCode(this) + ")", Ui.FG, null), Ui.fill());
         app.addView(Ui.gap(this));
+        // Whether links open in the built-in browser (Servo) or the phone's own, and why.
+        String noBrowser = Engine.unavailable(this);
+        LinearLayout br = Ui.cardRow(this, Ui.I_GLOBE, "Built-in browser", noBrowser == null ? "On: web links open in Harbor (Servo)" : "Off: " + noBrowser,
+                noBrowser == null ? Ui.FG : Ui.AMBER, noBrowser == null ? v -> Browser.open(this, "") : null);
+        Ui.wrapSub(br, 4);
+        app.addView(br, Ui.fill());
+        app.addView(Ui.gap(this));
         app.addView(Ui.cardRow(this, Ui.I_GAUGE, "Usage", "Tokens and cost by project and day", Ui.FG, v -> usage()), Ui.fill());
 
         LinearLayout here = card(col);

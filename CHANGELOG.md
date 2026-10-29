@@ -5,6 +5,17 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: when web links can't open in the built-in browser, the phone says why, once, and
+  Settings › Built-in browser keeps saying it: phones with a 32-bit Android (the Galaxy A13 and
+  other budget phones run one on a 64-bit processor) or Android older than 9 open links in the
+  phone's own browser, because the engine is built for 64-bit Android only.
+
+### Added
+- The phone tells its PCs what it is (maker and model, Android version, ABIs, whether its
+  built-in browser runs): agents see it in the versions list (`GET /v1/versions`, the
+  `machines` list), so a phone-only problem can be diagnosed from the PC.
+
 ## [0.83.0] - 2026-10-28
 
 ### Added
