@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-10-28
+
 ### Fixed
 - Phone: when web links can't open in the built-in browser, the phone says why, once, and
   Settings › Built-in browser keeps saying it: phones with a 32-bit Android (the Galaxy A13 and
@@ -1802,7 +1804,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.83.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.84.0...HEAD
+[0.84.0]: https://github.com/RDevNeo/harbor/compare/v0.83.0...v0.84.0
 [0.83.0]: https://github.com/RDevNeo/harbor/compare/v0.82.0...v0.83.0
 [0.82.0]: https://github.com/RDevNeo/harbor/compare/v0.81.0...v0.82.0
 [0.81.0]: https://github.com/RDevNeo/harbor/compare/v0.80.0...v0.81.0
