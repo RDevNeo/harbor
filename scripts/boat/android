@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF2'
+Usage: scripts/boat/android [--out DIR] [--quiet]
+
+Builds the unsigned APK from this working tree (tracked files with their uncommitted changes,
+plus new files git does not ignore) with android/build.sh, which also runs the Android unit tests
+(android/test), on a fresh `large` boat.dev sandbox from the snapshot `harbor-build`, in the
+release build's Android image and SDK (.github/boat/apk.sh). Output streams here; exits non-zero
+when the build or a test fails. The APK carries no built-in browser engine (android/servo: that
+is browser.yml's job) and is unsigned: install it only where no signed Harbor app is installed.
+The sandbox is always deleted, also on error, Ctrl+C or kill (see scripts/boat/check --help).
+
+Options:
+  --out DIR    copy the APK to DIR/harbor-android-unsigned.apk
+  -q, --quiet  print only progress and the summary (what failed included); the full output stays
+               in /tmp/<sandbox name>.log
+  -h, --help   this help
+
+Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
+EOF2
+}
+out="" quiet=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) out=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
+    -q|--quiet) quiet=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+. "$(dirname "$0")/lib.sh"
+
+summary() {
+  [ -f "$log" ] || return 0
+  [ -z "$quiet" ] || sed 's/\x1b\[[0-9;]*[mK]//g' "$log" | grep -E '^Exception|^\s+at |^error:|: error: ' | head -100
+  echo
+  say "summary"
+  grep -E '^<== |^built |^FAIL |check\(s\) failed|: error: ' "$log" | sed 's/^<== //; s/^/  /'
+  [ -z "$out" ] || [ ! -f "$out/harbor-android-unsigned.apk" ] || echo "  apk: $out/harbor-android-unsigned.apk"
+}
+
+sandbox
+upload
+remote -- bash .github/boat/apk.sh
+if [ -n "$out" ]; then
+  "$boat" scp "$id:/home/user/out/harbor-android-unsigned.apk" "$out/" >/dev/null
+fi

@@ -7,6 +7,11 @@ PC (it has no Rust or Android toolchain) and not on GitHub-hosted runners. GitHu
 orchestrates: checkout, start the boat job, then sign, attest and publish.
 
 - Use the premade scripts; don't drive the `boat` CLI by hand.
+  - `scripts/boat/check`: every build or test of local changes. Tests the working tree (uncommitted
+    changes included), then builds it for release; `-- <filter>` picks tests, `--out DIR` brings
+    the binary back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
+    give it the longest timeout, or run it in the background.
+  - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
     the outputs back and deletes the sandbox (also on failure or cancellation, via
     `.github/boat/cleanup.sh`).

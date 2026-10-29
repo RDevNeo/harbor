@@ -33,3 +33,34 @@ run_in() {
 binfmt() {
   docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64 >/dev/null
 }
+
+# The Rust toolchain, kept in ~/cache: run_in <image> "${rust[@]}" … -- cargo …
+rust=(-e RUSTUP_HOME=/c/rustup -e CARGO_HOME=/c/cargo -e PATH=/c/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
+# toolchain <image> [rustup toolchain install options]: stable, installed or brought up to date.
+toolchain() {
+  local img="$1"; shift
+  mkdir -p "$cache/rustup" "$cache/cargo"
+  run_in "$img" "${rust[@]}" -- bash -euo pipefail -c '
+    [ -x /c/cargo/bin/rustup ] || curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --no-modify-path --profile minimal --default-toolchain none
+    rustup toolchain install stable --profile minimal "$@" >/dev/null
+    rustup default stable >/dev/null
+    rustc --version' bash "$@"
+}
+
+# apk_unsigned <image> <path under /out>: android/build.sh, unsigned, with the SDK in ~/cache. Its
+# unit tests (android/test) run as part of it.
+apk_unsigned() {
+  mkdir -p "$cache/android"
+  run_in "$1" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps \
+    -e UNSIGNED=1 -e OUT="$2" -- bash -euo pipefail -c '
+    sdk=/c/android/sdk sm=/c/android/sdk/cmdline-tools/latest/bin/sdkmanager
+    if [ ! -x "$sm" ]; then
+      curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/clt.zip
+      mkdir -p "$sdk/cmdline-tools" /tmp/clt && unzip -q /tmp/clt.zip -d /tmp/clt && mv /tmp/clt/cmdline-tools "$sdk/cmdline-tools/latest"
+    fi
+    if [ ! -x "$sdk/build-tools/34.0.0/aapt2" ] || [ ! -f "$sdk/platforms/android-34/android.jar" ]; then
+      yes | "$sm" --sdk_root="$sdk" --licenses >/dev/null || true
+      "$sm" --sdk_root="$sdk" --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
+    fi
+    ANDROID_HOME=$sdk android/build.sh'
+}

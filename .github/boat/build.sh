@@ -2,20 +2,13 @@
 # Run by release.yml (job build) on a boat.dev sandbox, from the extracted source: Harbor for
 # x86_64 and aarch64, the licence reports and the unsigned APK, side by side.
 . "$(dirname "$0")/lib.sh"
-mkdir -p "$cache/rustup" "$cache/cargo"
 core=$(image harbor-builder .github/boat/Dockerfile)
 apk=$(image harbor-android .github/boat/Dockerfile.android)
 # aarch64 binaries (the updater tests) run under the kernel's binfmt qemu: Ubuntu 22.04's own
 # qemu-user 6.2 crashes on them.
 binfmt
-rust=(-e RUSTUP_HOME=/c/rustup -e CARGO_HOME=/c/cargo -e PATH=/c/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
-
 # Once, before the parallel builds: rustup doesn't take two installs at a time.
-run_in "$core" "${rust[@]}" -- bash -euo pipefail -c '
-  [ -x /c/cargo/bin/rustup ] || curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --no-modify-path --profile minimal --default-toolchain none
-  rustup toolchain install stable --profile minimal --target aarch64-unknown-linux-gnu >/dev/null
-  rustup default stable >/dev/null
-  rustc --version'
+toolchain "$core" --target aarch64-unknown-linux-gnu
 
 # One target dir each: cargo locks a target dir for the whole build.
 x86_64() {
@@ -66,21 +59,7 @@ licences() {
 }
 
 # Signed later in GitHub Actions, where the keystore is.
-android() {
-  mkdir -p "$cache/android"
-  run_in "$apk" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps \
-    -e UNSIGNED=1 -e OUT=/out/harbor-android/harbor-android-unsigned.apk -- bash -euo pipefail -c '
-    sdk=/c/android/sdk sm=/c/android/sdk/cmdline-tools/latest/bin/sdkmanager
-    if [ ! -x "$sm" ]; then
-      curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/clt.zip
-      mkdir -p "$sdk/cmdline-tools" /tmp/clt && unzip -q /tmp/clt.zip -d /tmp/clt && mv /tmp/clt/cmdline-tools "$sdk/cmdline-tools/latest"
-    fi
-    if [ ! -x "$sdk/build-tools/34.0.0/aapt2" ] || [ ! -f "$sdk/platforms/android-34/android.jar" ]; then
-      yes | "$sm" --sdk_root="$sdk" --licenses >/dev/null || true
-      "$sm" --sdk_root="$sdk" --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
-    fi
-    ANDROID_HOME=$sdk android/build.sh'
-}
+android() { apk_unsigned "$apk" /out/harbor-android/harbor-android-unsigned.apk; }
 
 pids=() names=(x86_64 aarch64 licences android)
 for n in "${names[@]}"; do

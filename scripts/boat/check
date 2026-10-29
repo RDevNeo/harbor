@@ -1,0 +1,76 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF'
+Usage: scripts/boat/check [options] [-- <test args>]
+
+Checks this working tree (tracked files with their uncommitted changes, plus new files git does
+not ignore) on a fresh `large` boat.dev sandbox from the snapshot `harbor-build`, in the release
+build's ubuntu:22.04 image and warm target dir (.github/boat/check.sh):
+  1. cargo test --locked -- <test args>   all tests unless filtered, e.g. `-- view::`
+  2. cargo clippy --locked --all-targets  with --clippy only; advisory: it never fails the check
+                                          (main has ~200 clippy warnings: expect a long output)
+  3. cargo build --release --locked       unless --no-release
+Output streams here; a summary ends it (tests, warnings, time, cost). Exits non-zero when a step
+fails. The sandbox is always deleted, also on error, Ctrl+C or kill; sandboxes left behind by a
+killed -9 run are swept by the next run (this PC's at once, anyone's after 3 h).
+
+Options:
+  --clippy        also run clippy (about 40 s more)
+  --no-release    skip the release build
+  --out DIR       copy the release binary to DIR/harbor
+  -q, --quiet     print only progress, the summary and what failed (failing tests' output, compile
+                  errors); the full output stays in /tmp/<sandbox name>.log. Best for agents.
+  -h, --help      this help
+
+Prerequisites (any PC of the mesh): the boat CLI, logged in to the account that holds the
+snapshot `harbor-build` (`boat login`; on PATH or at ~/.ascii/bin/boat), jq, git, GNU tar.
+Nothing to build with locally.
+Cost: a large sandbox bills about $0.07 per hour; a warm run takes a few minutes.
+EOF
+}
+clippy="" release=1 out="" quiet="" args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --clippy) clippy=1 ;;
+    --no-release) release=0 ;;
+    -q|--quiet) quiet=1 ;;
+    --out) out=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; args=("$@"); break ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+[ -z "$out" ] || [ "$release" = 1 ] || { echo "--out needs the release build" >&2; exit 2; }
+. "$(dirname "$0")/lib.sh"
+
+summary() {
+  local plain="$work/plain"
+  [ -f "$log" ] || return 0
+  sed 's/\x1b\[[0-9;]*[mK]//g' "$log" > "$plain"
+  if [ -n "$quiet" ]; then
+    # What failed: compile errors and the failing tests' output.
+    awk '/^error(\[E[0-9]+\])?: / && !/could not compile|test failed/ { e = 1 } /^---- .* stdout ----$/ { t = 1 }
+         /^failures:$/ { t = 0 } e || t { print } /^$/ { e = 0 }' "$plain" | head -300
+  fi
+  echo
+  say "summary"
+  # Each step with its warnings and errors, one per place in the code.
+  awk '/^==> / { step = $2 }
+       /^(warning|error)(\[E[0-9]+\])?: / && !/generated [0-9]+ warning|warnings? emitted|could not compile|build failed|test failed/ { k = substr($1, 1, 1); next }
+       k && /^ +--> / { if (!seen[step k $2]++) n[step k]++ } { k = "" }
+       /^<== / { e = n[$2 "e"] ? sprintf(", %d errors", n[$2 "e"]) : ""; printf "  %s %s %s, %d warnings%s\n", $2, $3, $4, n[$2 "w"], e }' "$plain"
+  awk '/^test result:/ { for (i = 1; i <= NF; i++) { if ($(i+1) ~ /^passed/) p += $i; if ($(i+1) ~ /^failed/) f += $i; if ($(i+1) ~ /^ignored/) g += $i } n++ }
+       END { if (n) printf "  tests: %d passed, %d failed, %d ignored\n", p, f, g }' "$plain"
+  grep -E '^test .* \.\.\. FAILED$' "$plain" | sed -E 's/^test (.*) \.\.\. FAILED$/    failed: \1/' | sort -u
+  [ -z "$out" ] || [ ! -f "$out/harbor" ] || echo "  binary: $out/harbor"
+}
+
+sandbox
+upload
+remote CLIPPY="$clippy" RELEASE="$release" -- bash .github/boat/check.sh "${args[@]}"
+if [ -n "$out" ]; then
+  "$boat" scp "$id:/home/user/out/harbor" "$out/harbor" >/dev/null
+  chmod +x "$out/harbor"
+fi
