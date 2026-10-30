@@ -30,7 +30,7 @@ import java.util.Set;
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
  *  dot while a turn runs. A round avatar (this PC) and the black "New session" pill float at
- *  the bottom. The title row's workspace button narrows the list to one of the account's
+ *  the bottom. The title row's workspace button narrows the list to some of the account's
  *  workspaces, as the desktop sidebar's does.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
 final class Sidebar {
@@ -43,7 +43,7 @@ final class Sidebar {
     private JSONObject st;
     private boolean showSettled;
     private String filter; // project id, "" = all
-    private WsFilter scope = new WsFilter("", "", null, new HashMap<>()); // as last drawn
+    private WsFilter scope = new WsFilter(new ArrayList<>(), "", null, new HashMap<>()); // as last drawn
 
     Sidebar(Base a, String current) {
         this.a = a;
@@ -57,7 +57,7 @@ final class Sidebar {
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
         head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
         // Which workspace's chats show; hidden until `render` knows there are any.
-        wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspace());
+        wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspaces());
         wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
         wsBtn.setVisibility(View.GONE);
         head.addView(wsBtn);
@@ -169,12 +169,12 @@ final class Sidebar {
             if (p != null) projects.put(p.optString("id"), p.optString("name"));
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
-        // A workspace that's gone (left, signed out) shows as All.
-        JSONObject ws = Account.workspace(a, wsChoice());
-        drawWsBtn(ws);
+        Map<String, String> workspaces = Account.workspaces(a);
+        List<String> shown = WsFilter.picked(wsChoice(), workspaces.keySet());
+        drawWsBtn(workspaces, shown);
         Map<String, String> pcs = Account.pcWorkspaces(a);
         String hubId = st.optString("hub_id");
-        scope = new WsFilter(ws == null ? "" : ws.optString("id"), hubId, pcs.containsKey(hubId) ? pcs.get(hubId) : Account.wsOf(a.hub), pcs);
+        scope = new WsFilter(shown, hubId, pcs.containsKey(hubId) ? pcs.get(hubId) : Account.wsOf(a.hub), pcs);
 
         if (offTitle != null) {
             TextView icon = Ui.icon(a, Ui.I_MONITOR, 18, Ui.RED);
@@ -225,7 +225,7 @@ final class Sidebar {
             byId.put(c.optString("id"), c);
         }
         String nothing = !q.isEmpty() ? "No chat matches “" + q + "”."
-                : scope.active() ? "No chats of " + ws.optString("name") + " reach this PC."
+                : scope.active() ? "No chats of " + (shown.size() == 1 ? workspaces.get(shown.get(0)) : "these workspaces") + " reach this PC."
                 : "No chats yet. Start one with New session.";
         if (byId.isEmpty()) {
             none(nothing);
@@ -648,36 +648,51 @@ final class Sidebar {
         return r;
     }
 
-    /** The workspace picked on this phone ("": all), which may be gone since. */
+    /** The workspaces picked on this phone, ids joined by commas ("": all), some maybe gone since. */
     private String wsChoice() { return Ui.prefs(a).getString("ws-filter", ""); }
 
-    /** The title row's workspace button: only with workspaces to pick, tinted while one is picked. */
-    private void drawWsBtn(JSONObject ws) {
-        JSONArray all = Account.directory(a).optJSONArray("workspaces");
-        wsBtn.setVisibility(all == null || all.length() == 0 ? View.GONE : View.VISIBLE);
-        wsBtn.setTextColor(ws == null ? Ui.FG : Ui.BLUE);
-        wsBtn.setBackground(Ui.press(ws == null ? 0 : Ui.G100, 0, 22));
-        wsBtn.setContentDescription(ws == null ? "Workspace: all" : "Workspace: " + ws.optString("name"));
+    /** The title row's workspace button: only with workspaces to pick, tinted unless it's All. */
+    private void drawWsBtn(Map<String, String> workspaces, List<String> shown) {
+        wsBtn.setVisibility(workspaces.isEmpty() ? View.GONE : View.VISIBLE);
+        wsBtn.setTextColor(shown.isEmpty() ? Ui.FG : Ui.BLUE);
+        wsBtn.setBackground(Ui.press(shown.isEmpty() ? 0 : Ui.G100, 0, 22));
+        List<String> names = new ArrayList<>();
+        for (String id : shown) names.add(workspaces.get(id));
+        wsBtn.setContentDescription("Workspace: " + (names.isEmpty() ? "all" : String.join(", ", names)));
     }
 
-    /** All, then the account's workspaces; the desktop sidebar's workspace menu. */
-    private void pickWorkspace() {
+    /** The desktop sidebar's workspace menu: a checklist that stays open. */
+    private void pickWorkspaces() {
+        Sheet s = new Sheet(a, "Workspace");
+        drawWorkspaces(s.card());
+        s.show();
+    }
+
+    /** All, then the account's workspaces: a tap on one turns it on or off, and the list behind follows. */
+    private void drawWorkspaces(LinearLayout c) {
+        c.removeAllViews();
+        Map<String, String> workspaces = Account.workspaces(a);
+        List<String> shown = WsFilter.picked(wsChoice(), workspaces.keySet());
         String pc = st == null ? "" : st.optString("hub_name");
         String here = Account.pcWorkspaces(a).get(st == null ? "" : st.optString("hub_id"));
-        List<Sheet.Option> o = new ArrayList<>();
-        o.add(new Sheet.Option("", "All", pc.isEmpty() ? "" : "Every chat on " + pc, true));
-        JSONArray all = Account.directory(a).optJSONArray("workspaces");
-        for (int i = 0; all != null && i < all.length(); i++) {
-            JSONObject w = all.optJSONObject(i);
-            if (w == null) continue;
-            String id = w.optString("id");
-            o.add(new Sheet.Option(id, w.optString("name"), id.equals(here) && !pc.isEmpty() ? pc + "'s workspace" : "", true));
+        c.addView(wsRow(c, "All", pc.isEmpty() ? "" : "Every chat on " + pc, shown.isEmpty(), ""), Ui.fill());
+        for (Map.Entry<String, String> w : workspaces.entrySet()) {
+            String id = w.getKey();
+            c.addView(Ui.gap(a));
+            String sub = id.equals(here) && !pc.isEmpty() ? pc + "'s workspace" : "";
+            c.addView(wsRow(c, w.getValue(), sub, shown.contains(id), WsFilter.toggled(wsChoice(), id, workspaces.keySet())), Ui.fill());
         }
-        String picked = Account.workspace(a, wsChoice()) == null ? "" : wsChoice();
-        Sheet.pick(a, "Workspace", null, o, picked, id -> {
-            Ui.prefs(a).edit().putString("ws-filter", id).apply();
+    }
+
+    /** One checklist row; a tap makes `then` the selection. */
+    private View wsRow(LinearLayout c, String title, String sub, boolean on, String then) {
+        LinearLayout r = Ui.cardRow(a, null, title, sub, Ui.FG, v -> {
+            Ui.prefs(a).edit().putString("ws-filter", then).apply();
             if (st != null) render(st);
+            drawWorkspaces(c);
         });
+        if (on) r.addView(Ui.icon(a, Ui.I_CHECK, 20, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(24), Ui.dp(24)));
+        return r;
     }
 
     private void pickProject(Map<String, String> projects) {

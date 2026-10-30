@@ -71,16 +71,36 @@ pub fn tree(repos: &[i64], chats: &[crate::store::Chat], mains: &HashMap<i64, i6
     t
 }
 
+/// What's picked of the workspace filter `stored` (ids joined by commas) among `all`, the
+/// workspaces there are: ids that are gone drop out, and none or every one of them is All (empty).
+pub fn picked(stored: &str, all: &[crate::account::Workspace]) -> Vec<String> {
+    let want: Vec<&str> = stored.split(',').collect();
+    let on: Vec<String> = all.iter().filter(|w| want.contains(&w.id.as_str())).map(|w| w.id.clone()).collect();
+    if on.len() == all.len() { vec![] } else { on }
+}
+
+/// The workspace filter `stored` with workspace `id` turned on or off (All turns it on alone).
+pub fn toggled(stored: &str, id: &str, all: &[crate::account::Workspace]) -> String {
+    let mut on = picked(stored, all);
+    if let Some(i) = on.iter().position(|x| x == id) {
+        on.remove(i);
+    } else {
+        on.push(id.to_string());
+    }
+    picked(&on.join(","), all).join(",")
+}
+
 /// What's left of `t` under the workspace filter on `ws`. A chat is in the workspace of its home
 /// PC: `mine` (this PC's, "" for none) for its own chats, the directory's `pcs` for the others', so
 /// a PC in no workspace shows only under All. This PC's projects are in its workspace; a project
 /// stays in another one while one of its unsettled chats is there. (The phone's: WsFilter.java.)
-pub fn in_workspace(mut t: Tree, ws: &str, mine: &str, pcs: &HashMap<String, String>, chats: &[crate::store::Chat]) -> Tree {
+pub fn in_workspaces(mut t: Tree, ws: &[String], mine: &str, pcs: &HashMap<String, String>, chats: &[crate::store::Chat]) -> Tree {
     let of = |home: &str| if home.is_empty() { mine } else { pcs.get(home).map_or("", String::as_str) };
-    let ours: Vec<&crate::store::Chat> = chats.iter().filter(|c| of(&c.home) == ws).collect();
+    let shown = |w: &str| ws.iter().any(|x| x == w);
+    let ours: Vec<&crate::store::Chat> = chats.iter().filter(|c| shown(of(&c.home))).collect();
     let ids: HashSet<i64> = ours.iter().map(|c| c.id).collect();
     let repos: HashSet<i64> = ours.iter().filter(|c| !c.settled && c.role == Role::Lead).filter_map(|c| c.repo_id).collect();
-    t.projects.retain(|p| mine == ws || repos.contains(&p.id));
+    t.projects.retain(|p| shown(mine) || repos.contains(&p.id));
     for p in &mut t.projects {
         p.chats.retain(|c| ids.contains(c));
     }
@@ -521,9 +541,9 @@ impl App {
         ui.add_space(4.0);
 
         // ---- search row
-        // A workspace that's gone (left, signed out) shows as All.
         let workspaces = crate::account::workspaces();
-        let shown = workspaces.iter().find(|w| w.id == self.ws_filter).cloned();
+        let shown = picked(&self.ws_filter, &workspaces);
+        let names: Vec<&str> = workspaces.iter().filter(|w| shown.contains(&w.id)).map(|w| w.name.as_str()).collect();
         let row_w = ui.available_width();
         ui.allocate_ui_with_layout(Vec2::new(row_w, 32.0), Layout::left_to_right(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -531,8 +551,8 @@ impl App {
             w::search_field(ui, &mut self.search, "Search", None, wdt);
             if !workspaces.is_empty() {
                 let open = self.popup == Some(Popup::WsFilter);
-                let tip = shown.as_ref().map_or("Workspace".to_string(), |w| format!("Workspace: {}", w.name));
-                let b = w::btn(ic::USERS).muted().icon_xs().pressed(open || shown.is_some()).show(ui).tip(tip);
+                let tip = if names.is_empty() { "Workspace".to_string() } else { format!("Workspace: {}", names.join(", ")) };
+                let b = w::btn(ic::USERS).muted().icon_xs().pressed(open || !names.is_empty()).show(ui).tip(tip);
                 if b.clicked() {
                     self.popup = if open { None } else { Some(Popup::WsFilter) };
                     self.popup_anchor = b.rect;
@@ -556,8 +576,8 @@ impl App {
         // The same placement the phone gets (`tree`): every unsettled chat of a project on its own row.
         // (This window's alone: phones pick their own from the whole tree.)
         let mut tree = self.sidebar_tree();
-        if let Some(ws) = &shown {
-            tree = in_workspace(tree, &ws.id, &crate::account::workspace(), &crate::account::directory().pc_workspaces(), &self.chats);
+        if !shown.is_empty() {
+            tree = in_workspaces(tree, &shown, &crate::account::workspace(), &crate::account::directory().pc_workspaces(), &self.chats);
         }
         let chat = |id: &i64| self.chat(*id).cloned();
         let matches = |c: &crate::store::Chat| q.is_empty() || c.title.to_lowercase().contains(&q);
@@ -589,13 +609,14 @@ impl App {
         let list_h = (ui.available_height() - footer_h - section_h - settled_h).max(40.0);
 
         // Reordering takes every project: not while some are left out.
-        let draggable = !self.order_by_activity && q.is_empty() && shown.is_none();
+        let draggable = !self.order_by_activity && q.is_empty() && shown.is_empty();
         let mut drop: Option<(i64, usize)> = None;
         ScrollArea::vertical().id_salt("projects").max_height(list_h).min_scrolled_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
             if active.is_empty() {
                 ui.add_space(24.0);
-                if let Some(ws) = shown.as_ref().filter(|_| q.is_empty()) {
-                    if loose.is_empty() && n_settled == 0 && w::empty(ui, ic::USERS, "Nothing here", &format!("No chats of {} reach this PC.", ws.name), Some("Show all")) {
+                if !shown.is_empty() && q.is_empty() {
+                    let of = if let [one] = names[..] { one } else { "these workspaces" };
+                    if loose.is_empty() && n_settled == 0 && w::empty(ui, ic::USERS, "Nothing here", &format!("No chats of {of} reach this PC."), Some("Show all")) {
                         self.set_ws_filter(String::new());
                     }
                 } else if q.is_empty() {
@@ -912,18 +933,20 @@ impl App {
         }
     }
 
-    /// The sidebar's workspace menu: All, then the account's workspaces.
+    /// The sidebar's workspace menu, a checklist that stays open: All, then the account's
+    /// workspaces.
     pub fn ws_filter_menu(&mut self, ui: &mut Ui) {
         let workspaces = crate::account::workspaces();
+        let shown = picked(&self.ws_filter, &workspaces);
         let mine = crate::account::workspace();
         let mut pick = None;
         w::subtle(ui, "  Workspace", "label-12");
-        if w::menu_item(ui, ic::LAYERS, "All", Some("Every chat on this PC"), !workspaces.iter().any(|w| w.id == self.ws_filter)).clicked() {
+        if w::menu_item(ui, ic::LAYERS, "All", Some("Every chat on this PC"), shown.is_empty()).clicked() {
             pick = Some(String::new());
         }
         for ws in &workspaces {
-            if w::menu_item(ui, ic::USERS, &ws.name, (ws.id == mine).then_some("This PC's workspace"), ws.id == self.ws_filter).clicked() {
-                pick = Some(ws.id.clone());
+            if w::menu_item(ui, ic::USERS, &ws.name, (ws.id == mine).then_some("This PC's workspace"), shown.contains(&ws.id)).clicked() {
+                pick = Some(toggled(&self.ws_filter, &ws.id, &workspaces));
             }
         }
         if let Some(id) = pick {
@@ -931,11 +954,10 @@ impl App {
         }
     }
 
-    /// Shows workspace `id` in the sidebar ("": all of them), on this device from now on.
-    fn set_ws_filter(&mut self, id: String) {
-        self.store.set("sidebar_workspace", &id);
-        self.ws_filter = id;
-        self.popup = None;
+    /// Shows the workspaces `ids` in the sidebar ("": all of them), on this device from now on.
+    fn set_ws_filter(&mut self, ids: String) {
+        self.store.set("sidebar_workspace", &ids);
+        self.ws_filter = ids;
     }
 }
 
@@ -1075,6 +1097,14 @@ mod tests {
         Place { id, snoozed, main, chats }
     }
 
+    fn only(ws: &str) -> Vec<String> {
+        vec![ws.to_string()]
+    }
+
+    fn workspaces(ids: &[&str]) -> Vec<crate::account::Workspace> {
+        ids.iter().map(|id| crate::account::Workspace { id: id.to_string(), ..Default::default() }).collect()
+    }
+
     /// A lead of PC `home` ("": this one).
     fn from_pc(id: i64, repo: Option<i64>, home: &str) -> Chat {
         Chat { home: home.into(), ..chat(id, repo, Role::Lead, id) }
@@ -1090,17 +1120,53 @@ mod tests {
     }
 
     #[test]
+    fn several_workspaces_show_what_each_of_them_has() {
+        let (t, chats, pcs) = workspace_tree();
+        let got = in_workspaces(t, &["a".to_string(), "b".to_string()], "a", &pcs, &chats);
+        let want = Tree { projects: vec![place(1, false, None, vec![1, 2]), place(2, false, Some(6), vec![])], threads: vec![3], settled: vec![5], snoozed: vec![] };
+        assert_eq!(got, want, "both workspaces, and still not the PC in none");
+        let (t, chats, pcs) = workspace_tree();
+        let got = in_workspaces(t, &["b".to_string(), "gone".to_string()], "a", &pcs, &chats);
+        assert_eq!(got.projects, vec![place(1, false, None, vec![2])], "this PC's workspace isn't among them");
+    }
+
+    #[test]
+    fn the_picked_workspaces_drop_what_is_gone_and_never_end_up_empty() {
+        let all = workspaces(&["a", "b", "c"]);
+        assert_eq!(picked("", &all), Vec::<String>::new(), "All");
+        assert_eq!(picked("a", &all), ["a"], "a value from when one was the limit");
+        assert_eq!(picked("c,a", &all), ["a", "c"]);
+        assert_eq!(picked("a,left", &all), ["a"], "an id that's gone drops out");
+        assert_eq!(picked("left,gone", &all), Vec::<String>::new(), "none left: All");
+        assert_eq!(picked("a,b,c", &all), Vec::<String>::new(), "every one is All");
+        assert_eq!(picked("a,left", &workspaces(&["a"])), Vec::<String>::new(), "the only one left is every one");
+        assert_eq!(picked("a", &[]), Vec::<String>::new(), "signed out");
+    }
+
+    #[test]
+    fn toggling_a_workspace_follows_the_checklist() {
+        let all = workspaces(&["a", "b", "c"]);
+        assert_eq!(toggled("", "b", &all), "b", "from All, only the one checked");
+        assert_eq!(toggled("b", "a", &all), "a,b", "one more");
+        assert_eq!(toggled("a,b", "c", &all), "", "checking every one is All");
+        assert_eq!(toggled("a,b", "a", &all), "b", "unchecking one");
+        assert_eq!(toggled("b", "b", &all), "", "unchecking the last goes back to All");
+        assert_eq!(toggled("a,left", "b", &all), "a,b", "ids that are gone don't stay");
+        assert_eq!(toggled("", "a", &workspaces(&["a"])), "", "a single workspace is All");
+    }
+
+    #[test]
     fn a_workspace_shows_its_pcs_chats_and_projects() {
         let (t, chats, pcs) = workspace_tree();
         let want = Tree { projects: vec![place(1, false, None, vec![1]), place(2, false, Some(6), vec![])], threads: vec![3], settled: vec![], snoozed: vec![] };
-        assert_eq!(in_workspace(t, "a", "a", &pcs, &chats), want, "this PC's own: its projects, without other PCs' chats");
+        assert_eq!(in_workspaces(t, &only("a"), "a", &pcs, &chats), want, "this PC's own: its projects, without other PCs' chats");
     }
 
     #[test]
     fn another_workspace_keeps_only_the_projects_it_has_chats_in() {
         let (t, chats, pcs) = workspace_tree();
         let want = Tree { projects: vec![place(1, false, None, vec![2])], threads: vec![], settled: vec![5], snoozed: vec![] };
-        assert_eq!(in_workspace(t, "b", "a", &pcs, &chats), want);
+        assert_eq!(in_workspaces(t, &only("b"), "a", &pcs, &chats), want);
     }
 
     #[test]
@@ -1108,7 +1174,7 @@ mod tests {
         let mut settled = from_pc(1, Some(1), "ts:b");
         settled.settled = true;
         let t = Tree { projects: vec![place(1, false, None, vec![])], settled: vec![1], ..Default::default() };
-        let got = in_workspace(t, "b", "a", &HashMap::from([("ts:b".to_string(), "b".to_string())]), &[settled]);
+        let got = in_workspaces(t, &only("b"), "a", &HashMap::from([("ts:b".to_string(), "b".to_string())]), &[settled]);
         assert_eq!(got, Tree { settled: vec![1], ..Default::default() });
     }
 
@@ -1116,7 +1182,7 @@ mod tests {
     fn a_snoozed_chat_keeps_its_project_in_its_workspace() {
         let t = Tree { projects: vec![place(1, false, None, vec![])], snoozed: vec![2, 3], ..Default::default() };
         let chats = [from_pc(2, Some(1), "ts:b"), from_pc(3, Some(1), "")];
-        let got = in_workspace(t, "b", "a", &HashMap::from([("ts:b".to_string(), "b".to_string())]), &chats);
+        let got = in_workspaces(t, &only("b"), "a", &HashMap::from([("ts:b".to_string(), "b".to_string())]), &chats);
         assert_eq!(got, Tree { projects: vec![place(1, false, None, vec![])], snoozed: vec![2], ..Default::default() });
     }
 
@@ -1124,11 +1190,11 @@ mod tests {
     fn chats_of_no_workspace_show_only_under_all() {
         // A PC the directory doesn't list, and this PC while it's in none.
         let (t, chats, pcs) = workspace_tree();
-        let got = in_workspace(t, "b", "", &pcs, &chats);
+        let got = in_workspaces(t, &only("b"), "", &pcs, &chats);
         assert_eq!(got.threads, Vec::<i64>::new());
         assert_eq!(got.projects, vec![place(1, false, None, vec![2])]);
         let (t, chats, pcs) = workspace_tree();
-        assert!(!in_workspace(t, "a", "a", &pcs, &chats).threads.contains(&4));
+        assert!(!in_workspaces(t, &only("a"), "a", &pcs, &chats).threads.contains(&4));
     }
 
     fn none() -> HashMap<i64, i64> {

@@ -25,6 +25,7 @@ import java.security.SecureRandom;
 import java.security.Signature;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -126,6 +127,17 @@ final class Account {
             if (w != null && ws.equals(w.optString("id"))) return w;
         }
         return null;
+    }
+
+    /** The account's workspaces, id → name, in the directory's order. */
+    static Map<String, String> workspaces(Context c) {
+        Map<String, String> out = new LinkedHashMap<>();
+        JSONArray a = directory(c).optJSONArray("workspaces");
+        for (int i = 0; a != null && i < a.length(); i++) {
+            JSONObject w = a.optJSONObject(i);
+            if (w != null) out.put(w.optString("id"), w.optString("name"));
+        }
+        return out;
     }
 
     /** The directory's PCs by mesh id, each with its workspace's id. */

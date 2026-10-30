@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The workspace filter takes several workspaces at once, on the desktop and the phone. Its menu is
+  a checklist that stays open while you tick: All, then each workspace. All clears the picks,
+  ticking every workspace is All, and unticking the last goes back to All, so the sidebar never
+  ends up with nothing selected. A choice made in 0.99.0 carries over.
+
 ## [0.99.0] - 2026-10-30
 
 ### Added

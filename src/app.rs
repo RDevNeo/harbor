@@ -237,7 +237,8 @@ pub struct App {
     /// Settings › Phones: the API Harbor for Android talks to (api.rs).
     pub api: crate::api::Local,
     pub order_by_activity: bool,
-    /// The account workspace the sidebar shows (kv `sidebar_workspace`), "" for all of them.
+    /// The account workspaces the sidebar shows, ids joined by commas (kv `sidebar_workspace`,
+    /// sidebar.rs `picked`), "" for all of them.
     pub ws_filter: String,
     /// Fast mode for Claude and Codex turns.
     pub fast: bool,
