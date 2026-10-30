@@ -5,12 +5,15 @@
 //!
 //! A new chat picks "Current checkout" or "New worktree" before its first message; the
 //! worktree is made from the branch picked (default: the checkout's), named for what the chat is
-//! about (its title or first message, a few words: `slug`), as `<data dir>/worktrees/<project>-<slug>`
-//! on branch `harbor/<slug>` ("-2"… when taken; 6 hex when the message gives no words). The
+//! about: a few words Haiku gives for its title or first message (`namer`), asked while git
+//! checks it out, else (no Claude login, offline, slow) a few of the message's own words
+//! (`slug`), renamed when Haiku answers late (`ws_name_later`). It's
+//! `<data dir>/worktrees/<project>-<name>` on branch `harbor/<name>` ("-2"… when taken; 6 hex
+//! when the message gives no words). The
 //! branch menu renames the branch at any time (`ws_rename`; a pushed one on its remote too, or
 //! it stops tracking it); the folder follows once nothing works in it (`ws_moves`: no turn, no
 //! process, no terminal there; kept in kv `worktree_move:<lead>` across restarts), and the agents
-//! are told on their next turn. The workspace menu renames the folder on its own too; once the
+//! are told on their next turn. The workspace menu renames the folder on its own; once the
 //! user named it (kv `worktree_named:<lead>`), branch renames leave it be. Its path is kept in kv
 //! `worktree:<chat id>`; sub-agents run in their lead's. An existing chat in the checkout can
 //! move to a new worktree when it could move projects (movechat.rs: not running, on this PC,
@@ -204,6 +207,52 @@ pub fn slug(about: &str) -> String {
     out
 }
 
+/// How long a new worktree waits for its name from Claude (`NAME_SYSTEM`) before it's made
+/// with `slug`'s; the checkout runs meanwhile, so it's mostly hidden.
+const NAME_WAIT: Duration = Duration::from_secs(5);
+/// A name that comes later than that still renames the worktree (`App::ws_name_later`).
+const NAME_LATE: Duration = Duration::from_secs(45);
+
+const NAME_SYSTEM: &str = "You name git branches. You get the first message a user sent an AI coding agent. Reply with a short name for the task it asks for: 2 to 5 lowercase English words joined by hyphens, only a-z and 0-9, like inline-chat-mention-links or fix-login-redirect. Say what is to be done, not how the user phrased it; no filler words. Reply with only the name: no prefix, quotes or explanation.";
+
+/// Asks for a worktree's name, on the worktree's thread: Claude's answer, cleaned (`clean_name`).
+pub type Namer = Box<dyn FnOnce() -> Option<String> + Send>;
+
+/// A `Namer` asking Haiku through this Claude account (binary, environment) what the chat is
+/// about; None when the message gives nothing to name.
+pub fn namer(bin: String, env: Vec<(String, Option<String>)>, about: &str) -> Option<Namer> {
+    let text: String = about.trim().chars().take(2000).collect();
+    if slug(&text).is_empty() {
+        return None;
+    }
+    Some(Box::new(move || crate::recap::ask_within(bin, env, NAME_SYSTEM, format!("<message>\n{text}\n</message>"), NAME_LATE).ok().and_then(|a| clean_name(&a))))
+}
+
+/// Claude's answer as a branch and folder name: "Inline-Chat-Mention links" → "inline-chat-mention-links".
+/// Only a-z, 0-9 and "-", at most 5 words and 40 characters; None when it isn't a name (a
+/// sentence, nothing left).
+pub fn clean_name(answer: &str) -> Option<String> {
+    let line = answer.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let line = line.trim_matches(|c: char| c == '`' || c == '"' || c == '\'' || c == '*' || c == '.');
+    // "harbor/x", "feature/x": the name is the last part.
+    let line = line.rsplit('/').next().unwrap_or(line).trim();
+    if line.split_whitespace().count() > 5 || line.contains(':') {
+        return None;
+    }
+    let s: String = line.chars().map(|c| c.to_ascii_lowercase()).map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() { c } else { '-' }).collect();
+    let mut out = String::new();
+    for w in s.split('-').filter(|w| !w.is_empty()).take(5) {
+        if !out.is_empty() && out.len() + 1 + w.len() > 40 {
+            break;
+        }
+        if !out.is_empty() {
+            out.push('-');
+        }
+        out.extend(w.chars().take(40));
+    }
+    (out.len() >= 3 && out.chars().any(|c| c.is_ascii_lowercase())).then_some(out)
+}
+
 /// The project's part of its worktrees' folder names.
 fn project_part(repo: &Path) -> String {
     repo.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into()).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect()
@@ -230,6 +279,32 @@ fn taken_branches(repo: &Path) -> std::collections::HashSet<String> {
         set.extend(b.remote.iter().filter_map(|r| r.split_once('/').map(|(_, n)| n.to_string())));
     }
     set
+}
+
+/// `want`, or `want-2`, `want-3`… : the first whose folder (`<project>-<id>` in `root`) and
+/// branch (`harbor/<id>`) are both free.
+fn free_id(root: &Path, project: &str, want: &str, taken: &std::collections::HashSet<String>) -> Option<String> {
+    (1..100).map(|n| if n == 1 { want.to_string() } else { format!("{want}-{n}") }).find(|id| !root.join(format!("{project}-{id}")).exists() && !taken.contains(&format!("harbor/{id}")))
+}
+
+/// Renames a worktree just made by `add_in` (nothing works in it yet) to `name`: branch
+/// `harbor/<name>`, folder `<project>-<name>` ("-2"… when taken). None when it can't or
+/// already is.
+fn rename_new(repo: &Path, dir: &Path, name: &str) -> Option<PathBuf> {
+    let (root, project) = (dir.parent()?, project_part(repo));
+    let id = dir.file_name()?.to_string_lossy().strip_prefix(&format!("{project}-"))?.to_string();
+    if is_named(&id, name) {
+        return None;
+    }
+    let old = head(dir)?.branch;
+    let new = free_id(root, &project, name, &taken_branches(repo))?;
+    git(dir, &["branch", "-m", &old, &format!("harbor/{new}")], GIT_TIMEOUT).ok()?;
+    let to = root.join(format!("{project}-{new}"));
+    if move_dir(dir, &to).is_err() {
+        let _ = git(dir, &["branch", "-m", &format!("harbor/{new}"), &old], GIT_TIMEOUT);
+        return None;
+    }
+    Some(to)
 }
 
 /// Makes a worktree of `repo` in `root` on a new branch `harbor/<slug of about>` from `base`
@@ -431,12 +506,14 @@ pub fn move_dir(dir: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// A worktree just made: its folder, its branch and the branch it started from.
+/// A worktree just made: its folder, its branch and the branch it started from; and its name
+/// from Claude when that's still on its way (then it's made with `slug`'s, renamed later).
 #[derive(Clone, Debug)]
 pub struct Made {
     pub dir: PathBuf,
     pub branch: String,
     pub base: String,
+    pub late: Option<Arc<Mutex<Receiver<Option<String>>>>>,
 }
 
 impl Made {
@@ -459,17 +536,35 @@ impl Made {
 }
 
 /// Makes a worktree of `repo` on a new branch named for what the chat is about (`about`: its
-/// title or first message; `harbor/<slug>`) from `base` (a branch, or "" for the checkout's
-/// HEAD), in Harbor's data folder; with what the chat's line says about it.
-pub fn make(repo: &Path, base: &str, about: &str) -> Result<Made, String> {
-    make_in(&root(), repo, base, about)
+/// title or first message) from `base` (a branch, or "" for the checkout's HEAD), in Harbor's
+/// data folder; with what the chat's line says about it. The name is Claude's (`name`), asked
+/// while git checks it out; when it isn't there within `NAME_WAIT`, or there's no Claude to
+/// ask, `slug`'s (`harbor/<slug>`), and a late answer renames it (`Made::late`).
+pub fn make(repo: &Path, base: &str, about: &str, name: Option<Namer>) -> Result<Made, String> {
+    make_in(&root(), repo, base, about, name)
 }
 
-fn make_in(root: &Path, repo: &Path, base: &str, about: &str) -> Result<Made, String> {
-    let dir = add_in(root, repo, base, about)?;
+fn make_in(root: &Path, repo: &Path, base: &str, about: &str, name: Option<Namer>) -> Result<Made, String> {
+    let start = Instant::now();
+    let asked = name.map(|f| {
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx
+    });
+    let mut dir = add_in(root, repo, base, about)?;
+    let mut late = None;
+    if let Some(rx) = asked {
+        match rx.recv_timeout(NAME_WAIT.saturating_sub(start.elapsed())) {
+            Ok(Some(n)) => dir = rename_new(repo, &dir, &n).unwrap_or(dir),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => late = Some(Arc::new(Mutex::new(rx))),
+            _ => {}
+        }
+    }
     let branch = head(&dir).map(|h| h.label()).unwrap_or_default();
     let base = if base.is_empty() { head(repo).map(|h| h.label()).unwrap_or_default() } else { base.to_string() };
-    Ok(Made { dir, branch, base })
+    Ok(Made { dir, branch, base, late })
 }
 
 /// Removes a worktree made by `make`, unless it has uncommitted changes (Err says so). Its
@@ -788,7 +883,8 @@ impl App {
         }
         self.ws.busy = Some((Side::Workspace, "Creating worktree…".into()));
         let about = held.text.clone();
-        self.ws_spawn(ctx, move || make(&repo, &base, &about), move |app, r, ctx| {
+        let name = self.ws_namer(&about);
+        self.ws_spawn(ctx, move || make(&repo, &base, &about, name), move |app, r, ctx| {
             app.ws.busy = None;
             match r {
                 Ok(made) => {
@@ -796,7 +892,7 @@ impl App {
                     if held.main {
                         app.adopt_main(held.repo, id);
                     }
-                    app.ws_attach(id, Some(made));
+                    app.ws_attach(id, Some(made), ctx);
                     // Still on the new chat: follow it there.
                     if app.view == View::Draft {
                         app.view = View::Chat(id);
@@ -823,12 +919,62 @@ impl App {
     }
 
     /// Records a new chat's worktree, with a line in the chat that says where it works.
-    pub fn ws_attach(&mut self, chat_id: i64, made: Option<Made>) {
+    pub fn ws_attach(&mut self, chat_id: i64, made: Option<Made>, ctx: &egui::Context) {
         if let Some(m) = made {
             self.store.set(&format!("worktree:{chat_id}"), &m.dir.to_string_lossy());
             let (text, detail) = m.notice("Working in a new worktree");
             self.notice(chat_id, "worktree", &text, &detail);
+            self.ws_name_later(chat_id, &m, ctx);
         }
+    }
+
+    /// What names a new worktree: Haiku through this PC's Claude login (the one dictation uses),
+    /// unless it's at a usage limit. None: `slug`'s name.
+    pub fn ws_namer(&self, about: &str) -> Option<Namer> {
+        let a = self.accounts.iter().filter(|a| a.kind == crate::providers::Kind::Claude && a.installed() && a.logged_in == Some(true)).filter(|a| self.blocked(&a.id).is_none()).min_by_key(|a| a.id != "claude")?;
+        if self.limits.quota.get(&a.id).is_some_and(|q| q.iter().any(|(_, used, _)| *used >= 0.9)) {
+            return None;
+        }
+        namer(a.bin_str(), a.env(), about)
+    }
+
+    /// The worktree's name from Claude came too late to make it with: once it comes, its branch
+    /// is renamed (the folder follows when nothing works in it, as with the user's renames),
+    /// unless the user renamed either meanwhile.
+    fn ws_name_later(&mut self, lead: i64, made: &Made, ctx: &egui::Context) {
+        let Some(rx) = made.late.clone() else { return };
+        let (dir, was) = (made.dir.clone(), made.branch.clone());
+        self.ws_spawn(ctx, move || {
+            let name = rx.lock().unwrap().recv_timeout(NAME_LATE).ok().flatten()?;
+            // Still as it was made, and not already named so.
+            let id = was.strip_prefix("harbor/")?;
+            (head(&dir)?.branch == was && !is_named(id, &name)).then_some(())?;
+            let root = dir.parent()?.to_path_buf();
+            let project = dir.file_name()?.to_string_lossy().strip_suffix(&format!("-{id}"))?.to_string();
+            free_id(&root, &project, &name, &taken_branches(&dir)).map(|id| format!("harbor/{id}"))
+        }, move |app, to, ctx| {
+            if let Some(to) = to {
+                app.ws_name_apply(lead, to, 0, ctx);
+            }
+        });
+    }
+
+    fn ws_name_apply(&mut self, lead: i64, to: String, tries: u32, ctx: &egui::Context) {
+        if self.ws_folder_named(lead) || self.chat(lead).is_none() {
+            return;
+        }
+        if self.ws.busy.is_some() {
+            // Git is busy with something the user asked for: in a moment.
+            if tries < 20 {
+                self.ws_spawn(ctx, || std::thread::sleep(Duration::from_secs(1)), move |app, _, ctx| app.ws_name_apply(lead, to, tries + 1, ctx));
+            }
+            return;
+        }
+        self.ws_rename_by(lead, to, false, false, ctx, |_, r, _| {
+            if let Err(e) = r {
+                eprintln!("harbor: couldn't name the worktree: {e}");
+            }
+        });
     }
 
     /// "Move to a new worktree": the chat (and its sub-agents) runs in a new worktree from now
@@ -846,9 +992,10 @@ impl App {
         self.ws.busy = Some((Side::Workspace, "Creating worktree…".into()));
         let repo = info.repo.clone();
         let about = self.chat(chat_id).map(|c| c.title.clone()).unwrap_or_default();
-        self.ws_spawn(ctx, move || make(&repo, "", &about), move |app, r, ctx| {
+        let name = self.ws_namer(&about);
+        self.ws_spawn(ctx, move || make(&repo, "", &about, name), move |app, r, ctx| {
             app.ws.busy = None;
-            let r = r.and_then(|made| match app.ws_moved(chat_id, &made) {
+            let r = r.and_then(|made| match app.ws_moved(chat_id, &made, ctx) {
                 Ok(()) => Ok(made.dir),
                 Err(e) => {
                     // It started meanwhile, or a session didn't copy: the new worktree goes again.
@@ -862,7 +1009,7 @@ impl App {
     }
 
     /// The chat (and its sub-agents) moves into the worktree just made, if it still may.
-    fn ws_moved(&mut self, chat_id: i64, made: &Made) -> Result<(), String> {
+    fn ws_moved(&mut self, chat_id: i64, made: &Made, ctx: &egui::Context) -> Result<(), String> {
         let ids = self.movable(chat_id)?;
         for id in &ids {
             let Some(c) = self.chat(*id).cloned() else { continue };
@@ -877,6 +1024,7 @@ impl App {
         self.store.set(&format!("worktree:{chat_id}"), &made.dir.to_string_lossy());
         let (text, detail) = made.notice("Moved to a new worktree");
         self.notice(chat_id, "worktree", &text, &detail);
+        self.ws_name_later(chat_id, made, ctx);
         Ok(())
     }
 
@@ -932,6 +1080,11 @@ impl App {
     /// at once when nothing runs there, else as soon as nothing does (`ws_moves`): moving a
     /// folder under a working agent, a dev server or a shell would pull it from under them.
     pub fn ws_rename(&mut self, chat_id: i64, name: String, on_remote: bool, ctx: &egui::Context, done: impl FnOnce(&mut App, Result<RenameDone, String>, &egui::Context) + Send + 'static) {
+        self.ws_rename_by(chat_id, name, on_remote, true, ctx, done)
+    }
+
+    /// `ws_rename`, by the user or (`by_user` false) by Harbor naming a new worktree.
+    fn ws_rename_by(&mut self, chat_id: i64, name: String, on_remote: bool, by_user: bool, ctx: &egui::Context, done: impl FnOnce(&mut App, Result<RenameDone, String>, &egui::Context) + Send + 'static) {
         let Some(c) = self.chat(chat_id).cloned() else { return done(self, Err("no such chat".into()), ctx) };
         let lead = if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id };
         let info = match self.ws_info(Target::Chat(chat_id)).ok_or_else(|| "this chat isn't in a git project on this PC".to_string()).and_then(|i| i.rename.clone().map(|_| i)) {
@@ -956,8 +1109,13 @@ impl App {
                     if let Some(n) = &rn.remote {
                         detail.push_str(&format!("\n{n}."));
                     }
-                    app.notice(lead, "worktree", &format!("Branch renamed · {} → {}", rn.old, rn.branch), &detail);
-                    app.ws_note(lead, &format!("the user renamed this worktree's branch from {} to {}.", rn.old, rn.branch));
+                    if by_user {
+                        app.notice(lead, "worktree", &format!("Branch renamed · {} → {}", rn.old, rn.branch), &detail);
+                        app.ws_note(lead, &format!("the user renamed this worktree's branch from {} to {}.", rn.old, rn.branch));
+                    } else {
+                        app.notice(lead, "worktree", &format!("Branch named · {} → {}", rn.old, rn.branch), &detail);
+                        app.ws_note(lead, &format!("Harbor renamed this worktree's branch from {} to {}, a name for the task.", rn.old, rn.branch));
+                    }
                     // The folder follows, unless the user named it themselves.
                     if !app.ws_folder_named(lead) {
                         if let Some(to) = folder_for(&info.repo, &info.dir, &rn.branch).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())) {
@@ -1309,14 +1467,12 @@ impl App {
             return self.rename_menu(ctx, id, &info, "workspace", !self.ws.from_header);
         }
         let error = self.ws.error.clone();
-        // A chat's own worktree: its folder and its branch can be renamed from here too.
+        // A chat's own worktree: its folder can be renamed from here (its branch, from the branch menu).
         let lead = match target {
             Target::Chat(id) => self.chat(id).map(|c| if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id }),
             Target::Draft(_) => None,
         };
         let renames = info.rename.is_ok() && info.worktree.is_some();
-        let on_branch = renames && self.ws_head(&info.dir, ctx).is_some_and(|h| !h.branch.is_empty());
-        let named = lead.is_some_and(|l| self.ws_folder_named(l));
         let folder_to = lead.and_then(|l| self.ws_folder_to(l).cloned());
         let busy = self.ws.busy.is_some();
         let mut start: Option<RenameKind> = None;
@@ -1345,10 +1501,6 @@ impl App {
                         crate::widgets::menu_separator(ui);
                         if ui.add_enabled_ui(!busy, |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename worktree…", Some("Its folder, in the same place"), false)).inner.clicked() {
                             start = Some(RenameKind::Folder);
-                        }
-                        let desc = if named { "The folder keeps the name you gave it" } else { "Its worktree folder follows" };
-                        if ui.add_enabled_ui(!busy && on_branch, |ui| crate::widgets::menu_item(ui, crate::icons::BRANCH, "Rename branch…", Some(desc), false)).inner.clicked() {
-                            start = Some(RenameKind::Branch);
                         }
                     }
                 }
@@ -1846,7 +1998,8 @@ impl App {
                 let repo_dir = info.repo.clone();
                 // Named as the chat will be: its title, else its first message.
                 let about = [&call.body["title"], &call.body["text"]].iter().filter_map(|v| v.as_str()).find(|t| !t.trim().is_empty()).unwrap_or("").to_string();
-                self.ws_spawn(ctx, move || make(&repo_dir, &base, &about), move |app, r, ctx| {
+                let name = self.ws_namer(&about);
+                self.ws_spawn(ctx, move || make(&repo_dir, &base, &about, name), move |app, r, ctx| {
                     let reply = match r {
                         Err(e) => err(409, e),
                         Ok(made) => {
@@ -2020,18 +2173,65 @@ mod tests {
         let d = repo("made");
         let root = d.with_extension("wts");
         // From the checkout's branch (""): that's its base.
-        let m = make_in(&root, &d, "", "Fix the login bug").unwrap();
+        let m = make_in(&root, &d, "", "Fix the login bug", None).unwrap();
         assert_eq!((m.branch.as_str(), m.base.as_str()), ("harbor/fix-login-bug", "main"));
         let (text, detail) = m.notice("Working in a new worktree");
         assert_eq!(text, format!("Working in a new worktree · {} on branch harbor/fix-login-bug (from main)", m.name()));
         assert!(detail.contains("Branch: harbor/fix-login-bug (from main)"), "{detail}");
-        let m = make_in(&root, &d, "feature/login", "").unwrap();
+        let m = make_in(&root, &d, "feature/login", "", None).unwrap();
         assert_eq!(m.base, "feature/login");
         // Nothing to name it after: 6 hex, as before.
         let id = m.branch.strip_prefix("harbor/").unwrap();
         assert!(id.len() == 6 && id.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn claude_names_new_worktrees() {
+        let d = repo("claude");
+        let root = d.with_extension("wts");
+        let proj = project_part(&d);
+        let say = |a: &'static str| -> Option<Namer> { Some(Box::new(move || clean_name(a))) };
+        // In time: made with Claude's name, folder and branch.
+        let m = make_in(&root, &d, "", "Remove this, i only want the worktree here", say("worktree-menu-cleanup")).unwrap();
+        assert_eq!((m.branch.as_str(), m.name()), ("harbor/worktree-menu-cleanup", format!("{proj}-worktree-menu-cleanup")));
+        assert!(m.late.is_none() && m.dir.is_dir() && !root.join(format!("{proj}-remove-only-want-worktree")).exists());
+        assert_eq!(head(&m.dir).unwrap().branch, "harbor/worktree-menu-cleanup");
+        let list = git(&d, &["worktree", "list", "--porcelain"], GIT_TIMEOUT).unwrap();
+        assert!(list.contains(&format!("worktree {}", m.dir.display())), "{list}");
+        // Taken: a number, as for slugs.
+        assert_eq!(make_in(&root, &d, "", "Something else", say("worktree-menu-cleanup")).unwrap().branch, "harbor/worktree-menu-cleanup-2");
+        // No answer (offline, no account, nonsense): the slug.
+        assert_eq!(make_in(&root, &d, "", "Fix the login bug", Some(Box::new(|| None))).unwrap().branch, "harbor/fix-login-bug");
+        assert_eq!(make_in(&root, &d, "", "Fix the login bug", say("I can't name this: it's not a task.")).unwrap().branch, "harbor/fix-login-bug-2");
+        // Late: the slug now, the answer still to come.
+        let slow: Namer = Box::new(|| {
+            std::thread::sleep(NAME_WAIT + Duration::from_millis(500));
+            Some("late-name".into())
+        });
+        let t = Instant::now();
+        let m = make_in(&root, &d, "", "Sidebar chips", Some(slow)).unwrap();
+        assert!(t.elapsed() < NAME_WAIT + Duration::from_millis(400), "waited {:?}", t.elapsed());
+        assert_eq!(m.branch, "harbor/sidebar-chips");
+        let rx = m.late.clone().expect("still coming");
+        assert_eq!(rx.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap().as_deref(), Some("late-name"));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn claude_answers_are_cleaned_into_names() {
+        assert_eq!(clean_name("inline-chat-mention-links").as_deref(), Some("inline-chat-mention-links"));
+        assert_eq!(clean_name("  `Harbor/Fix_Login Redirect`.\n").as_deref(), Some("fix-login-redirect"));
+        assert_eq!(clean_name("\"dark-mode\"\nBecause the user wants…").as_deref(), Some("dark-mode"));
+        assert_eq!(clean_name("one-two-three-four-five-six-seven").as_deref(), Some("one-two-three-four-five"));
+        assert!(clean_name("averyveryverylongwordthatgoeson-andanotherlongword").unwrap().len() <= 40);
+        assert_eq!(clean_name("Here is a name for the task you asked for"), None, "a sentence");
+        assert_eq!(clean_name("Name: fix-it"), None);
+        assert_eq!(clean_name("日本語"), None);
+        assert_eq!(clean_name("42"), None);
+        assert_eq!(clean_name(""), None);
     }
 
     #[test]
@@ -2053,13 +2253,13 @@ mod tests {
         let d = repo("names");
         let root = d.with_extension("wts");
         let proj = project_part(&d);
-        let a = make_in(&root, &d, "", "Main thread per project").unwrap();
+        let a = make_in(&root, &d, "", "Main thread per project", None).unwrap();
         assert_eq!((a.branch.clone(), a.name()), ("harbor/main-thread-per-project".to_string(), format!("{proj}-main-thread-per-project")));
-        let b = make_in(&root, &d, "", "Main thread per project").unwrap();
+        let b = make_in(&root, &d, "", "Main thread per project", None).unwrap();
         assert_eq!((b.branch.clone(), b.name()), ("harbor/main-thread-per-project-2".to_string(), format!("{proj}-main-thread-per-project-2")));
         // A branch only on a remote is taken too.
         git(&d, &["update-ref", "refs/remotes/origin/harbor/sidebar", "HEAD"], GIT_TIMEOUT).unwrap();
-        assert_eq!(make_in(&root, &d, "", "Sidebar").unwrap().branch, "harbor/sidebar-2");
+        assert_eq!(make_in(&root, &d, "", "Sidebar", None).unwrap().branch, "harbor/sidebar-2");
         // Bad and taken names are refused, plainly.
         assert!(rename_branch(&a.dir, "bad..name", false).unwrap_err().contains("isn't a valid branch name"));
         assert!(rename_branch(&a.dir, "main", false).unwrap_err().contains("already exists"));
@@ -2091,7 +2291,7 @@ mod tests {
         assert!(Command::new("git").args(["init", "-q", "--bare"]).arg(&bare).status().unwrap().success());
         git(&d, &["remote", "add", "origin", &bare.to_string_lossy()], GIT_TIMEOUT).unwrap();
         let root = d.with_extension("wts");
-        let m = make_in(&root, &d, "", "Push branch").unwrap();
+        let m = make_in(&root, &d, "", "Push branch", None).unwrap();
         assert_eq!(pushed_as(&m.dir), None);
         git(&m.dir, &["push", "-q", "-u", "origin", "harbor/push-branch"], ADD_TIMEOUT).unwrap();
         assert_eq!(pushed_as(&m.dir).as_deref(), Some("origin/harbor/push-branch"));

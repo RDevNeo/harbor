@@ -3986,7 +3986,7 @@ impl App {
         if main.is_some() {
             self.adopt_main(main, id);
         }
-        self.ws_attach(id, wt);
+        self.ws_attach(id, wt, ctx);
         if let Some(c) = self.chat_mut(id) {
             c.effort = effort;
             c.access = access;

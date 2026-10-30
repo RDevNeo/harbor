@@ -244,16 +244,14 @@ final class WorkBar {
             return;
         }
         if (wt) {
-            // As the desktop's workspace menu: the folder, and renaming it or its branch.
+            // As the desktop's workspace menu: the folder, and renaming it (its branch: the branch sheet).
             String to = info.isNull("folder_to") ? "" : info.optString("folder_to");
             opts.add(new Sheet.Option("wt", info.optString("name"), info.optString("path") + (to.isEmpty() ? "" : "\nBecomes " + to + " once nothing works in it."), true));
             if (info.optBoolean("can_rename")) {
                 opts.add(new Sheet.Option("folder", "Rename worktree…", "Its folder, in the same place", true));
-                opts.add(new Sheet.Option("branch", "Rename branch…", info.optBoolean("folder_named") ? "The folder keeps the name you gave it" : "Its worktree folder follows", true));
             }
             Sheet.pick(a, "Workspace", "This thread works in its own worktree. It's removed with the thread, unless it has uncommitted changes.", opts, "wt", id -> {
                 if ("folder".equals(id)) renameFolder(info.optString("name"));
-                else if ("branch".equals(id)) rename(info.optString("branch"));
             });
             return;
         }

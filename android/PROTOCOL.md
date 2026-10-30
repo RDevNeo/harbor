@@ -846,7 +846,10 @@ The desktop's bar under the composer (src/worktree.rs), as two chips under the p
 and New chat screen. Where the agent works: the project's own checkout, or a git worktree of its
 own (`<Harbor data>/worktrees/<project>-<name>`, branch `harbor/<name>`) so parallel agents don't
 collide. Since 0.87 `<name>` is a few words of the chat's title or first message
-("main-thread-per-project", "-2"… when taken), before that 6 hex. Hubs before 0.37 answer `404`:
+("main-thread-per-project", "-2"… when taken), before that 6 hex. Since 0.97 Claude (Haiku) names
+it for the task ("inline-chat-mention-links"); when that takes over ~5 s `POST /v1/chats` answers
+with the words name, and the branch is renamed (a `worktree` notice "Branch named · …") once the
+name comes, the folder once nothing works in it. Hubs before 0.37 answer `404`:
 show no chips.
 
 `GET /v1/workspace?chat=<id>` (a chat) or `?project=<id>&worktree=0|1&base=<branch>` (New chat,
@@ -910,8 +913,9 @@ restart of the PC.
 "path", "folder_waits": "<why>; it becomes <name> then" | null, "said"}`: renames the worktree's
 folder on its own, in the same place (just a name: no `/`, no spaces, not starting with `.` or
 `-`, not taken; `409` says which), at once when nothing works in it, else once nothing does. From
-then on `folder_named` is true. The desktop has it in the workspace menu ("Rename worktree…",
-next to "Rename branch…"); the phone in the workspace sheet, the same place.
+then on `folder_named` is true. The desktop has it in the workspace menu ("Rename worktree…";
+since 0.97 the branch is renamed only from the branch menu); the phone in the workspace sheet,
+the same place (its branch, from the branch sheet).
 
 ### `POST /v1/chats/{id}/fork`
 

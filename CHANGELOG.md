@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- A new worktree is named by Claude after what the chat asks for: a few words like
+  `inline-chat-mention-links` for its branch (`harbor/inline-chat-mention-links`) and folder,
+  instead of the first words of the message. Haiku is asked through your Claude login while the
+  worktree is checked out; when there's no Claude login, it's offline or it takes long, the
+  worktree starts with the message's words and its branch is renamed when the name comes (the
+  folder follows once nothing works in it). Folders you renamed are left alone. From the phone too.
+- The workspace menu under the composer only renames the worktree's folder; the branch is renamed
+  from the branch menu next to it (desktop and phone).
+
 ## [0.96.1] - 2026-10-29
 
 ### Fixed
