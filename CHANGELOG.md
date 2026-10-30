@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-10-30
+
 ### Changed
 - In a chat's own worktree, the Worktree and branch labels under the composer go straight to
   renaming it, without a menu first, on the desktop and the phone. Switching or creating a branch
@@ -2058,7 +2060,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.97.2...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.98.0...HEAD
+[0.98.0]: https://github.com/RDevNeo/harbor/compare/v0.97.2...v0.98.0
 [0.97.2]: https://github.com/RDevNeo/harbor/compare/v0.97.1...v0.97.2
 [0.97.1]: https://github.com/RDevNeo/harbor/compare/v0.97.0...v0.97.1
 [0.97.0]: https://github.com/RDevNeo/harbor/compare/v0.96.1...v0.97.0
