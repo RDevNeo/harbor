@@ -64,12 +64,23 @@ run_in() {
   local img="$1" opts=() root="$cache/rootfs/$1"; shift
   while [ "$1" != -- ]; do opts+=("$1"); shift; done; shift
   if [ -d "$root/usr" ]; then
-    ( local i kv
-      while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done < "$root/.env"
-      export CARGO_TERM_COLOR=always
-      for ((i = 1; i < ${#opts[@]}; i += 2)); do case "${opts[$i]}" in *=*) export "${opts[$i]}" ;; esac; done
+    # A clean environment, as in a container (tests notice LC_ALL), but for what was asked for.
+    ( local i kv keep=" HOME PATH CARGO_TERM_COLOR "
+      while IFS= read -r kv; do [ -z "$kv" ] || { export "$kv"; keep+=" ${kv%%=*} "; }; done < "$root/.env"
+      for ((i = 1; i < ${#opts[@]}; i += 2)); do
+        case "${opts[$i]}" in *=*) export "${opts[$i]}" ;; esac
+        keep+=" ${opts[$i]%%=*} "
+      done
+      for kv in $(compgen -e); do [[ $keep == *" $kv "* ]] || unset "$kv"; done
+      export CARGO_TERM_COLOR=${CARGO_TERM_COLOR:-always}
       # sudo -E: values stay off the command line (build.sh's Google secrets).
-      exec sudo -E env "PATH=$PATH" HOME=/tmp chroot --userspec="$(id -u):$(id -g)" "$root" /bin/sh -c 'cd /src && exec "$@"' sh "$@" )
+      # What sudo adds comes off again.
+      local drop=()
+      for kv in USER USERNAME LOGNAME SUDO_USER SUDO_UID SUDO_GID SUDO_COMMAND SUDO_HOME LANG LANGUAGE LC_ALL; do
+        [[ $keep == *" $kv "* ]] || drop+=(-u "$kv")
+      done
+      exec sudo -E env "${drop[@]}" "PATH=$PATH" HOME=/tmp \
+        chroot --userspec="$(id -u):$(id -g)" "$root" /bin/sh -c 'cd /src && exec "$@"' sh "$@" )
     return
   fi
   docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_TERM_COLOR=always \
