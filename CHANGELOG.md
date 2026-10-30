@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.100.0] - 2026-10-30
+
 ### Changed
 - The workspace filter takes several workspaces at once, on the desktop and the phone. Its menu is
   a checklist that stays open while you tick: All, then each workspace. All clears the picks,
@@ -2075,7 +2077,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.99.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.100.0...HEAD
+[0.100.0]: https://github.com/RDevNeo/harbor/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/RDevNeo/harbor/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/RDevNeo/harbor/compare/v0.97.2...v0.98.0
 [0.97.2]: https://github.com/RDevNeo/harbor/compare/v0.97.1...v0.97.2
