@@ -13,8 +13,8 @@ for r in "${runs[@]}"; do
     echo "no harbor-$arch-linux.tar.gz to test" > "$log"; pids+=(""); continue
   fi
   platform=linux/amd64; [ "$arch" = aarch64 ] && platform=linux/arm64
-  docker run --rm --platform "$platform" -v "$PWD:/src:ro" -v "$HOME/dist:/dist:ro" "$img" \
-    sh /src/.github/smoke-install.sh > "$log" 2>&1 &
+  ( s=$SECONDS; docker run --rm --platform "$platform" -v "$PWD:/src:ro" -v "$HOME/dist:/dist:ro" "$img" \
+      sh /src/.github/smoke-install.sh; c=$?; echo "$r: $((SECONDS - s))s"; exit $c ) > "$log" 2>&1 &
   pids+=($!)
 done
 failed=()
@@ -25,5 +25,6 @@ for r in "${runs[@]}"; do
   read -r img arch <<< "$r"
   echo "=== $img $arch ==="; cat "$HOME/out/smoke-${img/:/-}-$arch.log"
 done
+for r in "${runs[@]}"; do read -r img arch <<< "$r"; tail -1 "$HOME/out/smoke-${img/:/-}-$arch.log"; done
 [ ${#failed[@]} = 0 ] || { echo "::error::smoke test failed on: ${failed[*]}"; exit 1; }
 echo "all passed"

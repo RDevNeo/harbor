@@ -41,16 +41,12 @@ sherpa-onnx = { version = "2.0", default-features = false, features = ["static"]
 
 [profile.release]
 opt-level = 3
-lto = "fat"
+# ThinLTO, with Harbor itself in 16 parts and the dependencies in one: a release's warm rebuild takes
+# 45 s against 182 s for fat LTO with one unit, for 0-5% more CPU in the UI and 10% larger downloads.
+lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
 
-# Local runnable builds (~/.cache/harbor-rel/build.sh release): no fat LTO, parallel and
-# incremental, so a one-line change doesn't re-optimise the whole program on one thread.
-# Tagged releases in CI keep the release profile.
-[profile.fast]
-inherits = "release"
-lto = false
+[profile.release.package.harbor]
 codegen-units = 16
-incremental = true

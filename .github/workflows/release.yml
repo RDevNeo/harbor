@@ -256,10 +256,11 @@ jobs:
       - name: Pack
         run: |
           set -eu
-          tar -C pkg -czf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
-          tar -C pkg -czf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
+          z=$(command -v pigz || echo gzip)
+          tar -C pkg -I "$z" -cf dist/harbor-x86_64-linux.tar.gz harbor-x86_64-linux
+          tar -C pkg -I "$z" -cf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
           for arch in x86_64 aarch64; do
-            [ ! -d pkg/harbor-browser-$arch-linux ] || tar -C pkg -czf dist/harbor-browser-$arch-linux.tar.gz harbor-browser-$arch-linux
+            [ ! -d pkg/harbor-browser-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-browser-$arch-linux.tar.gz harbor-browser-$arch-linux
           done
           cp packaging/install.sh dist/install.sh
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
@@ -291,6 +292,7 @@ jobs:
         with:
           name: dist
           path: dist/
+          compression-level: 0
 
   smoke:
     needs: package

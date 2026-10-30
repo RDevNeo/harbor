@@ -37,13 +37,17 @@ binfmt() {
 # The Rust toolchain, kept in ~/cache: run_in <image> "${rust[@]}" … -- cargo …
 rust=(-e RUSTUP_HOME=/c/rustup -e CARGO_HOME=/c/cargo -e PATH=/c/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
 # toolchain <image> [rustup toolchain install options]: stable, installed or brought up to date.
+# Asks the network once a week: /c/rustup/synced lists the options done since.
 toolchain() {
   local img="$1"; shift
   mkdir -p "$cache/rustup" "$cache/cargo"
   run_in "$img" "${rust[@]}" -- bash -euo pipefail -c '
+    m=/c/rustup/synced new=$(find "$m" -mtime -7 2>/dev/null || true)
+    if [ -n "$new" ] && { [ $# = 0 ] || grep -qxF -- "$*" "$m"; } && rustc --version; then exit 0; fi
     [ -x /c/cargo/bin/rustup ] || curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --no-modify-path --profile minimal --default-toolchain none
     rustup toolchain install stable --profile minimal "$@" >/dev/null
     rustup default stable >/dev/null
+    if [ -n "$new" ]; then echo "$*" >> "$m"; else echo "$*" > "$m"; fi
     rustc --version' bash "$@"
 }
 
