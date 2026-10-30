@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.102.0] - 2026-10-30
+
 ### Changed
 - The image viewer browses only what belongs with the image you opened, on the desktop and the
   phone. An image in an agent's reply goes through the images of that agent's turn; an image in
@@ -2099,7 +2101,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.101.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.102.0...HEAD
+[0.102.0]: https://github.com/RDevNeo/harbor/compare/v0.101.1...v0.102.0
 [0.101.1]: https://github.com/RDevNeo/harbor/compare/v0.101.0...v0.101.1
 [0.101.0]: https://github.com/RDevNeo/harbor/compare/v0.100.0...v0.101.0
 [0.100.0]: https://github.com/RDevNeo/harbor/compare/v0.99.0...v0.100.0
