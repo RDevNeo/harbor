@@ -8,6 +8,8 @@
 //! call, freezes after a short idle, and thaws on the next call, as a laptop sleeps and wakes.
 //! A thawed client reconnects by itself; a long freeze can cost a full login, and logging in often
 //! is something Discord's spam filter looks at, so past a daily count it stops freezing.
+//! Without swap a frozen client keeps most of its memory, so there idle means quitting, after a
+//! longer wait because every start is a full login.
 //!
 //! At every page load the self-test checks what the tools need from Discord. A failure after a
 //! Vencord update goes back to the last version that passed; if it still fails, Discord itself
@@ -313,29 +315,60 @@ pub const MAX_LOGINS: usize = 20;
 /// Idle this long, so a burst of tool calls doesn't freeze and thaw between calls.
 const FREEZE_AFTER: i64 = 120;
 
-/// When the engine freezes.
+/// Without swap: frozen RAM stays around 320 MB, so an idle client quits. Each start is a login,
+/// hence the longer wait and the lower limit.
+const QUIT_AFTER: i64 = 30 * 60;
+const MAX_QUIT_LOGINS: usize = 8;
+
+/// What an idle client does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Rest {
+    Freeze,
+    Quit,
+}
+
+/// When the engine rests.
 #[derive(Clone, Copy)]
 pub struct Policy {
     pub idle: i64,
     pub max_logins: usize,
+    pub quit_idle: i64,
+    pub max_quit_logins: usize,
 }
 
 const DAY: i64 = 24 * 3600;
 
 impl Default for Policy {
     fn default() -> Self {
-        // A rig's shorter idle and limit.
+        // A rig's shorter waits and limits.
         let n = |k: &str, or: i64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(or);
-        Policy { idle: n("HARBOR_DISCORD_IDLE", FREEZE_AFTER), max_logins: n("HARBOR_DISCORD_MAX_LOGINS", MAX_LOGINS as i64) as usize }
+        Policy {
+            idle: n("HARBOR_DISCORD_IDLE", FREEZE_AFTER),
+            max_logins: n("HARBOR_DISCORD_MAX_LOGINS", MAX_LOGINS as i64) as usize,
+            quit_idle: n("HARBOR_DISCORD_QUIT_IDLE", QUIT_AFTER),
+            max_quit_logins: n("HARBOR_DISCORD_MAX_QUIT_LOGINS", MAX_QUIT_LOGINS as i64) as usize,
+        }
     }
 }
 
 impl Policy {
-    /// Whether a running engine should freeze now. `busy`: tool calls in flight, a waitForMessage
-    /// among them. `logins`: when it last logged in; past the limit it stays running for the day.
-    pub fn freeze_now(&self, now: i64, last_use: i64, busy: u32, logins: &[i64]) -> bool {
-        busy == 0 && now - last_use >= self.idle && logins.iter().filter(|t| now - **t < DAY).count() < self.max_logins
+    /// What a running engine should do now, if anything. `busy`: tool calls in flight, a
+    /// waitForMessage among them. `logins`: when it last logged in; past the day's limit it stays
+    /// running. `swap`: whether this PC has any (zram counts).
+    pub fn rest(&self, now: i64, last_use: i64, busy: u32, logins: &[i64], swap: bool) -> Option<Rest> {
+        let (idle, limit, rest) = if swap { (self.idle, self.max_logins, Rest::Freeze) } else { (self.quit_idle, self.max_quit_logins, Rest::Quit) };
+        (busy == 0 && now - last_use >= idle && logins.iter().filter(|t| now - **t < DAY).count() < limit).then_some(rest)
     }
+}
+
+/// Whether /proc/meminfo's text shows any swap: a disk's, or zram.
+fn swap_in(meminfo: &str) -> bool {
+    meminfo.lines().find_map(|l| l.strip_prefix("SwapTotal:")).and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok()).is_some_and(|kb| kb > 0)
+}
+
+/// Asked each time, as swap can come and go. A rig stands in for a PC without it.
+fn has_swap() -> bool {
+    std::env::var_os("HARBOR_DISCORD_NO_SWAP").is_none() && std::fs::read_to_string("/proc/meminfo").is_ok_and(|m| swap_in(&m))
 }
 
 // ------------------------------------------------------------------ pacing
@@ -1363,7 +1396,8 @@ impl Host {
             std::thread::sleep(Duration::from_secs(if self.policy.idle < 60 { 1 } else { 10 }));
             let now = store::now();
             let (phase, last, busy, repairing, signin_at) = self.get(|st| (st.phase, st.last_use, st.busy, st.repairing, st.signin_at));
-            if phase == Phase::Ready && !repairing && busy == 0 && now - last >= self.policy.idle {
+            let wait = if has_swap() { self.policy.idle } else { self.policy.quit_idle };
+            if phase == Phase::Ready && !repairing && busy == 0 && now - last >= wait {
                 self.idle(now, last);
             }
             if phase == Phase::Signin && now - signin_at > SIGNIN_WAIT.as_secs() as i64 {
@@ -1385,7 +1419,7 @@ impl Host {
         }
     }
 
-    /// Nothing has used the client for a while: look for a new Vencord, then freeze, unless the day's
+    /// Nothing has used the client for a while: look for a new Vencord, then rest, unless the day's
     /// logins are used up. A new Vencord needs a fresh page, so that goes first.
     fn idle(self: &Arc<Self>, now: i64, last: i64) {
         self.count_logins();
@@ -1397,8 +1431,10 @@ impl Host {
             return;
         }
         let logins = self.get(|st| st.saved.logins.clone());
-        if self.policy.freeze_now(now, last, 0, &logins) {
-            self.freeze();
+        match self.policy.rest(now, last, 0, &logins, has_swap()) {
+            Some(Rest::Freeze) => self.freeze(),
+            Some(Rest::Quit) => self.stop_page(),
+            None => {}
         }
     }
 }
@@ -1432,19 +1468,41 @@ impl St {
 mod tests {
     use super::*;
 
+    const POLICY: Policy = Policy { idle: FREEZE_AFTER, max_logins: MAX_LOGINS, quit_idle: QUIT_AFTER, max_quit_logins: MAX_QUIT_LOGINS };
+
     #[test]
-    fn freezes_after_idle_unless_busy_or_past_the_days_logins() {
-        let p = Policy { idle: FREEZE_AFTER, max_logins: MAX_LOGINS };
-        let now = 1_000_000;
+    fn with_swap_it_freezes_after_idle_unless_busy_or_past_the_days_logins() {
+        let (p, now) = (POLICY, 1_000_000);
         // A burst of calls doesn't freeze between calls.
-        assert!(!p.freeze_now(now, now - 119, 0, &[]));
-        assert!(p.freeze_now(now, now - 120, 0, &[]));
+        assert_eq!(p.rest(now, now - 119, 0, &[], true), None);
+        assert_eq!(p.rest(now, now - 120, 0, &[], true), Some(Rest::Freeze));
         // A pending waitForMessage is a call in flight.
-        assert!(!p.freeze_now(now, now - 9999, 1, &[]));
+        assert_eq!(p.rest(now, now - 9999, 1, &[], true), None);
         // Past 20 logins it stays running until the day is over; older ones don't count.
-        assert!(p.freeze_now(now, now - 9999, 0, &vec![now - 10; MAX_LOGINS - 1]));
-        assert!(!p.freeze_now(now, now - 9999, 0, &vec![now - 10; MAX_LOGINS]));
-        assert!(p.freeze_now(now, now - 9999, 0, &vec![now - DAY - 1; MAX_LOGINS]));
+        assert_eq!(p.rest(now, now - 9999, 0, &vec![now - 10; MAX_LOGINS - 1], true), Some(Rest::Freeze));
+        assert_eq!(p.rest(now, now - 9999, 0, &vec![now - 10; MAX_LOGINS], true), None);
+        assert_eq!(p.rest(now, now - 9999, 0, &vec![now - DAY - 1; MAX_LOGINS], true), Some(Rest::Freeze));
+    }
+
+    #[test]
+    fn without_swap_it_quits_later_and_never_freezes() {
+        let (p, now) = (POLICY, 1_000_000);
+        // Past the freeze wait, nothing yet: a frozen client would keep its memory here.
+        assert_eq!(p.rest(now, now - 120, 0, &[], false), None);
+        assert_eq!(p.rest(now, now - 1799, 0, &[], false), None);
+        assert_eq!(p.rest(now, now - 1800, 0, &[], false), Some(Rest::Quit));
+        assert_eq!(p.rest(now, now - 9999, 1, &[], false), None);
+        // Every start is a login: the 8th of the day stays running.
+        assert_eq!(p.rest(now, now - 9999, 0, &vec![now - 10; MAX_QUIT_LOGINS - 1], false), Some(Rest::Quit));
+        assert_eq!(p.rest(now, now - 9999, 0, &vec![now - 10; MAX_QUIT_LOGINS], false), None);
+        assert_eq!(p.rest(now, now - 9999, 0, &vec![now - DAY - 1; MAX_QUIT_LOGINS], false), Some(Rest::Quit));
+    }
+
+    #[test]
+    fn reads_swap_from_meminfo() {
+        assert!(swap_in("MemTotal:  8000 kB\nSwapTotal:  11500 kB\nSwapFree:  1 kB\n"));
+        assert!(!swap_in("MemTotal:  8000 kB\nSwapTotal:  0 kB\nSwapFree:  0 kB\n"));
+        assert!(!swap_in("MemTotal:  8000 kB\n"));
     }
 
     #[test]
