@@ -7,11 +7,12 @@ mkdir -p "$cache" "$HOME/out"
 # container uses, hence the keep- container. Its images load in the background after the sandbox
 # is ready and no docker command waits for them, so ~/cache/images lists the ones it should have.
 image() {
-  local img="$1:$(sha256sum "$2" | cut -c1-12)" i
+  local img="$1:$(sha256sum "$2" | cut -c1-12)" i=0
   until docker info >/dev/null 2>&1; do sleep 1; done
   if grep -qx "$img" "$cache/images" 2>/dev/null; then
     for i in $(seq 300); do docker image inspect "$img" >/dev/null 2>&1 && break; sleep 1; done
   fi
+  echo "image $img: $i s of waiting for it" >&2
   if ! docker image inspect "$img" >/dev/null 2>&1; then
     docker build -q -t "$img" -f "$2" "$(dirname "$2")" >/dev/null
     docker rm -f "keep-$1" >/dev/null 2>&1 || true

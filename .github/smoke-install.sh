@@ -16,8 +16,10 @@ case "$ID" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     # libgl1-mesa-dri: llvmpipe. The X11 libraries are the ones winit and glutin load at runtime.
-    apt-get install -y -qq --no-install-recommends ca-certificates curl xvfb xauth \
-      libgl1 libegl1 libgl1-mesa-dri libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libx11-xcb1 >/dev/null ;;
+    pkgs="ca-certificates curl xvfb xauth libgl1 libegl1 libgl1-mesa-dri libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libx11-xcb1"
+    # Once more: dpkg now and then fails under qemu (0.101.0's ubuntu aarch64), which says nothing about Harbor.
+    apt-get install -y -qq --no-install-recommends $pkgs >/dev/null \
+      || { dpkg --configure -a; apt-get install -y -qq --no-install-recommends $pkgs >/dev/null; } ;;
   fedora)
     dnf install -y -q curl xorg-x11-server-Xvfb mesa-dri-drivers mesa-libEGL mesa-libGL \
       libxkbcommon-x11 libXcursor libXrandr libXi util-linux shadow-utils findutils >/dev/null ;;
