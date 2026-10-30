@@ -268,6 +268,8 @@ final class Tags {
         if (w == null || (insert.isEmpty() && w.trigger != '$')) return;
         SlashList.Put p = SlashList.put(edit.getText(), new SlashList.Word(w.start, w.end, w.query, false), insert);
         edit.getText().replace(p.from, p.to, p.text);
+        // Picked: it goes in one erase (Composer.Edit.Picked).
+        if (!insert.isEmpty()) edit.pick(p.from, p.from + insert.length());
         edit.setSelection(Math.min(p.cursor(), edit.length()));
         hide();
     }
@@ -279,9 +281,15 @@ final class Tags {
         highlighting = true;
         for (Object s : e.getSpans(0, e.length(), TagSpan.class)) e.removeSpan(s);
         for (Object s : e.getSpans(0, e.length(), TagBg.class)) e.removeSpan(s);
-        for (int[] t : TagList.marks(e, titles == null ? null : titles.get())) {
+        java.util.List<String> ts = titles == null ? null : titles.get();
+        for (int[] t : TagList.marks(e, ts)) {
             e.setSpan(new TagSpan(Ui.BLUE), t[0], t[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             e.setSpan(new TagBg((Ui.BLUE & 0x00ffffff) | 0x26000000), t[0], t[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        // A mentioned chat's title goes in one erase, also when it came from another device.
+        if (ts != null) for (int[] t : TagList.marks(e, ts)) {
+            String run = e.subSequence(t[0], t[1]).toString();
+            if (ts.contains(run)) edit.pick(t[0], t[1]);
         }
         highlighting = false;
     }

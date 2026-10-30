@@ -1011,6 +1011,9 @@ impl App {
         if focused {
             self.tags_keys(ui, key, cid, &mut draft);
             self.chat_mention_keys(ui, key, cid, &mut draft);
+            // A picked token or a mentioned chat's title goes in one Backspace (usertext.rs).
+            let titles = self.mentions.drafts.get(&key).map(|ms| crate::usertext::chat_titles(ms)).unwrap_or_default();
+            crate::usertext::erase_keys(ui, cid, &mut draft, &titles);
         }
         // The dictation shortcut works wherever the composer is (not only while it's focused).
         if self.popup.is_none() && self.dialog.is_none() && ui.input_mut(|i| self.keys.take(i, "voice")) {

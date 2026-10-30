@@ -654,6 +654,7 @@ impl App {
     fn tags_accept(&mut self, ctx: &egui::Context, cid: Id, draft: &mut String, w: &Word, r: &Row) {
         let (text, cursor) = slash::replace(draft, &w.slash(), &r.insert());
         *draft = text;
+        crate::usertext::picked(ctx, cid, &r.insert());
         let mut state = egui::text_edit::TextEditState::load(ctx, cid).unwrap_or_default();
         state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(cursor))));
         state.store(ctx, cid);

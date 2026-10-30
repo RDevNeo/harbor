@@ -234,9 +234,67 @@ final class Composer {
             return super.onKeyPreIme(code, e);
         }
 
+        /** A token picked from a menu (`@file`, `#12`, `/command`) or a mentioned chat's title:
+         *  any erase in it takes all of it, as the desktop's composer does (src/usertext.rs
+         *  `erase`). A span, so it holds whichever way the text is erased: the keyboard's
+         *  backspace (deleteSurroundingText or a shorter composing word) or a hardware Del. */
+        static final class Picked implements android.text.NoCopySpan { }
+
+        private Picked erasing; // the token an erase under way touches
+        private boolean expanding;
+
+        /** Marks `[from, to)` as a picked token. */
+        void pick(int from, int to) {
+            Editable e = getText();
+            if (from < 0 || to > e.length() || from >= to) return;
+            for (Picked p : e.getSpans(from, to, Picked.class)) if (e.getSpanStart(p) == from && e.getSpanEnd(p) == to) return;
+            e.setSpan(new Picked(), from, to, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+
+        private final TextWatcher whole = new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                erasing = null;
+                if (expanding || count <= after || !(s instanceof android.text.Spanned)) return;
+                android.text.Spanned sp = (android.text.Spanned) s;
+                int end = start + count;
+                for (Picked p : sp.getSpans(Math.max(0, start - 1), end, Picked.class)) {
+                    int a = sp.getSpanStart(p), z = sp.getSpanEnd(p);
+                    // Part of it (not all: that needs nothing more), or the space just after it.
+                    boolean part = start < z && end > a && (start > a || end < z);
+                    boolean space = after == 0 && count == 1 && start == z && s.charAt(start) == ' ';
+                    if (part || space) { erasing = p; return; }
+                }
+            }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                // Typed inside one: it's text of its own now.
+                if (expanding || before != 0 || count == 0 || !(s instanceof android.text.Spannable)) return;
+                android.text.Spannable sp = (android.text.Spannable) s;
+                for (Picked p : sp.getSpans(start, start + count, Picked.class))
+                    if (sp.getSpanStart(p) < start && sp.getSpanEnd(p) > start + count) sp.removeSpan(p);
+            }
+            @Override public void afterTextChanged(Editable e) {
+                Picked p = erasing;
+                erasing = null;
+                if (p == null) return;
+                int a = e.getSpanStart(p), z = e.getSpanEnd(p);
+                e.removeSpan(p);
+                if (a < 0 || z <= a) return;
+                // One space stays between the words around it.
+                if (z < e.length() && e.charAt(z) == ' ' && (a == 0 || e.charAt(a - 1) == ' ')) z++;
+                expanding = true;
+                try { e.delete(a, z); } finally { expanding = false; }
+                // The keyboard's composing word may have pointed into it.
+                post(() -> {
+                    android.view.inputmethod.InputMethodManager im = (android.view.inputmethod.InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (im != null) im.restartInput(Edit.this);
+                });
+            }
+        };
+
         Edit(Context c, Attach attach) {
             super(c);
             this.attach = attach;
+            addTextChangedListener(whole);
             if (attach == null) return;
             if (Build.VERSION.SDK_INT >= 31) Receive.on(this, attach);
             // An image paste changes no text, so the toolbar would stay up: attached() closes it.

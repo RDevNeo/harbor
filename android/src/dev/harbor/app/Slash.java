@@ -336,6 +336,8 @@ final class Slash {
         boolean harbor = e.command != null;
         SlashList.Put p = SlashList.put(edit.getText(), w, harbor ? "" : "/" + e.name);
         edit.getText().replace(p.from, p.to, p.text);
+        // Picked: it goes in one erase (Composer.Edit.Picked).
+        if (!harbor) edit.pick(p.from, p.from + 1 + e.name.length());
         edit.setSelection(Math.min(p.cursor(), edit.length()));
         hide();
         if (harbor) onHarbor.run(e.command);

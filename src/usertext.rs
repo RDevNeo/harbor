@@ -6,6 +6,10 @@
 //!
 //! Older messages mention chats without their title in the text: the title goes on a line
 //! of its own before it, still a link.
+//!
+//! In the composer, a token picked from a menu (`@file`, `#12`, `/command`) and a mentioned
+//! chat's title go in one Backspace or Delete (`erase`); text typed by hand erases as usual.
+//! The phone does the same with spans on what it picked (Composer.java `Picked`).
 
 use crate::mentions::Mention;
 use crate::theme;
@@ -233,6 +237,89 @@ pub fn show(ui: &mut Ui, parts: &[Part], style: &str) -> Option<String> {
     None
 }
 
+// ---------------------------------------------------------------- erased whole
+
+/// The composer remembers what was picked into it from a menu (`@file`, `#12`, `/command`):
+/// such a token, like a mentioned chat's title, goes in one erase.
+pub fn picked(ctx: &egui::Context, cid: egui::Id, token: &str) {
+    let token = token.trim();
+    if token.is_empty() {
+        return;
+    }
+    ctx.data_mut(|d| {
+        let list = d.get_temp_mut_or_default::<Vec<String>>(cid.with("picked"));
+        if !list.iter().any(|t| t == token) {
+            list.push(token.to_string());
+        }
+    });
+}
+
+/// The tokens of `text` erased whole, by byte range, in order and apart: every occurrence of
+/// `tokens` standing as words of their own (longer ones first).
+pub fn whole(text: &str, tokens: &[String]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = vec![];
+    let mut by_len: Vec<&String> = tokens.iter().filter(|t| !t.trim().is_empty()).collect();
+    by_len.sort_by_key(|t| std::cmp::Reverse(t.len()));
+    for t in by_len {
+        for (a, _) in text.match_indices(t.as_str()) {
+            let z = a + t.len();
+            // A space or the end after it, maybe past punctuation (`@a.` but not `@a.rs`).
+            let rest = &text[z..];
+            let tail = rest.trim_start_matches(crate::tags::PUNCT);
+            let apart = crate::tags::opens(text[..a].chars().next_back()) && tail.chars().next().is_none_or(char::is_whitespace);
+            if apart && !out.iter().any(|(s, e)| a < *e && *s < z) {
+                out.push((a, z));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Backspace (`back`) or Delete at char `cursor` of `text`, when it touches a token erased
+/// whole (`spans`, byte ranges): the text without it and the cursor (in chars). Backspace
+/// takes it from inside it, at its end, or just after the space that follows it; Delete from
+/// its start or inside it. One space stays between the words around it.
+pub fn erase(text: &str, cursor: usize, back: bool, spans: &[(usize, usize)]) -> Option<(String, usize)> {
+    let c = text.char_indices().nth(cursor).map_or(text.len(), |(b, _)| b);
+    let &(a, mut z) = spans.iter().find(|&&(a, z)| {
+        if back {
+            (a < c && c <= z) || (text[z..].starts_with(' ') && c == z + 1)
+        } else {
+            a <= c && c < z
+        }
+    })?;
+    if text[z..].starts_with(' ') && (c == z + 1 || a == 0 || text[..a].ends_with(' ')) {
+        z += 1;
+    }
+    let out = format!("{}{}", &text[..a], &text[z..]);
+    Some((out, text[..a].chars().count()))
+}
+
+/// Before the composer's text field: Backspace or Delete next to a picked token or a mentioned
+/// chat's title (`titles`) takes all of it, one key.
+pub fn erase_keys(ui: &mut Ui, cid: egui::Id, draft: &mut String, titles: &[(String, String)]) {
+    use egui::{Key, Modifiers};
+    let (back, del) = ui.input(|i| (i.key_pressed(Key::Backspace) && i.modifiers.is_none(), i.key_pressed(Key::Delete) && i.modifiers.is_none()));
+    if !back && !del {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    let Some(mut state) = egui::text_edit::TextEditState::load(&ctx, cid) else { return };
+    let Some(range) = state.cursor.char_range() else { return };
+    if range.primary.index != range.secondary.index {
+        return;
+    }
+    let mut tokens: Vec<String> = ctx.data(|d| d.get_temp::<Vec<String>>(cid.with("picked"))).unwrap_or_default();
+    tokens.extend(titles.iter().map(|(t, _)| t.clone()));
+    let spans = whole(draft, &tokens);
+    let Some((text, at)) = erase(draft, range.primary.index.0, back, &spans) else { return };
+    ui.input_mut(|i| i.consume_key(Modifiers::NONE, if back { Key::Backspace } else { Key::Delete }));
+    *draft = text;
+    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(CCursor::new(at))));
+    state.store(&ctx, cid);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,5 +408,34 @@ mod tests {
     fn the_wire_has_kinds_and_chats() {
         let v = wire(&parts("Fix login /go", &[chat("Fix login", "g1")]));
         assert_eq!(v, json!([{ "text": "Fix login", "kind": "chat", "chat": "g1" }, { "text": " " }, { "text": "/go", "kind": "command" }]));
+    }
+    #[test]
+    fn picked_tokens_go_in_one_erase() {
+        let toks = vec!["@src/a.rs".to_string(), "#12".to_string(), "/review".to_string(), "Fix login".to_string()];
+        let text = "see Fix login and @src/a.rs, #12 /review";
+        let sp = whole(text, &toks);
+        assert_eq!(sp.iter().map(|&(a, z)| &text[a..z]).collect::<Vec<_>>(), ["Fix login", "@src/a.rs", "#12", "/review"]);
+        let at = |s: &str| text.find(s).unwrap();
+        // Backspace at its end, inside it, or after the space that follows it.
+        assert_eq!(erase(text, at(" and"), true, &sp), Some(("see and @src/a.rs, #12 /review".to_string(), 4)));
+        assert_eq!(erase(text, at("login") + 2, true, &sp).map(|r| r.0), Some("see and @src/a.rs, #12 /review".to_string()));
+        assert_eq!(erase(text, at(" and") + 1, true, &sp).map(|r| r.0), Some("see and @src/a.rs, #12 /review".to_string()));
+        assert_eq!(erase(text, text.len(), true, &sp), Some(("see Fix login and @src/a.rs, #12 ".to_string(), 33)));
+        // Delete at its start.
+        assert_eq!(erase(text, at("#12"), false, &sp).map(|r| r.0), Some("see Fix login and @src/a.rs, /review".to_string()));
+        // Elsewhere: an ordinary key; at its start Backspace isn't in it.
+        assert_eq!(erase(text, 2, true, &sp), None);
+        assert_eq!(erase(text, at("Fix"), true, &sp), None);
+        assert_eq!(erase(text, at(" and"), false, &sp), None);
+    }
+
+    #[test]
+    fn whole_tokens_stand_apart() {
+        let toks = vec!["/review".to_string(), "@a".to_string()];
+        assert!(whole("/reviewer and x@a and @ab", &toks).is_empty());
+        assert_eq!(whole("(/review) @a.", &toks), [(1, 8), (10, 12)]);
+        // After the pick: "token " with the cursor after the space, the text ending there.
+        assert_eq!(erase("hi @a ", 6, true, &whole("hi @a ", &toks)), Some(("hi ".to_string(), 3)));
+        assert_eq!(erase("é @a", 4, true, &whole("é @a", &toks)), Some(("é ".to_string(), 2)));
     }
 }

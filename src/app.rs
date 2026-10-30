@@ -1532,7 +1532,7 @@ pub fn clip(s: &str, n: usize) -> String {
 // ================================================================== frame
 
 impl eframe::App for App {
-    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|down|up|wheel[,secs]]
+    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|down|up|wheel|backspace|delete|left|right|type:text[,secs]]
     /// places the pointer there and optionally clicks once after `secs` (default 1, fractions ok; `down`
     /// then `up` at another step drags, e.g. to select text); more
     /// steps joined by ';' follow at their own `secs` (since start).
@@ -1578,6 +1578,19 @@ impl eframe::App for App {
                     }
                 }
                 "down" | "up" => raw.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: action == "down", modifiers: Default::default() }),
+                "backspace" | "delete" | "left" | "right" => {
+                    let key = match action {
+                        "backspace" => egui::Key::Backspace,
+                        "delete" => egui::Key::Delete,
+                        "left" => egui::Key::ArrowLeft,
+                        _ => egui::Key::ArrowRight,
+                    };
+                    for pressed in [true, false] {
+                        raw.events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
+                    }
+                }
+                // "type:some_text": typed into the focused field ('_' for a space).
+                a if a.starts_with("type:") => raw.events.push(egui::Event::Text(a["type:".len()..].replace('_', " "))),
                 _ => {}
             }
         }

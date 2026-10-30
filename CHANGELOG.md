@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- What you pick from the composer's menus goes in one erase: a chat from `$`, an issue or pull
+  request from `#`, a file from `@`, a command or skill from `/`. Backspace at its end (or just
+  after the space that follows it), Delete at its start, or any erase inside it takes all of it,
+  on the desktop and the phone (the on-screen keyboard's backspace included). Text you type by
+  hand still erases a character at a time.
+
 ## [0.95.0] - 2026-10-29
 
 ### Added

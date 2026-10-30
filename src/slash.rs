@@ -701,6 +701,7 @@ impl App {
         };
         let (text, cursor) = replace(draft, w, &with);
         *draft = text;
+        crate::usertext::picked(ctx, cid, &with);
         let mut state = egui::text_edit::TextEditState::load(ctx, cid).unwrap_or_default();
         state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(cursor))));
         state.store(ctx, cid);
