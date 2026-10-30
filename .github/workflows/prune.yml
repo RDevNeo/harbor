@@ -1,0 +1,32 @@
+# By hand, when the snapshot `harbor-browser` has picked up other engines' caches (.github/boat/prune.sh).
+name: prune
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  harbor-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/boat
+        id: boat
+        with:
+          key: ${{ secrets.BOAT_API_KEY }}
+          from: harbor-browser
+      - name: Prune and save
+        run: |
+          set -eu
+          .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- bash .github/boat/prune.sh
+          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out'
+          boat snapshot "${{ steps.boat.outputs.id }}" harbor-browser --json
+      - name: Delete the sandbox
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/boat/cleanup.sh

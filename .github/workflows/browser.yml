@@ -5,7 +5,7 @@
 # if the release key signed it. Servo is compiled only when neither has this id AND the caller
 # asks for it:
 #   - release.yml calls this with build=true on a v* tag (a release must ship the engine) and
-#     build=false on main pushes, which then just package no browser.
+#     build=false on runs by hand, which then just package no browser.
 #   - Run it by hand (Actions > browser > Run workflow, on main) after changing browser/, so
 #     the engine is cached on main and the next tag reuses it instead of compiling.
 name: browser
@@ -93,7 +93,7 @@ jobs:
             echo "::notice::No prebuilt engine for browser/ ${{ steps.id.outputs.id }}; skipping the browser (run the browser workflow on main to build it)."
           fi
       # On a boat.dev sandbox (.github/boat/browser.sh), from the saved snapshot `harbor-browser`
-      # that keeps Rust, the crates and target/ warm; a compile on main, or a forced one, saves it.
+      # that keeps Rust, the crates and target/ warm; a compile on main saves it, never one on a branch.
       - uses: ./.github/actions/boat
         id: boat
         if: steps.need.outputs.build == 'true'
@@ -109,7 +109,7 @@ jobs:
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out/harbor-browser/harbor-browser" out/harbor-browser
           chmod 755 out/harbor-browser
       - name: Save the boat cache
-        if: steps.need.outputs.build == 'true' && (github.ref == 'refs/heads/main' || inputs.force)
+        if: steps.need.outputs.build == 'true' && github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
           boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out'
@@ -203,7 +203,7 @@ jobs:
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out/harbor-browser/harbor-browser" out/harbor-browser
           chmod 755 out/harbor-browser
       - name: Save the boat cache
-        if: steps.need.outputs.build == 'true' && (github.ref == 'refs/heads/main' || inputs.force)
+        if: steps.need.outputs.build == 'true' && github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
           boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out'
@@ -306,7 +306,7 @@ jobs:
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       - name: Save the boat cache
-        if: steps.need.outputs.build == 'true' && (github.ref == 'refs/heads/main' || inputs.force)
+        if: steps.need.outputs.build == 'true' && github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
           boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out out.tgz'
