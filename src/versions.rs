@@ -111,6 +111,9 @@ pub fn pc_line(p: &PcVersion, newest: &str) -> String {
             None => {}
         }
     }
+    if let Some(id) = u["preview"]["id"].as_str() {
+        bits.push(format!("running preview {id}"));
+    }
     if bits.is_empty() {
         p.version.clone()
     } else if bits[0] == "latest" || !managed && bits.len() == 1 {
@@ -159,7 +162,7 @@ pub fn gather(hub: &crate::api::Hub) -> (Vec<PcVersion>, Vec<PhoneVersion>) {
         me: true,
         online: true,
         seen: crate::store::now(),
-        version: crate::update::VERSION.into(),
+        version: crate::update::current(),
         update: crate::update::info(),
     }];
     let mesh_on = hub.mesh.on.load(std::sync::atomic::Ordering::Relaxed);

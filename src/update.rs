@@ -51,6 +51,8 @@ static LAST_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
 static STARTED: Mutex<Option<Instant>> = Mutex::new(None);
 /// Settings › Updates › "Automatically", as last seen by `tick` (the scheduler thread reads it).
 static AUTO: AtomicBool = AtomicBool::new(false);
+/// Running a preview: the next release installs by itself whatever Settings says.
+static AUTO_PREVIEW: AtomicBool = AtomicBool::new(false);
 /// The newest version another PC of the mesh told of (`peer_news`).
 static HEARD: Mutex<Option<String>> = Mutex::new(None);
 /// The release that failed to install: (version, try again at, failures in a row).
@@ -67,10 +69,20 @@ fn set(s: State) {
 
 /// "0.1.0 (abc1234)" with the commit CI built it from.
 pub fn version_label() -> String {
-    match option_env!("HARBOR_GIT_SHA") {
+    let base = match option_env!("HARBOR_GIT_SHA") {
         Some(sha) if sha.len() >= 7 => format!("{VERSION} ({})", &sha[..7]),
         _ => VERSION.to_string(),
+    };
+    match crate::preview::label() {
+        Some(p) => format!("{base} {p}"),
+        None => base,
     }
+}
+
+/// The release this PC is on: the one it runs or, under a preview (preview.rs), the one installed
+/// beside it. That's what updates compare against, so a newer release replaces any preview.
+pub fn current() -> String {
+    if crate::preview::running() { on_disk().unwrap_or_else(|| VERSION.to_string()) } else { VERSION.to_string() }
 }
 
 /// Harbor's own file: where it was started from, even after an update replaced it.
@@ -234,7 +246,7 @@ fn install(version: &str) -> Result<(), String> {
         let prev = dir.join(".previous");
         let _ = std::fs::remove_dir_all(&prev);
         std::fs::create_dir_all(&prev).map_err(|e| e.to_string())?;
-        std::fs::write(prev.join("VERSION"), VERSION).map_err(|e| e.to_string())?;
+        std::fs::write(prev.join("VERSION"), current()).map_err(|e| e.to_string())?;
         if let Some(b) = &browser {
             replace(&b.join("harbor-browser"), &dir.join("harbor-browser"), Some(&prev))?;
             replace(&b.join("browser.id"), &dir.join("browser.installed"), None)?;
@@ -381,8 +393,8 @@ pub fn cli(arg: &str) -> Option<i32> {
                 Err("this copy wasn't installed by install.sh, so it doesn't update itself".to_string())
             } else {
                 latest().and_then(|v| {
-                    if !newer(&v, VERSION) {
-                        return Ok(format!("Harbor {VERSION} is up to date."));
+                    if !newer(&v, &current()) {
+                        return Ok(format!("Harbor {} is up to date.", current()));
                     }
                     println!("Installing Harbor {v}…");
                     install(&v).map(|()| format!("Harbor {v} is installed."))
@@ -438,6 +450,7 @@ pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
     if !managed() {
         return;
     }
+    AUTO_PREVIEW.store(crate::preview::running(), Ordering::Relaxed);
     let started = {
         let mut s = STARTED.lock().unwrap();
         if s.is_some() {
@@ -459,7 +472,8 @@ pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
                 continue;
             }
             // Installed: the reload into it comes first. Busy: try again in a while.
-            if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installed(_)) || !scheduled_check(AUTO.load(Ordering::Relaxed), &ctx) {
+            let auto = AUTO.load(Ordering::Relaxed) || AUTO_PREVIEW.load(Ordering::Relaxed);
+            if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installed(_)) || !scheduled_check(auto, &ctx) {
                 std::thread::sleep(LOOK_EVERY);
             }
         }
@@ -469,10 +483,11 @@ pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
 /// The version in another PC's `update::info` worth a check: newer than this one and than what
 /// was already heard. Only a reason to ask GitHub: what gets installed comes from there, signed.
 fn news(update: &serde_json::Value, heard: Option<&str>) -> Option<String> {
-    let mut best = heard.unwrap_or(VERSION).to_string();
+    let current = current();
+    let mut best = heard.unwrap_or(&current).to_string();
     let mut found = None;
     for v in [&update["version"], &update["latest"]].into_iter().filter_map(|v| v.as_str()) {
-        if newer(v, &best) && newer(v, VERSION) {
+        if newer(v, &best) && newer(v, &current) {
             best = v.to_string();
             found = Some(best.clone());
         }
@@ -510,7 +525,7 @@ fn scheduled_check(auto: bool, ctx: &eframe::egui::Context) -> bool {
             ctx2.request_repaint();
         }
         match latest() {
-            Ok(v) if newer(&v, VERSION) => {
+            Ok(v) if newer(&v, &current()) => {
                 if !auto || skipped(&v) {
                     set(State::Available(v));
                 } else if on_disk().as_deref() == Some(v.as_str()) {
@@ -539,7 +554,7 @@ pub fn check(auto: bool, ctx: &eframe::egui::Context) -> bool {
         set(State::Checking);
         ctx2.request_repaint();
         match latest() {
-            Ok(v) if newer(&v, VERSION) => {
+            Ok(v) if newer(&v, &current()) => {
                 if auto && !skipped(&v) {
                     run_install(v);
                 } else {
@@ -565,7 +580,7 @@ pub fn check_and_install(ctx: &eframe::egui::Context) -> bool {
         set(State::Checking);
         ctx2.request_repaint();
         match latest() {
-            Ok(v) if newer(&v, VERSION) => run_install(v),
+            Ok(v) if newer(&v, &current()) => run_install(v),
             Ok(_) => set(State::UpToDate),
             Err(e) => set(State::Failed(e)),
         }
@@ -583,12 +598,13 @@ pub fn check_and_install(ctx: &eframe::egui::Context) -> bool {
 pub fn info() -> serde_json::Value {
     let managed = managed();
     let s = state();
-    let ready = on_disk().filter(|v| newer(v, VERSION));
+    let current = current();
+    let ready = on_disk().filter(|v| newer(v, &current));
     let known = match &s {
         State::Available(v) | State::Installing(v) | State::Installed(v) => Some(v.clone()),
         _ => None,
     };
-    let latest = ready.clone().or(known).filter(|v| newer(v, VERSION));
+    let latest = ready.clone().or(known).filter(|v| newer(v, &current));
     let status = if !managed {
         "built from source, doesn't update itself".to_string()
     } else {
@@ -606,8 +622,9 @@ pub fn info() -> serde_json::Value {
         State::Failed(e) => Some(e.clone()),
         _ => None,
     };
+    let preview = crate::preview::info();
     serde_json::json!({
-        "version": VERSION,
+        "version": current,
         "managed": managed,
         "latest": latest,
         "ready": ready.is_some(),
@@ -617,6 +634,9 @@ pub fn info() -> serde_json::Value {
         "status": status,
         // Settings › Updates › Automatically (0.53): phones that haven't chosen follow it.
         "auto": AUTO.load(Ordering::Relaxed),
+        // preview.rs: it takes live previews, and the one it runs.
+        "preview_on": preview["preview_on"],
+        "preview": preview["preview"],
     })
 }
 

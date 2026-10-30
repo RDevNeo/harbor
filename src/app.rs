@@ -490,7 +490,9 @@ impl App {
             let ctx = ctx.clone();
             move || ctx.request_repaint()
         };
-        if let Ok(exe) = std::env::current_exe() {
+        crate::preview::set_wake(wake.clone());
+        // A preview doesn't change by itself: what matters to it is a new release beside it.
+        if let Some(exe) = crate::preview::release_exe().or_else(|| std::env::current_exe().ok()) {
             crate::reload::watch(exe, app.update_ready.clone(), wake.clone());
         }
         // Dev servers and other processes keep running across Harbor restarts.
@@ -1619,6 +1621,7 @@ impl eframe::App for App {
 impl App {
     /// Everything but drawing: also runs with no window (background.rs).
     pub fn tick(&mut self, ctx: &egui::Context) {
+        crate::preview::ticked();
         self.auto_tick(ctx);
         self.drop_idle_transcripts();
         while let Ok((id, ev)) = self.rx.try_recv() {
@@ -1671,6 +1674,8 @@ impl App {
                 control::Incoming::Hook(h) => self.handle_hook(h, ctx),
                 control::Incoming::Api(call) => self.handle_api(call, ctx),
                 control::Incoming::Mesh(m) => self.handle_mesh(m, ctx),
+                control::Incoming::Preview { offer, here } => self.preview_arrived(offer, here),
+                control::Incoming::PreviewBack { off } => self.preview_back(off),
                 control::Incoming::Focus { .. } if crate::background::hidden() => crate::background::show(ctx),
                 control::Incoming::Focus { raised } => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));

@@ -158,6 +158,7 @@ impl App {
             "draft_repo": self.draft.repo,
             "draft_main": self.draft.main,
             "drafts": self.drafts.iter().filter(|(_, t)| !t.is_empty()).map(|(k, t)| (k.to_string(), Value::String(t.clone()))).collect::<serde_json::Map<String, Value>>(),
+            "files": self.files.iter().filter(|(_, f)| !f.is_empty()).map(|(k, f)| (k.to_string(), json!(f))).collect::<serde_json::Map<String, Value>>(),
             "panes": panes,
             "max": self.surface_max.map(|d| d.idx()),
             // Agent turns keep running across the reload; what waits for them comes along.
@@ -177,6 +178,13 @@ impl App {
             for (k, t) in m {
                 if let (Ok(k), Some(t)) = (k.parse::<i64>(), t.as_str()) {
                     self.drafts.insert(k, t.to_string());
+                }
+            }
+        }
+        if let Some(m) = v["files"].as_object() {
+            for (k, f) in m {
+                if let (Ok(k), Ok(f)) = (k.parse::<i64>(), serde_json::from_value::<Vec<PathBuf>>(f.clone())) {
+                    self.files.insert(k, f);
                 }
             }
         }
@@ -258,8 +266,8 @@ impl App {
             self.reload_now();
             return;
         }
-        // "Ask me": the Update button waits for a click.
-        if !self.auto_update() {
+        // "Ask me": the Update button waits for a click. A release replaces a preview regardless.
+        if !self.auto_update() && !crate::preview::running() {
             return;
         }
         // Agent turns run detached and are picked up again, so they don't hold it back.
@@ -319,6 +327,28 @@ impl App {
         }
     }
 
+    /// A preview arrived (preview.rs): other PCs hear of it first, as this one may be about to
+    /// restart, and this one restarts into it at once, whatever the moment.
+    pub fn preview_arrived(&mut self, offer: Option<crate::preview::Offer>, here: bool) {
+        if let Some(o) = offer {
+            crate::mesh::announce_preview(self.shared(), &o);
+        }
+        if here {
+            self.reload_now();
+        }
+    }
+
+    /// Back to the release, and with `off` no more previews here.
+    pub fn preview_back(&mut self, off: bool) {
+        crate::preview::give_up();
+        if off {
+            let _ = crate::preview::set_enabled(false);
+        }
+        if crate::preview::running() {
+            self.reload_now();
+        }
+    }
+
     pub fn reload_now(&mut self) {
         let state = self.snapshot().to_string();
         self.store.set("reload_state", &state);
@@ -326,15 +356,18 @@ impl App {
         for d in [Dock::Right, Dock::Bottom] {
             self.drop_surfaces(d);
         }
-        let Some(exe) = crate::update::self_exe() else { return };
         // The new image opens a window only if this one has one (background.rs).
         let mut args: Vec<String> = std::env::args().skip(1).filter(|a| a != crate::background::FLAG).collect();
         if crate::background::hidden() {
             args.push(crate::background::FLAG.into());
         }
+        // Into or out of a preview, this same file otherwise.
+        let release_changed = self.update_ready.load(Ordering::Relaxed);
+        let Some(exe) = crate::preview::next_exe(release_changed, &args).or_else(crate::update::self_exe) else { return };
         // Development hooks describe the first launch only.
         let err = std::process::Command::new(&exe).args(args).env_remove("HARBOR_VIEW").env_remove("HARBOR_POINTER").env(crate::single::RELOADED_PID, std::process::id().to_string()).exec();
         eprintln!("harbor: reload failed: {err}");
+        crate::preview::exec_failed(&err.to_string());
         self.reload_asked = false;
         self.reload_not_before = None;
         self.update_ready.store(false, Ordering::Relaxed);

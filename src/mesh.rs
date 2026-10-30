@@ -728,23 +728,29 @@ fn phones_loop(hub: Arc<api::Hub>) {
     }
 }
 
-/// The phone app a PC serves (`GET /mesh/v1/app.apk`) into this PC's, as versionCode `code`.
-fn fetch_apk(dest: &Dest, code: i64) -> Result<(), String> {
+/// A GET whose answer is too large to keep in memory: the stream at its body, and its length.
+fn get_stream(dest: &Dest, path: &str, wait: Duration) -> Result<(BufReader<Box<dyn ReadWrite>>, u64), String> {
     let sock = dest.addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
-    if dest.fp.is_empty() {
-        return Err("no key on file for that PC".into());
-    }
-    let wait = Duration::from_secs(60);
     let mut s: Box<dyn ReadWrite> = match &dest.via {
-        Some(via) if via.via.is_none() => {
+        Some(via) if via.via.is_none() && !dest.fp.is_empty() => {
             let outer = crate::relay::open(via, &dest.fp, sock.port(), wait)?;
             Box::new(crate::tls::handshake(outer, sock.ip(), Some(&dest.fp))?.0)
         }
         Some(_) => return Err("only one relay".into()),
+        None if dest.fp.is_empty() => {
+            let ip = crate::tls::canonical(sock.ip());
+            if !ip.is_loopback() && !crate::tls::tailnet_ip(ip) {
+                return Err("no key on file for that PC".into());
+            }
+            let s = TcpStream::connect_timeout(&sock, CONNECT).map_err(|e| e.to_string())?;
+            let _ = s.set_read_timeout(Some(wait));
+            let _ = s.set_write_timeout(Some(wait));
+            Box::new(s)
+        }
         None => Box::new(crate::tls::connect(&sock, Some(&dest.fp), CONNECT, wait)?.0),
     };
     let (id, name) = HELLO.lock().unwrap().clone();
-    let head = format!("GET /mesh/v1/app.apk HTTP/1.1\r\nHost: {}\r\nX-Harbor-Id: {}\r\nX-Harbor-Name: {}\r\nConnection: close\r\n\r\n", dest.addr, id.replace(['\r', '\n'], ""), name.replace(['\r', '\n'], ""));
+    let head = format!("GET {path} HTTP/1.1\r\nHost: {}\r\nX-Harbor-Id: {}\r\nX-Harbor-Name: {}\r\nConnection: close\r\n\r\n", dest.addr, id.replace(['\r', '\n'], ""), name.replace(['\r', '\n'], ""));
     s.write_all(head.as_bytes()).and_then(|_| s.flush()).map_err(|e| e.to_string())?;
     let mut r = BufReader::new(s);
     let mut line = String::new();
@@ -764,7 +770,26 @@ fn fetch_apk(dest: &Dest, code: i64) -> Result<(), String> {
             }
         }
     }
-    let len = len.filter(|n| (1..=200 << 20).contains(n)).ok_or("no size, or too large")?;
+    Ok((r, len.ok_or("no size")?))
+}
+
+/// One of the files of a preview on offer, into `to`.
+fn fetch_file(dest: &Dest, path: &str, to: &std::path::Path) -> Result<(), String> {
+    let (r, len) = get_stream(dest, path, Duration::from_secs(120))?;
+    let mut f = std::fs::File::create(to).map_err(|e| e.to_string())?;
+    let got = std::io::copy(&mut r.take(len), &mut f).map_err(|e| e.to_string())?;
+    (got == len).then_some(()).ok_or_else(|| "the file came cut short".to_string())
+}
+
+/// The phone app a PC serves (`GET /mesh/v1/app.apk`) into this PC's, as versionCode `code`.
+fn fetch_apk(dest: &Dest, code: i64) -> Result<(), String> {
+    if dest.fp.is_empty() {
+        return Err("no key on file for that PC".into());
+    }
+    let (r, len) = get_stream(dest, "/mesh/v1/app.apk", Duration::from_secs(60))?;
+    if !(1..=200 << 20).contains(&len) {
+        return Err("no size, or too large".into());
+    }
     let mut bytes = Vec::with_capacity(len as usize);
     r.take(len).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     if bytes.len() as u64 != len || !bytes.starts_with(b"PK\x03\x04") {
@@ -775,6 +800,54 @@ fn fetch_apk(dest: &Dest, code: i64) -> Result<(), String> {
 
 trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
+
+/// Tells the PCs that take previews (preview.rs) what this one has. Short: Harbor may be about to
+/// restart, and a PC that doesn't answer in time simply stays on what it runs.
+pub fn announce_preview(shared: &Shared, o: &crate::preview::Offer) {
+    let dests: Vec<Dest> = shared.peers.lock().unwrap().values().filter(|p| p.online && crate::preview::takes(&p.update)).map(Peer::dest).collect();
+    let Ok(body) = serde_json::to_vec(o) else { return };
+    std::thread::scope(|s| {
+        for d in &dests {
+            let body = &body;
+            s.spawn(move || {
+                if let Err(e) = http(d, "POST", "/mesh/v1/preview", Some(("application/json", body)), Duration::from_secs(2)) {
+                    eprintln!("harbor: preview not offered to {}: {e}", d.addr);
+                }
+            });
+        }
+    });
+}
+
+/// The sender of a preview may be restarting into it itself: it gets this long to come back.
+const PREVIEW_FETCH: Duration = Duration::from_secs(45);
+
+/// One PC at a time: its files are written to fixed names.
+static PREVIEW_TAKING: Mutex<()> = Mutex::new(());
+
+/// Fetches a preview offered by `p`, then restarts into it.
+fn take_preview(p: &Peer, offer: &crate::preview::Offer, tx: Sender<crate::control::Incoming>) {
+    let _one = PREVIEW_TAKING.lock().unwrap();
+    let dest = p.dest();
+    let start = Instant::now();
+    let got = crate::preview::fetch(offer, &p.name, |kind, to| {
+        let path = format!("/mesh/v1/preview/file?kind={kind}&id={}", api::url_encode(&offer.id));
+        loop {
+            match fetch_file(&dest, &path, to) {
+                Ok(()) => return Ok(()),
+                Err(e) if start.elapsed() > PREVIEW_FETCH => return Err(e),
+                Err(_) => std::thread::sleep(Duration::from_millis(500)),
+            }
+        }
+    });
+    match got {
+        Ok(_) => {
+            let _ = tx.send(crate::control::Incoming::Preview { offer: None, here: true });
+            crate::preview::wake();
+        }
+        Err(e) => eprintln!("harbor: preview {} not taken: {e}", offer.id),
+    }
+}
+
 
 /// Writes a request and reads its answer on an open connection.
 fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>) -> Result<(u16, String, Vec<u8>), String> {
@@ -955,6 +1028,18 @@ pub fn serve(from: &api::Peer, req: &api::Request, r: &mut impl Read, hub: &api:
         }
         // Every PC's files (machines.rs): what this PC shares with the caller, and one tool call.
         ("GET", ["mesh", "v1", "share"]) => crate::machines::serve_share(&peer),
+        // A live preview on offer (preview.rs): taken only with previews on here, and only from a
+        // PC that may run anything here anyway.
+        ("POST", ["mesh", "v1", "preview"]) => {
+            let Ok(offer) = serde_json::from_value::<crate::preview::Offer>(read_json(r, req.len)) else { return err(400, "no offer") };
+            if let Some(why) = crate::preview::refuses(crate::machines::full_access(&peer)) {
+                return err(403, why);
+            }
+            let Some(p) = shared.peer(&peer) else { return err(404, "unknown PC") };
+            let tx = tx.clone();
+            std::thread::spawn(move || take_preview(&p, &offer, tx));
+            ok(json!({ "taking": true }))
+        }
         ("POST", ["mesh", "v1", "tool"]) => crate::machines::serve_tool(&peer, &read_json(r, req.len)),
         ("POST", ["mesh", "v1", "revoke"]) => {
             let body = read_json(r, req.len);
@@ -2336,7 +2421,7 @@ impl App {
                 let phones = self.api.hub.enabled.load(Ordering::Relaxed);
                 let port = *self.api.hub.port.lock().unwrap();
                 let about = crate::meshctx::about(&self.store);
-                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::VERSION, "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"], "update": crate::update::info(), "moves": crate::movepc::VERSION }))
+                ok(json!({ "id": me.id, "name": me.name, "version": crate::update::current(), "epoch": epoch, "accounts": accounts, "revoked": revoked, "phones": phones, "fp": crate::tls::my_fp(), "addrs": my_addrs(port), "port": port, "owner": about["owner"], "github": about["github"], "owner_suggested": about["owner_suggested"], "update": crate::update::info(), "moves": crate::movepc::VERSION }))
             }
             ("GET", ["mesh", "v1", "chats"]) => {
                 let since = q("since");
@@ -2868,7 +2953,7 @@ impl App {
                 |ui| w::toggle(ui, &mut on),
             );
             w::separator(ui);
-            w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), &format!("Harbor {} · key {}", crate::update::VERSION, crate::tls::short(&my_fp)), |ui| {
+            w::setting_row(ui, &format!("{}  {} (this PC)", crate::icons::MONITOR, me.name), &format!("Harbor {} · key {}", crate::update::version_label(), crate::tls::short(&my_fp)), |ui| {
                 if w::btn(crate::icons::COPY).muted().icon_xs().show(ui).tip("Copy this PC's full key").clicked() {
                     ui.ctx().copy_text(my_fp.clone());
                 }

@@ -1,0 +1,294 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF'
+Usage: scripts/boat/dev [options]
+
+Builds this working tree on one warm boat.dev sandbox and restarts Harbor into the result, in about
+10 seconds: `harbor preview push` here, and the PCs that took live previews on (preview.rs) get it
+over the mesh. The sandbox keeps Harbor's incremental build, stops by itself after --idle seconds
+without a build (boat's own timer, so a dead PC can't leave it on) and comes back on the next run.
+
+Each run: send the files that changed, build with the `quick` profile (Harbor unoptimised, its
+dependencies optimised), bring back a patch against the last binary, install it. It prints the time
+of each phase and the VM-hours used. It's a preview: unoptimised, not tested. Tests and releases
+stay with scripts/boat/check.
+
+Options:
+  --check         only cargo check: compile errors in a few seconds, no binary
+  --no-push       build and bring the binary back, don't hand it to Harbor
+  --out DIR       copy the binary to DIR/harbor
+  --stop          stop the sandbox now (it costs nothing stopped; its disk lasts 14 days)
+  --status        the sandbox's state, and VM-hours used and left
+  --delete        delete the sandbox and what this PC remembers of it
+  --idle SECONDS  stop the sandbox after this long without a build (default 600)
+  --type TYPE     machine for a new or resumed sandbox: small (the default), default, large
+  --note TEXT     what this build holds, shown with it (default: branch and last commit)
+  -h, --help      this help
+
+Prerequisites: the boat CLI logged in (see CLAUDE.md), jq, git, GNU tar, zstd, curl, and a Harbor
+0.103 or newer here. Before pushing, turn previews on: Settings › Updates › Live previews, or
+`harbor preview on`. HARBOR_BIN picks another Harbor than the one on PATH.
+EOF
+}
+idle=600 type="" note="" mode=build push=1 out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) mode=check ;;
+    --no-push) push=0 ;;
+    --out) out=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
+    --stop) mode=stop ;;
+    --status) mode=status ;;
+    --delete) mode=delete ;;
+    --idle) idle=$2; shift ;;
+    --type) type=$2; shift ;;
+    --note) note=$2; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+root=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+export BOAT_NO_UPDATE=1
+boat=$(command -v boat || true)
+[ -n "$boat" ] || boat=$HOME/.ascii/bin/boat
+[ -x "$boat" ] || { echo "no boat CLI (not on PATH nor at ~/.ascii/bin/boat): see --help" >&2; exit 1; }
+for c in jq zstd curl; do command -v "$c" >/dev/null || { echo "$c is needed: see --help" >&2; exit 1; }; done
+harbor=${HARBOR_BIN:-harbor}
+
+# One sandbox for the account, shared by its PCs: not a dev-harbor-* name, those get swept.
+name=harbor-live
+port=8799
+state=${XDG_CACHE_HOME:-$HOME/.cache}/harbor-dev
+mkdir -p "$state"
+chmod 700 "$state"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+say() { printf '\033[1m[dev] %s\033[0m\n' "$*" >&2; }
+now() { date +%s%3N; }
+# Time per phase, here and on the sandbox.
+laps=()
+t0=$(now) tp=$t0
+lap() { local n; n=$(now); laps+=("$1 $((n - tp))"); tp=$n; }
+lapped() { laps+=("$1 $2"); }
+
+find_id() {
+  local i; i=$(cat "$state/id" 2>/dev/null || true)
+  [ -n "$i" ] || i=$("$boat" list --all --json | jq -r --arg n "$name" '[.sandboxes[] | select(.name == $n) | .id][0] // empty')
+  echo "$i"
+}
+id=$(find_id)
+sandbox_state() { "$boat" info "$id" --json 2>/dev/null | jq -r '.sandbox.state // empty'; }
+
+used() {
+  local secs left
+  secs=$("$boat" usage "$id" --json 2>/dev/null | jq -r '.seconds // 0')
+  left=$("$boat" limits --json 2>/dev/null | jq -r '.planIncluded.vmHoursRemaining // "?"')
+  say "VM-hours: this sandbox $(awk "BEGIN { printf \"%.2f\", $secs / 3600 }") used so far, the account has $left left"
+}
+
+case "$mode" in
+  status)
+    [ -n "$id" ] || { echo "no sandbox yet: the first run makes one"; exit 0; }
+    echo "$name $id: $(sandbox_state)"
+    used
+    exit 0 ;;
+  stop)
+    [ -n "$id" ] || { echo "no sandbox"; exit 0; }
+    "$boat" stop "$id" --json >/dev/null
+    say "stopping $id"
+    used
+    exit 0 ;;
+  delete)
+    [ -z "$id" ] || "$boat" delete "$id" --yes --json >/dev/null
+    rm -rf "$state"
+    say "deleted"
+    exit 0 ;;
+esac
+
+# Up and warm. The timer is boat's: every run moves it, and without runs the sandbox stops.
+create() {
+  say "creating $name (${type:-small}, from harbor-build): the first build takes a few minutes"
+  # Long enough for the first build; the end of the run sets the idle timer.
+  id=$("$boat" new --type "${type:-small}" --from harbor-build --no-env --ttl 3600 --name "$name" --json | jq -r 'select(.event == "ready") | .id')
+  [ -n "$id" ] || { echo "could not create a sandbox" >&2; exit 1; }
+  echo "$id" > "$state/id"
+  rm -f "$state/manifest"
+  for _ in $(seq 30); do "$boat" exec "$id" --timeout 60 -- true >/dev/null 2>&1 && return; sleep 2; done
+  echo "the sandbox doesn't answer" >&2
+  exit 1
+}
+resume() {
+  say "resuming $id"
+  "$boat" resume "$id" --ttl 3600 ${type:+--type "$type"} --json >/dev/null
+  lap resume
+}
+ensure_up() {
+  [ -n "$id" ] || { create; return; }
+  case "$(sandbox_state)" in
+    "") rm -f "$state/id"; id=$(find_id); [ -n "$id" ] && ensure_up || create ;;
+    stopped|stopping|paused) until [ "$(sandbox_state)" != stopping ]; do sleep 1; done; resume ;;
+    *) ;;
+  esac
+}
+
+# What's on the sandbox is what this file says: the hash of the manifest of the last sync, wherever
+# it came from. Another tree synced since: this one goes over whole.
+manifest() {
+  (cd "$root" && git ls-files -z -co --exclude-standard | xargs -0 sha1sum 2>/dev/null || true) | LC_ALL=C sort -k2 > "$1"
+}
+manifest "$work/manifest"
+new=$(sha1sum < "$work/manifest" | cut -c1-40)
+old=none
+touch "$state/manifest"
+[ ! -s "$state/manifest" ] || old=$(sha1sum < "$state/manifest" | cut -c1-40)
+awk 'FILENAME == ARGV[1] { was[$0] = 1; next } !($0 in was) { print substr($0, 43) }' "$state/manifest" "$work/manifest" > "$work/changed"
+awk 'FILENAME == ARGV[1] { is[substr($0, 43)] = 1; next } !(substr($0, 43) in is) { print substr($0, 43) }' "$work/manifest" "$state/manifest" > "$work/removed"
+if [ -s "$work/changed" ]; then
+  (cd "$root" && tr '\n' '\0' < "$work/changed" | tar --null -T - -czf "$work/delta.tgz")
+  delta=$(base64 -w0 "$work/delta.tgz")
+else
+  delta=""
+fi
+base=$(cat "$state/harbor.sha" 2>/dev/null || true)
+lap diff
+
+# Runs on the sandbox: applies the delta if it has the tree it was made against, then dev.sh. Its
+# last argument is the file list to remove, one per line.
+apply='cd "$HOME/src" 2>/dev/null || exit 75
+[ "$(cat .manifest 2>/dev/null)" = "$1" ] || exit 75
+[ -z "$3" ] || printf %s "$3" | base64 -d | tar -xzm
+[ -z "$4" ] || printf %s "$4" | xargs -r -d "\n" rm -f --
+echo "$2" > .manifest
+exec bash .github/boat/dev.sh "$5" "$6"'
+
+run_on() { # dev.sh mode, base hash
+  "$boat" exec "$id" --timeout 590 --json -- bash -c "$apply" dev "$old" "$new" "$delta" "$(cat "$work/removed")" "$1" "$2" 2>"$work/exec.err"
+}
+
+# The whole tree, for a new sandbox or after another tree was synced.
+send_all() {
+  say "sending the whole tree"
+  (cd "$root" && git ls-files -z -co --exclude-standard | tar --null -T - --ignore-failed-read -czf "$work/all.tgz" 2>/dev/null)
+  "$boat" scp "$work/all.tgz" "$id:/home/user/src.tgz" >/dev/null
+  "$boat" exec "$id" --timeout 120 --json -- bash -c 'mkdir -p src && find src -mindepth 1 -delete && tar -xzmf src.tgz -C src && rm src.tgz && echo "$1" > src/.manifest' dev "$new" >/dev/null
+  cp "$work/manifest" "$state/manifest"
+  old=$new delta=""
+  : > "$work/removed"
+  lap "send-all"
+}
+
+ensure_up
+# Out of the way of a long build, then the idle timer from the end of this run.
+("$boat" extend "$id" --ttl 3600 --json >/dev/null 2>&1 || true) &
+ttl=$!
+trap 'rm -rf "$work"; [ -z "${id:-}" ] || "$boat" extend "$id" --ttl "$idle" --json >/dev/null 2>&1 || true' EXIT
+answer=$work/answer
+# A command's argument takes about 128 KB.
+if [ "$old" = none ] || [ "${#delta}" -gt 100000 ]; then
+  code=75
+else
+  run_on "$mode" "$base" > "$answer" || true
+  code=$(jq -r '.exitCode // empty' "$answer" 2>/dev/null || true)
+fi
+if [ -z "$code" ]; then
+  # Stopped meanwhile, or gone: once more from the top.
+  wait "$ttl" || true
+  id=$(find_id)
+  ensure_up
+  run_on "$mode" "$base" > "$answer" || true
+  code=$(jq -r '.exitCode // empty' "$answer" 2>/dev/null || true)
+fi
+if [ "$code" = 75 ]; then
+  send_all
+  say "setting up the sandbox (a first build)"
+  PATH="$(dirname "$boat"):$PATH" "$root/.github/boat/run.sh" "$id" --cwd src -- bash .github/boat/dev.sh setup | grep -vE "^\s+Compiling" | tail -40
+  lap setup
+  run_on "$mode" "$base" > "$answer" || true
+  code=$(jq -r '.exitCode // empty' "$answer" 2>/dev/null || true)
+fi
+wait "$ttl" || true
+jq -r '.stdout // ""' "$answer" > "$work/out"
+jq -r '.stderr // ""' "$answer" > "$work/err"
+get() { sed -n "s/^@@ $1 //p" "$work/out" | tail -1; }
+grep -v '^@@ ' "$work/out" || true
+if [ "$code" != 0 ]; then
+  sed -n 1,200p "$work/err" >&2
+  [ -n "$code" ] || sed -n 1,20p "$work/exec.err" >&2
+  say "FAILED on the sandbox (exit ${code:-no answer})"
+  exit 1
+fi
+[ -z "$new" ] || cp "$work/manifest" "$state/manifest"
+lap "sandbox(total)"
+for p in mount check build diff pack; do
+  v=$(get "$p")
+  [ -z "$v" ] || lapped "  $p" "$v"
+done
+report() {
+  local l n=$(now)
+  printf '\033[1m[dev] time:' >&2
+  for l in "${laps[@]}"; do printf ' %s=%sms' "${l% *}" "${l##* }" | tr -s ' ' >&2; done
+  printf ' total=%sms\033[0m\n' "$((n - t0))" >&2
+}
+if [ "$mode" = check ]; then
+  report
+  exit 0
+fi
+
+# The binary, from the patch or whole.
+sha=$(get sha)
+url() { # the sandbox's file server, the same address for as long as it lives
+  if [ "$(cat "$state/url.id" 2>/dev/null)" != "$id" ]; then
+    "$boat" host "$id" "$port" --json | jq -r .url > "$state/url"
+    echo "$id" > "$state/url.id"
+    rm -f "$state/cookies"
+  fi
+  local u; u=$(cat "$state/url")
+  printf '%s/%s?%s' "${u%%\?*}" "$1" "${u#*\?}"
+}
+fetch() { curl -fsSL --retry 3 --retry-all-errors --retry-delay 1 -c "$state/cookies" -b "$state/cookies" -o "$2" "$(url "$1")"; }
+if [ -n "$(get same)" ]; then
+  say "nothing changed in the binary"
+elif [ -n "$(get patch)" ]; then
+  say "patch: $(get patch) bytes"
+  if [ -n "$(get inline)" ]; then
+    get inline | base64 -d > "$state/patch"
+  else
+    fetch patch "$state/patch"
+  fi
+  lap bring
+  zstd -q -d --long=28 -f --patch-from="$state/harbor" "$state/patch" -o "$work/harbor"
+else
+  say "bringing the whole binary ($(get whole) bytes)"
+  fetch whole "$work/whole"
+  lap bring
+  zstd -q -d --long=28 -f "$work/whole" -o "$work/harbor"
+  rm -f "$state/patch"
+fi
+if [ -z "$(get same)" ]; then
+  [ "$(sha256sum "$work/harbor" | cut -c1-64)" = "$sha" ] || { rm -f "$state/harbor.sha"; echo "the binary that came isn't the one built" >&2; exit 1; }
+  chmod +x "$work/harbor"
+  mv "$work/harbor" "$state/harbor"
+  echo "$sha" > "$state/harbor.sha"
+fi
+lap apply
+[ -z "$out" ] || cp "$state/harbor" "$out/harbor"
+
+if [ "$push" = 1 ]; then
+  commit=$(git -C "$root" rev-parse --short HEAD)
+  dirty=$(git -C "$root" status --porcelain | sha1sum | cut -c1-4)
+  [ -n "$(git -C "$root" status --porcelain)" ] || dirty=clean
+  [ -n "$note" ] || note="$(git -C "$root" rev-parse --abbrev-ref HEAD) $(git -C "$root" log -1 --format=%s | cut -c1-60)"
+  extra=()
+  [ ! -f "$state/patch" ] || [ -z "$base" ] || extra=(--patch "$state/patch" --base "$base")
+  pushed=$(now)
+  "$harbor" preview push "$state/harbor" --id "$commit-$dirty-$(date +%H%M%S)" --note "$note" "${extra[@]}" --wait | tee "$work/pushed"
+  shown=$(sed -n 's/^on screen \([0-9]*\) ms.*/\1/p' "$work/pushed")
+  [ -z "$shown" ] || say "on screen $((pushed + shown - t0)) ms after the start"
+  [ -z "$shown" ] || lapped "restart(to first frame)" "$shown"
+  tp=$(now)
+fi
+report
+used

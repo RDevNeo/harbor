@@ -1841,6 +1841,21 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
 - `POST /mesh/v1/phones` `{}`: turn this PC's phone access on (Settings › Devices' "Enable phone
   access" on another PC).
 
+### Live previews (`/mesh/v1/preview`)
+
+A test build reaches the PCs that opted in (Settings › Updates › Live previews, `src/preview.rs`).
+Over the same pinned TLS as everything here; there's no signature, because a PC only takes one from
+a PC it shares `full` access with (`machines`), which may run anything on it anyway.
+
+- `update.preview_on` in hello and `/mesh/v1/chats`: this PC takes previews, so it's told of them.
+  `update.preview`: the one it runs, `{id, note, from, at}`, or null. `update.version` stays the
+  release installed there.
+- `POST /mesh/v1/preview` `{id, sha256, note, base}`: "I have this build". `403` when previews are off
+  there or the sender lacks `full`. `200 {taking: true}`: it fetches the build and restarts into it.
+  `base`: the SHA-256 of the binary the patch starts from, `""` when there's no patch.
+- `GET /mesh/v1/preview/file?kind=patch|binary&id=<id>`: the patch (`zstd --patch-from`, window 2^28)
+  or the whole binary, `404` once a newer build is on offer. The result must hash to `sha256`.
+
 ## The APK in releases
 
 The release workflow attaches `harbor-android.apk` and `harbor-android.apk.minisig`

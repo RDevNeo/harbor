@@ -54,6 +54,7 @@ mod notify;
 mod openchat;
 mod oauth;
 mod pages;
+mod preview;
 mod phonesui;
 mod picker;
 mod portmap;
@@ -108,7 +109,7 @@ fn main() -> eframe::Result {
     // Terminal commands stop quietly when their reader closes the pipe. Keep Rust's
     // ignored SIGPIPE for the GUI/background hub, workers, stdio MCP servers and nc:
     // those use sockets and handle write errors rather than dying on a disconnect.
-    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V" | "--update" | "--restore-previous" | "mesh" | "net" | "account")) {
+    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V" | "--update" | "--restore-previous" | "mesh" | "net" | "account" | "preview")) {
         #[allow(unsafe_code)] // signal(2), before starting any threads
         unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL); }
     }
@@ -140,6 +141,12 @@ fn main() -> eframe::Result {
     if args.get(1).map(String::as_str) == Some("mesh") {
         std::process::exit(mesh::cli(&args[2..]));
     }
+    if args.get(1).map(String::as_str) == Some("preview") {
+        std::process::exit(preview::cli(&args[2..]));
+    }
+    if args.get(1).map(String::as_str) == Some(preview::WATCH_ARG) {
+        std::process::exit(preview::watch(&args[2..]));
+    }
     if args.get(1).map(String::as_str) == Some("account") {
         std::process::exit(account::cli(&args[2..]));
     }
@@ -160,6 +167,8 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    // This PC runs a preview: the release hands over to it here.
+    preview::at_start(&args[1..]);
     if let Some(born) = born {
         procs::reap_inherited(born);
     }

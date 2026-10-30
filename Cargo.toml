@@ -50,3 +50,18 @@ panic = "abort"
 
 [profile.release.package.harbor]
 codegen-units = 16
+
+# Live previews (scripts/boat/dev): a warm rebuild in seconds. Harbor itself unoptimised and without
+# debug info, its dependencies optimised once, so the UI stays usable. Same behaviour as a release:
+# no overflow checks or debug assertions, panics abort.
+[profile.quick]
+inherits = "dev"
+debug = 0
+debug-assertions = false
+overflow-checks = false
+panic = "abort"
+strip = true
+incremental = true
+
+[profile.quick.package."*"]
+opt-level = 2

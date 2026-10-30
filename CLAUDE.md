@@ -21,6 +21,11 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
     changes included), then builds it for release; `-- <filter>` picks tests, `--out DIR` brings
     the binary back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
     give it the longest timeout, or run it in the background.
+  - `scripts/boat/dev`: see a change running, in about 10 seconds. Builds the working tree on one
+    warm sandbox (`harbor-live`) with the `quick` profile, brings back a patch, and Harbor restarts
+    into it on this PC and on the PCs that turned live previews on (`src/preview.rs`). `--check`
+    is only `cargo check`, `--status` shows VM-hours, `--stop` stops it now. It's a preview, not a
+    check: tests and releases stay with `scripts/boat/check`.
   - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
     the outputs back and deletes the sandbox (also on failure or cancellation, via
@@ -37,7 +42,9 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
     doesn't fail it.
   - `.github/workflows/prune.yml`: by hand, drops other engines' caches from `harbor-browser`.
 - Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
-  `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends.
+  `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends. The one
+  exception is `harbor-live` (`scripts/boat/dev`): it stays, stopped, and boat's own timer stops it
+  10 minutes after the last build, so VM-hours only run while someone is building.
 - A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
   30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).

@@ -125,6 +125,11 @@ pub fn level_for(s: &crate::store::Store, peer: &str) -> Level {
     levels(s).get(peer).copied().unwrap_or(DEFAULT)
 }
 
+/// `peer` may run anything on this PC.
+pub fn full_access(peer: &str) -> bool {
+    SHARE.lock().unwrap().levels.get(peer).copied().unwrap_or(DEFAULT) == Level::Full
+}
+
 pub fn set_level(s: &crate::store::Store, peer: &str, l: Level) {
     let mut m: serde_json::Map<String, Value> = s.get(SHARE_KEY).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     m.insert(peer.to_string(), json!(l.slug()));

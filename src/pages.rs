@@ -486,6 +486,28 @@ impl App {
                     }
                 },
             );
+            if managed {
+                w::separator(ui);
+                let on = crate::preview::enabled();
+                let running = crate::preview::running();
+                let desc = match crate::preview::failed() {
+                    Some(m) => format!("Build {} failed to start ({}), so Harbor went back to the release.", m.id, m.why),
+                    None if running => "This PC runs a test build: unoptimised, unsigned, not tested. The next release replaces it.".to_string(),
+                    None => "Harbor restarts into a test build as soon as one arrives, from this PC (scripts/boat/dev) or another with full access to it (Settings › Devices). Unoptimised, unsigned, not tested. If one fails to start, the release comes back by itself.".to_string(),
+                };
+                w::setting_row(ui, "Live previews", &desc, |ui| {
+                    if let Some(i) = w::tabs(ui, &["Off", "On"], usize::from(on)) {
+                        if i == 1 {
+                            let _ = crate::preview::set_enabled(true);
+                        } else {
+                            self.preview_back(true);
+                        }
+                    }
+                    if running && w::btn("Back to the release").sm().outline().show(ui).clicked() {
+                        self.preview_back(false);
+                    }
+                });
+            }
             if managed && up::has_previous() {
                 w::separator(ui);
                 w::setting_row(ui, "Previous version", "The version before the last update is kept, in case the new one misbehaves.", |ui| {

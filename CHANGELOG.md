@@ -5,6 +5,15 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Live previews: a change reaches your PC within seconds, for the PCs that turn it on (Settings ›
+  Updates › Live previews, off by default). `scripts/boat/dev` builds the working tree on a warm
+  boat.dev sandbox and Harbor restarts into the result at once, keeping what's on screen and running
+  agents. Other PCs with it on get the same build over the mesh, from PCs that have full access to
+  them. It's an unoptimised, untested test build, and it shows in Settings › Updates and Devices;
+  "Back to the release" returns in one click, a build that fails to start falls back by itself, and
+  the next signed release replaces it. Nothing changes on a PC that leaves it off.
+
 ## [0.102.1] - 2026-10-30
 
 ### Changed

@@ -39,6 +39,10 @@ pub enum Incoming {
     Focus { raised: bool },
     /// From the workers that follow other PCs' Harbors (mesh.rs).
     Mesh(crate::mesh::Msg),
+    /// A preview is here (preview.rs): tell the PCs in `offer`, restart into it when `here`.
+    Preview { offer: Option<crate::preview::Offer>, here: bool },
+    /// `harbor preview back` or `off`.
+    PreviewBack { off: bool },
 }
 
 pub fn socket_path() -> PathBuf {
@@ -78,6 +82,28 @@ pub fn start_socket(tx: Sender<Incoming>, wake: impl Fn() + Send + Sync + Clone 
                     // Raised from here, not the UI thread: a window on a hidden workspace gets no frames.
                     let raised = crate::single::raise();
                     let _ = tx.send(Incoming::Focus { raised });
+                    wake();
+                    let mut w = &stream;
+                    let _ = writeln!(w, "{}", serde_json::json!({ "ok": true }));
+                    return;
+                }
+                // `harbor preview push`: answered here, before any restart.
+                if v.get("preview").is_some() {
+                    let answer = match crate::preview::received(&v["preview"]) {
+                        Ok((here, offer)) => {
+                            let _ = tx.send(Incoming::Preview { offer: Some(offer), here });
+                            wake();
+                            let text = if here { "" } else { "Previews are off on this PC (harbor preview on): only offered to the other PCs." };
+                            serde_json::json!({ "ok": true, "restarting": here, "text": text })
+                        }
+                        Err(e) => serde_json::json!({ "ok": false, "text": e }),
+                    };
+                    let mut w = &stream;
+                    let _ = writeln!(w, "{answer}");
+                    return;
+                }
+                if v.get("preview_back").is_some() {
+                    let _ = tx.send(Incoming::PreviewBack { off: v["off"].as_bool() == Some(true) });
                     wake();
                     let mut w = &stream;
                     let _ = writeln!(w, "{}", serde_json::json!({ "ok": true }));

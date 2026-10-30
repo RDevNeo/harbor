@@ -1609,6 +1609,14 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         }
         return serve_apk(r.get_mut(), false);
     }
+    // A live preview on offer, for a PC of the mesh that was told about it (preview.rs).
+    if segs == ["mesh", "v1", "preview", "file"] && req.method == "GET" {
+        if !crate::mesh::admitted(hub, &peer, &req) {
+            FAILS.hit(ip);
+            return send_json(r.get_mut(), 403, &json!({ "error": "only for paired PCs" }));
+        }
+        return serve_preview(r.get_mut(), req.query("kind").unwrap_or(""), req.query("id").unwrap_or(""));
+    }
     // An image of one of this PC's chats, for a phone that reads it through another PC of the
     // mesh (`/v1/image` there): only paired PCs, only image files.
     if segs == ["mesh", "v1", "image"] && req.method == "GET" {
@@ -1933,6 +1941,17 @@ fn serve_apk(w: &mut impl Write, head_only: bool) {
     let len = f.metadata().map(|m| m.len()).unwrap_or(0) as usize;
     let head = response(200, "application/vnd.android.package-archive", len, "Content-Disposition: attachment; filename=\"harbor.apk\"\r\n");
     if w.write_all(head.as_bytes()).is_ok() && !head_only {
+        let _ = std::io::copy(&mut f, w);
+    }
+}
+
+/// A file of the preview this PC offers.
+fn serve_preview(w: &mut impl Write, kind: &str, id: &str) {
+    let Some(mut f) = crate::preview::offered_file(kind, id).and_then(|p| std::fs::File::open(p).ok()) else {
+        return send_json(w, 404, &json!({ "error": "that preview isn't on offer here" }));
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0) as usize;
+    if w.write_all(response(200, "application/octet-stream", len, "").as_bytes()).is_ok() {
         let _ = std::io::copy(&mut f, w);
     }
 }
@@ -3617,7 +3636,7 @@ impl App {
         let s = &self.draft.sel;
         let updates = self.updates_json();
         json!({
-            "version": crate::update::VERSION,
+            "version": crate::update::current(),
             "hub_id": me.id,
             // This PC's key and where it answers: a phone keeps its pairing up to date with these.
             "hub_fp": crate::tls::my_fp(),
@@ -3656,12 +3675,12 @@ impl App {
         // to swap in: the phone's banner neither.
         let hub = self.harbor_offer().filter(|(_, installing)| !self.harbor_silent(*installing)).map(|(v, installing)| {
             // `ready` (0.47.1): already installed on disk, Update only restarts into it.
-            json!({ "version": v, "current": crate::update::VERSION, "installing": installing || self.reload_asked, "ready": self.harbor_ready().is_some(), "notes_url": crate::notices::notes_url(&v) })
+            json!({ "version": v, "current": crate::update::current(), "installing": installing || self.reload_asked, "ready": self.harbor_ready().is_some(), "notes_url": crate::notices::notes_url(&v) })
         });
         // An Update asked before any release was known (0.51): checking first, version "".
         let hub = hub.or_else(|| {
             (self.reload_asked && crate::update::state() == crate::update::State::Checking)
-                .then(|| json!({ "version": "", "current": crate::update::VERSION, "installing": true, "checking": true, "ready": false }))
+                .then(|| json!({ "version": "", "current": crate::update::current(), "installing": true, "checking": true, "ready": false }))
         });
         let st = crate::provupdate::status();
         let providers = (!st.items.is_empty() || st.updating || st.error.is_some()).then(|| {
