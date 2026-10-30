@@ -6,7 +6,7 @@ du -sh "$cache"; ls -la "$cache"
 rm -rf "$cache/target-browser-aarch64" "$cache/target-android" "$cache/ndk" "$cache"/android-ndk-*
 img=$(image harbor-browser-builder .github/boat/Dockerfile.browser)
 echo "$img" > "$cache/images"
-docker ps -a --format '{{.Names}}' | grep -vx keep-harbor-browser-builder | xargs -r docker rm -f
+docker ps -a --format '{{.Names}}' | { grep -vx keep-harbor-browser-builder || true; } | xargs -r docker rm -f
 docker image prune -af >/dev/null
 docker images
 du -sh "$cache"

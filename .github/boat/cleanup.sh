@@ -8,7 +8,7 @@ for try in 1 2 3 4 5 6; do
   list=$(boat list --all --json 2>/dev/null | jq -er '.sandboxes') && break
   list=""; sleep 10
 done
-[ -n "$list" ] || { echo "::warning::could not list the sandboxes: delete ${BOAT_SANDBOX:-this job's} by hand if it stays"; exit 0; }
+[ -n "$list" ] || { echo "::warning::could not list the sandboxes: delete ${BOAT_SANDBOX:-the sandbox} by hand if it stays"; exit 0; }
 jq -r '.[] | select(.name | startswith("ci-harbor-")) | "\(.id) \(.name)"' <<<"$list" |
 while read -r id name; do
   run=${name#ci-harbor-}; run=${run%%-*}
