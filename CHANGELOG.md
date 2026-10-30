@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- 0.95.0's and 0.96.0's releases didn't build (a broken build cache on the build servers) and
+  were never published; this release brings their features. Release builds now start over once
+  when the cache is broken.
+
 ## [0.96.0] - 2026-10-29
 
 ### Changed

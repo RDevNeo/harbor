@@ -15,26 +15,33 @@ toolchain "$core" --target aarch64-unknown-linux-gnu
 # command line.
 google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOGLE_WEB_CLIENT_ID -e HARBOR_GOOGLE_WEB_CLIENT_SECRET)
 
+# A saved snapshot can keep a build script's fingerprint without its binary ("failed to link or
+# copy …/build-script-build"): cargo then fails the same way every run. Each step starts that
+# profile over once before giving up. Exported into the containers' bash -c below.
+again='again() { local d=$1; shift; "$@" && return; echo "::warning::$*: starting $d over"; rm -rf "$CARGO_TARGET_DIR/$d" "$CARGO_TARGET_DIR"/*/"$d"; "$@"; }'
+
 # One target dir each: cargo locks a target dir for the whole build.
 x86_64() {
-  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target -e HARBOR_GIT_SHA -- bash -euo pipefail -c '
-    cargo test --locked -- update::
-    cargo build --release --locked
+  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target -e HARBOR_GIT_SHA -e AGAIN="$again" -- bash -euo pipefail -c '
+    eval "$AGAIN"
+    again debug cargo test --locked -- update::
+    again release cargo build --release --locked
     ldd /c/target/release/harbor
     /c/target/release/harbor --version
     mkdir -p /out/harbor-x86_64 && cp /c/target/release/harbor /out/harbor-x86_64/'
 }
 aarch64() {
   local t=aarch64-unknown-linux-gnu T=AARCH64_UNKNOWN_LINUX_GNU
-  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target-aarch64 -e HARBOR_GIT_SHA \
+  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target-aarch64 -e HARBOR_GIT_SHA -e AGAIN="$again" \
     -e CARGO_BUILD_TARGET=$t -e CARGO_TARGET_${T}_LINKER=aarch64-linux-gnu-gcc \
     -e QEMU_LD_PREFIX=/usr/aarch64-linux-gnu \
     -e CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc -e CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
     -e AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar -e PKG_CONFIG_ALLOW_CROSS=1 \
     -e PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
     -- bash -euo pipefail -c '
-    cargo test --locked -- update::
-    cargo build --release --locked
+    eval "$AGAIN"
+    again debug cargo test --locked -- update::
+    again release cargo build --release --locked
     b=/c/target-aarch64/aarch64-unknown-linux-gnu/release/harbor
     aarch64-linux-gnu-readelf -d "$b" | grep NEEDED
     "$b" --version
