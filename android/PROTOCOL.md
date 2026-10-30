@@ -515,11 +515,13 @@ beside the text (a bubble's edge, a tool row, a notice) opens the sheet as befor
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 
-The image viewer browses the whole chat (0.82), as the desktop's does (view.rs `gallery`): a
-tap on any image opens it on that image, and previous/next go through every image of the
-chat's cards in `seq` order, skipping `hidden` ones; within a card its `media` of kind `image`
-come first, then its other `images`; an image (same `url`) already listed earlier is left out.
-Nothing new on the wire: the list comes from the cards the app already has.
+The image viewer browses the tapped image's sender only (0.102), as the desktop's does (view.rs
+`turn`, `gallery`). A `user` card, a `message` card and a `notice` with `icon` `report` or `bot`
+are someone speaking: a tap on a `user` card's image browses that card alone. A tap on any other
+card's image browses that agent's turn: the cards in `seq` order after the last such card before
+it, up to the next one. Within those cards, `hidden` ones are skipped, a card's `media` of kind
+`image` come first, then its other `images`, and an image (same `url`) already listed earlier is
+left out. Nothing new on the wire: the list comes from the cards the app already has.
 
 #### Status
 

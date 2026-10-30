@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The image viewer browses only what belongs with the image you opened, on the desktop and the
+  phone. An image in an agent's reply goes through the images of that agent's turn; an image in
+  your message goes through that message's images. ← →, swipes and the "3 / 7" counter work as
+  before. Before, they went through every image the chat had ever named, even files of other
+  projects that a tool call only mentioned.
+
 ## [0.101.1] - 2026-10-30
 
 ### Changed

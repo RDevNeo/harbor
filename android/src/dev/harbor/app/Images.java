@@ -37,9 +37,9 @@ import java.util.List;
  *  composer is about to send (a local file); and the full-screen viewer a tap opens (pinch or
  *  double-tap to zoom, swipe or the side buttons to the previous or next one, Back to close). */
 final class Images {
-    /** A screen whose images the viewer browses as one gallery (a chat: all of its images, in
-     *  order), whichever of them it opened on. */
-    interface Gallery { List<Src> gallery(); }
+    /** A screen that picks what the viewer browses from card {@code seq} (a chat: the images of
+     *  that card's turn, in order), whichever of them it opened on. */
+    interface Gallery { List<Src> gallery(int seq); }
     private static final LruCache<String, Bitmap> cache = new LruCache<String, Bitmap>(24 << 20) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
     };
@@ -60,7 +60,7 @@ final class Images {
     static String sized(String url, int px) { return url.replaceAll("([?&])max=\\d+", "$1max=" + px); }
 
     /** A sideways strip of images [{name,url}], or null when there are none. */
-    static View strip(Activity a, Hub hub, JSONArray images, float size) {
+    static View strip(Activity a, Hub hub, JSONArray images, float size, int seq) {
         if (images == null || images.length() == 0) return null;
         List<Src> all = new ArrayList<>();
         for (int i = 0; i < images.length(); i++) {
@@ -95,7 +95,7 @@ final class Images {
                     miss.setVisibility(View.GONE);
                     iv.setContentDescription(s.name);
                     load(a, hub, s.url, iv, failed);
-                } else open(a, all, at);
+                } else open(a, seq, all, at);
             });
         }
         h.addView(row);
@@ -192,11 +192,11 @@ final class Images {
 
     // ---- the viewer ----
 
-    /** A tap on group[at] (a card's images): the viewer on all of the screen's images when it
-     *  has a gallery with this one in it, else on the group. */
-    static void open(Activity a, List<Src> group, int at) {
+    /** A tap on group[at] (images of card {@code seq}): the viewer on the screen's gallery of
+     *  that card when it has this one in it, else on the group. */
+    static void open(Activity a, int seq, List<Src> group, int at) {
         if (a instanceof Gallery) {
-            List<Src> all = ((Gallery) a).gallery();
+            List<Src> all = ((Gallery) a).gallery(seq);
             for (int i = 0; i < all.size(); i++) {
                 if (all.get(i).same(group.get(at))) { view(a, all, i); return; }
             }

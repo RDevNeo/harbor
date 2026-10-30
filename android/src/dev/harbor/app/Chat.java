@@ -1099,13 +1099,24 @@ public class Chat extends Base implements Images.Gallery {
         comp.mentions.setVisibility(chips == 0 ? View.GONE : View.VISIBLE);
     }
 
-    /** Every image of the chat in the order the cards show them (a card's large ones, then its
-     *  strip), each once, as the desktop's viewer browses them (view.rs `gallery`): a tap on
-     *  any of them opens the viewer here, and swipes go on to the others. */
-    @Override public List<Images.Src> gallery() {
+    /** The images of card {@code seq}'s turn (Turn.java) in the order the cards show them (a
+     *  card's large ones, then its strip), each once, as the desktop's viewer browses them
+     *  (view.rs `turn`, `gallery`): a tap on any of them opens the viewer here, and swipes go
+     *  on to the others. */
+    @Override public List<Images.Src> gallery(int seq) {
         List<Images.Src> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (JSONObject it : items.values()) {
+        List<JSONObject> cards = new ArrayList<>(items.values());
+        boolean[] speakers = new boolean[cards.size()];
+        int at = -1;
+        for (int i = 0; i < speakers.length; i++) {
+            JSONObject it = cards.get(i);
+            speakers[i] = Turn.speaker(it.optString("kind"), it.optString("icon"));
+            if (it.optInt("seq") == seq) at = i;
+        }
+        if (at < 0) return out;
+        int[] turn = Turn.range(speakers, at);
+        for (JSONObject it : cards.subList(turn[0], turn[1])) {
             if ("hidden".equals(it.optString("kind"))) continue;
             JSONArray media = it.optJSONArray("media"), rest = notShown(it);
             for (JSONArray list : new JSONArray[]{media, rest}) {
@@ -1182,7 +1193,7 @@ public class Chat extends Base implements Images.Gallery {
                         bubble.addView(n, Ui.margins(Ui.wrap(), 10, 0, 0, 8));
                     }
                 }
-                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96);
+                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96, seq);
                 if (imgs != null) bubble.addView(imgs, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
                 String text = it.optString("text");
                 CharSequence shown = parts != null ? userText(parts) : text;
@@ -1241,7 +1252,7 @@ public class Chat extends Base implements Images.Gallery {
                         .select(t -> selectMenu(it, md, t));
                 // Images on their own line sit next to their text; the rest go after it.
                 JSONArray media = it.optJSONArray("media");
-                View body = r.text(it, here -> Media.list(this, hub, here, media));
+                View body = r.text(it, here -> Media.list(this, hub, here, media, seq));
                 JSONArray rest = media;
                 if (body == null) body = r.text(it);
                 else {
@@ -1254,9 +1265,9 @@ public class Chat extends Base implements Images.Gallery {
                 body.setOnLongClickListener(lp);
                 wrap.setOnLongClickListener(lp);
                 wrap.addView(body, Ui.fill());
-                View shown = Media.list(this, hub, rest, media);
+                View shown = Media.list(this, hub, rest, media, seq);
                 if (shown != null) wrap.addView(shown, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-                View imgs = Images.strip(this, hub, notShown(it), 120);
+                View imgs = Images.strip(this, hub, notShown(it), 120, seq);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 0, 8, 0, 0));
                 break;
             }
@@ -1285,9 +1296,9 @@ public class Chat extends Base implements Images.Gallery {
                     }
                     return c;
                 });
-                View vids = Media.list(this, hub, it.optJSONArray("media"));
+                View vids = Media.list(this, hub, it.optJSONArray("media"), seq);
                 if (vids != null) wrap.addView(vids, Ui.margins(Ui.fill(), 30, 6, 0, 0));
-                View imgs = Images.strip(this, hub, notShown(it), 96);
+                View imgs = Images.strip(this, hub, notShown(it), 96, seq);
                 if (imgs != null) wrap.addView(imgs, Ui.margins(Ui.fill(), 30, 6, 0, 0));
                 break;
             }

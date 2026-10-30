@@ -32,12 +32,12 @@ final class Media {
     private static final long MAX_VIDEO = 200L << 20;
 
     /** The media of a card, one under the other, or null when there are none. */
-    static View list(Activity a, Hub hub, JSONArray media) {
-        return list(a, hub, media, media);
+    static View list(Activity a, Hub hub, JSONArray media, int seq) {
+        return list(a, hub, media, media, seq);
     }
 
-    /** Some of a card's media ({@code media}), browsing all its images ({@code all}) in the viewer. */
-    static View list(Activity a, Hub hub, JSONArray media, JSONArray all) {
+    /** Some of card {@code seq}'s media ({@code media}), browsing all its images ({@code all}) in the viewer. */
+    static View list(Activity a, Hub hub, JSONArray media, JSONArray all, int seq) {
         if (media == null || media.length() == 0) return null;
         LinearLayout col = Ui.col(a);
         List<Images.Src> gallery = new ArrayList<>();
@@ -48,7 +48,7 @@ final class Media {
         for (int i = 0; i < media.length(); i++) {
             JSONObject m = media.optJSONObject(i);
             if (m == null || m.optString("url").isEmpty()) continue;
-            View v = "video".equals(m.optString("kind")) ? video(a, hub, m) : image(a, hub, m, gallery);
+            View v = "video".equals(m.optString("kind")) ? video(a, hub, m) : image(a, hub, m, gallery, seq);
             col.addView(v, Ui.margins(Ui.fill(), 0, col.getChildCount() == 0 ? 0 : 10, 0, 0));
             String cap = m.optString("caption");
             if (!cap.isEmpty()) col.addView(Ui.text(a, cap, 13, Ui.G700), Ui.margins(Ui.fill(), 2, 4, 2, 0));
@@ -66,7 +66,7 @@ final class Media {
         return miss;
     }
 
-    private static View image(Activity a, Hub hub, JSONObject m, List<Images.Src> gallery) {
+    private static View image(Activity a, Hub hub, JSONObject m, List<Images.Src> gallery, int seq) {
         String url = Images.sized(m.optString("url"), 1024);
         FrameLayout f = new FrameLayout(a);
         ImageView iv = new ImageView(a);
@@ -89,7 +89,7 @@ final class Media {
             if (miss.getVisibility() == View.VISIBLE) {
                 miss.setVisibility(View.GONE);
                 Images.load(a, hub, url, iv, failed);
-            } else if (!gallery.isEmpty()) Images.open(a, gallery, idx);
+            } else if (!gallery.isEmpty()) Images.open(a, seq, gallery, idx);
         });
         return f;
     }

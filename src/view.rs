@@ -318,9 +318,28 @@ pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media
     }
 }
 
-/// Every image of a chat's cards in the order they show (a card's large ones, then its strip),
-/// each once: what the image viewer browses with ← → or a swipe, whichever image it opened on.
-/// The phone builds the same list from the cards' `media` and `images` (PROTOCOL.md).
+/// Whether a card is someone else speaking: a person's message, another agent's message or
+/// report. An agent's images never browse together across one.
+fn speaker(card: &Card) -> bool {
+    matches!(card, Card::User { .. } | Card::Message { .. } | Card::Notice { icon: "report" | "bot", .. })
+}
+
+/// The cards whose images browse together with card `seq`: a speaker's card alone (a message's
+/// own images), any other card with the rest of its agent's turn, up to the speakers around it.
+/// The phone cuts its cards the same way (Turn.java, PROTOCOL.md).
+pub fn turn<'c, 'a>(cards: &'c [Shown<'a>], seq: usize) -> &'c [Shown<'a>] {
+    let Some(at) = cards.iter().position(|s| s.seq == seq) else { return &[] };
+    if speaker(&cards[at].card) {
+        return &cards[at..=at];
+    }
+    let start = cards[..at].iter().rposition(|s| speaker(&s.card)).map_or(0, |i| i + 1);
+    let end = cards[at..].iter().position(|s| speaker(&s.card)).map_or(cards.len(), |i| at + i);
+    &cards[start..end]
+}
+
+/// The images of `cards` ([`turn`]) in the order they show (a card's large ones, then its
+/// strip), each once: what the image viewer browses with ← → or a swipe, whichever image it
+/// opened on. The phone builds the same list from the cards' `media` and `images`.
 pub fn gallery(cards: &[Shown], find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = vec![];
@@ -415,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gallery_is_every_image_of_the_chat_in_order() {
+    fn the_gallery_lists_each_image_once_in_the_order_it_shows() {
         let m = |path: &str, shown: bool, video: bool| Media { path: path.into(), caption: String::new(), video, shown, url: None };
         let items = vec![
             Item::User { text: "look".into(), files: vec!["/p/a.png".into(), "/p/notes.txt".into(), "/p/b.png".into()], at: 0, mentions: vec![], sender: String::new(), intent: String::new() },
@@ -432,6 +451,73 @@ mod tests {
         };
         assert_eq!(gallery(&cards, &mut find), ["/p/a.png", "/p/b.png", "/p/c.png", "/p/d.png", "/p/named.png", "/p/e.png"]);
         assert!(gallery(&cards[3..], &mut find).is_empty());
+    }
+
+    /// `items` with each text and tool naming the one image that's its own text, the gallery
+    /// a click on card `seq` browses, by file name.
+    fn turn_of(items: &[Item], lead: bool, seq: usize) -> Vec<String> {
+        let cards = project(items, lead, &[]);
+        let mut find = |t: &str| vec![Media { path: t.into(), caption: String::new(), video: false, shown: true, url: None }];
+        gallery(turn(&cards, seq), &mut find)
+    }
+
+    fn user(files: &[&str]) -> Item {
+        Item::User { text: String::new(), files: files.iter().map(|f| f.to_string()).collect(), at: 0, mentions: vec![], sender: String::new(), intent: String::new() }
+    }
+
+    fn says(image: &str) -> Item {
+        Item::Text { text: image.into(), at: 0 }
+    }
+
+    fn tool(image: &str) -> Item {
+        Item::Tool { id: image.into(), name: "Read".into(), summary: String::new(), input: image.into(), result: None, is_error: false }
+    }
+
+    #[test]
+    fn an_agents_gallery_is_its_turn_across_every_card() {
+        let items = vec![user(&["/you.png"]), says("/a.png"), tool("/b.png"), Item::Thinking { text: "hm".into() }, says("/c.png"), says("/a.png")];
+        for seq in [1, 2, 4, 5] {
+            assert_eq!(turn_of(&items, false, seq), ["/a.png", "/b.png", "/c.png"], "from card {seq}");
+        }
+    }
+
+    #[test]
+    fn a_user_message_ends_the_turn_on_both_sides() {
+        let items = vec![says("/a.png"), user(&[]), says("/b.png"), user(&["/you.png"]), says("/c.png")];
+        assert_eq!(turn_of(&items, false, 0), ["/a.png"]);
+        assert_eq!(turn_of(&items, false, 2), ["/b.png"]);
+        assert_eq!(turn_of(&items, false, 4), ["/c.png"]);
+    }
+
+    #[test]
+    fn a_user_message_browses_only_its_own_images() {
+        let items = vec![user(&["/1.png", "/2.png", "/notes.txt"]), says("/a.png"), user(&["/3.png"])];
+        assert_eq!(turn_of(&items, false, 0), ["/1.png", "/2.png"]);
+        assert_eq!(turn_of(&items, false, 2), ["/3.png"]);
+    }
+
+    #[test]
+    fn another_agents_card_is_another_sender() {
+        let message = |from: &str| Item::Message { from: from.into(), to: "lead".into(), text: "done".into() };
+        let report = Item::Notice { icon: "report".into(), text: "api finished".into(), detail: "/r.png".into() };
+        // A sub-agent's task opens its chat with a message, and a teammate's opens its next turn.
+        let items = vec![message("lead"), says("/a.png"), message("api"), says("/b.png")];
+        assert_eq!(turn_of(&items, false, 1), ["/a.png"]);
+        assert_eq!(turn_of(&items, false, 3), ["/b.png"]);
+        // The lead before and after an agent's report: two senders' worth of images never mix.
+        let items = vec![user(&[]), says("/a.png"), report, says("/b.png")];
+        assert_eq!(turn_of(&items, true, 1), ["/a.png"]);
+        assert_eq!(turn_of(&items, true, 3), ["/b.png"]);
+        // A notice of the agent's own doesn't cut its turn.
+        let items = vec![says("/a.png"), Item::Notice { icon: "process".into(), text: "dev".into(), detail: String::new() }, says("/b.png")];
+        assert_eq!(turn_of(&items, false, 2), ["/a.png", "/b.png"]);
+    }
+
+    #[test]
+    fn a_turn_skips_what_a_lead_hides_and_a_seq_that_isnt_there() {
+        let items = vec![user(&[]), says("/a.png"), Item::Tool { id: "x".into(), name: MESSAGE_AGENT.into(), summary: String::new(), input: "/hidden.png".into(), result: None, is_error: false }, says("/b.png")];
+        assert_eq!(turn_of(&items, true, 1), ["/a.png", "/b.png"]);
+        assert!(turn_of(&items, true, 9).is_empty());
     }
 
     #[test]

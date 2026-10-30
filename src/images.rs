@@ -12,8 +12,8 @@
 //!   `lightbox(ctx)` (once per frame, after the rest), `is_open(ctx)`.
 //! - `take_keys(ctx)` (early in the frame): the lightbox's ← → Esc, before a focused
 //!   composer sees them.
-//! - `take_opened(ctx)` / `widen(ctx, keys)`: a chat turns the gallery of the message clicked
-//!   into all of its images.
+//! - `in_card(ctx, seq)` / `take_opened(ctx)` / `widen(ctx, keys)`: a chat notes which card each
+//!   image belongs to, then turns the clicked card's gallery into its whole turn's images.
 
 use crate::widgets::Tip as _;
 use crate::icons as ic;
@@ -74,8 +74,10 @@ struct Cache {
     open: Option<String>,
     /// What ← → browse in the lightbox (just `open` for a single image).
     gallery: Vec<String>,
-    /// The image a click on a thumbnail or inline image just opened (see [`take_opened`]).
-    opened: Option<String>,
+    /// The transcript card being drawn (see [`in_card`]).
+    card: usize,
+    /// The card of the image a click just opened (see [`take_opened`]).
+    opened: Option<usize>,
     /// ← → Esc taken early in the frame (see [`take_keys`]): previous, next, close.
     keys: [bool; 3],
     bytes: HashMap<String, Arc<[u8]>>,
@@ -375,7 +377,9 @@ fn open_clicked(ctx: &egui::Context, key: &str, group: &[String]) {
         Some(i) => open_gallery(ctx, group.to_vec(), i),
         None => open(ctx, key),
     }
-    lock(&shared(ctx)).opened = Some(key.to_string());
+    let s = shared(ctx);
+    let mut c = lock(&s);
+    c.opened = Some(c.card);
 }
 
 /// An attachment: a thumbnail with a remove button in its corner. Returns true when removed.
@@ -458,13 +462,18 @@ pub fn take_keys(ctx: &egui::Context) {
     }
 }
 
-/// The image a click on a thumbnail or an inline image opened since the last call.
-pub fn take_opened(ctx: &egui::Context) -> Option<String> {
+/// Images drawn until the next call belong to transcript card `seq`.
+pub fn in_card(ctx: &egui::Context, seq: usize) {
+    lock(&shared(ctx)).card = seq;
+}
+
+/// The card ([`in_card`]) of the thumbnail or inline image a click opened since the last call.
+pub fn take_opened(ctx: &egui::Context) -> Option<usize> {
     lock(&shared(ctx)).opened.take()
 }
 
-/// Browses `keys` (all the images of a chat, in order) from the open image, when it's one of
-/// them. Call while that chat's [`set_source`] holds: images not drawn yet come from there too.
+/// Browses `keys` (the images of the clicked card's turn, in order) from the open image, when
+/// it's one of them. Call while that chat's [`set_source`] holds: images not drawn yet come from there too.
 pub fn widen(ctx: &egui::Context, keys: Vec<String>) {
     let s = shared(ctx);
     let mut c = lock(&s);
@@ -791,13 +800,15 @@ mod tests {
     }
 
     #[test]
-    fn the_viewer_stops_at_either_end_and_widens_to_the_chat() {
+    fn the_viewer_stops_at_either_end_and_widens_to_the_turn() {
         assert_eq!((step(0, 3, -1), step(0, 3, 1), step(2, 3, 1), step(2, 3, -1)), (None, Some(1), None, Some(1)));
         assert_eq!(step(0, 1, 1), None);
         let ctx = egui::Context::default();
         let keys = |v: &[&str]| v.iter().map(|s| format!("/x/{s}.png")).collect::<Vec<_>>();
-        // A message's own two images, then the chat's five: the viewer stays on the one opened.
-        open_gallery(&ctx, keys(&["c", "d"]), 1);
+        // A card's own two images, then its turn's five: the viewer stays on the one opened.
+        in_card(&ctx, 7);
+        open_clicked(&ctx, "/x/d.png", &keys(&["c", "d"]));
+        assert_eq!((take_opened(&ctx), take_opened(&ctx)), (Some(7), None));
         widen(&ctx, keys(&["a", "b", "c", "d", "e"]));
         let s = shared(&ctx);
         let c = lock(&s);
