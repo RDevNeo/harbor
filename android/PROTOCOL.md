@@ -913,9 +913,11 @@ restart of the PC.
 "path", "folder_waits": "<why>; it becomes <name> then" | null, "said"}`: renames the worktree's
 folder on its own, in the same place (just a name: no `/`, no spaces, not starting with `.` or
 `-`, not taken; `409` says which), at once when nothing works in it, else once nothing does. From
-then on `folder_named` is true. The desktop has it in the workspace menu ("Rename worktree…";
-since 0.97 the branch is renamed only from the branch menu); the phone in the workspace sheet,
-the same place (its branch, from the branch sheet).
+then on `folder_named` is true. Since 0.98 the workspace chip goes straight to this rename and
+the branch chip to the branch's, on the desktop and the phone, when `can_rename_folder` (0.98,
+optional: `can_rename` also holds on a branch; a detached worktree's folder can still be renamed)
+and `can_rename`; "Switch branch…" there opens the branch picker. Otherwise the chips open their
+menus as before: a new chat, the checkout, a worktree that's gone.
 
 ### `POST /v1/chats/{id}/fork`
 

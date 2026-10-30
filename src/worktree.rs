@@ -9,19 +9,20 @@
 //! checks it out, else (no Claude login, offline, slow) a few of the message's own words
 //! (`slug`), renamed when Haiku answers late (`ws_name_later`). It's
 //! `<data dir>/worktrees/<project>-<name>` on branch `harbor/<name>` ("-2"… when taken; 6 hex
-//! when the message gives no words). The
-//! branch menu renames the branch at any time (`ws_rename`; a pushed one on its remote too, or
-//! it stops tracking it); the folder follows once nothing works in it (`ws_moves`: no turn, no
-//! process, no terminal there; kept in kv `worktree_move:<lead>` across restarts), and the agents
-//! are told on their next turn. The workspace menu renames the folder on its own; once the
-//! user named it (kv `worktree_named:<lead>`), branch renames leave it be. Its path is kept in kv
+//! when the message gives no words). In a chat's own worktree the two chips go straight to the
+//! rename form (`rename_menu`): the branch chip renames the branch at any time (`ws_rename`; a
+//! pushed one on its remote too, or it stops tracking it); the folder follows once nothing works
+//! in it (`ws_moves`: no turn, no process, no terminal there; kept in kv `worktree_move:<lead>`
+//! across restarts), and the agents are told on their next turn. The workspace chip renames the
+//! folder on its own; once the user named it (kv `worktree_named:<lead>`), branch renames leave
+//! it be. Where nothing can be renamed they open their menus instead. Its path is kept in kv
 //! `worktree:<chat id>`; sub-agents run in their lead's. An existing chat in the checkout can
 //! move to a new worktree when it could move projects (movechat.rs: not running, on this PC,
 //! its Claude sessions copied over); one in a worktree stays there. Deleting the chat removes
 //! its worktree, and the branch if it has nothing unmerged (`git branch -d`), unless the
 //! worktree has uncommitted changes: then it's kept and the user is told where.
 //!
-//! The branch picker switches the branch of where the chat runs (`git switch`, which refuses
+//! The branch picker (from the chip, or "Switch branch…" in the rename form) switches the branch of where the chat runs (`git switch`, which refuses
 //! to overwrite uncommitted changes; the menu warns about them first) or creates one. For a
 //! new chat headed for a new worktree it picks the worktree's base instead.
 
@@ -614,7 +615,7 @@ pub struct State {
     pub error: Option<String>,
     /// The workspace menu was opened from the header's chip (it opens under it), not the bar.
     pub from_header: bool,
-    /// The branch menu's "Rename branch" form, while open.
+    /// The rename form the chips open, while open.
     pub rename: Option<RenameForm>,
     /// Leads whose worktree folder is still to be renamed (→ its new name, next to it): moved
     /// once nothing runs there (`ws_moves`). Also in kv `worktree_move:<lead>`, so a restart
@@ -1418,8 +1419,8 @@ impl App {
                         (format!("from {base}"), "The new worktree's branch starts from this one".to_string())
                     }
                     // As the phone's bar: "main  ·  3 changed".
-                    Some(h) if h.dirty > 0 => (format!("{}  ·  {} changed", h.label(), h.dirty), format!("{} uncommitted change{}. Switch or create a branch", h.dirty, if h.dirty == 1 { "" } else { "s" })),
-                    Some(h) => (h.label(), "Switch or create a branch".to_string()),
+                    Some(h) if h.dirty > 0 => (format!("{}  ·  {} changed", h.label(), h.dirty), format!("{} uncommitted change{}. {}", h.dirty, if h.dirty == 1 { "" } else { "s" }, branch_tip(&info, h))),
+                    Some(h) => (h.label(), branch_tip(&info, h).to_string()),
                     None => ("…".to_string(), "Reading the branch…".to_string()),
                 };
                 let r = w_small(ui, crate::icons::BRANCH, &label, self.popup == Some(Popup::Branch), &t).tip(tip);
@@ -1435,6 +1436,16 @@ impl App {
         });
         if let Some((p, rect)) = open {
             self.ws_open(p, rect, false, info.dir.clone(), &ctx);
+            // A chat's own worktree: straight to renaming it. Elsewhere, and on a detached
+            // worktree's branch, there's nothing to rename: the menu.
+            let on_branch = h.as_ref().is_some_and(|h| !h.branch.is_empty());
+            if self.popup == Some(p) && info.rename.is_ok() {
+                match p {
+                    Popup::Workspace => self.ws_start_rename(RenameKind::Folder, &info, &ctx),
+                    Popup::Branch if on_branch => self.ws_start_rename(RenameKind::Branch, &info, &ctx),
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -1467,15 +1478,11 @@ impl App {
             return self.rename_menu(ctx, id, &info, "workspace", !self.ws.from_header);
         }
         let error = self.ws.error.clone();
-        // A chat's own worktree: its folder can be renamed from here (its branch, from the branch menu).
         let lead = match target {
             Target::Chat(id) => self.chat(id).map(|c| if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id }),
             Target::Draft(_) => None,
         };
-        let renames = info.rename.is_ok() && info.worktree.is_some();
         let folder_to = lead.and_then(|l| self.ws_folder_to(l).cloned());
-        let busy = self.ws.busy.is_some();
-        let mut start: Option<RenameKind> = None;
         // Over the bar, or under the header's chip.
         let (pick, close) = crate::widgets::popover(ctx, "workspace", self.popup_anchor, 320.0, !self.ws.from_header, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -1497,12 +1504,6 @@ impl App {
                     if let Some(to) = &folder_to {
                         note(ui, &format!("Becomes {to} once nothing works in it."), t.subtle());
                     }
-                    if renames {
-                        crate::widgets::menu_separator(ui);
-                        if ui.add_enabled_ui(!busy, |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename worktree…", Some("Its folder, in the same place"), false)).inner.clicked() {
-                            start = Some(RenameKind::Folder);
-                        }
-                    }
                 }
                 (Target::Chat(_), None) => {
                     crate::widgets::menu_item(ui, crate::icons::FOLDER, "Current checkout", Some(&crate::app::tilde(&info.repo)), true);
@@ -1522,10 +1523,6 @@ impl App {
             }
             pick
         });
-        if let Some(kind) = start {
-            self.ws_start_rename(kind, &info, ctx);
-            return false;
-        }
         match (pick, target) {
             (Some(on), Target::Draft(_)) => {
                 self.ws.draft.worktree = on;
@@ -1570,14 +1567,6 @@ impl App {
         let mut query = std::mem::take(&mut self.ws.query);
         let error = self.ws.error.clone();
         let current = if info.new_worktree { if info.base.is_empty() { h.as_ref().map(|h| h.branch.clone()).unwrap_or_default() } else { info.base.clone() } } else { h.as_ref().map(|h| h.branch.clone()).unwrap_or_default() };
-        // A thread's own worktree on a branch: it can be renamed (also while its agent works).
-        let can_rename = info.rename.is_ok() && h.as_ref().is_some_and(|h| !h.branch.is_empty());
-        let named = match target {
-            Target::Chat(id) => self.chat(id).is_some_and(|c| self.ws_folder_named(if c.role == Role::Sub { c.parent.unwrap_or(c.id) } else { c.id })),
-            Target::Draft(_) => false,
-        };
-        let branch_desc = if named { "The folder keeps the name you gave it" } else { "Its worktree folder follows" };
-        let mut rename = false;
         let (pick, close) = crate::widgets::popover(ctx, "branch", self.popup_anchor, 340.0, true, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut pick: Option<Result<Row, String>> = None;
@@ -1640,23 +1629,12 @@ impl App {
                     }
                 }
             }
-            if can_rename {
-                crate::widgets::menu_separator(ui);
-                let r = ui.add_enabled_ui(busy.is_none(), |ui| crate::widgets::menu_item(ui, crate::icons::PEN_LINE, "Rename branch…", Some(branch_desc), false)).inner;
-                if r.clicked() {
-                    rename = true;
-                }
-            }
             if let Some(e) = &error {
                 note(ui, e, t.red(900));
             }
             pick
         });
         self.ws.query = query;
-        if rename {
-            self.ws_start_rename(RenameKind::Branch, &info, ctx);
-            return false;
-        }
         let (row, name) = match pick {
             Some(Ok(row)) => (Some(row), None),
             Some(Err(name)) => (None, Some(name)),
@@ -1679,7 +1657,7 @@ impl App {
         false
     }
 
-    /// Opens the rename form (in whichever menu is open): the branch's (its remote is read on a
+    /// Opens the rename form (the chips do, in the popover they open): the branch's (its remote is read on a
     /// thread) or the worktree folder's.
     fn ws_start_rename(&mut self, kind: RenameKind, info: &Info, ctx: &egui::Context) {
         self.ws.error = None;
@@ -1699,9 +1677,10 @@ impl App {
         }
     }
 
-    /// The rename form, in the branch menu or the workspace menu (`id`, `above` as that
+    /// The rename form, in the branch popover or the workspace popover (`id`, `above` as that
     /// popover): the branch's new name, whether its remote branch is renamed too and where the
-    /// folder goes; or the worktree folder's new name. True: close the menu.
+    /// folder goes, with the way to the branch picker; or the worktree folder's new name. True:
+    /// close it.
     fn rename_menu(&mut self, ctx: &egui::Context, chat: i64, info: &Info, id: &str, above: bool) -> bool {
         let t = self.theme.t;
         let Some(mut form) = self.ws.rename.take() else { return true };
@@ -1714,6 +1693,7 @@ impl App {
             RenameKind::Folder => folder_now.clone(),
         };
         let named = self.ws_folder_named(lead);
+        let folder_to = self.ws_folder_to(lead).cloned();
         let name = form.name.trim().to_string();
         // Where the folder goes: for a branch, the name it gives (unless the user named the
         // folder); for a folder, what's typed.
@@ -1730,7 +1710,7 @@ impl App {
             RenameKind::Branch => ("Rename branch", "New branch name"),
             RenameKind::Folder => ("Rename worktree", "New folder name"),
         };
-        let ((submit, cancel), close) = crate::widgets::popover(ctx, id, self.popup_anchor, 340.0, above, &t, |ui| {
+        let ((submit, cancel, switch), close) = crate::widgets::popover(ctx, id, self.popup_anchor, 340.0, above, &t, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             crate::widgets::menu_label(ui, title);
             let r = ui.add(egui::TextEdit::singleline(&mut form.name).hint_text(hint).desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
@@ -1758,6 +1738,9 @@ impl App {
                 }
                 Some(None) => {}
             }
+            if let (RenameKind::Folder, Some(to)) = (form.kind, &folder_to) {
+                note(ui, &format!("Becomes {to} once nothing works in it."), t.subtle());
+            }
             match (form.kind, &folder, &waits) {
                 (RenameKind::Branch, None, _) if named => note(ui, &format!("The folder keeps its name, {folder_now}: you named it."), t.subtle()),
                 (RenameKind::Branch, Some(f), None) => note(ui, &format!("The folder becomes {f}."), t.subtle()),
@@ -1774,20 +1757,33 @@ impl App {
                 note(ui, e, t.red(900));
             }
             ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    let submit = crate::widgets::btn("Rename").primary().sm().enabled(ready).show(ui).clicked() || (enter && ready);
-                    let cancel = crate::widgets::btn("Cancel").outline().sm().show(ui).clicked();
-                    (submit, cancel)
+            let (submit, cancel) = ui
+                .horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add_space(4.0);
+                        let submit = crate::widgets::btn("Rename").primary().sm().enabled(ready).show(ui).clicked() || (enter && ready);
+                        let cancel = crate::widgets::btn("Cancel").outline().sm().enabled(busy.is_none()).show(ui).clicked();
+                        (submit, cancel)
+                    })
+                    .inner
                 })
-                .inner
-            })
-            .inner
+                .inner;
+            // Everything else the branch chip does: switching and creating branches.
+            let mut switch = false;
+            if form.kind == RenameKind::Branch {
+                ui.add_space(4.0);
+                crate::widgets::menu_separator(ui);
+                switch = ui.add_enabled_ui(busy.is_none(), |ui| crate::widgets::menu_item(ui, crate::icons::BRANCH, "Switch branch…", Some("Or create one, from where it is now"), false)).inner.clicked();
+            }
+            (submit, cancel, switch)
         });
         if cancel {
             self.ws.error = None;
-            // Back to the menu it was opened from.
+            return true;
+        }
+        // The form stays closed: branch_menu shows the picker from now on.
+        if switch {
+            self.ws.error = None;
             return false;
         }
         let on_remote = form.on_remote && matches!(form.pushed, Some(Some(_)));
@@ -1869,6 +1865,8 @@ impl App {
                 let tx = reply(call);
                 std::thread::spawn(move || {
                     let h = head(&info.dir);
+                    // The folder has no use for a branch: a detached worktree's can be renamed.
+                    let folder_rename = info.rename.is_ok();
                     let rename = info.rename.clone().and_then(|_| if h.as_ref().is_some_and(|h| h.branch.is_empty()) { Err("it's detached: switch to a branch first".to_string()) } else { Ok(()) });
                     let pushed = rename.is_ok().then(|| pushed_as(&info.dir)).flatten();
                     let name = info.worktree.as_ref().and_then(|w| w.file_name()).map(|n| n.to_string_lossy().into_owned());
@@ -1885,6 +1883,7 @@ impl App {
                         "branch_lock": if new_worktree { None } else { info.branch_lock },
                         "pending": pending,
                         "can_rename": rename.is_ok(),
+                        "can_rename_folder": folder_rename,
                         "rename_why": rename.err(),
                         "pushed": pushed,
                         "folder_waits": folder_waits,
@@ -2045,6 +2044,12 @@ pub fn rename_said(d: &RenameDone) -> String {
         s.push_str(&format!(". {r}"));
     }
     s
+}
+
+/// What the branch chip does, for its tip: renames the branch of a chat's own worktree (with
+/// the picker a row away), else opens the picker.
+fn branch_tip(info: &Info, h: &Head) -> &'static str {
+    if info.rename.is_ok() && !h.branch.is_empty() { "Rename this branch, or switch to another" } else { "Switch or create a branch" }
 }
 
 /// "Switching to main…" with a spinner.

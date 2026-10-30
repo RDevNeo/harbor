@@ -49,8 +49,8 @@ final class WorkBar {
         ws = chip(Ui.I_FOLDER);
         br = chip(Ui.I_BRANCH);
         prc = chip(Ui.I_PR_OPEN);
-        ws.setOnClickListener(v -> pickWorkspace());
-        br.setOnClickListener(v -> pickBranch());
+        ws.setOnClickListener(v -> tapWorkspace());
+        br.setOnClickListener(v -> tapBranch());
         prc.setOnClickListener(v -> openPr());
         prc.setOnLongClickListener(v -> { if (pr != null) Ui.toast(a, pr.optString("label") + "\n" + pr.optString("title")); return true; });
         prc.setVisibility(View.GONE);
@@ -120,7 +120,7 @@ final class WorkBar {
         ws.setVisibility(View.VISIBLE);
         br.setVisibility(View.VISIBLE);
         showPr();
-        ws.setOnClickListener(v -> pickWorkspace());
+        ws.setOnClickListener(v -> tapWorkspace());
         tint(ws, Ui.G700);
         // As the desktop: "gone" only where the workspace is this PC's (a device's chat has its
         // worktree elsewhere, so it isn't here, yet not gone).
@@ -229,6 +229,14 @@ final class WorkBar {
 
     // ---- where it works ----
 
+    /** The chip, as the desktop's: a chat's own worktree goes straight to renaming it; where
+     *  nothing can be renamed (a new chat, the checkout, a worktree that's gone), the sheet. */
+    private void tapWorkspace() {
+        // Hubs before 0.98 only say can_rename.
+        if (info != null && info.optBoolean("can_rename_folder", info.optBoolean("can_rename"))) renameFolder(info.optString("name"));
+        else pickWorkspace();
+    }
+
     private void pickWorkspace() {
         if (info == null) return;
         boolean wt = "worktree".equals(info.optString("mode"));
@@ -244,15 +252,10 @@ final class WorkBar {
             return;
         }
         if (wt) {
-            // As the desktop's workspace menu: the folder, and renaming it (its branch: the branch sheet).
+            // As the desktop's workspace menu, where it can't be renamed: the folder.
             String to = info.isNull("folder_to") ? "" : info.optString("folder_to");
             opts.add(new Sheet.Option("wt", info.optString("name"), info.optString("path") + (to.isEmpty() ? "" : "\nBecomes " + to + " once nothing works in it."), true));
-            if (info.optBoolean("can_rename")) {
-                opts.add(new Sheet.Option("folder", "Rename worktree…", "Its folder, in the same place", true));
-            }
-            Sheet.pick(a, "Workspace", "This thread works in its own worktree. It's removed with the thread, unless it has uncommitted changes.", opts, "wt", id -> {
-                if ("folder".equals(id)) renameFolder(info.optString("name"));
-            });
+            Sheet.pick(a, "Workspace", "This thread works in its own worktree. It's removed with the thread, unless it has uncommitted changes.", opts, "wt", id -> { });
             return;
         }
         boolean can = info.optBoolean("can_move");
@@ -270,6 +273,14 @@ final class WorkBar {
     }
 
     // ---- its branch ----
+
+    /** The chip, as the desktop's: the branch of a chat's own worktree goes straight to renaming
+     *  it ("Switch branch…" there leads to the picker); elsewhere, and detached, the picker. */
+    private void tapBranch() {
+        String b = info == null ? "" : info.optString("branch");
+        if (info != null && info.optBoolean("can_rename") && !b.isEmpty()) rename(b);
+        else pickBranch();
+    }
 
     private void pickBranch() {
         if (info == null) return;
@@ -326,14 +337,6 @@ final class WorkBar {
                                 v -> { s.dismiss(); create(name); }), Ui.fill());
                         list.addView(cc, Ui.fill());
                     }
-                    // The chat's own worktree: its branch can be renamed (also while its agent works).
-                    if (!forBase && info.optBoolean("can_rename")) {
-                        String cur = fr.optString("current");
-                        LinearLayout rc = Ui.card(a);
-                        rc.addView(Ui.cardRow(a, Ui.I_PEN, "Rename branch…", info.optBoolean("folder_named") ? "The folder keeps the name you gave it" : "Its worktree folder follows", Ui.FG,
-                                v -> { s.dismiss(); rename(cur); }), Ui.fill());
-                        list.addView(rc, Ui.margins(Ui.fill(), 0, 12, 0, 0));
-                    }
                 });
             });
         };
@@ -357,7 +360,8 @@ final class WorkBar {
 
     /** "Rename branch", as the desktop's form (worktree.rs rename_menu): the new name, and for a
      *  pushed branch whether it's renamed on its remote too. The PC renames the branch at once
-     *  and moves the worktree's folder once nothing works in it. */
+     *  and moves the worktree's folder once nothing works in it. Switching and creating branches
+     *  are a row away. */
     private void rename(String current) {
         Sheet s = new Sheet(a, "Rename branch");
         LinearLayout c = s.card();
@@ -394,6 +398,8 @@ final class WorkBar {
         };
         e.setOnEditorActionListener((v, act, ev) -> { go.run(); return true; });
         c.addView(Ui.button(a, "Rename", true, v -> go.run()), Ui.margins(Ui.wrap(), 0, 4, 0, 0));
+        s.card().addView(Ui.cardRow(a, Ui.I_BRANCH, "Switch branch…", "Or create one, from where it is now", Ui.FG,
+                v -> { s.dismiss(); pickBranch(); }), Ui.fill());
         s.show();
         e.requestFocus();
     }
@@ -413,7 +419,9 @@ final class WorkBar {
         String path = info == null ? "" : info.optString("path");
         int cut = path.lastIndexOf('/');
         String where = cut > 0 ? path.substring(0, cut) : "the same folder";
-        TextView n = Ui.text(a, "Stays in " + where + "; renaming the branch leaves it be from now on. It's renamed once nothing works in it.", 13, Ui.G700);
+        String to = info == null || info.isNull("folder_to") ? "" : info.optString("folder_to");
+        TextView n = Ui.text(a, (to.isEmpty() ? "" : "Becomes " + to + " once nothing works in it.\n")
+                + "Stays in " + where + "; renaming the branch leaves it be from now on. It's renamed once nothing works in it, and removed with the thread unless it has uncommitted changes.", 13, Ui.G700);
         n.setPadding(Ui.dp(4), Ui.dp(8), Ui.dp(4), Ui.dp(8));
         c.addView(n, Ui.fill());
         Runnable go = () -> {

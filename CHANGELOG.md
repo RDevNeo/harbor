@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- In a chat's own worktree, the Worktree and branch labels under the composer go straight to
+  renaming it, without a menu first, on the desktop and the phone. Switching or creating a branch
+  is the "Switch branch…" row in the rename form. A new chat, the project's checkout and a
+  worktree that's gone still open their menus: there's nothing to rename there.
+
 ## [0.97.2] - 2026-10-30
 
 ### Fixed
