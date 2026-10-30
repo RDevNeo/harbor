@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build Harbor for Android -> android/build/harbor-android.apk. No Gradle: aapt2 + javac + d8 +
-# zipalign + apksigner straight from an Android SDK. The only third-party code is sherpa-onnx's
-# Java bindings, vendored as source in third_party/sherpa-onnx.
+# zipalign + apksigner straight from an Android SDK. Third-party code: sherpa-onnx's Java bindings,
+# vendored as source in third_party/sherpa-onnx, and the few Google Play services client libraries
+# Gmail's native sign-in needs (below, third_party/play-services/NOTICE).
 #
 # Version: versionName is Cargo.toml's version; versionCode is major*1000000 + minor*1000 + patch
 # (0.7.0 -> 7000), so the app the desktop serves and the one on the phone compare as numbers.
@@ -81,6 +82,27 @@ for abi in ${ANDROID_ABIS:-arm64-v8a armeabi-v7a}; do
   tar xjf "$DEPS/sherpa-onnx-$SHERPA-android.tar.bz2" -C "$W/lib/$abi" --strip-components=3 "./jniLibs/$abi/libsherpa-onnx-jni.so"
 done
 
+# Gmail's native consent (Gmail.java): Google's AuthorizationClient only ships in Play services'
+# client libraries, and it needs only these (Kotlin, AndroidX fragments and the rest of
+# play-services-auth's dependency list aren't reached by it). Pinned by SHA-256, cached between
+# builds, their classes dexed as they are.
+GMS=https://dl.google.com/android/maven2/com/google/android/gms
+LIBS=()
+aar() { # name version sha256
+  fetch "$GMS/$1/$2/$1-$2.aar" "$3" "$DEPS/$1-$2.aar"
+  mkdir -p "$W/libs/$1"
+  unzip -qo "$DEPS/$1-$2.aar" classes.jar -d "$W/libs/$1"
+  LIBS+=("$W/libs/$1/classes.jar")
+}
+aar play-services-auth 22.0.0 0897c1ad398cae3f7a743a24d66373cc7440e63d11e7429ed9a17a77a61c96dc
+aar play-services-basement 18.9.0 c6ed7236b1b3ce0296b508a5c0a09108fd52d83559d35cad2639505cd04ab255
+aar play-services-base 18.5.0 59a5c0c2da12311d75d965ce1f419498536b1a167fb28ff7dfc2dfd9cefa4157
+aar play-services-tasks 18.2.0 7f2aaa8f502068eaf54356ca92aec04271d6e7c416c52c45c0d23440fcbd1654
+fetch https://dl.google.com/android/maven2/androidx/collection/collection/1.1.0/collection-1.1.0.jar \
+  632a0e5407461de774409352940e292a291037724207a787820c77daf7d33b72 "$DEPS/collection-1.1.0.jar"
+LIBS+=("$DEPS/collection-1.1.0.jar")
+LIBCP=$(IFS=:; echo "${LIBS[*]}")
+
 # The built-in browser's engine (android/servo: Servo as libharborservo.so), built separately with
 # the NDK (android/servo/build.sh, or CI's cached build): $SERVO_LIBS/<abi>/libharborservo.so
 # with its libc++_shared.so,
@@ -135,7 +157,7 @@ esac
 "$BT/aapt2" link -I "$JAR" --manifest "$HERE/AndroidManifest.xml" -o "$W/base.apk" "$W/res.zip" \
   -A "$W/assets" --java "$W/gen" --min-sdk-version 26 --target-sdk-version 34 \
   --version-code "$CODE" --version-name "$VER"
-javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR" -d "$W/classes" \
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$JAR:$LIBCP" -d "$W/classes" \
   $(find "$HERE/src" "$HERE/third_party/sherpa-onnx/src" "$W/gen" -name '*.java')
 # Net's connection rules are plain Java: check them on this JVM before packaging.
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/AddrTest.java"
@@ -152,8 +174,8 @@ java -cp "$W/classes:$W/test" dev.harbor.app.UpdateTest
 # And dictation's dictionary and commands, against the hub's cases (src/dictwords.rs).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/WordsTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.WordsTest "$HERE/test/dictation-cases.txt"
-"$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class')
-(cd "$W" && zip -qj base.apk classes.dex)
+"$BT/d8" --release --lib "$JAR" --min-api 26 --output "$W" $(find "$W/classes" -name '*.class') "${LIBS[@]}"
+(cd "$W" && zip -qj base.apk classes*.dex)
 (cd "$W" && zip -qr base.apk lib)
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
 if [ -n "${UNSIGNED:-}" ]; then

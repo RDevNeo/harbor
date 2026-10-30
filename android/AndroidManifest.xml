@@ -87,5 +87,8 @@
              and older it also shares what the PCs send (Inbox) -->
         <provider android:name=".CamProvider" android:authorities="dev.harbor.app.cam"
             android:exported="false" android:grantUriPermissions="true" />
+        <!-- What Play services' client libraries read (play-services-basement 18.9.0's
+             google_play_services_version; android/build.sh pins that library). -->
+        <meta-data android:name="com.google.android.gms.version" android:value="12451000" />
     </application>
 </manifest>

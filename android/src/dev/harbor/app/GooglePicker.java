@@ -13,7 +13,7 @@ import android.os.OutcomeReceiver;
 
 /** Android's own "choose an account" sheet (Credential Manager, Android 14+), asking Google
  *  Play services for a Google ID token for Harbor's Web client: no website, no redirect.
- *  Built on the framework API by hand (the app has no AndroidX/Play libraries): the option
+ *  Built on the framework API by hand (no AndroidX or googleid library in the app): the option
  *  carries the same type and Bundle keys Google's GetGoogleIdOption (googleid 1.1.0) does.
  *  Only loaded on Android 14+ (Account checks first). */
 final class GooglePicker {

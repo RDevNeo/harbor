@@ -1,0 +1,12 @@
+Google Play services client libraries, fetched at build time by android/build.sh and included in
+the app for Gmail's native sign-in (AuthorizationClient):
+
+  com.google.android.gms:play-services-auth 22.0.0
+  com.google.android.gms:play-services-basement 18.9.0
+  com.google.android.gms:play-services-base 18.5.0
+  com.google.android.gms:play-services-tasks 18.2.0
+  androidx.collection:collection 1.1.0
+
+The Play services libraries are under the Android Software Development Kit License
+(https://developer.android.com/studio/terms); androidx.collection is under the Apache License 2.0.
+They aren't part of this repository.

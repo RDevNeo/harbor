@@ -1548,18 +1548,22 @@ aside) is this object, plus `email` after a sign-in:
 - `browser`: this PC can run a browser sign-in for the phone (Harbor's built-in Google client,
   or the user's own). False with a null `web_client_id`: connect Gmail on the PC.
 
-Adding an account, with Android's own account sheet: `AccountManager.newChooseAccountIntent`
-(Google accounts), then `getAuthToken(account, "oauth2:server:client_id:<web_client_id>:api_scope:<scopes>")`
-with the activity (Google's consent screen shows when needed). The token is a one-time server code. Invalidate it at once, then
-`POST /v1/apps/gmail/code` `{"code": "…"}`. The PC exchanges it with the Web client's secret
-(`redirect_uri` empty) and keeps the refresh token; nothing stays on the phone. Scopes:
+Adding an account natively: pick it with the sheet the app's own sign-in uses (Credential Manager,
+Android 14+) or `AccountManager.newChooseAccountIntent` (older, or when the sheet can't run). Then
+Google's `AuthorizationClient.authorize` with those scopes, `setAccount`, and
+`requestOfflineAccess(web_client_id, true)`; launch its PendingIntent when it asks (Google's native
+consent) and read `serverAuthCode`. If that fails, `AccountManager.getAuthToken(account,
+"oauth2:server:client_id:<web_client_id>:api_scope:<scopes>")` gives the same kind of code
+(invalidate it at once). Either way, `POST /v1/apps/gmail/code` `{"code": "…"}`. The PC exchanges it
+with the Web client's secret (`redirect_uri` empty) and keeps the refresh token; nothing stays on
+the phone. Scopes:
 `https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic`.
 
-The browser instead (no `web_client_id`, no Google account on the phone, or Google refused):
+The browser is the last resort (no `web_client_id`, or both native requests failed; the phone shows why in its Gmail sheet):
 the phone listens on `127.0.0.1:<port>` and sends `POST /v1/apps/gmail/start`
 `{"redirect_uri": "http://127.0.0.1:<port>/"}` (nothing else is accepted). The answer is
 `{"url": "https://accounts.google.com/…", "state": "…"}`: Google's page, with its account chooser,
-for the PC's Desktop client. Open it in a Custom Tab (`&login_hint=` may name the account). The
+for the PC's Desktop client. Open it in a Custom Tab. To preselect an account add `&login_hint=` and drop `select_account` from `prompt`. The
 browser comes back to the phone's port with `code` and `state`; check `state`, then
 `POST /v1/apps/gmail/finish` `{"state": "…", "code": "…"}` within 15 minutes.
 The PC exchanges it with the PKCE verifier it kept.

@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- Phone: adding a Gmail account no longer opens the browser after you pick the account. The
+  account comes from the same sheet as Harbor's sign-in, then Google's own consent screen shows
+  in the app. The browser is only the last resort now, and the Gmail sheet says why it was used.
+
 ## [0.97.1] - 2026-10-29
 
 ### Changed

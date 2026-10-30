@@ -10,6 +10,10 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.LinearLayout;
 
+import com.google.android.gms.auth.api.identity.AuthorizationRequest;
+import com.google.android.gms.auth.api.identity.Identity;
+import com.google.android.gms.common.api.Scope;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -24,16 +28,16 @@ import java.nio.charset.StandardCharsets;
 
 /** Gmail for the agents on a PC, from the phone (Settings › Apps; hub `/v1/apps/gmail`,
  *  android/PROTOCOL.md): the PC's connected Google accounts, the default one, sign-out, and
- *  adding one. Adding starts with the sheet Harbor's own sign-in uses (Credential Manager,
- *  GooglePicker, Android 14+): the account picked there gets a one-time server code for the
- *  PC's Web client (`oauth2:server:client_id:…`) when Android lets Harbor see that account,
- *  which the PC exchanges for a refresh token of its own: agents run there, so the tokens live
- *  there. Otherwise, and wherever the sheet or the code can't work, Google's page opens in a
- *  Custom Tab with that account preselected and comes back to a loopback port on this phone,
- *  whose code the PC exchanges. Before Android 14: AccountManager's own chooser, then the code.
- *  Framework APIs only (the app has no Play libraries). */
+ *  adding one. Adding: the sheet Harbor's own sign-in uses (Credential Manager, GooglePicker,
+ *  Android 14+; before that, or when it can't run, AccountManager's chooser) picks the account;
+ *  Google's AuthorizationClient then shows Google's native consent and gives a one-time server
+ *  code for the PC's Web client, which the PC exchanges for a refresh token of its own: agents
+ *  run there, so the tokens live there. If that fails, AccountManager asks for the same code
+ *  (`oauth2:server:client_id:…`). Only when both fail, or the PC has no Web client, Google's
+ *  page opens in a Custom Tab and comes back to a loopback port on this phone, whose code the
+ *  PC exchanges; why it did shows in the sheet (`note`). */
 final class Gmail {
-    static final int PICK = 0x6a1;
+    static final int PICK = 0x6a1, CONSENT = 0x6a2;
     static final String SCOPES = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic";
     private static Sheet sheet;
     /** Runs when the sheet closes (Settings updates its row). */
@@ -41,6 +45,12 @@ final class Gmail {
     /** How a browser sign-in ended while the app wasn't in front (Android drops toasts then):
      *  said once any screen is back (Base.onResume). */
     private static volatile String outcome;
+
+    /** Why the last Add account didn't go the native way: logged, and shown in the sheet. */
+    private static void note(Activity a, String why) {
+        android.util.Log.w("HarborGmail", why);
+        Ui.prefs(a).edit().putString("gmail_why", why).apply();
+    }
 
     private static void say(Activity a, String msg) {
         if (Base.resumed > 0) Ui.toast(a.getApplicationContext(), msg);
@@ -56,6 +66,7 @@ final class Gmail {
     /** The PC an account is being picked for (the chooser's result comes back to Settings). */
     private static Hub picking;
     private static String pickingClient;
+    private static Account pickingAccount;
 
     /** The row's subtitle: "Not connected", the address, or "3 accounts". */
     static String summary(JSONObject r) {
@@ -105,6 +116,8 @@ final class Gmail {
         } else {
             add.addView(Ui.cardRow(a, Ui.I_ALERT, "Connect from the PC", "This PC's Harbor has no Google client to sign in with: connect Gmail in Settings › Integrations there.", Ui.FG, null), Ui.fill());
         }
+        String why = Ui.prefs(a).getString("gmail_why", "");
+        if (!why.isEmpty()) s.body.addView(Ui.text(a, "Last try: " + why, 12, Ui.G700), Ui.margins(Ui.fill(), 6, 0, 6, 8));
         s.dialog.setOnDismissListener(d -> { if (changed != null) changed.run(); });
         s.show();
     }
@@ -122,26 +135,19 @@ final class Gmail {
 
     private static void add(Activity a, Hub hub, JSONObject r) {
         String web = r.isNull("web_client_id") ? "" : r.optString("web_client_id");
+        Ui.prefs(a).edit().remove("gmail_why").apply();
         if (web.isEmpty()) {
+            note(a, "this PC's Harbor has no Web client, so the browser");
             browser(a, hub, null);
-            return;
-        }
-        if (android.os.Build.VERSION.SDK_INT >= 34) {
+        } else if (android.os.Build.VERSION.SDK_INT >= 34) {
             sheet(a, hub, web);
-            return;
-        }
-        picking = hub;
-        pickingClient = web;
-        Intent i = AccountManager.newChooseAccountIntent(null, null, new String[] {"com.google"}, null, null, null, null);
-        try {
-            a.startActivityForResult(i, PICK);
-        } catch (Exception e) {
-            browser(a, hub, null);
+        } else {
+            chooser(a, hub, web);
         }
     }
 
-    /** Harbor's sign-in sheet (every Google account on the phone), then the code for the one
-     *  picked, or Google's page with it preselected. */
+    /** Harbor's sign-in sheet: every Google account on the phone. Where it can't run, Android's
+     *  own chooser: still native. */
     private static void sheet(Activity a, Hub hub, String web) {
         byte[] n = new byte[16];
         new java.security.SecureRandom().nextBytes(n);
@@ -149,13 +155,84 @@ final class Gmail {
         GooglePicker.pick(a, web, nonce, new GooglePicker.Result() {
             @Override public void token(String idToken) {
                 String email = emailOf(idToken);
-                Account seen = email.isEmpty() ? null : visible(a, email);
-                if (seen != null) code(a, hub, web, seen);
-                else Gmail.browser(a, hub, email.isEmpty() ? null : email);
+                if (!email.isEmpty()) { authorize(a, hub, web, email); return; }
+                note(a, "the sheet gave no address");
+                chooser(a, hub, web);
             }
-            // No Google account on the phone, or no provider: Google's page, with its own chooser.
-            @Override public void browser(String why) { Gmail.browser(a, hub, null); }
+            @Override public void browser(String why) {
+                note(a, "the account sheet failed: " + why);
+                chooser(a, hub, web);
+            }
             @Override public void canceled() { }
+        });
+    }
+
+    private static void chooser(Activity a, Hub hub, String web) {
+        picking = hub;
+        pickingClient = web;
+        Intent i = AccountManager.newChooseAccountIntent(null, null, new String[] {"com.google"}, null, null, null, null);
+        try {
+            a.startActivityForResult(i, PICK);
+        } catch (Exception e) {
+            note(a, "Android's chooser failed: " + e);
+            browser(a, hub, null);
+        }
+    }
+
+    /** Google's native authorization for the picked account: its consent screen when needed
+     *  (forceCodeForRefreshToken: the PC always gets a refresh token), then the server code. */
+    private static void authorize(Activity a, Hub hub, String web, String email) {
+        Account acct = new Account(email, "com.google");
+        try {
+            AuthorizationRequest req = AuthorizationRequest.builder()
+                    .setRequestedScopes(java.util.Arrays.asList(new Scope(SCOPES.split(" ")[0]), new Scope(SCOPES.split(" ")[1])))
+                    .requestOfflineAccess(web, true)
+                    .setAccount(acct)
+                    .build();
+            Identity.getAuthorizationClient(a.getApplicationContext()).authorize(req)
+                    // Not the Activity overloads: they need AndroidX fragments, which the app doesn't carry.
+                    .addOnSuccessListener(r -> {
+                        if (a.isFinishing() || a.isDestroyed()) return;
+                        if (r.hasResolution() && r.getPendingIntent() != null) {
+                            picking = hub;
+                            pickingClient = web;
+                            pickingAccount = acct;
+                            try {
+                                a.startIntentSenderForResult(r.getPendingIntent().getIntentSender(), CONSENT, null, 0, 0, 0);
+                            } catch (Exception e) {
+                                note(a, "Google's consent didn't open: " + e);
+                                code(a, hub, web, acct);
+                            }
+                        } else {
+                            authorized(a, hub, web, acct, r.getServerAuthCode());
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        if (a.isFinishing() || a.isDestroyed()) return;
+                        note(a, "Google's authorization failed: " + e);
+                        code(a, hub, web, acct);
+                    });
+        } catch (Exception | LinkageError e) {
+            note(a, "Google's authorization isn't available: " + e);
+            code(a, hub, web, acct);
+        }
+    }
+
+    private static void authorized(Activity a, Hub hub, String web, Account acct, String code) {
+        if (code == null || code.isEmpty()) {
+            note(a, "Google's authorization gave no code");
+            code(a, hub, web, acct);
+        } else {
+            send(a, hub, acct.name, code);
+        }
+    }
+
+    /** The PC exchanges the one-time code for its own tokens. */
+    private static void send(Activity a, Hub hub, String name, String code) {
+        Ui.toast(a, "Connecting " + name + "…");
+        Ui.bg(a, () -> hub.call("POST", "/v1/apps/gmail/code", new JSONObject().put("code", code), 60_000), r -> {
+            Ui.toast(a, "Gmail connected: " + r.optString("email", name));
+            render(a, hub, r);
         });
     }
 
@@ -170,31 +247,32 @@ final class Gmail {
         }
     }
 
-    /** The phone's Google account with that address, when Android lets Harbor see it (Android 8+
-     *  shows an app only accounts picked for it in Android's own chooser): a code needs that. */
-    private static Account visible(Activity a, String email) {
-        try {
-            for (Account x : AccountManager.get(a).getAccountsByType("com.google")) {
-                if (x.name.equalsIgnoreCase(email)) return x;
-            }
-        } catch (Exception ignored) { }
-        return null;
-    }
-
-    /** From the activity's onActivityResult: true when it was the account chooser's. */
+    /** From the activity's onActivityResult: true when it was the chooser's or Google's consent. */
     static boolean result(Activity a, int req, int res, Intent data) {
-        if (req != PICK) return false;
+        if (req != PICK && req != CONSENT) return false;
         Hub hub = picking;
         String web = pickingClient;
+        Account acct = pickingAccount;
         picking = null;
-        String name = data == null ? null : data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
-        if (res != Activity.RESULT_OK || hub == null || name == null) return true;
-        code(a, hub, web, new Account(name, "com.google"));
+        pickingAccount = null;
+        if (hub == null || res != Activity.RESULT_OK) return true;
+        if (req == PICK) {
+            String name = data == null ? null : data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
+            if (name != null) authorize(a, hub, web, name);
+            return true;
+        }
+        try {
+            authorized(a, hub, web, acct, Identity.getAuthorizationClient(a.getApplicationContext()).getAuthorizationResultFromIntent(data).getServerAuthCode());
+        } catch (Exception e) {
+            note(a, "Google's consent failed: " + e);
+            code(a, hub, web, acct);
+        }
         return true;
     }
 
-    /** A one-time code for the PC's Web client for `acct`; with the activity, Android shows
-     *  Google's own consent screen first when needed. Any failure: Google's page instead. */
+    /** The same one-time code through AccountManager (Android itself doesn't ask that the account
+     *  was shown to Harbor; its Google authenticator decides); with the activity, Google's consent
+     *  shows first when needed. Any failure: Google's page, the last resort. */
     private static void code(Activity a, Hub hub, String web, Account acct) {
         AccountManager am = AccountManager.get(a);
         String name = acct.name;
@@ -208,20 +286,21 @@ final class Gmail {
                 } catch (OperationCanceledException e) {
                     return;
                 } catch (Exception e) {
+                    note(a, "Android's token request failed too: " + e);
                     browser(a, hub, name);
                     return;
                 }
-                if (code == null || code.isEmpty()) { browser(a, hub, name); return; }
+                if (code == null || code.isEmpty()) {
+                    note(a, "Android's token request gave no code");
+                    browser(a, hub, name);
+                    return;
+                }
                 // A code works once: never let Android hand out this one again.
                 am.invalidateAuthToken("com.google", code);
-                Ui.toast(a, "Connecting " + name + "…");
-                String once = code;
-                Ui.bg(a, () -> hub.call("POST", "/v1/apps/gmail/code", new JSONObject().put("code", once), 60_000), r -> {
-                    Ui.toast(a, "Gmail connected: " + r.optString("email", name));
-                    render(a, hub, r);
-                });
+                send(a, hub, name, code);
             }, null);
         } catch (Exception e) {
+            note(a, "Android's token request failed too: " + e);
             browser(a, hub, name);
         }
     }
@@ -236,7 +315,8 @@ final class Gmail {
                 String redirect = "http://127.0.0.1:" + ss.getLocalPort() + "/";
                 JSONObject st = hub.call("POST", "/v1/apps/gmail/start", new JSONObject().put("redirect_uri", redirect));
                 String url = st.getString("url");
-                if (hint != null) url += "&login_hint=" + Uri.encode(hint);
+                // Without select_account, or Google shows its chooser whatever the hint says.
+                if (hint != null) url = url.replace("select_account%20consent", "consent") + "&login_hint=" + Uri.encode(hint);
                 String go = url;
                 Ui.main.post(() -> open(a, go));
                 String[] got = waitCode(ss);
