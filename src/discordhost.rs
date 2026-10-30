@@ -804,7 +804,7 @@ impl Host {
             me.set(|st| match r {
                 Ok(()) => {
                     st.phase = Phase::Signin;
-                    st.signin.note = "Loading Discord's sign-in…".into();
+                    st.signin.note = "Loading sign-in…".into();
                     st.signin_at = store::now();
                     st.display = display.clone();
                 }
@@ -1067,8 +1067,13 @@ pub fn status_offline() -> Value {
 pub fn run() -> i32 {
     let root = setup::root();
     let Ok(lock) = std::fs::File::create(root.join("h.lock")) else { return 1 };
-    if lock.try_lock().is_err() {
-        return 0;
+    // Taken: another host, or one on its way out as this one started; that one's gone in a moment.
+    let until = Instant::now() + Duration::from_secs(2);
+    while lock.try_lock().is_err() {
+        if Instant::now() > until {
+            return 0;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
     let sock = setup::socket();
     let _ = std::fs::remove_file(&sock);
