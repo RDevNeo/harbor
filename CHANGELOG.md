@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.101.0] - 2026-10-30
+
 ### Changed
 - A new release reaches your PCs within about 5 minutes instead of up to 4 hours. Each PC looks
   every 5 minutes with one small request, and when one of them finds a release the others of the
@@ -2084,7 +2086,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.100.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.101.0...HEAD
+[0.101.0]: https://github.com/RDevNeo/harbor/compare/v0.100.0...v0.101.0
 [0.100.0]: https://github.com/RDevNeo/harbor/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/RDevNeo/harbor/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/RDevNeo/harbor/compare/v0.97.2...v0.98.0
