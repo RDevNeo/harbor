@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.99.0] - 2026-10-30
+
 ### Added
 - A workspace filter in the sidebar, next to Order and view, on the desktop and in the phone's
   list: All, or one of your account's workspaces, to see only the chats of that workspace's PCs
@@ -2067,7 +2069,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.98.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.99.0...HEAD
+[0.99.0]: https://github.com/RDevNeo/harbor/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/RDevNeo/harbor/compare/v0.97.2...v0.98.0
 [0.97.2]: https://github.com/RDevNeo/harbor/compare/v0.97.1...v0.97.2
 [0.97.1]: https://github.com/RDevNeo/harbor/compare/v0.97.0...v0.97.1
