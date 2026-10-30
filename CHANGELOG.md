@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-10-29
+
 ### Changed
 - What you pick from the composer's menus goes in one erase: a chat from `$`, an issue or pull
   request from `#`, a file from `@`, a command or skill from `/`. Backspace at its end (or just
@@ -2016,7 +2018,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.95.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.96.0...HEAD
+[0.96.0]: https://github.com/RDevNeo/harbor/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/RDevNeo/harbor/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/RDevNeo/harbor/compare/v0.93.0...v0.94.0
 [0.93.0]: https://github.com/RDevNeo/harbor/compare/v0.92.0...v0.93.0
