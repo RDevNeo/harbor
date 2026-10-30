@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.97.2] - 2026-10-30
+
 ### Fixed
 - Phone: adding a Gmail account no longer opens the browser after you pick the account. The
   account comes from the same sheet as Harbor's sign-in, then Google's own consent screen shows
@@ -2050,7 +2052,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.97.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.97.2...HEAD
+[0.97.2]: https://github.com/RDevNeo/harbor/compare/v0.97.1...v0.97.2
 [0.97.1]: https://github.com/RDevNeo/harbor/compare/v0.97.0...v0.97.1
 [0.97.0]: https://github.com/RDevNeo/harbor/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/RDevNeo/harbor/compare/v0.96.0...v0.96.1
