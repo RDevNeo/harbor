@@ -955,6 +955,8 @@ impl App {
         let builtin = google && mcp::google_builtin() && mcp::google_client(a.id).0.is_empty();
         // A Google app can have several accounts, each listed under the card's head.
         let accounts = if google { mcp::google_accounts(a.id) } else { vec![] };
+        let discord = matches!(a.auth, mcp::Auth::Discord);
+        let trouble = discord.then(|| crate::discord::trouble(ctx)).flatten();
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if pending.is_some() {
@@ -989,7 +991,8 @@ impl App {
                     }
                 } else if w::btn("Sign in").sm().primary().show(ui).clicked() {
                     match a.auth {
-                        mcp::Auth::Key { .. } => key = Some(String::new()),
+                        // Discord's warning comes before anything starts.
+                        mcp::Auth::Key { .. } | mcp::Auth::Discord => key = Some(String::new()),
                         mcp::Auth::Google { .. } => {
                             let (c, s) = mcp::google_client(a.id);
                             (key, secret) = (Some(c), s);
@@ -1003,11 +1006,14 @@ impl App {
                     ui.add_space(4.0);
                     let wdt = ui.available_width().max(20.0);
                     let (sub, color) = match &pending {
+                        Some(mcp::Pending { note: Some(n), .. }) => (n.clone(), t.blue(900)),
                         Some(p) if p.code.is_some() => ("Enter the code below in your browser".to_string(), t.blue(900)),
                         Some(_) => ("Finish in your browser…".to_string(), t.blue(900)),
+                        None if key.is_some() && discord => ("Read this first".to_string(), t.subtle()),
                         None if key.is_some() && matches!(a.auth, mcp::Auth::Google { .. }) => ("Add your Google OAuth client below".to_string(), t.subtle()),
                         None if key.is_some() => ("Paste an API key below".to_string(), t.subtle()),
                         None if accounts.len() > 1 => (format!("{} accounts", accounts.len()), t.subtle()),
+                        None if trouble.is_some() => (trouble.clone().unwrap_or_default(), t.amber(900)),
                         None if signed => (mcp::account(a.id).map(|u| format!("Signed in as {u}")).unwrap_or_else(|| a.about.into()), t.subtle()),
                         None => (a.about.to_string(), t.subtle()),
                     };
@@ -1019,7 +1025,29 @@ impl App {
                 });
             });
         });
-        if let Some(p) = &pending {
+        if let Some(p) = pending.as_ref().filter(|_| discord) {
+            if let Some(url) = &p.qr {
+                ui.add_space(8.0);
+                let id = Id::NULL.with("discord-qr");
+                let held: Option<(String, egui::TextureHandle)> = ui.data(|d| d.get_temp(id)).filter(|(u, _): &(String, egui::TextureHandle)| u == url);
+                let tex = held.map(|h| h.1).unwrap_or_else(|| {
+                    let tex = ctx.load_texture("discord-qr", crate::devices::qr_image(url), egui::TextureOptions::NEAREST);
+                    ui.data_mut(|d| d.insert_temp(id, (url.clone(), tex.clone())));
+                    tex
+                });
+                crate::phonesui::qr(ui, &tex, 180.0);
+                ui.add_space(6.0);
+                w::subtle(ui, "In the Discord app on your phone: Settings › Scan QR Code.", "label-12");
+            }
+            if !p.window {
+                ui.add_space(8.0);
+                if w::btn("Use email and password").sm().ghost().show(ui).tip("Sign in on Discord's own page, in a window: for a password, 2FA or a captcha").clicked() {
+                    std::thread::spawn(|| {
+                        let _ = crate::discord::window();
+                    });
+                }
+            }
+        } else if let Some(p) = &pending {
             if p.code.is_some() || p.url.is_some() {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -1047,6 +1075,14 @@ impl App {
             if builtin {
                 ui.add_space(6.0);
                 w::subtle(ui, "If Google says it hasn't verified this app, click Advanced, then Go to Harbor.", "label-12");
+            }
+        } else if key.is_some() && discord {
+            ui.add_space(8.0);
+            w::subtle(ui, "Discord's rules forbid automating personal accounts, and this account can be banned for it. Harbor signs in with a real Discord page and paces joins, new DMs and uploads, but that doesn't make it allowed. Use an account you can afford to lose.", "label-12");
+            ui.add_space(6.0);
+            if w::btn("I understand, sign in").sm().primary().show(ui).clicked() {
+                mcp::sign_in(a.id, ctx.clone());
+                key = None;
             }
         } else if let (Some(k), mcp::Auth::Google { help, .. }) = (&mut key, &a.auth) {
             ui.add_space(8.0);

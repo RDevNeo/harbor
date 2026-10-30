@@ -1,0 +1,8 @@
+{
+  "name": "harbor-discord",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Harbor's Discord shell: a hidden Discord page that Harbor's agents use as tools",
+  "license": "GPL-3.0-or-later",
+  "main": "main.js"
+}

@@ -1,0 +1,918 @@
+[
+ {
+  "name": "discord_status",
+  "description": "Is Discord running and signed in here, and which tools work right now. Call this first when other tools fail.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "discord_view",
+  "description": "Read the channel open in Harbor's Discord: the selected channel and the messages rendered in the viewport. Works with scroll: Discord virtualizes off-screen messages out of the DOM, so if the user scrolls up to look at history, *that* slice is what comes back. Each message includes author info (id, username, display name, bot flag), content, timestamp, attachments, reply ref, and mentions. Each message's top-level `id` is the value to pass as `replyToMessageId` to `discord_send` when replying to that specific message. `scroll.atBottom` tells you if the user is following live or browsing history. Use this as the default \"what's happening here?\" lookup.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200,
+     "description": "Cap on messages returned (default 100; capped at what's actually rendered)."
+    },
+    "includeEmbeds": {
+     "type": "boolean",
+     "description": "Include embed details (title/desc/url). Default false — only an `embedCount`."
+    },
+    "includeReactions": {
+     "type": "boolean",
+     "description": "Include reaction details (emoji/count/me). Default false — only a `reactionCount`."
+    },
+    "resolveReplies": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 20,
+     "description": "For each message with `replyTo`, walk up to N parents and embed them inline as `replyChain` (oldest→newest). REST-fetches parents that aren't in the local store, so this also resolves the `{unloaded: true}` case. Default 0 (no expansion). 2–3 is plenty for normal threads."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_screenshot",
+  "description": "Screenshot the Discord page as an image — to SEE the UI. Pass `selector` to capture one element (cheaper — fewer tokens — and scrolled into view first); omit for the whole viewport. Only the visible viewport is captured; scroll or navigate first if needed. Pass `savePath` to write the bytes to disk instead of inlining the image — the returned path feeds straight into `discord_send({files: [path]})`.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "selector": {
+     "type": "string",
+     "description": "CSS selector of one element to capture; omit for the full window."
+    },
+    "format": {
+     "type": "string",
+     "enum": [
+      "png",
+      "jpeg"
+     ],
+     "description": "Image format (default jpeg — smaller; png is lossless)."
+    },
+    "maxWidth": {
+     "type": "integer",
+     "minimum": 64,
+     "maximum": 4096,
+     "description": "Scale down so width ≤ this many px (default 1280)."
+    },
+    "quality": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 100,
+     "description": "JPEG quality 1–100 (default 70; ignored for png)."
+    },
+    "savePath": {
+     "type": "string",
+     "description": "Absolute path to write the image bytes to. When set, the image is NOT inlined in the reply — only the path + dimensions text comes back."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_notes",
+  "description": "Persistent local notebook for personal context about the user and their Discord world — writing style, recurring contacts, group conventions, aliases, preferences. Stored locally as a flat key→entry map; nothing leaves the machine.\n\nMANDATORY USAGE: call `recall` (no filter) at the start of any task that involves sending, replying, opening, or otherwise targeting a Discord channel / user / group. The notebook is the user's source of truth for what \"my group\", \"the main chat\", a nickname, or a voice-mode mistranscription actually maps to. Once a phrase is resolved to a channelId or userId, immediately `recall` again with that id as a filter to load every related note (style rules, in-jokes, topics in flight) before composing. Do this BEFORE `discord_dms` / `discord_guilds` / `discord_open` / `discord_send` — those are the fallback when no alias exists, not the first step.\n\nEach entry can be tagged with a `userId` and/or `channelId`. Many notes can share the same id — that is the point: tag every alias / style / friend / group note with the relevant ID so the filtered recall returns a tight slice instead of dumping the whole notebook.\n\nActions:\n  `recall` (no filter) — every saved note grouped by topic. Cheap; do this first.\n  `recall` (with `key`) — one entry.\n  `recall` (with `userId` / `channelId` / `topic`) — entries matching ALL given filters. Use once the target id is known.\n  `save` — write/overwrite an entry. Use snake_case keys, optionally prefixed by type and sub-aspect (`friend:ana`, `group:main`, `group:main:style`, `alias:my_group`, `pref:tone`). Multiple notes per channel/user is the normal case — keep each one short and durable, and reuse the same `channelId`/`userId` across them. Save a new alias note any time the user refers to something by a phrase you had to resolve manually — so next session is one recall away.\n  `forget` — delete one entry.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "enum": [
+      "save",
+      "recall",
+      "forget"
+     ],
+     "description": "`save` writes/overwrites, `recall` reads, `forget` deletes."
+    },
+    "key": {
+     "type": "string",
+     "description": "Entry key. Required for `save` / `forget`. On `recall`, fetches that single entry."
+    },
+    "value": {
+     "type": "string",
+     "description": "Note content (free-form text). Required for `save`."
+    },
+    "topic": {
+     "type": "string",
+     "description": "Optional grouping bucket, e.g. \"writing_style\", \"friends\", \"groups\", \"preferences\". Default \"general\". Also acts as a filter on recall."
+    },
+    "userId": {
+     "type": "string",
+     "description": "Discord user ID to attach (on save) or filter by (on recall). Use to anchor a note to a specific person."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Discord channel ID to attach (on save) or filter by (on recall). Use to anchor a note to a specific DM / group / channel."
+    }
+   },
+   "required": [
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "discord_onboarding",
+  "description": "Auto-complete a Discord server's onboarding questionnaire — the \"Question X of Y\" flow shown right after you join a community server. Walks every question in order: a Required question gets its first option selected and then Next; an optional question is Skipped (set `answerOptional` to select its first option instead). Handles both answer widgets: the option-button grid and a \"Select...\" dropdown (expanded first, then its first entry picked). Repeats until the questionnaire closes, then completes the \"Read & Agree to Server Rules\" gate that follows it — whose Finish button stays disabled until the rules have been read to the end. Scoped to the current server's onboarding unless `allServers` is set (Discord chains several freshly-joined servers' onboarding back-to-back). Returns a per-question log; a step that did not take is reported as such rather than as success. Safe no-op (reports it) when no onboarding question is on screen.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "answerOptional": {
+     "type": "boolean",
+     "description": "Also select the first option on OPTIONAL questions instead of skipping them (default false — optional questions are skipped)."
+    },
+    "allServers": {
+     "type": "boolean",
+     "description": "Keep going through every pending server's onboarding, not just the current one (default false)."
+    },
+    "maxQuestions": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 100,
+     "description": "Safety cap on how many questions to process (default 40)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_open",
+  "description": "Switch Discord to a specific channel (DM, group DM, or guild channel) — same code path the sidebar uses (`ChannelActions.selectChannel`). Optionally scroll-jump to a message via `messageId`. Result confirms whether `SelectedChannelStore` actually flipped, and includes resolved channel + recipients.\n\nRULE: when the user names the target by phrase rather than ID (\"my group\", \"the gamers chat\", a nickname), call `discord_notes` `recall` FIRST — the user stores aliases there mapping phrases → channelIds. Only fall back to `discord_dms` / `discord_guilds` search if no alias matches.\n\nTypical flow: `discord_notes(recall)` → if alias hit, use its channelId → else `discord_dms({query})` → `discord_open({channelId})` → `discord_view()`.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Channel ID to switch to (from `discord_dms`, `discord_view`, or elsewhere)."
+    },
+    "messageId": {
+     "type": "string",
+     "description": "Optional message ID to scroll-jump to within the channel."
+    }
+   },
+   "required": [
+    "channelId"
+   ]
+  }
+ },
+ {
+  "name": "discord_dms",
+  "description": "List Discord direct messages and group DMs in sidebar order — lets you resolve a person's name to a channelId for `discord_send`. Pass `query` (case-insensitive substring) to filter; results are ranked exact > prefix > substring across the DM display name, recipient display names, and recipient usernames. Each entry returns `{channelId, kind: \"dm\"|\"group\", name, memberCount?, recipients: [{id, username, name, bot}]}`. Typical flow: `discord_dms({query:\"ana\"})` → grab channelId → `discord_send({channelId, content})`.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Case-insensitive name filter (substring). Omit to list everything in sidebar order."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 100,
+     "description": "Cap on results (default: 20 when query, 50 otherwise)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_send",
+  "description": "Send a message in Discord natively — uses `MessageActions.sendMessage` (or `UploadManager.uploadFiles` when attachments are included), the same code path Discord's own composer uses. `channelId` defaults to the currently selected channel.\n\nRULE — resolve target before sending: whenever the user names the destination by phrase rather than an explicit channelId (\"send to my group\", \"tell ana\", \"in the thinking chat\"), call `discord_notes` `recall` FIRST. The user stores alias / friend / group notes there with `channelId` and `userId` tags — those are the canonical resolution. Also recall notes attached to the resolved channelId / userId before composing, so style rules, in-jokes, and tone get applied. Only fall back to `discord_dms` / `discord_guilds` search if no alias matches.\n\nWhen this message is a direct response to a specific prior message (answering a question, quoting back, follow-up that names what it's reacting to), set `replyToMessageId` so it renders as a native Discord reply — don't rely on temporal proximity alone. Result includes the resolved channel {id, name, guildName} so you can verify where it landed. Harbor spaces out sends and limits file uploads, because bursts trip Discord's spam filter.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "content": {
+     "type": "string",
+     "description": "Message text. Required unless `files` is given. Discord parses mentions / markdown as usual."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "replyToMessageId": {
+     "type": "string",
+     "description": "Message ID to reply to — adds a native Discord reply reference. Prefer this whenever the message is a direct response to a specific prior message (answer, quote-back, named follow-up). Pull the ID from a fresh `discord_view` result; never fabricate — unknown IDs are pre-validated against the local message store and rejected with an error."
+    },
+    "files": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Absolute paths of files to attach. Mime is guessed from extension."
+    },
+    "tts": {
+     "type": "boolean",
+     "description": "Send as text-to-speech (default false)."
+    },
+    "typing": {
+     "type": "boolean",
+     "description": "Show the typing indicator before sending; duration auto-derived from content length (~60ms/char, clamped 800ms–6000ms). Ignored if `typingMs` is set."
+    },
+    "typingMs": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 30000,
+     "description": "Explicit typing duration in ms (overrides `typing`). Capped at 30s."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_history",
+  "description": "Fetch a paginated slice of channel history via Discord REST — the primitive for \"give me the last N messages\" or \"every message between X and Y\". Unlike `discord_view` (which is bounded to the user's current viewport), this walks the real backlog and works for any channelId. Pages internally in 100-message chunks and returns oldest-first so the result reads like a transcript. Bound the window with `before`/`after` snowflakes, or `since`/`until` ISO timestamps (auto-converted to snowflakes). `from`/`contains` are client-side filters applied after the fetch. Always pass a tight `select` projection — the default ([id, content, author, timestamp]) is what you usually want; only widen it when you actually need attachments / replyTo / mentions / reactions. If `hasMoreBefore` is true, pass `nextBefore` back as `before` to keep paging deeper.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "before": {
+     "type": "string",
+     "description": "Snowflake — return messages strictly older than this ID."
+    },
+    "after": {
+     "type": "string",
+     "description": "Snowflake — return messages strictly newer than this ID."
+    },
+    "around": {
+     "type": "string",
+     "description": "Snowflake — return messages around this ID (single 100-msg window; ignores `limit`)."
+    },
+    "since": {
+     "type": "string",
+     "description": "ISO timestamp lower bound (auto-converted to a snowflake). Ignored if `after` is set."
+    },
+    "until": {
+     "type": "string",
+     "description": "ISO timestamp upper bound (auto-converted to a snowflake). Ignored if `before` is set."
+    },
+    "from": {
+     "type": "string",
+     "description": "Filter to messages from this user ID (client-side; Discord REST has no author filter)."
+    },
+    "contains": {
+     "type": "string",
+     "description": "Filter to messages whose content includes this substring, case-insensitive."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 5000,
+     "description": "Max messages to return (default 200, max 5000). Pages internally; raise only when you really need it."
+    },
+    "select": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "id",
+       "content",
+       "author",
+       "timestamp",
+       "attachments",
+       "replyTo",
+       "mentions",
+       "reactions",
+       "edited"
+      ]
+     },
+     "description": "Field projection. Default: [id, content, author, timestamp]. `id` is always included. Keep this tight — token usage scales linearly."
+    },
+    "resolveReplies": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 20,
+     "description": "Walk each reply's parent chain up to N hops and embed as `replyChain` (oldest→newest). Auto-adds `replyTo` to the projection. Default 0 (no expansion)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_search",
+  "description": "Search messages via Discord's native `/messages/search` endpoint — the right tool for \"find every message about X\" or \"what did Alice say about Y\". Works on DMs, group DMs, and guild channels (uses the guild-level search URL automatically when applicable). Loops `offset` pagination internally up to `limit`. Returns `{ totalResults, count, messages }` — each result has `hit: true` and the standard projected fields. If Discord is still indexing the channel, the result is `{ indexing: true, retryAfter }` — wait that many seconds and try again. Prefer this over `discord_history` + client-side `contains` when you have a real keyword query (search hits are server-side ranked and span much further back).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Search query — words/phrases. Same syntax Discord's search bar uses."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "from": {
+     "type": "string",
+     "description": "Restrict to messages by this user ID (`author_id`)."
+    },
+    "mentions": {
+     "type": "string",
+     "description": "Restrict to messages mentioning this user ID."
+    },
+    "has": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "image",
+       "video",
+       "link",
+       "file",
+       "embed",
+       "sound",
+       "sticker"
+      ]
+     },
+     "description": "Restrict to messages containing these attachment kinds (Discord's `has=` filter)."
+    },
+    "before": {
+     "type": "string",
+     "description": "Snowflake max bound (`max_id`)."
+    },
+    "after": {
+     "type": "string",
+     "description": "Snowflake min bound (`min_id`)."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200,
+     "description": "Max results to return (default 25, max 200; Discord pages 25 at a time)."
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
+  "name": "discord_user_messages",
+  "description": "Search a specific server for messages sent by a specific user. Uses Discord's native guild message search with `author_id`, so it can span channels the logged-in account can access without scraping the current viewport. This is deliberately bounded: default `limit` is 100, max 500. Use `offset` from `nextOffset` to page through more results, and `before`/`after` snowflakes to narrow the time window. Optional `query` restricts matches to messages containing those words.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "guildId": {
+     "type": "string",
+     "pattern": "^\\d{15,25}$",
+     "description": "Target server/guild ID."
+    },
+    "userId": {
+     "type": "string",
+     "pattern": "^\\d{15,25}$",
+     "description": "Author user ID to search for."
+    },
+    "query": {
+     "type": "string",
+     "description": "Optional Discord search text/content filter."
+    },
+    "before": {
+     "type": "string",
+     "pattern": "^\\d{15,25}$",
+     "description": "Snowflake max bound (`max_id`)."
+    },
+    "after": {
+     "type": "string",
+     "pattern": "^\\d{15,25}$",
+     "description": "Snowflake min bound (`min_id`)."
+    },
+    "offset": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "Pagination offset. Use `nextOffset` from the previous result."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 500,
+     "description": "Max messages to return (default 100, max 500)."
+    }
+   },
+   "required": [
+    "guildId",
+    "userId"
+   ]
+  }
+ },
+ {
+  "name": "discord_stats",
+  "description": "Compute aggregate stats over a channel + time window — the right tool for \"who posts most\", \"how active was this DM each month\", \"what links/words come up\". Walks the channel via REST in 100-msg batches (bounded by `hardCap`, default 50k) and emits a fixed-size summary regardless of how many messages were scanned. Output includes: `summary` (total/attachments/links/replies/distinctAuthors/span), `byAuthor` ranked top-N, `byBucket` time series, `replyEdges` top reply graph, `topDomains` from links, `topWords` (PT + EN stopwords stripped). Stopword list is built-in — don't ask for filtering. Use `since`/`until` to bound the window; without them, the entire channel is scanned up to `hardCap`.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "since": {
+     "type": "string",
+     "description": "ISO timestamp lower bound. Omit to scan back to channel start (capped by `hardCap`)."
+    },
+    "until": {
+     "type": "string",
+     "description": "ISO timestamp upper bound. Omit to scan from the latest message."
+    },
+    "groupBy": {
+     "type": "string",
+     "enum": [
+      "day",
+      "week",
+      "month"
+     ],
+     "description": "Time bucket granularity for `byBucket` (default `month`)."
+    },
+    "topN": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 100,
+     "description": "Cap on each ranked list (byAuthor / replyEdges / topDomains / topWords). Default 10."
+    },
+    "hardCap": {
+     "type": "integer",
+     "minimum": 100,
+     "maximum": 200000,
+     "description": "Max messages to scan (default 50000). Tighten for fast channels; raise only for full-channel runs."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_react",
+  "description": "Add or remove a reaction on a message — uses Discord's internal `addReaction`/`removeReaction`, the same path the reaction picker uses. Accepts either raw unicode (`\"👍\"`, `\"🔥\"`) or full custom-emoji syntax (`\"<:pepega:1234>\"`, `\"<a:dance:5678>\"`). Shortcodes (`:thumbsup:`) are NOT resolved — paste the unicode character or the `<:name:id>` form. `messageId` is pre-validated against the local MessageStore: a fabricated ID errors instead of silently no-op-ing.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "messageId": {
+     "type": "string",
+     "description": "Message to react to. Pull from a fresh `discord_view`/`discord_history` result."
+    },
+    "emoji": {
+     "type": "string",
+     "description": "Emoji — raw unicode (`👍`) or `<:name:id>` / `<a:name:id>` for custom."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "action": {
+     "type": "string",
+     "enum": [
+      "add",
+      "remove"
+     ],
+     "description": "Default `add`. Use `remove` to take your own reaction back off."
+    }
+   },
+   "required": [
+    "messageId",
+    "emoji"
+   ]
+  }
+ },
+ {
+  "name": "discord_edit",
+  "description": "Edit one of the viewer's own messages — `MessageActions.editMessage`. Discord only allows editing your own messages, so the tool refuses on anyone else's. `messageId` is pre-validated against MessageStore. Use only on explicit user instruction — editing is visible to recipients as an `(edited)` marker.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "messageId": {
+     "type": "string",
+     "description": "Message to edit — must be one you sent. Pull from `discord_view`/`discord_history`."
+    },
+    "content": {
+     "type": "string",
+     "description": "New full message content (replaces the previous text — this is not a patch)."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    }
+   },
+   "required": [
+    "messageId",
+    "content"
+   ]
+  }
+ },
+ {
+  "name": "discord_delete",
+  "description": "Delete one of the viewer's own messages — `MessageActions.deleteMessage`. DESTRUCTIVE: the message is gone, recipients lose access immediately, no Discord-side undo. Only invoke on explicit user instruction (\"delete my last message\", \"remove that reply\"); never on inference. The tool refuses on messages the viewer did not send and pre-validates the messageId against MessageStore.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "messageId": {
+     "type": "string",
+     "description": "Message to delete — must be one you sent. Pull from `discord_view`/`discord_history`."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    }
+   },
+   "required": [
+    "messageId"
+   ]
+  }
+ },
+ {
+  "name": "discord_pins",
+  "description": "List a channel's pinned messages via Discord REST — pins are usually the channel's thesis (rules, decisions, links), so this is cheap, high-signal context for orienting in an unfamiliar channel. Each entry uses the same projection shape as `discord_history`.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "select": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "id",
+       "content",
+       "author",
+       "timestamp",
+       "attachments",
+       "replyTo",
+       "mentions",
+       "reactions",
+       "edited"
+      ]
+     },
+     "description": "Field projection. Default: [id, content, author, timestamp]."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_threads",
+  "description": "List threads under a parent channel — both active and (optionally) recently archived public threads. Threads are first-class channels in Discord; their IDs are usable as a `channelId` for `discord_view`, `discord_history`, `discord_send`, etc. If you pass a thread's own ID as `channelId`, the tool treats its parent as the listing target.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Parent channel ID. Omit to use the currently selected channel."
+    },
+    "includeArchived": {
+     "type": "boolean",
+     "description": "Include recently archived public threads (default true)."
+    },
+    "archivedLimit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 100,
+     "description": "How many archived threads to fetch (default 25)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_member",
+  "description": "Look up a user's full profile — display name, avatar, bio/pronouns, mutual guilds (via `/users/{id}/profile`), plus live status and activities (`PresenceStore`). Useful for disambiguating (\"which Ana?\"), tone calibration (don't ping at 3am), or addressing someone by their `globalName` instead of their `username`. Some users return limited data when you share no context — username/avatar fall back to the local UserStore if the profile API rejects.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "userId": {
+     "type": "string",
+     "description": "Discord user ID (snowflake). Pull from `discord_view` / `discord_dms` / message author fields."
+    }
+   },
+   "required": [
+    "userId"
+   ]
+  }
+ },
+ {
+  "name": "discord_resolveMessage",
+  "description": "Fetch one message + its reply ancestry. REST-fetches anything not in the local MessageStore, so this works even when the parent was scrolled out or is from a different channel. Returns `{ message, replyChain }` — `replyChain` is the parent thread oldest→newest, capped at `depth`. Use when a `discord_view` reply came back as `{unloaded: true}`, or when you want the full conversational arc behind a single message without re-fetching the whole channel.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "messageId": {
+     "type": "string",
+     "description": "Message ID to resolve."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Channel the message lives in. Omit to use the currently selected channel."
+    },
+    "depth": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 20,
+     "description": "Max parent hops to walk (default 5). 0 returns just the message."
+    }
+   },
+   "required": [
+    "messageId"
+   ]
+  }
+ },
+ {
+  "name": "discord_attachment",
+  "description": "Fetch the bytes of a message attachment so the model can actually see/read it — for image attachments, the bytes come back as an inline image ContentBlock (so the model perceives the image directly); for everything else, base64 in a text block with mime + size. Default `index` is 0 (first attachment). Refuses files larger than `maxBytes` (default 5 MB) — for those, get metadata via `discord_view` / `discord_history` with the `attachments` projection instead. Use this whenever a message references a screenshot, PDF, or other file the user is asking about: without this tool you only see the filename.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "messageId": {
+     "type": "string",
+     "description": "Message that owns the attachment. Pull from `discord_view` / `discord_history`."
+    },
+    "channelId": {
+     "type": "string",
+     "description": "Target channel ID. Omit to use the currently selected channel."
+    },
+    "index": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "Which attachment on the message (default 0)."
+    },
+    "maxBytes": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 25000000,
+     "description": "Refuse to return if the file is larger than this (default 5_000_000)."
+    }
+   },
+   "required": [
+    "messageId"
+   ]
+  }
+ },
+ {
+  "name": "discord_dm_open",
+  "description": "Open (or fetch) a 1:1 DM with a user, or a group DM with several users — REST `POST /users/@me/channels`. Use when the target person isn't in the DM sidebar yet, so `discord_dms` can't find them. Discord reuses the existing DM if one already exists, so this is safe to call repeatedly. Result shape matches `discord_dms` entries — pipe the `channelId` straight into `discord_send`. Harbor limits how many new DMs can be started per hour and per day: on `paced`, tell the user instead of retrying.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "userId": {
+     "type": "string",
+     "description": "Single recipient user ID. Use this for a 1:1 DM."
+    },
+    "userIds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "minItems": 1,
+     "description": "Recipient user IDs for a group DM (2+ recommended)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_emoji",
+  "description": "List/search custom server emoji across all guilds the user is in. Returns each as `{ name, id, animated, guildId, guildName, url, shortcode }` where `shortcode` is the `<:name:id>` / `<a:name:id>` form ready to paste into `discord_send` content or use directly with `discord_react`. Without this tool the agent has no way to discover what custom emoji exist. Pass `query` for a substring filter; ranked exact > prefix > substring. Output is projection + limited (default 25) because the full set across many guilds is large.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Case-insensitive substring filter on emoji name."
+    },
+    "guildId": {
+     "type": "string",
+     "description": "Narrow to one guild."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200,
+     "description": "Cap on results (default 25)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_unread",
+  "description": "List channels with unread messages — the \"what did I miss?\" lookup. Always scans DMs + group DMs; pass `includeGuilds: true` to also walk every guild text channel the user has access to (heavier — only when needed). Each entry: `{ channelId, kind, name, guildId, guildName, unreadCount, mentionCount, oldestUnreadId, lastReadMessageId }`. Sorted by mentions, then unread count. Pass `mentionsOnly: true` to only return channels where someone pinged the viewer. Pipe a channelId into `discord_history({ after: oldestUnreadId })` to see exactly what was missed.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "includeGuilds": {
+     "type": "boolean",
+     "description": "Also scan guild text channels (default false — DMs/groups only)."
+    },
+    "mentionsOnly": {
+     "type": "boolean",
+     "description": "Only return channels with at least one mention (default false)."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 500,
+     "description": "Cap on results (default 100)."
+    }
+   }
+  }
+ },
+ {
+  "name": "discord_ack",
+  "description": "Mark a channel read up to a message — REST `POST /channels/{id}/messages/{messageId}/ack`. Clears unread badges user-visibly. Not destructive per se, but DOES mutate visible state — only call when the user explicitly asks to mark something read, or after they've obviously caught up on a channel via the agent. Omit `messageId` to ack the channel's most recent message.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Channel to mark read."
+    },
+    "messageId": {
+     "type": "string",
+     "description": "Ack up to this message ID. Omit for the channel's most recent message."
+    }
+   },
+   "required": [
+    "channelId"
+   ]
+  }
+ },
+ {
+  "name": "discord_guilds",
+  "description": "Read the left-sidebar guild layout — folders and top-level guilds in display order. Each entry is either `{kind:\"guild\", guildId, name}` or `{kind:\"folder\", id, name, color, expanded, guildIds, guilds:[{id,name}]}`. `color` is a 24-bit RGB integer (Discord renders it as the folder swatch). Pipe the returned `sidebar` array straight into `discord_organize` after mutating it — every guildId must appear exactly once across all entries.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "discord_mute_guild",
+  "description": "Mute or unmute a Discord guild/server by guild ID. This changes the same per-server notification setting as Discord's Server Menu -> Mute Server. Default is dry-run: it verifies membership and reports the target without changing anything. Pass `apply: true` only when the user explicitly asked to mute/unmute that exact server. The default mute duration is `forever`, equivalent to Discord's \"Until I turn it back on\".",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "guildId": {
+     "type": "string",
+     "pattern": "^\\d{15,25}$",
+     "description": "Discord guild/server ID to mute or unmute."
+    },
+    "action": {
+     "type": "string",
+     "enum": [
+      "mute",
+      "unmute"
+     ],
+     "description": "Default `mute`. Use `unmute` to turn server notifications back on."
+    },
+    "duration": {
+     "type": "string",
+     "enum": [
+      "15m",
+      "1h",
+      "3h",
+      "8h",
+      "24h",
+      "forever"
+     ],
+     "description": "Mute duration. Default `forever`, matching Discord's \"Until I turn it back on\"."
+    },
+    "apply": {
+     "type": "boolean",
+     "description": "Default false (dry-run). Pass true to actually update the guild notification setting."
+    }
+   },
+   "required": [
+    "guildId"
+   ]
+  }
+ },
+ {
+  "name": "discord_organize",
+  "description": "Rewrite the left-sidebar guild layout — reorder, group into folders, rename / recolor folders, ungroup, move guilds between folders. `sidebar` is the full ordered list of top-level entries; every guild the user is in must appear exactly once. Entry forms:\n  `{kind:\"guild\", guildId}` — a top-level guild\n  `{kind:\"folder\", guildIds:[...], name?, color?, id?}` — a folder of guilds\n`color` is a 24-bit RGB integer (e.g. 3447003 = blue). `id` is auto-minted if omitted; pass through an existing folder's `id` to preserve identity (expanded/collapsed state across edits). Default is dry-run (returns the resolved preview without writing). Pass `apply: true` to commit via Discord's user settings proto — change syncs to all the user's other Discord clients.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "sidebar": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "guild",
+         "folder"
+        ]
+       },
+       "guildId": {
+        "type": "string"
+       },
+       "guildIds": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "name": {
+        "type": "string"
+       },
+       "color": {
+        "type": "integer",
+        "minimum": 0
+       },
+       "id": {
+        "type": [
+         "number",
+         "string"
+        ]
+       }
+      },
+      "additionalProperties": false
+     },
+     "description": "Full ordered list of sidebar entries. Every guild must appear exactly once."
+    },
+    "apply": {
+     "type": "boolean",
+     "description": "Default false (dry-run). Pass true to actually write the new layout."
+    }
+   },
+   "required": [
+    "sidebar"
+   ]
+  }
+ },
+ {
+  "name": "discord_leave",
+  "description": "Leave a Discord guild/server by guild ID. Destructive: the account leaves the server and may lose access to its channels immediately. Default is dry-run: it verifies current membership and returns the resolved guild without leaving. Pass `apply: true` only when the user explicitly asked to leave that exact server ID. After applying, the tool re-checks the live guild store and reports `left:true` only when membership is actually gone.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "guildId": {
+     "type": "string",
+     "pattern": "^\\d{15,25}$",
+     "description": "Discord guild/server ID to leave."
+    },
+    "apply": {
+     "type": "boolean",
+     "description": "Default false (dry-run). Pass true to actually leave the guild."
+    }
+   },
+   "required": [
+    "guildId"
+   ]
+  }
+ },
+ {
+  "name": "discord_join",
+  "description": "Join a Discord server from an invite. Accepts any invite form — a full URL (`https://discord.gg/abc`, `https://discord.com/invite/abc`) or a bare code (`abc`). Default is dry-run: resolves the invite and returns the target guild, channel, inviter, and approximate member/online counts WITHOUT joining. Pass `apply: true` to actually join. Idempotent — if the user is already in the guild it returns `alreadyMember: true` without re-accepting.\n\nALWAYS check the returned `joined` boolean — it reflects the live guild store, not a guess. Possible outcomes: `joined:true` (in the guild), `alreadyMember:true`, `dryRun:true` (preview only), `captchaRequired:true`, or `error`.\n\nCAPTCHA: large or flagged servers gate joins behind a captcha, which only a person can solve. The tool then returns `captchaRequired`: ask the user to join from their own Discord app, and don't retry. Harbor limits how many servers can be joined per hour and per day, because joins are what Discord's spam filter watches most.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "invite": {
+     "type": "string",
+     "description": "Invite URL or bare code, e.g. `discord.gg/abc` or `abc`."
+    },
+    "apply": {
+     "type": "boolean",
+     "description": "Default false (dry-run preview). Pass true to actually join."
+    }
+   },
+   "required": [
+    "invite"
+   ]
+  }
+ },
+ {
+  "name": "discord_waitForMessage",
+  "description": "Block until a new Discord message arrives that matches the filter — or until `timeoutMs` elapses. Event-driven, and catches messages in DMs, group DMs, and guild channels alike. Filters AND together; omit a filter to match anything in that dimension (e.g. omit `channelId` to listen to every channel at once).\n\nUSE WHEN the user says any of: \"wait for a message\", \"wait for a reply\", \"wait for his / her / their response\", \"wait until X responds / replies / messages me / says something\", \"respond when X messages me\", \"let me know when someone writes in this group\", \"watch this channel for a new message\", or any phrasing that means \"pause until a Discord message arrives\". Pick filters from the user's wording: a named person → resolve via `discord_notes` / `discord_dms` to a `fromUserId`; \"in this channel / group / DM\" → `channelId`; \"about X\" → `contains: \"X\"`; \"when they ping me\" → `mentionsViewer: true`. Default excludes the viewer's own outgoing messages — pass `includeSelf: true` only if the user explicitly wants their own sends. Optimistic pre-confirmation dispatches are always skipped.\n\nResult on hit: `{done: true, timedOut: false, matches: [<msg>...]}` where each `msg` is `{id, channelId, guildId, content, timestamp, author, attachments?, replyTo?, mentions?}`. On timeout: `{done: false, timedOut: true, matches: []}` (or partial matches if `maxMatches > 1`). After a hit, the typical follow-up is `discord_send({channelId, replyToMessageId, content})`.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "channelId": {
+     "type": "string",
+     "description": "Restrict to one channel (DM, group, or guild channel). Omit to match in any channel."
+    },
+    "fromUserId": {
+     "type": "string",
+     "description": "Only count messages whose author has this user ID."
+    },
+    "contains": {
+     "type": "string",
+     "description": "Only count messages whose content contains this substring (case-insensitive)."
+    },
+    "mentionsViewer": {
+     "type": "boolean",
+     "description": "Only count messages that mention the current user."
+    },
+    "includeSelf": {
+     "type": "boolean",
+     "description": "Include the viewer's own (server-confirmed) outgoing messages. Default false."
+    },
+    "maxMatches": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 50,
+     "description": "Resolve after collecting this many matches (default 1)."
+    },
+    "timeoutMs": {
+     "type": "integer",
+     "minimum": 1000,
+     "maximum": 600000,
+     "description": "Max wait in ms (default 60000, max 600000 = 10 min)."
+    }
+   }
+  }
+ }
+]
