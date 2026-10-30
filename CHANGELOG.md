@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.96.1] - 2026-10-29
+
 ### Fixed
 - 0.95.0's and 0.96.0's releases didn't build (a broken build cache on the build servers) and
   were never published; this release brings their features. Release builds now start over once
@@ -2023,7 +2025,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.96.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.96.1...HEAD
+[0.96.1]: https://github.com/RDevNeo/harbor/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/RDevNeo/harbor/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/RDevNeo/harbor/compare/v0.94.0...v0.95.0
 [0.94.0]: https://github.com/RDevNeo/harbor/compare/v0.93.0...v0.94.0
