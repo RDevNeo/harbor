@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- A new release reaches your PCs within about 5 minutes instead of up to 4 hours. Each PC looks
+  every 5 minutes with one small request, and when one of them finds a release the others of the
+  mesh hear of it and look too, within about a minute and a half. When it installs is as before:
+  automatically while nobody is looking, or on the Update button with "Ask me". An install that
+  fails waits longer each time (5 minutes up to 6 hours) instead of downloading again every check.
+
 ## [0.100.0] - 2026-10-30
 
 ### Changed

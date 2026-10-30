@@ -1587,6 +1587,7 @@ fn sync(hub: &api::Hub, dest: &Dest, id: &str, epoch: u64, still: &dyn Fn() -> b
         let rev = chats["rev"].as_u64().unwrap_or(0);
         // Its Harbor's updates, as they are now (Settings › Devices shows them, 0.51).
         if let Some(u) = chats.get("update") {
+            crate::update::peer_news(u);
             let mut peers = hub.mesh.peers.lock().unwrap();
             if let Some(p) = peers.get_mut(id).filter(|p| p.update != *u) {
                 p.update = u.clone();

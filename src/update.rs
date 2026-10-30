@@ -1,6 +1,7 @@
 //! Self-update for per-user installs (packaging/install.sh puts Harbor in ~/.local/lib/harbor
 //! and leaves a `.managed` marker there). Harbor asks GitHub for the latest release now and
-//! then. By default it only offers it (the Update button); clicking it, or "Automatically"
+//! every few minutes, and sooner when another PC of the mesh has news of one (`peer_news`). By
+//! default it only offers it (the Update button); clicking it, or "Automatically"
 //! in Settings, downloads it, checks its minisign signature against the key below, and renames
 //! the new files over the old ones (helpers first, harbor last). The hot reload (reload.rs)
 //! sees its own file change and restarts into the new version; agent turns run detached and
@@ -24,7 +25,8 @@ const REPO: &str = "RDevNeo/harbor";
 const PUBKEY: &str = "RWSaeVHfD2GBvTEgaNXQQs8eQR5rCD50vuckgoo79X6wqhOKXIpUVHNh";
 /// The release assets are named by it: harbor-x86_64-linux, harbor-aarch64-linux.
 const ARCH: &str = std::env::consts::ARCH;
-const CHECK_EVERY: Duration = Duration::from_secs(4 * 3600);
+/// One small request (`latest`), so a new release reaches a PC within minutes.
+const CHECK_EVERY: Duration = Duration::from_secs(5 * 60);
 /// The first check waits a little, so starting Harbor stays quick.
 const FIRST_CHECK: Duration = Duration::from_secs(20);
 /// The scheduler looks again at least this often (a check started by hand moves the next one).
@@ -49,6 +51,10 @@ static LAST_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
 static STARTED: Mutex<Option<Instant>> = Mutex::new(None);
 /// Settings › Updates › "Automatically", as last seen by `tick` (the scheduler thread reads it).
 static AUTO: AtomicBool = AtomicBool::new(false);
+/// The newest version another PC of the mesh told of (`peer_news`).
+static HEARD: Mutex<Option<String>> = Mutex::new(None);
+/// The release that failed to install: (version, try again at, failures in a row).
+static INSTALL_FAILED: Mutex<Option<(String, Instant, u32)>> = Mutex::new(None);
 static BROWSER: Mutex<Option<Result<(), String>>> = Mutex::new(None);
 
 pub fn state() -> State {
@@ -108,23 +114,34 @@ pub fn newer(candidate: &str, current: &str) -> bool {
 
 // ------------------------------------------------------------------ network (curl)
 
-fn curl() -> Command {
+fn curl_one() -> Command {
     let mut c = Command::new("curl");
-    c.args(["-fsSL", "--retry", "2", "--connect-timeout", "15", "-A"]).arg(format!("harbor/{VERSION}"));
+    c.args(["-fsS", "--retry", "2", "--connect-timeout", "15", "-A"]).arg(format!("harbor/{VERSION}"));
     c
 }
 
-/// The latest release's version, from where /releases/latest redirects (no API rate limit).
+fn curl() -> Command {
+    let mut c = curl_one();
+    c.arg("-L");
+    c
+}
+
+/// The version in the address /releases/latest redirects to.
+fn tagged(url: &str) -> Result<String, String> {
+    let tag = url.trim().rsplit_once("/tag/").map(|(_, t)| t.to_string()).ok_or_else(|| "no release published yet".to_string())?;
+    parse(&tag).ok_or_else(|| format!("unexpected release tag {tag}"))?;
+    Ok(tag.trim_start_matches('v').to_string())
+}
+
+/// The latest release's version, from where /releases/latest redirects (no API rate limit). Only
+/// the redirect is asked for (about 5 KB): the release page behind it is 150 KB.
 fn latest() -> Result<String, String> {
-    let out = curl()
-        .args(["-o", "/dev/null", "-w", "%{url_effective}"])
+    let out = curl_one()
+        .args(["-I", "--max-time", "30", "-o", "/dev/null", "-w", "%{redirect_url}"])
         .arg(format!("https://github.com/{REPO}/releases/latest"))
         .output()
         .map_err(|e| format!("curl: {e}"))?;
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let tag = url.rsplit_once("/tag/").map(|(_, t)| t.to_string()).ok_or_else(|| "no release published yet".to_string())?;
-    parse(&tag).ok_or_else(|| format!("unexpected release tag {tag}"))?;
-    Ok(tag.trim_start_matches('v').to_string())
+    tagged(&String::from_utf8_lossy(&out.stdout))
 }
 
 fn download(version: &str, name: &str, to: &Path) -> Result<(), String> {
@@ -404,7 +421,7 @@ fn spawn(ctx: &eframe::egui::Context, job: impl FnOnce() + Send + 'static) -> bo
 }
 
 /// How long until the next scheduled check: shortly after start, then every CHECK_EVERY after
-/// the last one. Zero: due.
+/// the last one (none after `peer_news`, which forgets it). Zero: due.
 fn next_check(started: Instant, last: Option<Instant>, now: Instant) -> Duration {
     let at = match last {
         None => started + FIRST_CHECK,
@@ -442,15 +459,80 @@ pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
                 continue;
             }
             // Installed: the reload into it comes first. Busy: try again in a while.
-            if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installed(_)) || !check(AUTO.load(Ordering::Relaxed), &ctx) {
+            if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installed(_)) || !scheduled_check(AUTO.load(Ordering::Relaxed), &ctx) {
                 std::thread::sleep(LOOK_EVERY);
             }
         }
     });
 }
 
-/// "Check now" (and the scheduler): finds the latest release, installs it when `auto`. The UI
-/// is woken at each step (the hub API reads the same state, window or not). False: busy.
+/// The version in another PC's `update::info` worth a check: newer than this one and than what
+/// was already heard. Only a reason to ask GitHub: what gets installed comes from there, signed.
+fn news(update: &serde_json::Value, heard: Option<&str>) -> Option<String> {
+    let mut best = heard.unwrap_or(VERSION).to_string();
+    let mut found = None;
+    for v in [&update["version"], &update["latest"]].into_iter().filter_map(|v| v.as_str()) {
+        if newer(v, &best) && newer(v, VERSION) {
+            best = v.to_string();
+            found = Some(best.clone());
+        }
+    }
+    found
+}
+
+/// Another PC of the mesh said this about itself (it runs a newer version, or found one): the
+/// next look of the scheduler checks here too, once per version. It's asked from this side
+/// because peers already poll each other: older PCs need nothing new, and one that slept hears
+/// of it as soon as it's back. An update installs or waits as this PC's settings say.
+pub fn peer_news(update: &serde_json::Value) {
+    let mut heard = HEARD.lock().unwrap();
+    if let Some(v) = news(update, heard.as_deref()) {
+        *heard = Some(v);
+        *LAST_CHECK.lock().unwrap() = None;
+    }
+}
+
+/// Whether the automatic install of `version` may run: not until the wait after a failure is
+/// over, as a release is several archives and checks come every few minutes.
+fn install_due(failed: Option<&(String, Instant, u32)>, version: &str, now: Instant) -> bool {
+    failed.is_none_or(|(v, at, _)| v != version || now >= *at)
+}
+
+/// The scheduler's check. Most find nothing, so an offer or a failure stays on show meanwhile,
+/// a bad connection doesn't count as a failure unless nothing is known yet, and a release that's
+/// on disk already or just failed to install isn't downloaded again. False: busy.
+fn scheduled_check(auto: bool, ctx: &eframe::egui::Context) -> bool {
+    let before = state();
+    let ctx2 = ctx.clone();
+    let started = spawn(ctx, move || {
+        if !matches!(before, State::Available(_) | State::Failed(_)) {
+            set(State::Checking);
+            ctx2.request_repaint();
+        }
+        match latest() {
+            Ok(v) if newer(&v, VERSION) => {
+                if !auto || skipped(&v) {
+                    set(State::Available(v));
+                } else if on_disk().as_deref() == Some(v.as_str()) {
+                    set(State::Installed(v));
+                } else if install_due(INSTALL_FAILED.lock().unwrap().as_ref(), &v, Instant::now()) {
+                    run_install(v);
+                } else {
+                    set(before);
+                }
+            }
+            Ok(_) => set(State::UpToDate),
+            Err(e) => set(if before == State::Idle { State::Failed(e) } else { before }),
+        }
+    });
+    if started {
+        *LAST_CHECK.lock().unwrap() = Some(Instant::now());
+    }
+    started
+}
+
+/// "Check now": finds the latest release, installs it when `auto`. The UI is woken at each step
+/// (the hub API reads the same state, window or not). False: busy.
 pub fn check(auto: bool, ctx: &eframe::egui::Context) -> bool {
     let ctx2 = ctx.clone();
     let started = spawn(ctx, move || {
@@ -475,8 +557,7 @@ pub fn check(auto: bool, ctx: &eframe::egui::Context) -> bool {
 }
 
 /// The phone's Update (or another PC's) when this Harbor knows of no release yet: it may not
-/// have checked since it started (first check after 20 s, then every 4 h), so it checks now and
-/// installs what it finds, even a version "Restore previous version" skipped (asked for by
+/// have checked yet, so it checks now and installs what it finds, even a version "Restore previous version" skipped (asked for by
 /// hand). False: busy.
 pub fn check_and_install(ctx: &eframe::egui::Context) -> bool {
     let ctx2 = ctx.clone();
@@ -542,8 +623,17 @@ pub fn info() -> serde_json::Value {
 fn run_install(v: String) {
     set(State::Installing(v.clone()));
     match install(&v) {
-        Ok(()) => set(State::Installed(v)),
-        Err(e) => set(State::Failed(e)),
+        Ok(()) => {
+            *INSTALL_FAILED.lock().unwrap() = None;
+            set(State::Installed(v));
+        }
+        Err(e) => {
+            let mut failed = INSTALL_FAILED.lock().unwrap();
+            let n = failed.as_ref().filter(|(was, ..)| *was == v).map_or(0, |(.., n)| *n) + 1;
+            *failed = Some((v, Instant::now() + retry_after(n), n));
+            drop(failed);
+            set(State::Failed(e));
+        }
     }
 }
 
@@ -569,7 +659,7 @@ const BROWSER_GLIBC: (u32, u32) = (2, 39);
 /// In the install folder: no engine downloads (`install.sh --no-browser`). "Install engine" in
 /// the browser panel removes it.
 pub const NO_BROWSER: &str = ".no-browser";
-/// Background retries of a failed engine download: 5 min, 10, 20… up to 6 h.
+/// Background retries of a failed download: 5 min, 10, 20… up to 6 h.
 const BROWSER_RETRY: Duration = Duration::from_secs(300);
 const BROWSER_RETRY_MAX: Duration = Duration::from_secs(6 * 3600);
 
@@ -747,6 +837,48 @@ mod tests {
         let last = t0 + Duration::from_secs(30);
         assert_eq!(next_check(t0, Some(last), last + Duration::from_secs(60)), CHECK_EVERY - Duration::from_secs(60));
         assert!(next_check(t0, Some(last), last + CHECK_EVERY).is_zero());
+        assert!(next_check(t0, None, last + CHECK_EVERY).is_zero(), "peer_news forgot the last check");
+        assert_eq!(CHECK_EVERY, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn release_address() {
+        assert_eq!(tagged("https://github.com/o/r/releases/tag/v1.2.3\n").as_deref(), Ok("1.2.3"));
+        assert!(tagged("").is_err(), "no answer");
+        assert!(tagged("https://github.com/o/r/releases").is_err(), "no release yet");
+        assert!(tagged("https://github.com/o/r/releases/tag/nightly").is_err());
+    }
+
+    #[test]
+    fn news_from_other_pcs() {
+        use serde_json::json;
+        let ahead = "99.0.0";
+        let more = "99.0.1";
+        assert_eq!(news(&json!({ "version": VERSION, "latest": ahead }), None).as_deref(), Some(ahead), "it found one");
+        assert_eq!(news(&json!({ "version": ahead, "latest": null }), None).as_deref(), Some(ahead), "it runs one");
+        assert_eq!(news(&json!({ "version": ahead, "latest": more }), None).as_deref(), Some(more));
+        assert_eq!(news(&json!({ "version": more, "latest": ahead }), None).as_deref(), Some(more));
+        assert_eq!(news(&json!({ "version": VERSION, "latest": null }), None), None, "nothing new");
+        assert_eq!(news(&json!({ "version": "0.0.1", "latest": VERSION }), None), None, "behind this PC");
+        // Once per version, whichever PC says it first.
+        assert_eq!(news(&json!({ "version": VERSION, "latest": ahead }), Some(ahead)), None);
+        assert_eq!(news(&json!({ "version": VERSION, "latest": more }), Some(ahead)).as_deref(), Some(more));
+        // Older hubs: no update info at all, or fields it doesn't have.
+        assert_eq!(news(&serde_json::Value::Null, None), None);
+        assert_eq!(news(&json!({ "managed": true }), None), None);
+        assert_eq!(news(&json!({ "version": "garbage", "latest": 7 }), None), None);
+    }
+
+    #[test]
+    fn failed_install_waits() {
+        let t0 = Instant::now();
+        assert!(install_due(None, "1.0.0", t0), "nothing failed");
+        let failed = ("1.0.0".to_string(), t0 + retry_after(1), 1);
+        assert!(!install_due(Some(&failed), "1.0.0", t0), "not every check");
+        assert!(!install_due(Some(&failed), "1.0.0", t0 + retry_after(1) - Duration::from_secs(1)));
+        assert!(install_due(Some(&failed), "1.0.0", t0 + retry_after(1)));
+        assert!(install_due(Some(&failed), "1.0.1", t0), "another release may work");
+        assert!(retry_after(1) >= CHECK_EVERY, "the first wait spans a check");
     }
 
     #[test]
