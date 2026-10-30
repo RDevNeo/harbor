@@ -18,11 +18,11 @@ isn't meant for Vencord's repository: it runs stock Vencord, unmodified.
 |---|---|
 | `main.js` | Electron main: one offscreen page at 1 fps, no window, tray or UI. A real window opens only for a password, 2FA or a captcha at sign-in. |
 | `preload.js` | Loads stock Vencord into the page; on the login page, listens to Discord's own QR socket so Harbor can draw the code. |
-| `page/harbor.js` | **All the tools**, as code in the page, plus the self-test. The host only calls `$harbor.call(name, args)`, so the engine can be swapped. |
+| `page/harbor.js` | **All the tools**, as code in the page, plus the self-test and the wait for Discord's reconnect after a freeze. The host only calls `$harbor.call(name, args)`, so the engine can be swapped. |
 | `tools.json` | The tools' names and schemas, read without starting anything. |
 | `scratch.js` | The low-level tools (eval, click, key, query, findModule). Loaded only in scratch mode: a throwaway logged-out page for repair. A signed-in page has none of them. |
 | `SHA256SUMS` | What Harbor checks the download against. Run `sums.sh` after changing a file; a Harbor test fails if you forget. |
-| `test/` | A fake Discord and an end-to-end rig (`node test/rig.mjs <harbor> <electron>`). Not downloaded. |
+| `test/` | A fake Discord and an end-to-end rig (`node test/rig.mjs <harbor> <electron>`), and `try.sh` for trying a branch on a real desktop. Not downloaded. |
 
 Harbor fetches official Electron (pinned by sha256) and Vencord's rolling release from their own
 GitHub releases, and these files from this repository at the build's commit, so no build job is

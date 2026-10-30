@@ -188,8 +188,7 @@ async function capture(opts) {
 async function quit() {
     // A hard kill can lose the newest writes to the profile, the session among them.
     try {
-        await session.defaultSession.flushStorageData();
-        await session.defaultSession.cookies.flushStore();
+        await ops.flush();
     } catch { /* quitting anyway */ }
     app.exit(0);
 }
@@ -204,6 +203,14 @@ const ops = {
     state: () => run("$harbor.state()"),
     inject,
     logout: () => run("$harbor.logout()"),
+    // Before a freeze: a frozen client can be lost with the PC.
+    flush: async () => {
+        await session.defaultSession.flushStorageData();
+        await session.defaultSession.cookies.flushStore();
+    },
+    thawed: () => { busy(); return run("$harbor.thawed()"); },
+    settled: () => run("$harbor.settled()"),
+    gateway: () => run("$harbor.gateway()"),
     // The real window, on the same session; the hidden page goes.
     show: () => {
         const old = win;

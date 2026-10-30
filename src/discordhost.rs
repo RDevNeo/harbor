@@ -4,14 +4,16 @@
 //! minutes after the engine stopped; the next user starts it again.
 //!
 //! Everything about Electron is behind [`Engine`]; the tools are the page's (discord/page), so
-//! nothing here depends on either. When the engine runs is [`Policy`]: start on the first tool
-//! call, stop after a long idle, never more than a few starts a day, because reconnecting often
-//! is itself something Discord's spam filter looks at.
+//! nothing here depends on either. When the engine runs is [`Policy`]: it starts on the first tool
+//! call, freezes after a short idle, and thaws on the next call, as a laptop sleeps and wakes.
+//! A thawed client reconnects by itself; a long freeze can cost a full login, and logging in often
+//! is something Discord's spam filter looks at, so past a daily count it stops freezing.
 //!
 //! At every page load the self-test checks what the tools need from Discord. A failure after a
 //! Vencord update goes back to the last version that passed; if it still fails, Discord itself
 //! changed and repair starts (discordrepair.rs).
 
+use crate::discordfreeze::Held;
 use crate::discordsetup as setup;
 use crate::mcp::write_private;
 use crate::store;
@@ -34,6 +36,10 @@ const START_WAIT: Duration = Duration::from_secs(120);
 const LINGER: i64 = 300;
 /// The tool calls' limit, unless the call says otherwise.
 const CALL_WAIT: Duration = Duration::from_secs(120);
+/// A thaw until the page answers at all; the first after a full reclaim was seen taking 4 s.
+const THAW_WAIT: Duration = Duration::from_secs(20);
+/// What a screenshot gives a reconnect: the page's own limit, and a bit.
+const LIVE_WAIT: Duration = Duration::from_secs(25);
 /// From the page answering until it knows who's signed in.
 const SESSION_WAIT: Duration = Duration::from_secs(45);
 /// Sign-in gives up after this long.
@@ -49,16 +55,23 @@ pub enum Mode {
     Scratch,
 }
 
-/// Runs Discord's page. The host only needs this; suspend and resume join it if freezing an idle
-/// page turns out to work.
+/// Runs Discord's page. A reboot or a crash just means [`Engine::start`] again: a client that's
+/// gone can't be told from one that never ran.
 pub trait Engine: Send + Sync {
     fn start(&self, mode: Mode, display: &Display) -> Result<(), String>;
     /// The page answers: the tools can be called.
     fn ready(&self) -> bool;
+    /// It's there at all, frozen or not.
+    fn alive(&self) -> bool;
     /// Quits cleanly (the session is on disk) and returns when it's gone.
     fn stop(&self);
     /// One request to the page; its answer.
     fn ask(&self, op: Value, wait: Duration) -> Result<Value, String>;
+    /// Holds it still; says how ("cgroup" or "signals"). Nothing it does can run until [`Self::resume`].
+    fn suspend(&self) -> Result<&'static str, String>;
+    fn resume(&self);
+    /// Gives up a suspended client's memory, until `stop`.
+    fn reclaim(&self, stop: &AtomicBool);
 }
 
 /// The desktop a sign-in window would open on; empty: there is none.
@@ -98,11 +111,12 @@ struct Electron {
     next: AtomicU64,
     /// Which start this is: what's left of an earlier one can't touch the current one's state.
     run: Arc<AtomicU64>,
+    held: Mutex<Option<Arc<Held>>>,
 }
 
 impl Electron {
     fn new(data: PathBuf, events: Sender<(Mode, Value)>) -> Electron {
-        Electron { child: Mutex::new(None), stdin: Mutex::new(None), waiters: Default::default(), ready: Default::default(), events, data, next: AtomicU64::new(1), run: Default::default() }
+        Electron { child: Mutex::new(None), stdin: Mutex::new(None), waiters: Default::default(), ready: Default::default(), events, data, next: AtomicU64::new(1), run: Default::default(), held: Mutex::new(None) }
     }
 }
 
@@ -119,12 +133,24 @@ impl Engine for Electron {
             // A rig's fake Discord; the shell's default is the real one.
             "url": std::env::var(if mode == Mode::Scratch { "HARBOR_DISCORD_SCRATCH_URL" } else { "HARBOR_DISCORD_URL" }).ok(),
         });
-        let mut cmd = Command::new(setup::electron_bin());
-        cmd.arg(setup::shell_dir()).env_clear();
-        for k in ["HOME", "PATH", "LANG", "TZ", "XDG_RUNTIME_DIR"] {
+        // The running page gets a cgroup of its own, for freezing it. Without one it runs all the same.
+        let mut cmd = match in_scope(mode) {
+            Some(unit) => {
+                let mut c = Command::new("systemd-run");
+                c.args(["--user", "--scope", "--quiet", "--collect", "-p", "Delegate=yes", &format!("--unit={unit}"), "--"]).arg(setup::electron_bin());
+                c
+            }
+            None => Command::new(setup::electron_bin()),
+        };
+        cmd.arg(setup::shell_dir()).env_clear().env("XDG_RUNTIME_DIR", runtime_dir());
+        for k in ["HOME", "PATH", "LANG", "TZ"] {
             if let Ok(v) = std::env::var(k) {
                 cmd.env(k, v);
             }
+        }
+        // Chromium only moves to a second cgroup of its own with a session bus: a rig's way to get one.
+        if let Ok(v) = std::env::var("HARBOR_DISCORD_DBUS") {
+            cmd.env("DBUS_SESSION_BUS_ADDRESS", v);
         }
         cmd.env("HARBOR_DISCORD", cfg.to_string());
         // A window can only open on a real desktop, and only sign-in has one. The rest has no
@@ -146,6 +172,9 @@ impl Engine for Electron {
         let mut child = cmd.spawn().map_err(|e| format!("Couldn't start Electron: {e}"))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let out = child.stdout.take().ok_or("no stdout")?;
+        if mode == Mode::Run {
+            let _ = write_private(&left_over_path(), &child.id().to_string());
+        }
         *self.stdin.lock().unwrap() = Some(stdin);
         *self.child.lock().unwrap() = Some(child);
         self.ready.store(false, Ordering::SeqCst);
@@ -181,18 +210,23 @@ impl Engine for Electron {
         self.ready.load(Ordering::SeqCst)
     }
 
+    fn alive(&self) -> bool {
+        self.child.lock().unwrap().as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+    }
+
     fn stop(&self) {
+        self.resume();
         let Some(mut c) = self.child.lock().unwrap().take() else { return };
-        let _ = self.ask(json!({ "op": "quit" }), Duration::from_secs(5));
+        let _ = std::fs::remove_file(left_over_path());
+        if matches!(c.try_wait(), Ok(None)) {
+            let _ = self.ask(json!({ "op": "quit" }), Duration::from_secs(5));
+        }
         *self.stdin.lock().unwrap() = None;
         let until = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < until {
-            if matches!(c.try_wait(), Ok(Some(_))) {
-                return;
-            }
+        while Instant::now() < until && !matches!(c.try_wait(), Ok(Some(_))) {
             std::thread::sleep(Duration::from_millis(50));
         }
-        // The shell leads its own process group (`process_group(0)` above).
+        // The shell leads its own process group (`process_group(0)` above); whatever it left goes.
         if let Some(pid) = rustix::process::Pid::from_raw(c.id() as i32) {
             let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
         }
@@ -222,33 +256,85 @@ impl Engine for Electron {
             Err(_) => Err("Discord stopped.".into()),
         }
     }
+
+    fn suspend(&self) -> Result<&'static str, String> {
+        let leader = self.child.lock().unwrap().as_ref().map(|c| c.id() as i32).ok_or("Discord isn't running.")?;
+        let h = Arc::new(crate::discordfreeze::freeze(leader)?);
+        let word = h.word();
+        *self.held.lock().unwrap() = Some(h);
+        Ok(word)
+    }
+
+    fn resume(&self) {
+        if let Some(h) = self.held.lock().unwrap().take() {
+            crate::discordfreeze::thaw(&h);
+        }
+    }
+
+    fn reclaim(&self, stop: &AtomicBool) {
+        let h = self.held.lock().unwrap().clone();
+        if let Some(h) = h {
+            crate::discordfreeze::reclaim(&h, stop);
+        }
+    }
+}
+
+/// The scope a running page starts in, where systemd can make one.
+fn in_scope(mode: Mode) -> Option<String> {
+    if mode != Mode::Run || std::env::var_os("HARBOR_DISCORD_NO_CGROUP").is_some() {
+        return None;
+    }
+    let ok = Command::new("systemd-run")
+        .args(["--user", "--scope", "--quiet", "--collect", "true"])
+        .env("XDG_RUNTIME_DIR", runtime_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    ok.is_ok_and(|s| s.success()).then(|| format!("harbor-discord-{}-{}", std::process::id(), store::now()))
+}
+
+/// Where systemd --user listens; the host may have been started without it in its environment.
+fn runtime_dir() -> String {
+    std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", rustix::process::getuid().as_raw()))
+}
+
+/// The shell's pid while it runs: a host that died can't leave a frozen client behind for good.
+fn left_over_path() -> PathBuf {
+    setup::root().join("engine.pid")
 }
 
 // ------------------------------------------------------------------ when it runs
 
-/// When the engine stops. The defaults are a judgement call, not a measured limit: the numbers
-/// keep reconnects to about what a person opening Discord a few times a day does.
+/// Full gateway logins (IDENTIFY) a day before freezing stops, and the client just stays running.
+/// A judgement call: nobody has published a safe rate. A person's client does a few of these a day;
+/// a thaw inside Discord's resume window doesn't count, one past it does.
+pub const MAX_LOGINS: usize = 20;
+/// Idle this long, so a burst of tool calls doesn't freeze and thaw between calls.
+const FREEZE_AFTER: i64 = 120;
+
+/// When the engine freezes.
 #[derive(Clone, Copy)]
 pub struct Policy {
     pub idle: i64,
-    pub max_starts: usize,
+    pub max_logins: usize,
 }
 
 const DAY: i64 = 24 * 3600;
 
 impl Default for Policy {
     fn default() -> Self {
-        // A rig's shorter idle.
-        let idle = std::env::var("HARBOR_DISCORD_IDLE").ok().and_then(|s| s.parse().ok()).unwrap_or(30 * 60);
-        Policy { idle, max_starts: 8 }
+        // A rig's shorter idle and limit.
+        let n = |k: &str, or: i64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(or);
+        Policy { idle: n("HARBOR_DISCORD_IDLE", FREEZE_AFTER), max_logins: n("HARBOR_DISCORD_MAX_LOGINS", MAX_LOGINS as i64) as usize }
     }
 }
 
 impl Policy {
-    /// Whether a running engine should stop now. `busy`: tool calls in flight, a waitForMessage
-    /// among them. `starts`: when it started lately; once the day's starts are used up it stays.
-    pub fn stop_now(&self, now: i64, last_use: i64, busy: u32, starts: &[i64]) -> bool {
-        busy == 0 && now - last_use >= self.idle && starts.iter().filter(|t| now - **t < DAY).count() < self.max_starts
+    /// Whether a running engine should freeze now. `busy`: tool calls in flight, a waitForMessage
+    /// among them. `logins`: when it last logged in; past the limit it stays running for the day.
+    pub fn freeze_now(&self, now: i64, last_use: i64, busy: u32, logins: &[i64]) -> bool {
+        busy == 0 && now - last_use >= self.idle && logins.iter().filter(|t| now - **t < DAY).count() < self.max_logins
     }
 }
 
@@ -351,6 +437,9 @@ enum Phase {
     Setup,
     Starting,
     Ready,
+    /// Going into a freeze, or coming out: calls wait for what's next.
+    Moving,
+    Frozen,
     Signin,
 }
 
@@ -372,9 +461,9 @@ struct Signin {
 /// What survives the host (`state.json`).
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Saved {
-    /// Recent starts (unix seconds).
+    /// Recent full logins (unix seconds).
     #[serde(default)]
-    starts: Vec<i64>,
+    logins: Vec<i64>,
     /// When the engine last stopped: a wait after that catches up on what it missed.
     #[serde(default)]
     stopped: i64,
@@ -413,8 +502,17 @@ struct St {
     /// Tools the last self-test says can't work, with what's missing.
     broken: HashMap<String, Vec<String>>,
     saved: Saved,
-    /// A wait may use this once: the engine wasn't running from then until this start.
+    /// A wait may use this once: the engine wasn't running from then until it came back.
     catch_up: Option<i64>,
+    /// How the client is frozen, and since when.
+    held: &'static str,
+    frozen_at: i64,
+    /// Tells reclaim a call wants the client back.
+    reclaiming: Arc<AtomicBool>,
+    /// CONNECTION_OPENs this page has counted so far.
+    opens: u64,
+    /// A newer Vencord is here: the next idle restarts instead of freezing.
+    restart: bool,
     /// The chat view's internals have been judged in this page.
     chat_tested: bool,
     repairing: bool,
@@ -528,19 +626,25 @@ impl Host {
 
     // -------------------------------------------------------------- lifecycle
 
-    /// The page is up and answering, started if it wasn't.
+    /// The page is up and answering: started if it wasn't, thawed if it's frozen.
     fn ensure(self: &Arc<Self>) -> Result<(), String> {
         let mut st = self.st.lock().unwrap();
         loop {
             match st.phase {
                 Phase::Ready => return Ok(()),
                 Phase::Signin | Phase::Setup => return Err("Discord is signing in on this PC. Try again when that's done.".into()),
-                Phase::Starting => {
+                Phase::Starting | Phase::Moving => {
                     let (s, wait) = self.moved.wait_timeout(st, START_WAIT).unwrap();
                     st = s;
                     if wait.timed_out() {
                         return Err("Discord is taking too long to start.".into());
                     }
+                }
+                Phase::Frozen => {
+                    st.phase = Phase::Moving;
+                    st.reclaiming.store(true, Ordering::Relaxed);
+                    drop(st);
+                    return self.thaw();
                 }
                 Phase::Stopped => {
                     if account().is_none() {
@@ -549,15 +653,95 @@ impl Host {
                     st.phase = Phase::Starting;
                     st.error = None;
                     drop(st);
-                    let r = self.boot();
-                    self.set(|st| {
-                        st.phase = if r.is_ok() { Phase::Ready } else { Phase::Stopped };
-                        st.error = r.as_ref().err().cloned();
-                    });
-                    return r;
+                    return self.cold_start();
                 }
             }
         }
+    }
+
+    /// From nothing: a first call, a reboot, a crash, a thaw that didn't come back.
+    fn cold_start(self: &Arc<Self>) -> Result<(), String> {
+        let r = self.boot();
+        self.set(|st| {
+            st.phase = if r.is_ok() { Phase::Ready } else { Phase::Stopped };
+            st.error = r.as_ref().err().cloned();
+        });
+        r
+    }
+
+    /// Wakes the client as Discord wakes after a laptop sleeps: the page checks its connection and
+    /// reconnects, and live tools wait for that in the page. One that doesn't answer starts over.
+    fn thaw(self: &Arc<Self>) -> Result<(), String> {
+        self.engine.resume();
+        let state = self.engine.ask(json!({ "op": "thawed" }), THAW_WAIT);
+        self.set(|st| st.held = "");
+        match state {
+            Ok(s) if s["path"].as_str().is_some_and(|p| p.starts_with("/login")) => {
+                self.session_ended();
+                self.set(|st| st.phase = Phase::Stopped);
+                Err("Discord ended this session: sign in again under Settings › Integrations › Apps.".into())
+            }
+            Ok(_) => {
+                self.set(|st| {
+                    st.phase = Phase::Ready;
+                    st.last_use = store::now();
+                });
+                Ok(())
+            }
+            Err(_) => {
+                self.engine.stop();
+                self.set(|st| st.phase = Phase::Starting);
+                self.cold_start()
+            }
+        }
+    }
+
+    /// Holds the idle client still and gives up its memory. Saved first: a frozen client can be
+    /// lost with the PC, and it mustn't take the newest of the profile with it.
+    fn freeze(self: &Arc<Self>) {
+        {
+            let mut st = self.st.lock().unwrap();
+            if st.phase != Phase::Ready || st.busy > 0 {
+                return;
+            }
+            st.phase = Phase::Moving;
+        }
+        let _ = self.engine.ask(json!({ "op": "flush" }), Duration::from_secs(5));
+        let done = self.engine.suspend();
+        let stop = Arc::new(AtomicBool::new(false));
+        let now = store::now();
+        self.set(|st| match done {
+            Ok(how) => {
+                st.phase = Phase::Frozen;
+                st.held = how;
+                st.frozen_at = now;
+                st.catch_up.get_or_insert(now);
+                st.reclaiming = stop.clone();
+            }
+            // Not this time: it stays running, and idle asks again.
+            Err(_) => {
+                st.phase = Phase::Ready;
+                st.last_use = now;
+            }
+        });
+        if self.get(|st| st.phase == Phase::Frozen) {
+            let me = self.clone();
+            std::thread::spawn(move || me.engine.reclaim(&stop));
+        }
+    }
+
+    /// Adds the logins the page has seen since the last look.
+    fn count_logins(&self) {
+        let Ok(g) = self.engine.ask(json!({ "op": "gateway" }), Duration::from_secs(5)) else { return };
+        let page = g["opens"].as_u64().unwrap_or(0);
+        let now = store::now();
+        self.set(|st| {
+            let seen = if page < st.opens { 0 } else { st.opens };
+            st.saved.logins.retain(|t| now - t < DAY);
+            st.saved.logins.extend((seen..page).map(|_| now));
+            st.opens = page;
+        });
+        self.save();
     }
 
     /// Starts the engine and judges what came up. A failed self-test can restart it on another
@@ -568,6 +752,7 @@ impl Host {
         setup::ensure_shell(&say)?;
         setup::ensure_vencord(&say)?;
         setup::check_vencord(false);
+        self.set(|st| st.restart = false);
         for _ in 0..3 {
             self.start_page()?;
             let test = self.selftest()?;
@@ -584,12 +769,9 @@ impl Host {
             st.broken.clear();
             st.chat_tested = false;
             st.catch_up = Some(st.saved.stopped).filter(|t| *t > 0);
-            let now = store::now();
-            st.saved.starts.retain(|t| now - t < DAY);
-            st.saved.starts.push(now);
-            st.last_use = now;
+            st.opens = 0;
+            st.last_use = store::now();
         });
-        self.save();
         self.engine.start(Mode::Run, &Display::default())?;
         let until = Instant::now() + START_WAIT;
         while !self.engine.ready() {
@@ -609,6 +791,14 @@ impl Host {
         while Instant::now() < until {
             let state = self.engine.ask(json!({ "op": "state" }), Duration::from_secs(10))?;
             if !state["user"].is_null() {
+                // A page that came up signed in logged in, seen or not.
+                let now = store::now();
+                self.set(|st| {
+                    st.saved.logins.retain(|t| now - t < DAY);
+                    st.saved.logins.push(now);
+                    st.opens = 1;
+                });
+                self.save();
                 return Ok(());
             }
             if state["path"].as_str().is_some_and(|p| p.starts_with("/login")) {
@@ -631,6 +821,8 @@ impl Host {
     }
 
     pub fn stop_page(&self) {
+        // Calls wait for what comes next instead of finding it half gone.
+        self.set(|st| st.phase = Phase::Moving);
         self.engine.stop();
         self.set(|st| {
             st.phase = Phase::Stopped;
@@ -685,9 +877,12 @@ impl Host {
             return;
         }
         let me = self.clone();
+        self.set(|st| st.busy += 1);
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(2));
-            if let Ok(t) = me.selftest() {
+            let t = me.selftest();
+            me.set(|st| st.busy -= 1);
+            if let Ok(t) = t {
                 me.judge_running(t);
             }
         });
@@ -726,9 +921,64 @@ impl Host {
         let _ = std::fs::remove_dir_all(setup::root().join("scratch"));
     }
 
+    /// The client is up and counts as in use until [`Self::leave`]: it can't freeze in between.
+    fn enter(self: &Arc<Self>) -> Result<(), String> {
+        loop {
+            self.ensure()?;
+            let mut st = self.st.lock().unwrap();
+            if st.phase == Phase::Ready {
+                st.busy += 1;
+                st.last_use = store::now();
+                return Ok(());
+            }
+        }
+    }
+
+    fn leave(&self) {
+        self.set(|st| {
+            st.busy -= 1;
+            st.last_use = store::now();
+        });
+    }
+
+    /// A request about the page itself. Anything shown of it comes after the reconnect, like the
+    /// tools that read it.
+    fn page_op(self: &Arc<Self>, req: &Value) -> Result<Value, String> {
+        self.enter()?;
+        let r = self.engine.ask(json!({ "op": "settled" }), LIVE_WAIT).and_then(|_| self.engine.ask(req.clone(), Duration::from_secs(30)));
+        self.leave();
+        r
+    }
+
     /// Reads a tool's arguments and runs it.
     fn call(self: &Arc<Self>, name: &str, mut args: Value) -> Result<Value, String> {
-        self.ensure()?;
+        self.enter()?;
+        let r = self.run_tool(name, &mut args);
+        self.leave();
+        let v = r?;
+        match name {
+            "discord_join" if v["joined"] == true => pace_note("join"),
+            "discord_leave" if v["left"] == true => pace_note("leave"),
+            "discord_dm_open" if v["created"] == true => pace_note("dm"),
+            "discord_send" | "discord_react" if v["paced"] != true => {
+                if let Some(k) = pace_kind(name, &args) {
+                    pace_note(k);
+                }
+            }
+            _ => {}
+        }
+        if v["paced"] == true && name == "discord_dm_open" {
+            if let Pace::Refuse(why) = pace("dm", &pace_log(), store::now()) {
+                return Ok(json!({ "paced": true, "note": why }));
+            }
+        }
+        if matches!(name, "discord_open" | "discord_view" | "discord_dm_open" | "discord_send") {
+            self.test_chat_view();
+        }
+        Ok(v)
+    }
+
+    fn run_tool(self: &Arc<Self>, name: &str, args: &mut Value) -> Result<Value, String> {
         if let Some(missing) = self.get(|st| st.broken.get(name).cloned()) {
             let doing = if self.get(|st| st.repairing) { "Harbor is repairing it; try again in a few minutes." } else { "Discord tools need attention." };
             return Err(format!("This tool can't work right now: Discord changed {}. {doing}", missing.join(", ")));
@@ -737,8 +987,7 @@ impl Host {
         if name == "discord_dm_open" {
             args["_allowNew"] = json!(pace("dm", &pace_log(), store::now()) == Pace::Go);
         }
-        let kind = pace_kind(name, &args);
-        if let Some(k) = kind {
+        if let Some(k) = pace_kind(name, args) {
             match pace(k, &pace_log(), store::now()) {
                 Pace::Go => {}
                 Pace::Wait(s) => std::thread::sleep(Duration::from_secs(s as u64)),
@@ -750,36 +999,9 @@ impl Host {
                 args["_since"] = json!(t * 1000);
             }
         }
-        self.set(|st| {
-            st.busy += 1;
-            st.last_use = store::now();
-        });
-        let wait = call_wait(name, &args);
-        let r = self.engine.ask(json!({ "op": "call", "name": name, "args": args }), wait);
-        self.set(|st| {
-            st.busy -= 1;
-            st.last_use = store::now();
-        });
-        let v: Value = serde_json::from_str(r?.as_str().unwrap_or("null")).unwrap_or(Value::Null);
-        match name {
-            "discord_join" if v["joined"] == true => pace_note("join"),
-            "discord_leave" if v["left"] == true => pace_note("leave"),
-            "discord_dm_open" if v["created"] == true => pace_note("dm"),
-            _ => {
-                if let (Some(k), true) = (kind, matches!(name, "discord_send" | "discord_react")) {
-                    pace_note(k);
-                }
-            }
-        }
-        if v["paced"] == true && name == "discord_dm_open" {
-            if let Pace::Refuse(why) = pace("dm", &pace_log(), store::now()) {
-                return Ok(json!({ "paced": true, "note": why }));
-            }
-        }
-        if matches!(name, "discord_open" | "discord_view" | "discord_dm_open" | "discord_send") {
-            self.test_chat_view();
-        }
-        Ok(v)
+        let wait = call_wait(name, args);
+        let r = self.engine.ask(json!({ "op": "call", "name": name, "args": args }), wait)?;
+        Ok(serde_json::from_str(r.as_str().unwrap_or("null")).unwrap_or(Value::Null))
     }
 
     // -------------------------------------------------------------- sign-in
@@ -854,10 +1076,12 @@ impl Host {
             st.saved.attempts.clear();
         });
         self.save();
-        let running = self.get(|st| st.phase == Phase::Ready);
+        let frozen = self.get(|st| st.phase == Phase::Frozen);
+        let running = frozen || self.get(|st| st.phase == Phase::Ready);
         self.set(|st| st.phase = Phase::Setup);
         let me = self.clone();
         std::thread::spawn(move || {
+            me.engine.resume();
             if !running && me.engine.start(Mode::Run, &Display::default()).is_ok() {
                 let until = Instant::now() + Duration::from_secs(40);
                 while !me.engine.ready() && Instant::now() < until {
@@ -933,15 +1157,18 @@ impl Host {
             // A page that reloaded by itself may be a new Discord.
             "ready" if mode == Mode::Run && self.get(|st| st.phase == Phase::Ready) => {
                 let me = self.clone();
+                self.set(|st| st.busy += 1);
                 std::thread::spawn(move || {
                     me.set(|st| st.chat_tested = false);
-                    if let Ok(t) = me.selftest() {
+                    let t = me.selftest();
+                    me.set(|st| st.busy -= 1);
+                    if let Ok(t) = t {
                         me.judge_running(t);
                     }
                 });
             }
             "gone" => self.set(|st| {
-                if matches!(st.phase, Phase::Ready | Phase::Signin) {
+                if matches!(st.phase, Phase::Ready | Phase::Frozen | Phase::Signin) {
                     st.phase = Phase::Stopped;
                     st.saved.stopped = store::now();
                     if st.signin.active {
@@ -967,7 +1194,7 @@ impl Host {
         let r: Result<Value, String> = match op {
             "status" => Ok(self.status()),
             "call" => self.call(req["name"].as_str().unwrap_or(""), req["args"].clone()),
-            "rect" | "capture" => self.ensure().and_then(|_| self.engine.ask(req.clone(), Duration::from_secs(30))),
+            "rect" | "capture" => self.page_op(req),
             "signin" if req["accept"] != true => Err("Sign-in needs the warning accepted first.".into()),
             "signin" => self.signin(serde_json::from_value(req["display"].clone()).unwrap_or_default()).map(|_| json!({})),
             "window" => self.window().map(|_| json!({})),
@@ -1050,7 +1277,8 @@ fn status_json(st: Option<&St>, saved: &Saved) -> Value {
         "failing": saved.failing,
         "repairing": st.is_some_and(|s| s.repairing),
         "busy": st.map(|s| s.busy).unwrap_or(0),
-        "starts_today": saved.starts.iter().filter(|t| now - **t < DAY).count(),
+        "held": st.map(|s| s.held).unwrap_or(""),
+        "logins_today": saved.logins.iter().filter(|t| now - **t < DAY).count(),
         "vencord": v.current,
         "electron": setup::ELECTRON,
     })
@@ -1078,6 +1306,14 @@ pub fn run() -> i32 {
     let sock = setup::socket();
     let _ = std::fs::remove_file(&sock);
     let Ok(listener) = UnixListener::bind(&sock) else { return 1 };
+    // A host that died left its client, frozen perhaps: this one starts clean.
+    if let Some(pid) = std::fs::read_to_string(left_over_path()).ok().and_then(|p| p.trim().parse::<i32>().ok()) {
+        let shell = setup::shell_dir();
+        if std::fs::read_to_string(format!("/proc/{pid}/cmdline")).is_ok_and(|c| c.contains(shell.to_string_lossy().as_ref())) {
+            crate::discordfreeze::kill_left_over(pid);
+        }
+        let _ = std::fs::remove_file(left_over_path());
+    }
     let (tx, rx) = channel();
     let scratch_dir = root.join("scratch");
     let _ = std::fs::remove_dir_all(&scratch_dir);
@@ -1121,23 +1357,48 @@ fn serve(h: Arc<Host>, conn: UnixStream) {
 }
 
 impl Host {
-    /// The clock: idle stops, sign-in's time limit, and the host's own end.
+    /// The clock: idle freezes, sign-in's time limit, and the host's own end.
     fn watch(self: Arc<Self>, _lock: std::fs::File, sock: PathBuf) {
         loop {
             std::thread::sleep(Duration::from_secs(if self.policy.idle < 60 { 1 } else { 10 }));
             let now = store::now();
-            let (phase, last, busy, starts, repairing, signin_at) = self.get(|st| (st.phase, st.last_use, st.busy, st.saved.starts.clone(), st.repairing, st.signin_at));
-            if phase == Phase::Ready && !repairing && self.policy.stop_now(now, last, busy, &starts) {
-                self.stop_page();
+            let (phase, last, busy, repairing, signin_at) = self.get(|st| (st.phase, st.last_use, st.busy, st.repairing, st.signin_at));
+            if phase == Phase::Ready && !repairing && busy == 0 && now - last >= self.policy.idle {
+                self.idle(now, last);
             }
             if phase == Phase::Signin && now - signin_at > SIGNIN_WAIT.as_secs() as i64 {
                 self.cancel();
             }
+            // Frozen children keep the pipe open, so a dead client doesn't look like one by itself.
+            if matches!(phase, Phase::Ready | Phase::Frozen) && !self.engine.alive() {
+                self.stop_page();
+            }
             let quiet = now - self.touched.load(Ordering::Relaxed) as i64;
-            if phase == Phase::Stopped && !repairing && quiet > LINGER.min(self.policy.idle.max(5)) {
+            let gone = phase == Phase::Stopped && !repairing && quiet > LINGER.min(self.policy.idle.max(5));
+            // A new Harbor came: only a new host runs its shell.
+            let replaced = matches!(phase, Phase::Stopped | Phase::Frozen) && !repairing && std::env::current_exe().is_ok_and(|p| p.to_string_lossy().ends_with(" (deleted)"));
+            if gone || replaced {
+                self.engine.stop();
                 let _ = std::fs::remove_file(&sock);
                 std::process::exit(0);
             }
+        }
+    }
+
+    /// Nothing has used the client for a while: look for a new Vencord, then freeze, unless the day's
+    /// logins are used up. A new Vencord needs a fresh page, so that goes first.
+    fn idle(self: &Arc<Self>, now: i64, last: i64) {
+        self.count_logins();
+        if setup::check_vencord(false) {
+            self.set(|st| st.restart = true);
+        }
+        if self.get(|st| st.restart) {
+            self.stop_page();
+            return;
+        }
+        let logins = self.get(|st| st.saved.logins.clone());
+        if self.policy.freeze_now(now, last, 0, &logins) {
+            self.freeze();
         }
     }
 }
@@ -1156,6 +1417,11 @@ impl St {
             broken: HashMap::new(),
             saved: load_saved(),
             catch_up: None,
+            held: "",
+            frozen_at: 0,
+            reclaiming: Default::default(),
+            opens: 0,
+            restart: false,
             chat_tested: false,
             repairing: false,
         }
@@ -1167,18 +1433,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stops_after_idle_unless_busy_or_out_of_starts() {
-        let p = Policy { idle: 1800, max_starts: 8 };
-        let now = 100_000;
-        assert!(!p.stop_now(now, now - 1799, 0, &[]));
-        assert!(p.stop_now(now, now - 1800, 0, &[]));
+    fn freezes_after_idle_unless_busy_or_past_the_days_logins() {
+        let p = Policy { idle: FREEZE_AFTER, max_logins: MAX_LOGINS };
+        let now = 1_000_000;
+        // A burst of calls doesn't freeze between calls.
+        assert!(!p.freeze_now(now, now - 119, 0, &[]));
+        assert!(p.freeze_now(now, now - 120, 0, &[]));
         // A pending waitForMessage is a call in flight.
-        assert!(!p.stop_now(now, now - 9999, 1, &[]));
-        // The 8th start of the day stays running; older starts don't count.
-        let eight = vec![now - 10; 8];
-        assert!(!p.stop_now(now, now - 9999, 0, &eight));
-        let old = vec![now - DAY - 1; 8];
-        assert!(p.stop_now(now, now - 9999, 0, &old));
+        assert!(!p.freeze_now(now, now - 9999, 1, &[]));
+        // Past 20 logins it stays running until the day is over; older ones don't count.
+        assert!(p.freeze_now(now, now - 9999, 0, &vec![now - 10; MAX_LOGINS - 1]));
+        assert!(!p.freeze_now(now, now - 9999, 0, &vec![now - 10; MAX_LOGINS]));
+        assert!(p.freeze_now(now, now - 9999, 0, &vec![now - DAY - 1; MAX_LOGINS]));
     }
 
     #[test]
