@@ -7,9 +7,9 @@ mkdir -p "$cache" "$HOME/out"
 # container uses, hence the keep- container. Its images load in the background after the sandbox
 # is ready, from seconds to many minutes later, and no docker command waits for them, so
 # ~/cache/images lists the ones it should have. warm.sh therefore also saves each image as a plain
-# folder in ~/cache/rootfs: with one, there is nothing to wait for and run_in uses chroot.
+# folder in ~/cache/root: with one, there is nothing to wait for and run_in uses chroot.
 image() {
-  local img="$1:$(sha256sum "$2" | cut -c1-12)" root="$cache/rootfs/$1:$(sha256sum "$2" | cut -c1-12)"
+  local img="$1:$(sha256sum "$2" | cut -c1-12)" root="$cache/root/$1:$(sha256sum "$2" | cut -c1-12)"
   [ ! -d "$root/usr" ] || { rootfs_up "$img"; echo "$img"; return; }
   docker_image "$1" "$2"
 }
@@ -31,20 +31,20 @@ docker_image() {
 
 # rootfs_save <name> <dockerfile>: the image as a folder, dropping older ones of that name.
 rootfs_save() {
-  local img="$1:$(sha256sum "$2" | cut -c1-12)" root c; root="$cache/rootfs/$img"
+  local img="$1:$(sha256sum "$2" | cut -c1-12)" root c; root="$cache/root/$img"
   [ ! -d "$root/usr" ] || return 0
   docker_image "$1" "$2" >/dev/null
-  find "$cache/rootfs" -mindepth 1 -maxdepth 1 -name "$1:*" -exec rm -rf {} + 2>/dev/null || true
+  find "$cache/root" -mindepth 1 -maxdepth 1 -name "$1:*" -exec rm -rf {} + 2>/dev/null || true
   mkdir -p "$root"
   c=$(docker create "$img")
-  docker export "$c" | tar -x -C "$root" --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' 2>/dev/null || true
+  docker export "$c" | tar -x -C "$root" --anchored --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' 2>/dev/null || true
   docker rm "$c" >/dev/null
   docker image inspect "$img" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$root/.env"
 }
 # What a container gets from docker, for that folder, at /run/harbor/<image>: the same paths, so
 # cargo's fingerprints hold. Outside ~/cache and private: mounts in the snapshot's tree leak into it.
 rootfs_up() {
-  local root="$cache/rootfs/$1" m="/run/harbor/$1" d
+  local root="$cache/root/$1" m="/run/harbor/$1" d
   mountpoint -q "$m" && return
   mkdir -p "$root/src" "$root/c" "$root/out"
   sudo mkdir -p "$m"
@@ -60,13 +60,14 @@ rootfs_up() {
 rootfs_down() {
   local m r
   for m in /run/harbor/*/; do ! mountpoint -q "$m" || sudo umount -R -l "$m"; done
-  for r in "$cache"/rootfs/*/; do rm -rf "${r}src" "${r}c" "${r}out"; done
+  for r in "$cache"/root/*/; do rm -rf "${r}src" "${r}c" "${r}out"; done
+  rm -rf "$cache/rootfs"  # from before tar's exclusions were anchored: no sys/ headers
 }
 
 # run_in <image> [docker options: only -e] -- <command>. The source is always mounted at /src:
 # cargo's fingerprints include the path.
 run_in() {
-  local img="$1" opts=() root="$cache/rootfs/$1"; shift
+  local img="$1" opts=() root="$cache/root/$1"; shift
   while [ "$1" != -- ]; do opts+=("$1"); shift; done; shift
   if [ -d "$root/usr" ]; then
     # A clean environment, as in a container (tests notice LC_ALL), but for what was asked for.
