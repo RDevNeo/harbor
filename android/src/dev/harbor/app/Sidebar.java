@@ -18,6 +18,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,18 +30,20 @@ import java.util.Set;
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
  *  dot while a turn runs. A round avatar (this PC) and the black "New session" pill float at
- *  the bottom.
+ *  the bottom. The title row's workspace button narrows the list to one of the account's
+ *  workspaces, as the desktop sidebar's does.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
 final class Sidebar {
     final Base a;
     final FrameLayout view;
     private final LinearLayout list;
     private final EditText search;
-    private final TextView avatar;
+    private final TextView avatar, wsBtn;
     private final String current; // the open chat (highlighted), or null
     private JSONObject st;
     private boolean showSettled;
     private String filter; // project id, "" = all
+    private WsFilter scope = new WsFilter("", "", null, new HashMap<>()); // as last drawn
 
     Sidebar(Base a, String current) {
         this.a = a;
@@ -53,6 +56,11 @@ final class Sidebar {
         LinearLayout head = Ui.row(a);
         head.setPadding(Ui.dp(20), Ui.dp(14), Ui.dp(8), Ui.dp(4));
         head.addView(Ui.heading(a, "Harbor", 26), Ui.weight());
+        // Which workspace's chats show; hidden until `render` knows there are any.
+        wsBtn = Ui.iconButton(a, Ui.I_USERS, Ui.FG, v -> pickWorkspace());
+        wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        wsBtn.setVisibility(View.GONE);
+        head.addView(wsBtn);
         // Search everything (the desktop's Ctrl+K palette); a long press filters this list instead.
         TextView find = Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> palette());
         find.setOnLongClickListener(v -> { toggleSearch(); return true; });
@@ -161,6 +169,12 @@ final class Sidebar {
             if (p != null) projects.put(p.optString("id"), p.optString("name"));
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
+        // A workspace that's gone (left, signed out) shows as All.
+        JSONObject ws = Account.workspace(a, wsChoice());
+        drawWsBtn(ws);
+        Map<String, String> pcs = Account.pcWorkspaces(a);
+        String hubId = st.optString("hub_id");
+        scope = new WsFilter(ws == null ? "" : ws.optString("id"), hubId, pcs.containsKey(hubId) ? pcs.get(hubId) : Account.wsOf(a.hub), pcs);
 
         if (offTitle != null) {
             TextView icon = Ui.icon(a, Ui.I_MONITOR, 18, Ui.RED);
@@ -196,21 +210,25 @@ final class Sidebar {
 
         String q = search.getText().toString().trim().toLowerCase();
         String you = st.optString("you", "");
-        // The chats that pass the project filter and the search, by id.
+        // The chats that pass the filters and the search, by id. A project's main chat stays
+        // for its header whatever the workspace: the project's other chats may be in this one.
         Map<String, JSONObject> byId = new LinkedHashMap<>();
         JSONArray ca = st.optJSONArray("chats");
         if (ca != null) for (int i = 0; i < ca.length(); i++) {
             JSONObject c = ca.optJSONObject(i);
             if (c == null || "sub".equals(c.optString("role"))) continue; // a lead's subagents live inside its chat, as on the desktop
             String pid = c.isNull("project_id") ? "" : c.optString("project_id");
+            if ("lead".equals(c.optString("role")) && !c.optBoolean("settled")) scope.saw(c.optString("home"), pid);
+            if (!scope.shows(c.optString("home")) && !c.optBoolean("main")) continue;
             if (!filter.isEmpty() && !filter.equals(pid)) continue;
             if (!q.isEmpty() && !c.optString("title").toLowerCase().contains(q) && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             byId.put(c.optString("id"), c);
         }
+        String nothing = !q.isEmpty() ? "No chat matches “" + q + "”."
+                : scope.active() ? "No chats of " + ws.optString("name") + " reach this PC."
+                : "No chats yet. Start one with New session.";
         if (byId.isEmpty()) {
-            TextView t = Ui.text(a, q.isEmpty() ? "No chats yet. Start one with New session." : "No chat matches “" + q + "”.", 14, Ui.G700);
-            t.setPadding(Ui.dp(20), Ui.dp(16), Ui.dp(20), Ui.dp(16));
-            list.addView(t, Ui.fill());
+            none(nothing);
             return;
         }
         // By project, in the desktop sidebar's order, newest first in each; chats without a
@@ -262,7 +280,7 @@ final class Sidebar {
         boolean first = true;
         for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
             JSONObject main = mains.get(g.getKey());
-            if (g.getValue().isEmpty() && main == null) continue;
+            if (!scope.showsProject(g.getKey()) || (g.getValue().isEmpty() && main == null)) continue;
             if (!first) divider();
             first = false;
             group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty(), main, withMains.contains(g.getKey()));
@@ -279,7 +297,15 @@ final class Sidebar {
             h.setOnClickListener(v -> { showSettled = !showSettled; render(st); });
             list.addView(h, Ui.fill());
             if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
+        } else if (first && scope.active()) {
+            none(nothing); // only main chats of projects the filter left out
         }
+    }
+
+    private void none(String text) {
+        TextView t = Ui.text(a, text, 14, Ui.G700);
+        t.setPadding(Ui.dp(20), Ui.dp(16), Ui.dp(20), Ui.dp(16));
+        list.addView(t, Ui.fill());
     }
 
     // ---- the two update banners (the desktop's pop-ups, src/notices.rs), never merged ----
@@ -622,10 +648,44 @@ final class Sidebar {
         return r;
     }
 
+    /** The workspace picked on this phone ("": all), which may be gone since. */
+    private String wsChoice() { return Ui.prefs(a).getString("ws-filter", ""); }
+
+    /** The title row's workspace button: only with workspaces to pick, tinted while one is picked. */
+    private void drawWsBtn(JSONObject ws) {
+        JSONArray all = Account.directory(a).optJSONArray("workspaces");
+        wsBtn.setVisibility(all == null || all.length() == 0 ? View.GONE : View.VISIBLE);
+        wsBtn.setTextColor(ws == null ? Ui.FG : Ui.BLUE);
+        wsBtn.setBackground(Ui.press(ws == null ? 0 : Ui.G100, 0, 22));
+        wsBtn.setContentDescription(ws == null ? "Workspace: all" : "Workspace: " + ws.optString("name"));
+    }
+
+    /** All, then the account's workspaces; the desktop sidebar's workspace menu. */
+    private void pickWorkspace() {
+        String pc = st == null ? "" : st.optString("hub_name");
+        String here = Account.pcWorkspaces(a).get(st == null ? "" : st.optString("hub_id"));
+        List<Sheet.Option> o = new ArrayList<>();
+        o.add(new Sheet.Option("", "All", pc.isEmpty() ? "" : "Every chat on " + pc, true));
+        JSONArray all = Account.directory(a).optJSONArray("workspaces");
+        for (int i = 0; all != null && i < all.length(); i++) {
+            JSONObject w = all.optJSONObject(i);
+            if (w == null) continue;
+            String id = w.optString("id");
+            o.add(new Sheet.Option(id, w.optString("name"), id.equals(here) && !pc.isEmpty() ? pc + "'s workspace" : "", true));
+        }
+        String picked = Account.workspace(a, wsChoice()) == null ? "" : wsChoice();
+        Sheet.pick(a, "Workspace", null, o, picked, id -> {
+            Ui.prefs(a).edit().putString("ws-filter", id).apply();
+            if (st != null) render(st);
+        });
+    }
+
     private void pickProject(Map<String, String> projects) {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("", "All projects", "", true));
-        for (Map.Entry<String, String> p : projects.entrySet()) o.add(new Sheet.Option(p.getKey(), p.getValue(), "", true));
+        for (Map.Entry<String, String> p : projects.entrySet()) {
+            if (scope.showsProject(p.getKey())) o.add(new Sheet.Option(p.getKey(), p.getValue(), "", true));
+        }
         Sheet.pick(a, "Projects", null, o, filter, id -> {
             filter = id;
             Ui.prefs(a).edit().putString("filter-" + a.hub.id, id).apply();

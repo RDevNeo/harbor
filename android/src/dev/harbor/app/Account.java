@@ -24,8 +24,10 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.Signature;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /** The phone's Google sign-in and its account (android/PROTOCOL.md, "Accounts"). Clerk is the
  *  OAuth provider: the browser opens its sign-in (Google only) and comes back through the
@@ -124,6 +126,21 @@ final class Account {
             if (w != null && ws.equals(w.optString("id"))) return w;
         }
         return null;
+    }
+
+    /** The directory's PCs by mesh id, each with its workspace's id. */
+    static Map<String, String> pcWorkspaces(Context c) {
+        Map<String, String> out = new HashMap<>();
+        JSONArray a = directory(c).optJSONArray("workspaces");
+        for (int i = 0; a != null && i < a.length(); i++) {
+            JSONObject w = a.optJSONObject(i);
+            JSONArray pcs = w == null ? null : w.optJSONArray("pcs");
+            for (int k = 0; pcs != null && k < pcs.length(); k++) {
+                JSONObject p = pcs.optJSONObject(k);
+                if (p != null && !p.optString("id").isEmpty()) out.put(p.optString("id"), w.optString("id"));
+            }
+        }
+        return out;
     }
 
     /** "ws:<id>" → "<id>": the workspace a hub entry stands for (null for none). */

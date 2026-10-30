@@ -26,6 +26,7 @@
 use crate::store;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -188,6 +189,11 @@ impl Directory {
     pub fn of(&self, ws: &str) -> Option<&Dir> {
         self.workspaces.iter().find(|d| d.ws.id == ws)
     }
+
+    /// Each PC it lists, by mesh id, with its workspace's id.
+    pub fn pc_workspaces(&self) -> HashMap<String, String> {
+        self.workspaces.iter().flat_map(|d| d.pcs.iter().filter(|p| !p.id.is_empty()).map(|p| (p.id.clone(), d.ws.id.clone()))).collect()
+    }
 }
 
 /// Who is signed in here (kv `account`): no secrets.
@@ -285,6 +291,11 @@ pub fn account() -> Option<Account> {
 
 pub fn signed_in() -> bool {
     LIVE.read().unwrap().account.is_some()
+}
+
+/// The workspaces of whoever is signed in here (none while nobody is).
+pub fn workspaces() -> Vec<Workspace> {
+    LIVE.read().unwrap().account.as_ref().map(|a| a.workspaces.clone()).unwrap_or_default()
 }
 
 /// This PC's workspace id ("" when it's in none).
@@ -1252,6 +1263,16 @@ mod tests {
         c3["iss"] = json!("someone");
         assert!(verify_with(&token(&kp, c3), &keys, now).is_err(), "issuer");
         assert!(verify_with("abc", &keys, now).is_err() && !is_token("0123abcd"));
+    }
+
+    #[test]
+    fn the_directory_says_each_pcs_workspace() {
+        let pc = |id: &str| Pc { id: id.into(), ..Default::default() };
+        let dir = |ws: &str, pcs| Dir { ws: Workspace { id: ws.into(), ..Default::default() }, pcs, ..Default::default() };
+        let d = Directory { at: 0, workspaces: vec![dir("a", vec![pc("ts:desk"), pc("")]), dir("b", vec![pc("ts:other")])] };
+        let got = d.pc_workspaces();
+        assert_eq!(got.len(), 2, "a PC without an id can't be told from a chat's home");
+        assert_eq!((got["ts:desk"].as_str(), got["ts:other"].as_str()), ("a", "b"));
     }
 
     #[test]

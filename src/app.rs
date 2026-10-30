@@ -70,6 +70,8 @@ pub enum Popup {
     Access,
     Project,
     Filter,
+    /// The sidebar's filter by account workspace (not `Workspace`, a chat's checkout or worktree).
+    WsFilter,
     /// Snooze menu for `App::snooze_for` (a chat or a project).
     Snooze,
     /// Which device the agent runs on.
@@ -235,6 +237,8 @@ pub struct App {
     /// Settings › Phones: the API Harbor for Android talks to (api.rs).
     pub api: crate::api::Local,
     pub order_by_activity: bool,
+    /// The account workspace the sidebar shows (kv `sidebar_workspace`), "" for all of them.
+    pub ws_filter: String,
     /// Fast mode for Claude and Codex turns.
     pub fast: bool,
     /// The team panel beside a lead's thread.
@@ -425,6 +429,7 @@ impl App {
             inc_tx: inc_tx.clone(),
             api,
             order_by_activity: false,
+            ws_filter: String::new(),
             fast: false,
             show_team: true,
             sidebar_open: true,
@@ -476,6 +481,7 @@ impl App {
         app.webhooks = app.store.webhooks();
         app.sync_tokens();
         app.order_by_activity = app.store.get("order_by_activity").as_deref() == Some("1");
+        app.ws_filter = app.store.get("sidebar_workspace").unwrap_or_default();
         app.fast = app.store.get("fast_mode").as_deref() == Some("1");
         app.show_team = app.store.get("show_team").as_deref() != Some("0");
         app.sidebar_open = app.store.get("sidebar_open").as_deref() != Some("0");

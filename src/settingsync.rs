@@ -40,6 +40,8 @@ pub const KEYS: &[(&str, Class)] = &[
     ("favorites", A),
     // The SSH device new threads run on: devices are set up per PC (remote.rs).
     ("default_device", D),
+    // The sidebar's workspace filter: each device shows its own.
+    ("sidebar_workspace", D),
     // How threads behave.
     ("follow_up", A),
     ("resume_on_restart", A),

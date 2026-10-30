@@ -1425,6 +1425,10 @@ impl App {
                 let ((), close) = w::popover(ctx, "filter", anchor, 260.0, false, &t, |ui| self.filter_menu(ui));
                 close
             }
+            Popup::WsFilter => {
+                let ((), close) = w::popover(ctx, "ws-filter", anchor, 260.0, false, &t, |ui| self.ws_filter_menu(ui));
+                close
+            }
             Popup::Device => self.device_menu(ctx),
             Popup::Workspace => self.workspace_menu(ctx),
             Popup::Branch => self.branch_menu(ctx),

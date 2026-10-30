@@ -5,6 +5,13 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A workspace filter in the sidebar, next to Order and view, on the desktop and in the phone's
+  list: All, or one of your account's workspaces, to see only the chats of that workspace's PCs
+  and its projects. The button is tinted while a workspace is picked, each device remembers its
+  own choice, the sidebar's search stays inside it, and chats of PCs in no workspace show only
+  under All. A workspace you've left goes back to All.
+
 ## [0.98.0] - 2026-10-30
 
 ### Changed
