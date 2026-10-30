@@ -25,13 +25,17 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
     the outputs back and deletes the sandbox (also on failure or cancellation, via
     `.github/boat/cleanup.sh`).
-  - `.github/boat/build.sh`: Harbor for x86_64 and aarch64, the updater tests, the licence
-    reports and the unsigned APK (release.yml).
+  - `.github/boat/build.sh`: Harbor for x86_64 and aarch64, the licence reports and the unsigned
+    APK (release.yml). A release is the `v*` tag alone: a push to main builds nothing, and running
+    release.yml by hand on main is the dry run (signs and publishes nothing, saves the snapshot).
   - `.github/boat/browser.sh`: the Servo engine for x86_64, or (`browser.sh aarch64`) cross-compiled
     for aarch64 (browser.yml).
   - `.github/boat/browser-android.sh`: the phone app's Servo engine, arm64-v8a and armeabi-v7a, with
     the NDK (browser.yml).
   - `.github/boat/smoke.sh`: the install tests on clean distro images (smoke.yml).
+  - `.github/boat/run.sh`: runs a command on a sandbox and follows it; a lost connection to boat
+    doesn't fail it.
+  - `.github/workflows/prune.yml`: by hand, drops other engines' caches from `harbor-browser`.
 - Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
   `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends.
 - If no script covers the job you need, stop and ask the user before writing one. Don't improvise

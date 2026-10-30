@@ -4,9 +4,6 @@
 . "$(dirname "$0")/lib.sh"
 core=$(image harbor-builder .github/boat/Dockerfile)
 apk=$(image harbor-android .github/boat/Dockerfile.android)
-# aarch64 binaries (the updater tests) run under the kernel's binfmt qemu: Ubuntu 22.04's own
-# qemu-user 6.2 crashes on them.
-binfmt
 # Once, before the parallel builds: rustup doesn't take two installs at a time.
 toolchain "$core" --target aarch64-unknown-linux-gnu
 
@@ -20,11 +17,11 @@ google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOG
 # profile over once before giving up. Exported into the containers' bash -c below.
 again='again() { local d=$1; shift; "$@" && return; echo "::warning::$*: starting $d over"; rm -rf "$CARGO_TARGET_DIR/$d" "$CARGO_TARGET_DIR"/*/"$d"; "$@"; }'
 
+# The tests ran in scripts/boat/check before the change landed, and smoke.yml runs both binaries.
 # One target dir each: cargo locks a target dir for the whole build.
 x86_64() {
   run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target -e HARBOR_GIT_SHA -e AGAIN="$again" -- bash -euo pipefail -c '
     eval "$AGAIN"
-    again debug cargo test --locked -- update::
     again release cargo build --release --locked
     ldd /c/target/release/harbor
     /c/target/release/harbor --version
@@ -34,17 +31,14 @@ aarch64() {
   local t=aarch64-unknown-linux-gnu T=AARCH64_UNKNOWN_LINUX_GNU
   run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target-aarch64 -e HARBOR_GIT_SHA -e AGAIN="$again" \
     -e CARGO_BUILD_TARGET=$t -e CARGO_TARGET_${T}_LINKER=aarch64-linux-gnu-gcc \
-    -e QEMU_LD_PREFIX=/usr/aarch64-linux-gnu \
     -e CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc -e CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
     -e AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar -e PKG_CONFIG_ALLOW_CROSS=1 \
     -e PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
     -- bash -euo pipefail -c '
     eval "$AGAIN"
-    again debug cargo test --locked -- update::
     again release cargo build --release --locked
     b=/c/target-aarch64/aarch64-unknown-linux-gnu/release/harbor
     aarch64-linux-gnu-readelf -d "$b" | grep NEEDED
-    "$b" --version
     mkdir -p /out/harbor-aarch64 && cp "$b" /out/harbor-aarch64/'
 }
 

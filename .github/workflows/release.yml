@@ -16,16 +16,16 @@
 # one-time code a phone gets from Android's account sheet for Gmail.
 name: release
 
-# Pushes to main (each publish.sh) build everything except Servo (see browser.yml) but sign or
-# release nothing. They exist to save the caches (the boat snapshot `harbor-build`; GitHub's caches
-# for the browser engine: a tag run only restores caches saved on its own ref or on main).
+# A release is a v* tag: one run, one sandbox, which also saves the boat snapshot `harbor-build` for
+# the next one. A push to main builds nothing (scripts/boat/check tests a change before it lands).
+# Run by hand on main it builds everything except Servo (see browser.yml), signs and releases
+# nothing and saves the snapshot: a dry run of the pipeline.
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
-# One run per ref; a newer push to main waits instead of cancelling (cancelled runs save no cache).
+# One run per ref; a newer run waits instead of cancelling (cancelled runs save no cache).
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -46,6 +46,8 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    outputs:
+      sandbox: ${{ steps.boat.outputs.id }}
     steps:
       - uses: actions/checkout@v7
       - name: Tag matches Cargo.toml
@@ -76,17 +78,6 @@ jobs:
           boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
-      - name: Save the cache
-        if: github.ref == 'refs/heads/main'
-        continue-on-error: true
-        run: |
-          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -rf src out out.tgz'
-          boat snapshot "${{ steps.boat.outputs.id }}" harbor-build --json
-      - name: Delete the sandbox
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: .github/boat/cleanup.sh
       # The oldest supported base, glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …), as this runner.
       - run: ldd out/harbor-x86_64/harbor && out/harbor-x86_64/harbor --version
       - uses: actions/upload-artifact@v7
@@ -106,7 +97,33 @@ jobs:
           name: harbor-extra
           path: out/extra/
 
-  # Never compiles Servo on a main push (no engine found = no browser in that run's package).
+  # Saves the snapshot and deletes the build's sandbox, beside the packaging: a release doesn't wait
+  # for it, and it never fails one. Runs also when the build failed: then it only deletes.
+  cache:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BOAT_API_KEY: ${{ secrets.BOAT_API_KEY }}
+      BOAT_SANDBOX: ci-harbor-${{ github.run_id }}-${{ github.run_attempt }}-build
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: .github/boat/cli.sh
+      - name: Save the snapshot
+        if: needs.build.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        continue-on-error: true
+        run: |
+          id="${{ needs.build.outputs.sandbox }}"
+          .github/boat/run.sh "$id" --cwd src -- bash .github/boat/warm.sh
+          boat exec "$id" -- bash -c 'rm -rf src out out.tgz'
+          boat snapshot "$id" harbor-build --json
+      - name: Delete the sandbox
+        if: always()
+        run: .github/boat/cleanup.sh
+
+  # Never compiles Servo on a run by hand (no engine found = no browser in that run's package).
   # A tag compiles it only when browser/ changed and nobody ran the browser workflow on main.
   browser:
     uses: ./.github/workflows/browser.yml
@@ -124,7 +141,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: art
-      # Main pushes without the signing secrets sign with a throwaway key, only to prove it signs.
+      # Runs by hand without the signing secrets sign with a throwaway key, only to prove it signs.
       - name: Sign the APK
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
@@ -184,7 +201,7 @@ jobs:
             cp packaging/harbor.desktop packaging/harbor.svg README.md CHANGELOG.md "$d/"
             cp art/harbor-extra/harbor-256.png "$d/harbor-256.png"
             echo "$ver" > "$d/VERSION"
-            # The engine's id, also when this run has no engine (only main pushes; tags always do).
+            # The engine's id, also when this run has no engine (only runs by hand; tags always do).
             git rev-parse HEAD:browser > "$d/browser.id"
             cp LICENSE "$d/licenses/Harbor-MIT.txt"
             cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
