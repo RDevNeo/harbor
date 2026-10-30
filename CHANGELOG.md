@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.101.1] - 2026-10-30
+
+### Changed
+- Releases get out faster: one build per release, on boat.dev, in a third of the time. The app itself
+  is built with ThinLTO now: it starts and runs the same, and its download is about 10% larger.
+
 ## [0.101.0] - 2026-10-30
 
 ### Changed
@@ -2086,7 +2092,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.101.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.101.1...HEAD
+[0.101.1]: https://github.com/RDevNeo/harbor/compare/v0.101.0...v0.101.1
 [0.101.0]: https://github.com/RDevNeo/harbor/compare/v0.100.0...v0.101.0
 [0.100.0]: https://github.com/RDevNeo/harbor/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/RDevNeo/harbor/compare/v0.98.0...v0.99.0

@@ -38,5 +38,8 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
   - `.github/workflows/prune.yml`: by hand, drops other engines' caches from `harbor-browser`.
 - Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
   `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends.
+- A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
+  30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
+  (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).
 - If no script covers the job you need, stop and ask the user before writing one. Don't improvise
   boat CLI commands; the new script should cover the job for every agent after you.
