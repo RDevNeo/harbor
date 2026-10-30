@@ -45,6 +45,7 @@ const NEEDS = {
     MuteStore: { props: [["isMuted", "getMuteConfig"]] },
     MuteActions: { props: [["updateGuildNotificationSettings", "updateChannelOverrideSettings"]] },
     GuildActions: { props: [["leaveGuild"]] },
+    GatewayConnectionStore: { props: [["getSocket", "isTryingToConnect"]] },
     SuperProperties: { props: [["getSuperPropertiesBase64"]], optional: true },
     CloudUpload: { code: ["uploadAnalytics", "preCompressionSize"] },
     // The same module emits both events; found by what its functions dispatch.
@@ -2913,36 +2914,37 @@ async function toolLeave(args) {
 
 /* ------------------------------------------------------------------------- the tools -- */
 
-// Every tool, with what it needs from NEEDS. The host calls them by name; a signed-in page has no
-// other way in (no eval, no low-level click or key).
+// Every tool, with what it needs from NEEDS. `live`: answers from what the page holds, so after a
+// thaw it waits for the reconnect; the rest ask Discord's servers themselves. The host calls them
+// by name; a signed-in page has no other way in (no eval, no low-level click or key).
 const TOOLS = {
-    discord_view: { run: bridgeGetView, needs: ["AuthTokenStore", "ChannelStore", "GuildStore", "MessageStore", "PresenceStore", "SelectedChannelStore", "TypingStore", "UserStore", "source:chat-messages", "source:messagesWrapper"] },
+    discord_view: { run: bridgeGetView, live: true, needs: ["AuthTokenStore", "ChannelStore", "GuildStore", "MessageStore", "PresenceStore", "SelectedChannelStore", "TypingStore", "UserStore", "source:chat-messages", "source:messagesWrapper"] },
     discord_send: { run: bridgeSendMessage, needs: ["ChannelActions", "ChannelStore", "CloudUpload", "GuildStore", "MessageActions", "MessageStore", "SelectedChannelStore", "TypingActions"] },
-    discord_dms: { run: bridgeListDMs, needs: ["ChannelStore", "PrivateChannelSortStore", "RelationshipStore", "UserStore"] },
+    discord_dms: { run: bridgeListDMs, live: true, needs: ["ChannelStore", "PrivateChannelSortStore", "RelationshipStore", "UserStore"] },
     discord_history: { run: bridgeGetHistory, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
     discord_search: { run: bridgeSearchMessages, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_user_messages: { run: bridgeUserMessages, needs: ["AuthTokenStore", "GuildStore"] },
     discord_stats: { run: bridgeGetStats, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
-    discord_open: { run: bridgeOpenChannel, needs: ["ChannelActions", "ChannelStore", "GuildStore", "SelectedChannelStore", "UserStore"] },
+    discord_open: { run: bridgeOpenChannel, live: true, needs: ["ChannelActions", "ChannelStore", "GuildStore", "SelectedChannelStore", "UserStore"] },
     discord_react: { run: bridgeReact, needs: ["ChannelStore", "MessageStore", "ReactionActions", "SelectedChannelStore", "UserStore"] },
     discord_edit: { run: bridgeEdit, needs: ["MessageActions", "MessageStore", "SelectedChannelStore", "UserStore"] },
     discord_delete: { run: bridgeDelete, needs: ["MessageActions", "MessageStore", "SelectedChannelStore", "UserStore"] },
     discord_pins: { run: bridgePins, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_threads: { run: bridgeThreads, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_member: { run: bridgeMember, needs: ["AuthTokenStore", "PresenceStore", "UserStore"] },
-    discord_unread: { run: bridgeUnread, needs: ["ChannelStore", "GuildChannelStore", "GuildStore", "PrivateChannelSortStore", "ReadStateStore", "RelationshipStore", "UserStore"] },
+    discord_unread: { run: bridgeUnread, live: true, needs: ["ChannelStore", "GuildChannelStore", "GuildStore", "PrivateChannelSortStore", "ReadStateStore", "RelationshipStore", "UserStore"] },
     discord_ack: { run: bridgeAck, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "ReadStateStore"] },
-    discord_emoji: { run: bridgeEmoji, needs: ["EmojiStore", "GuildStore"] },
+    discord_emoji: { run: bridgeEmoji, live: true, needs: ["EmojiStore", "GuildStore"] },
     discord_dm_open: { run: bridgeDmOpen, needs: ["AuthTokenStore", "ChannelActions", "RelationshipStore", "SelectedChannelStore", "UserStore"] },
     discord_attachment: { run: bridgeAttachment, needs: ["AuthTokenStore", "MessageStore", "SelectedChannelStore"] },
     discord_resolveMessage: { run: bridgeResolveMessage, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
-    discord_guilds: { run: bridgeListGuilds, needs: ["GuildStore", "SortedGuildStore"] },
+    discord_guilds: { run: bridgeListGuilds, live: true, needs: ["GuildStore", "SortedGuildStore"] },
     discord_organize: { run: bridgeOrganizeGuilds, needs: ["GuildStore", "PreloadedUserSettings"] },
     discord_join: { run: bridgeJoinInvite, needs: ["GuildStore", "InviteActions"] },
     discord_leave: { run: toolLeave, needs: ["GuildActions", "GuildStore", "UserStore"] },
     discord_mute_guild: { run: toolMuteGuild, needs: ["GuildStore", "MuteActions", "MuteStore"] },
-    discord_waitForMessage: { run: toolWaitForMessage, needs: ["AuthTokenStore", "FluxDispatcher", "PrivateChannelSortStore", "ReadStateStore", "UserStore"] },
-    discord_onboarding: { run: toolOnboarding, needs: ["source:optionButtonWrapper"] },
+    discord_waitForMessage: { run: toolWaitForMessage, live: true, needs: ["AuthTokenStore", "FluxDispatcher", "PrivateChannelSortStore", "ReadStateStore", "UserStore"] },
+    discord_onboarding: { run: toolOnboarding, live: true, needs: ["source:optionButtonWrapper"] },
 };
 
 /** Where an element is on the page, for a screenshot of just that. */
@@ -3007,14 +3009,75 @@ function captchaShowing() {
     });
 }
 
+/* ---------------------------------------------------------- the gateway after a freeze -- */
+
+/** How long live tools wait for the reconnect after a thaw. */
+const LIVE_WAIT_MS = 20_000;
+
+// One page has one record, however often this script is injected again.
+const gate = (window.$harborGate ??= { caught: true, thawedAt: 0, opens: 0, resumes: 0, closes: 0, watching: false, wake: [] });
+
+function caughtUp() {
+    gate.caught = true;
+    for (const w of gate.wake.splice(0)) w();
+}
+
+/** Discord's own events for its connection. CONNECTION_OPEN is a full login (READY), RESUMED a
+ * resume whose missed events have all been replayed by the time it comes. */
+function watchGateway() {
+    const flux = need("FluxDispatcher");
+    if (gate.watching || !flux?.subscribe) return;
+    gate.watching = true;
+    flux.subscribe("CONNECTION_OPEN", () => { gate.opens++; caughtUp(); });
+    flux.subscribe("CONNECTION_RESUMED", () => { gate.resumes++; caughtUp(); });
+    const lost = () => { gate.closes++; gate.caught = false; };
+    flux.subscribe("CONNECTION_INTERRUPTED", lost);
+    flux.subscribe("CONNECTION_CLOSED", lost);
+}
+
+/** The connection answered a heartbeat since the thaw: it never dropped, and whatever the server
+ * held for it has arrived ahead of that answer. */
+function heartbeatAnswered() {
+    const s = need("GatewayConnectionStore")?.getSocket?.();
+    return !!s?.isSessionEstablished?.() && (s.lastHeartbeatAckTime ?? 0) >= gate.thawedAt;
+}
+
+/** Waits for the store data to be current again; right away if nothing's outstanding. */
+async function settled() {
+    const until = Date.now() + LIVE_WAIT_MS;
+    while (!gate.caught) {
+        if (heartbeatAnswered()) caughtUp();
+        else {
+            const left = until - Date.now();
+            if (left <= 0) throw new Error("Discord hasn't reconnected yet, so this would show old data. Try again in a moment.");
+            await Promise.race([new Promise(r => gate.wake.push(r)), sleep(Math.min(left, 250))]);
+        }
+    }
+}
+
 window.$harbor = {
     /** Runs a tool; the result as JSON text, so it crosses any engine's boundary the same way. */
     async call(name, args) {
         const t = Object.hasOwn(TOOLS, name) ? TOOLS[name] : null;
         if (!t) throw new Error("No such tool: " + name);
+        if (t.live) await settled();
         return JSON.stringify(await t.run(args ?? {}) ?? null);
     },
-    ready: () => !!Web()?.wreq && !!need("UserStore"),
+    ready: () => {
+        const up = !!Web()?.wreq && !!need("UserStore");
+        if (up) watchGateway();
+        return up;
+    },
+    /** The client was frozen: from here, store data is old until the connection is checked. Same
+     * as what Discord's desktop app does when the PC wakes. */
+    thawed() {
+        gate.thawedAt = Date.now();
+        gate.caught = false;
+        try { need("GatewayConnectionStore")?.getSocket?.()?.expeditedHeartbeat?.(5000, "thawed"); } catch { /* the wait reports it */ }
+        return { path: location.pathname, user: me() };
+    },
+    settled,
+    gateway: () => ({ opens: gate.opens, resumes: gate.resumes, closes: gate.closes, caught: gate.caught }),
     selftest,
     elementRect,
     /** What sign-in and the host watch: who's signed in, and what the login page shows. */

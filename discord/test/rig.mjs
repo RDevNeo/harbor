@@ -20,7 +20,8 @@ fs.writeFileSync(root + "/bin/claude", `#!/bin/sh\nenv >> ${root}/claude.env\nex
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- the fake Discord
-const seen = { send: [], rest: [], join: [], dm: [], leave: [], logout: [], react: [] };
+const seen = { send: [], rest: [], join: [], dm: [], leave: [], logout: [], react: [], heartbeat: [] };
+let thaw = { mode: "alive", delay: 0 };
 const events = [], history = [];
 const snowflake = ms => String((BigInt(ms) - 1420070400000n) << 22n);
 let vencord = "good", pageQuery = "";
@@ -33,6 +34,7 @@ const server = http.createServer((req, res) => {
         return;
     }
     if (u.pathname === "/rig/history") return res.end(JSON.stringify(history));
+    if (u.pathname === "/rig/thaw") return res.end(JSON.stringify(thaw));
     if (u.pathname.startsWith("/rig/")) {
         let b = "";
         req.on("data", d => b += d);
@@ -71,18 +73,27 @@ class Mcp {
     async tool(name, args = {}) { const r = await this.rpc("tools/call", { name, arguments: args }); return { text: r.content.map(c => c.text ?? `[${c.type}]`).join("\n"), isError: r.isError, raw: r }; }
     close() { this.c.kill(); }
 }
-const engines = () => execFileSync("sh", ["-c", `grep -lz HARBOR_DISCORD= /proc/[0-9]*/environ 2>/dev/null | wc -l`]).toString().trim();
-const shellUp = () => { // the shell: an Electron main process of ours
+const shellPid = () => { // the shell: an Electron main process of ours
     for (const p of fs.readdirSync("/proc")) {
         if (!/^\d+$/.test(p)) continue;
         try {
             const c = fs.readFileSync(`/proc/${p}/cmdline`, "utf8");
-            if (c.startsWith(electron) && !c.includes("--type=") && fs.readFileSync(`/proc/${p}/environ`, "utf8").includes(data)) return true;
+            // By its command line: Chromium overwrites its environment area with the process title.
+            if (c.startsWith(electron) && !c.includes("--type=") && c.includes(path.dirname(here))) return +p;
         } catch { /* gone */ }
     }
-    return false;
+    return 0;
 };
-void engines;
+const shellUp = () => !!shellPid();
+// Whether the kernel holds it, whichever way: read from outside, not from what Harbor says.
+const heldBy = pid => {
+    const cg = "/sys/fs/cgroup" + fs.readFileSync(`/proc/${pid}/cgroup`, "utf8").trim().split("::")[1];
+    try { if (fs.readFileSync(cg + "/cgroup.events", "utf8").includes("frozen 1")) return "cgroup"; } catch { /* */ }
+    return fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1][0] === "T" ? "signals" : "";
+};
+const cgroupMem = pid => { try { return Math.round(+fs.readFileSync("/sys/fs/cgroup" + fs.readFileSync(`/proc/${pid}/cgroup`, "utf8").trim().split("::")[1] + "/memory.current", "utf8") / 1048576); } catch { return -1; } };
+const status = async () => (await hostOp({ op: "status" }))?.result ?? {};
+const frozenNow = () => until(async () => (await status()).phase === "frozen", 15000, "freeze");
 const until = async (f, ms, what) => { const t = Date.now(); while (Date.now() - t < ms) { if (await f()) return true; await sleep(100); } throw new Error("timed out: " + what); };
 const account = () => fs.writeFileSync(app + "/account.json", JSON.stringify({ id: "100000000000000001", username: "tester", name: "Test User", at: 1 }));
 const state = () => (fs.existsSync(app + "/state.json") ? JSON.parse(fs.readFileSync(app + "/state.json", "utf8")) : {});
@@ -102,11 +113,12 @@ async function scenario(name, f) {
 // Each scenario starts from a stopped host, with the day's starts unused.
 async function fresh() {
     if (fs.existsSync(app + "/h.sock")) await hostOp({ op: "stop" });
-    await until(() => !shellUp(), 15000, "shell to go");
+    await until(() => !shellUp(), 25000, "shell to go");
     await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host to go");
     const s = state();
-    s.starts = [];
+    s.logins = [];
     write("state.json", s);
+    thaw = { mode: "alive", delay: 0 };
 }
 
 // ---------------------------------------------------------------- scenarios
@@ -177,53 +189,174 @@ await scenario("pacing", async () => {
     write("pace.json", []);
 });
 
-await scenario("idle", async () => {
+await scenario("freeze", async () => {
     account();
     await mcp.tool("discord_dms");
     check(shellUp(), "running after a call");
+    const busyBurst = await status();
+    check(busyBurst.phase === "ready", "and it stays up right after one", busyBurst.phase);
+    await frozenNow();
+    const pid = shellPid();
+    const st = await status();
+    check(heldBy(pid) === st.held && !!st.held, "idle: the kernel holds it (" + st.held + ")", heldBy(pid));
+    await sleep(2500);
+    console.log("       frozen memory:", cgroupMem(pid), "MB in the main cgroup");
+    check(shellPid() === pid, "frozen, it stays, it doesn't quit");
+    await until(() => !fs.existsSync(app + "/h.sock") && false, 3000, "").catch(() => {});
+    check(fs.existsSync(app + "/h.sock"), "and the host stays with it");
+    const r0 = await mcp.tool("discord_status");
+    check(r0.text.includes("frozen") && heldBy(pid), "discord_status doesn't wake it", r0.text);
+
+    // A call wakes it, and live data waits for the reconnect.
+    thaw = { mode: "resume", delay: 1500, nickname: "Renamed while frozen" };
+    let t = Date.now();
+    let r = await mcp.tool("discord_dms");
+    console.log("       thaw + reconnect + answer:", Date.now() - t, "ms");
+    check(r.text.includes("Renamed while frozen"), "after a thaw a live tool has the new data, not the old", r.text);
+    check(Date.now() - t >= 1400, "because it waited for the reconnect", Date.now() - t);
+    check(seen.heartbeat.length === 1, "the page checked its connection as Discord does on wake", seen.heartbeat.length);
+    check(shellPid() === pid, "same client, no restart");
+
+    // REST tools don't wait.
+    await frozenNow();
+    thaw = { mode: "resume", delay: 4000 };
+    t = Date.now();
+    r = await mcp.tool("discord_history", { channelId: "200000000000000001", limit: 5 });
+    check(!r.isError && Date.now() - t < 3000, "a REST tool answers without waiting for the gateway", Date.now() - t);
+    await sleep(4300);
+
+    // A connection that survived: no reconnect ever comes, the heartbeat's answer says so.
+    await frozenNow();
+    thaw = { mode: "alive", delay: 300 };
+    t = Date.now();
+    r = await mcp.tool("discord_guilds");
+    check(!r.isError && Date.now() - t < 5000, "a connection that never dropped doesn't wait for a reconnect", Date.now() - t);
+
+    // No reconnect: a clear error, never old data.
+    await frozenNow();
+    thaw = { mode: "never", delay: 0 };
+    t = Date.now();
+    r = await mcp.tool("discord_dms");
+    check(r.isError && r.text.includes("hasn't reconnected"), "no reconnect in time: a clear error instead of stale data", r.text);
+    check(Date.now() - t < 26000, "after the timeout", Date.now() - t);
+});
+
+await scenario("wait-keeps-awake", async () => {
+    account();
+    await mcp.tool("discord_dms");
     const w = mcp.tool("discord_waitForMessage", { timeoutMs: 6000 });
     await sleep(4000);
-    check(shellUp(), "a pending wait keeps it alive past the idle limit");
-    events.push({ id: "400000000000000002", content: "ping" });
+    check((await status()).phase === "ready" && !heldBy(shellPid()), "a pending wait keeps it awake past idle");
+    events.push({ id: snowflake(Date.now()), content: "ping" });
     const r = await w;
     check(r.text.includes("ping"), "the wait gets the message", r.text);
-    await until(() => !shellUp(), 10000, "idle stop");
-    check(true, "stops after idle");
-    const before = state().starts.length;
-    await sleep(500);
-    const r2 = await mcp.tool("discord_status");
-    check(!shellUp() && r2.text.includes("isn't running"), "discord_status doesn't start it", r2.text);
-    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
-    check(true, "the host goes too");
-    const r3 = await mcp.tool("discord_dms");
-    check(!r3.isError && state().starts.length === before + 1, "the next call starts everything again", r3.text);
-    await until(() => !shellUp(), 10000, "idle stop");
+    await frozenNow();
+    check(true, "and it freezes after");
 });
 
 await scenario("catch-up", async () => {
     account();
     await mcp.tool("discord_dms");
-    await until(() => !shellUp(), 10000, "idle stop");
-    // Written while it was stopped: no event will bring it.
+    await frozenNow();
     await sleep(1100);
-    history.push({ id: snowflake(Date.now()), content: "written while stopped" });
+    // Written while frozen: no event brings it.
+    history.push({ id: snowflake(Date.now()), content: "written while frozen" });
     const r = await mcp.tool("discord_waitForMessage", { channelId: "200000000000000001", timeoutMs: 3000 });
-    check(r.text.includes("written while stopped"), "a wait after a stop finds what it missed in history", r.text);
+    check(r.text.includes("written while frozen"), "a wait after a freeze finds what it missed", r.text);
     const r2 = await mcp.tool("discord_waitForMessage", { channelId: "200000000000000001", timeoutMs: 1000 });
     check(r2.text.includes('"timedOut": true'), "only once: the next wait is for new messages", r2.text);
-    await until(() => !shellUp(), 10000, "idle stop");
 });
 
-await scenario("start-cap", async () => {
+await scenario("login-limit", async () => {
     account();
-    const now = Math.floor(Date.now() / 1000);
+    await mcp.tool("discord_dms");
+    check(state().logins.length === 1, "a cold start is one login", state().logins.length);
+    await frozenNow();
+    thaw = { mode: "resume", delay: 100 };
+    await mcp.tool("discord_dms");
+    await frozenNow();
+    check(state().logins.length === 1, "a resume isn't one", state().logins.length);
+    thaw = { mode: "identify", delay: 100 };
+    await mcp.tool("discord_dms");
+    await frozenNow();
+    check(state().logins.length === 2, "a full login after a long freeze is", state().logins.length);
+    await hostOp({ op: "stop" });
+    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
     const s = state();
-    s.starts = Array(7).fill(now - 100);
+    s.logins = Array(19).fill(Math.floor(Date.now() / 1000) - 100);
     write("state.json", s);
     await mcp.tool("discord_dms");
-    check(state().starts.length === 8, "this is the 8th start", state().starts.length);
+    check(state().logins.length === 20, "this start is the 20th of the day", state().logins.length);
     await sleep(5000);
-    check(shellUp(), "past the cap it stays running after idle");
+    const st = await status();
+    check(st.phase === "ready" && !heldBy(shellPid()), "at the limit it stops freezing and stays running", st.phase);
+});
+
+await scenario("crashes", async () => {
+    account();
+    await mcp.tool("discord_dms");
+    await frozenNow();
+    process.kill(shellPid(), "SIGKILL");
+    await until(async () => (await status()).phase === "stopped", 4000, "the host to notice");
+    check(true, "a frozen client that dies is noticed");
+    let r = await mcp.tool("discord_dms");
+    check(!r.isError, "the next call starts it again, same as a first start", r.text);
+    await frozenNow();
+    const old = shellPid();
+    const host = +fs.readFileSync(app + "/engine.pid", "utf8") && execFileSync("sh", ["-c", `fuser ${app}/h.lock 2>/dev/null || true`]).toString().trim().split(/\s+/)[0];
+    if (host) process.kill(+host, "SIGKILL");
+    else check(false, "couldn't find the host");
+    await sleep(400);
+    r = await mcp.tool("discord_dms");
+    check(!r.isError, "a host that died leaves no stuck client: the next call just works", r.text);
+    check(shellPid() !== old && !fs.existsSync(`/proc/${old}/cmdline`), "the old frozen client is gone", shellPid());
+});
+
+// Chromium's main process moves to a cgroup of its own when it can reach a session bus.
+await scenario("two-cgroups", async () => {
+    account();
+    await hostOp({ op: "stop" }).catch(() => {});
+    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    env.HARBOR_DISCORD_DBUS = `unix:path=/run/user/${process.getuid()}/bus`;
+    const m = new Mcp();
+    await m.rpc("initialize", {});
+    const first = await m.tool("discord_dms");
+    check(!first.isError, "it starts", first.text);
+    await sleep(1500);
+    const pid = shellPid();
+    const group = p => fs.readFileSync(`/proc/${p}/cgroup`, "utf8").trim().split("::")[1];
+    const kids = fs.readdirSync("/proc").filter(p => /^\d+$/.test(p)).filter(p => { try { return fs.readFileSync(`/proc/${p}/cmdline`, "utf8").startsWith(electron) && +p !== pid && fs.readFileSync(`/proc/${p}/stat`, "utf8").length > 0; } catch { return false; } });
+    const groups = new Set([pid, ...kids].map(group));
+    console.log("       cgroups:", [...groups].map(g => g.split("/").pop()).join(" "));
+    check(groups.size === 2, "the client really is in two cgroups", groups.size);
+    await frozenNow();
+    check((await status()).held === "cgroup", "held by cgroups");
+    const all = [...groups].map(g => fs.readFileSync(`/sys/fs/cgroup${g}/cgroup.events`, "utf8").includes("frozen 1"));
+    check(all.every(Boolean), "both are frozen", all);
+    await sleep(2000);
+    console.log("       frozen memory:", [...groups].map(g => Math.round(+fs.readFileSync(`/sys/fs/cgroup${g}/memory.current`, "utf8") / 1048576) + " MB").join(" + "));
+    const r = await m.tool("discord_dms");
+    check(!r.isError && !heldBy(pid), "a call wakes both", r.text);
+    m.close();
+    delete env.HARBOR_DISCORD_DBUS;
+});
+
+await scenario("no-cgroups", async () => {
+    account();
+    await hostOp({ op: "stop" }).catch(() => {});
+    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    env.HARBOR_DISCORD_NO_CGROUP = "1";
+    const m = new Mcp();
+    await m.rpc("initialize", {});
+    await m.tool("discord_dms");
+    await frozenNow();
+    const pid = shellPid();
+    check((await status()).held === "signals" && heldBy(pid) === "signals", "without cgroups it falls back to SIGSTOP", (await status()).held);
+    thaw = { mode: "resume", delay: 200, nickname: "After SIGCONT" };
+    const r = await m.tool("discord_dms");
+    check(r.text.includes("After SIGCONT") && !heldBy(pid), "and wakes the same way", r.text);
+    m.close();
+    delete env.HARBOR_DISCORD_NO_CGROUP;
 });
 
 function hostOp(req) {
@@ -242,24 +375,24 @@ function hostOp(req) {
 await scenario("rollback", async () => {
     account();
     await mcp.tool("discord_dms"); // the good version passes
-    await until(() => !shellUp(), 10000, "idle stop");
+    await sleep(300);
     const v1 = JSON.parse(fs.readFileSync(app + "/vencord.json", "utf8"));
     check(v1.good && v1.good === v1.current, "a version that passed is the good one", JSON.stringify(v1));
+    // A new Vencord: an idle client restarts for it instead of freezing, so frozen clients update.
     vencord = "bad";
     write("vencord.json", { ...v1, checked: 0 });
+    await until(() => !shellUp(), 10000, "restart for the update");
+    check(true, "a new Vencord replaces the freeze with a stop");
     const r = await mcp.tool("discord_dms");
     check(!r.isError && r.text.includes("A Friend"), "after a bad update the tool still works", r.text);
     const v2 = JSON.parse(fs.readFileSync(app + "/vencord.json", "utf8"));
     check(v2.current === v1.good && v2.bad.length === 1, "it rolled back and remembers the bad version", JSON.stringify(v2));
-    check(state().starts.length >= 2, "that took a restart", state().starts.length);
-    await until(() => !shellUp(), 10000, "idle stop");
+    await fresh();
     write("vencord.json", { ...v2, checked: 0 });
     await mcp.tool("discord_dms");
     const v3 = JSON.parse(fs.readFileSync(app + "/vencord.json", "utf8"));
     check(v3.current === v1.good, "the bad version isn't tried again", JSON.stringify(v3));
     vencord = "good";
-    await until(() => !shellUp(), 10000, "idle stop");
-    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
 });
 
 await scenario("repair", async () => {
@@ -288,13 +421,11 @@ await scenario("repair", async () => {
     const n = fs.readFileSync(app + "/notices.jsonl", "utf8");
     check(n.includes("Discord tools repaired") && n.includes("updateMessage"), "the user gets a notice with what changed", n);
     fs.rmSync(app + "/notices.jsonl");
-    await until(() => !shellUp(), 10000, "idle stop");
-    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    await fresh();
     // The override stays for the next start.
     const r3 = await mcp.tool("discord_send", { content: "again", channelId: "200000000000000001" });
     check(!r3.isError, "the override survives a restart", r3.text);
-    await until(() => !shellUp(), 10000, "idle stop");
-    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    await fresh();
     fs.rmSync(app + "/override.json");
 });
 
@@ -311,13 +442,11 @@ await scenario("give-up", async () => {
     check(fs.readFileSync(app + "/notices.jsonl", "utf8").includes("Discord tools need attention"), "the user gets the plain notice");
     const other = await mcp.tool("discord_dms");
     check(!other.isError, "tools that don't need the missing piece keep working", other.text);
-    await until(() => !shellUp(), 10000, "idle stop");
-    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    await fresh();
     await mcp.tool("discord_dms");
     await sleep(1000);
     check(fs.readFileSync(root + "/claude.log", "utf8").trim().split("\n").length === 3, "the next start doesn't run it again");
-    await until(() => !shellUp(), 10000, "idle stop");
-    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    await fresh();
     pageQuery = "";
 });
 
@@ -328,12 +457,10 @@ await scenario("session-ended", async () => {
     check(r.isError && r.text.includes("ended this session"), "a page that isn't signed in says so", r.text);
     check(!fs.existsSync(app + "/account.json"), "the app shows as signed out");
     pageQuery = "";
-    await until(() => !shellUp(), 10000, "stop");
 });
 
 await scenario("signin-signout", async () => {
     fs.rmSync(app + "/account.json", { force: true });
-    await until(() => !shellUp(), 10000, "stopped");
     env.HARBOR_DISCORD_URL = site + "/login?autologin=1";
     const refused = await (async () => { const m = new Mcp(); await m.tool("discord_status"); m.close(); })();
     void refused;

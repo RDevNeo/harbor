@@ -29,6 +29,7 @@ mod favicon;
 mod ghapi;
 mod git;
 mod discord;
+mod discordfreeze;
 mod discordhost;
 mod discordrepair;
 mod discordsetup;

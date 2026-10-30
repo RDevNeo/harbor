@@ -19,6 +19,25 @@
     const messages = [msg("400000000000000001", "hello from the fake")];
     let selected = null, memberOf = { [guild.id]: guild };
     const subs = {};
+    const emit = (type, extra) => { for (const f of subs[type] ?? []) f({ type, ...extra }); };
+    let nickname = null, established = true;
+    // The connection after a thaw, as the rig asks: what Discord's socket would do.
+    const socket = {
+        lastHeartbeatAckTime: 0,
+        isSessionEstablished: () => established,
+        expeditedHeartbeat: async () => {
+            const m = await (await fetch(rig + "/rig/thaw")).json();
+            report("heartbeat", m);
+            if (m.mode === "never") { established = false; emit("CONNECTION_INTERRUPTED"); return; }
+            if (m.mode === "alive") { await new Promise(r => setTimeout(r, m.delay)); socket.lastHeartbeatAckTime = Date.now(); nickname = m.nickname ?? nickname; return; }
+            established = false;
+            emit("CONNECTION_INTERRUPTED");
+            await new Promise(r => setTimeout(r, m.delay));
+            nickname = m.nickname ?? nickname;
+            established = true;
+            emit(m.mode === "identify" ? "CONNECTION_OPEN" : "CONNECTION_RESUMED");
+        },
+    };
     const renamed = new URLSearchParams(location.search).has("renamed") || window.RENAMED;
     const MessageActions = {
         sendMessage: async (id, m, _wait, opts) => { report("send", { id, content: m.content, uploads: opts?.attachmentsToUpload?.length ?? 0 }); },
@@ -32,7 +51,8 @@
         UserStore: { getCurrentUser: () => (loggedIn ? me : undefined), getUser: id => (id === friend.id ? friend : me) },
         MessageStore: { getMessage: (c, id) => messages.find(m => m.id === id), getMessages: () => ({ toArray: () => messages }) },
         ChannelActions: { selectChannel: ({ channelId }) => { selected = channelId; showChat(); }, selectVoiceChannel() {} },
-        RelationshipStore: { getRelationshipType: () => 1, isFriend: () => true, getNickname: () => null },
+        RelationshipStore: { getRelationshipType: () => 1, isFriend: () => true, getNickname: () => nickname },
+        Gateway: { getSocket: () => socket, isTryingToConnect: () => true, isConnected: () => established },
         PresenceStore: { getStatus: () => "online", getActivities: () => [] },
         TypingStore: { getTypingUsers: () => ({}), isTyping: () => false },
         Sort: { getPrivateChannelIds: () => [channel.id] },
@@ -63,7 +83,9 @@
         if (path.endsWith("/users/@me/channels")) { report("dm", JSON.parse(init.body)); return { id: "200000000000000099", type: 1, recipients: [friend] }; }
         if (path.includes("/messages")) {
             const after = q.get("after");
-            return after ? messages.filter(m => BigInt(m.id) > BigInt(after)) : messages;
+            const more = (await (await fetch(rig + "/rig/history")).json()).map(m => msg(m.id, m.content));
+            const all = [...messages, ...more.filter(m => !messages.some(x => x.id === m.id))];
+            return after ? all.filter(m => BigInt(m.id) > BigInt(after)) : all;
         }
         return [];
     };
@@ -73,13 +95,10 @@
         CloudUpload: class {},
         rest,
     };
+    if (loggedIn) setTimeout(() => emit("CONNECTION_OPEN"), 100);
     if (loggedIn) window.GLOBAL_ENV = { VERSION_HASH: new URLSearchParams(location.search).get("build") ?? "build1" };
     else setTimeout(() => { if (location.search.includes("autologin")) location.href = "/app"; }, 1500);
-    // Messages the rig sends: what the gateway would do. `history`: already there at load.
-    if (loggedIn) (async () => {
-        const old = await (await fetch(rig + "/rig/history")).json();
-        for (const m of old) messages.push(msg(m.id, m.content));
-    })();
+    // Messages the rig sends: what the gateway would do.
     (async function events() {
         for (;;) {
             try {
