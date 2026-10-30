@@ -12,7 +12,7 @@ use eframe::egui::{self, Align, CornerRadius, Layout, Margin, Rect, Sense, Ui, V
 use std::sync::atomic::Ordering;
 
 /// The QR code, on white whatever the theme.
-fn qr(ui: &mut Ui, tex: &egui::TextureHandle, side: f32) {
+pub fn qr(ui: &mut Ui, tex: &egui::TextureHandle, side: f32) {
     let (r, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     ui.painter().rect_filled(r, CornerRadius::same(crate::theme::RADIUS_MD), egui::Color32::WHITE);
     ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);

@@ -48,6 +48,9 @@ pub enum Auth {
     /// scopes are restricted, so Google allows no shared client without a security assessment.
     /// `help` is where to create the client.
     Google { scope: &'static str, help: &'static str },
+    /// A real Discord page signs itself in (discordhost.rs): a QR code Harbor draws, or the page's
+    /// own window for a password, 2FA and captcha.
+    Discord,
 }
 
 pub enum Transport {
@@ -91,6 +94,7 @@ pub const APPS: &[App] = &[
         },
         mcp: Transport::Harbor(crate::gmail::NAME),
     },
+    App { id: crate::discord::NAME, label: "Discord", about: "Read and send as you", auth: Auth::Discord, mcp: Transport::Harbor(crate::discord::NAME) },
 ];
 
 pub fn app(id: &str) -> Option<&'static App> {
@@ -209,6 +213,7 @@ pub fn signed_in(id: &str) -> bool {
         Some(Auth::Github) => gh_token().is_some(),
         Some(Auth::Convex) => convex_token().is_some(),
         Some(Auth::Google { .. }) => !google_accounts(id).is_empty(),
+        Some(Auth::Discord) => crate::discord::signed_in(),
         Some(_) => load(id).is_some(),
         None => false,
     }
@@ -225,6 +230,7 @@ pub fn account(id: &str) -> Option<String> {
     match app(id)?.auth {
         Auth::Github => github_user(),
         Auth::Google { .. } => google_accounts(id).into_iter().next(),
+        Auth::Discord => crate::discord::account_name(),
         _ => load(id).map(|c| c.account).filter(|a| !a.is_empty()),
     }
 }
@@ -238,6 +244,8 @@ fn token(id: &str) -> Option<String> {
         Auth::OAuth => fresh_token(id, false),
         // Harbor's own server (gmail.rs) refreshes each account itself: this only says one is there.
         Auth::Google { .. } => google_accounts(id).first().and_then(|e| load_account(id, e)).map(|c| c.access_token),
+        // No token: the session is in the shell's profile. This only says it's there.
+        Auth::Discord => crate::discord::signed_in().then(String::new),
     }
 }
 
@@ -285,6 +293,7 @@ pub fn sign_out(id: &str) {
                 }
             }
         }
+        Some(Auth::Discord) => crate::discord::sign_out(),
         _ => {
             let _ = std::fs::remove_file(cred_path(id));
         }
@@ -570,6 +579,12 @@ fn google_auth_url(client_id: &str, redirect: &str, scope: &str, verifier: &str,
 pub struct Pending {
     pub code: Option<String>,
     pub url: Option<String>,
+    /// Text to show as a QR code.
+    pub qr: Option<String>,
+    /// How it's going, in words.
+    pub note: Option<String>,
+    /// The app's own sign-in window is open.
+    pub window: bool,
 }
 
 struct Flow {
@@ -627,6 +642,7 @@ pub fn sign_in(id: &'static str, ctx: eframe::egui::Context) {
             (Auth::Convex, _) => device_login(id, convex_login_cmd(), &child, &update),
             (Auth::OAuth, Transport::Http(url)) => oauth_login(id, url, &cancel, &update),
             (Auth::Google { scope, .. }, _) => google_login(id, scope, &cancel, &update),
+            (Auth::Discord, _) => crate::discord::login(&cancel, &update),
             _ => Err("This app signs in with a key.".into()),
         };
         if !cancel.load(Ordering::Relaxed) {
@@ -826,7 +842,7 @@ fn oauth_login(id: &str, url: &str, cancel: &AtomicBool, update: &dyn Fn(Pending
     ]);
     let auth_url = format!("{authorize}{}{q}", if authorize.contains('?') { '&' } else { '?' });
     crate::git::open_url(&auth_url);
-    update(Pending { code: None, url: Some(auth_url) });
+    update(Pending { url: Some(auth_url), ..Default::default() });
     let code = wait_callback(&listener, "/callback", &state, cancel)?;
     let body = form(&[
         ("grant_type", "authorization_code"),
@@ -858,7 +874,7 @@ fn google_login(id: &str, scope: &str, cancel: &AtomicBool, update: &dyn Fn(Pend
     let state = b64url(&random(16)?);
     let auth_url = google_auth_url(&client.0, &redirect, scope, &verifier, &state);
     crate::git::open_url(&auth_url);
-    update(Pending { code: None, url: Some(auth_url) });
+    update(Pending { url: Some(auth_url), ..Default::default() });
     let code = wait_callback(&listener, "/", &state, cancel)?;
     google_save_code(id, scope, client, &code, &redirect, &verifier).map(|_| ())
 }
@@ -1218,11 +1234,26 @@ pub fn serve(args: &[String]) -> i32 {
             crate::gmail::run();
             0
         }
+        Some(crate::discord::NAME) => {
+            crate::discord::run();
+            0
+        }
+        Some(crate::discord::HOST) => crate::discordhost::run(),
+        Some(crate::discord::REPAIR) => {
+            crate::discordrepair::run();
+            0
+        }
         _ => {
             eprintln!("harbor app: unknown app");
             2
         }
     }
+}
+
+/// A local server that a signed-in app of the same name replaces, so agents never get both sets
+/// of tools. With no sign-in the local one works as ever.
+fn shadowed(local: &str) -> bool {
+    app(local).is_some() && signed_in(local)
 }
 
 /// The env var Codex reads an app's token from.
@@ -1240,7 +1271,7 @@ pub fn claude_config(chat_id: i64, extra: Vec<(&str, Value)>, apps: bool) -> Pat
     }
     // A chat commanded from another PC doesn't get this PC's owner's sign-ins (meshctx.rs).
     if !apps {
-        m.retain(|k, _| app(k).is_none());
+        m.retain(|k, _| app(k).is_none_or(|_| !signed_in(k)));
     }
     let p = private_dir(dir().join("run")).join(format!("claude-{chat_id}.json"));
     let _ = write_private(&p, &json!({ "mcpServers": m }).to_string());
@@ -1251,7 +1282,7 @@ pub fn claude_config(chat_id: i64, extra: Vec<(&str, Value)>, apps: bool) -> Pat
 pub fn claude_servers(extra: Option<(&str, Value)>) -> Map<String, Value> {
     let mut m = Map::new();
     for (l, def) in locals() {
-        if let Some((name, v)) = def.filter(|_| !is_off(l.id)) {
+        if let Some((name, v)) = def.filter(|_| !is_off(l.id) && !shadowed(l.id)) {
             m.insert(name, v);
         }
     }
@@ -1295,7 +1326,7 @@ pub fn codex_args() -> Vec<String> {
         v.push(s);
     };
     for k in &keys {
-        if !local_for(k.trim_matches('"')).is_some_and(|l| !is_off(l.id)) {
+        if !local_for(k.trim_matches('"')).is_some_and(|l| !is_off(l.id) && !shadowed(l.id)) {
             c(format!("mcp_servers.{k}.enabled=false"));
         }
     }

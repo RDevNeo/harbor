@@ -1271,6 +1271,7 @@ dependencies = [
  "arboard",
  "eframe",
  "egui_commonmark",
+ "flate2",
  "image",
  "libc",
  "minisign-verify",

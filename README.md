@@ -34,7 +34,7 @@ Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
   PCs and phones: send them text, images and files).
 - **Pages**: Settings (general, appearance, keybindings, providers/accounts, usage limits,
   integrations, secrets, devices, webhooks), Usage (plan limits and Harbor's own token totals), Pull requests (`gh`).
-- **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex, Gmail presets plus custom
+- **Integrations**: GitHub, Vercel, Linear, Sentry, Supabase, Context7, Playwright, Convex, Gmail, Discord presets plus custom
   servers, managed through `claude mcp` so the terminal CLI sees the same config.
 
 ## Install
@@ -176,6 +176,9 @@ page by name too (`general|appearance|keybindings|providers|limits|integrations|
 ## Licences and credits
 
 - **Harbor** (this repository, apart from what's listed below): MIT, see [LICENSE](LICENSE).
+- **Discord shell** (`discord/`): GPL-3.0-or-later, see [discord/LICENSE](discord/LICENSE). A separate
+  program, not part of the Harbor binary: Harbor downloads it on first use and talks to it over
+  stdin and stdout. Harbor stays MIT.
 - **Browser helper** (`browser/`): MIT, see [browser/LICENSE](browser/LICENSE). It links
   [Servo](https://servo.org), which is MPL-2.0.
 - **Fonts**: [Geist and Geist Mono](https://vercel.com/font) (SIL OFL 1.1, `assets/fonts/OFL.txt`) and a

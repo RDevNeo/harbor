@@ -5,6 +5,18 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Discord, as an app next to Gmail: agents can read and send on your personal account, once you
+  sign in under Settings › Integrations › Apps. Discord's rules forbid automating personal accounts
+  and an account can be banned for it, so sign-in says so first. It runs a real Discord page in the
+  background, with no window, which starts on the first tool call and freezes after 2 idle minutes.
+  Sign in by scanning a QR code with the Discord app, or in Discord's own window for a password,
+  2FA or a captcha. Harbor paces joins, new DMs and uploads, checks the tools against Discord at
+  every start, and repairs them by itself when Discord changes, telling you what changed. Sign out
+  ends the session and removes its profile. The page, tools and Electron are a separate GPL program
+  (`discord/`) that Harbor downloads on first use; Harbor stays MIT. A signed-in Discord app
+  replaces your own `discord` MCP server for agents.
+
 ## [0.101.0] - 2026-10-30
 
 ### Changed

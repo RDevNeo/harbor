@@ -1711,6 +1711,30 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
                 Err(e) => send_json(r.get_mut(), 409, &json!({ "error": e })),
             }
         }
+        // The Discord app here: its state and sign-in, QR included, for a phone to show. The
+        // warning is the phone's to show too: signing in needs `accept`.
+        ("GET", ["v1", "apps", "discord"]) => send_json(w, 200, &crate::discord::status()),
+        ("POST", ["v1", "apps", "discord", action]) => {
+            let body: Value = read_body(&mut r, req.len, 4 << 10).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            let done = match *action {
+                "signin" if body["accept"] != true => Err("Sign-in needs the warning accepted first.".to_string()),
+                "signin" => crate::discord::signin(),
+                "window" => crate::discord::window(),
+                "cancel" => {
+                    crate::discord::cancel();
+                    Ok(())
+                }
+                "signout" => {
+                    crate::discord::sign_out();
+                    Ok(())
+                }
+                _ => return send_json(r.get_mut(), 404, &json!({ "error": "no such call" })),
+            };
+            match done {
+                Ok(()) => send_json(r.get_mut(), 200, &crate::discord::status()),
+                Err(e) => send_json(r.get_mut(), 409, &json!({ "error": e })),
+            }
+        }
         // Every PC's Harbor and every phone's app (versions.rs, 0.68).
         ("GET", ["v1", "versions"]) => send_json(w, 200, &crate::versions::api_json(hub)),
         ("GET", ["v1", "events"]) => {

@@ -1,0 +1,97 @@
+<!doctype html><title>Fake Discord</title>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<div id="app"></div>
+<script>
+// Just enough of Discord for the tools: stores, actions, a chat view, events from the rig.
+(() => {
+    const rig = location.origin;
+    const report = (kind, data) => navigator.sendBeacon(rig + "/rig/" + kind, JSON.stringify(data ?? {}));
+    const loggedIn = !location.pathname.startsWith("/login") && !location.search.includes("nouser");
+    // A dead session: Discord falls back to the login page.
+    if (location.search.includes("nouser")) location.replace("/login");
+    const me = { id: "100000000000000001", username: "tester", globalName: "Test User" };
+    const friend = { id: "100000000000000002", username: "friend", globalName: "A Friend", bot: false };
+    const channel = { id: "200000000000000001", type: 1, name: "", recipients: [friend.id], guild_id: null };
+    const guild = { id: "300000000000000001", name: "Fake Server", ownerId: friend.id };
+    const room = { id: "200000000000000002", type: 0, name: "general", guild_id: guild.id, recipients: [] };
+    const channels = { [channel.id]: channel, [room.id]: room };
+    const msg = (id, text, author = friend) => ({ id, channel_id: channel.id, content: text, author, timestamp: new Date().toISOString(), attachments: [], mentions: [], embeds: [], reactions: [] });
+    const messages = [msg("400000000000000001", "hello from the fake")];
+    let selected = null, memberOf = { [guild.id]: guild };
+    const subs = {};
+    const renamed = new URLSearchParams(location.search).has("renamed") || window.RENAMED;
+    const MessageActions = {
+        sendMessage: async (id, m, _wait, opts) => { report("send", { id, content: m.content, uploads: opts?.attachmentsToUpload?.length ?? 0 }); },
+        [renamed ? "updateMessage" : "editMessage"]: async (id, mid, m) => report("edit", { id, mid, m }),
+        deleteMessage: async (id, mid) => report("delete", { id, mid }),
+    };
+    const stores = {
+        SelectedChannelStore: { getChannelId: () => selected, getVoiceChannelId: () => null },
+        ChannelStore: { getChannel: id => channels[id], hasChannel: id => !!channels[id], getDMFromUserId: u => (u === friend.id ? channel.id : undefined) },
+        GuildStore: { getGuild: id => memberOf[id], getGuilds: () => memberOf },
+        UserStore: { getCurrentUser: () => (loggedIn ? me : undefined), getUser: id => (id === friend.id ? friend : me) },
+        MessageStore: { getMessage: (c, id) => messages.find(m => m.id === id), getMessages: () => ({ toArray: () => messages }) },
+        ChannelActions: { selectChannel: ({ channelId }) => { selected = channelId; showChat(); }, selectVoiceChannel() {} },
+        RelationshipStore: { getRelationshipType: () => 1, isFriend: () => true, getNickname: () => null },
+        PresenceStore: { getStatus: () => "online", getActivities: () => [] },
+        TypingStore: { getTypingUsers: () => ({}), isTyping: () => false },
+        Sort: { getPrivateChannelIds: () => [channel.id] },
+        Reads: { getUnreadCount: () => 1, getMentionCount: () => 0, hasUnread: () => true, lastMessageId: () => null },
+        GuildChannels: { getChannels: () => ({ SELECTABLE: [{ channel: room }] }), getDefaultChannel: () => room },
+        Emoji: { getGuildEmoji: () => [] },
+        Folders: { getGuildFolders: () => [{ guildIds: [guild.id] }] },
+        Flux: { dispatch() {}, subscribe(t, f) { (subs[t] ??= new Set()).add(f); }, unsubscribe(t, f) { subs[t]?.delete(f); } },
+        Invites: {
+            resolveInvite: async code => ({ invite: { code, guild: { id: "30000000000000000" + code.length, name: "Joined " + code }, channel: { id: "1", name: "x" } } }),
+            acceptInvite: async ({ inviteKey }) => { const id = "30000000000000000" + inviteKey.length; memberOf[id] = { id, name: "Joined " + inviteKey }; report("join", { inviteKey }); },
+        },
+        Token: { getToken: () => "fake-token" },
+        Mute: { isMuted: () => false, getMuteConfig: () => null },
+        MuteAct: { updateGuildNotificationSettings: async () => {}, updateChannelOverrideSettings() {} },
+        GuildAct: { leaveGuild: id => { delete memberOf[id]; report("leave", { id }); } },
+        Super: { getSuperPropertiesBase64: () => "e30=" },
+        Reactions: { a() { return '"MESSAGE_REACTION_ADD"'; }, b() { return '"MESSAGE_REACTION_REMOVE"'; } },
+        Proto: { ProtoClass: {}, updateAsync: async () => {}, type: 1 },
+    };
+    stores.Reactions.a = async (c, m, e) => { void '"MESSAGE_REACTION_ADD"'; report("react", { c, m, e }); };
+    stores.Reactions.b = async () => { void '"MESSAGE_REACTION_REMOVE"'; };
+    function showChat() {
+        document.getElementById("app").innerHTML = `<div data-list-id="chat-messages"><div id="chat-messages-${channel.id}-${messages[0].id}">hello</div></div>`;
+    }
+    const rest = async (method, path, q, init) => {
+        if (path.endsWith("/auth/logout")) { report("logout"); return {}; }
+        if (path.endsWith("/users/@me/channels")) { report("dm", JSON.parse(init.body)); return { id: "200000000000000099", type: 1, recipients: [friend] }; }
+        if (path.includes("/messages")) {
+            const after = q.get("after");
+            return after ? messages.filter(m => BigInt(m.id) > BigInt(after)) : messages;
+        }
+        return [];
+    };
+    window.FAKE = {
+        mods: [...Object.values(stores), MessageActions],
+        sources: { 1: () => "chat-messages- messagesWrapper optionButtonWrapper" },
+        CloudUpload: class {},
+        rest,
+    };
+    if (loggedIn) window.GLOBAL_ENV = { VERSION_HASH: new URLSearchParams(location.search).get("build") ?? "build1" };
+    else setTimeout(() => { if (location.search.includes("autologin")) location.href = "/app"; }, 1500);
+    // Messages the rig sends: what the gateway would do. `history`: already there at load.
+    if (loggedIn) (async () => {
+        const old = await (await fetch(rig + "/rig/history")).json();
+        for (const m of old) messages.push(msg(m.id, m.content));
+    })();
+    (async function events() {
+        for (;;) {
+            try {
+                const r = await fetch(rig + "/rig/next");
+                const m = await r.json();
+                if (m?.content) {
+                    const full = msg(m.id, m.content);
+                    messages.push(full);
+                    for (const f of subs.MESSAGE_CREATE ?? []) f({ message: full });
+                }
+            } catch { await new Promise(r => setTimeout(r, 500)); }
+        }
+    })();
+})();
+</script>
