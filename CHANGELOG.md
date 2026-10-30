@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.97.1] - 2026-10-29
+
 ### Changed
 - Phone: adding a Gmail account starts with the same sheet Harbor's own sign-in uses (your
   Google accounts with their names and pictures) instead of Android's plain account list. When
@@ -2043,7 +2045,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.97.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.97.1...HEAD
+[0.97.1]: https://github.com/RDevNeo/harbor/compare/v0.97.0...v0.97.1
 [0.97.0]: https://github.com/RDevNeo/harbor/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/RDevNeo/harbor/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/RDevNeo/harbor/compare/v0.95.0...v0.96.0
