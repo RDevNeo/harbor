@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Phone: adding a Gmail account starts with the same sheet Harbor's own sign-in uses (your
+  Google accounts with their names and pictures) instead of Android's plain account list. When
+  Android lets Harbor use the picked account directly, Google's consent screen follows; otherwise
+  Google's page opens in the browser with that account already chosen.
+
 ## [0.97.0] - 2026-10-29
 
 ### Changed
