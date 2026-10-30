@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.97.0] - 2026-10-29
+
 ### Changed
 - A new worktree is named by Claude after what the chat asks for: a few words like
   `inline-chat-mention-links` for its branch (`harbor/inline-chat-mention-links`) and folder,
@@ -2035,7 +2037,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.96.1...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.97.0...HEAD
+[0.97.0]: https://github.com/RDevNeo/harbor/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/RDevNeo/harbor/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/RDevNeo/harbor/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/RDevNeo/harbor/compare/v0.94.0...v0.95.0
