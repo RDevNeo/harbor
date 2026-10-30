@@ -23,8 +23,9 @@ Options:
                   errors); the full output stays in /tmp/<sandbox name>.log. Best for agents.
   -h, --help      this help
 
-Prerequisites (any PC of the mesh): the boat CLI, logged in to the account that holds the
-snapshot `harbor-build` (`boat login`; on PATH or at ~/.ascii/bin/boat), jq, git, GNU tar.
+Prerequisites (any PC of the mesh): the boat CLI (`curl -fsSL https://boat.dev/install | sh`, on
+PATH or at ~/.ascii/bin/boat), logged in to the account that holds the snapshot `harbor-build`
+(`boat login`, or `boat login --key-stdin` with an API key); jq, git, GNU tar.
 Nothing to build with locally.
 Cost: a large sandbox bills about $0.07 per hour; a warm run takes a few minutes.
 EOF

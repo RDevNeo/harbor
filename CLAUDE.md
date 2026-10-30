@@ -2,10 +2,20 @@
 
 ## Compute runs on boat.dev
 
-Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on this
-PC (it has no Rust or Android toolchain) and not on GitHub-hosted runners. GitHub Actions only
-orchestrates: checkout, start the boat job, then sign, attest and publish.
+Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on the PCs
+and not on GitHub-hosted runners. GitHub Actions only orchestrates: checkout, start the boat job,
+then sign, attest and publish.
 
+A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor. The old
+local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
+
+- What a PC needs: the boat CLI (`curl -fsSL https://boat.dev/install | sh`) logged in to the
+  account that holds the snapshot `harbor-build` (`boat login`, or `boat login --key-stdin` with an
+  API key), plus jq, git and GNU tar. No toolchain. If `boat` is missing or logged out, say so and
+  stop; don't fall back to a local build.
+- Rigs and anything else that needs a binary on this PC: compile on boat, run here. `scripts/boat/check
+  --out DIR` brings the release binary back (`--no-release` can't be combined with it); copy it to
+  the rig and run it as usual. Running a binary or a rig locally is fine; compiling is not.
 - Use the premade scripts; don't drive the `boat` CLI by hand.
   - `scripts/boat/check`: every build or test of local changes. Tests the working tree (uncommitted
     changes included), then builds it for release; `-- <filter>` picks tests, `--out DIR` brings

@@ -6,6 +6,9 @@ boat=$(command -v boat || true)
 [ -n "$boat" ] || boat=$HOME/.ascii/bin/boat
 [ -x "$boat" ] || { echo "no boat CLI (not on PATH nor at ~/.ascii/bin/boat): see --help" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is needed: see --help" >&2; exit 1; }
+# Not logged in (or boat is down): say so, not "jq: Cannot iterate over null".
+err=$("$boat" list --all --json 2>&1 | jq -r '.error // empty' 2>/dev/null || true)
+[ -z "$err" ] || { echo "boat: $err" >&2; exit 1; }
 
 user=$(id -un) host=$(hostname -s 2>/dev/null || cat /etc/hostname)
 prefix="dev-harbor-$user-$host-"
