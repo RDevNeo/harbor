@@ -5,8 +5,15 @@ mkdir -p "$cache" "$HOME/out"
 
 # image <name> <dockerfile>: tagged by the Dockerfile's hash. A snapshot keeps only images that a
 # container uses, hence the keep- container. Its images load in the background after the sandbox
-# is ready and no docker command waits for them, so ~/cache/images lists the ones it should have.
+# is ready, from seconds to many minutes later, and no docker command waits for them, so
+# ~/cache/images lists the ones it should have. warm.sh therefore also saves each image as a plain
+# folder in ~/cache/rootfs: with one, there is nothing to wait for and run_in uses chroot.
 image() {
+  local img="$1:$(sha256sum "$2" | cut -c1-12)" root="$cache/rootfs/$1:$(sha256sum "$2" | cut -c1-12)"
+  [ ! -d "$root/usr" ] || { rootfs_up "$root"; echo "$img"; return; }
+  docker_image "$1" "$2"
+}
+docker_image() {
   local img="$1:$(sha256sum "$2" | cut -c1-12)" i=0
   until docker info >/dev/null 2>&1; do sleep 1; done
   if grep -qx "$img" "$cache/images" 2>/dev/null; then
@@ -22,11 +29,49 @@ image() {
   echo "$img"
 }
 
-# run_in <image> [docker options] -- <command>. The source is always mounted at /src: cargo's
-# fingerprints include the path.
+# rootfs_save <name> <dockerfile>: the image as a folder, dropping older ones of that name.
+rootfs_save() {
+  local img root c; img=$(docker_image "$1" "$2"); root="$cache/rootfs/$img"
+  [ ! -d "$root/usr" ] || return 0
+  find "$cache/rootfs" -mindepth 1 -maxdepth 1 -name "$1:*" -exec rm -rf {} + 2>/dev/null || true
+  mkdir -p "$root"
+  c=$(docker create "$img")
+  docker export "$c" | tar -x -C "$root" --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' 2>/dev/null || true
+  docker rm "$c" >/dev/null
+  docker image inspect "$img" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$root/.env"
+}
+# What a container gets from docker, for this folder: the same paths, so cargo's fingerprints hold.
+rootfs_up() {
+  local d
+  mkdir -p "$1/src" "$1/c" "$1/out"
+  for d in proc dev sys tmp; do mountpoint -q "$1/$d" || sudo mount --rbind "/$d" "$1/$d"; done
+  mountpoint -q "$1/src" || sudo mount --bind "$PWD" "$1/src"
+  mountpoint -q "$1/c" || sudo mount --bind "$cache" "$1/c"
+  mountpoint -q "$1/out" || sudo mount --bind "$HOME/out" "$1/out"
+  sudo cp /etc/resolv.conf "$1/etc/resolv.conf"
+}
+# Before a snapshot: src and out are about to go, and a snapshot wants no mounts in it.
+rootfs_down() {
+  local r d
+  for r in "$cache"/rootfs/*/; do
+    for d in src c out proc dev sys tmp; do ! mountpoint -q "$r$d" || sudo umount -R -l "$r$d"; done
+  done
+}
+
+# run_in <image> [docker options: only -e] -- <command>. The source is always mounted at /src:
+# cargo's fingerprints include the path.
 run_in() {
-  local img="$1" opts=(); shift
+  local img="$1" opts=() root="$cache/rootfs/$1"; shift
   while [ "$1" != -- ]; do opts+=("$1"); shift; done; shift
+  if [ -d "$root/usr" ]; then
+    ( local i kv
+      while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done < "$root/.env"
+      export CARGO_TERM_COLOR=always
+      for ((i = 1; i < ${#opts[@]}; i += 2)); do case "${opts[$i]}" in *=*) export "${opts[$i]}" ;; esac; done
+      # sudo -E: values stay off the command line (build.sh's Google secrets).
+      exec sudo -E env "PATH=$PATH" HOME=/tmp chroot --userspec="$(id -u):$(id -g)" "$root" /bin/sh -c 'cd /src && exec "$@"' sh "$@" )
+    return
+  fi
   docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_TERM_COLOR=always \
     -v "$cache:/c" -v "$PWD:/src" -v "$HOME/out:/out" -w /src "${opts[@]}" "$img" "$@"
 }
