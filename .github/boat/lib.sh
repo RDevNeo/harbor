@@ -10,7 +10,7 @@ mkdir -p "$cache" "$HOME/out"
 # folder in ~/cache/rootfs: with one, there is nothing to wait for and run_in uses chroot.
 image() {
   local img="$1:$(sha256sum "$2" | cut -c1-12)" root="$cache/rootfs/$1:$(sha256sum "$2" | cut -c1-12)"
-  [ ! -d "$root/usr" ] || { rootfs_up "$root"; echo "$img"; return; }
+  [ ! -d "$root/usr" ] || { rootfs_up "$img"; echo "$img"; return; }
   docker_image "$1" "$2"
 }
 docker_image() {
@@ -31,8 +31,9 @@ docker_image() {
 
 # rootfs_save <name> <dockerfile>: the image as a folder, dropping older ones of that name.
 rootfs_save() {
-  local img root c; img=$(docker_image "$1" "$2"); root="$cache/rootfs/$img"
+  local img="$1:$(sha256sum "$2" | cut -c1-12)" root c; root="$cache/rootfs/$img"
   [ ! -d "$root/usr" ] || return 0
+  docker_image "$1" "$2" >/dev/null
   find "$cache/rootfs" -mindepth 1 -maxdepth 1 -name "$1:*" -exec rm -rf {} + 2>/dev/null || true
   mkdir -p "$root"
   c=$(docker create "$img")
@@ -40,22 +41,26 @@ rootfs_save() {
   docker rm "$c" >/dev/null
   docker image inspect "$img" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$root/.env"
 }
-# What a container gets from docker, for this folder: the same paths, so cargo's fingerprints hold.
+# What a container gets from docker, for that folder, at /run/harbor/<image>: the same paths, so
+# cargo's fingerprints hold. Outside ~/cache and private: mounts in the snapshot's tree leak into it.
 rootfs_up() {
-  local d
-  mkdir -p "$1/src" "$1/c" "$1/out"
-  for d in proc dev sys tmp; do mountpoint -q "$1/$d" || sudo mount --rbind "/$d" "$1/$d"; done
-  mountpoint -q "$1/src" || sudo mount --bind "$PWD" "$1/src"
-  mountpoint -q "$1/c" || sudo mount --bind "$cache" "$1/c"
-  mountpoint -q "$1/out" || sudo mount --bind "$HOME/out" "$1/out"
-  sudo cp /etc/resolv.conf "$1/etc/resolv.conf"
+  local root="$cache/rootfs/$1" m="/run/harbor/$1" d
+  mountpoint -q "$m" && return
+  mkdir -p "$root/src" "$root/c" "$root/out"
+  sudo mkdir -p "$m"
+  sudo mount --bind "$root" "$m"
+  sudo mount --make-rprivate "$m"
+  for d in proc dev sys tmp; do sudo mount --rbind "/$d" "$m/$d"; done
+  sudo mount --bind "$PWD" "$m/src"
+  sudo mount --bind "$cache" "$m/c"
+  sudo mount --bind "$HOME/out" "$m/out"
+  sudo cp /etc/resolv.conf "$m/etc/resolv.conf"
 }
-# Before a snapshot: src and out are about to go, and a snapshot wants no mounts in it.
+# Before a snapshot: src and out are about to go.
 rootfs_down() {
-  local r d
-  for r in "$cache"/rootfs/*/; do
-    for d in src c out proc dev sys tmp; do ! mountpoint -q "$r$d" || sudo umount -R -l "$r$d"; done
-  done
+  local m r
+  for m in /run/harbor/*/; do ! mountpoint -q "$m" || sudo umount -R -l "$m"; done
+  for r in "$cache"/rootfs/*/; do rm -rf "${r}src" "${r}c" "${r}out"; done
 }
 
 # run_in <image> [docker options: only -e] -- <command>. The source is always mounted at /src:
@@ -80,7 +85,7 @@ run_in() {
         [[ $keep == *" $kv "* ]] || drop+=(-u "$kv")
       done
       exec sudo -E env "${drop[@]}" "PATH=$PATH" HOME=/tmp \
-        chroot --userspec="$(id -u):$(id -g)" "$root" /bin/sh -c 'cd /src && exec "$@"' sh "$@" )
+        chroot --userspec="$(id -u):$(id -g)" "/run/harbor/$img" /bin/sh -c 'cd /src && exec "$@"' sh "$@" )
     return
   fi
   docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_TERM_COLOR=always \
