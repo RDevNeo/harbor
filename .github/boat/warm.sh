@@ -22,5 +22,5 @@ for d in "$cache"/target/{debug,release}/deps "$cache"/target-aarch64/aarch64-un
 done
 { ls -td "$cache"/target/debug/incremental/harbor-* 2>/dev/null || true; } | tail -n +2 | xargs -r rm -rf
 bash .github/boat/relink.sh --split "$cache"/target/{release,debug} "$cache"/target-aarch64/release
-echo "snapshot: $(df --output=used -BG "$cache" | tail -1 | tr -d ' ') used"
+echo "disk at the save: $(findmnt -no FSTYPE -T "$cache") (fuse: still loading)"
 rootfs_down
