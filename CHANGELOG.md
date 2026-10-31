@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.106.1] - 2026-10-31
+
 ### Fixed
 - In a chat driven from another PC or its phone, a `claude` started by a command, script or
   commit hook no longer stops at "Not logged in". It signs in with the chat's account while
@@ -2177,7 +2179,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.106.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.106.1...HEAD
+[0.106.1]: https://github.com/RDevNeo/harbor/compare/v0.106.0...v0.106.1
 [0.106.0]: https://github.com/RDevNeo/harbor/compare/v0.105.0...v0.106.0
 [0.105.0]: https://github.com/RDevNeo/harbor/compare/v0.104.0...v0.105.0
 [0.104.0]: https://github.com/RDevNeo/harbor/compare/v0.103.0...v0.104.0
