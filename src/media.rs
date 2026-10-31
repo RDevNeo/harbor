@@ -279,6 +279,11 @@ pub fn resolve(target: &str, cwd: Option<&Path>) -> Option<(String, Option<Strin
     allowed(&path).then(|| (path.to_string_lossy().into_owned(), None))
 }
 
+/// The path of a video on this PC that a link points to; None for anything else.
+pub fn local_video(target: &str) -> Option<String> {
+    resolve(target, None).filter(|(path, url)| url.is_none() && is_video(path)).map(|(path, _)| path)
+}
+
 /// Not in a folder of keys (by the path as written and as it really is).
 pub fn allowed(p: &Path) -> bool {
     let private = |p: &Path| p.components().any(|c| matches!(c, Component::Normal(n) if PRIVATE.iter().any(|x| n == *x))) || ["/proc", "/sys", "/dev"].iter().any(|d| p.starts_with(d));

@@ -485,6 +485,9 @@ impl App {
         app.order_by_activity = app.store.get("order_by_activity").as_deref() == Some("1");
         app.ws_filter = app.store.get("sidebar_workspace").unwrap_or_default();
         app.fast = app.store.get("fast_mode").as_deref() == Some("1");
+        if let Some(v) = app.store.get("video_volume").and_then(|v| v.parse().ok()) {
+            crate::video::set_volume(v);
+        }
         app.show_team = app.store.get("show_team").as_deref() != Some("0");
         app.sidebar_open = app.store.get("sidebar_open").as_deref() != Some("0");
         let wake = {
@@ -874,8 +877,14 @@ impl App {
     fn route_links(&mut self, ctx: &egui::Context) {
         let mut urls = vec![];
         let mut chats = vec![];
+        let mut videos = vec![];
         ctx.output_mut(|o| {
             o.commands.retain(|c| match c {
+                // A link to a video on this PC plays in the viewer, as one a reply shows does.
+                egui::OutputCommand::OpenUrl(u) if crate::media::local_video(&u.url).is_some() => {
+                    videos.extend(crate::media::local_video(&u.url));
+                    false
+                }
                 egui::OutputCommand::OpenUrl(u) if u.url.starts_with("http://") || u.url.starts_with("https://") => {
                     urls.push(u.url.clone());
                     false
@@ -895,6 +904,9 @@ impl App {
         }
         if let Some(url) = urls.pop() {
             self.open_browser(Some(url));
+        }
+        if let Some(video) = videos.pop() {
+            crate::images::open(ctx, &video);
         }
     }
 
@@ -1573,6 +1585,10 @@ impl eframe::App for App {
             .collect();
         let Some(first) = steps.first() else { return };
         let due = steps.iter().take_while(|s| start.elapsed() > Duration::from_secs_f64(s.2)).count();
+        // All done: no more events, or each frame would ask for the next one.
+        if due == steps.len() && DONE.load(std::sync::atomic::Ordering::Relaxed) == due {
+            return;
+        }
         let pos = steps.get(due.max(1) - 1).map_or(first.0, |s| s.0);
         raw.events.push(egui::Event::PointerMoved(pos));
         let done = DONE.load(std::sync::atomic::Ordering::Relaxed);
@@ -1736,7 +1752,7 @@ impl App {
         }
     }
 
-    fn draw(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn draw(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.theme.refresh(&ctx);
         ctx.data_mut(|d| d.insert_temp(Id::NULL, TokensCell(self.theme.t)));
@@ -1752,6 +1768,14 @@ impl App {
             return;
         }
         self.update_toasts(&ctx);
+        // A video fills the window: nothing behind it is drawn, so a frame costs next to nothing.
+        if crate::video::is_open() {
+            crate::images::lightbox(&ctx, frame);
+            if let Some(v) = crate::video::take_volume() {
+                self.store.set("video_volume", &v.to_string());
+            }
+            return;
+        }
         let narrow = self.sidebar_narrow(&ctx);
         if !narrow {
             self.sidebar_drawer = false;
@@ -1782,7 +1806,7 @@ impl App {
                 self.palette_ui(&ctx);
                 self.add_project_ui(&ctx);
                 self.route_links(&ctx);
-                crate::images::lightbox(&ctx);
+                crate::images::lightbox(&ctx, frame);
                 return;
             }
             self.surface_max = None;
@@ -1832,7 +1856,7 @@ impl App {
         self.palette_ui(&ctx);
         self.add_project_ui(&ctx);
         self.route_links(&ctx);
-        crate::images::lightbox(&ctx);
+        crate::images::lightbox(&ctx, frame);
     }
 }
 

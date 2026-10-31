@@ -516,7 +516,7 @@ beside the text (a bubble's edge, a tool row, a notice) opens the sheet as befor
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 
 The image viewer browses the tapped image's own card only (0.102.1), as the desktop's does (view.rs
-`gallery`): nothing of the cards around it, in a `hidden` card nothing. Within that card its
+`gallery`, where a card's videos play in the same viewer): nothing of the cards around it, in a `hidden` card nothing. Within that card its
 `media` of kind `image` come first, then its other `images`; an image (same `url`) already listed
 is left out. Nothing new on the wire: the list comes from the card the app already has.
 

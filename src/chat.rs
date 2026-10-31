@@ -1763,8 +1763,8 @@ fn fork_dividers(ui: &mut Ui, forks: &[i64]) -> Option<i64> {
 const THUMB: Vec2 = Vec2::new(132.0, 96.0);
 
 /// A row of thumbnails under a message or tool call, indented by `indent`.
-/// The images and videos a card shows: shown ones large (an image opens the lightbox, a video
-/// the system's player) with their captions, files it only names as a strip of thumbnails.
+/// The images and videos a card shows: shown ones large (a click opens the viewer) with their
+/// captions, files it only names as a strip of thumbnails.
 fn media_view(ui: &mut Ui, media: &[crate::media::Media], indent: f32) {
     if media.is_empty() {
         return;

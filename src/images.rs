@@ -13,7 +13,10 @@
 //! - `take_keys(ctx)` (early in the frame): the lightbox's ← → Esc, before a focused
 //!   composer sees them.
 //! - `in_card(ctx, seq)` / `take_opened(ctx)` / `widen(ctx, keys)`: a chat notes which card each
-//!   image belongs to, then turns the clicked image's group into all of its card's images.
+//!   image belongs to, then turns the clicked image's group into all of its card's images
+//!   and videos.
+//!
+//! Videos browse along with the images: in the lightbox they play in place (video.rs).
 
 use crate::widgets::Tip as _;
 use crate::icons as ic;
@@ -87,6 +90,8 @@ struct Cache {
     source: Option<Source>,
     /// Image → where to fetch it, for images of another PC's chat.
     remote: HashMap<String, Fetch>,
+    /// The same for videos.
+    videos: HashMap<String, Fetch>,
 }
 
 /// Fetches an image that isn't on this disk by its path there (encoded bytes), e.g. from the
@@ -405,14 +410,20 @@ pub fn open(ctx: &egui::Context, key: &str) {
 pub fn open_gallery(ctx: &egui::Context, keys: Vec<String>, index: usize) {
     let Some(key) = keys.get(index).cloned() else { return };
     lock(&shared(ctx)).gallery = keys;
-    show(ctx, &key);
+    show(ctx, &key, true);
 }
 
-/// Points the lightbox at `key`, (re)loading it if the file changed since.
-fn show(ctx: &egui::Context, key: &str) {
+/// Points the lightbox at `key`, (re)loading it if the file changed since. A video plays when
+/// `play` says so; browsed onto, it waits at its first frame.
+fn show(ctx: &egui::Context, key: &str, play: bool) {
     let s = shared(ctx);
     let mut c = lock(&s);
     c.open = Some(key.to_string());
+    if crate::media::is_video(key) {
+        crate::video::open(ctx, key, c.videos.get(key).cloned(), play);
+    } else {
+        crate::video::close(ctx);
+    }
     let local = !c.bytes.contains_key(key);
     let now = if local { stamp(key) } else { None };
     // A screenshot taken again at the same path: refresh the thumbnail too.
@@ -445,6 +456,7 @@ pub fn close(ctx: &egui::Context) {
     c.keys = [false; 3];
     // The full-size texture is large; keep it only while it's shown.
     c.full = None;
+    crate::video::close(ctx);
 }
 
 /// While the lightbox is open, takes ← → and Esc for it. Call at the start of the frame: the
@@ -454,7 +466,8 @@ pub fn take_keys(ctx: &egui::Context) {
         return;
     }
     let none = egui::Modifiers::NONE;
-    let keys = ctx.input_mut(|i| [i.consume_key(none, Key::ArrowLeft), i.consume_key(none, Key::ArrowRight), i.consume_key(none, Key::Escape)]);
+    // (Page Up and Down too, as on a video, where ← → seek.)
+    let keys = if crate::video::is_open() { crate::video::take_keys(ctx) } else { ctx.input_mut(|i| [i.consume_key(none, Key::ArrowLeft) | i.consume_key(none, Key::PageUp), i.consume_key(none, Key::ArrowRight) | i.consume_key(none, Key::PageDown), i.consume_key(none, Key::Escape)]) };
     let s = shared(ctx);
     let mut c = lock(&s);
     for (held, now) in c.keys.iter_mut().zip(keys) {
@@ -480,10 +493,13 @@ pub fn widen(ctx: &egui::Context, keys: Vec<String>) {
     if !c.open.as_ref().is_some_and(|k| keys.contains(k)) {
         return;
     }
-    if let Some(src) = c.source.as_ref().map(|s| s.image.clone()) {
+    if let Some(src) = c.source.clone() {
         for k in &keys {
             if !c.bytes.contains_key(k) && !c.remote.contains_key(k) {
-                c.remote.insert(k.clone(), src.clone());
+                c.remote.insert(k.clone(), src.image.clone());
+            }
+            if crate::media::is_video(k) {
+                c.videos.insert(k.clone(), src.video.clone());
             }
         }
     }
@@ -497,7 +513,8 @@ fn step(at: usize, n: usize, dir: isize) -> Option<usize> {
 
 /// Draws the lightbox when one is open, and drops thumbnails not drawn lately.
 /// Call once per frame, after the rest of the UI. Esc, the X or a click outside closes it.
-pub fn lightbox(ctx: &egui::Context) {
+pub fn lightbox(ctx: &egui::Context, frame: &mut eframe::Frame) {
+    crate::video::pump(ctx, frame);
     // Not taken earlier this frame (take_keys): taken now.
     take_keys(ctx);
     let s = shared(ctx);
@@ -507,7 +524,10 @@ pub fn lightbox(ctx: &egui::Context) {
             let now = ctx.input(|i| i.time);
             c.thumbs.retain(|_, (slot, used)| matches!(slot, Slot::Loading) || now - *used < 30.0);
         }
-        let Some(key) = c.open.clone() else { return };
+        let Some(key) = c.open.clone() else {
+            crate::video::close(ctx);
+            return;
+        };
         let full = c.full.as_ref().filter(|(k, _)| *k == key).map(|(_, s)| s.clone());
         let small = c.thumbs.get(&key).map(|(s, _)| s.clone());
         (key, full, small, c.gallery.clone(), std::mem::take(&mut c.keys))
@@ -522,11 +542,12 @@ pub fn lightbox(ctx: &egui::Context) {
     if next {
         go = step(at, n, 1).or(go);
     }
+    let video = crate::video::is_open();
     let screen = ctx.content_rect();
     egui::Area::new(Id::NULL.with("lightbox")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let back = ui.interact(screen, Id::NULL.with("lightbox-back"), Sense::click());
-        ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(220));
-        let room = Rect::from_min_max(screen.min + vec2(48.0, 56.0), screen.max - vec2(48.0, 64.0));
+        ui.painter().rect_filled(screen, 0.0, if video { Color32::BLACK } else { Color32::from_black_alpha(220) });
+        let room = if video { screen } else { Rect::from_min_max(screen.min + vec2(48.0, 56.0), screen.max - vec2(48.0, 64.0)) };
         // The full image once decoded; until then the thumbnail, stretched.
         let shown = match (&full, &small) {
             (Some(Slot::Ready { tex, dims, .. }), _) => Some((tex.clone(), *dims, false)),
@@ -538,7 +559,20 @@ pub fn lightbox(ctx: &egui::Context) {
             _ => None,
         };
         let mut caption = name(&key);
-        if let Some((tex, dims, loading)) = shown {
+        // A video: its picture, or its poster the size the picture will be, under its controls.
+        let mut alpha = 1.0;
+        if video {
+            if !crate::video::picture(ui, screen) {
+                if let Some((tex, dims, _)) = shown {
+                    let natural = vec2(dims[0] as f32, dims[1] as f32);
+                    let rect = Rect::from_center_size(room.center(), natural * (room.width() / natural.x).min(room.height() / natural.y));
+                    egui::Image::from_texture(SizedTexture::from_handle(&tex)).paint_at(ui, rect);
+                }
+            }
+            let drawn = crate::video::controls(ui, screen);
+            shut |= drawn.shut;
+            alpha = drawn.alpha;
+        } else if let Some((tex, dims, loading)) = shown {
             let natural = vec2(dims[0] as f32, dims[1] as f32) / ctx.pixels_per_point();
             let scale = (room.width() / natural.x).min(room.height() / natural.y).min(1.0);
             let rect = Rect::from_center_size(room.center(), natural * scale);
@@ -554,44 +588,58 @@ pub fn lightbox(ctx: &egui::Context) {
         } else {
             w::spinner(ui.painter(), room.center(), 12.0, Color32::WHITE);
         }
-        let g = ui.painter().layout_no_wrap(caption, FontId::proportional(13.0), Color32::from_gray(210));
-        ui.painter().galley(pos2(screen.center().x - g.size().x / 2.0, screen.bottom() - 40.0), g, Color32::from_gray(210));
-        // Top right: copy path (local files), copy image and close.
-        let bar = Rect::from_min_max(pos2(screen.right() - 340.0, screen.top() + 12.0), pos2(screen.right() - 12.0, screen.top() + 44.0));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar).layout(egui::Layout::right_to_left(egui::Align::Center)));
-        child.spacing_mut().item_spacing.x = 6.0;
-        if w::btn(ic::X).secondary().icon_xs().show(&mut child).tip("Close (Esc)").clicked() {
-            shut = true;
+        if !video {
+            let g = ui.painter().layout_no_wrap(caption.clone(), FontId::proportional(13.0), Color32::from_gray(210));
+            ui.painter().galley(pos2(screen.center().x - g.size().x / 2.0, screen.bottom() - 40.0), g, Color32::from_gray(210));
         }
-        if Path::new(&key).is_absolute() && w::btn(&format!("{}  Copy path", ic::COPY)).secondary().xs().show(&mut child).clicked() {
-            ctx.copy_text(key.clone());
-        }
-        // Copy image (also Ctrl+C): the encoded bytes go to the system clipboard as PNG.
-        let copy = w::btn(&format!("{}  Copy image", ic::IMAGE)).secondary().xs().show(&mut child).clicked()
-            || ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
-        if copy {
-            let bytes = lock(&s).bytes.get(&key).map(|b| b.to_vec()).or_else(|| std::fs::read(&key).ok());
-            if let Some(b) = bytes {
-                crate::clipboard::copy_image_noticed(b);
+        // A video's buttons fade with its controls.
+        if alpha > 0.0 {
+            let mut ui = ui.new_child(egui::UiBuilder::new().id_salt("lightbox-buttons").max_rect(screen));
+            ui.multiply_opacity(alpha);
+            let ui = &mut ui;
+            // Top right: copy path (local files), copy image and close.
+            let bar = Rect::from_min_max(pos2(screen.right() - 340.0, screen.top() + 12.0), pos2(screen.right() - 12.0, screen.top() + 44.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            child.spacing_mut().item_spacing.x = 6.0;
+            if w::btn(ic::X).secondary().icon_xs().show(&mut child).tip("Close (Esc)").clicked() {
+                shut = true;
             }
-        }
-        if n > 1 {
-            // Top left, across from the buttons: where this image is in the gallery, "3 / 7".
-            let t = w::tokens(ui);
-            let g = ui.painter().layout_no_wrap(format!("{} / {n}", at + 1), FontId::proportional(13.0), t.fg());
-            let pill = Rect::from_center_size(pos2(screen.left() + 12.0 + (g.size().x + 20.0) / 2.0, bar.center().y), vec2(g.size().x + 20.0, 28.0));
-            ui.painter().rect_filled(pill, CornerRadius::same(RADIUS_MD), t.gray(100));
-            ui.painter().rect_stroke(pill, CornerRadius::same(RADIUS_MD), Stroke::new(1.0, t.border()), StrokeKind::Inside);
-            ui.painter().galley(pill.center() - g.size() / 2.0, g, t.fg());
-            // A side's button only while there's an image that way.
-            for (dx, glyph, dir, tip) in [(32.0, ic::LEFT, -1, "Previous (←)"), (-32.0, ic::RIGHT, 1, "Next (→)")] {
-                let Some(to) = step(at, n, dir) else { continue };
-                let x = if dx > 0.0 { screen.left() + dx } else { screen.right() + dx };
-                let r = Rect::from_center_size(pos2(x, room.center().y), Vec2::splat(32.0));
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
-                if w::btn(glyph).secondary().icon_sm().show(&mut child).tip(tip).clicked() {
-                    go = Some(to);
+            if Path::new(&key).is_absolute() && w::btn(&format!("{}  Copy path", ic::COPY)).secondary().xs().show(&mut child).clicked() {
+                ctx.copy_text(key.clone());
+            }
+            // Copy image (also Ctrl+C): the encoded bytes go to the system clipboard as PNG.
+            let copy = !video && (w::btn(&format!("{}  Copy image", ic::IMAGE)).secondary().xs().show(&mut child).clicked() || ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy))));
+            if copy {
+                let bytes = lock(&s).bytes.get(&key).map(|b| b.to_vec()).or_else(|| std::fs::read(&key).ok());
+                if let Some(b) = bytes {
+                    crate::clipboard::copy_image_noticed(b);
                 }
+            }
+            let mut left = screen.left() + 12.0;
+            if n > 1 {
+                // Top left, across from the buttons: where this image is in the gallery, "3 / 7".
+                let t = w::tokens(ui);
+                let g = ui.painter().layout_no_wrap(format!("{} / {n}", at + 1), FontId::proportional(13.0), t.fg());
+                let pill = Rect::from_center_size(pos2(left + (g.size().x + 20.0) / 2.0, bar.center().y), vec2(g.size().x + 20.0, 28.0));
+                ui.painter().rect_filled(pill, CornerRadius::same(RADIUS_MD), t.gray(100));
+                ui.painter().rect_stroke(pill, CornerRadius::same(RADIUS_MD), Stroke::new(1.0, t.border()), StrokeKind::Inside);
+                ui.painter().galley(pill.center() - g.size() / 2.0, g, t.fg());
+                left = pill.right() + 10.0;
+                // A side's button only while there's an image that way. (On a video ← → seek.)
+                let keys = if video { ["Previous (PgUp)", "Next (PgDn)"] } else { ["Previous (←)", "Next (→)"] };
+                for (dx, glyph, dir, tip) in [(32.0, ic::LEFT, -1, keys[0]), (-32.0, ic::RIGHT, 1, keys[1])] {
+                    let Some(to) = step(at, n, dir) else { continue };
+                    let x = if dx > 0.0 { screen.left() + dx } else { screen.right() + dx };
+                    let r = Rect::from_center_size(pos2(x, room.center().y), Vec2::splat(32.0));
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                    if w::btn(glyph).secondary().icon_sm().show(&mut child).tip(tip).clicked() {
+                        go = Some(to);
+                    }
+                }
+            }
+            if video {
+                let g = ui.painter().layout_no_wrap(caption, FontId::proportional(13.0), Color32::from_gray(230));
+                ui.painter().galley(pos2(left, bar.center().y - g.size().y / 2.0), g, Color32::from_gray(230));
             }
         }
         if back.clicked() {
@@ -601,7 +649,7 @@ pub fn lightbox(ctx: &egui::Context) {
     if shut {
         close(ctx);
     } else if let Some(i) = go {
-        show(ctx, &gallery[i]);
+        show(ctx, &gallery[i], false);
     }
 }
 
@@ -726,7 +774,7 @@ pub fn failed(ui: &mut Ui, key: &str, max: Vec2, why: &str) -> bool {
 }
 
 /// A video shown in a reply: its poster (or a dark card without ffmpeg) with a play button;
-/// a click plays it in the system's player.
+/// a click plays it in the viewer.
 pub fn video(ui: &mut Ui, key: &str, max: Vec2) -> Response {
     let mid = format!("{MID}{key}");
     // Another PC's chat: its PC checks the file (its poster comes from there, or says why not).
@@ -771,20 +819,12 @@ pub fn video(ui: &mut Ui, key: &str, max: Vec2) -> Response {
         p.galley(at, label, Color32::from_gray(230));
         p.rect_stroke(rect, radius, Stroke::new(1.0, if resp.hovered() { t.gray(600) } else { t.border() }), StrokeKind::Inside);
     }
-    let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{}\nPlay in your video player", name(key)));
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand).tip(format!("{}\nPlay", name(key)));
     if resp.clicked() {
-        match away {
-            // Fetched from its PC into a file here first.
-            Some(fetch) => {
-                let key = key.to_string();
-                std::thread::spawn(move || {
-                    if let Some(file) = fetch(&key).and_then(|b| crate::media::save_remote(&key, &b)) {
-                        crate::git::open_url(&file.to_string_lossy());
-                    }
-                });
-            }
-            None => crate::git::open_url(&crate::media::located(Path::new(key)).to_string_lossy()),
+        if let Some(fetch) = away {
+            lock(&shared(ui.ctx())).videos.insert(key.to_string(), fetch);
         }
+        open_clicked(ui.ctx(), key, &[]);
     }
     resp
 }

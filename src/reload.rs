@@ -50,8 +50,9 @@ pub struct Moment {
     pub focused: bool,
     /// Since the window was last touched.
     pub idle: Duration,
-    /// The composer on screen holds text (it's kept, but the user may be mid-sentence), or the
-    /// chat is scrolled up to older messages (the restart would bring it back to its end).
+    /// The composer on screen holds text (it's kept, but the user may be mid-sentence), the chat
+    /// is scrolled up to older messages (the restart would bring it back to its end), or a video
+    /// is open (it would stop).
     pub editing: bool,
     /// Files wait to be sent: a restart would drop them.
     pub attached: bool,
@@ -280,7 +281,7 @@ impl App {
             hidden: crate::background::hidden(),
             focused: ctx.input(|i| i.viewport().focused.unwrap_or(false)),
             idle: now.duration_since(self.reload_watch.input),
-            editing: self.drafts.get(&key).is_some_and(|d| !d.trim().is_empty()) || (matches!(self.view, View::Chat(_)) && self.reading_back),
+            editing: self.drafts.get(&key).is_some_and(|d| !d.trim().is_empty()) || (matches!(self.view, View::Chat(_)) && self.reading_back) || crate::video::is_open(),
             attached: self.files.values().any(|f| !f.is_empty()),
             watching: matches!(self.view, View::Chat(id) if self.turns.contains_key(&id)),
             starved,

@@ -318,14 +318,14 @@ pub fn media(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<Media
     }
 }
 
-/// The images of one card in the order they show (its large ones, then its strip), each once:
-/// what the image viewer browses with ← → or a swipe, whichever of them it opened on. The phone
-/// builds the same list from the card's `media` and `images` (PROTOCOL.md).
+/// The images and videos of one card in the order they show (its large ones, then its strip),
+/// each once: what the viewer browses, whichever of them it opened on. The phone builds the same
+/// list from the card's `media` and `images`, without the videos (PROTOCOL.md).
 pub fn gallery(card: &Card, find: &mut dyn FnMut(&str) -> Vec<Media>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let media = media(card, find);
-    let images = media.iter().filter(|m| !m.video);
-    images.clone().filter(|m| m.shown).chain(images.filter(|m| !m.shown)).filter(|m| seen.insert(m.path.clone())).map(|m| m.path.clone()).collect()
+    let large = |m: &&Media| m.shown || m.video;
+    media.iter().filter(large).chain(media.iter().filter(|m| !large(m))).filter(|m| seen.insert(m.path.clone())).map(|m| m.path.clone()).collect()
 }
 
 /// A lead's turn that delegates, one that answers, and the cards around them (tests here and
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gallery_is_one_cards_images_each_once_in_the_order_they_show() {
+    fn the_gallery_is_one_cards_images_and_videos_each_once_in_the_order_they_show() {
         let m = |path: &str, shown: bool, video: bool| Media { path: path.into(), caption: String::new(), video, shown, url: None };
         let items = vec![
             Item::User { text: "look".into(), files: vec!["/p/a.png".into(), "/p/notes.txt".into(), "/p/b.png".into()], at: 0, mentions: vec![], sender: String::new(), intent: String::new() },
@@ -425,7 +425,7 @@ mod tests {
         };
         // Each card alone: a message's own images, nothing of the cards around it.
         assert_eq!(gallery(&cards[0].card, &mut find), ["/p/a.png", "/p/b.png"]);
-        assert_eq!(gallery(&cards[1].card, &mut find), ["/p/c.png", "/p/d.png", "/p/named.png"]);
+        assert_eq!(gallery(&cards[1].card, &mut find), ["/p/c.png", "/p/run.mp4", "/p/d.png", "/p/named.png"]);
         assert_eq!(gallery(&cards[2].card, &mut find), ["/p/e.png"]);
         assert!(gallery(&cards[4].card, &mut find).is_empty());
     }

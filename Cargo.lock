@@ -1278,6 +1278,7 @@ dependencies = [
  "portable-pty",
  "pulldown-cmark",
  "qrcode",
+ "raw-window-handle",
  "rcgen",
  "ring",
  "rusqlite",

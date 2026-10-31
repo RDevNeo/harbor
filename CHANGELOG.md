@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Videos play inside Harbor, on the desktop. A click on a video in a reply, or on a link to a video
+  on this PC, opens it in the viewer, which browses a message's images and videos together. It
+  shows just the picture, with play and pause, a seek bar, the time, volume and full screen, and
+  these fade while it plays. Space pauses, ← → seek 5 seconds, ↑ ↓ change the volume, M mutes, F
+  goes full screen, Esc leaves, Page Up and Page Down go to the previous or next item. It decodes
+  on the graphics card when it can, costs nothing while paused, and pauses when the window is out
+  of sight. Videos of another PC's chat play here too. It needs mpv (`libmpv`): without it a video
+  opens in your video player as before, with a short hint.
+
 ## [0.104.0] - 2026-10-30
 
 ### Added

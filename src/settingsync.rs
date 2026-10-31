@@ -105,6 +105,7 @@ pub const KEYS: &[(&str, Class)] = &[
     ("move_pc", D),
     // Windows, sidebars, history and dismissed notices.
     ("sidebar_open", D),
+    ("video_volume", D),
     ("show_team", D),
     ("collapsed", D),
     ("agents_settled_open", D),

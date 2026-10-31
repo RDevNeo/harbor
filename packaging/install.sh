@@ -326,4 +326,5 @@ command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1 || \
 missing=""
 command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1 || missing="$missing zenity"
 for c in git xdg-open notify-send; do command -v "$c" >/dev/null 2>&1 || missing="$missing $c"; done
+ldconfig -p 2>/dev/null | grep -q 'libmpv\.so' || missing="$missing mpv"
 [ -z "$missing" ] || say "Optional, not installed:$missing (see the README's list of what Harbor uses)."

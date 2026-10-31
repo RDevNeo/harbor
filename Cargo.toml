@@ -36,6 +36,8 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem",
 ring = "0.17"
 # getifaddrs: this PC's LAN addresses for pairing (already in the tree).
 libc = "0.2"
+# The window's display, which libmpv needs for hardware decoding (video.rs; already in the tree).
+raw-window-handle = "0.6"
 # Voice input's speech engine (parakeet.rs): sherpa-onnx, linked statically with its ONNX
 # Runtime (prebuilt libraries fetched at build time), runs Parakeet TDT 0.6B v3 and the
 # Whisper fallback. No separate install; models download on first use.

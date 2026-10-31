@@ -99,6 +99,8 @@ mod voice;
 mod update;
 mod usertext;
 mod versions;
+#[allow(unsafe_code)] // libmpv and OpenGL: C APIs, no safe wrapper in the tree
+mod video;
 mod view;
 mod waiting;
 mod widgets;
@@ -234,5 +236,9 @@ impl eframe::App for Window<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         eframe::App::ui(self.0, ui, frame);
+    }
+
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        video::shutdown(gl);
     }
 }
