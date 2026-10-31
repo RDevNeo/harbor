@@ -13,7 +13,7 @@
 //! - `take_keys(ctx)` (early in the frame): the lightbox's ← → Esc, before a focused
 //!   composer sees them.
 //! - `in_card(ctx, seq)` / `take_opened(ctx)` / `widen(ctx, keys)`: a chat notes which card each
-//!   image belongs to, then turns the clicked card's gallery into its whole turn's images.
+//!   image belongs to, then turns the clicked image's group into all of its card's images.
 
 use crate::widgets::Tip as _;
 use crate::icons as ic;
@@ -472,7 +472,7 @@ pub fn take_opened(ctx: &egui::Context) -> Option<usize> {
     lock(&shared(ctx)).opened.take()
 }
 
-/// Browses `keys` (the images of the clicked card's turn, in order) from the open image, when
+/// Browses `keys` (all the images of the clicked card, in order) from the open image, when
 /// it's one of them. Call while that chat's [`set_source`] holds: images not drawn yet come from there too.
 pub fn widen(ctx: &egui::Context, keys: Vec<String>) {
     let s = shared(ctx);
@@ -800,12 +800,12 @@ mod tests {
     }
 
     #[test]
-    fn the_viewer_stops_at_either_end_and_widens_to_the_turn() {
+    fn the_viewer_stops_at_either_end_and_widens_to_the_card() {
         assert_eq!((step(0, 3, -1), step(0, 3, 1), step(2, 3, 1), step(2, 3, -1)), (None, Some(1), None, Some(1)));
         assert_eq!(step(0, 1, 1), None);
         let ctx = egui::Context::default();
         let keys = |v: &[&str]| v.iter().map(|s| format!("/x/{s}.png")).collect::<Vec<_>>();
-        // A card's own two images, then its turn's five: the viewer stays on the one opened.
+        // Its large images, then all five of its card's: the viewer stays on the one opened.
         in_card(&ctx, 7);
         open_clicked(&ctx, "/x/d.png", &keys(&["c", "d"]));
         assert_eq!((take_opened(&ctx), take_opened(&ctx)), (Some(7), None));

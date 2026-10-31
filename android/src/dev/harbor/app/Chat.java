@@ -1099,33 +1099,21 @@ public class Chat extends Base implements Images.Gallery {
         comp.mentions.setVisibility(chips == 0 ? View.GONE : View.VISIBLE);
     }
 
-    /** The images of card {@code seq}'s turn (Turn.java) in the order the cards show them (a
-     *  card's large ones, then its strip), each once, as the desktop's viewer browses them
-     *  (view.rs `turn`, `gallery`): a tap on any of them opens the viewer here, and swipes go
-     *  on to the others. */
+    /** The images of card {@code seq} in the order it shows them (its large ones, then its
+     *  strip), each once, as the desktop's viewer browses them (view.rs `gallery`): a tap on
+     *  any of them opens the viewer here, and swipes go on to the others. */
     @Override public List<Images.Src> gallery(int seq) {
         List<Images.Src> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        List<JSONObject> cards = new ArrayList<>(items.values());
-        boolean[] speakers = new boolean[cards.size()];
-        int at = -1;
-        for (int i = 0; i < speakers.length; i++) {
-            JSONObject it = cards.get(i);
-            speakers[i] = Turn.speaker(it.optString("kind"), it.optString("icon"));
-            if (it.optInt("seq") == seq) at = i;
-        }
-        if (at < 0) return out;
-        int[] turn = Turn.range(speakers, at);
-        for (JSONObject it : cards.subList(turn[0], turn[1])) {
-            if ("hidden".equals(it.optString("kind"))) continue;
-            JSONArray media = it.optJSONArray("media"), rest = notShown(it);
-            for (JSONArray list : new JSONArray[]{media, rest}) {
-                for (int i = 0; list != null && i < list.length(); i++) {
-                    JSONObject m = list.optJSONObject(i);
-                    if (m == null || list == media && !"image".equals(m.optString("kind"))) continue;
-                    String url = m.optString("url");
-                    if (!url.isEmpty() && seen.add(url)) out.add(new Images.Src(hub, url, m.optString("name")));
-                }
+        JSONObject it = items.get(seq);
+        if (it == null || "hidden".equals(it.optString("kind"))) return out;
+        JSONArray media = it.optJSONArray("media"), rest = notShown(it);
+        for (JSONArray list : new JSONArray[]{media, rest}) {
+            for (int i = 0; list != null && i < list.length(); i++) {
+                JSONObject m = list.optJSONObject(i);
+                if (m == null || list == media && !"image".equals(m.optString("kind"))) continue;
+                String url = m.optString("url");
+                if (!url.isEmpty() && seen.add(url)) out.add(new Images.Src(hub, url, m.optString("name")));
             }
         }
         return out;

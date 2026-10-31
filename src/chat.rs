@@ -376,10 +376,10 @@ impl App {
                     ui.add_space(24.0);
                 });
             });
-        // An image of the chat opened: ← → browse its whole turn, not only its card's.
+        // An image of the chat opened: ← → browse its message's images, its strip's too.
         if let Some(card) = crate::images::take_opened(ui.ctx()) {
-            let turn = self.turn_images(ui.ctx(), id, card);
-            crate::images::widen(ui.ctx(), turn);
+            let own = self.card_images(ui.ctx(), id, card);
+            crate::images::widen(ui.ctx(), own);
         }
         crate::images::set_source(ui.ctx(), None);
         // Scrolled up to older messages: an automatic update waits (reload.rs), as the restart
@@ -387,15 +387,16 @@ impl App {
         self.reading_back = out.state.clamped_offset().y + out.inner_rect.height() < out.content_size.y - 48.0;
     }
 
-    /// The images of card `seq`'s turn in chat `id`, in order (view.rs `turn`, `gallery`): what
-    /// the lightbox browses.
-    fn turn_images(&mut self, ctx: &egui::Context, id: i64, seq: usize) -> Vec<String> {
+    /// The images of card `seq` in chat `id`, in order (view.rs `gallery`): what the lightbox
+    /// browses.
+    fn card_images(&mut self, ctx: &egui::Context, id: i64, seq: usize) -> Vec<String> {
         let forks = self.forks_of(id);
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
         let cwd = self.media_cwd(id).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         let Some(tr) = self.transcripts.get(&id) else { return vec![] };
         let cards = crate::view::project(&tr.items, lead, &forks);
-        crate::view::gallery(crate::view::turn(&cards, seq), &mut |t| crate::images::media_in(ctx, t, &cwd))
+        let Some(shown) = cards.iter().find(|s| s.seq == seq) else { return vec![] };
+        crate::view::gallery(&shown.card, &mut |t| crate::images::media_in(ctx, t, &cwd))
     }
 
     fn transcript(&mut self, ui: &mut Ui, id: i64, _running: Option<u64>) {

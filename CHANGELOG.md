@@ -5,6 +5,10 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- The image viewer browses only the message you opened it from, on the desktop and the phone: ← →,
+  swipes and the "3 / 7" counter go through that one message's images, not the rest of its turn.
+
 ## [0.102.0] - 2026-10-30
 
 ### Changed

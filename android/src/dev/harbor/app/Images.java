@@ -37,8 +37,8 @@ import java.util.List;
  *  composer is about to send (a local file); and the full-screen viewer a tap opens (pinch or
  *  double-tap to zoom, swipe or the side buttons to the previous or next one, Back to close). */
 final class Images {
-    /** A screen that picks what the viewer browses from card {@code seq} (a chat: the images of
-     *  that card's turn, in order), whichever of them it opened on. */
+    /** A screen that picks what the viewer browses from card {@code seq} (a chat: all of that
+     *  card's images, in order), whichever of them it opened on. */
     interface Gallery { List<Src> gallery(int seq); }
     private static final LruCache<String, Bitmap> cache = new LruCache<String, Bitmap>(24 << 20) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
