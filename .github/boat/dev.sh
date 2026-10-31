@@ -37,14 +37,16 @@ if [ "$mode" = check ]; then
   exit
 fi
 
-# 2 MB alignment: data growing in front of the code doesn't move it. dev-link.sh does the same
-# between Harbor's objects. On this one crate only, so the dependencies are built once.
-if [ ! -f "$cache/target/dev-gap.o" ]; then
-  printf '.section .text.zzgap,"axR",@progbits\n.p2align 14\nnop\n' > "$cache/dev-gap.s"
-  run_in "$core" "${rust[@]}" -- cc -c /c/dev-gap.s -o /c/target/dev-gap.o
-fi
+# Code and data stay in place between builds, for a small patch: 2 MB alignment against what grows
+# in front of them, dev-link.sh between Harbor's objects, no unwind tables (panic=abort doesn't need
+# them, and they shift with every function), and enough codegen units that rustc doesn't merge any:
+# merging by size moves functions between objects on any edit. On this one crate only: dependencies
+# build once.
+for g in gap first; do
+  [ "$cache/target/dev-$g.o" -nt ".github/boat/dev-$g.s" ] || run_in "$core" "${rust[@]}" -- cc -c "/src/.github/boat/dev-$g.s" -o "/c/target/dev-$g.o"
+done
 quietly cargo_in rustc --locked --profile quick --bin harbor -- -C linker=/src/.github/boat/dev-link.sh \
-  -C link-arg=-Wl,-z,separate-code -C link-arg=-Wl,-z,max-page-size=0x200000
+  -C codegen-units=4096 -C force-unwind-tables=no -C link-arg=-Wl,-z,separate-code -C link-arg=-Wl,-z,max-page-size=0x200000
 lap build
 bin="$cache/target/quick/harbor"
 sha=$(sha256sum "$bin" | cut -c1-64)
