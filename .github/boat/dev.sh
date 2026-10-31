@@ -18,6 +18,9 @@ lap() { local n; n=$(now); echo "@@ $1 $((n - t))"; t=$n; }
 
 if [ "$mode" = setup ]; then
   rootfs_save harbor-builder .github/boat/Dockerfile
+  # What the snapshot keeps for other builds. After a long stop the whole disk loads again and every
+  # build crawls until it's done: 130 s against 4 s. 6 GB instead of 31.
+  rm -rf "$cache/target-aarch64" "$cache/android" "$cache/target/debug" "$cache/target/release"
 fi
 core=$(image harbor-builder .github/boat/Dockerfile)
 [ "$mode" != setup ] || toolchain "$core"

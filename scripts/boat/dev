@@ -22,7 +22,8 @@ Options:
   --status        the sandbox's state, and VM-hours used and left
   --delete        delete the sandbox and what this PC remembers of it
   --idle SECONDS  stop the sandbox after this long without a build (default 600)
-  --type TYPE     machine for a new or resumed sandbox: small (the default), default, large
+  --type TYPE     stay on this machine: small, default or large. Without it the first build runs
+                  on large and the warm ones on small, which rebuilds as fast at a quarter of the rate
   --note TEXT     what this build holds, shown with it (default: branch and last commit)
   -h, --help      this help
 
@@ -110,9 +111,10 @@ esac
 
 # Up and warm. The timer is boat's: every run moves it, and without runs the sandbox stops.
 create() {
-  say "creating $name (${type:-small}, from harbor-build): the first build takes a few minutes"
+  say "creating $name (${type:-large}, from harbor-build): the first build takes a few minutes"
   # Long enough for the first build; the end of the run sets the idle timer.
-  id=$("$boat" new --type "${type:-small}" --from harbor-build --no-env --ttl 3600 --name "$name" --json | jq -r 'select(.event == "ready") | .id')
+  created=1
+  id=$("$boat" new --type "${type:-large}" --from harbor-build --no-env --ttl 3600 --name "$name" --json | jq -r 'select(.event == "ready") | .id')
   [ -n "$id" ] || { echo "could not create a sandbox" >&2; exit 1; }
   echo "$id" > "$state/id"
   rm -f "$state/manifest"
@@ -206,6 +208,13 @@ if [ "$code" = 75 ]; then
   say "setting up the sandbox (a first build)"
   PATH="$(dirname "$boat"):$PATH" "$root/.github/boat/run.sh" "$id" --cwd src -- bash .github/boat/dev.sh setup | grep -vE "^\s+Compiling" | tail -40
   lap setup
+  # A cold build wants the memory; a warm one doesn't.
+  if [ -n "${created:-}" ] && [ -z "$type" ]; then
+    "$boat" stop "$id" --json >/dev/null
+    until [ "$(sandbox_state)" = stopped ]; do sleep 1; done
+    "$boat" resume "$id" --type small --ttl 3600 --json >/dev/null
+    lap "to-small"
+  fi
   run_on "$mode" "$base" > "$answer" || true
   code=$(jq -r '.exitCode // empty' "$answer" 2>/dev/null || true)
 fi
