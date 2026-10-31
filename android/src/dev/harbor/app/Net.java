@@ -264,6 +264,7 @@ final class Net {
         private InputStream in;
         private int code = -1;
         private long length = -1;
+        private String range;
 
         Http(Socket s, String host, int port, String method, String path, String seen) {
             this.s = s;
@@ -312,8 +313,11 @@ final class Net {
             try { code = Integer.parseInt(p[1]); } catch (NumberFormatException e) { throw new IOException("bad reply from the PC"); }
             for (String l; !(l = line(r)).isEmpty(); ) {
                 int i = l.indexOf(':');
-                if (i > 0 && l.substring(0, i).trim().toLowerCase(Locale.ROOT).equals("content-length")) {
+                String name = i > 0 ? l.substring(0, i).trim().toLowerCase(Locale.ROOT) : "";
+                if (name.equals("content-length")) {
                     try { length = Long.parseLong(l.substring(i + 1).trim()); } catch (NumberFormatException ignored) { }
+                } else if (name.equals("content-range")) {
+                    range = l.substring(i + 1).trim();
                 }
             }
             in = length < 0 ? r : new Limited(r, length);
@@ -322,6 +326,9 @@ final class Net {
 
         /** Content-Length of the answer, -1 if none. */
         long length() throws IOException { code(); return length; }
+
+        /** The answer's Content-Range, null if none. */
+        String range() throws IOException { code(); return range; }
 
         /** The answer's body (for errors too). */
         InputStream in() throws IOException { code(); return in; }

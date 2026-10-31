@@ -1,6 +1,7 @@
 package dev.harbor.app;
 
 import android.app.Activity;
+import android.app.Application;
 import android.app.Dialog;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -11,6 +12,7 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.util.LruCache;
 import android.view.GestureDetector;
 import android.view.Gravity;
@@ -35,10 +37,11 @@ import java.util.List;
 /** Images in a chat: thumbnails the hub serves (/v1/image?…&max=512, with the token) in the
  *  strip under a user message, a reply or a tool, like the desktop's; thumbnails of what the
  *  composer is about to send (a local file); and the full-screen viewer a tap opens (pinch or
- *  double-tap to zoom, swipe or the side buttons to the previous or next one, Back to close). */
+ *  double-tap to zoom, swipe or the side buttons to the previous or next one, Back to close).
+ *  Videos browse along with the images: in the viewer they play in place ({@link Video}). */
 final class Images {
     /** A screen that picks what the viewer browses from card {@code seq} (a chat: all of that
-     *  card's images, in order), whichever of them it opened on. */
+     *  card's images and videos, in order), whichever of them it opened on. */
     interface Gallery { List<Src> gallery(int seq); }
     private static final LruCache<String, Bitmap> cache = new LruCache<String, Bitmap>(24 << 20) {
         @Override protected int sizeOf(String k, Bitmap b) { return b.getByteCount(); }
@@ -47,12 +50,17 @@ final class Images {
     /** The viewer's size: the hub scales to this, local files are decoded to it. */
     private static final int BIG = 2048;
 
-    /** One image: on the hub (an /v1/image URL) or on this phone (a content Uri). */
+    /** One image: on the hub (an /v1/image URL) or on this phone (a content Uri); or a video on
+     *  the hub (a /v1/media URL, with the image of its poster). */
     static final class Src {
-        final Hub hub; final String url; final Uri uri; final String name;
-        Src(Hub hub, String url, String name) { this.hub = hub; this.url = url; this.uri = null; this.name = name; }
-        Src(Uri uri, String name) { this.hub = null; this.url = null; this.uri = uri; this.name = name; }
-        String key(int px) { return hub != null ? hub.id + sized(url, px) : uri + "@" + px; }
+        final Hub hub; final String url; final Uri uri; final String name; final String poster;
+        Src(Hub hub, String url, String name) { this(hub, url, name, null); }
+        Src(Hub hub, String url, String name, String poster) { this.hub = hub; this.url = url; this.uri = null; this.name = name; this.poster = poster; }
+        Src(Uri uri, String name) { this.hub = null; this.url = null; this.uri = uri; this.name = name; this.poster = null; }
+        boolean video() { return poster != null; }
+        /** The image to show for it. */
+        String picture() { return video() ? poster : url; }
+        String key(int px) { return hub != null ? hub.id + sized(picture(), px) : uri + "@" + px; }
         boolean same(Src o) { return hub != null ? o.hub == hub && url.equals(o.url) : uri.equals(o.uri); }
     }
 
@@ -192,7 +200,7 @@ final class Images {
 
     // ---- the viewer ----
 
-    /** A tap on group[at] (images of card {@code seq}): the viewer on the screen's gallery of
+    /** A tap on group[at] (images and videos of card {@code seq}): the viewer on the screen's gallery of
      *  that card when it has this one in it, else on the group. */
     static void open(Activity a, int seq, List<Src> group, int at) {
         if (a instanceof Gallery) {
@@ -219,6 +227,16 @@ final class Images {
         f.setBackgroundColor(0xff000000);
         Zoom z = new Zoom(a);
         f.addView(z, new FrameLayout.LayoutParams(-1, -1));
+        boolean[] chrome = {true}; // the bar and the side buttons; a tap on the image hides them
+        Runnable[] redraw = new Runnable[1];
+        Video found = null;
+        for (Src s : all) if (s.video() && found == null) found = new Video(a, win, on -> { chrome[0] = on; redraw[0].run(); });
+        Video video = found;
+        if (video != null) {
+            // Over the poster, under the buttons: its touches go on to the Zoom.
+            f.addView(video.picture, new FrameLayout.LayoutParams(-1, -1));
+            f.addView(video.state, new FrameLayout.LayoutParams(-1, -1));
+        }
         LinearLayout bar = Ui.row(a);
         bar.setPadding(Ui.dp(6), Ui.dp(6), Ui.dp(16), Ui.dp(6));
         bar.setBackgroundColor(0x66000000);
@@ -232,27 +250,43 @@ final class Images {
         bar.addView(count);
         f.addView(bar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         int[] i = {at};
-        boolean[] chrome = {true}; // the bar and the side buttons; a tap on the image hides them
         View[] sides = new View[2];
         Runnable show = () -> {
             Src s = all.get(i[0]);
             name.setText(s.name);
             count.setText(all.size() > 1 ? (i[0] + 1) + " / " + all.size() : "");
-            bar.setVisibility(chrome[0] ? View.VISIBLE : View.GONE);
+            fade(bar, chrome[0]);
             // A side's button only while there's an image that way.
-            sides[0].setVisibility(chrome[0] && i[0] > 0 ? View.VISIBLE : View.GONE);
-            sides[1].setVisibility(chrome[0] && i[0] < all.size() - 1 ? View.VISIBLE : View.GONE);
+            fade(sides[0], chrome[0] && i[0] > 0);
+            fade(sides[1], chrome[0] && i[0] < all.size() - 1);
+            if (video != null) {
+                fade(video.bar, chrome[0] && s.video());
+                video.chrome(chrome[0]);
+            }
+        };
+        redraw[0] = show;
+        // Shows all[i]: a video plays when it was tapped, and waits at its start when browsed onto.
+        java.util.function.Consumer<Boolean> enter = start -> {
+            Src s = all.get(i[0]);
+            z.fixed = s.video();
+            if (video != null) {
+                if (s.video()) video.show(s, start);
+                else video.leave();
+            }
+            big(a, s, z);
         };
         Zoom.Swipe go = new Zoom.Swipe() {
             @Override public boolean can(int dir) { int n = i[0] + dir; return n >= 0 && n < all.size(); }
             @Override public void to(int dir) {
                 if (!can(dir)) return;
                 i[0] += dir;
+                chrome[0] = true;
                 show.run();
-                big(a, all.get(i[0]), z);
+                enter.accept(false);
                 z.setAlpha(0.4f);
                 z.animate().alpha(1).setDuration(160).start();
             }
+            @Override public void drag(float dx) { if (video != null) video.picture.setTranslationX(dx); }
         };
         for (int k = 0; k < 2; k++) {
             int dir = k == 0 ? -1 : 1;
@@ -263,10 +297,16 @@ final class Images {
             f.addView(b, lp);
             sides[k] = b;
         }
+        if (video != null) {
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, Ui.dp(48), Gravity.BOTTOM);
+            lp.leftMargin = lp.rightMargin = lp.bottomMargin = Ui.dp(10);
+            f.addView(video.bar, lp);
+        }
         z.onSwipe = go;
         z.onTap = () -> { chrome[0] = !chrome[0]; show.run(); };
         // A keyboard's ← → too (a tablet or a Chromebook).
         d.setOnKeyListener((x, code, e) -> {
+            if (code == android.view.KeyEvent.KEYCODE_BACK && video != null && e.getAction() == android.view.KeyEvent.ACTION_UP && video.leaveFull()) return true;
             if (e.getAction() != android.view.KeyEvent.ACTION_DOWN) return false;
             if (code == android.view.KeyEvent.KEYCODE_DPAD_LEFT) { go.to(-1); return true; }
             if (code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) { go.to(1); return true; }
@@ -274,20 +314,52 @@ final class Images {
         });
         d.setContentView(f);
         show.run();
-        big(a, all.get(i[0]), z);
+        if (video != null) follow(a, d, video);
         d.show();
+        enter.accept(true);
+    }
+
+    /** A video follows the screen it's on: paused when it leaves, nothing of it kept in the
+     *  background, gone with the viewer. */
+    private static void follow(Activity a, Dialog d, Video v) {
+        Application.ActivityLifecycleCallbacks life = new Application.ActivityLifecycleCallbacks() {
+            @Override public void onActivityPaused(Activity x) { if (x == a) v.pause(); }
+            @Override public void onActivityStopped(Activity x) { if (x == a) v.suspend(); }
+            @Override public void onActivityStarted(Activity x) { if (x == a) v.resume(); }
+            @Override public void onActivityDestroyed(Activity x) { if (x == a) d.dismiss(); }
+            @Override public void onActivityCreated(Activity x, Bundle b) { }
+            @Override public void onActivityResumed(Activity x) { }
+            @Override public void onActivitySaveInstanceState(Activity x, Bundle b) { }
+        };
+        a.getApplication().registerActivityLifecycleCallbacks(life);
+        d.setOnDismissListener(x -> {
+            a.getApplication().unregisterActivityLifecycleCallbacks(life);
+            v.close();
+        });
+    }
+
+    /** Shows or hides a viewer's control the way the desktop's fade. */
+    private static void fade(View v, boolean on) {
+        // (Also what's on its way out comes back: the cancel drops the end action.)
+        v.animate().cancel();
+        if (on) {
+            v.setVisibility(View.VISIBLE);
+            v.animate().alpha(1).setDuration(180).start();
+        } else if (v.getVisibility() == View.VISIBLE) {
+            v.animate().alpha(0).setDuration(180).withEndAction(() -> v.setVisibility(View.GONE)).start();
+        }
     }
 
     /** The thumbnail at once (if cached), then the big copy. */
     private static void big(Activity a, Src s, Zoom into) {
         String key = s.key(BIG);
         Bitmap b = cache.get(key);
-        if (b == null) b = cache.get(s.hub != null ? s.hub.id + s.url : s.uri + "@" + Attach.THUMB);
+        if (b == null) b = cache.get(s.hub != null ? s.hub.id + s.picture() : s.uri + "@" + Attach.THUMB);
         into.setTag(key);
         into.show(b);
         if (cache.get(key) != null) return;
         Ui.pool.execute(() -> {
-            Bitmap got = s.hub != null ? fetch(s.hub, sized(s.url, BIG)) : decode(a.getContentResolver(), s.uri, BIG);
+            Bitmap got = s.hub != null ? fetch(s.hub, sized(s.picture(), BIG)) : decode(a.getContentResolver(), s.uri, BIG);
             if (got == null) return;
             // Too big for the cache: kept only by the viewer.
             if (got.getByteCount() < cache.maxSize() / 3) cache.put(key, got);
@@ -298,10 +370,12 @@ final class Images {
     /** An image that fits the screen and zooms: pinch, double-tap, drag while zoomed; a swipe
      *  sideways at fit size goes to the previous or next one; a tap shows or hides the bar. */
     static final class Zoom extends ImageView {
-        /** dir -1: the previous image, 1: the next one. */
-        interface Swipe { boolean can(int dir); void to(int dir); }
+        /** dir -1: the previous image, 1: the next one; drag: how far the finger has it now. */
+        interface Swipe { boolean can(int dir); void to(int dir); default void drag(float dx) { } }
         Swipe onSwipe;
         Runnable onTap;
+        /** A video's poster: it doesn't zoom. */
+        boolean fixed;
         private final Matrix m = new Matrix();
         private float fit = 1; // the scale that fits the view
         private final ScaleGestureDetector pinch;
@@ -362,6 +436,7 @@ final class Images {
         private boolean zoomed() { return scale() > fit * 1.02f; }
 
         private void zoomBy(float f, float x, float y) {
+            if (fixed) return;
             float s = scale(), to = Math.max(fit, Math.min(fit * 6, s * f));
             m.postScale(to / s, to / s, x, y);
             apply();
@@ -421,6 +496,7 @@ final class Images {
                     m.postTranslate(to - dragX, 0);
                     dragX = to;
                     setImageMatrix(m);
+                    onSwipe.drag(to);
                 }
             }
             // (Its fling, on the lift, comes before the lift is handled below.)
@@ -428,6 +504,7 @@ final class Images {
             if ((act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) && dragging) {
                 dragging = false;
                 int dir = flung != 0 ? flung : Math.abs(dragX) > getWidth() * 0.2f ? (dragX < 0 ? 1 : -1) : 0;
+                onSwipe.drag(0);
                 if (act == MotionEvent.ACTION_UP && dir != 0 && onSwipe.can(dir)) onSwipe.to(dir);
                 else fitIn();
             }

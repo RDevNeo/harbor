@@ -481,8 +481,7 @@ media without `after` after the text. `kind` is
 on tap) or `video` (`url` = `/v1/media?…`, the file itself; `poster` = `/v1/image?…` of the video,
 a JPEG of its first frame, `404` when the PC has no ffmpeg). Draw the `images` not in `media` (same
 `url`) as the strip; older apps ignore `media` and still get every image in `images`. A video
-plays from a local copy (download it with the token, then a player); a media item that can't
-load shows a small "can't load" tile that retries on tap. `blocks` leave out the markdown images
+plays while it arrives, by `Range` (`/v1/media` below); a media item that can't load shows a small "can't load" tile that retries on tap. `blocks` leave out the markdown images
 that `media` draws. A reply's local files are kept by its PC when the reply ends (0.84), so
 their `url`s keep working after the agent deletes them (a screenshot in /tmp).
 
@@ -515,10 +514,11 @@ beside the text (a bubble's edge, a tool row, a notice) opens the sheet as befor
 `images` are `[{name, url}]`; `url` is `/v1/image?path=…&max=512` (below). Tool `input`/`result`,
 notice details, messages and errors are clipped to 16 KB. Ignore unknown kinds.
 
-The image viewer browses the tapped image's own card only (0.102.1), as the desktop's does (view.rs
-`gallery`, where a card's videos play in the same viewer): nothing of the cards around it, in a `hidden` card nothing. Within that card its
-`media` of kind `image` come first, then its other `images`; an image (same `url`) already listed
-is left out. Nothing new on the wire: the list comes from the card the app already has.
+The viewer browses the tapped item's own card only (0.102.1), as the desktop's does (view.rs
+`gallery`), images and videos together (0.106): nothing of the cards around it, in a `hidden` card
+nothing. Within that card its `media` come first, then its other `images`; an item (same `url`)
+already listed is left out. Nothing new on the wire: the list comes from the card the app already
+has.
 
 #### Status
 
@@ -1144,6 +1144,11 @@ Only files that are really images or videos by their first bytes, at most 200 MB
 folders (`.ssh`, `.gnupg`, …); `404` otherwise. `/v1/image` follows the same rules (and draws
 SVGs as PNG). Card URLs carry `&chat=<gid>` like images; through another PC of the mesh a video
 comes from the chat's own PC, up to 64 MB.
+
+From 0.106 it takes `Range: bytes=N-` or `bytes=N-M`: `206` with `Content-Range: bytes N-M/total`
+and that part, `416` past the end, and `Accept-Ranges: bytes` says so. A video of another PC's
+chat comes at most 8 MB per answer, whatever was asked (and then has no 64 MB limit): ask for the
+rest from where it stopped. A hub before 0.106 ignores the header and answers `200`.
 
 ### `GET /v1/chats/{id}/team`
 

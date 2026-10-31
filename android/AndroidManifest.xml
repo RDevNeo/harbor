@@ -59,7 +59,8 @@
         <activity android:name=".Browser" android:exported="false" android:process=":browser"
             android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden" />
-        <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".Chat" android:exported="false" android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden" />
         <activity android:name=".NewChat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".Palette" android:exported="false" android:windowSoftInputMode="adjustResize|stateVisible" />
         <activity android:name=".Settings" android:exported="false" />

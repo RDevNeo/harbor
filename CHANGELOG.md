@@ -5,6 +5,22 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- Videos have the same player on the phone as on the desktop: just the picture, with play and
+  pause, the time, a seek bar, mute and full screen, which fade while it plays; a tap brings them
+  back. They browse together with the images of the message you opened, by swipe or the side
+  buttons, and a video you browse onto waits at its start. A video now starts right away instead
+  of after its whole download, and a seek goes straight there: it plays while it arrives and
+  fetches only a little ahead of what you watch, so one you stop early costs little data. It
+  stops when you leave and picks up paused where it was when you come back, and watched videos
+  are kept in a cache of at most 300 MB. A video in a reply now shows at its own shape, a tall
+  one narrow, as on the desktop.
+
+### Changed
+- Videos of a chat on another PC of your mesh reach the phone in parts, so the old 64 MB limit
+  there is gone and they stay within the usual 200 MB.
+- The chat on the phone keeps its place when the phone turns.
+
 ## [0.105.0] - 2026-10-30
 
 ### Added

@@ -1099,9 +1099,9 @@ public class Chat extends Base implements Images.Gallery {
         comp.mentions.setVisibility(chips == 0 ? View.GONE : View.VISIBLE);
     }
 
-    /** The images of card {@code seq} in the order it shows them (its large ones, then its
-     *  strip), each once, as the desktop's viewer browses them (view.rs `gallery`): a tap on
-     *  any of them opens the viewer here, and swipes go on to the others. */
+    /** The images and videos of card {@code seq} in the order it shows them (its large ones,
+     *  then its strip), each once, as the desktop's viewer browses them (view.rs `gallery`): a
+     *  tap on any of them opens the viewer here, and swipes go on to the others. */
     @Override public List<Images.Src> gallery(int seq) {
         List<Images.Src> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -1111,9 +1111,9 @@ public class Chat extends Base implements Images.Gallery {
         for (JSONArray list : new JSONArray[]{media, rest}) {
             for (int i = 0; list != null && i < list.length(); i++) {
                 JSONObject m = list.optJSONObject(i);
-                if (m == null || list == media && !"image".equals(m.optString("kind"))) continue;
+                if (m == null) continue;
                 String url = m.optString("url");
-                if (!url.isEmpty() && seen.add(url)) out.add(new Images.Src(hub, url, m.optString("name")));
+                if (!url.isEmpty() && seen.add(url)) out.add(Media.src(hub, m));
             }
         }
         return out;

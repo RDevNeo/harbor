@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1256,6 +1256,7 @@ fn status_text(s: u16) -> &'static str {
         200 => "OK",
         201 => "Created",
         204 => "No Content",
+        206 => "Partial Content",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
@@ -1264,6 +1265,7 @@ fn status_text(s: u16) -> &'static str {
         409 => "Conflict",
         411 => "Length Required",
         413 => "Payload Too Large",
+        416 => "Range Not Satisfiable",
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
@@ -1632,7 +1634,7 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
             FAILS.hit(ip);
             return send_json(r.get_mut(), 403, &json!({ "error": "only for paired PCs" }));
         }
-        return serve_media(r.get_mut(), req.query("path").unwrap_or(""));
+        return serve_media(r.get_mut(), req.query("path").unwrap_or(""), req.header("range"));
     }
     // Another PC's Harbor (mesh.rs): known by its key, not a token.
     if segs.first() == Some(&"mesh") {
@@ -1820,13 +1822,15 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
         ("GET", ["v1", "media"]) => {
             let path = req.query("path").unwrap_or("");
             let chat = req.query("chat").and_then(|c| c.parse::<i64>().ok().or_else(|| hub.mesh.by_gid(c)));
+            let range = req.header("range");
             // Asked of its home PC first: the same path here (a /tmp/shot.png) may be another file.
-            if let Some((ctype, bytes)) = chat.and_then(|c| crate::mesh::home_media(hub, c, path)) {
-                let _ = w.write_all(response(200, &ctype, bytes.len(), "").as_bytes());
-                let _ = w.write_all(&bytes);
+            if let Some(part) = chat.and_then(|c| crate::mesh::home_media_part(hub, c, path, range)) {
+                let extra = if part.range.is_empty() { String::new() } else { format!("Accept-Ranges: bytes\r\nContent-Range: {}\r\n", part.range) };
+                let _ = w.write_all(response(part.status, &part.ctype, part.body.len(), &extra).as_bytes());
+                let _ = w.write_all(&part.body);
                 return;
             }
-            serve_media(w, path)
+            serve_media(w, path, range)
         }
         // A phone without a recogniser of its own: its recording (WAV, 16-bit mono), transcribed
         // here with whisper.cpp (voice.rs), on this connection's thread.
@@ -2051,9 +2055,27 @@ fn serve_image(w: &mut impl Write, path: &str, max: Option<u32>) {
     let _ = w.write_all(&body);
 }
 
-/// A video (or an image's original) a card shows (`media_url`), streamed as it is. Only real
-/// image and video files (media.rs `check`), at most `media::MAX_VIDEO`.
-fn serve_media(w: &mut impl Write, path: &str) {
+/// The bytes a `Range` header asks of a file of `len` bytes, first and last. None to answer with
+/// the whole file (no header, or one this doesn't take: a list, other units), Err when it starts
+/// past the end. A suffix (`bytes=-500`) is the file's end.
+fn byte_range(header: Option<&str>, len: u64) -> Option<Result<(u64, u64), ()>> {
+    let (from, to) = header?.trim().strip_prefix("bytes=")?.split_once('-')?;
+    if from.is_empty() {
+        let n: u64 = to.parse().ok()?;
+        return (n > 0 && len > 0).then(|| Ok((len.saturating_sub(n), len - 1)));
+    }
+    let from: u64 = from.parse().ok()?;
+    let to = if to.is_empty() { u64::MAX } else { to.parse().ok()? };
+    if from > to {
+        return None;
+    }
+    Some(if from < len { Ok((from, to.min(len - 1))) } else { Err(()) })
+}
+
+/// A video (or an image's original) a card shows (`media_url`), streamed as it is, or the part
+/// of it `range` asks for (a phone plays while it arrives). Only real image and video files
+/// (media.rs `check`), at most `media::MAX_VIDEO`.
+fn serve_media(w: &mut impl Write, path: &str, range: Option<&str>) {
     let p = Path::new(path);
     crate::media::wait_for(p, Duration::from_secs(20));
     if let Err(e) = crate::media::check(p) {
@@ -2061,10 +2083,19 @@ fn serve_media(w: &mut impl Write, path: &str) {
     }
     let Ok(mut f) = std::fs::File::open(crate::media::located(p)) else { return send_json(w, 404, &json!({ "error": "unreadable file" })) };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    if w.write_all(response(200, crate::media::mime(path), len as usize, "").as_bytes()).is_err() {
+    let mime = crate::media::mime(path);
+    let (head, from, n) = match byte_range(range, len) {
+        None => (response(200, mime, len as usize, "Accept-Ranges: bytes\r\n"), 0, len),
+        Some(Ok((from, to))) => (response(206, mime, (to - from + 1) as usize, &format!("Accept-Ranges: bytes\r\nContent-Range: bytes {from}-{to}/{len}\r\n")), from, to - from + 1),
+        Some(Err(())) => {
+            let _ = w.write_all(response(416, mime, 0, &format!("Content-Range: bytes */{len}\r\n")).as_bytes());
+            return;
+        }
+    };
+    if w.write_all(head.as_bytes()).is_err() || f.seek(std::io::SeekFrom::Start(from)).is_err() {
         return;
     }
-    let _ = std::io::copy(&mut (&mut f).take(len), w);
+    let _ = std::io::copy(&mut (&mut f).take(n), w);
 }
 
 pub fn uploads_dir() -> PathBuf {
@@ -4891,6 +4922,49 @@ mod tests {
         assert!(card_json(&cards[0], 1, &mut |_| vec![], &HashMap::new(), &Default::default()).get("media").is_none());
     }
 
+    #[test]
+    fn a_range_asks_for_part_of_a_file() {
+        assert_eq!(byte_range(Some("bytes=0-"), 100), Some(Ok((0, 99))));
+        assert_eq!(byte_range(Some("bytes=10-19"), 100), Some(Ok((10, 19))));
+        assert_eq!(byte_range(Some("bytes=90-500"), 100), Some(Ok((90, 99))));
+        assert_eq!(byte_range(Some("bytes=-30"), 100), Some(Ok((70, 99))));
+        assert_eq!(byte_range(Some("bytes=-500"), 100), Some(Ok((0, 99))));
+        // Past the end says so; what this doesn't take is the whole file.
+        assert_eq!(byte_range(Some("bytes=100-"), 100), Some(Err(())));
+        for other in [None, Some("bytes=5-1"), Some("bytes=0-1,5-6"), Some("items=0-1"), Some("bytes=a-"), Some("bytes=-0")] {
+            assert_eq!(byte_range(other, 100), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_video_is_served_in_parts_within_medias_rules() {
+        let root = std::env::temp_dir().join(format!("harbor-media-range-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".ssh")).unwrap();
+        let mp4: Vec<u8> = b"\0\0\0\x18ftypmp42\0\0\0\0".iter().copied().chain((0..1000u32).map(|i| i as u8)).collect();
+        std::fs::write(root.join("run.mp4"), &mp4).unwrap();
+        std::fs::write(root.join(".ssh/key.mp4"), &mp4).unwrap();
+        let path = root.join("run.mp4").to_string_lossy().into_owned();
+        let get = |path: &str, range: Option<&str>| {
+            let mut out = vec![];
+            serve_media(&mut out, path, range);
+            out
+        };
+        let head = |r: &[u8]| String::from_utf8_lossy(&r[..r.windows(4).position(|w| w == b"\r\n\r\n").unwrap()]).into_owned();
+        let whole = get(&path, None);
+        assert!(head(&whole).starts_with("HTTP/1.1 200") && head(&whole).contains("Accept-Ranges: bytes") && whole.ends_with(&mp4));
+        let part = get(&path, Some("bytes=100-199"));
+        assert!(head(&part).starts_with("HTTP/1.1 206") && head(&part).contains(&format!("Content-Range: bytes 100-199/{}", mp4.len())), "{}", head(&part));
+        assert!(head(&part).contains("Content-Length: 100") && part.ends_with(&mp4[100..200]));
+        let tail = get(&path, Some("bytes=-16"));
+        assert!(tail.ends_with(&mp4[mp4.len() - 16..]));
+        let past = get(&path, Some(&format!("bytes={}-", mp4.len())));
+        assert!(head(&past).starts_with("HTTP/1.1 416") && head(&past).contains(&format!("Content-Range: bytes */{}", mp4.len())));
+        // A range reaches nothing a whole request wouldn't.
+        assert!(head(&get(&root.join(".ssh/key.mp4").to_string_lossy(), Some("bytes=0-10"))).starts_with("HTTP/1.1 404"));
+        assert!(head(&get(&root.join("missing.mp4").to_string_lossy(), Some("bytes=0-10"))).starts_with("HTTP/1.1 404"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A reply showing a /tmp screenshot and a project-relative image: the addresses the phone
     /// (and another PC, `/mesh/v1/image` and `/media` serve the same) gets, and the bytes they
     /// serve, also once the /tmp file is deleted.
@@ -4938,7 +5012,7 @@ mod tests {
         let full = get(&paths[1], None);
         assert!(ok(&full) && full.ends_with(&png(30, 30)), "{}", String::from_utf8_lossy(&full[..60.min(full.len())]));
         let mut file = vec![];
-        serve_media(&mut file, &paths[1]);
+        serve_media(&mut file, &paths[1], None);
         assert!(ok(&file) && String::from_utf8_lossy(&file).contains("image/png"));
         // A path no reply showed stays gone.
         assert!(get(&tmp.join("other.png").to_string_lossy(), None).starts_with(b"HTTP/1.1 404"));

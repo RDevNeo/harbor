@@ -632,6 +632,20 @@ pub fn http(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, 
 
 /// [`http`] with the answer as it came: status, content type and bytes (an image).
 pub fn http_raw(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, wait: Duration) -> Result<(u16, String, Vec<u8>), String> {
+    http_part(dest, method, path, body, "", wait).map(|a| (a.status, a.ctype, a.body))
+}
+
+/// An answer as it came, with the part of a file it holds when one was asked for.
+pub struct Answer {
+    pub status: u16,
+    pub ctype: String,
+    /// `Content-Range`.
+    pub range: String,
+    pub body: Vec<u8>,
+}
+
+/// [`http_raw`] asking for only part of a file (`range`: a `Range` header's value, or empty).
+fn http_part(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8])>, range: &str, wait: Duration) -> Result<Answer, String> {
     let sock = dest.addr.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("no address")?;
     if let Some(via) = &dest.via {
         // Through another PC: a raw stream to the peer, then TLS with the peer inside it.
@@ -640,7 +654,7 @@ pub fn http_raw(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8]
         }
         let outer = crate::relay::open(via, &dest.fp, sock.port(), wait)?;
         let (inner, _) = crate::tls::handshake(outer, sock.ip(), Some(&dest.fp))?;
-        return exchange(inner, &dest.addr, method, path, body);
+        return exchange(inner, &dest.addr, method, path, body, range);
     }
     if dest.fp.is_empty() {
         let ip = crate::tls::canonical(sock.ip());
@@ -650,13 +664,13 @@ pub fn http_raw(dest: &Dest, method: &str, path: &str, body: Option<(&str, &[u8]
         let s = TcpStream::connect_timeout(&sock, CONNECT).map_err(|e| e.to_string())?;
         let _ = s.set_read_timeout(Some(wait));
         let _ = s.set_write_timeout(Some(wait));
-        return exchange(s, &dest.addr, method, path, body);
+        return exchange(s, &dest.addr, method, path, body, range);
     }
     if crate::relay::unreachable(&sock) {
         return Err("unreachable (HARBOR_UNREACHABLE)".into());
     }
     let (s, _) = crate::tls::connect(&sock, Some(&dest.fp), CONNECT, wait)?;
-    exchange(s, &dest.addr, method, path, body)
+    exchange(s, &dest.addr, method, path, body, range)
 }
 
 /// How often each PC asks the others where they saw the phones.
@@ -850,18 +864,19 @@ fn take_preview(p: &Peer, offer: &crate::preview::Offer, tx: Sender<crate::contr
 
 
 /// Writes a request and reads its answer on an open connection.
-fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>) -> Result<(u16, String, Vec<u8>), String> {
+fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body: Option<(&str, &[u8])>, range: &str) -> Result<Answer, String> {
     let (ctype, data) = body.unwrap_or(("application/json", b""));
     let (id, name) = HELLO.lock().unwrap().clone();
     let me = format!("X-Harbor-Id: {}\r\nX-Harbor-Name: {}\r\n", id.replace(['\r', '\n'], ""), name.replace(['\r', '\n'], ""));
-    let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n{me}Content-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", data.len());
+    let range = if range.is_empty() { String::new() } else { format!("Range: {}\r\n", range.replace(['\r', '\n'], "")) };
+    let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n{me}{range}Content-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", data.len());
     s.write_all(head.as_bytes()).and_then(|_| s.write_all(data)).and_then(|_| s.flush()).map_err(|e| e.to_string())?;
     let mut r = BufReader::new(s);
     let mut line = String::new();
     r.read_line(&mut line).map_err(|e| e.to_string())?;
     let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or("not Harbor")?;
     let mut len: Option<usize> = None;
-    let mut ctype = String::new();
+    let (mut ctype, mut range) = (String::new(), String::new());
     loop {
         let mut l = String::new();
         if r.read_line(&mut l).map_err(|e| e.to_string())? == 0 || l.trim().is_empty() {
@@ -872,6 +887,8 @@ fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body
                 len = v.trim().parse().ok();
             } else if k.trim().eq_ignore_ascii_case("content-type") {
                 ctype = v.trim().to_string();
+            } else if k.trim().eq_ignore_ascii_case("content-range") {
+                range = v.trim().to_string();
             }
         }
     }
@@ -886,7 +903,7 @@ fn exchange(mut s: impl Read + Write, host: &str, method: &str, path: &str, body
             r.take(64 << 20).read_to_end(&mut buf).map_err(|e| e.to_string())?;
         }
     }
-    Ok((status, ctype, buf))
+    Ok(Answer { status, ctype, range, body: buf })
 }
 
 /// An image of a chat that runs on another PC (`/v1/image` here for a copy): fetched from that
@@ -904,11 +921,30 @@ pub fn home_image(hub: &api::Hub, chat: i64, path: &str, max: Option<u32>) -> Op
 /// A video of a chat that runs on another PC (`/v1/media` here for a copy), the same way: at
 /// most what one mesh answer carries (64 MB).
 pub fn home_media(hub: &api::Hub, chat: i64, path: &str) -> Option<(String, Vec<u8>)> {
+    home_media_part(hub, chat, path, None).map(|a| (a.ctype, a.body))
+}
+
+/// The most of a file one ranged mesh answer carries, so a phone's `bytes=N-` for a video of
+/// another PC's chat doesn't wait for all of it here first: it gets this and asks for the rest.
+const MEDIA_PART: u64 = 8 << 20;
+
+/// `range` (a `Range` header's value) cut to at most [`MEDIA_PART`] bytes.
+fn part_of(range: &str) -> String {
+    let parts = range.trim().strip_prefix("bytes=").and_then(|r| r.split_once('-'));
+    let Some((from, to)) = parts.and_then(|(f, t)| Some((f.parse::<u64>().ok()?, t))) else { return range.to_string() };
+    let last = from + MEDIA_PART - 1;
+    format!("bytes={from}-{}", to.parse().map_or(last, |t: u64| t.min(last)))
+}
+
+/// [`home_media`], or the part of it `range` asks for. A PC from before ranges answers with the
+/// whole file, which goes on as it came.
+pub fn home_media_part(hub: &api::Hub, chat: i64, path: &str, range: Option<&str>) -> Option<Answer> {
     let (home, _) = hub.mesh.homes.lock().unwrap().get(&chat).cloned()?;
     let p = hub.mesh.peer(&home).filter(|p| p.online)?;
     let q = format!("/mesh/v1/media?path={}", api::url_encode(path));
-    match http_raw(&p.dest(), "GET", &q, None, Duration::from_secs(120)) {
-        Ok((200, ctype, bytes)) if ctype.starts_with("video/") || ctype.starts_with("image/") => Some((ctype, bytes)),
+    let range = range.map(part_of).unwrap_or_default();
+    match http_part(&p.dest(), "GET", &q, None, &range, Duration::from_secs(120)) {
+        Ok(a) if matches!(a.status, 200 | 206) && (a.ctype.starts_with("video/") || a.ctype.starts_with("image/")) => Some(a),
         _ => None,
     }
 }
@@ -1223,7 +1259,7 @@ pub fn pair_join(shared: &Shared, addr: &str, code: &str, port: u16) -> Result<A
     let (id, name) = HELLO.lock().unwrap().clone();
     let body = json!({ "proof": crate::tls::proof(&key, "join", &host, &mine), "id": id, "name": name, "addrs": my_addrs(port), "port": port });
     let data = serde_json::to_vec(&body).unwrap_or_default();
-    let (status, _, buf) = exchange(s, &target, "POST", "/mesh/v1/pair", Some(("application/json", &data)))?;
+    let Answer { status, body: buf, .. } = exchange(s, &target, "POST", "/mesh/v1/pair", Some(("application/json", &data)), "")?;
     let v: Value = serde_json::from_slice(&buf).unwrap_or(Value::Null);
     if status != 200 {
         return Err(v["error"].as_str().map(String::from).unwrap_or_else(|| format!("{target} answered {status}")));
@@ -3437,6 +3473,42 @@ mod tests {
 
     /// A PC allowed by Tailscale node before 0.13 swaps keys over the tailnet, and from then on
     /// only TLS with that key gets in.
+    /// A phone's range for a video of another PC's chat goes there as a header, cut down, and
+    /// what comes back says which part it is.
+    #[test]
+    fn a_range_goes_to_the_other_pc_and_back() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let pc = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                if line.trim().is_empty() {
+                    break;
+                }
+                head.push_str(&line);
+            }
+            s.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Type: video/mp4\r\nContent-Length: 4\r\nContent-Range: bytes 0-3/90000000\r\nConnection: close\r\n\r\nmp4!").unwrap();
+            head
+        });
+        let dest = Dest { addr, ..Default::default() };
+        let a = http_part(&dest, "GET", "/mesh/v1/media?path=%2Fa.mp4", None, &part_of("bytes=0-"), Duration::from_secs(5)).unwrap();
+        assert_eq!((a.status, a.ctype.as_str(), a.range.as_str(), a.body.as_slice()), (206, "video/mp4", "bytes 0-3/90000000", b"mp4!".as_slice()));
+        assert!(pc.join().unwrap().contains(&format!("Range: bytes=0-{}\r\n", MEDIA_PART - 1)));
+    }
+
+    #[test]
+    fn a_ranged_mesh_answer_stays_small() {
+        assert_eq!(part_of("bytes=0-"), format!("bytes=0-{}", MEDIA_PART - 1));
+        assert_eq!(part_of("bytes=100-199"), "bytes=100-199");
+        assert_eq!(part_of(&format!("bytes=5-{}", 200 << 20)), format!("bytes=5-{}", 5 + MEDIA_PART - 1));
+        // A suffix or anything else goes on as it is: the other PC decides.
+        assert_eq!(part_of("bytes=-500"), "bytes=-500");
+    }
+
     #[test]
     fn upgrade_from_tailscale() {
         let hub = api::Hub::new(vec![], api::DEFAULT_PORT);
