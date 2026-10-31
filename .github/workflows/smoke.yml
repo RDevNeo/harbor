@@ -58,8 +58,8 @@ jobs:
           ARCH: ${{ inputs.arch }}
         run: |
           set -eu
-          # Only what install.sh uses, as it is: the archives are compressed already.
-          skip=(--exclude='harbor-android.apk*' --exclude='harbor-video-source*')
+          # Only what install.sh uses on these machines, as it is: it's all compressed already.
+          skip=(--exclude='harbor-video-source*')
           case "$ARCH" in
             x86_64) skip+=(--exclude='*aarch64*') ;;
             aarch64) skip+=(--exclude='*x86_64*') ;;
