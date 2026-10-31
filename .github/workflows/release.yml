@@ -246,6 +246,7 @@ jobs:
               install -m755 "art/harbor-video/$arch/libmpv-harbor.so" "$v/libmpv-harbor.so"
               cp art/harbor-video/video.id "$v/video.id"
               cp -r art/harbor-video/licenses "$v/licenses"
+              cp packaging/nv-codec-headers-NOTICE.txt "$v/licenses/"
             done
             cp art/harbor-video/harbor-video-source.tar.gz dist/
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
