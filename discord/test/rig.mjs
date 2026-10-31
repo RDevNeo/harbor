@@ -341,6 +341,54 @@ await scenario("two-cgroups", async () => {
     delete env.HARBOR_DISCORD_DBUS;
 });
 
+// A PC without swap: frozen, a client keeps most of its memory, so idle quits, later than it'd freeze.
+await scenario("no-swap", async () => {
+    account();
+    await hostOp({ op: "stop" }).catch(() => {});
+    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    env.HARBOR_DISCORD_NO_SWAP = "1";
+    env.HARBOR_DISCORD_QUIT_IDLE = "5";
+    const m = new Mcp();
+    await m.rpc("initialize", {});
+    const first = await m.tool("discord_dms");
+    check(!first.isError, "the first call starts it", first.text);
+    const before = state().logins.length;
+    await sleep(3200);
+    const early = await status();
+    check(early.phase === "ready" && !heldBy(shellPid()), "past the freeze wait it's still running, not frozen", early.phase);
+    let sawFrozen = false;
+    await until(async () => { const s = await status(); sawFrozen ||= s.phase === "frozen" || !!s.held; return !shellUp(); }, 15000, "quit");
+    check(!sawFrozen, "idle quits it: gone, and never frozen on the way");
+    check(state().stopped > 0, "the stop is on record, for catching up");
+    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    check(true, "the host goes too: nothing is left in memory");
+    await sleep(1100);
+    history.push({ id: snowflake(Date.now()), content: "written while quit" });
+    const t = Date.now();
+    const r = await m.tool("discord_waitForMessage", { channelId: "200000000000000001", timeoutMs: 3000 });
+    console.log("       cold start + answer:", Date.now() - t, "ms");
+    check(r.text.includes("written while quit"), "the next call starts it again and finds what it missed", r.text);
+    check(state().logins.length === before + 1, "that start is one more login", state().logins.length);
+    const w = m.tool("discord_waitForMessage", { timeoutMs: 8000 });
+    await sleep(6500);
+    check(shellUp(), "a pending wait keeps it up past the quit wait");
+    events.push({ id: snowflake(Date.now()), content: "ping" });
+    check((await w).text.includes("ping"), "and gets its message");
+    await hostOp({ op: "stop" });
+    await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
+    const s = state();
+    s.logins = Array(7).fill(Math.floor(Date.now() / 1000) - 100);
+    write("state.json", s);
+    await m.tool("discord_dms");
+    check(state().logins.length === 8, "this start is the 8th of the day", state().logins.length);
+    await sleep(8000);
+    const st = await status();
+    check(st.phase === "ready" && shellUp(), "at the limit it stays running", st.phase);
+    m.close();
+    delete env.HARBOR_DISCORD_NO_SWAP;
+    delete env.HARBOR_DISCORD_QUIT_IDLE;
+});
+
 await scenario("no-cgroups", async () => {
     account();
     await hostOp({ op: "stop" }).catch(() => {});
