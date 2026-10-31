@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.105.0] - 2026-10-30
+
 ### Added
 - Videos play inside Harbor, on the desktop. A click on a video in a reply, or on a link to a video
   on this PC, opens it in the viewer, which browses a message's images and videos together. It
@@ -2146,7 +2148,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.104.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.105.0...HEAD
+[0.105.0]: https://github.com/RDevNeo/harbor/compare/v0.104.0...v0.105.0
 [0.104.0]: https://github.com/RDevNeo/harbor/compare/v0.103.0...v0.104.0
 [0.103.0]: https://github.com/RDevNeo/harbor/compare/v0.102.1...v0.103.0
 [0.102.1]: https://github.com/RDevNeo/harbor/compare/v0.102.0...v0.102.1
