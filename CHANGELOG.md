@@ -5,6 +5,11 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Removed
+- The token and cost counter is gone from the chat header on the desktop and the phone. The
+  phone's header now shows just the PC and the account. Settings › Usage still has the totals,
+  and the agent cards still show their own.
+
 ## [0.106.0] - 2026-10-30
 
 ### Added

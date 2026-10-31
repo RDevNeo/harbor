@@ -5,7 +5,7 @@
 //! API-equivalent price, also for subscription accounts, which aren't billed per token).
 
 use crate::app::App;
-use crate::store::{Item, Role};
+use crate::store::Item;
 use eframe::egui;
 use serde_json::{Value, json};
 
@@ -30,15 +30,6 @@ impl Usage {
             self.cached += cached;
             self.cost += cost_usd;
         }
-    }
-
-    pub fn plus(mut self, o: &Usage) -> Usage {
-        self.turns += o.turns;
-        self.input += o.input;
-        self.output += o.output;
-        self.cached += o.cached;
-        self.cost += o.cost;
-        self
     }
 
     pub fn tokens(&self) -> u64 {
@@ -96,22 +87,6 @@ impl App {
             None => self.usage_totals.last().by_chat.get(&id).copied().unwrap_or_default(),
         }
     }
-
-    /// A lead's with its agents'; None for other chats.
-    fn team_usage_known(&self, id: i64) -> Option<Usage> {
-        self.chat(id).filter(|c| c.role == Role::Lead)?;
-        let subs = self.chats.iter().filter(|c| c.role == Role::Sub && c.parent == Some(id));
-        Some(subs.fold(self.chat_usage_known(id), |u, c| u.plus(&self.chat_usage_known(c.id))))
-    }
-
-    /// A chat's `usage` for the phone (PROTOCOL.md): the header's label and hover, and the
-    /// numbers of the chat alone and with its agents; null before its first turn ends.
-    pub fn usage_json(&self, id: i64) -> Value {
-        let own = self.chat_usage_known(id);
-        let team = self.team_usage_known(id);
-        let Some((label, detail)) = line(own, team) else { return Value::Null };
-        json!({ "label": label, "detail": detail, "chat": own.json(), "team": team.map(|t| t.json()) })
-    }
 }
 
 impl App {
@@ -143,15 +118,6 @@ impl App {
             })
             .collect();
         json!({ "projects": projects.iter().map(|(n, u)| row(n.clone(), u)).collect::<Vec<_>>(), "days": days, "accounts": accounts })
-    }
-}
-
-/// The header's label and hover for a chat's own usage and, for a lead, its team's.
-fn line(own: Usage, team: Option<Usage>) -> Option<(String, String)> {
-    match team {
-        Some(t) if t.turns > own.turns => Some((t.compact(), format!("With its agents: {}\nThis chat alone: {}", t.detail(), own.detail()))),
-        _ if own.is_empty() => None,
-        _ => Some((own.compact(), own.detail())),
     }
 }
 
@@ -212,19 +178,6 @@ mod tests {
 
     fn result(tin: u64, tout: u64, cached: u64, cost: f64) -> Item {
         Item::Result { cost_usd: cost, duration_ms: 0, turns: 1, input_tokens: tin, output_tokens: tout, cached, at: 0, account: String::new(), model: String::new() }
-    }
-
-    #[test]
-    fn header_line() {
-        let u = |turns, cost| Usage { turns, input: 1_000 * turns, output: 10, cached: 0, cost };
-        assert_eq!(line(Usage::default(), None), None);
-        assert_eq!(line(u(1, 0.5), None).unwrap().0, "1k tok · $0.50");
-        // A lead: its agents' turns count in the label; the hover splits them.
-        let (label, tip) = line(u(1, 0.5), Some(u(3, 1.5))).unwrap();
-        assert_eq!(label, "3k tok · $1.50");
-        assert!(tip.starts_with("With its agents: 3k in") && tip.contains("This chat alone: 1k in"));
-        // A lead without agent turns: its own.
-        assert_eq!(line(u(1, 0.5), Some(u(1, 0.5))).unwrap().1, "1k in · 10 out · $0.50 · 1 turn");
     }
 
     #[test]

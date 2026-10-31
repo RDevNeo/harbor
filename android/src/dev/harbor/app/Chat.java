@@ -59,7 +59,6 @@ public class Chat extends Base implements Images.Gallery {
     private Render render;
     private Team team;
     private Slash slash;
-    private String usageLabel = "", usageDetail = ""; // the chat's tokens and cost so far (cost.rs)
     private JSONObject shown;                         // the chat the header shows
     private Tags tags;
 
@@ -94,10 +93,6 @@ public class Chat extends Base implements Images.Gallery {
         barTitle.setOnClickListener(v -> {
             JSONObject c = Hub.chat(Hub.states.get(hub.id), chatId);
             if (c != null) Chats.rename(this, hub, c, this::refreshState);
-        });
-        // The desktop header's usage hover: tokens in (cached), out, cost and turns.
-        barSub.setOnClickListener(v -> {
-            if (!usageDetail.isEmpty()) Ui.dialog(this).setTitle("Usage").setMessage(usageDetail).setPositiveButton("Close", null).show();
         });
 
         scroll = new ScrollView(this);
@@ -261,9 +256,7 @@ public class Chat extends Base implements Images.Gallery {
         String home = c.optString("home_name", "");
         if (st != null && !c.optString("home", "").isEmpty() && !c.optString("home").equals(st.optString("hub_id"))) dev = home;
         String line = dev.isEmpty() ? acc : dev + " · " + acc;
-        // The desktop header's usage, dim, before the settings so it's never what gets cut off
-        // (a tap on the line shows its split).
-        sub(usageLabel.isEmpty() ? line : usageLabel + " · " + line, Ui.G700);
+        sub(line, Ui.G700);
         boolean ro = c.has("writable") && !c.optBoolean("writable", true);
         offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
@@ -383,10 +376,6 @@ public class Chat extends Base implements Images.Gallery {
         if (r.has("typing")) comp.who(Sidebar.typingWho(r, you()));
         applyDraft(r.optJSONObject("draft"));
         bars = r.optJSONObject("status");
-        JSONObject u = r.optJSONObject("usage");
-        String label = u == null ? "" : u.optString("label");
-        usageDetail = u == null ? "" : u.optString("detail");
-        if (!label.equals(usageLabel)) { usageLabel = label; showChat(shown); }
         drawBars();
         if (atBottom) toEnd();
     }

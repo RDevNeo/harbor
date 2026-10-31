@@ -423,17 +423,11 @@ refetch everything.
 
 ```json
 {"rev": 1761200000200, "count": 31, "running": true, "queued": 1, "typing": [ … ],
- "status": { … }, "usage": { … }, "items": [ … ]}
+ "status": { … }, "items": [ … ]}
 ```
 
-`usage` (optional, since 0.39; null before the chat's first turn ends): its tokens and cost so far,
-as the desktop's header shows them dim after the chat's settings: `label` ("12.4k tok · $0.18"; a
-lead's counts its agents' turns too), `detail` (the header's hover: "12k in (8k cached) · 500 out ·
-$0.18 · 2 turns", and for a lead "With its agents: …" and "This chat alone: …" on two lines),
-`chat` and `team` (null for other chats) with the numbers: `{turns, input, output, cached, cost,
-label, detail}`. `input` counts the cached tokens too; `cost` is the provider's own estimate in
-USD (Claude Code's is the API-equivalent price, also for subscription accounts), 0 when it reports
-none (Codex, Gemini: show tokens only).
+Hubs from 0.39 to 0.106.0 also send `usage`, the tokens and cost the chat header showed then; ignore
+it. Settings › Usage has the totals (`GET /v1/usage`).
 
 The chat **exactly as the desktop draws it**: `items` are the desktop's own cards (one
 projection, `src/view.rs`, that `chat.rs` draws and this call sends), so a phone renders them

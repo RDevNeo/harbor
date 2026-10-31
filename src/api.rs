@@ -3071,7 +3071,11 @@ impl App {
                 None => err(404, "no such chat"),
             },
             ("GET", ["v1", "chats", c, "team"]) => match self.ref_id(c).filter(|c| self.chat(*c).is_some()) {
-                Some(c) => ok(self.api_team(c, ctx)),
+                Some(c) => {
+                    // Its agents' cards show their usage: nothing else may have summed it yet.
+                    self.usage_now(ctx);
+                    ok(self.api_team(c, ctx))
+                }
                 None => err(404, "no such chat"),
             },
             // "Move to PC…": the PCs the chat could move to, each with why not (movepc.rs).
@@ -3847,8 +3851,6 @@ impl App {
             "typing": self.typing_json(chat),
             "draft": self.draft_json(chat),
             "status": self.status_json(chat),
-            // Its tokens and cost so far (cost.rs), for the header; optional.
-            "usage": self.usage_json(chat),
             "items": out,
         })
     }
