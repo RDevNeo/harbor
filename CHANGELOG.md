@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.106.0] - 2026-10-30
+
 ### Added
 - Videos have the same player on the phone as on the desktop: just the picture, with play and
   pause, the time, a seek bar, mute and full screen, which fade while it plays; a tap brings them
@@ -2164,7 +2166,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.105.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.106.0...HEAD
+[0.106.0]: https://github.com/RDevNeo/harbor/compare/v0.105.0...v0.106.0
 [0.105.0]: https://github.com/RDevNeo/harbor/compare/v0.104.0...v0.105.0
 [0.104.0]: https://github.com/RDevNeo/harbor/compare/v0.103.0...v0.104.0
 [0.103.0]: https://github.com/RDevNeo/harbor/compare/v0.102.1...v0.103.0
