@@ -47,7 +47,7 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
 - Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
   `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends. The one
   exception is `harbor-live` (`scripts/boat/dev`): it stays, stopped, and boat's own timer stops it
-  10 minutes after the last build, so VM-hours only run while someone is building.
+  30 minutes after the last build, so VM-hours only run while someone is building.
 - A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
   30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).

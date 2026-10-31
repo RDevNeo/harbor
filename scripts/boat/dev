@@ -22,7 +22,7 @@ Options:
   --stop          stop the sandbox now (it costs nothing stopped; its disk lasts 14 days)
   --status        the sandbox's state, and VM-hours used and left
   --delete        delete the sandbox and what this PC remembers of it
-  --idle SECONDS  stop the sandbox after this long without a build (default 600)
+  --idle SECONDS  stop the sandbox after this long without a build (default 1800)
   --type TYPE     stay on this machine: small, default or large. Without it the first build runs
                   on large and the warm ones on small, which rebuilds as fast at a quarter of the rate
   --note TEXT     what this build holds, shown with it (default: branch and last commit)
@@ -33,7 +33,7 @@ Prerequisites: the boat CLI logged in (see CLAUDE.md), jq, git, GNU tar, zstd, c
 `harbor preview on`. HARBOR_BIN picks another Harbor than the one on PATH.
 EOF
 }
-idle=600 type="" note="" mode=build push=1 out=""
+idle=1800 type="" note="" mode=build push=1 out=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) mode=check ;;
