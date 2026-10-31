@@ -184,6 +184,14 @@ pub fn preset_metrics(name: &str) -> (Option<f32>, f32) {
     (Some(lh), em * size)
 }
 
+/// For an agent's reply in the transcript: copy-16 instead of the 14px body, its code and
+/// headings up in step (egui_commonmark sizes everything from these three styles).
+pub fn reply_text(style: &mut egui::Style) {
+    style.text_styles.insert(TextStyle::Body, FontId::new(16.0, FontFamily::Proportional));
+    style.text_styles.insert(TextStyle::Monospace, FontId::new(15.0, FontFamily::Monospace));
+    style.text_styles.insert(TextStyle::Heading, FontId::new(23.0, semibold()));
+}
+
 fn text_styles() -> std::collections::BTreeMap<TextStyle, FontId> {
     use FontFamily::{Monospace, Proportional};
     let mut m = std::collections::BTreeMap::new();

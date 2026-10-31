@@ -1246,7 +1246,7 @@ impl App {
                         w::text(ui, name, "strong-14");
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let u = crate::cost::Usage { turns: *turns, input: *tin, output: *tout, cached: 0, cost: *cost };
-                            w::subtle(ui, u.compact(), "label-13-mono").on_hover_text(u.detail());
+                            w::subtle(ui, u.compact(), "label-13-mono").tip(u.detail());
                         });
                     });
                 });

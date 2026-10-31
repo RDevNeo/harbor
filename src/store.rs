@@ -124,6 +124,9 @@ pub struct Chat {
     pub home: String,
     /// The chat's id on its home PC (0 for this PC's own chats).
     pub home_id: i64,
+    /// A subagent its lead retired (team.rs `retire_agent`): off the team for good, its
+    /// transcript kept to read.
+    pub retired: bool,
 }
 
 impl Chat {
@@ -408,6 +411,11 @@ fn migrate(db: &Connection) -> rusqlite::Result<()> {
     if !has_main {
         db.execute_batch("ALTER TABLE repos ADD COLUMN main_chat INTEGER NOT NULL DEFAULT 0;")?;
     }
+    // A subagent its lead retired (team.rs): added by name too.
+    let has_retired: bool = db.query_row("SELECT COUNT(*) FROM pragma_table_info('chats') WHERE name='retired'", [], |r| r.get::<_, i64>(0))? > 0;
+    if !has_retired {
+        db.execute_batch("ALTER TABLE chats ADD COLUMN retired INTEGER NOT NULL DEFAULT 0;")?;
+    }
     Ok(())
 }
 
@@ -642,7 +650,7 @@ impl Store {
             .db
             .prepare(
                 "SELECT id, repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device,
-                        gid, home, home_id
+                        gid, home, home_id, retired
                  FROM chats ORDER BY updated DESC",
             )
             .unwrap();
@@ -666,6 +674,7 @@ impl Store {
                 gid: r.get(15)?,
                 home: r.get(16)?,
                 home_id: r.get(17)?,
+                retired: r.get::<_, i64>(18)? != 0,
             })
         })
         .unwrap()
@@ -685,10 +694,10 @@ impl Store {
         self.db
             .execute(
                 "INSERT INTO chats(repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device,
-                    gid, home, home_id)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                    gid, home, home_id, retired)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated,
-                    c.role.as_str(), c.parent, c.name, c.device, c.gid, c.home, c.home_id],
+                    c.role.as_str(), c.parent, c.name, c.device, c.gid, c.home, c.home_id, c.retired as i64],
             )
             .unwrap();
         c.id = self.db.last_insert_rowid();
@@ -698,9 +707,9 @@ impl Store {
     pub fn save_chat(&self, c: &Chat) {
         let _ = self.db.execute(
             "UPDATE chats SET repo_id=?2, title=?3, session_id=?4, started=?5, account=?6, model=?7, effort=?8,
-                access=?9, settled=?10, updated=?11, device=?12, role=?13, parent=?14, name=?15 WHERE id=?1",
+                access=?9, settled=?10, updated=?11, device=?12, role=?13, parent=?14, name=?15, retired=?16 WHERE id=?1",
             params![c.id, c.repo_id, c.title, c.session_id, c.started as i64, c.account, c.model, c.effort, c.access, c.settled as i64, c.updated, c.device,
-                c.role.as_str(), c.parent, c.name],
+                c.role.as_str(), c.parent, c.name, c.retired as i64],
         );
     }
 
@@ -904,7 +913,7 @@ mod tests {
             s.create_chat(Chat {
                 id: 0, repo_id: Some(repo), title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
                 model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Chat,
-                parent: None, name: String::new(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0,
+                parent: None, name: String::new(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0, retired: false,
             })
             .id
         };
@@ -941,7 +950,7 @@ mod tests {
             s.create_chat(Chat {
                 id: 0, repo_id: Some(repo), title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
                 model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Lead,
-                parent: None, name: String::new(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0,
+                parent: None, name: String::new(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0, retired: false,
             })
             .id
         };
@@ -967,6 +976,49 @@ mod tests {
     }
 
     #[test]
+    fn a_retired_agent_stays_retired() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-retired-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harbor.db");
+        let mut s = Store::open_at(&path).unwrap();
+        let mut c = s.create_chat(Chat {
+            id: 0, repo_id: None, title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
+            model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Sub,
+            parent: Some(1), name: "tests".into(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0, retired: false,
+        });
+        s.save_items(c.id, &[text("its report")]);
+        assert!(!s.chats()[0].retired);
+        c.retired = true;
+        s.save_chat(&c);
+        // Across a restart (and the column isn't added twice), its transcript with it.
+        drop(s);
+        let s = Store::open_at(&path).unwrap();
+        assert!(s.chats()[0].retired);
+        assert_eq!(texts(&s, c.id), ["its report"]);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_database_from_before_retiring_gets_the_column() {
+        let dir = std::env::temp_dir().join(format!("harbor-store-oldchats-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harbor.db");
+        let s = Store::open_at(&path).unwrap();
+        let c = s.create_chat(Chat {
+            id: 0, repo_id: None, title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
+            model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated: 0, role: Role::Sub,
+            parent: Some(1), name: "tests".into(), device: String::new(), gid: String::new(), home: String::new(), home_id: 0, retired: false,
+        });
+        s.db.execute_batch("ALTER TABLE chats DROP COLUMN retired;").unwrap();
+        drop(s);
+        let s = Store::open_at(&path).unwrap();
+        assert_eq!(s.chats().iter().find(|x| x.id == c.id).map(|x| x.retired), Some(false));
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn chats_have_global_ids_and_copies_keep_theirs() {
         let dir = std::env::temp_dir().join(format!("harbor-store-gid-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -974,7 +1026,7 @@ mod tests {
         let mk = |gid: &str, home: &str, home_id: i64, updated: i64| Chat {
             id: 0, repo_id: None, title: "t".into(), session_id: String::new(), started: false, account: "claude".into(),
             model: String::new(), effort: String::new(), access: "full".into(), settled: false, updated, role: Role::Lead,
-            parent: None, name: String::new(), device: String::new(), gid: gid.into(), home: home.into(), home_id,
+            parent: None, name: String::new(), device: String::new(), gid: gid.into(), home: home.into(), home_id, retired: false,
         };
         let own = s.create_chat(mk("", "", 0, 5));
         assert_eq!(own.gid.len(), 36, "a new chat gets a uuid");

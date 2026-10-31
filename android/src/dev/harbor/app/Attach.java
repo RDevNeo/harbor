@@ -26,11 +26,14 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** The composer's attachments: pick a photo (system photo picker) or any file
  *  (ACTION_OPEN_DOCUMENT), take one, or paste one (Composer), upload it to the hub at once and
- *  show it: an image as a thumbnail (tap for the viewer), anything else as a chip. */
+ *  show it: an image as a thumbnail (tap for the viewer), anything else as a chip. An image the
+ *  hub can send as one wears its number: it's `[Image #N]` in the text (src/usertext.rs). */
 final class Attach {
     static final int PICK = 41, SHOT = 42;
     static final int THUMB = 256; // px of a composer thumbnail
@@ -43,14 +46,19 @@ final class Attach {
 
     /** The files changed here (added and uploaded, or removed): the shared draft follows. */
     Runnable onChange;
+    /** An image was added here, or left (its tile's ✕, a failed upload): its number. */
+    java.util.function.IntConsumer onImage, onImageGone;
 
-    private static final class Up {
+    static final class Up {
         String name, id; boolean failed;
         Uri uri;          // on this phone (null: already on the hub)
         String url;       // an image on the hub (a shared draft's), for its thumbnail
         View chip;        // the chip or the thumbnail tile
         TextView text;    // a chip's label
         TextView state;   // a tile's uploading / failed overlay
+        TextView badge;   // a tile's number
+        int number;       // its place among the message's images; 0: none
+        boolean dropped;  // its upload failed: it won't be sent, so it isn't numbered
     }
 
     private final String chat;
@@ -190,7 +198,12 @@ final class Attach {
             u.text.setOnClickListener(v -> remove(u));
             u.chip = u.text;
         }
+        place(u);
+    }
+
+    private void place(Up u) {
         ups.add(u);
+        renumber();
         LinearLayout.LayoutParams p = u.text != null ? Ui.wrap() : new LinearLayout.LayoutParams(Ui.dp(72), Ui.dp(72));
         p.rightMargin = Ui.dp(6);
         p.gravity = Gravity.BOTTOM;
@@ -213,6 +226,8 @@ final class Attach {
         x.setContentDescription("Remove " + u.name);
         x.setOnClickListener(v -> remove(u));
         f.addView(x, new FrameLayout.LayoutParams(Ui.dp(22), Ui.dp(22), Gravity.TOP | Gravity.END));
+        u.badge = Images.number(a, 0);
+        f.addView(u.badge, Ui.margins(new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START), 4, 0, 0, 4));
         View.OnClickListener open = v -> {
             List<Images.Src> all = new ArrayList<>();
             int at = 0;
@@ -230,10 +245,66 @@ final class Attach {
     }
 
     private void remove(Up u) {
+        int n = u.number;
         ups.remove(u);
         chips.removeView(u.chip);
+        renumber();
         show();
+        if (n > 0 && onImageGone != null) onImageGone.accept(n);
         changed();
+    }
+
+    /** The token of image `n` was erased in the text: the image goes too. */
+    void removeImage(int n) {
+        for (Up u : new ArrayList<>(ups)) {
+            if (u.number != n) continue;
+            ups.remove(u);
+            chips.removeView(u.chip);
+            renumber();
+            show();
+            changed();
+            return;
+        }
+    }
+
+    /** The images `tokens` name ({start, end, N}, TagList.images), by number. */
+    Map<Integer, Up> named(List<int[]> tokens) {
+        Map<Integer, Up> out = new HashMap<>();
+        for (int[] t : tokens) for (Up u : ups) if (u.number == t[2]) out.put(t[2], u);
+        return out;
+    }
+
+    /** A token copied or cut here was pasted: its image, back if it had left. Its number now. */
+    int back(Up u) {
+        if (!ups.contains(u)) {
+            place(u);
+            changed();
+        }
+        return u.number;
+    }
+
+    /** The numbers in order; the hub counts the images it would send as images. */
+    private void renumber() {
+        int n = 0;
+        for (Up u : ups) {
+            u.number = !u.dropped && numbered(u.name) ? ++n : 0;
+            if (u.badge != null) {
+                u.badge.setText("#" + u.number);
+                u.badge.setVisibility(u.number > 0 ? View.VISIBLE : View.GONE);
+            }
+            if (u.text != null) label(u);
+        }
+    }
+
+    int images() {
+        int n = 0;
+        for (Up u : ups) if (u.number > 0) n++;
+        return n;
+    }
+
+    /** Whether the hub takes a file of this name for an image (src/images.rs `is_image`). */
+    static boolean numbered(String name) {
+        return isImage(name) && !name.toLowerCase().endsWith(".heic");
     }
 
     private void add(Uri uri, Runnable done) {
@@ -241,6 +312,7 @@ final class Attach {
         u.uri = uri;
         u.name = name(uri);
         chip(u);
+        if (u.number > 0 && onImage != null) onImage.accept(u.number);
         Ui.pool.execute(() -> {
             try {
                 long size = size(uri);
@@ -268,6 +340,12 @@ final class Attach {
             }
             Ui.main.post(() -> {
                 label(u);
+                if (u.failed && u.number > 0) {
+                    int n = u.number;
+                    u.dropped = true;
+                    renumber();
+                    if (onImageGone != null) onImageGone.accept(n);
+                }
                 if (done != null) done.run();
                 changed();
             });
@@ -283,7 +361,7 @@ final class Attach {
             return;
         }
         String state = u.failed ? "  failed" : u.id == null ? "  …" : "";
-        u.text.setText((isImage(u.name) ? "▣ " : "▤ ") + u.name + state + "  ✕");
+        u.text.setText((u.number > 0 ? "#" + u.number + " " : "") + (isImage(u.name) ? "▣ " : "▤ ") + u.name + state + "  ✕");
         u.text.setTextColor(u.failed ? Ui.RED : u.id == null ? Ui.G700 : Ui.FG);
     }
 

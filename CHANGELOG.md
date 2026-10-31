@@ -5,6 +5,41 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A lead agent can retire a subagent whose job is done, with the new `retire_agent` tool: a
+  running turn stops, the agent leaves the Agents panel on every PC and phone, and it can't be
+  messaged or woken again. Its chat stays readable, read-only, through its link, the palette and
+  `find_chats`. Processes it started keep running and report to the lead. Leads are told to do
+  this when a job is finished.
+- Images are part of what you write. Paste, drop or pick one and `[Image #1]` goes in the text at
+  the cursor, marked, and the thumbnail wears the same number. Erase the token and the image goes;
+  remove the image and its token goes, and the later numbers move down. Ctrl+Z brings both back,
+  and a token you cut or copy takes its image along when you paste it, on the desktop and (paste
+  only) the phone. A `[Image #1]` that comes from anywhere else, like a quoted message, stays as
+  `[Image 1]`, so it can't name an image of this message by accident. The agent gets the token
+  where you wrote it and is told which image each number is, on every provider. A message in the
+  chat shows them the same way.
+
+### Changed
+- Agents' replies read larger in the chat, on the desktop and the phone: 16 px instead of 14 on
+  the desktop and 18 sp instead of 16 on the phone, with their code, lists, tables and headings
+  in step. Your own messages keep their size.
+- A project's main chat now shows what the agent says and what you need to know, not how the work
+  got done: tool calls, the "started", "finished" and "Sent to" cards of its agents and
+  processes, its agents' messages to it, wake-ups and webhooks are gone from it. Nothing is lost:
+  a sub-agent's chat shows all of it as before, and the Agents panel and the bar over the composer
+  still show what's running. Problems, usage limits and moves still appear in the chat.
+- Agent cards stop showing tokens and price, and an agent at work reads blue.
+- What stops something is red with a white icon wherever it is, and tooltips are one white panel.
+
+### Fixed
+- "Image #1" in a message is no longer taken for GitHub issue #1: it isn't tagged and doesn't open
+  the `#` menu, on the desktop or the phone.
+- A chat or agent running on another PC shows as running here too: the "Working…" line, its team's
+  cards and the Agents panel go by what that PC says, not only by turns on this one.
+- A very long model id no longer pushes the send button out of the composer: it's cut, and its
+  tooltip has all of it.
+
 ## [0.107.0] - 2026-10-31
 
 ### Changed

@@ -808,7 +808,8 @@ public class Settings extends Base {
                 .setNegativeButton("Close", null);
         if (ready || wanted) d.setPositiveButton(ready ? "Remove" : "Stop download", (x, w) -> { Asr.remove(this); modelRows(); });
         else d.setPositiveButton("Download on Wi-Fi", (x, w) -> { Asr.want(this); modelRows(); });
-        d.show();
+        android.app.AlertDialog dlg = d.show();
+        if (wanted && !ready) dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setTextColor(Ui.RED);
     }
 
     private void voiceLang() {

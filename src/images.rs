@@ -6,8 +6,8 @@
 //! `put_bytes` (an image that isn't on this disk, e.g. on a remote device).
 //!
 //! - `thumbnail(ui, key, size)`: a click opens the lightbox.
-//! - `strip(ui, keys, size)`: a wrapped row of thumbnails, browsable as a gallery.
-//! - `attachment(ui, key, size)`: a thumbnail with a remove button; true when removed.
+//! - `strip(ui, keys, size, numbered)`: a wrapped row of thumbnails, browsable as a gallery.
+//! - `attachment(ui, key, size, number)`: a thumbnail with a remove button; true when removed.
 //! - `open(ctx, key)`, `open_gallery(ctx, keys, index)` (← → to browse),
 //!   `lightbox(ctx)` (once per frame, after the rest), `is_open(ctx)`.
 //! - `take_keys(ctx)` (early in the frame): the lightbox's ← → Esc, before a focused
@@ -326,14 +326,28 @@ pub fn thumbnail(ui: &mut Ui, key: &str, size: Vec2) -> Response {
     thumb_in(ui, key, size, &[])
 }
 
-/// Thumbnails of `keys` in a wrapped row; a click opens them as a gallery.
-pub fn strip(ui: &mut Ui, keys: &[String], size: Vec2) {
+/// Thumbnails of `keys` in a wrapped row; a click opens them as a gallery. `numbered`: each
+/// wears the number the message's text calls it by.
+pub fn strip(ui: &mut Ui, keys: &[String], size: Vec2, numbered: bool) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(8.0);
-        for k in keys {
-            thumb_in(ui, k, size, keys);
+        for (i, k) in keys.iter().enumerate() {
+            let r = thumb_in(ui, k, size, keys);
+            if numbered {
+                number_badge(ui, r.rect, i + 1);
+            }
         }
     });
+}
+
+/// "#2" in a thumbnail's corner: the image `[Image #2]` names (usertext.rs).
+fn number_badge(ui: &Ui, rect: Rect, n: usize) {
+    let p = ui.painter();
+    let g = p.layout_no_wrap(format!("#{n}"), FontId::proportional(11.0), Color32::WHITE);
+    let size = g.size() + vec2(8.0, 2.0);
+    let pill = Rect::from_min_size(rect.left_bottom() + vec2(4.0, -4.0 - size.y), size);
+    p.rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(180));
+    p.galley(pill.min + vec2(4.0, 1.0), g, Color32::WHITE);
 }
 
 /// `thumbnail`, opening `group` (when not empty) as the lightbox's gallery.
@@ -387,9 +401,11 @@ fn open_clicked(ctx: &egui::Context, key: &str, group: &[String]) {
     c.opened = Some(c.card);
 }
 
-/// An attachment: a thumbnail with a remove button in its corner. Returns true when removed.
-pub fn attachment(ui: &mut Ui, key: &str, size: Vec2) -> bool {
+/// An attachment, the message's image `number`: a thumbnail with a remove button in its corner.
+/// Returns true when removed.
+pub fn attachment(ui: &mut Ui, key: &str, size: Vec2, number: usize) -> bool {
     let r = thumbnail(ui, key, size);
+    number_badge(ui, r.rect, number);
     let xr = Rect::from_center_size(r.rect.right_top() + vec2(-10.0, 10.0), Vec2::splat(18.0));
     // Interacted after the thumbnail, so it's on top: its clicks don't open the lightbox.
     let x = ui.interact(xr, ui.scope_id().with(("remove-image", key)), Sense::click());
@@ -688,7 +704,7 @@ fn cant_load(ui: &mut Ui, rect: Rect, id: Id, why: &str) -> bool {
     child.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.label(egui::RichText::new(ic::ALERT).size(14.0).color(t.subtle()));
         let why = if why.contains("os error 2") { "file not found" } else { why };
-        ui.add(egui::Label::new(egui::RichText::new(format!("Can't load: {why}")).text_style(crate::theme::ts("label-13")).color(t.subtle())).truncate()).on_hover_text(why.to_string());
+        ui.add(egui::Label::new(egui::RichText::new(format!("Can't load: {why}")).text_style(crate::theme::ts("label-13")).color(t.subtle())).truncate()).tip(why.to_string());
     });
     retry
 }

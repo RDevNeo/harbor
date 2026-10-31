@@ -38,6 +38,8 @@ pub enum Variant {
     GhostMuted,
     Destructive,
     GhostDestructive,
+    /// Anything that stops something: solid danger red, white icon, in every state.
+    Stop,
 }
 
 /// rengaf's button sizes (button-variants.ts): height, text and icon go together.
@@ -159,6 +161,10 @@ impl<'a> Btn<'a> {
             Variant::Destructive => {
                 let base = if t.dark { alpha(t.destructive(), 0.6) } else { t.destructive() };
                 (if hover { alpha(base, 0.9) } else { base }, Color32::WHITE, clear)
+            }
+            Variant::Stop => {
+                let f = if down { mix(t.destructive(), Color32::BLACK, 0.25) } else if hover { mix(t.destructive(), Color32::BLACK, 0.12) } else { t.destructive() };
+                (f, Color32::WHITE, clear)
             }
             Variant::GhostDestructive => {
                 let f = if hover { alpha(t.destructive(), if t.dark { 0.2 } else { 0.1 }) } else { clear };
@@ -378,6 +384,18 @@ pub fn truncated(ui: &Ui, text: &str, font: FontId, color: Color32, max_w: f32) 
     let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
     job.wrap = egui::text::TextWrapping::truncate_at_width(max_w);
     ui.painter().layout_job(job)
+}
+
+/// `text` with its end cut so it fits `max_w` in `font`, an ellipsis where it was cut.
+pub fn cut_to(ui: &Ui, text: &str, font: FontId, max_w: f32) -> String {
+    let width = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::PLACEHOLDER).size().x;
+    if width(text) <= max_w {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let cut = |n: usize| format!("{}…", chars[..n].iter().collect::<String>().trim_end());
+    let n = (0..chars.len()).collect::<Vec<_>>().partition_point(|n| width(&cut(*n)) <= max_w);
+    cut(n.saturating_sub(1))
 }
 
 // ---------------------------------------------------------------- Card / Badge
@@ -733,6 +751,16 @@ pub fn round_button(ui: &mut Ui, icon: &str, enabled: bool) -> Response {
     if enabled { resp.on_hover_cursor(CursorIcon::PointingHand) } else { resp }
 }
 
+/// Round Stop: the composer's and dictation's.
+pub fn stop_button(ui: &mut Ui) -> Response {
+    let t = tokens(ui);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+    let fill = if resp.is_pointer_button_down_on() { mix(t.destructive(), Color32::BLACK, 0.25) } else if resp.hovered() { mix(t.destructive(), Color32::BLACK, 0.12) } else { t.destructive() };
+    ui.painter().circle_filled(rect.center(), 17.0, fill);
+    crate::icons::glyph(ui.painter(), rect.center(), crate::icons::STOP, 16.0, Color32::WHITE);
+    resp.on_hover_cursor(CursorIcon::PointingHand)
+}
+
 /// Keyboard shortcut chip ("Ctrl+1"), outlined when `strong`.
 pub fn kbd(ui: &Ui, pos: egui::Pos2, text: &str, strong: bool) {
     let t = tokens(ui);
@@ -881,15 +909,35 @@ impl Tip for Response {
     }
 }
 
-/// The tooltip's text, painted over egui's own popup frame (whose margin is `menu_margin`, 4).
-pub fn tip_body(ui: &mut Ui, text: &str) {
+/// The tooltip's inverted panel, painted over egui's own popup frame (whose margin is
+/// `menu_margin`, 4) around whatever `add` puts in; `margin` is the air inside it. Text in
+/// it defaults to the inverted foreground.
+pub fn tip_panel<R>(ui: &mut Ui, margin: Margin, add: impl FnOnce(&mut Ui) -> R) -> R {
     let t = tokens(ui);
     let (fill, fg) = (t.gray(1000), t.bg100);
-    let galley = ui.painter().layout(text.to_string(), FontId::proportional(12.0), fg, 280.0);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + Vec2::new(16.0, 4.0), Sense::hover());
-    let frame = rect.expand(5.0);
-    ui.painter().with_clip_rect(frame.expand(1.0)).rect_filled(frame, CornerRadius::same(RADIUS_MD), fill);
-    ui.painter().galley(rect.min + Vec2::new(8.0, 2.0), galley, fg);
+    let painter = ui.painter().with_clip_rect(Rect::EVERYTHING);
+    let bg = painter.add(egui::Shape::Noop);
+    let out = Frame::new().inner_margin(margin).show(ui, |ui| {
+        ui.visuals_mut().override_text_color = Some(fg);
+        add(ui)
+    });
+    let frame = out.response.rect.expand(5.0);
+    painter.set(bg, egui::epaint::RectShape::filled(frame, CornerRadius::same(RADIUS_MD), fill));
+    out.inner
+}
+
+/// A muted line inside `tip_panel`: the inverted foreground, faded.
+pub fn tip_subtle(ui: &mut Ui, text: impl Into<String>, preset: &str) -> Response {
+    let fg = tokens(ui).bg100;
+    ui.label(rich(text, preset).color(alpha(fg, 0.72)))
+}
+
+/// The tooltip's text, in `tip_panel`.
+pub fn tip_body(ui: &mut Ui, text: &str) {
+    tip_panel(ui, Margin::symmetric(8, 2), |ui| {
+        ui.set_max_width(280.0);
+        ui.label(egui::RichText::new(text).size(12.0));
+    });
 }
 
 // ---------------------------------------------------------------- Settings

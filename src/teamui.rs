@@ -94,7 +94,7 @@ impl App {
 
             // ---- agents (working or queued ones never count as settled)
             let mut subs = self.subs_of(lead.id);
-            subs.sort_by_key(|c| (!self.turns.contains_key(&c.id), std::cmp::Reverse(c.updated)));
+            subs.sort_by_key(|c| (!self.is_running(c.id), std::cmp::Reverse(c.updated)));
             let marks = Settle::load(&ctx, &self.store);
             let now = store::now();
             let (settled, active): (Vec<Chat>, Vec<Chat>) = subs.into_iter().partition(|c| self.settled_by(&marks, c, now));
@@ -247,7 +247,7 @@ impl App {
     }
 
     fn settled_by(&self, marks: &Settle, c: &Chat, now: i64) -> bool {
-        !self.turns.contains_key(&c.id) && self.pending.get(&c.id).is_none_or(|q| q.is_empty()) && self.queued(c.id).is_empty() && self.paused(c.id).is_none() && marks.settled(c, now)
+        !self.is_running(c.id) && self.pending.get(&c.id).is_none_or(|q| q.is_empty()) && self.queued(c.id).is_empty() && self.paused(c.id).is_none() && marks.settled(c, now)
     }
 
     /// Settle (or Unsettle) an agent now; new work unsettles it again.
@@ -278,7 +278,7 @@ impl App {
                     if w::btn(if open { ic::UP } else { ic::DOWN }).muted().icon_xs().show(ui).tip("Output").clicked() {
                         action = Some("logs");
                     }
-                    if w::btn(ic::STOP).muted().icon_xs().show(ui).tip("Stop").clicked() {
+                    if w::btn(ic::STOP).variant(w::Variant::Stop).icon_xs().show(ui).tip("Stop").clicked() {
                         action = Some("stop");
                     }
                     if url.is_some() && w::btn(ic::GLOBE).muted().icon_xs().show(ui).tip("Open in Harbor's browser").clicked() {
@@ -316,7 +316,7 @@ impl App {
 
     fn agent_card(&mut self, ui: &mut Ui, c: &Chat, settled: bool) {
         let t = self.theme.t;
-        let running = self.turns.get(&c.id).map(|(_, s)| s.elapsed().as_secs());
+        let running = self.running_since(c.id).map(|s| s.elapsed().as_secs());
         let queued = self.pending.get(&c.id).map(|q| q.len()).unwrap_or(0);
         let acc = self.account(&c.account).cloned();
         let model = acc.as_ref().map(|a| self.model_label(a.kind, &c.model)).unwrap_or(c.model.clone());
@@ -327,7 +327,7 @@ impl App {
             rect,
             CornerRadius::same(crate::theme::RADIUS_LG),
             if resp.hovered() { t.gray(100) } else { t.bg100 },
-            Stroke::new(1.0, if running.is_some() { t.green(600) } else { t.border() }),
+            Stroke::new(1.0, if running.is_some() { t.blue(600) } else { t.border() }),
             egui::StrokeKind::Inside,
         );
         if let Some(a) = &acc {
@@ -335,7 +335,7 @@ impl App {
         }
         let paused = self.paused(c.id).map(|p| p.at.map(crate::limits::when).unwrap_or_else(|| "usage limit".into()));
         let (status, col) = match (running, queued) {
-            (Some(s), _) => (format!("working {}", w::minutes(s)), t.green(900)),
+            (Some(s), _) => (format!("working {}", w::minutes(s)), t.blue(900)),
             (None, _) if paused.is_some() => (format!("{} paused · {}", ic::CLOCK, paused.clone().unwrap_or_default()), t.amber(900)),
             (None, n) if n > 0 => (format!("{n} queued"), t.amber(900)),
             _ => (format!("idle · {}", ago(c.updated)), t.subtle()),
@@ -352,25 +352,8 @@ impl App {
         let status = w::truncated(ui, &status, FontId::proportional(12.0), col, (rect.width() * 0.45).max(40.0));
         let text_w = rect.width() - 46.0;
         let name = w::truncated(ui, &c.name, FontId::new(14.0, crate::theme::medium()), t.fg(), text_w - status.size().x.max(settle_w - 6.0) - 8.0);
-        // Its tokens and cost so far, right of the model (cost.rs).
-        let usage = self.chat_usage(ui.ctx(), c.id);
-        let usage = (!usage.is_empty()).then(|| {
-            // Narrow cards: the cost alone (the tokens when there's none), not a clipped line.
-            let full = w::truncated(ui, &usage.compact(), FontId::monospace(12.0), t.subtle(), f32::INFINITY);
-            let g = if full.size().x <= rect.width() * 0.5 {
-                full
-            } else {
-                let short = crate::cost::money(usage.cost);
-                let short = if short.is_empty() { format!("{} tok", crate::cost::short(usage.tokens())) } else { short };
-                w::truncated(ui, &short, FontId::monospace(12.0), t.subtle(), rect.width() * 0.4)
-            };
-            g
-        });
-        let model = w::truncated(ui, &model, FontId::monospace(12.0), t.subtle(), text_w - usage.as_ref().map_or(0.0, |g| g.size().x + 12.0));
+        let model = w::truncated(ui, &model, FontId::monospace(12.0), t.subtle(), text_w);
         let p = ui.painter();
-        if let Some(g) = &usage {
-            p.galley(pos2(rect.right() - 10.0 - g.size().x, rect.top() + 29.0), g.clone(), t.subtle());
-        }
         p.galley(pos2(rect.left() + 36.0, rect.top() + 10.0), name, t.fg());
         if settle_w == 0.0 {
             p.galley(pos2(rect.right() - 10.0 - status.size().x, rect.top() + 11.0), status, col);
@@ -389,7 +372,7 @@ impl App {
         }
         if resp.hovered() && running.is_some() {
             let br = Rect::from_min_size(pos2(rect.right() - 34.0, rect.top() + 26.0), Vec2::splat(26.0));
-            if w::overlay(ui, br, |ui| w::btn(ic::STOP).muted().icon_xs().show(ui)).tip("Stop").clicked() {
+            if w::overlay(ui, br, |ui| w::btn(ic::STOP).variant(w::Variant::Stop).icon_xs().show(ui)).tip("Stop").clicked() {
                 self.pending.remove(&c.id);
                 self.stop(c.id);
                 return;

@@ -196,7 +196,7 @@ pub fn prompt(ms: &[Mention]) -> String {
         } else {
             out.push_str(&format!("> [mentioned message from {}{when}]\n", m.from));
         }
-        for l in m.text.lines() {
+        for l in crate::usertext::defuse(&m.text).lines() {
             out.push_str("> ");
             out.push_str(l);
             out.push('\n');

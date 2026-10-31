@@ -2709,7 +2709,7 @@ impl App {
             let n = subs.get(&c.id).copied().unwrap_or(0);
             let strip = if n > 0 { self.strip_key(c.id) } else { vec![] };
             let bars = (n, strip, self.paused(c.id).map(|p| p.at), self.queue_hash(c.id));
-            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c)), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id), self.chat_pr(c).map(|p| (p.number, p.state)))));
+            let h = hash_of(&(&c.title, c.settled, c.updated, &c.account, &c.model, &c.effort, &c.access, &c.device, c.repo_id, (self.is_running(c.id), self.team_working(c), c.retired), self.queued_count(c.id), (bars, self.writable_chat(c), self.snoozed_label(c.id), self.chat_pr(c).map(|p| (p.number, p.state)))));
             if self.api.chats.get(&c.id) != Some(&h) {
                 changed.push(c.id);
             }
@@ -2759,7 +2759,7 @@ impl App {
     /// Per lead, a hash of what its team panel shows; leads without a team are left out.
     fn team_hashes(&self) -> HashMap<i64, u64> {
         let mut parts: HashMap<i64, DefaultHasher> = HashMap::new();
-        for c in self.chats.iter().filter(|c| c.role == store::Role::Sub) {
+        for c in self.chats.iter().filter(|c| c.role == store::Role::Sub && !c.retired) {
             if let Some(lead) = c.parent {
                 (c.id, &c.name, &c.title, self.is_running(c.id), self.queued_count(c.id), self.paused(c.id).is_some()).hash(parts.entry(lead).or_default());
             }
@@ -2878,6 +2878,9 @@ impl App {
                 let n = d.text.chars().count();
                 let to = if at.is_none_or(|a| a >= old) { n } else { at.unwrap_or(n).min(n) };
                 st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(to))));
+                if !self.is_foreign(chat) && self.files.get(&chat).map_or(0, Vec::len) + d.files.len() > 0 {
+                    st.clear_undoer();
+                }
                 st.store(&self.ctx, cid);
             }
             if d.text.is_empty() {
@@ -3217,6 +3220,12 @@ impl App {
                         self.queue_resume(c);
                         ok(json!({ "ok": true }))
                     }
+                    // A lead's `retire_agent` for an agent on this PC (or a client's): `text` says
+                    // what happened.
+                    "retire" => match self.retire_agent(c, ctx) {
+                        Ok(text) => ok(json!({ "ok": true, "text": text })),
+                        Err(e) => err(409, e),
+                    },
                     "fork" => self.api_fork(c, &call.body),
                     // "Move to project…": {"repo": project id, its path, or null for No project}.
                     "move" => self.api_move(c, &call.body),
@@ -3426,7 +3435,7 @@ impl App {
         };
         match self.move_chat(c, repo) {
             Ok(()) => {
-                let moved: Vec<i64> = std::iter::once(c).chain(self.subs_of(c).into_iter().map(|s| s.id)).collect();
+                let moved: Vec<i64> = std::iter::once(c).chain(self.all_subs_of(c).into_iter().map(|s| s.id)).collect();
                 let chat = self.chat(c).map(|ch| self.chat_json(ch)).unwrap_or_default();
                 ok(json!({ "ok": true, "chat": chat, "moved": moved }))
             }
@@ -3523,6 +3532,8 @@ impl App {
         json!({
             "id": c.id, "project_id": c.repo_id, "title": c.title, "device": c.device, "account": c.account,
             "model": c.model, "effort": c.effort, "access": c.access, "fast": self.fast, "settled": c.settled,
+            // A sub-agent its lead retired (optional): off the team, its chat read-only.
+            "retired": c.retired,
             "running": self.is_running(c.id), "queued": self.queued_count(c.id),
             // Busy as the desktop sidebar says it: its own turn or any of its sub-agents' (or
             // work queued for them), so a lead waiting on its team still shows as working.
@@ -3957,6 +3968,9 @@ impl App {
         };
         if text.is_empty() && files.is_empty() {
             return err(400, "nothing to send");
+        }
+        if self.chat(chat).is_some_and(|c| c.retired) {
+            return err(409, "this agent was retired");
         }
         let before = self.queued(chat).iter().filter(|q| q.intent.is_empty()).count();
         let running = self.turns.contains_key(&chat);
@@ -4459,7 +4473,7 @@ mod tests {
         store::Chat {
             id: 1, repo_id: None, title: "t".into(), session_id: "s".into(), started, account: account.into(), model: "claude-opus-5-5".into(),
             effort: "high".into(), access: "full".into(), settled: false, updated: 0, role, parent: None, name: "lead".into(), device: String::new(),
-            gid: String::new(), home: String::new(), home_id: 0,
+            gid: String::new(), home: String::new(), home_id: 0, retired: false,
         }
     }
 
@@ -5050,7 +5064,7 @@ mod tests {
             }
         }
         let shown: Vec<&str> = phone.iter().filter(|p| p["kind"] != "hidden").map(|p| p["kind"].as_str().unwrap()).collect();
-        assert_eq!(shown, ["user", "notice", "text", "message", "tool", "text", "notice", "error"]);
+        assert_eq!(shown, ["user", "text", "text", "error"]);
         assert_eq!(phone[9]["kind"], "hidden");
         assert_eq!(phone[8]["forks_after"], json!([42]));
     }

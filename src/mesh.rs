@@ -2043,13 +2043,14 @@ impl App {
         self.chat(id).is_some_and(|c| c.foreign())
     }
 
-    /// A copy can be written while its home PC answers; this PC's own chats always.
+    /// A copy can be written while its home PC answers; this PC's own chats always, but a
+    /// retired agent's.
     pub fn writable(&self, id: i64) -> bool {
         self.chat(id).is_none_or(|c| self.writable_chat(c))
     }
 
     pub fn writable_chat(&self, c: &Chat) -> bool {
-        !c.foreign() || self.shared().online(&c.home)
+        !c.retired && (!c.foreign() || self.shared().online(&c.home))
     }
 
     /// The name of the PC a chat runs on (this PC's name for its own).
@@ -2357,6 +2358,7 @@ impl App {
             gid,
             home: peer.to_string(),
             home_id: hid,
+            retired: m["retired"].as_bool().unwrap_or(false),
         };
         let id = match existing {
             Some(id) => {
@@ -2556,7 +2558,7 @@ impl App {
         let forks: Vec<Value> = self.forks_of(c.id).into_iter().map(|(seq, f)| json!([seq, f])).collect();
         json!({
             "id": c.id, "gid": c.gid, "title": c.title, "project": project, "account": c.account, "model": c.model,
-            "effort": c.effort, "access": c.access, "device": c.device, "settled": c.settled, "updated": c.updated,
+            "effort": c.effort, "access": c.access, "device": c.device, "settled": c.settled, "retired": c.retired, "updated": c.updated,
             "role": c.role.as_str(), "parent": c.parent, "name": c.name, "started": c.started,
             "count": count, "digest": digest,
             "running": self.turns.contains_key(&c.id), "since_ms": since_ms, "queued": self.queued_count(c.id),
@@ -2672,6 +2674,24 @@ impl App {
 
     pub fn mesh_delete(&mut self, chat: i64) -> bool {
         self.mesh_forward(chat, "delete the chat", "DELETE", &[], Value::Null, vec![], None)
+    }
+
+    /// `retire_agent` for a copy: its home PC retires it and `reply` gets what that PC says.
+    pub fn mesh_retire(&mut self, c: &Chat, reply: Sender<(bool, String)>) -> Result<(), String> {
+        let name = self.shared().name_of(&c.home);
+        let Some(peer) = self.shared().peer(&c.home).filter(|p| p.online) else {
+            return Err(format!("{} runs on {name}, which is off: retire it when {name} is back", c.name));
+        };
+        let path = vec!["v1".to_string(), "chats".to_string(), c.home_id.to_string(), "retire".to_string()];
+        let sender = (self.shared().me().name, api::local_device());
+        forward(peer.dest(), name.clone(), "POST", path, json!({}), vec![], sender, Value::Null, move |r| {
+            let _ = reply.send(if r.status < 300 {
+                (true, r.body["text"].as_str().unwrap_or("Retired.").to_string())
+            } else {
+                (false, format!("{name} didn't retire it: {}", r.body["error"].as_str().unwrap_or("no answer")))
+            });
+        });
+        Ok(())
     }
 
     /// Mesh peers that can take a new chat now (they run Harbor and answer).
@@ -2845,7 +2865,8 @@ impl App {
 
 impl App {
     /// Above the composer: a forwarded call that failed, and for another PC's chat where it
-    /// runs. True when the chat is read-only now (its PC is off): that note replaces the composer.
+    /// runs. True when the chat is read-only now (its PC is off, or a retired agent's): that note
+    /// replaces the composer.
     pub fn mesh_composer(&mut self, ui: &mut eframe::egui::Ui) -> bool {
         use crate::widgets as w;
         use eframe::egui::{CornerRadius, Frame, Margin, Stroke};
@@ -2863,6 +2884,22 @@ impl App {
             }
         }
         let crate::app::View::Chat(id) = self.view else { return false };
+        let t = self.theme.t;
+        let note = |ui: &mut eframe::egui::Ui, text: String| {
+            Frame::new()
+                .fill(t.bg200)
+                .stroke(Stroke::new(1.0, t.border()))
+                .corner_radius(CornerRadius::same(16))
+                .inner_margin(Margin::same(16))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    w::subtle(ui, text, "label-14");
+                });
+        };
+        if self.chat(id).is_some_and(|c| c.retired) {
+            note(ui, format!("{}  This agent was retired, so it takes no more messages. Its chat stays here to read.", crate::icons::BOT));
+            return true;
+        }
         let Some(c) = self.chat(id).filter(|c| c.foreign()).cloned() else { return false };
         let name = self.home_name(&c);
         if self.writable(id) {
@@ -2873,16 +2910,7 @@ impl App {
             ui.add_space(4.0);
             return false;
         }
-        let t = self.theme.t;
-        Frame::new()
-            .fill(t.bg200)
-            .stroke(Stroke::new(1.0, t.border()))
-            .corner_radius(CornerRadius::same(16))
-            .inner_margin(Margin::same(16))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                w::subtle(ui, format!("{}  {name} is off. This chat runs there, so it's read-only until {name} is back; then it catches up.", crate::icons::MONITOR), "label-14");
-            });
+        note(ui, format!("{}  {name} is off. This chat runs there, so it's read-only until {name} is back; then it catches up.", crate::icons::MONITOR));
         true
     }
 

@@ -18,6 +18,7 @@ use crate::icons as ic;
 use crate::providers::Kind;
 use crate::store;
 use crate::limits::account_name;
+use crate::widgets::Tip as _;
 use crate::widgets as w;
 use eframe::egui::{self, Align2, CornerRadius, FontId, Sense, Stroke, Ui, Vec2, pos2};
 use std::collections::{HashMap, HashSet};
@@ -277,7 +278,7 @@ impl App {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if switchable {
-                        ui.add_enabled_ui(switch_on, |ui| w::toggle(ui, use_it)).response.on_hover_text(if switch_on {
+                        ui.add_enabled_ui(switch_on, |ui| w::toggle(ui, use_it)).response.tip(if switch_on {
                             "When another account hits its limit or cap, its threads may move here."
                         } else {
                             "Turn on account switching in Settings › Usage limits first."

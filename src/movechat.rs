@@ -85,7 +85,7 @@ impl App {
             return Err("a sub-agent moves with its lead: move the lead".into());
         }
         let mut ids = vec![chat_id];
-        ids.extend(self.subs_of(chat_id).into_iter().map(|s| s.id));
+        ids.extend(self.all_subs_of(chat_id).into_iter().map(|s| s.id));
         if let Some(d) = ids.iter().filter_map(|i| self.chat(*i)).find(|c| !c.device.is_empty()) {
             return Err(format!("{} runs on device {}, which keeps its session there", if d.id == chat_id { "it" } else { "one of its sub-agents" }, d.device));
         }

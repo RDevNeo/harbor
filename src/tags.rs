@@ -62,6 +62,14 @@ pub(crate) fn opens(prev: Option<char>) -> bool {
     prev.is_none_or(|c| c.is_whitespace() || OPENERS.contains(c))
 }
 
+/// Whether the `#` at byte `i` of `text` numbers an image ("Image #1", `[Image #1]`,
+/// usertext.rs): that's no issue or pull request.
+fn numbers_image(text: &str, i: usize) -> bool {
+    let before = text[..i].trim_end_matches(' ');
+    let Some(start) = before.len().checked_sub("image".len()).filter(|s| before.is_char_boundary(*s)) else { return false };
+    before[start..].eq_ignore_ascii_case("image") && !before[..start].ends_with(char::is_alphanumeric)
+}
+
 /// The `@word` or `#word` at char `cursor` of `text`, if the cursor is in one.
 pub fn word(text: &str, cursor: usize) -> Option<Word> {
     let chars: Vec<char> = text.chars().collect();
@@ -74,6 +82,12 @@ pub fn word(text: &str, cursor: usize) -> Option<Word> {
     let trigger = *chars.get(start)?;
     if !matches!(trigger, '@' | '#') || start == cursor {
         return None;
+    }
+    if trigger == '#' {
+        let before: String = chars[..start].iter().collect();
+        if numbers_image(&before, before.len()) {
+            return None;
+        }
     }
     let query: String = chars[start + 1..cursor].iter().collect();
     // `##` (a heading) and `@@` are not tags.
@@ -109,7 +123,7 @@ pub fn tokens(text: &str) -> Vec<(usize, usize)> {
     let mut prev: Option<char> = None;
     let mut it = text.char_indices().peekable();
     while let Some((i, c)) = it.next() {
-        if matches!(c, '@' | '#') && opens(prev) {
+        if matches!(c, '@' | '#') && opens(prev) && !(c == '#' && numbers_image(text, i)) {
             let len = text[i..].find(char::is_whitespace).unwrap_or(text.len() - i);
             let body = text[i + 1..i + len].trim_end_matches(PUNCT);
             let ok = !body.is_empty() && if c == '@' { !body.starts_with('@') } else { body.bytes().all(|b| b.is_ascii_digit()) };
@@ -826,6 +840,18 @@ mod tests {
         assert_eq!(tokens("a @b #3 c#4 #x"), vec![(2, 2), (5, 2)]);
         assert_eq!(tokens("é @ñ."), vec![(3, 3)]);
         assert_eq!(tokens("@app/(group)/page.tsx"), vec![(0, 21)]);
+    }
+
+    #[test]
+    fn an_images_number_is_no_issue() {
+        let text = "this [Image #1] and Image #2, image #3, IMAGE  #4 but #5 and myimage #6";
+        assert_eq!(tagged(text).1, [5, 6]);
+        assert!(tokens("[Image #12]").is_empty());
+        // The menu doesn't open on it either.
+        assert_eq!(word("Image #1", 8), None);
+        assert_eq!(word("[Image #", 8), None);
+        assert_eq!(word("é image #1", 10), None);
+        assert_eq!(word("fix #1", 6).map(|w| w.query), Some("1".to_string()));
     }
 
     #[test]

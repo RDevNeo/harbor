@@ -46,6 +46,8 @@ final class Ui {
     // G100..G900: fills to secondary text; FG: text; INK/ON_INK: the black pill and send button.
     static int BG, BG2, CARD, LINE, G100, G200, G300, G400, G500, G600, G700, G900, FG, INK, ON_INK;
     static int BLUE, RED, RED_BG, GREEN, AMBER;
+    /** Every Stop control, the same in both themes. */
+    static final int STOP = 0xffd93a3f, ON_STOP = 0xffffffff;
     static boolean dark;
     /** Settings › Density: Compact takes shorter rows (the desktop's own setting, kept per device). */
     static boolean compact;

@@ -914,8 +914,11 @@ impl App {
     fn ws_restore(&mut self, held: Held) {
         let key = crate::app::DRAFT;
         let now = self.drafts.remove(&key).unwrap_or_default();
+        let now = crate::usertext::shift_images(&now, crate::usertext::image_count(&held.files));
         self.drafts.insert(key, if now.trim().is_empty() { held.text } else { format!("{}\n{now}", held.text) });
-        self.files.entry(key).or_default().extend(held.files);
+        let mut files = held.files;
+        files.extend(self.files.remove(&key).unwrap_or_default());
+        self.files.insert(key, files);
         self.mentions.drafts.entry(key).or_default().extend(held.mentions);
     }
 

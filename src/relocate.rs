@@ -283,7 +283,7 @@ impl App {
             return Some(format!("it's moving to {to}"));
         }
         let mut ids = vec![chat_id];
-        ids.extend(self.subs_of(chat_id).into_iter().map(|s| s.id));
+        ids.extend(self.all_subs_of(chat_id).into_iter().map(|s| s.id));
         for id in &ids {
             let Some(x) = self.chat(*id) else { continue };
             let it = if *id == chat_id { "it".to_string() } else { format!("its sub-agent {}", x.name) };
@@ -398,7 +398,7 @@ impl App {
             }
         };
         let mut chats = vec![lead.clone()];
-        chats.extend(self.subs_of(chat_id));
+        chats.extend(self.all_subs_of(chat_id));
         let sessions: Vec<Session> = chats
             .iter()
             .filter(|c| c.started && !c.session_id.is_empty())

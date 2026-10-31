@@ -1,6 +1,6 @@
 //! What a chat's transcript shows, card by card. The desktop (chat.rs) draws these cards and
 //! the phone API (api.rs) sends them, so a chat looks the same on both: the same items hidden
-//! (a lead's coordination), the same labels, dividers and images.
+//! (a lead's activity), the same labels, dividers and images.
 
 use std::borrow::Cow;
 
@@ -92,9 +92,9 @@ pub fn actions(card: &Card) -> Vec<Action> {
 
 /// An old transcript's `show_media` call: still shown, as a tool card with its file.
 const OLD_SHOW_MEDIA: &str = "mcp__harbor__show_media";
-/// A lead's tools that hand work off: each leaves a line in its chat ([`handoff`]).
-pub const SPAWN_AGENT: &str = "mcp__harbor__spawn_agent";
-pub const MESSAGE_AGENT: &str = "mcp__harbor__message_agent";
+/// What a lead's notices say that's only activity: its agents, processes, wake-ups and webhooks.
+/// Its other notices (a problem, a usage limit, the chat moved) stay.
+const LEAD_ACTIVITY: [&str; 5] = ["bot", "report", "process", "wake", "webhook"];
 
 /// A card and where it is: `seq` is the item's index in the transcript, `forks_after` the
 /// chats forked from it ("Conversation fork" dividers drawn right after it).
@@ -129,9 +129,8 @@ pub fn tool_label(name: &str) -> String {
     }
 }
 
-/// Which items a transcript hides. Only a lead's: its coordination is invisible (tool calls
-/// to Harbor, thinking, agents' reports). What it says when it hands work off shows, so the
-/// user hears what happens next, and so does a line per hand-off ([`handoff`]).
+/// Which items a transcript hides. What needs the user draws under it instead (waiting.rs),
+/// and an agent's message from another chat stays: that chat's next turn answers it.
 pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     let mut out = vec![false; items.len()];
     if !lead {
@@ -139,9 +138,10 @@ pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     }
     for (i, item) in items.iter().enumerate() {
         out[i] = match item {
-            Item::Tool { name, is_error, .. } => name.starts_with("mcp__harbor__") && (name != OLD_SHOW_MEDIA || *is_error),
+            Item::Tool { name, is_error, .. } => name != OLD_SHOW_MEDIA || *is_error,
             Item::Thinking { .. } => true,
-            Item::Notice { icon, .. } => icon == "bot",
+            Item::Notice { icon, .. } => LEAD_ACTIVITY.contains(&icon.as_str()),
+            Item::Message { to, .. } => to != crate::openchat::THIS_CHAT,
             Item::Text { text, .. } => text.trim().is_empty(),
             _ => false,
         };
@@ -149,69 +149,23 @@ pub fn hidden(items: &[Item], lead: bool) -> Vec<bool> {
     out
 }
 
-/// Whether each item is in a turn that answers the user: the user wrote since the last turn
-/// ended (a turn an agent's report started is the lead's coordination).
-fn answers_user(items: &[Item]) -> Vec<bool> {
-    let mut on = false;
-    items
-        .iter()
-        .map(|it| {
-            let now = on || matches!(it, Item::User { .. });
-            on = now && !matches!(it, Item::Result { .. });
-            now
-        })
-        .collect()
-}
-
-/// A lead handing work off, as one line in its chat (its other Harbor calls stay hidden), so
-/// a turn that only delegates still shows what happens: "api started: PR status in the
-/// footer" for spawn_agent (its `title`, else the task's first sentence), "Sent to api: …" for
-/// message_agent in a turn that answers the user. It opens on the whole task or message. A
-/// call that failed shows nothing.
-fn handoff(item: &Item, answers_user: bool) -> Option<Card<'_>> {
-    let Item::Tool { name, input, result, is_error: false, .. } = item else { return None };
-    if name != SPAWN_AGENT && !(name == MESSAGE_AGENT && answers_user) {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_str(input).ok()?;
-    let arg = |k: &str| v[k].as_str().unwrap_or("").trim().to_string();
-    let (icon, text, detail) = match name.as_str() {
-        SPAWN_AGENT => {
-            // Its name once spawned (Harbor makes a taken one unique: "api-2").
-            let agent = result.as_deref().and_then(|r| r.strip_prefix("Spawned '")?.split_once('\'')).map(|(n, _)| n.to_string()).unwrap_or_else(|| arg("name"));
-            let task = arg("task");
-            let title = Some(arg("title")).filter(|t| !t.is_empty()).map(|t| crate::agentstrip::headline(&t)).unwrap_or_else(|| crate::agentstrip::headline(&task));
-            let who = if agent.is_empty() { "Started".to_string() } else { format!("{agent} started") };
-            ("started", if title.is_empty() { who } else { format!("{who}: {title}") }, task)
-        }
-        _ => {
-            let text = arg("text");
-            ("sent", format!("Sent to {}: {}", arg("agent"), crate::agentstrip::headline(&text)), text)
-        }
-    };
-    Some(Card::Notice { icon, text: Cow::Owned(text), detail: Cow::Owned(detail), markdown: true, url: None })
-}
-
 /// The transcript as cards. `forks` are (item index, forked chat) pairs.
 pub fn project<'a>(items: &'a [Item], lead: bool, forks: &[(usize, i64)]) -> Vec<Shown<'a>> {
     let hide = hidden(items, lead);
     let forkable = crate::fork::forkable(items);
-    let user = if lead { answers_user(items) } else { vec![] };
     let mut out: Vec<Shown> = items
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let card = if hide[i] {
-                // Only a lead hides items; its hand-offs show as a line instead.
-                handoff(item, user.get(i).copied().unwrap_or(false)).unwrap_or(Card::Hidden)
-            } else {
-                card(item, forkable[i].is_some())
-            };
+            let card = if hide[i] { Card::Hidden } else { card(item, forkable[i].is_some()) };
             let forks_after = forks.iter().filter(|(at, _)| *at == i).map(|(_, f)| *f).collect();
             Shown { seq: i, card, forks_after, group: None }
         })
         .collect();
-    mark_groups(&mut out);
+    // (A lead keeps no tool rows: the old `show_media` call it still shows isn't folded away.)
+    if !lead {
+        mark_groups(&mut out);
+    }
     out
 }
 
@@ -339,7 +293,7 @@ pub fn fixture() -> Vec<Item> {
         Item::Thinking { text: "hmm".into() },
         Item::Tool {
             id: "s".into(),
-            name: SPAWN_AGENT.into(),
+            name: "mcp__harbor__spawn_agent".into(),
             summary: "s".into(),
             input: r#"{"name":"worker","title":"Build it","task":"Build it.\n\nAll the details."}"#.into(),
             result: Some("Spawned 'worker' on Claude / Opus 5.5. It reports back to you when its turn ends.".into()),
@@ -384,25 +338,22 @@ mod tests {
         let groups_of = |items: &[Item]| project(items, false, &[]).iter().map(|s| s.group).collect::<Vec<_>>();
         let mut items = vec![
             Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new(), intent: String::new() },
-            Item::Thinking { text: "hmm".into() },
             tool("a", Some("ok")),
-            text(""),
+            Item::Thinking { text: "hmm".into() },
             tool("b", Some("ok")),
             text("Done with a and b."),
             tool("c", None),
         ];
-        let groups_of_lead = |items: &[Item]| project(items, true, &[]).iter().map(|s| s.group).collect::<Vec<_>>();
-        // A lead's (its thinking and empty text hidden: they don't break the run either).
-        assert_eq!(groups_of_lead(&items), [None, None, Some(2), None, Some(2), None, Some(6)]);
-        let cards = project(&items, true, &[]);
+        assert_eq!(groups_of(&items), [None, Some(1), Some(1), Some(1), None, Some(5)]);
+        let cards = project(&items, false, &[]);
         let g = groups(&cards);
-        assert_eq!((g[&2], g[&6]), (Group { calls: 2, pending: false }, Group { calls: 1, pending: true }));
+        assert_eq!((g[&1], g[&5]), (Group { calls: 2, pending: false }, Group { calls: 1, pending: true }));
         assert_eq!((group_label(1), group_label(5)), ("1 tool call".to_string(), "5 tool calls".to_string()));
         // The run grows; its id stays its first card's seq.
         items.push(tool("d", Some("ok")));
-        assert_eq!(groups_of_lead(&items)[6..], [Some(6), Some(6)]);
-        // Others' thinking folds in with the calls; alone it doesn't.
-        assert_eq!(groups_of(&items[..3]), [None, Some(1), Some(1)]);
+        assert_eq!(groups_of(&items)[5..], [Some(5), Some(5)]);
+        // Thinking folds in with the calls; alone it doesn't.
+        assert_eq!(groups_of(&items[1..3]), [Some(0), Some(0)]);
         assert_eq!(groups_of(&[Item::Thinking { text: "x".into() }, text("hi")]), [None, None]);
     }
 
@@ -439,78 +390,64 @@ mod tests {
     }
 
     #[test]
-    fn a_lead_hides_its_coordination() {
+    fn a_lead_shows_what_it_says_not_how_the_work_got_done() {
         let items = fixture();
         let cards = project(&items, true, &[(8, 42)]);
         let kinds: Vec<&str> = cards.iter().map(|s| kind(&s.card)).collect();
-        assert_eq!(kinds, ["user", "hidden", "notice", "text", "hidden", "message", "hidden", "tool", "text", "hidden", "notice", "error"]);
-        // The hand-off is one line that opens on the task.
-        let Card::Notice { icon, text, detail, markdown, url } = &cards[2].card else { panic!() };
-        assert_eq!((*icon, text.as_ref(), detail.as_ref(), *markdown, *url), ("started", "worker started: Build it", "Build it.\n\nAll the details.", true, None));
+        assert_eq!(kinds, ["user", "hidden", "hidden", "text", "hidden", "hidden", "hidden", "hidden", "text", "hidden", "hidden", "error"]);
         assert_eq!(cards[8].forks_after, [42]);
         assert!(matches!(cards[8].card, Card::Text { forkable: true, .. }));
         let Card::User { files, images, .. } = &cards[0].card else { panic!() };
         assert_eq!((files.as_slice(), images.as_slice()), (["/tmp/notes.txt"].as_slice(), ["/tmp/shot.png"].as_slice()));
-        assert!(matches!(cards[10].card, Card::Notice { url: Some("http://127.0.0.1:3000"), .. }));
+        // No card is left to a run of tool calls: no chevron row.
+        assert!(cards.iter().all(|s| s.group.is_none()));
         // Not a lead: everything shows but the ends of turns (no usage line in the chat).
         assert!(project(&items, false, &[]).iter().zip(&items).all(|(s, it)| (s.card == Card::Hidden) == matches!(it, Item::Result { .. })));
     }
 
     #[test]
-    fn a_lead_shows_its_agents_report_lines() {
-        let items = vec![
-            Item::Notice { icon: "bot".into(), text: "api finished".into(), detail: "old".into() },
-            Item::Notice { icon: "report".into(), text: "api finished: added tests".into(), detail: "**Added tests.**".into() },
-        ];
-        let cards = project(&items, true, &[]);
-        assert_eq!(cards[0].card, Card::Hidden);
-        assert!(matches!(&cards[1].card, Card::Notice { text, markdown: true, .. } if text == "api finished: added tests"));
+    fn a_lead_hides_activity_and_keeps_what_the_user_has_to_know() {
+        let notice = |icon: &str| Item::Notice { icon: icon.into(), text: format!("{icon} line"), detail: "more".into() };
+        let shown = |icons: &[&str], lead: bool| -> Vec<bool> {
+            let items: Vec<Item> = icons.iter().map(|i| notice(i)).collect();
+            project(&items, lead, &[]).iter().map(|s| s.card != Card::Hidden).collect()
+        };
+        let quiet = ["bot", "report", "process", "wake", "webhook"];
+        assert_eq!(shown(&quiet, true), [false; 5]);
+        let kept = ["alert", "clock", "restart", "monitor", "worktree", "folder", "users", "lock", "fork", "chat"];
+        assert_eq!(shown(&kept, true), [true; 10]);
+        // A sub-agent's chat keeps them all.
+        assert_eq!(shown(&quiet, false), [true; 5]);
     }
 
     #[test]
-    fn a_lead_says_what_it_handed_off() {
-        let call = |name: &str, input: &str, result: Option<&str>, is_error: bool| Item::Tool { id: name.into(), name: name.into(), summary: String::new(), input: input.into(), result: result.map(String::from), is_error };
-        let user = Item::User { text: "go".into(), files: vec![], at: 0, mentions: vec![], sender: String::new(), intent: String::new() };
-        let end = Item::Result { cost_usd: 0.0, duration_ms: 0, turns: 1, input_tokens: 0, output_tokens: 0, cached: 0, at: 0, account: String::new(), model: String::new() };
-        let text_of = |c: &Card| match c {
-            Card::Notice { text, .. } => text.to_string(),
-            c => kind(c).to_string(),
-        };
+    fn a_turn_of_only_tool_calls_leaves_nothing_in_a_leads_chat() {
+        let call = |name: &str, is_error: bool| Item::Tool { id: name.into(), name: name.into(), summary: String::new(), input: "{}".into(), result: Some("ok".into()), is_error };
         let items = vec![
-            user.clone(),
-            // No title: the task's first sentence; the name Harbor gave it once spawned.
-            call(SPAWN_AGENT, &serde_json::json!({ "name": "api", "task": "## Task\n**Add** the `status` field. Then test it." }).to_string(), Some("Spawned 'api-2' on Claude / Opus 5.5."), false),
-            // Still starting: the name it asked for.
-            call(SPAWN_AGENT, r#"{"name":"ui","title":"PR status in the footer","task":"x"}"#, None, false),
-            call(SPAWN_AGENT, r#"{"name":"db","task":"x"}"#, Some("unknown account"), true),
-            call(MESSAGE_AGENT, r#"{"agent":"api","text":"Also make it blue. Thanks."}"#, Some("ok"), false),
-            call("mcp__harbor__list_agents", "{}", Some("ok"), false),
-            end.clone(),
-            // A turn an agent's report started: its messages are coordination, its spawns not.
-            Item::Notice { icon: "report".into(), text: "api finished".into(), detail: String::new() },
-            call(MESSAGE_AGENT, r#"{"agent":"api","text":"Now the docs."}"#, Some("ok"), false),
-            call(SPAWN_AGENT, r#"{"name":"docs","task":"Write the docs."}"#, Some("Spawned 'docs' on Claude / Opus 5.5."), false),
-            end,
+            call("Bash", false),
+            call("Bash", true),
+            call("mcp__github__get_pr", false),
+            call("mcp__harbor__spawn_agent", false),
+            Item::Thinking { text: "hmm".into() },
+            Item::Text { text: " \n".into(), at: 0 },
         ];
-        let shown: Vec<String> = project(&items, true, &[]).iter().map(|s| text_of(&s.card)).collect();
-        assert_eq!(
-            shown,
-            [
-                "user",
-                "api-2 started: Add the status field",
-                "ui started: PR status in the footer",
-                "hidden",
-                "Sent to api: Also make it blue",
-                "hidden",
-                "hidden",
-                "api finished",
-                "hidden",
-                "docs started: Write the docs",
-                "hidden"
-            ]
-        );
-        // Not a lead: its tool calls are tool cards.
-        assert!(project(&items, false, &[]).iter().all(|s| !matches!(&s.card, Card::Notice { icon, .. } if *icon == "started" || *icon == "sent")));
+        assert!(project(&items, true, &[]).iter().all(|s| s.card == Card::Hidden && s.group.is_none()));
+        // A fork off one of them still has its divider: hidden cards keep `forks_after`.
+        assert_eq!(project(&items, true, &[(1, 7)])[1].forks_after, [7]);
+        // In a sub-agent's chat they're the usual run behind its row.
+        let cards = project(&items, false, &[]);
+        assert_eq!(groups(&cards)[&0].calls, 4);
+    }
+
+    #[test]
+    fn a_lead_hides_its_agents_messages_but_not_another_chats() {
+        let items = vec![
+            Item::Message { from: "api".into(), to: "lead".into(), text: "done".into() },
+            Item::Message { from: "chat \"Fix login\"".into(), to: crate::openchat::THIS_CHAT.into(), text: "look at this".into() },
+        ];
+        let kinds: Vec<&str> = project(&items, true, &[]).iter().map(|s| kind(&s.card)).collect();
+        assert_eq!(kinds, ["hidden", "message"]);
+        assert!(project(&items, false, &[]).iter().all(|s| kind(&s.card) == "message"));
     }
 
     #[test]
@@ -519,8 +456,9 @@ mod tests {
         let items = vec![tool(Some("Shown in the chat: /p/out/demo.png (image, 0.1 MB)."), false), tool(Some("no such file"), true)];
         let cards = project(&items, true, &[]);
         let kinds: Vec<&str> = cards.iter().map(|c| kind(&c.card)).collect();
-        // A lead hides its Harbor calls, but not this one (unless it failed).
+        // A lead hides its tool calls, but not this one (unless it failed), nor folds it away.
         assert_eq!(kinds, ["tool", "hidden"]);
+        assert_eq!(cards[0].group, None);
         // Its file, from the call's answer, as a thumbnail: a tool's named files aren't "shown".
         let mut asked = vec![];
         let m = media(&cards[0].card, &mut |t| {

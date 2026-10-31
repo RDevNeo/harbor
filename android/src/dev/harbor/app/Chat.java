@@ -258,7 +258,8 @@ public class Chat extends Base implements Images.Gallery {
         String line = dev.isEmpty() ? acc : dev + " · " + acc;
         sub(line, Ui.G700);
         boolean ro = c.has("writable") && !c.optBoolean("writable", true);
-        offNote.setText(home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
+        offNote.setText(c.optBoolean("retired") ? "This agent was retired, so it takes no more messages. Its chat stays here to read."
+                : home + " is off. This chat runs there, so it's read-only until " + home + " is back; then it catches up.");
         offNote.setVisibility(ro ? View.VISIBLE : View.GONE);
         comp.view.setVisibility(ro ? View.GONE : View.VISIBLE);
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, c.optString("home", ""), home);
@@ -591,7 +592,7 @@ public class Chat extends Base implements Images.Gallery {
         outer.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
         LinearLayout box = Ui.col(this);
         outer.addView(box, Ui.weight());
-        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.G700);
+        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.RED);
         stop.setBackground(Ui.press(0, 0, 8));
         stop.setContentDescription("Stop all");
         stop.setOnClickListener(v -> stopAll(rows.length()));
@@ -649,7 +650,7 @@ public class Chat extends Base implements Images.Gallery {
         named.addView(Ui.subtitle(Ui.bold(this, name, 14, Ui.FG)), new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         named.addView(new Pulse(this, nth * 0.37f), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
         idle.addView(named, Ui.weight());
-        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.G700);
+        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.RED);
         stop.setBackground(Ui.press(0, 0, 8));
         stop.setContentDescription("Stop " + name);
         stop.setOnClickListener(v -> stripAsk(id));
@@ -662,8 +663,8 @@ public class Chat extends Base implements Images.Gallery {
             stripAsk("");
             Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + id + "/stop", null), x -> load(false));
         });
-        yes.setTextColor(Ui.RED);
-        yes.setBackground(Ui.press(Ui.RED_BG, 0, 14));
+        yes.setTextColor(Ui.ON_STOP);
+        yes.setBackground(Ui.press(Ui.STOP, 0, 14));
         ask.addView(yes, Ui.margins(Ui.wrap(), 6, 0, 4, 0));
         row.addView(ask, Ui.margins(Ui.weight(), 8, 0, 0, 0));
         stripRows.put(id, new View[]{idle, ask});
@@ -734,7 +735,7 @@ public class Chat extends Base implements Images.Gallery {
             float phase = (android.os.SystemClock.uptimeMillis() / 1600f + offset) % 1f;
             float ease = 1 - (1 - phase) * (1 - phase) * (1 - phase);
             float cx = getWidth() / 2f, cy = getHeight() / 2f;
-            paint.setColor(Ui.GREEN);
+            paint.setColor(Ui.BLUE);
             paint.setAlpha(Math.round(255 * 0.5f * (1 - ease)));
             c.drawCircle(cx, cy, Ui.dp(4) * (0.6f + 1.4f * ease) * 1.25f, paint);
             paint.setAlpha(255);
@@ -1170,7 +1171,7 @@ public class Chat extends Base implements Images.Gallery {
                         bubble.addView(n, Ui.margins(Ui.wrap(), 10, 0, 0, 8));
                     }
                 }
-                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96, seq);
+                View imgs = Images.strip(this, hub, it.optJSONArray("images"), 96, seq, namesImages(parts));
                 if (imgs != null) bubble.addView(imgs, Ui.margins(Ui.wrap(), 0, 0, 0, 6));
                 String text = it.optString("text");
                 CharSequence shown = parts != null ? userText(parts) : text;
@@ -1224,7 +1225,7 @@ public class Chat extends Base implements Images.Gallery {
             case "text": {
                 String md = it.optString("markdown");
                 View.OnLongClickListener lp = v -> { itemMenu(it, md); return true; };
-                Render r = new Render(this, lp).commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info))
+                Render r = new Render(this, lp).reply().commits(it.optJSONObject("commits"), (sha, info) -> CommitSheet.open(this, hub, chatId, sha, info))
                         .chats(it.optJSONObject("chat_links"), this::openLink)
                         .select(t -> selectMenu(it, md, t));
                 // Images on their own line sit next to their text; the rest go after it.
@@ -1605,8 +1606,17 @@ public class Chat extends Base implements Images.Gallery {
         t.setCustomSelectionActionModeCallback(selectMenu(it, whole, t));
     }
 
-    /** A user message's `parts` (src/usertext.rs): tags and commands blue, a mentioned chat's
-     *  title a blue underlined link that opens it. */
+    /** Whether a user message's `parts` name its images: its thumbnails wear their numbers. */
+    private static boolean namesImages(JSONArray parts) {
+        for (int i = 0; parts != null && i < parts.length(); i++) {
+            JSONObject p = parts.optJSONObject(i);
+            if (p != null && "image".equals(p.optString("kind"))) return true;
+        }
+        return false;
+    }
+
+    /** A user message's `parts` (src/usertext.rs): tags and commands blue, `[Image #N]` marked,
+     *  a mentioned chat's title a blue underlined link that opens it. */
     private CharSequence userText(JSONArray parts) {
         android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
         for (int i = 0; i < parts.length(); i++) {
@@ -1620,6 +1630,10 @@ public class Chat extends Base implements Images.Gallery {
             switch (p.optString("kind")) {
                 case "tag": case "command":
                     sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.BLUE), a, z, f);
+                    break;
+                case "image":
+                    sb.setSpan(new android.text.style.ForegroundColorSpan(Ui.BLUE), a, z, f);
+                    sb.setSpan(new android.text.style.BackgroundColorSpan((Ui.BLUE & 0x00ffffff) | 0x26000000), a, z, f);
                     break;
                 case "chat": {
                     String gid = p.optString("chat");
@@ -1649,7 +1663,8 @@ public class Chat extends Base implements Images.Gallery {
     /** Quote in reply, as the desktop does it: the message as "> " lines on top of the draft. */
     private void quote(String text) {
         StringBuilder q = new StringBuilder();
-        for (String l : text.split("\n", -1)) q.append("> ").append(l).append('\n');
+        // Its tokens name the old message's images, not this draft's (src/usertext.rs).
+        for (String l : TagList.defuse(text).split("\n", -1)) q.append("> ").append(l).append('\n');
         String draft = q + "\n" + composer.getText().toString();
         composer.setText(draft);
         composer.setSelection(draft.length());
@@ -1939,7 +1954,8 @@ public class Chat extends Base implements Images.Gallery {
                 for (int i = 0; i < back.length(); i++) {
                     JSONObject m = back.optJSONObject(i);
                     if (m == null) continue;
-                    String t = m.optString("text").trim();
+                    // Its images follow the ones already here: their numbers too.
+                    String t = TagList.shifted(m.optString("text").trim(), attach.images());
                     if (!t.isEmpty()) sb.append(sb.length() > 0 ? "\n\n" : "").append(t);
                     JSONArray f = m.optJSONArray("files");
                     if (f != null) for (int j = 0; j < f.length(); j++) attach.addUploaded(f.optString(j));

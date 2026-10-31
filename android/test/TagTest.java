@@ -39,7 +39,12 @@ public class TagTest {
         same(TagList.word("$$x", 3, true) == null, true, "two dollars");
         same(TagList.word("a$b", 3, true) == null, true, "inside a word");
 
+        same(word("Image #1", 8), "none", "an image's number");
+        same(word("[Image #", 8), "none", "an image's number, being written");
+        same(word("fix #1", 6), "#,4,6,1", "still an issue");
+
         same(tokens("a @b #3 c#4 #x"), "@b|#3|", "tokens");
+        same(tokens("this [Image #1] and Image #2, image #3, IMAGE  #4 but #5 and myimage #6"), "#5|#6|", "an image's number is no issue");
         same(tokens("see @src/chat.rs, and #12 (also #12) or me@mail.com #7."), "@src/chat.rs|#12|#12|#7|", "punctuation");
         same(tokens("@app/(group)/page.tsx"), "@app/(group)/page.tsx|", "brackets in a path");
         List<int[]> t = TagList.tokens("é @ñ.");
@@ -54,6 +59,21 @@ public class TagTest {
         StringBuilder m = new StringBuilder();
         for (int[] r : TagList.marks(ms, java.util.Arrays.asList("Fix", "Fix @login page"))) m.append(ms, r[0], r[1]).append('|');
         same(m, "Fix @login page|Fix|/go|@a|", "marks: longer titles first, tags outside them");
+
+        // src/usertext.rs's images.
+        String im = "see [Image #1], Image #2 [Image #x] [Image #0] [Image #12]";
+        StringBuilder found = new StringBuilder();
+        for (int[] r : TagList.images(im)) found.append(im, r[0], r[1]).append('=').append(r[2]).append('|');
+        same(found, "[Image #1]=1|[Image #12]=12|", "image tokens");
+        same(TagList.imageNumbers("[Image #3] [Image #1] [Image #3]"), "[1, 3]", "image numbers");
+        same(TagList.shifted("a [Image #1] b [Image #2]", 3), "a [Image #4] b [Image #5]", "shifted");
+        same(TagList.defuse("see [Image #1], [Image #12] and Image #3"), "see [Image 1], [Image 12] and Image #3", "defused");
+        same(TagList.imageNumbers(TagList.defuse("[Image #1] [Image #2]")), "[]", "defused tokens are none");
+        same(tokens(TagList.defuse("[Image #4]")), "", "defused is no issue");
+        StringBuilder marked = new StringBuilder();
+        String ims = "look [Image #1] /go #4";
+        for (int[] r : TagList.marks(ims, null)) marked.append(ims, r[0], r[1]).append('|');
+        same(marked, "[Image #1]|/go|#4|", "marks: images");
 
         if (failed > 0) { System.err.println(failed + " tag test(s) failed"); System.exit(1); }
         System.out.println("tag tests passed");

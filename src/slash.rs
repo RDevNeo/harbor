@@ -834,10 +834,11 @@ impl App {
     /// The text a chat's agent gets for the user's `text`: as is for Claude Code here,
     /// which expands slash commands itself; with this PC's commands and skills put in
     /// for other agents and for Claude on another device.
-    /// The files and issues tagged with `@` and `#` follow it (tags.rs).
-    pub fn slash_prompt(&self, chat_id: i64, text: &str) -> String {
+    /// The files and issues tagged with `@` and `#` follow it (tags.rs), then which of its
+    /// `files` each `[Image #N]` in it is (usertext.rs).
+    pub fn slash_prompt(&self, chat_id: i64, text: &str, files: &[std::path::PathBuf]) -> String {
         let Some(chat) = self.chat(chat_id) else { return text.to_string() };
-        let tags = self.tags_prompt(chat_id, text);
+        let tags = format!("{}{}", self.tags_prompt(chat_id, text), crate::usertext::images_prompt(text, files));
         let account = self.account(&chat.account);
         if !expands(account.map(|a| a.kind), &chat.device) || !text.contains('/') {
             return format!("{text}{tags}");

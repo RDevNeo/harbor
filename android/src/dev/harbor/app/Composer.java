@@ -39,6 +39,11 @@ final class Composer {
     private final FrameLayout send;
     private final TextView sendGlyph;
     private final Activity a;
+    private final Attach attach;
+    /** The image numbers in the text, as of its last change. */
+    private List<Integer> images = new ArrayList<>();
+    /** The last change to the text: where, and how much came in. */
+    private int changedAt, changedLen;
     private boolean running, canSteer, held, editing;
     /** What the send button does while the agent works: "steer" or "queue" (Chat.followUp). */
     private String mode = "queue";
@@ -78,6 +83,7 @@ final class Composer {
 
     Composer(Activity a, Attach attach, String hint) {
         this.a = a;
+        this.attach = attach;
         this.hint = hint;
         view = Ui.col(a);
         view.setBackground(Ui.round(Ui.CARD, Ui.LINE, 28));
@@ -152,13 +158,61 @@ final class Composer {
 
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }
-            @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
+                changedAt = st;
+                changedLen = c;
+            }
             @Override public void afterTextChanged(Editable e) {
+                imagesFollow(e);
                 refresh();
                 if (onType != null) onType.run();
             }
         });
+        if (attach != null) {
+            attach.onImage = edit::insertImage;
+            attach.onImageGone = n -> {
+                edit.forgetImage(n);
+                images = TagList.imageNumbers(edit.getText());
+            };
+        }
         refresh();
+    }
+
+    /** The text changed: a token erased in it takes its image along and the later numbers move
+     *  down (src/usertext.rs). Text set from outside (a shared draft, a queued message) comes
+     *  with its files. Every token goes in one erase. */
+    private void imagesFollow(Editable e) {
+        if (attach == null || edit.renumbering) return;
+        if (!edit.setting) {
+            if (!edit.placing && changedLen > 1) arrived(e);
+            List<Integer> now = TagList.imageNumbers(e);
+            for (int i = images.size() - 1; i >= 0; i--) {
+                int n = images.get(i);
+                if (now.contains(n)) continue;
+                attach.removeImage(n);
+                edit.forgetImage(n);
+            }
+        }
+        images = TagList.imageNumbers(e);
+        for (int[] t : TagList.images(e)) edit.pick(t[0], t[1]);
+    }
+
+    /** Tokens that came in whole, not typed: a paste or an undo. What was copied or cut here
+     *  keeps its images and takes the numbers they have now; anything else, whose number means
+     *  another moment's or another message's image, stops being a token (src/usertext.rs). */
+    private void arrived(Editable e) {
+        int from = changedAt, to = changedAt + changedLen; // the replacements below move them
+        boolean ours = to <= e.length() && e.subSequence(from, to).toString().equals(edit.clipText);
+        List<int[]> all = TagList.images(e);
+        edit.renumbering = true;
+        try {
+            for (int i = all.size() - 1; i >= 0; i--) {
+                int[] t = all.get(i);
+                if (t[0] < from || t[1] > to) continue;
+                Attach.Up u = ours ? edit.clip.get(t[2]) : null;
+                e.replace(t[0], t[1], u != null ? TagList.token(attach.back(u)) : TagList.defused(t[2]));
+            }
+        } finally { edit.renumbering = false; }
     }
 
     boolean empty() { return edit.getText().toString().trim().isEmpty(); }
@@ -199,6 +253,9 @@ final class Composer {
         } else if (held && empty) { g = Ui.I_PLAY; d = "Resume queue"; }
         else { g = Ui.I_UP; d = "Send"; }
         sendGlyph.setText(g);
+        boolean stopping = !editing && running && empty;
+        send.setBackground(Ui.press(stopping ? Ui.STOP : Ui.INK, 0, 22));
+        sendGlyph.setTextColor(stopping ? Ui.ON_STOP : Ui.ON_INK);
         send.setContentDescription(d);
         Recap.refresh(this);
     }
@@ -220,6 +277,59 @@ final class Composer {
          *  closes and the keyboard stays). */
         java.util.function.BooleanSupplier backOpen;
         Runnable onBack;
+        /** The text is being set from outside, an image's token written, or its image numbers
+         *  rewritten (imagesFollow). */
+        boolean setting, placing, renumbering;
+        /** The text last copied or cut here, and the images its tokens named. */
+        String clipText;
+        java.util.Map<Integer, Attach.Up> clip = new java.util.HashMap<>();
+
+        @Override public void setText(CharSequence text, BufferType type) {
+            setting = true;
+            try { super.setText(text, type); } finally { setting = false; }
+        }
+
+        /** Writes `[Image #n]` at the cursor, spaces where words would touch it. */
+        void insertImage(int n) {
+            Editable e = getText();
+            // A token written by hand that named no image must not start naming this one.
+            List<int[]> all = TagList.images(e);
+            renumbering = true;
+            try {
+                for (int i = all.size() - 1; i >= 0; i--) {
+                    if (all.get(i)[2] >= n) e.replace(all.get(i)[0], all.get(i)[1], TagList.defused(all.get(i)[2]));
+                }
+            } finally { renumbering = false; }
+            placing = true;
+            try {
+                int at = Math.max(getSelectionStart(), getSelectionEnd());
+                if (at < 0 || (at == 0 && !hasFocus())) at = e.length();
+                String head = at > 0 && !Character.isWhitespace(e.charAt(at - 1)) ? " " : "";
+                String tail = at < e.length() && Character.isWhitespace(e.charAt(at)) ? "" : " ";
+                String token = head + TagList.token(n) + tail;
+                e.insert(at, token);
+                setSelection(at + token.length());
+            } finally { placing = false; }
+        }
+
+        /** Image `n` left the message: its tokens go and the later numbers move down, one space
+         *  staying between the words around a token (src/usertext.rs `forget_image`). */
+        void forgetImage(int n) {
+            Editable e = getText();
+            List<int[]> all = TagList.images(e);
+            renumbering = true;
+            try {
+                for (int i = all.size() - 1; i >= 0; i--) {
+                    int[] t = all.get(i);
+                    if (t[2] > n) e.replace(t[0], t[1], TagList.token(t[2] - 1));
+                    else if (t[2] == n) {
+                        boolean space = t[1] < e.length() && e.charAt(t[1]) == ' ' && (t[0] == 0 || Character.isWhitespace(e.charAt(t[0] - 1)));
+                        e.delete(t[0], space ? t[1] + 1 : t[1]);
+                    }
+                }
+            } finally { renumbering = false; }
+            for (int[] t : TagList.images(e)) pick(t[0], t[1]);
+        }
 
         @Override protected void onSelectionChanged(int start, int end) {
             super.onSelectionChanged(start, end);
@@ -329,6 +439,11 @@ final class Composer {
         }
 
         @Override public boolean onTextContextMenuItem(int id) {
+            if (attach != null && (id == android.R.id.cut || id == android.R.id.copy) && getSelectionStart() != getSelectionEnd()) {
+                int a = Math.min(getSelectionStart(), getSelectionEnd()), b = Math.max(getSelectionStart(), getSelectionEnd());
+                clipText = getText().subSequence(a, b).toString();
+                clip = attach.named(TagList.images(clipText));
+            }
             if (attach != null && Build.VERSION.SDK_INT < 31 && (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) && pasteImages()) return true;
             return super.onTextContextMenuItem(id);
         }

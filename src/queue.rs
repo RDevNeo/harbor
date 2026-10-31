@@ -26,6 +26,7 @@ use crate::icons as ic;
 use crate::mentions::Mention;
 use crate::store::{self, Item};
 use crate::theme::RADIUS_LG;
+use crate::widgets::Tip as _;
 use crate::widgets as w;
 use eframe::egui::{self, Align2, CornerRadius, FontId, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, pos2};
 use serde_json::{Value, json};
@@ -310,7 +311,7 @@ impl App {
                 self.queue.list(chat).insert(at, q);
             }
             Steering::Active => {
-                let said = self.slash_prompt(chat, &q.text);
+                let said = self.slash_prompt(chat, &q.text, &q.files);
                 let wrote = self.turns.get(&chat).is_some_and(|(t, _)| t.write_now(&q.prompt(&said), &q.files));
                 if wrote {
                     q.written = true;
@@ -426,7 +427,7 @@ impl App {
     /// runs it next, in the same process.
     fn deliver_next(&mut self, chat_id: i64) {
         let Some(q) = self.queued(chat_id).iter().find(|q| !q.written) else { return };
-        let said = self.slash_prompt(chat_id, &q.text);
+        let said = self.slash_prompt(chat_id, &q.text, &q.files);
         let prompt = q.prompt(&said);
         let id = q.id;
         let files = q.files.clone();
@@ -514,7 +515,7 @@ impl App {
         if q.is_empty() {
             return;
         }
-        let prompts: Vec<String> = q.iter().map(|m| m.prompt(&self.slash_prompt(chat_id, &m.text))).collect();
+        let prompts: Vec<String> = q.iter().map(|m| m.prompt(&self.slash_prompt(chat_id, &m.text, &m.files))).collect();
         let tr = self.transcripts.entry(chat_id).or_default();
         if tr.items.is_empty() {
             tr.items = self.store.items(chat_id);
@@ -817,7 +818,7 @@ impl App {
                     let mut x = row.right();
                     if mine {
                         let r = egui::Rect::from_min_max(pos2(x - 60.0, row.top()), pos2(x, row.bottom()));
-                        if w::overlay(ui, r, |ui| w::btn("Cancel").muted().xs().show(ui)).on_hover_text("Cancel the edit (Esc)").clicked() {
+                        if w::overlay(ui, r, |ui| w::btn("Cancel").muted().xs().show(ui)).tip("Cancel the edit (Esc)").clicked() {
                             action = Some((m.id, "cancel"));
                         }
                         x -= 64.0;
@@ -844,7 +845,7 @@ impl App {
                     let wdt = b.width(ui);
                     let r = egui::Rect::from_min_max(pos2(x - wdt, row.top()), pos2(x, row.bottom()));
                     x -= wdt + 2.0;
-                    let resp = w::overlay(ui, r, |ui| b.enabled(on).show(ui)).on_hover_text(tip);
+                    let resp = w::overlay(ui, r, |ui| b.enabled(on).show(ui)).tip(tip);
                     if resp.clicked() && on {
                         action = Some((m.id, act));
                     }
@@ -862,7 +863,7 @@ impl App {
                 button(ui, ic::COMPOSE, None, if last { "Edit in the composer (Alt+↑)" } else { "Edit in the composer" }, "edit", true);
                 if waiting > 1 {
                     let r = egui::Rect::from_min_max(pos2(x - 28.0, row.top()), pos2(x, row.bottom()));
-                    let g = w::overlay(ui, r, |ui| w::btn(ic::GRIP).muted().icon_xs().show(ui)).on_hover_text("Right-click to move it up or down");
+                    let g = w::overlay(ui, r, |ui| w::btn(ic::GRIP).muted().icon_xs().show(ui)).tip("Right-click to move it up or down");
                     let n = place.unwrap_or(0);
                     g.context_menu(|ui| {
                         if n > 0 && ui.button("Move up").clicked() {

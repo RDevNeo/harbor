@@ -168,13 +168,13 @@ impl App {
     pub fn stop_all_dialog(&mut self, ui: &mut egui::Ui, lead: i64, close: &mut bool) {
         let n = self.running_subs(lead).len();
         let subs = if n == 1 { "1 running sub-agent".to_string() } else { format!("{n} running sub-agents") };
-        let title = if self.turns.contains_key(&lead) { format!("Stop the main agent and {subs}?") } else { format!("Stop {subs}?") };
+        let title = if self.is_running(lead) { format!("Stop the main agent and {subs}?") } else { format!("Stop {subs}?") };
         w::text(ui, title, "heading-20");
         ui.add_space(4.0);
         w::subtle(ui, "Sub-agent queues are cleared; your queued messages wait until you resume. Finished work and transcripts stay.", "copy-14");
         ui.add_space(16.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if w::btn("Stop all").sm().variant(w::Variant::Destructive).show(ui).clicked() {
+            if w::btn("Stop all").sm().variant(w::Variant::Stop).show(ui).clicked() {
                 self.stop_all(lead);
                 *close = true;
             }
@@ -288,6 +288,8 @@ impl App {
     /// mentions), cursor at the end. A draft typed since stays, after the restored text.
     pub fn restore_draft(&mut self, chat_id: i64, text: String, files: Vec<PathBuf>, mentions: Vec<Mention>, ctx: &egui::Context) {
         let draft = self.drafts.remove(&chat_id).unwrap_or_default();
+        // The draft's images come after the message's: their numbers too (usertext.rs).
+        let draft = crate::usertext::shift_images(&draft, crate::usertext::image_count(&files));
         let joined = if draft.trim().is_empty() { text } else { format!("{text}\n{draft}") };
         let mut f = files;
         f.extend(self.files.remove(&chat_id).unwrap_or_default());
@@ -305,6 +307,8 @@ impl App {
         let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
         let end = joined.chars().count();
         state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(end))));
+        // Other files, other numbers: older texts would name the wrong images (usertext.rs).
+        state.clear_undoer();
         state.store(ctx, id);
         self.drafts.insert(chat_id, joined);
         self.focus_composer = true;

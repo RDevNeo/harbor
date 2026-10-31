@@ -329,6 +329,9 @@ refetch everything.
   Claude since 0.84, the CLI's own default for the others): show a chat's or the defaults' `""`
   as that level, and pick it for a new chat.
 - `role`: `lead` (a project's thread), `sub` (a subagent of `parent`; usually hidden), `chat`.
+- `retired` (optional, older hubs leave it out): a subagent its lead retired (`POST
+  /v1/chats/{id}/retire`). It's off its team, so `GET …/team` no longer lists it, and its chat
+  stays to read, `writable: false`: say it was retired instead of "<home_name> is off".
 - `tree` (optional, older hubs leave it out): where the desktop sidebar places each chat, so the
   list shows the same chats in the same places. `{"projects": [{"id": 1, "snoozed": false,
   "chats": [14, 12]}], "threads": [9], "settled": [3]}`, chat ids in display order. Each project
@@ -450,15 +453,15 @@ the cards draw as below. Cards without `group` (an older hub) draw as before.
 
 | kind | what the desktop draws | fields |
 |---|---|---|
-| `hidden` | nothing: remove it if you had it (a lead's coordination; it can become hidden later, when its turn delegates) | only `forks_after` (then draw just the divider) |
-| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note, kind?, chat?, title?}]` (`kind` "chat" from 0.72: a mentioned chat, `chat` its global id, `title` its title; the chip shows it and a tap opens that chat; `excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.71, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu), `parts` (0.94, absent when the text is all plain: the text as the desktop draws it, `[{text, kind?, chat?}]` whose `text`s joined are what the bubble shows in place of `text`; `kind` `tag` (`@file`, `#123`) and `command` (`/command`) are blue, `chat` is a mentioned chat's title, a blue underlined link to the global id `chat`; a mention of an older message, its title not in the text, comes first on a line of its own. Mentioned chats are in `parts`, so draw chips only for the other `mentions`) |
+| `hidden` | nothing: remove it if you had it (a lead's tool calls, thinking and activity, from 0.108; a sub-agent's chat keeps them) | only `forks_after` (then draw just the divider) |
+| `user` | the right-aligned bubble: mention chips, image strip, text, a 📎 line per other file; "from `sender`" small in its bottom-right corner, inside the bubble, when there is one | `text`, `files` (names of non-image files), `images`, `mentions: [{from, text, excerpt, note, kind?, chat?, title?}]` (`kind` "chat" from 0.72: a mentioned chat, `chat` its global id, `title` its title; the chip shows it and a tap opens that chat; `excerpt` true when only a selected part of the message was mentioned: the chip shows `text` in quotes; `note` what the user wrote about that mention, shown under its chip, empty when none; both absent on older hubs), `at` (unix s), `sender` (where it was written when not on the chat's PC: "Pixel", "desk", "Pixel via desk"; empty otherwise), `intent` (0.71, absent otherwise: `steer` when it steered a running turn, `promoted` when it was queued first; draw a small "↻ Steer" caption over the bubble and put "Steered the active turn" / "Originally queued, then promoted to steer the active turn" in its long-press menu), `parts` (0.94, absent when the text is all plain: the text as the desktop draws it, `[{text, kind?, chat?}]` whose `text`s joined are what the bubble shows in place of `text`; `kind` `tag` (`@file`, `#123`) and `command` (`/command`) are blue, `image` (0.108: `[Image #N]`, `image` its number, the Nth of `images`) is blue on a tint and the strip's thumbnails wear their numbers, `chat` is a mentioned chat's title, a blue underlined link to the global id `chat`; a mention of an older message, its title not in the text, comes first on a line of its own. Mentioned chats are in `parts`, so draw chips only for the other `mentions`) |
 | `text` | the reply (markdown), image strip under it; Fork among its actions when `forkable`; commit pills in its spans (below) | `markdown`, `blocks` (below), `images`, `at`, `forkable`, `commits` (optional, 0.52) |
 | `thinking` | a collapsed "Thinking" header; expands to italic text | `text` |
 | `tool` | one row: status icon (spinner / ✓ / ✗), `label`, `summary`; tap expands `input` and `result`; image strip under it | `label`, `summary`, `input`, `result` (null while running), `done`, `is_error`, `images` |
 | `footer` | nothing since 0.59.2: the end of a turn comes as `hidden` (its usage stays in Usage). Older hubs send its line here; draw nothing | `text` (e.g. "Claude · AB · Opus 5.5 · 4.3s · 189k in (180k cached) · 304 out · $3.96"), `at` |
 | `forked_from` | "Forked from conversation · Open source conversation" divider | `chat`, `seq` (open that chat at that card) |
 | `chat_link` (0.57) | a divider "`text` · Open chat" linking to another chat: at the top of a chat an agent opened with its `open_chat` tool ("Opened by the agent of “Fix login”"), and in the chat that opened it ("Opened “Docs pass”"). Tap: open `chat`; while `chat` is null (that chat hasn't reached this hub yet) draw just the text | `text`, `chat` (this hub's id, or the gid with `X-Harbor-Ids: global`; null when it isn't here), `gid` |
-| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (0.84, play and send glyphs; older apps: any fallback) are a lead handing work off, which shows nothing else: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown) | `icon`, `text`, `detail`, `detail_markdown`, `url` |
+| `notice` | a centred pill with the icon and `text`; with a `detail` it expands to it (as markdown when `detail_markdown`); with a `url` (a process's address) tapping opens it. Icon `report` (bot glyph) is a lead's one-line entry for a sub-agent's final report ("api finished: Added tests for X"), its `detail` the whole report. Icon `worktree` (0.66, folder-git glyph; older apps: any fallback) says the chat works in a new worktree from then on ("Working in a new worktree · app-a1b2c3 on branch harbor/a1b2c3 (from main)", or "Moved to a new worktree · …"), its `detail` the folder and branch. Icons `started` and `sent` (hubs 0.84 to 0.107, play and send glyphs; older apps: any fallback; hubs from 0.108 send neither, and hide `report`, `bot`, `process`, `wake` and `webhook` notices and agents' messages in a lead's chat too) are a lead handing work off: `started` for each sub-agent it starts ("api started: PR status in the footer"), `sent` for a message it passes to one while answering the user ("Sent to api: Also make it blue"), their `detail` the whole task or message (markdown) | `icon`, `text`, `detail`, `detail_markdown`, `url` |
 | `message` | the blue card "`from` → `to`" with `text` | `from`, `to`, `text` |
 | `error` | the red card, monospace | `text` |
 | `media` (0.50–0.83) | an image or video an agent showed with its `show_media` tool. Hubs from 0.84 don't send it (agents put `![caption](path)` in their reply instead; an old transcript's call comes as a `tool` card with its file in `images`); from older hubs draw it like a `text` card's `media`, or skip it | `media` (one entry), `caption`, `pending`, `images` |
@@ -695,6 +698,14 @@ queue, as older apps expect): `steer` reaches the running turn now (`steering: t
 (`can_steer`), else it queues; `queue` waits for the turn to end (`queued: true`). A message to an
 idle chat starts a turn, and resumes a queue a Stop held (it runs after this one).
 
+`[Image #N]` in the text (0.108) names the Nth image of `files`, counting only the images the hub
+takes as such (png, jpg, jpeg, gif, webp): the agent is told which file each number is. The
+composer writes the token at the cursor for each image added, and keeps tokens and images together
+(erasing one takes the other, and the later numbers move down), as the desktop's does. A number
+means nothing without its files, so a token that arrives as text doesn't stay one: what was copied
+or cut in the composer brings its image and takes its number there, and anything else (a quoted
+message, a paste from elsewhere) becomes `[Image N]`, which names no image.
+
 Optional `mentions` (the draft's, as the shared draft holds them). A mentioned chat (from 0.72,
 `$` in the composer) is `{"kind": "chat", "chat": "<global id>", "title": "…", "from": "<its
 row's line>", "note"?: "…"}`: the hub fills in its context when the message goes out (title,
@@ -709,6 +720,15 @@ with the chat's id and link. Old hubs read it as an empty message mention.
 `hold` (older apps) → `{"ok": true, "returned": [{"text": "…", "files": [upload ids]}]}`: messages
 queued behind it are taken out of the queue and returned, oldest first, so the app can put them
 back in its composer (files that weren't phone uploads are left out).
+
+### `POST /v1/chats/{id}/retire`
+
+→ `{"ok": true, "text": "Retired api (its running turn was stopped). It's off the team…"}`: what a
+lead's `retire_agent` tool does to a subagent of its team. The running turn stops (`running` goes
+false), messages waiting for it are dropped, and it leaves `GET …/team` for good: no new turn
+starts, `send` answers `409`. The transcript stays. Its processes keep running and report to the
+lead. A second call answers `{"ok": true}` with "already retired"; anything but a subagent answers
+`409`. A team panel that's open refetches as for any other team change.
 
 ### Steer and the queue (0.71)
 
@@ -1635,7 +1655,7 @@ Harbor keeps a full copy of every chat (`src/mesh.rs`), so any of them answers t
 same chats, rendered the same way.
 
 - A chat runs on one PC, its `home`. Another hub holds a copy: reading it is local; a write to it
-  (`send`, `stop`, `stop_all`, `continue`, `cancel_limit`, `continue_on`, `fork`, `slash`, `move_pc`, `PATCH`, `DELETE`), and
+  (`send`, `stop`, `stop_all`, `retire`, `continue`, `cancel_limit`, `continue_on`, `fork`, `slash`, `move_pc`, `PATCH`, `DELETE`), and
   `GET …/slash` and `GET …/move_targets`, is forwarded to the home PC and answered from there. The message records where it came from (`sender`).
   While the home PC is off the copy is read-only (`writable: false`, writes `409`) and catches up
   when it's back.
@@ -1758,7 +1778,7 @@ list adds the tailnet addresses. Each is tried, pinned to the peer's key, until 
 - `GET /mesh/v1/chats?since=<rev>&epoch=<epoch>` → `{epoch, rev, full, chats: [chat], gone: [id]}`:
   this PC's own chats changed after `since`, all of them (`full: true`) when `since` is 0 or the
   epoch is another; `gone` are own chats deleted since. A chat: `id` (on its home PC), `gid`,
-  `title`, `project: {name, path, remote?}|null`, `account`, `model`, `effort`, `access`, `device`, `settled`,
+  `title`, `project: {name, path, remote?}|null`, `account`, `model`, `effort`, `access`, `device`, `settled`, `retired` (optional),
   `updated`, `role`, `parent` (id there), `name`, `started`, `count`, `digest` (hex FNV of the
   items, only in full lists: a copy whose digest differs fetches its items from 0), `running`,
   `since_ms`, `queued`, `status` (as in items), `forks: [[seq, id]]`.

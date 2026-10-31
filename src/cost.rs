@@ -73,6 +73,7 @@ impl Usage {
 impl App {
     /// A chat's own turns: from its transcript while it's loaded (live), else from the store's
     /// totals (`usage_now`).
+    #[allow(dead_code)]
     pub fn chat_usage(&mut self, ctx: &egui::Context, id: i64) -> Usage {
         if let Some(t) = self.transcripts.get(&id) {
             return of_items(&t.items);

@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 /// A chat notice's detail that links to another chat by its gid.
 pub const LINK: &str = "harbor:gid/";
+/// Who a message from another chat's agent is to, in its transcript (view.rs keeps it in a lead's).
+pub const THIS_CHAT: &str = "this chat";
 
 fn arg<'a>(a: &'a Value, k: &str) -> &'a str {
     a[k].as_str().unwrap_or("").trim()
@@ -256,8 +258,11 @@ impl App {
         Ok(out.join("\n"))
     }
 
-    /// "working 2m", "queued", "settled", "idle, last active 3h ago".
+    /// "working 2m", "queued", "settled", "retired", "idle, last active 3h ago".
     fn status_words(&self, c: &Chat) -> String {
+        if c.retired {
+            return "retired".into();
+        }
         let subs_busy = self.subs_of(c.id).iter().any(|s| self.turns.contains_key(&s.id));
         if self.turns.contains_key(&c.id) || subs_busy {
             let since = self.running_since(c.id).map(|t| crate::widgets::elapsed(t.elapsed().as_secs()));
@@ -323,7 +328,7 @@ impl App {
         if tr.items.is_empty() {
             tr.items = self.store.items(target.id);
         }
-        tr.items.push(Item::Message { from, to: "this chat".into(), text: text.into() });
+        tr.items.push(Item::Message { from, to: THIS_CHAT.into(), text: text.into() });
         self.persist(target.id);
         let busy = self.turns.contains_key(&target.id);
         self.trigger(target.id, format!("[message from the agent of the chat {} (id {})] {text}", quoted(&me.title), me.id), true, ctx);
@@ -364,6 +369,7 @@ mod tests {
             gid: gid.into(),
             home: String::new(),
             home_id: 0,
+            retired: false,
         }
     }
 

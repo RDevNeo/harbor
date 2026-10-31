@@ -464,7 +464,7 @@ impl App {
             return Some(format!("it's moving to {to}"));
         }
         let mut ids = vec![chat_id];
-        ids.extend(self.subs_of(chat_id).into_iter().map(|s| s.id));
+        ids.extend(self.all_subs_of(chat_id).into_iter().map(|s| s.id));
         for id in &ids {
             let Some(x) = self.chat(*id) else { continue };
             let it = if *id == chat_id { "it".to_string() } else { format!("its sub-agent {}", x.name) };
@@ -546,7 +546,7 @@ impl App {
             return self.relocate(chat_id, pc, ctx);
         }
         let mut chats = vec![lead.clone()];
-        chats.extend(self.subs_of(chat_id));
+        chats.extend(self.all_subs_of(chat_id));
         // Where it works: clean, or it doesn't go.
         let worktree = self.worktree_of(&lead);
         let code = if lead.repo_id.is_some() { code_state(&self.chat_cwd(&lead), worktree.is_some())? } else { Code::default() };
@@ -573,7 +573,7 @@ impl App {
             let parent = c.parent.and_then(|p| self.chat(p)).map(|p| p.gid.clone());
             list.push(json!({
                 "gid": c.gid, "title": c.title, "session_id": c.session_id, "started": c.started, "model": c.model,
-                "effort": c.effort, "access": c.access, "settled": c.settled, "role": c.role.as_str(), "parent": parent,
+                "effort": c.effort, "access": c.access, "settled": c.settled, "retired": c.retired, "role": c.role.as_str(), "parent": parent,
                 "name": c.name, "items": items,
             }));
         }
@@ -643,7 +643,7 @@ impl App {
         // Its worktree here is clean and pushed: it goes (kept, with a toast, if it changed since).
         self.ws_drop(lead, ctx);
         let mut all = vec![lead];
-        all.extend(self.subs_of(lead).into_iter().map(|s| s.id));
+        all.extend(self.all_subs_of(lead).into_iter().map(|s| s.id));
         let waiting = self.pending.remove(&lead).unwrap_or_default();
         for id in &all {
             let Some(c) = self.chat_mut(*id) else { continue };
@@ -743,7 +743,7 @@ impl App {
     fn move_owned(&self, gid: &str) -> Option<HashMap<String, i64>> {
         let lead = self.chats.iter().find(|c| c.gid == gid && !c.foreign())?;
         let mut m: HashMap<String, i64> = HashMap::from([(lead.gid.clone(), lead.id)]);
-        m.extend(self.subs_of(lead.id).into_iter().map(|s| (s.gid, s.id)));
+        m.extend(self.all_subs_of(lead.id).into_iter().map(|s| (s.gid, s.id)));
         Some(m)
     }
 
@@ -907,6 +907,7 @@ impl App {
                 gid: gid.clone(),
                 home: String::new(),
                 home_id: 0,
+                retired: m["retired"].as_bool().unwrap_or(false),
             };
             let id = match existing {
                 Some(id) => {

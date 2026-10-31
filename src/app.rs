@@ -160,6 +160,7 @@ pub struct App {
     last_sweep: Instant,
     pub drafts: HashMap<i64, String>,
     pub files: HashMap<i64, Vec<PathBuf>>,
+    pub image_memory: crate::usertext::ImageMemory,
     pub mentions: crate::mentions::State,
     pub slash: crate::slash::State,
     pub tags: crate::tags::State,
@@ -371,6 +372,7 @@ impl App {
             last_sweep: Instant::now(),
             drafts: HashMap::new(),
             files: HashMap::new(),
+            image_memory: Default::default(),
             mentions: Default::default(),
             slash: Default::default(),
             tags: Default::default(),
@@ -925,10 +927,11 @@ impl App {
         }
         let key = self.key();
         let mut added = false;
+        let mut files = vec![];
         raw.events.retain(|e| match e {
             egui::Event::PasteImage(img) => {
                 match save_pasted_image(img) {
-                    Ok(path) => self.files.entry(key).or_default().push(path),
+                    Ok(path) => files.push(path),
                     Err(e) => eprintln!("harbor: paste image: {e}"),
                 }
                 added = true;
@@ -936,7 +939,7 @@ impl App {
             }
             egui::Event::Paste(text) => match copied_files(text) {
                 Some(paths) => {
-                    self.files.entry(key).or_default().extend(paths);
+                    files.extend(paths);
                     added = true;
                     false
                 }
@@ -944,9 +947,143 @@ impl App {
             },
             _ => true,
         });
+        self.attach(key, files, ctx);
         if added {
             self.focus_composer = true;
         }
+        // A token keeps its image only out of a composer and into a composer (usertext.rs).
+        let cid = Id::NULL.with(("composer", key));
+        for e in raw.events.iter_mut() {
+            match e {
+                egui::Event::Copy | egui::Event::Cut if focused != Some(cid) => self.image_memory.clip = None,
+                egui::Event::Paste(text) if focused == Some(cid) && !crate::usertext::images(text).is_empty() => {
+                    let named = self.image_memory.clip.as_ref().filter(|c| c.0 == *text).map_or(vec![], |c| c.1.clone());
+                    *text = crate::usertext::pasted(text, &named, self.files.entry(key).or_default());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Attaches `paths` to composer `key`, however they came. An image also goes in the text,
+    /// as `[Image #N]` at the cursor (usertext.rs).
+    pub fn attach(&mut self, key: i64, paths: Vec<PathBuf>, ctx: &egui::Context) {
+        for p in paths {
+            let image = crate::images::is_image(&p.to_string_lossy());
+            let files = self.files.entry(key).or_default();
+            files.push(p);
+            if image {
+                let n = crate::usertext::image_count(files);
+                crate::usertext::write_image(ctx, Id::NULL.with(("composer", key)), self.drafts.entry(key).or_default(), n);
+            }
+        }
+    }
+
+    /// Attachment `i` of composer `key` removed: an image's token goes with it.
+    pub fn detach(&mut self, key: i64, i: usize, ctx: &egui::Context) {
+        let Some(files) = self.files.get_mut(&key).filter(|f| i < f.len()) else { return };
+        if crate::images::is_image(&files[i].to_string_lossy()) {
+            let n = crate::usertext::image_count(&files[..=i]);
+            let draft = self.drafts.get(&key).cloned().unwrap_or_default();
+            let was = self.composed(key, &draft, ctx);
+            let undoer = composer_state(key, ctx).undoer();
+            self.drop_image(key, n, ctx);
+            self.image_left(key, was, undoer, false, ctx);
+            // Where Ctrl+Z brings it back.
+            self.focus_composer = true;
+        } else {
+            files.remove(i);
+        }
+    }
+
+    /// Image `n` leaves composer `key`: its file and its tokens; the later ones move down.
+    fn drop_image(&mut self, key: i64, n: usize, ctx: &egui::Context) {
+        let Some(files) = self.files.get_mut(&key) else { return };
+        let Some(i) = files.iter().enumerate().filter(|(_, f)| crate::images::is_image(&f.to_string_lossy())).nth(n - 1).map(|x| x.0) else { return };
+        files.remove(i);
+        crate::usertext::erase_image(ctx, Id::NULL.with(("composer", key)), self.drafts.entry(key).or_default(), n);
+    }
+
+    /// Composer `key` as it stands, its text in `draft`.
+    pub fn composed(&self, key: i64, draft: &str, ctx: &egui::Context) -> crate::usertext::Composed {
+        let cursor = composer_state(key, ctx).cursor.char_range();
+        crate::usertext::Composed { text: draft.to_string(), files: self.files.get(&key).cloned().unwrap_or_default(), cursor }
+    }
+
+    /// The text changed in composer `key` this frame (it was `before`): a token erased takes
+    /// its image along, highest number first so the lower ones hold.
+    pub fn images_erased(&mut self, key: i64, before: crate::usertext::Composed, ctx: &egui::Context) {
+        let now = crate::usertext::image_numbers(self.drafts.get(&key).map_or("", String::as_str));
+        let count = crate::usertext::image_count(&before.files);
+        let gone: Vec<usize> = crate::usertext::image_numbers(&before.text).into_iter().rev().filter(|n| *n <= count && !now.contains(n)).collect();
+        if gone.is_empty() {
+            return;
+        }
+        let undoer = composer_state(key, ctx).undoer();
+        // Ctrl+Z took the newest images out again: no number moved, so egui's undo goes on.
+        let undone = ctx.input(crate::usertext::undo_keys).0 && now.last().is_none_or(|k| gone.iter().all(|n| n > k));
+        for n in gone {
+            self.drop_image(key, n, ctx);
+        }
+        self.image_left(key, before, undoer, undone, ctx);
+    }
+
+    /// Images left composer `key`, which was `was`: Ctrl+Z goes back to it, or if `undone` (it
+    /// was Ctrl+Z) Ctrl+Y does. Otherwise egui's undo starts over, its texts' numbers out of date.
+    fn image_left(&mut self, key: i64, was: crate::usertext::Composed, undoer: crate::usertext::TextUndo, undone: bool, ctx: &egui::Context) {
+        let from = (self.drafts.get(&key).cloned().unwrap_or_default(), self.files.get(&key).cloned().unwrap_or_default());
+        let step = crate::usertext::ImageStep { was, undoer, from };
+        let m = &mut self.image_memory;
+        if undone {
+            crate::usertext::ImageMemory::push(m.redo.entry(key).or_default(), step);
+            return;
+        }
+        m.redo.remove(&key);
+        crate::usertext::ImageMemory::push(m.undo.entry(key).or_default(), step);
+        let cid = Id::NULL.with(("composer", key));
+        let mut state = composer_state(key, ctx);
+        state.clear_undoer();
+        state.store(ctx, cid);
+    }
+
+    /// Ctrl+Z or Ctrl+Y in composer `key`, when that step is one images left or came back by:
+    /// its text, files, cursor and undo history come back together.
+    pub fn image_keys(&mut self, ui: &mut Ui, key: i64, draft: &mut String) {
+        let (undo, redo) = ui.input(crate::usertext::undo_keys);
+        if !undo && !redo {
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        let files = self.files.get(&key).cloned().unwrap_or_default();
+        let m = &mut self.image_memory;
+        let (steps, others) = if undo { (&mut m.undo, &mut m.redo) } else { (&mut m.redo, &mut m.undo) };
+        let here = (draft.clone(), files.clone());
+        let Some(step) = steps.get_mut(&key).and_then(|l| l.pop_if(|s| s.from == here)) else { return };
+        ui.input_mut(|i| {
+            i.consume_key(egui::Modifiers::COMMAND, Key::Z);
+            i.consume_key(egui::Modifiers::COMMAND, Key::Y);
+        });
+        let mut state = composer_state(key, &ctx);
+        let was = crate::usertext::Composed { text: std::mem::take(draft), files, cursor: state.cursor.char_range() };
+        let back = crate::usertext::ImageStep { was, undoer: state.undoer(), from: (step.was.text.clone(), step.was.files.clone()) };
+        crate::usertext::ImageMemory::push(others.entry(key).or_default(), back);
+        *draft = step.was.text;
+        self.files.insert(key, step.was.files);
+        state.cursor.set_char_range(step.was.cursor);
+        state.set_undoer(step.undoer);
+        state.store(&ctx, Id::NULL.with(("composer", key)));
+    }
+
+    /// Copy or Cut in composer `key`: remembers which images the selected tokens name.
+    pub fn images_copied(&mut self, ui: &Ui, key: i64, draft: &str) {
+        if !ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut))) {
+            return;
+        }
+        let Some(r) = composer_state(key, ui.ctx()).cursor.char_range().filter(|r| r.primary.index != r.secondary.index) else { return };
+        let (a, z) = (r.primary.index.0.min(r.secondary.index.0), r.primary.index.0.max(r.secondary.index.0));
+        let text: String = draft.chars().skip(a).take(z - a).collect();
+        let named = crate::usertext::named_images(&text, self.files.get(&key).map_or(&[], Vec::as_slice));
+        self.image_memory.clip = Some((text, named));
     }
 
     pub fn pick_files(&self, key: i64) {
@@ -997,6 +1134,7 @@ impl App {
         if text.is_empty() && files.is_empty() && mentions.is_empty() {
             return;
         }
+        self.image_memory.forget(key);
         // The project's page, its main chat started meanwhile (on the phone): the message joins it.
         let joins_main = key == DRAFT && self.draft.main && self.draft.repo.and_then(|r| self.main_chat(r)).is_some();
         if key == DRAFT && !joins_main && self.mesh_create(&text, &files) {
@@ -1111,7 +1249,7 @@ impl App {
         let fork = self.take_fork_preamble(chat_id);
         let queued = self.pending.remove(&chat_id).filter(|q| !q.is_empty());
         let snap = self.undo_snapshot(chat_id, item, &text, &files, &mentions, queued.as_deref().unwrap_or_default());
-        let said = self.slash_prompt(chat_id, &text);
+        let said = self.slash_prompt(chat_id, &text, &files);
         let prompt = match queued {
             Some(q) => format!("{fork}{}\n\n---\n\n{quoted}{said}", q.join("\n\n---\n\n")),
             // A slash command only runs at the start: what goes with it follows.
@@ -1124,8 +1262,8 @@ impl App {
 
     /// Starts one agent turn for a chat (user message, report, wake-up, webhook…).
     pub fn start_turn(&mut self, chat_id: i64, prompt: String, files: Vec<PathBuf>, ctx: &egui::Context) {
-        // Turns of another PC's chat run on that PC only.
-        if self.is_foreign(chat_id) {
+        // Turns of another PC's chat run on that PC only; a retired agent takes none.
+        if self.is_foreign(chat_id) || self.chat(chat_id).is_some_and(|c| c.retired) {
             return;
         }
         // One turn per chat. A runner still going for it, even one this Harbor lost
@@ -1469,6 +1607,96 @@ fn save_pasted_image(img: &egui::ColorImage) -> Result<PathBuf, String> {
 }
 
 /// Pasted text that is only `file://` URIs (files copied in a file manager): their paths.
+/// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|down|up|wheel|backspace|delete|left|right|ctrl:key|ctrlshift:key|drop:path|type:text[,secs]]
+/// places the pointer there and optionally clicks once after `secs` (default 1, fractions ok; `down`
+/// then `up` at another step drags, e.g. to select text); more
+/// steps joined by ';' follow at their own `secs` (since start).
+fn scripted_input(ctx: &egui::Context, raw: &mut egui::RawInput) {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    static DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let Ok(spec) = std::env::var("HARBOR_POINTER") else { return };
+    let start = START.get_or_init(Instant::now);
+    // Steps "x,y[,action[,secs]]" joined by ';': the pointer moves to each at its time.
+    let steps: Vec<(egui::Pos2, &str, f64)> = spec
+        .split(';')
+        .filter_map(|s| {
+            let parts: Vec<&str> = s.split(',').collect();
+            let (x, y) = (parts.first()?.trim().parse().ok()?, parts.get(1)?.trim().parse().ok()?);
+            Some((egui::pos2(x, y), parts.get(2).copied().unwrap_or(""), parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(1.0)))
+        })
+        .collect();
+    let Some(first) = steps.first() else { return };
+    let due = steps.iter().take_while(|s| start.elapsed() > Duration::from_secs_f64(s.2)).count();
+    // All done: no more events, or each frame would ask for the next one.
+    if due == steps.len() && DONE.load(std::sync::atomic::Ordering::Relaxed) == due {
+        return;
+    }
+    let pos = steps.get(due.max(1) - 1).map_or(first.0, |s| s.0);
+    raw.events.push(egui::Event::PointerMoved(pos));
+    let done = DONE.load(std::sync::atomic::Ordering::Relaxed);
+    if due > done {
+        DONE.store(due, std::sync::atomic::Ordering::Relaxed);
+        let (pos, action, _) = steps[due - 1];
+        match action {
+            "wheel" => raw.events.push(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -400.0), phase: egui::TouchPhase::Move, modifiers: Default::default(), source: egui::MouseWheelSource::Wheel }),
+            "click" | "rclick" => {
+                let button = if action == "click" { egui::PointerButton::Primary } else { egui::PointerButton::Secondary };
+                for pressed in [true, false] {
+                    raw.events.push(egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() });
+                }
+            }
+            "down" | "up" => raw.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: action == "down", modifiers: Default::default() }),
+            "backspace" | "delete" | "left" | "right" => {
+                let key = match action {
+                    "backspace" => egui::Key::Backspace,
+                    "delete" => egui::Key::Delete,
+                    "left" => egui::Key::ArrowLeft,
+                    _ => egui::Key::ArrowRight,
+                };
+                for pressed in [true, false] {
+                    raw.events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
+                }
+            }
+            // "ctrl:v", "ctrlshift:z": a shortcut, through the clipboard and the text field as a real one.
+            a if a.starts_with("ctrl:") || a.starts_with("ctrlshift:") => {
+                let (mods, name) = a.split_once(':').unwrap_or_default();
+                let modifiers = egui::Modifiers { ctrl: true, command: true, shift: mods == "ctrlshift", ..Default::default() };
+                if let Some(key) = Key::from_name(&name.to_uppercase()) {
+                    for pressed in [true, false] {
+                        raw.events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers });
+                    }
+                }
+            }
+            // "drop:/some/file": a file dropped on the window.
+            a if a.starts_with("drop:") => raw.dropped_files.push(Arc::new(ScriptedDrop(a["drop:".len()..].into()))),
+            // "type:some_text": typed into the focused field ('_' for a space).
+            a if a.starts_with("type:") => raw.events.push(egui::Event::Text(a["type:".len()..].replace('_', " "))),
+            _ => {}
+        }
+    }
+    // Later steps come on their own, without other input.
+    if steps.len() > due {
+        ctx.request_repaint_after(Duration::from_millis(50));
+    }
+}
+
+#[derive(Debug)]
+struct ScriptedDrop(PathBuf);
+
+impl egui::DroppedFile for ScriptedDrop {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+fn composer_state(key: i64, ctx: &egui::Context) -> egui::text_edit::TextEditState {
+    egui::text_edit::TextEditState::load(ctx, Id::NULL.with(("composer", key))).unwrap_or_default()
+}
+
 fn copied_files(text: &str) -> Option<Vec<PathBuf>> {
     let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
     if lines.is_empty() || !lines.iter().all(|l| l.starts_with("file://")) {
@@ -1554,11 +1782,9 @@ pub fn clip(s: &str, n: usize) -> String {
 // ================================================================== frame
 
 impl eframe::App for App {
-    /// Development aid for headless screenshots: HARBOR_POINTER=x,y[,click|rclick|down|up|wheel|backspace|delete|left|right|type:text[,secs]]
-    /// places the pointer there and optionally clicks once after `secs` (default 1, fractions ok; `down`
-    /// then `up` at another step drags, e.g. to select text); more
-    /// steps joined by ';' follow at their own `secs` (since start).
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // First: scripted keys go the way real ones do.
+        scripted_input(ctx, raw);
         // A keybinding being set takes every key first: no clipboard key, shortcut or text field sees it.
         if self.keys.capture.is_some() && matches!(self.view, View::Settings(Tab::Keybindings)) {
             self.keys.capture_raw(raw, &self.store);
@@ -1570,60 +1796,6 @@ impl eframe::App for App {
         crate::clipboard::shortcuts(raw, in_terminal, keep_copy_keys);
         drop_idle_ime(raw, &mut self.ime_preedit);
         self.paste_attachments(ctx, raw);
-        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-        static DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let Ok(spec) = std::env::var("HARBOR_POINTER") else { return };
-        let start = START.get_or_init(Instant::now);
-        // Steps "x,y[,action[,secs]]" joined by ';': the pointer moves to each at its time.
-        let steps: Vec<(egui::Pos2, &str, f64)> = spec
-            .split(';')
-            .filter_map(|s| {
-                let parts: Vec<&str> = s.split(',').collect();
-                let (x, y) = (parts.first()?.trim().parse().ok()?, parts.get(1)?.trim().parse().ok()?);
-                Some((egui::pos2(x, y), parts.get(2).copied().unwrap_or(""), parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(1.0)))
-            })
-            .collect();
-        let Some(first) = steps.first() else { return };
-        let due = steps.iter().take_while(|s| start.elapsed() > Duration::from_secs_f64(s.2)).count();
-        // All done: no more events, or each frame would ask for the next one.
-        if due == steps.len() && DONE.load(std::sync::atomic::Ordering::Relaxed) == due {
-            return;
-        }
-        let pos = steps.get(due.max(1) - 1).map_or(first.0, |s| s.0);
-        raw.events.push(egui::Event::PointerMoved(pos));
-        let done = DONE.load(std::sync::atomic::Ordering::Relaxed);
-        if due > done {
-            DONE.store(due, std::sync::atomic::Ordering::Relaxed);
-            let (pos, action, _) = steps[due - 1];
-            match action {
-                "wheel" => raw.events.push(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, -400.0), phase: egui::TouchPhase::Move, modifiers: Default::default(), source: egui::MouseWheelSource::Wheel }),
-                "click" | "rclick" => {
-                    let button = if action == "click" { egui::PointerButton::Primary } else { egui::PointerButton::Secondary };
-                    for pressed in [true, false] {
-                        raw.events.push(egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() });
-                    }
-                }
-                "down" | "up" => raw.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: action == "down", modifiers: Default::default() }),
-                "backspace" | "delete" | "left" | "right" => {
-                    let key = match action {
-                        "backspace" => egui::Key::Backspace,
-                        "delete" => egui::Key::Delete,
-                        "left" => egui::Key::ArrowLeft,
-                        _ => egui::Key::ArrowRight,
-                    };
-                    for pressed in [true, false] {
-                        raw.events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Default::default() });
-                    }
-                }
-                // "type:some_text": typed into the focused field ('_' for a space).
-                a if a.starts_with("type:") => raw.events.push(egui::Event::Text(a["type:".len()..].replace('_', " "))),
-                _ => {}
-            }
-        }
-        // Later steps come on their own, without other input.
-        if steps.len() > due {
-            ctx.request_repaint_after(Duration::from_millis(50));
-        }
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1657,7 +1829,7 @@ impl App {
         }
         while let Ok(m) = self.bg_rx.try_recv() {
             match m {
-                Bg::Files(key, f) => self.files.entry(key).or_default().extend(f),
+                Bg::Files(key, f) => self.attach(key, f, ctx),
                 m @ (Bg::GhRepos(_) | Bg::Cloned(_)) => self.add_project_bg(m),
                 Bg::Avatar(repo, img) => {
                     let tex = img.map(|i| ctx.load_texture(format!("avatar-{repo}"), i, egui::TextureOptions::LINEAR));
@@ -1717,7 +1889,7 @@ impl App {
         // (With no window the input is the last window's: nothing was dropped.)
         if !dropped.is_empty() && !crate::background::hidden() && !crate::devices::claims_drop(ctx) {
             let key = self.key();
-            self.files.entry(key).or_default().extend(dropped);
+            self.attach(key, dropped, ctx);
         }
         // Running turns don't tick the whole UI: spinners and counters ask for their
         // own next step while on screen (w::repaint_in), and agent events wake by chat.

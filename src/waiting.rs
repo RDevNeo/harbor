@@ -1,5 +1,6 @@
-//! The status line under a transcript: "Working…" while the chat's own turn runs. A lead
-//! waiting for its sub-agents shows them in the agent strip over the composer instead.
+//! The status line under a transcript: "Working…" while the chat's own turn runs, on this PC or
+//! on the one it lives on. A lead waiting for its sub-agents shows them in the agent strip over
+//! the composer instead.
 
 use crate::app::App;
 use crate::store::Role;
@@ -15,7 +16,7 @@ impl App {
         self.limit_line(ui, id);
         self.secret_asks_ui(ui, id);
         self.folder_ui(ui, id);
-        let own = self.turns.get(&id).map(|(_, s)| s.elapsed().as_secs());
+        let own = self.running_since(id).map(|s| s.elapsed().as_secs());
         let lead = self.chat(id).is_some_and(|c| c.role == Role::Lead);
         let subs = if lead { self.running_subs(id) } else { vec![] };
         if let Some(secs) = own {

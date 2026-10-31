@@ -742,7 +742,7 @@ impl App {
         let hint = self.key_hint("Dictate", "voice");
         if let Some((level, secs)) = recording {
             // Stop, then the meter and the time, right to left.
-            let r = crate::widgets::round_button(ui, ic_stop(), true).tip(self.key_hint("Stop and transcribe", "voice"));
+            let r = crate::widgets::stop_button(ui).tip(self.key_hint("Stop and transcribe", "voice"));
             if r.clicked() {
                 self.voice_toggle(key, ui.ctx());
             }
@@ -1019,10 +1019,6 @@ fn model_progress() -> Option<String> {
 fn capital(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-}
-
-fn ic_stop() -> &'static str {
-    crate::icons::STOP
 }
 
 /// Five bars rising with the level.

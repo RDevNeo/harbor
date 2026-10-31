@@ -11,6 +11,7 @@ use crate::icons as ic;
 use crate::provupdate;
 use crate::theme::Tokens;
 use crate::update::State;
+use crate::widgets::Tip as _;
 use crate::widgets as w;
 
 const WIDTH: f32 = 340.0;
@@ -65,7 +66,7 @@ pub fn toast(ctx: &egui::Context, t: &Tokens, id: &str, y: f32, icon: impl FnOnc
                         });
                     });
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                        if w::btn(ic::X).muted().icon_xs().show(ui).on_hover_text("Dismiss").clicked() {
+                        if w::btn(ic::X).muted().icon_xs().show(ui).tip("Dismiss").clicked() {
                             click = Click::Close;
                         }
                     });

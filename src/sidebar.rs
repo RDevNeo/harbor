@@ -248,7 +248,7 @@ impl App {
             let at = pos2(mark_x, rect.center().y);
             ic::glyph(ui.painter(), at, ic::FOLDER_GIT, 13.0, if m.gone { t.red(900) } else if active { t.fg() } else { t.subtle() });
             if ui.rect_contains_pointer(Rect::from_center_size(at, Vec2::splat(16.0))) {
-                resp = resp.on_hover_text(if m.gone { format!("Its worktree, {}, is gone", m.name) } else { format!("Runs in its own worktree, {}", m.name) });
+                resp = resp.tip(if m.gone { format!("Its worktree, {}, is gone", m.name) } else { format!("Runs in its own worktree, {}", m.name) });
             }
             mark_x += 20.0;
         }
@@ -256,7 +256,7 @@ impl App {
             let at = pos2(mark_x, rect.center().y);
             ic::glyph(ui.painter(), at, p.state.icon(), 13.0, p.state.color(&t));
             if ui.rect_contains_pointer(Rect::from_center_size(at, Vec2::splat(16.0))) {
-                resp = resp.on_hover_text(format!("{}: {}", p.label(), p.title));
+                resp = resp.tip(format!("{}: {}", p.label(), p.title));
             }
         }
         if resp.clicked() {
@@ -275,7 +275,7 @@ impl App {
             }
             // The project's row opens it from then on (a project's chats only).
             if c.role == Role::Lead && c.repo_id.is_some_and(|r| self.repo(r).is_some()) {
-                if ui.button("Make main chat").on_hover_text("The project's row opens this chat, and what you write on the project's page goes here").clicked() {
+                if ui.button("Make main chat").tip("The project's row opens this chat, and what you write on the project's page goes here").clicked() {
                     let _ = self.make_main(c.id);
                 }
             }
@@ -721,7 +721,7 @@ impl App {
                     let n = self.turns.len();
                     if n > 0 {
                         w::subtle(ui, format!("{n} running"), "label-12");
-                        w::dot(ui, t.green(700));
+                        w::dot(ui, t.blue(700));
                     }
                 });
             });
@@ -879,7 +879,7 @@ impl App {
                 if ui.button("Rename main chat").clicked() {
                     self.dialog = Some(Dialog::Rename { chat: m.id, title: m.title.clone() });
                 }
-                if ui.button("Settle main chat").on_hover_text("It goes to Settled; the project's next message starts a new main chat").clicked() {
+                if ui.button("Settle main chat").tip("It goes to Settled; the project's next message starts a new main chat").clicked() {
                     self.settle_and_go(m.id);
                 }
             }
@@ -1090,6 +1090,7 @@ mod tests {
             gid: String::new(),
             home: String::new(),
             home_id: 0,
+            retired: false,
         }
     }
 

@@ -63,6 +63,20 @@ final class Render {
         return this;
     }
 
+    private float bodySp = 16, codeSp = 13, markSp = 15, cellSp = 13;
+    private float[] headingSp = {20, 18, 16};
+
+    /** An agent's reply in the chat: a step larger than the rest of the app, everything in it
+     *  in step (the desktop's theme::reply_text). */
+    Render reply() {
+        bodySp = 18;
+        codeSp = 15;
+        markSp = 17;
+        cellSp = 15;
+        headingSp = new float[]{23, 20, 18};
+        return this;
+    }
+
     Render(Context c, View.OnLongClickListener longPress) {
         this.c = c;
         this.longPress = longPress;
@@ -125,11 +139,11 @@ final class Render {
         switch (k) {
             case "heading": {
                 int lvl = b.optInt("level", 1);
-                TextView t = Ui.bold(c, spans(b.optJSONArray("spans")), lvl <= 1 ? 20 : lvl == 2 ? 18 : 16, Ui.FG);
+                TextView t = Ui.bold(c, spans(b.optJSONArray("spans")), headingSp[Math.max(1, Math.min(lvl, 3)) - 1], Ui.FG);
                 return links(t);
             }
             case "paragraph":
-                return links(Ui.text(c, spans(b.optJSONArray("spans")), 16, Ui.FG));
+                return links(Ui.text(c, spans(b.optJSONArray("spans")), bodySp, Ui.FG));
             case "code":
                 return code(b.optString("lang"), b.optString("text"));
             case "list":
@@ -161,7 +175,7 @@ final class Render {
     }
 
     TextView para(String s) {
-        return links(Ui.text(c, s, 16, Ui.FG));
+        return links(Ui.text(c, s, bodySp, Ui.FG));
     }
 
     private TextView links(TextView t) {
@@ -319,7 +333,7 @@ final class Render {
         }
         HorizontalScrollView h = new HorizontalScrollView(c);
         h.setHorizontalScrollBarEnabled(false);
-        TextView t = Ui.text(c, trimEnd(text), 13, Ui.FG);
+        TextView t = Ui.text(c, trimEnd(text), codeSp, Ui.FG);
         t.setTypeface(Ui.mono);
         t.setLineSpacing(0, 1.1f);
         t.setPadding(Ui.dp(12), Ui.dp(8), Ui.dp(12), Ui.dp(10));
@@ -338,7 +352,7 @@ final class Render {
         for (int i = 0; i < items.length(); i++) {
             LinearLayout r = Ui.row(c);
             r.setGravity(Gravity.TOP);
-            TextView mark = Ui.text(c, ordered ? (start + i) + "." : "•", 15, Ui.G900);
+            TextView mark = Ui.text(c, ordered ? (start + i) + "." : "•", markSp, Ui.G900);
             mark.setMinWidth(Ui.dp(ordered ? 22 : 14));
             r.addView(mark);
             LinearLayout inner = Ui.col(c);
@@ -367,7 +381,7 @@ final class Render {
             for (int j = 0; j < cells.length(); j++) {
                 Object cell = cells.opt(j);
                 CharSequence s = cell instanceof JSONArray ? spans((JSONArray) cell) : String.valueOf(cell);
-                TextView tv = i == 0 ? Ui.bold(c, s, 13, Ui.FG) : Ui.text(c, s, 13, Ui.FG);
+                TextView tv = i == 0 ? Ui.bold(c, s, cellSp, Ui.FG) : Ui.text(c, s, cellSp, Ui.FG);
                 tv.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(10), Ui.dp(6));
                 tv.setMaxWidth(Ui.dp(280));
                 links(tv);

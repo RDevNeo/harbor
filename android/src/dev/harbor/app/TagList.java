@@ -4,13 +4,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** The composer's `@` and `#` tags, as src/tags.rs has them: the `@word` or `#word` at the
- *  cursor, and the tag tokens the text highlights (with `/command`s and mentioned chats'
- *  titles, src/usertext.rs). Ranking is the hub's (GET
+ *  cursor, and the tag tokens the text highlights (with `[Image #N]`s, `/command`s and mentioned
+ *  chats' titles, src/usertext.rs). Ranking is the hub's (GET
  *  /v1/chats/{id}/tags): nothing is matched here. Plain Java: build.sh tests it on the JVM
  *  (test/TagTest.java). Indices are the EditText's (UTF-16). */
 final class TagList {
     private static final String OPENERS = "([{\"'`";
     private static final String PUNCT = ",.;:!?)]}\"'`";
+    private static final String IMAGE_OPEN = "[Image #";
 
     /** The word being typed: its trigger (@ or #), where it is, and what follows the trigger
      *  up to the cursor. */
@@ -37,6 +38,7 @@ final class TagList {
         if (start == cursor) return null;
         char t = text.charAt(start);
         if (t != '@' && t != '#' && !(chats && t == '$')) return null;
+        if (t == '#' && numbersImage(text, start)) return null;
         String query = text.subSequence(start + 1, cursor).toString();
         if (t == '$' && !query.isEmpty() && (query.charAt(0) == '$' || Character.isDigit(query.charAt(0)))) return null;
         // `##` (a heading) and `@@` are not tags.
@@ -54,6 +56,7 @@ final class TagList {
         for (int i = 0; i < n; i++) {
             char c = text.charAt(i);
             if ((c != '@' && c != '#') || (i > 0 && !opens(text.charAt(i - 1)))) continue;
+            if (c == '#' && numbersImage(text, i)) continue;
             int end = i + 1;
             while (end < n && !Character.isWhitespace(text.charAt(end))) end++;
             int body = end;
@@ -67,6 +70,59 @@ final class TagList {
             }
         }
         return out;
+    }
+
+    /** Whether the `#` at `i` numbers an image ("Image #1", `[Image #1]`): no issue or pull
+     *  request (src/tags.rs `numbers_image`). */
+    private static boolean numbersImage(CharSequence text, int i) {
+        int end = i;
+        while (end > 0 && text.charAt(end - 1) == ' ') end--;
+        int start = end - 5;
+        if (start < 0 || !text.subSequence(start, end).toString().equalsIgnoreCase("image")) return false;
+        return start == 0 || !Character.isLetterOrDigit(text.charAt(start - 1));
+    }
+
+    /** `[Image #n]`, the message's nth image (src/usertext.rs). */
+    static String token(int n) { return IMAGE_OPEN + n + "]"; }
+
+    /** What's left of a token that names nothing here: it reads the same (src/usertext.rs). */
+    static String defused(int n) { return "[Image " + n + "]"; }
+
+    /** `text` from another message, its tokens no longer tokens (src/usertext.rs `defuse`). */
+    static String defuse(String text) {
+        StringBuilder out = new StringBuilder(text);
+        List<int[]> all = images(text);
+        for (int i = all.size() - 1; i >= 0; i--) out.replace(all.get(i)[0], all.get(i)[1], defused(all.get(i)[2]));
+        return out.toString();
+    }
+
+    /** The `[Image #N]` tokens of `text` as {start, end, N} (src/usertext.rs `images`). */
+    static List<int[]> images(CharSequence text) {
+        List<int[]> out = new ArrayList<>();
+        String s = text.toString();
+        for (int i = s.indexOf(IMAGE_OPEN); i >= 0; i = s.indexOf(IMAGE_OPEN, i + 1)) {
+            int from = i + IMAGE_OPEN.length(), k = from;
+            while (k < s.length() && s.charAt(k) >= '0' && s.charAt(k) <= '9') k++;
+            if (k == from || k - from > 6 || k >= s.length() || s.charAt(k) != ']') continue;
+            int n = Integer.parseInt(s.substring(from, k));
+            if (n > 0) out.add(new int[]{i, k + 1, n});
+        }
+        return out;
+    }
+
+    /** The image numbers written in `text`, each once, lowest first. */
+    static List<Integer> imageNumbers(CharSequence text) {
+        java.util.TreeSet<Integer> set = new java.util.TreeSet<>();
+        for (int[] t : images(text)) set.add(t[2]);
+        return new ArrayList<>(set);
+    }
+
+    /** `text`'s image numbers raised by `by`: its images now follow `by` others in the message. */
+    static String shifted(String text, int by) {
+        StringBuilder b = new StringBuilder(text);
+        List<int[]> all = images(text);
+        for (int i = all.size() - 1; i >= 0; i--) b.replace(all.get(i)[0], all.get(i)[1], token(all.get(i)[2] + by));
+        return b.toString();
     }
 
     /** The `/command` tokens of `text` as [start, end) pairs (src/usertext.rs `commands`): at the
@@ -97,7 +153,7 @@ final class TagList {
 
     /** What the composer highlights (src/usertext.rs `runs`), as [start, end) pairs in order:
      *  each of `titles` (mentioned chats' titles, every time written, longer ones first), then
-     *  the tags and commands outside them. */
+     *  the images, tags and commands outside them. */
     static List<int[]> marks(CharSequence text, List<String> titles) {
         List<int[]> out = new ArrayList<>();
         String s = text.toString();
@@ -109,7 +165,8 @@ final class TagList {
                 if (free(out, i, i + t.length())) out.add(new int[]{i, i + t.length()});
             }
         }
-        List<int[]> rest = tokens(text);
+        List<int[]> rest = images(text);
+        rest.addAll(tokens(text));
         rest.addAll(commands(text));
         for (int[] r : rest) if (free(out, r[0], r[1])) out.add(r);
         out.sort((a, b) -> a[0] - b[0]);

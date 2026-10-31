@@ -67,8 +67,19 @@ final class Images {
     /** url with its max= set to px. */
     static String sized(String url, int px) { return url.replaceAll("([?&])max=\\d+", "$1max=" + px); }
 
+    /** "#2" on a thumbnail: the image `[Image #2]` names (src/usertext.rs). */
+    static TextView number(Activity a, int n) {
+        TextView t = Ui.text(a, "#" + n, 11, 0xffffffff);
+        t.setBackground(Ui.round(0xb4000000, 0, 6));
+        t.setPadding(Ui.dp(5), Ui.dp(1), Ui.dp(5), Ui.dp(1));
+        return t;
+    }
+
     /** A sideways strip of images [{name,url}], or null when there are none. */
-    static View strip(Activity a, Hub hub, JSONArray images, float size, int seq) {
+    static View strip(Activity a, Hub hub, JSONArray images, float size, int seq) { return strip(a, hub, images, size, seq, false); }
+
+    /** `numbered`: each wears the number its message's text calls it by. */
+    static View strip(Activity a, Hub hub, JSONArray images, float size, int seq, boolean numbered) {
         if (images == null || images.length() == 0) return null;
         List<Src> all = new ArrayList<>();
         for (int i = 0; i < images.length(); i++) {
@@ -92,6 +103,7 @@ final class Images {
             miss.addView(Ui.text(a, "Tap to retry", 11, Ui.G600), Ui.margins(Ui.wrap(), 0, 4, 0, 0));
             miss.setVisibility(View.GONE);
             f.addView(miss, new FrameLayout.LayoutParams(-1, -1));
+            if (numbered) f.addView(number(a, i + 1), Ui.margins(new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START), 4, 0, 0, 4));
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(Ui.dp(size), Ui.dp(size));
             if (i > 0) p.leftMargin = Ui.dp(8);
             row.addView(f, p);

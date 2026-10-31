@@ -486,7 +486,7 @@ impl App {
                         ui.painter().galley(pos2(x, row.center().y - g.size().y / 2.0), g, t.subtle());
                         ic::glyph(ui.painter(), pos2(x - 9.0, row.center().y), ic::REDO_2, 12.0, t.subtle());
                         if ui.rect_contains_pointer(egui::Rect::from_min_max(pos2(x - 18.0, row.top()), row.max)) {
-                            resp.on_hover_text(tip);
+                            resp.tip(tip);
                         }
                         ui.add_space(2.0);
                     }
@@ -555,7 +555,8 @@ impl App {
                                     }
                                     if images > 0 {
                                         let keys: Vec<String> = shown_images.iter().map(|s| s.to_string()).collect();
-                                        crate::images::strip(ui, &keys, THUMB);
+                                        let numbered = parts.iter().any(|p| matches!(p.kind, crate::usertext::Kind::Image(_)));
+                                        crate::images::strip(ui, &keys, THUMB, numbered);
                                     }
                                     if !parts.is_empty() {
                                         if let Some(gid) = crate::usertext::show(ui, &parts, "copy-14") {
@@ -573,7 +574,7 @@ impl App {
                                         ui.add_space(-6.0);
                                         // A long "from … via …" ends in "…" (full on hover).
                                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                                            ui.add(egui::Label::new(RichText::new(&from).text_style(theme::ts("label-12")).color(t.subtle())).truncate()).on_hover_text(from);
+                                            ui.add(egui::Label::new(RichText::new(&from).text_style(theme::ts("label-12")).color(t.subtle())).truncate()).tip(from);
                                         });
                                     }
                                 });
@@ -616,6 +617,7 @@ impl App {
                     let r = ui
                         .vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 5.0;
+                            theme::reply_text(ui.style_mut());
                             // List rows are bottom-aligned in egui_commonmark; with Harbor's
                             // 32px minimum row height the marker and the text drift apart.
                             let line = ui.text_style_height(&egui::TextStyle::Body);
@@ -759,9 +761,6 @@ impl App {
                         "users" => ic::USERS,
                         "monitor" => ic::MONITOR,
                         "lock" => ic::LOCK,
-                        // A lead's hand-offs (view::handoff).
-                        "started" => ic::PLAY,
-                        "sent" => ic::SEND,
                         _ => ic::CIRCLE_CHECK,
                     };
                     let (text, detail) = (text.as_ref(), detail.as_ref());
@@ -784,7 +783,7 @@ impl App {
                                         let rest = (column - 24.0 - 19.0 - if chevron { 18.0 } else { 0.0 }).max(40.0);
                                         let g = w::truncated(ui, text, FontId::new(13.0, egui::FontFamily::Proportional), t.fg(), rest);
                                         if g.size().x + 1.0 < ui.painter().layout_no_wrap(text.to_string(), FontId::new(13.0, egui::FontFamily::Proportional), t.fg()).size().x {
-                                            ui.label(g).on_hover_text(text);
+                                            ui.label(g).tip(text);
                                         } else {
                                             ui.label(g);
                                         }
@@ -895,7 +894,8 @@ impl App {
                 }
             }
             Some(MsgAction::Quote(text)) => {
-                let quote: String = text.lines().map(|l| format!("> {l}\n")).collect();
+                // Its tokens name the old message's images, not this draft's (usertext.rs).
+                let quote: String = crate::usertext::defuse(&text).lines().map(|l| format!("> {l}\n")).collect();
                 let draft = self.drafts.entry(id).or_default();
                 *draft = format!("{quote}\n{draft}");
                 self.focus_composer = true;
@@ -986,6 +986,12 @@ impl App {
         let focused = ui.memory(|m| m.has_focus(cid));
         let mut send = false;
         let mut draft = self.drafts.remove(&key).unwrap_or_default();
+        if focused {
+            // Before the text field, which would undo the text alone (usertext.rs).
+            self.image_keys(ui, key, &mut draft);
+            self.images_copied(ui, key, &draft);
+        }
+        let before = self.composed(key, &draft, ui.ctx());
         // The suggested next prompt (recap.rs): the empty composer's placeholder; Tab or → takes it.
         let ghost = match self.view {
             View::Chat(id) if running.is_none() => self.ghost(id, &draft),
@@ -1097,10 +1103,12 @@ impl App {
                 // Images as thumbnails, other files as chips.
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::splat(8.0);
+                    let mut number = 0;
                     for (i, f) in files.iter().enumerate() {
                         let path = f.to_string_lossy();
                         if crate::images::is_image(&path) {
-                            if crate::images::attachment(ui, &path, Vec2::splat(64.0)) {
+                            number += 1;
+                            if crate::images::attachment(ui, &path, Vec2::splat(64.0), number) {
                                 remove = Some(i);
                             }
                         }
@@ -1132,10 +1140,12 @@ impl App {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 let mlabel = self.model_label(kind, &sel.model);
+                // A long model id gets a share of the row: the send button stays in view.
+                let shown = w::cut_to(ui, &mlabel, FontId::new(14.0, egui::FontFamily::Proportional), (ui.available_width() * 0.24).min(220.0));
                 let badge = account.as_ref().map(|a| a.badge.clone()).unwrap_or_default();
-                let r = w::trigger(ui, w::Lead::Provider(kind, &badge), if tiny { "" } else { &mlabel }, self.popup == Some(Popup::Model));
+                let r = w::trigger(ui, w::Lead::Provider(kind, &badge), if tiny { "" } else { &shown }, self.popup == Some(Popup::Model));
                 let tip = account.as_ref().map(|a| a.short()).unwrap_or_default();
-                let r = r.on_hover_text(if tiny { format!("{mlabel} · {tip}") } else { tip });
+                let r = r.tip(if tiny || shown != mlabel { format!("{mlabel} · {tip}") } else { tip });
                 model_rect = r.rect;
                 if r.clicked() {
                     open = Some((Popup::Model, r.rect));
@@ -1150,7 +1160,7 @@ impl App {
                         providers::effort_label(kind, &sel.effort).to_string()
                     };
                     let r = w::trigger(ui, w::Lead::Icon(ic::BRAIN), if compact { "" } else { &label }, self.popup == Some(Popup::Effort));
-                    let r = if compact { r.on_hover_text(&label) } else { r };
+                    let r = if compact { r.tip(&label) } else { r };
                     effort_rect = r.rect;
                     if r.clicked() {
                         open = Some((Popup::Effort, r.rect));
@@ -1166,7 +1176,7 @@ impl App {
                 };
                 let access = providers::access_label(kind, &sel.access);
                 let r = w::trigger(ui, w::Lead::Icon(icon), if compact { "" } else { access }, self.popup == Some(Popup::Access));
-                let r = if compact { r.on_hover_text(access) } else { r };
+                let r = if compact { r.tip(access) } else { r };
                 if r.clicked() {
                     open = Some((Popup::Access, r.rect));
                 } else if self.popup == Some(Popup::Access) {
@@ -1184,11 +1194,11 @@ impl App {
                     let empty = draft.trim().is_empty() && self.files.get(&key).is_none_or(|f| f.is_empty()) && self.mentions.drafts.get(&key).is_none_or(|m| m.is_empty());
                     let held = key != crate::app::DRAFT && self.queue_held(key);
                     if editing.is_some() {
-                        if w::round_button(ui, ic::CHECK, true).on_hover_text("Update queued message (Enter)").clicked() {
+                        if w::round_button(ui, ic::CHECK, true).tip("Update queued message (Enter)").clicked() {
                             send = true;
                         }
                     } else if running.is_some() && empty {
-                        if w::round_button(ui, ic::STOP, true).on_hover_text("Stop (Esc)").clicked() {
+                        if w::stop_button(ui).tip("Stop (Esc)").clicked() {
                             stop = true;
                         }
                     } else if running.is_some() {
@@ -1200,11 +1210,11 @@ impl App {
                             _ if default == crate::queue::Mode::Queue => (ic::LIST_PLUS, "Click to queue, Ctrl-click or Ctrl+Enter to steer"),
                             _ => (ic::LIST_PLUS, "Queue: it runs after the current turn (Ctrl+Enter)"),
                         };
-                        if w::round_button(ui, icon, true).on_hover_text(tip).clicked() {
+                        if w::round_button(ui, icon, true).tip(tip).clicked() {
                             click_mode = Some(shown_mode);
                         }
                     } else if held && empty {
-                        if w::round_button(ui, ic::PLAY, true).on_hover_text("Resume queue: the next queued message starts").clicked() {
+                        if w::round_button(ui, ic::PLAY, true).tip("Resume queue: the next queued message starts").clicked() {
                             resume = true;
                         }
                     } else {
@@ -1213,11 +1223,11 @@ impl App {
                             Some(t) if key != crate::app::DRAFT => format!("Queue (Enter): {} is typing; it goes out when they're done", t.label),
                             _ => "Send (Enter)".to_string(),
                         };
-                        if w::round_button(ui, ic::ARROW_UP, !empty).on_hover_text(tip).clicked() {
+                        if w::round_button(ui, ic::ARROW_UP, !empty).tip(tip).clicked() {
                             send = true;
                         }
                     }
-                    if w::btn(ic::CLIP).muted().icon_sm().show(ui).on_hover_text("Attach files or images (or drop them here)").clicked() {
+                    if w::btn(ic::CLIP).muted().icon_sm().show(ui).tip("Attach files or images (or drop them here)").clicked() {
                         attach = true;
                     }
                     // Dictation (voice.rs): the mic, or the meter and time while it records.
@@ -1233,6 +1243,7 @@ impl App {
         self.tags_menu(ui, key, cid, &mut draft, focused, shown.response.rect);
         self.chat_mention_menu(ui, key, cid, &mut draft, focused, shown.response.rect);
         self.drafts.insert(key, draft);
+        self.images_erased(key, before, ui.ctx());
         match slash {
             Some(crate::slash::Harbor::Model) => open = Some((Popup::Model, model_rect)),
             Some(crate::slash::Harbor::Effort) => open = Some((Popup::Effort, effort_rect)),
@@ -1240,9 +1251,7 @@ impl App {
             None => {}
         }
         if let Some(i) = remove {
-            if let Some(f) = self.files.get_mut(&key) {
-                f.remove(i);
-            }
+            self.detach(key, i, ui.ctx());
         }
         if let Some(i) = unmention {
             if let Some(m) = self.mentions.drafts.get_mut(&key) {
@@ -1801,7 +1810,7 @@ fn image_strip(ui: &mut Ui, paths: &[String], indent: f32) {
     }
     ui.horizontal(|ui| {
         ui.add_space(indent);
-        crate::images::strip(ui, paths, THUMB);
+        crate::images::strip(ui, paths, THUMB, false);
     });
 }
 

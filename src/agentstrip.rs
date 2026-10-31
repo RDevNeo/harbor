@@ -9,6 +9,7 @@ use crate::app::{App, View};
 use crate::icons as ic;
 use crate::providers::Kind;
 use crate::store::{Item, Role};
+use crate::widgets::Tip as _;
 use crate::widgets as w;
 use eframe::egui::{self, CornerRadius, FontId, Rect, Sense, Stroke, Ui, Vec2, pos2};
 use serde_json::{Value, json};
@@ -202,9 +203,9 @@ pub fn report_line(name: &str, report: &str) -> String {
     }
 }
 
-/// A text's first sentence as one plain line (a report's, a task's): its first line that isn't
-/// a heading or a code fence, without list marks, bold or code ticks, up to ". ", clipped.
-pub fn headline(text: &str) -> String {
+/// A report's first sentence as one plain line: its first line that isn't a heading or a code
+/// fence, without list marks, bold or code ticks, up to ". ", clipped.
+fn headline(text: &str) -> String {
     let first = text
         .lines()
         .map(str::trim)
@@ -308,7 +309,7 @@ impl App {
         if header {
             // Stop all, in the title row's corner: as the old waiting bar's, it asks first.
             let sr = Rect::from_min_size(pos2(rect.right() - 4.0 - STOP_W, y), Vec2::new(STOP_W - 2.0, ROW_H));
-            if w::overlay(ui, sr, |ui| w::btn(ic::STOP).muted().icon_xs().show(ui)).on_hover_text("Stop all: every running sub-agent, and clear their queues").clicked() {
+            if w::overlay(ui, sr, |ui| w::btn(ic::STOP).variant(w::Variant::Stop).icon_xs().show(ui)).tip("Stop all: every running sub-agent, and clear their queues").clicked() {
                 self.dialog = Some(crate::app::Dialog::StopAll(lead));
             }
             let r = Rect::from_min_size(pos2(rect.left() + 4.0, y), Vec2::new(row_w - STOP_W, ROW_H));
@@ -392,7 +393,7 @@ impl App {
         // The controls on the right, and where they start.
         let right = if asking {
             let mut child = ui.new_child(egui::UiBuilder::new().id_salt(("agent-strip-ask", row.id)).max_rect(r.shrink2(Vec2::new(2.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
-            let stop = w::btn(&format!("{}  Stop", ic::STOP)).xs().variant(w::Variant::Destructive).show(&mut child);
+            let stop = w::btn(&format!("{}  Stop", ic::STOP)).xs().variant(w::Variant::Stop).show(&mut child);
             let cancel = w::btn("Cancel").xs().muted().show(&mut child);
             if let Some(c) = confirm {
                 let now = ctx.input(|i| i.time);
@@ -429,11 +430,11 @@ impl App {
         } else {
             let sr = Rect::from_center_size(pos2(r.right() - 16.0, cy), Vec2::splat(26.0));
             if hovered || resp.has_focus() || ctx.memory(|m| m.has_focus(stop_id)) {
-                let sresp = ui.interact(sr, stop_id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("Stop {}", row.name));
-                if sresp.hovered() {
-                    ui.painter().rect_filled(sr, CornerRadius::same(6), t.accent());
-                }
-                ic::glyph(ui.painter(), sr.center(), ic::STOP, 14.0, if sresp.hovered() { t.fg() } else { t.subtle() });
+                let sresp = ui.interact(sr, stop_id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).tip(format!("Stop {}", row.name));
+                let down = sresp.is_pointer_button_down_on();
+                let red = if down { w::mix(t.destructive(), egui::Color32::BLACK, 0.25) } else if sresp.hovered() { w::mix(t.destructive(), egui::Color32::BLACK, 0.12) } else { t.destructive() };
+                ui.painter().rect_filled(sr, CornerRadius::same(6), red);
+                ic::glyph(ui.painter(), sr.center(), ic::STOP, 14.0, egui::Color32::WHITE);
                 if sresp.has_focus() {
                     w::focus_ring(ui, sr, 6);
                 }
@@ -451,15 +452,17 @@ impl App {
         let phase = ((ctx.input(|i| i.time) / PULSE_SECS + nth as f64 * 0.37).fract()) as f32;
         working_dot(ui.painter(), pos2(x + nw + 11.0, cy), phase, &t);
         let resp = resp.on_hover_ui(|ui| {
-            ui.set_max_width(360.0);
-            w::text(ui, &row.name, "strong-14");
-            w::subtle(ui, &row.model, "label-12-mono");
-            if !row.task.is_empty() {
-                w::subtle(ui, &row.task, "label-12");
-            }
-            w::subtle(ui, &format!("Working for {}", short_elapsed(row.secs)), "label-12");
-            ui.add_space(4.0);
-            w::subtle(ui, "Click to open the agent", "label-12");
+            w::tip_panel(ui, egui::Margin::symmetric(8, 6), |ui| {
+                ui.set_max_width(344.0);
+                w::text(ui, &row.name, "strong-14");
+                w::tip_subtle(ui, &row.model, "label-12-mono");
+                if !row.task.is_empty() {
+                    w::tip_subtle(ui, &row.task, "label-12");
+                }
+                w::tip_subtle(ui, &format!("Working for {}", short_elapsed(row.secs)), "label-12");
+                ui.add_space(4.0);
+                w::tip_subtle(ui, "Click to open the agent", "label-12");
+            });
         });
         if resp.clicked() {
             act = act.or(Some(Act::Open(row.id)));
@@ -500,12 +503,12 @@ pub fn esc_cancels_stop(ctx: &egui::Context) -> bool {
     true
 }
 
-/// A green dot with a ring that swells and fades, `phase` (0..1) into its beat.
+/// A blue dot with a ring that swells and fades, `phase` (0..1) into its beat.
 fn working_dot(p: &egui::Painter, c: egui::Pos2, phase: f32, t: &crate::theme::Tokens) {
     let ease = 1.0 - (1.0 - phase).powi(3);
-    let green = t.green(900);
-    p.circle_filled(c, 6.0 * (0.6 + 1.4 * ease), w::alpha(green, 0.5 * (1.0 - ease)));
-    p.circle_filled(c, 3.0, green);
+    let blue = t.blue(900);
+    p.circle_filled(c, 6.0 * (0.6 + 1.4 * ease), w::alpha(blue, 0.5 * (1.0 - ease)));
+    p.circle_filled(c, 3.0, blue);
 }
 
 #[cfg(test)]
