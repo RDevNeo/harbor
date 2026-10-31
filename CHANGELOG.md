@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.103.0] - 2026-10-30
+
 ### Added
 - Live previews: a change reaches your PC within seconds, for the PCs that turn it on (Settings ›
   Updates › Live previews, off by default). `scripts/boat/dev` builds the working tree on a warm
