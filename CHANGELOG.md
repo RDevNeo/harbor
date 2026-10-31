@@ -5,6 +5,12 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Fixed
+- In a chat driven from another PC or its phone, a `claude` started by a command, script or
+  commit hook no longer stops at "Not logged in". It signs in with the chat's account while
+  the turn runs: its access token alone, never the refresh token, removed when the turn ends
+  or is stopped.
+
 ### Removed
 - The token and cost counter is gone from the chat header on the desktop and the phone. The
   phone's header now shows just the PC and the account. Settings › Usage still has the totals,

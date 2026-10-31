@@ -94,6 +94,7 @@ impl Turn {
         if crate::detach::alive(self.meta.pid, self.meta.pid_start) {
             kill_tree(self.meta.pid);
         }
+        crate::detach::take_back(&self.dir, self.meta.pid);
     }
 
     /// Stops the turn and waits until its process is gone, so its session file is final.

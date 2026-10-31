@@ -333,7 +333,7 @@ pub fn run(args: &[String]) {
             }
             // Not signed in here: no login left from an earlier turn runs it as someone else.
             None => {
-                if let Some(o) = overlay.filter(|o| !overlay_in_use(o)) {
+                if let Some(o) = overlay.filter(|o| !overlay_in_use(o, std::process::id())) {
                     crate::oauth::unlend(&o);
                 }
             }
@@ -513,16 +513,28 @@ struct Lent(PathBuf);
 
 impl Drop for Lent {
     fn drop(&mut self) {
-        if !overlay_in_use(&self.0) {
+        if !overlay_in_use(&self.0, std::process::id()) {
             crate::oauth::unlend(&self.0);
         }
     }
 }
 
-/// Another live turn runs in this overlay profile (chats commanded from the same PC share it).
-fn overlay_in_use(overlay: &Path) -> bool {
-    let me = std::process::id();
-    runners().into_iter().filter(|r| r.2 != me).any(|(_, dir, _)| {
+/// A stopped turn's lent login: the kill (agent.rs) gives its runner no chance to take it out.
+pub fn take_back(dir: &Path, runner: u32) {
+    let spec = std::fs::read_to_string(dir.join("cmd.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).unwrap_or_default();
+    let var = |k: &str| spec["env"].as_array().into_iter().flatten().find(|kv| kv[0] == k).and_then(|kv| kv[1].as_str());
+    // Only a guest turn's: another turn's config dir is its account's own profile.
+    if let (Some(_), Some(overlay)) = (var(crate::agent::GUEST_LOGIN), var("CLAUDE_CONFIG_DIR")) {
+        if !overlay_in_use(Path::new(overlay), runner) {
+            crate::oauth::unlend(Path::new(overlay));
+        }
+    }
+}
+
+/// A live turn other than `runner`'s runs in this overlay profile (chats commanded from the
+/// same PC share it).
+fn overlay_in_use(overlay: &Path, runner: u32) -> bool {
+    runners().into_iter().filter(|r| r.2 != runner).any(|(_, dir, _)| {
         let spec = std::fs::read_to_string(dir.join("cmd.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).unwrap_or_default();
         spec["env"].as_array().into_iter().flatten().any(|kv| kv[0] == "CLAUDE_CONFIG_DIR" && kv[1].as_str().map(Path::new) == Some(overlay))
     })
@@ -866,6 +878,23 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let out = turn(&dir);
         assert!(out.starts_with("token= login=none\n") && !out.contains("sk-ant-"), "{out}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stopped_guest_turn_gives_its_login_back() {
+        let root = std::env::temp_dir().join(format!("harbor-guest-stop-{}", crate::bridge::token().unwrap()));
+        std::fs::create_dir_all(&root).unwrap();
+        let creds = root.join(".credentials.json");
+        let turn = |env: serde_json::Value| std::fs::write(root.join("cmd.json"), json!({ "program": "sh", "env": env }).to_string()).unwrap();
+        std::fs::write(&creds, "{}").unwrap();
+        // Any other turn: the config dir is its account's own profile, with its own login.
+        turn(json!([["CLAUDE_CONFIG_DIR", root]]));
+        take_back(&root, u32::MAX);
+        assert!(creds.exists());
+        turn(json!([["CLAUDE_CONFIG_DIR", root], [crate::agent::GUEST_LOGIN, ""]]));
+        take_back(&root, u32::MAX);
+        assert!(!creds.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
