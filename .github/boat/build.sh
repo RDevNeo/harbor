@@ -68,6 +68,9 @@ licences() {
 android() { apk_unsigned "$apk" /out/harbor-android/harbor-android-unsigned.apk; }
 
 cpu_mark
+# When the sandbox's lazy disk stops loading: ~ moves from FUSE to its real disk.
+( while [ "$(findmnt -no FSTYPE -T "$cache")" = fuse ]; do sleep 2; done; echo "disk loaded at $SECONDS s" ) > "$HOME/out/disk.log" &
+disk=$!
 pids=() names=(x86_64 aarch64 licences android)
 for n in "${names[@]}"; do
   ( s=$(date +%s); "$n"; echo "$n: $(( $(date +%s) - s ))s" ) > "$HOME/out/$n.log" 2>&1 &
@@ -78,6 +81,7 @@ for i in "${!pids[@]}"; do wait "${pids[$i]}" || failed+=("${names[$i]}"); done
 for n in "${names[@]}"; do echo "::group::$n"; cat "$HOME/out/$n.log"; echo "::endgroup::"; done
 for n in "${names[@]}"; do tail -1 "$HOME/out/$n.log"; done
 cpu_report
+if kill "$disk" 2>/dev/null; then echo "disk still loading at $SECONDS s"; else cat "$HOME/out/disk.log"; fi
 # A warm build compiles Harbor and nothing else: anything more is worth a look, or a change of
 # dependencies.
 for n in x86_64 aarch64; do
