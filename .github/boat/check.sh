@@ -31,7 +31,7 @@ step() {
     echo "<== $name FAILED $((SECONDS - s))s"; exit 1
   fi
 }
-bash .github/boat/relink.sh "$cache/target/debug" "$cache/target/release"
+for p in debug release; do bash .github/boat/relink.sh --first "$cache/target/$p"; done
 step test cargo test --locked -- "$@"
 [ -z "${CLIPPY:-}" ] || step clippy cargo clippy --locked --all-targets
 if [ "${RELEASE:-1}" = 1 ]; then

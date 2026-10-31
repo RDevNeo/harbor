@@ -12,10 +12,10 @@ toolchain "$core" --target aarch64-unknown-linux-gnu
 # command line.
 google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOGLE_WEB_CLIENT_ID -e HARBOR_GOOGLE_WEB_CLIENT_SECRET)
 
-# Whatever a saved snapshot still gets wrong: each step repairs the build scripts it finds broken
-# (relink.sh), then, should cargo fail, again, and only then starts that profile over. Exported into
-# the containers' bash -c below.
-again='again() { local d=$1 r="$CARGO_TARGET_DIR/$1"; shift; bash .github/boat/relink.sh "$r"; "$@" && return; echo "::warning::$*: failed, repairing the build scripts"; bash .github/boat/relink.sh "$r"; "$@" && return; echo "::warning::$*: starting $d over"; rm -rf "$r" "$CARGO_TARGET_DIR"/*/"$d"; "$@"; }'
+# Whatever a saved snapshot still gets wrong: each step looks at its build scripts first (relink.sh),
+# repairs them should cargo fail, and only then starts that profile over. Exported into the
+# containers' bash -c below.
+again='again() { local d=${1:?} t=${CARGO_TARGET_DIR:?}; shift; bash .github/boat/relink.sh --first "$t/$d"; "$@" && return; echo "::warning::$*: failed, repairing the build scripts"; bash .github/boat/relink.sh "$t/$d"; "$@" && return; echo "::warning::$*: starting $d over"; rm -rf "${t:?}/${d:?}" "${t:?}"/*/"${d:?}"; "$@"; }'
 
 # The tests ran in scripts/boat/check before the change landed, and smoke.yml runs both binaries.
 # One target dir each: cargo locks a target dir for the whole build.
@@ -67,6 +67,7 @@ licences() {
 # Signed later in GitHub Actions, where the keystore is.
 android() { apk_unsigned "$apk" /out/harbor-android/harbor-android-unsigned.apk; }
 
+cpu_mark
 pids=() names=(x86_64 aarch64 licences android)
 for n in "${names[@]}"; do
   ( s=$(date +%s); "$n"; echo "$n: $(( $(date +%s) - s ))s" ) > "$HOME/out/$n.log" 2>&1 &
@@ -76,6 +77,7 @@ failed=()
 for i in "${!pids[@]}"; do wait "${pids[$i]}" || failed+=("${names[$i]}"); done
 for n in "${names[@]}"; do echo "::group::$n"; cat "$HOME/out/$n.log"; echo "::endgroup::"; done
 for n in "${names[@]}"; do tail -1 "$HOME/out/$n.log"; done
+cpu_report
 # A warm build compiles Harbor and nothing else: anything more is worth a look, or a change of
 # dependencies.
 for n in x86_64 aarch64; do

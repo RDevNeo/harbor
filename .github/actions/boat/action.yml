@@ -8,6 +8,9 @@ inputs:
   from:
     description: Saved snapshot to start from; without it (or if it is gone), a clean sandbox
     default: ""
+  label:
+    description: Tells apart two calls of one reusable workflow's job, which share GITHUB_JOB
+    default: ""
 outputs:
   id:
     value: ${{ steps.box.outputs.id }}
@@ -29,11 +32,12 @@ runs:
       env:
         FROM: ${{ inputs.from }}
         TYPE: ${{ inputs.type }}
+        LABEL: ${{ inputs.label }}
       run: |
         set -eu
         boat=$HOME/.local/bin/boat
         # The name finds the sandbox again: .github/boat/cleanup.sh deletes by it.
-        name="ci-harbor-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+        name="ci-harbor-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB${LABEL:+-$LABEL}"
         echo "BOAT_SANDBOX=$name" >> "$GITHUB_ENV"
         named() { "$boat" list --all --json | jq -r --arg n "$name" '[.sandboxes[] | select(.name == $n)][0].id // empty'; }
         new() { "$boat" new --type "$TYPE" --no-env --ttl 7200 --name "$name" --json "$@" | tee /dev/stderr | jq -r 'select(.event == "ready") | .id'; }

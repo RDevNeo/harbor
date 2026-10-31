@@ -95,6 +95,16 @@ run_in() {
     -v "$cache:/c" -v "$PWD:/src" -v "$HOME/out:/out" -w /src "${opts[@]}" "$img" "$@"
 }
 
+# cpu_mark, then cpu_report: where this sandbox's CPU time went, to tell a slow run's cause. Busy
+# for all of it is the work itself, idle means waiting (the lazy disk, the network; FUSE waits count
+# as idle), steal is another VM on the machine.
+cpu_mark() { cpu0=$(sed 1q /proc/stat); }
+cpu_report() {
+  local a b i t=0 d=(); read -ra a <<< "$cpu0"; read -ra b < /proc/stat
+  for i in 1 2 3 4 5 6 7 8; do d[i]=$((b[i] - a[i])); t=$((t + d[i])); done
+  echo "cpu: user $((100 * (d[1] + d[2]) / t))%, system $((100 * (d[3] + d[6] + d[7]) / t))%, idle $((100 * d[4] / t))%, iowait $((100 * d[5] / t))%, steal $((100 * d[8] / t))%"
+}
+
 binfmt() {
   docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64 >/dev/null
 }

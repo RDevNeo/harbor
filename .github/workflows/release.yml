@@ -1,5 +1,6 @@
 # Builds Harbor for Linux x86_64 and aarch64 and publishes a GitHub Release on a v* tag, once
-# smoke.yml has installed and started it on clean distro images. Every build and test runs on
+# smoke.yml has installed and started it on clean x86_64 distro images; aarch64's, slow under qemu,
+# run beside the publishing, and a failure there fails this run. Every build and test runs on
 # boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes.
 #
 # Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), install.sh,
@@ -75,9 +76,9 @@ jobs:
       - name: Fetch the results
         run: |
           set -eu
-          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
-          boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
-          mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
+          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -I "zstd -T0" -cf out.tar.zst -C out .'
+          boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tar.zst" "$RUNNER_TEMP/out.tar.zst"
+          mkdir -p out && tar -I zstd -xf "$RUNNER_TEMP/out.tar.zst" -C out
       # The oldest supported base, glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …), as this runner.
       - run: ldd out/harbor-x86_64/harbor && out/harbor-x86_64/harbor --version
       - uses: actions/upload-artifact@v7
@@ -117,7 +118,7 @@ jobs:
         run: |
           id="${{ needs.build.outputs.sandbox }}"
           .github/boat/run.sh "$id" --cwd src -- bash .github/boat/warm.sh
-          boat exec "$id" -- bash -c 'rm -rf src out out.tgz'
+          boat exec "$id" -- bash -c 'rm -rf src out out.tar.zst'
           boat snapshot "$id" harbor-build --json
       - name: Delete the sandbox
         if: always()
@@ -325,6 +326,17 @@ jobs:
     secrets: inherit
     with:
       dist: true
+      arch: x86_64
+
+  # Holds nothing back: publish doesn't need it. A failure shows as this run's failure, after the
+  # release is out.
+  smoke-aarch64:
+    needs: package
+    uses: ./.github/workflows/smoke.yml
+    secrets: inherit
+    with:
+      dist: true
+      arch: aarch64
 
   publish:
     needs: [package, smoke]

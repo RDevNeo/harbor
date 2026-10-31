@@ -1,8 +1,9 @@
 # Installs Harbor with packaging/install.sh on clean distro images and starts it (see
 # .github/smoke-install.sh): no sudo, every library found, the window comes up under Xvfb,
 # --uninstall keeps the data folder.
-#   - release.yml calls it with this run's `dist` artifact, before anything is published.
-#   - Changing install.sh on a branch, or running it by hand, tests against the latest release.
+#   - release.yml calls it with this run's `dist` artifact, once per architecture: x86_64 before
+#     anything is published, aarch64 beside the publishing (it takes minutes under qemu).
+#   - Changing install.sh on a branch, or running it by hand, tests both against the latest release.
 name: smoke
 
 on:
@@ -12,6 +13,10 @@ on:
         description: Use this run's `dist` artifact instead of the latest release
         type: boolean
         default: false
+      arch:
+        description: Test only this architecture (x86_64 or aarch64) instead of both
+        type: string
+        default: ""
   workflow_dispatch:
   push:
     branches-ignore: [main]
@@ -22,7 +27,7 @@ permissions:
   actions: read
 
 jobs:
-  # Every distro image at once, as containers on one boat.dev sandbox (.github/boat/smoke.sh).
+  # Every distro image asked for at once, as containers on one boat.dev sandbox (.github/boat/smoke.sh).
   install:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -47,13 +52,22 @@ jobs:
         id: boat
         with:
           key: ${{ secrets.BOAT_API_KEY }}
+          label: ${{ inputs.arch }}
       - name: Install and start (on boat)
+        env:
+          ARCH: ${{ inputs.arch }}
         run: |
           set -eu
-          tar -czf "$RUNNER_TEMP/dist.tgz" dist
-          boat scp "$RUNNER_TEMP/dist.tgz" "${{ steps.boat.outputs.id }}:/home/user/dist.tgz"
-          boat exec "${{ steps.boat.outputs.id }}" -- tar -xzf dist.tgz
-          .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- bash .github/boat/smoke.sh
+          # Only what install.sh uses, as it is: the archives are compressed already.
+          skip=(--exclude='harbor-android.apk*' --exclude='harbor-video-source*')
+          case "$ARCH" in
+            x86_64) skip+=(--exclude='*aarch64*') ;;
+            aarch64) skip+=(--exclude='*x86_64*') ;;
+          esac
+          tar -cf "$RUNNER_TEMP/dist.tar" "${skip[@]}" dist
+          boat scp "$RUNNER_TEMP/dist.tar" "${{ steps.boat.outputs.id }}:/home/user/dist.tar"
+          boat exec "${{ steps.boat.outputs.id }}" -- tar -xf dist.tar
+          .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env SMOKE_ARCH="$ARCH" bash .github/boat/smoke.sh
       - name: Delete the sandbox
         if: always()
         env:
