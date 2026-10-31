@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.102.1] - 2026-10-30
+
 ### Changed
 - The image viewer browses only the message you opened it from, on the desktop and the phone: ← →,
   swipes and the "3 / 7" counter go through that one message's images, not the rest of its turn.
@@ -2105,7 +2107,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.102.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.102.1...HEAD
+[0.102.1]: https://github.com/RDevNeo/harbor/compare/v0.102.0...v0.102.1
 [0.102.0]: https://github.com/RDevNeo/harbor/compare/v0.101.1...v0.102.0
 [0.101.1]: https://github.com/RDevNeo/harbor/compare/v0.101.0...v0.101.1
 [0.101.0]: https://github.com/RDevNeo/harbor/compare/v0.100.0...v0.101.0
