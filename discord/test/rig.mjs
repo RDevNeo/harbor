@@ -168,6 +168,7 @@ await scenario("pacing", async () => {
     let r = await mcp.tool("discord_join", { invite: "abc", apply: true });
     check(r.text.includes('"joined": true'), "first join goes through", r.text);
     r = await mcp.tool("discord_join", { invite: "abcd", apply: true });
+    await sleep(300); // the page's report of the first join comes by beacon
     check(r.text.includes("Paced") && seen.join.length === 1, "second join right after is refused", r.text);
     r = await mcp.tool("discord_join", { invite: "abcd" });
     check(r.text.includes("dryRun"), "a dry run isn't paced", r.text);
