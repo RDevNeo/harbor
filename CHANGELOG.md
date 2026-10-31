@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.108.0] - 2026-10-31
+
 ### Added
 - A lead agent can retire a subagent whose job is done, with the new `retire_agent` tool: a
   running turn stops, the agent leaves the Agents panel on every PC and phone, and it can't be
@@ -2226,7 +2228,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.107.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.108.0...HEAD
+[0.108.0]: https://github.com/RDevNeo/harbor/compare/v0.107.0...v0.108.0
 [0.107.0]: https://github.com/RDevNeo/harbor/compare/v0.106.1...v0.107.0
 [0.106.1]: https://github.com/RDevNeo/harbor/compare/v0.106.0...v0.106.1
 [0.106.0]: https://github.com/RDevNeo/harbor/compare/v0.105.0...v0.106.0
