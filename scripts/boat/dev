@@ -4,10 +4,11 @@ usage() {
   cat <<'EOF'
 Usage: scripts/boat/dev [options]
 
-Builds this working tree on one warm boat.dev sandbox and restarts Harbor into the result, in about
-10 seconds: `harbor preview push` here, and the PCs that took live previews on (preview.rs) get it
-over the mesh. The sandbox keeps Harbor's incremental build, stops by itself after --idle seconds
-without a build (boat's own timer, so a dead PC can't leave it on) and comes back on the next run.
+Builds this working tree on one warm boat.dev sandbox and restarts Harbor into the result, 7-20
+seconds after the edit: `harbor preview push` here, and the PCs that took live previews on
+(preview.rs) get it over the mesh. The sandbox keeps Harbor's incremental build, stops by itself
+after --idle seconds without a build (boat's own timer, so a dead PC can't leave it on) and comes
+back on the next run. The first runs after a stop take from 30 s to a few minutes: its disk loads.
 
 Each run: send the files that changed, build with the `quick` profile (Harbor unoptimised, its
 dependencies optimised), bring back a patch against the last binary, install it. It prints the time

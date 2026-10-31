@@ -21,11 +21,12 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
     changes included), then builds it for release; `-- <filter>` picks tests, `--out DIR` brings
     the binary back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
     give it the longest timeout, or run it in the background.
-  - `scripts/boat/dev`: see a change running, in about 10 seconds. Builds the working tree on one
-    warm sandbox (`harbor-live`) with the `quick` profile, brings back a patch, and Harbor restarts
-    into it on this PC and on the PCs that turned live previews on (`src/preview.rs`). `--check`
-    is only `cargo check`, `--status` shows VM-hours, `--stop` stops it now. It's a preview, not a
-    check: tests and releases stay with `scripts/boat/check`.
+  - `scripts/boat/dev`: see a change running, 7-20 seconds after the edit once the sandbox is warm.
+    The first runs after it stopped take from 30 s to a few minutes, while its disk loads. Builds
+    the working tree on one warm sandbox (`harbor-live`) with the `quick` profile, brings back a
+    patch, and Harbor restarts into it on this PC and on the PCs that turned live previews on
+    (`src/preview.rs`). `--check` is only `cargo check`, `--status` shows VM-hours, `--stop` stops
+    it now. It's a preview, not a check: tests and releases stay with `scripts/boat/check`.
   - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
     the outputs back and deletes the sandbox (also on failure or cancellation, via
