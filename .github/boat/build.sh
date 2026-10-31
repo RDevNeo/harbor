@@ -79,7 +79,7 @@ for n in "${names[@]}"; do tail -1 "$HOME/out/$n.log"; done
 # A warm build compiles Harbor and nothing else: anything more is worth a look, or a change of
 # dependencies.
 for n in x86_64 aarch64; do
-  c=$(grep -c ' Compiling ' "$HOME/out/$n.log" || true)
+  c=$(grep -c 'Compiling' "$HOME/out/$n.log" || true)
   echo "$n: compiled $c crates"
   [ "$c" -le 3 ] || echo "::warning::$n compiled $c crates: the snapshot was not warm, unless the dependencies changed"
 done
