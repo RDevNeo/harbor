@@ -63,12 +63,12 @@ kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill 
 
 sandbox() {
   sweep
-  say "creating $name (large, from harbor-build)"
+  say "creating $name (large, from ${snapshot:-harbor-build})"
   local try
   for try in 1 2 3; do
     id=$(named "$name" | head -1)
     [ -z "$id" ] || break
-    local from=(--from harbor-build); [ "$try" -lt 3 ] || from=()
+    local from=(--from "${snapshot:-harbor-build}"); [ "$try" -lt 3 ] || from=()
     id=$(waiting "$boat" new --type large "${from[@]}" --no-env --ttl 10800 --name "$name" --json 2>"$work/new.err" |
       jq -r 'select(.event == "ready") | .id' || true)
     [ -n "$id" ] || { [ "$try" = 3 ] || sleep 10; continue; }

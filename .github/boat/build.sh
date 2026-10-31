@@ -12,10 +12,10 @@ toolchain "$core" --target aarch64-unknown-linux-gnu
 # command line.
 google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOGLE_WEB_CLIENT_ID -e HARBOR_GOOGLE_WEB_CLIENT_SECRET)
 
-# A saved snapshot can keep a build script's fingerprint without its binary ("failed to link or
-# copy …/build-script-build"): cargo then fails the same way every run. Each step starts that
-# profile over once before giving up. Exported into the containers' bash -c below.
-again='again() { local d=$1; shift; "$@" && return; echo "::warning::$*: starting $d over"; rm -rf "$CARGO_TARGET_DIR/$d" "$CARGO_TARGET_DIR"/*/"$d"; "$@"; }'
+# Whatever a saved snapshot still gets wrong: each step repairs the build scripts it finds broken
+# (relink.sh), then, should cargo fail, again, and only then starts that profile over. Exported into
+# the containers' bash -c below.
+again='again() { local d=$1 r="$CARGO_TARGET_DIR/$1"; shift; bash .github/boat/relink.sh "$r"; "$@" && return; echo "::warning::$*: failed, repairing the build scripts"; bash .github/boat/relink.sh "$r"; "$@" && return; echo "::warning::$*: starting $d over"; rm -rf "$r" "$CARGO_TARGET_DIR"/*/"$d"; "$@"; }'
 
 # The tests ran in scripts/boat/check before the change landed, and smoke.yml runs both binaries.
 # One target dir each: cargo locks a target dir for the whole build.
@@ -76,4 +76,11 @@ failed=()
 for i in "${!pids[@]}"; do wait "${pids[$i]}" || failed+=("${names[$i]}"); done
 for n in "${names[@]}"; do echo "::group::$n"; cat "$HOME/out/$n.log"; echo "::endgroup::"; done
 for n in "${names[@]}"; do tail -1 "$HOME/out/$n.log"; done
+# A warm build compiles Harbor and nothing else: anything more is worth a look, or a change of
+# dependencies.
+for n in x86_64 aarch64; do
+  c=$(grep -c ' Compiling ' "$HOME/out/$n.log" || true)
+  echo "$n: compiled $c crates"
+  [ "$c" -le 3 ] || echo "::warning::$n compiled $c crates: the snapshot was not warm, unless the dependencies changed"
+done
 [ ${#failed[@]} = 0 ] || { echo "::error::failed: ${failed[*]}"; exit 1; }

@@ -12,11 +12,17 @@ step() {
   if cargo_in "$@"; then
     ok=1
   elif grep -qE 'failed to link or copy|failed to run custom build command|could not (find|read) .*fingerprint' "$HOME/step.log"; then
-    # The snapshot's warm target lost files its fingerprints still count on: once more from clean
-    # (the summary shows it as "<step> rebuilt clean").
-    echo "<== $name rebuilt clean (warm target broken: $profile wiped)"
-    rm -rf "$cache/target/$profile"
-    ! cargo_in "$@" || ok=1
+    # The snapshot's warm target lost files its fingerprints still count on: the build scripts'
+    # first (relink.sh), and only then that profile from clean (the summary shows it as "<step>
+    # rebuilt clean").
+    bash .github/boat/relink.sh "$cache/target/$profile"
+    if cargo_in "$@"; then
+      ok=1
+    else
+      echo "<== $name rebuilt clean (warm target broken: $profile wiped)"
+      rm -rf "$cache/target/$profile"
+      ! cargo_in "$@" || ok=1
+    fi
   fi
   if [ -n "$ok" ]; then
     echo "<== $name ok $((SECONDS - s))s"
@@ -25,6 +31,7 @@ step() {
     echo "<== $name FAILED $((SECONDS - s))s"; exit 1
   fi
 }
+bash .github/boat/relink.sh "$cache/target/debug" "$cache/target/release"
 step test cargo test --locked -- "$@"
 [ -z "${CLIPPY:-}" ] || step clippy cargo clippy --locked --all-targets
 if [ "${RELEASE:-1}" = 1 ]; then

@@ -28,6 +28,8 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
     (`src/preview.rs`). `--check` is only `cargo check`, `--status` shows VM-hours, `--stop` stops
     it now. It's a preview, not a check: tests and releases stay with `scripts/boat/check`.
   - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
+  - `scripts/boat/snapshot`: what a saved snapshot's warm target really holds (`--from NAME`), and
+    the release's build and save steps on a copy of it (`--build --save NAME`, `--rm NAME`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
     the outputs back and deletes the sandbox (also on failure or cancellation, via
     `.github/boat/cleanup.sh`).

@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF2'
+Usage: scripts/boat/snapshot [--from NAME] [--build] [--save NAME] [--rm NAME]
+
+Looks at a saved snapshot from the inside: starts a fresh `large` boat.dev sandbox from it (default
+harbor-build) and reports what its warm target holds on disk (.github/boat/snapshot.sh).
+
+Options:
+  --from NAME  the snapshot to look at
+  --build      then run this working tree through the release's own steps, build.sh and warm.sh,
+               and report again
+  --save NAME  and save the sandbox as NAME, as release.yml's job cache does. Never saves over
+               harbor-build, so a change to the pipeline can be tried on a copy
+  --rm NAME    afterwards, remove the saved snapshot NAME
+  -h, --help   this help
+
+Prerequisites and cost: as scripts/boat/check, one sandbox start.
+EOF2
+}
+from=harbor-build build="" save="" drop="" quiet=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --from) from=$2; shift ;;
+    --build) build=1 ;;
+    --save) save=$2; shift ;;
+    --rm) drop=$2; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+[ "$save" != harbor-build ] || { echo "--save harbor-build: only release.yml saves that one" >&2; exit 2; }
+. "$(dirname "$0")/lib.sh"
+
+snapshot=$from
+sandbox
+upload
+if [ -n "$build" ]; then
+  remote -- bash -c 'bash .github/boat/build.sh && bash .github/boat/warm.sh && bash .github/boat/snapshot.sh'
+else
+  remote -- bash .github/boat/snapshot.sh
+fi
+if [ -n "$save" ]; then
+  "$boat" exec "$id" -- bash -c 'rm -rf src out out.tgz' >/dev/null
+  "$boat" snapshot "$id" "$save" --json
+fi
+[ -z "$drop" ] || "$boat" snapshot rm "$drop" --json

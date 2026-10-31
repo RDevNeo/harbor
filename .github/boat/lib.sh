@@ -50,7 +50,9 @@ rootfs_up() {
   sudo mkdir -p "$m"
   sudo mount --bind "$root" "$m"
   sudo mount --make-rprivate "$m"
-  for d in proc dev sys tmp; do sudo mount --rbind "/$d" "$m/$d"; done
+  # rslave: these stay peers of the sandbox's own mounts otherwise, and rootfs_down's umount takes
+  # /dev/pts, /dev/shm and /sys/fs/cgroup away from it too.
+  for d in proc dev sys tmp; do sudo mount --rbind "/$d" "$m/$d"; sudo mount --make-rslave "$m/$d"; done
   sudo mount --bind "$PWD" "$m/src"
   sudo mount --bind "$cache" "$m/c"
   sudo mount --bind "$HOME/out" "$m/out"
