@@ -18,9 +18,9 @@ if [ "$(cat "$cache/test-deps" 2>/dev/null)" != "$key" ]; then
 fi
 rm -rf "${cache:?}/target-aarch64/debug" "${cache:?}/target-aarch64/aarch64-unknown-linux-gnu/debug"
 for d in "$cache"/target/{debug,release}/deps "$cache"/target-aarch64/aarch64-unknown-linux-gnu/release/deps; do
-  ls -t "$d"/harbor-???????????????? 2>/dev/null | tail -n +2 | while read -r old; do rm -f "$old" "$old.d"; done
+  { ls -t "$d"/harbor-???????????????? 2>/dev/null || true; } | tail -n +2 | while read -r old; do rm -f "$old" "$old.d"; done
 done
-ls -td "$cache"/target/debug/incremental/harbor-* 2>/dev/null | tail -n +2 | xargs -r rm -rf
+{ ls -td "$cache"/target/debug/incremental/harbor-* 2>/dev/null || true; } | tail -n +2 | xargs -r rm -rf
 bash .github/boat/relink.sh --split "$cache"/target/{release,debug} "$cache"/target-aarch64/release
 echo "snapshot: $(df --output=used -BG "$cache" | tail -1 | tr -d ' ') used"
 rootfs_down
