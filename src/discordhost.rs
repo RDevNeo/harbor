@@ -219,7 +219,10 @@ impl Engine for Electron {
     fn stop(&self) {
         self.resume();
         let Some(mut c) = self.child.lock().unwrap().take() else { return };
-        let _ = std::fs::remove_file(left_over_path());
+        // Only its own: repair's scratch page stops while the real one runs.
+        if std::fs::read_to_string(left_over_path()).is_ok_and(|p| p.trim() == c.id().to_string()) {
+            let _ = std::fs::remove_file(left_over_path());
+        }
         if matches!(c.try_wait(), Ok(None)) {
             let _ = self.ask(json!({ "op": "quit" }), Duration::from_secs(5));
         }

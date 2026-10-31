@@ -49,14 +49,16 @@
         ChannelStore: { getChannel: id => channels[id], hasChannel: id => !!channels[id], getDMFromUserId: u => (u === friend.id ? channel.id : undefined) },
         GuildStore: { getGuild: id => memberOf[id], getGuilds: () => memberOf },
         UserStore: { getCurrentUser: () => (loggedIn ? me : undefined), getUser: id => (id === friend.id ? friend : me) },
-        MessageStore: { getMessage: (c, id) => messages.find(m => m.id === id), getMessages: () => ({ toArray: () => messages }) },
-        ChannelActions: { selectChannel: ({ channelId }) => { selected = channelId; showChat(); }, selectVoiceChannel() {} },
+        MessageStore: { getMessage: (c, id) => messages.find(m => m.id === id), getMessages: () => ({ toArray: () => messages, ready: true, length: messages.length }) },
+        // As on Discord: the store moves, the page doesn't.
+        ChannelActions: { selectChannel: ({ channelId }) => { selected = channelId; }, selectVoiceChannel() {} },
         RelationshipStore: { getRelationshipType: () => 1, isFriend: () => true, getNickname: () => nickname },
         Gateway: { getSocket: () => socket, isTryingToConnect: () => true, isConnected: () => established },
         PresenceStore: { getStatus: () => "online", getActivities: () => [] },
         TypingStore: { getTypingUsers: () => ({}), isTyping: () => false },
         Sort: { getPrivateChannelIds: () => [channel.id] },
-        Reads: { getUnreadCount: () => 1, getMentionCount: () => 0, hasUnread: () => true, lastMessageId: () => null },
+        // As on Discord: no count until a channel's messages are loaded, the marker apart from the newest id.
+        Reads: { getUnreadCount: () => (nickname === "partly loaded" ? 1 : 0), getMentionCount: () => 0, hasUnread: () => true, ackMessageId: () => "400000000000000000", lastMessageId: () => "400000000000000001" },
         GuildChannels: { getChannels: () => ({ SELECTABLE: [{ channel: room }] }), getDefaultChannel: () => room },
         Emoji: { getGuildEmoji: () => [] },
         Folders: { getGuildFolders: () => [{ guildIds: [guild.id] }] },
@@ -71,16 +73,24 @@
         GuildAct: { leaveGuild: id => { delete memberOf[id]; report("leave", { id }); } },
         Super: { getSuperPropertiesBase64: () => "e30=" },
         Reactions: { a() { return '"MESSAGE_REACTION_ADD"'; }, b() { return '"MESSAGE_REACTION_REMOVE"'; } },
+        // A module like the real ones that made Vencord's find give up.
+        Touchy: Object.defineProperty({}, "boom", { enumerable: true, get() { throw new Error("don't read me"); } }),
         Proto: { ProtoClass: {}, updateAsync: async () => {}, type: 1 },
     };
     stores.Reactions.a = async (c, m, e) => { void '"MESSAGE_REACTION_ADD"'; report("react", { c, m, e }); };
     stores.Reactions.b = async () => { void '"MESSAGE_REACTION_REMOVE"'; };
-    function showChat() {
-        document.getElementById("app").innerHTML = `<div data-list-id="chat-messages"><div id="chat-messages-${channel.id}-${messages[0].id}">hello</div></div>`;
+    // Only the DM has a message list to show; the guild channel stands in for one that never renders.
+    function go(path) {
+        const id = path.split("/")[3];
+        history.pushState({}, "", path);
+        selected = id;
+        setTimeout(() => {
+            document.getElementById("app").innerHTML = id === channel.id ? `<div data-list-id="chat-messages"><div id="chat-messages-${channel.id}-${messages[0].id}">hello</div></div>` : "";
+        }, 400);
     }
     const rest = async (method, path, q, init) => {
         if (path.endsWith("/auth/logout")) { report("logout"); return {}; }
-        if (path.endsWith("/users/@me/channels")) { report("dm", JSON.parse(init.body)); return { id: "200000000000000099", type: 1, recipients: [friend] }; }
+        if (path.endsWith("/users/@me/channels")) { report("dm", JSON.parse(init.body)); return { id: channel.id, type: 1, recipients: [friend] }; }
         if (path.includes("/messages")) {
             const after = q.get("after");
             const more = (await (await fetch(rig + "/rig/history")).json()).map(m => msg(m.id, m.content));
@@ -90,8 +100,12 @@
         return [];
     };
     window.FAKE = {
+        common: {
+            ChannelRouter: { transitionToChannel: id => go(`/channels/${channels[id]?.guild_id ?? "@me"}/${id}`) },
+            NavigationRouter: { transitionTo: go },
+        },
         mods: [...Object.values(stores), MessageActions],
-        sources: { 1: () => "chat-messages- messagesWrapper optionButtonWrapper" },
+        sources: { 1: () => "chat-messages messagesWrapper optionButtonWrapper" },
         CloudUpload: class {},
         rest,
     };

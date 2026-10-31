@@ -139,7 +139,7 @@
  },
  {
   "name": "discord_open",
-  "description": "Switch Discord to a specific channel (DM, group DM, or guild channel) — same code path the sidebar uses (`ChannelActions.selectChannel`). Optionally scroll-jump to a message via `messageId`. Result confirms whether `SelectedChannelStore` actually flipped, and includes resolved channel + recipients.\n\nRULE: when the user names the target by phrase rather than ID (\"my group\", \"the gamers chat\", a nickname), call `discord_notes` `recall` FIRST — the user stores aliases there mapping phrases → channelIds. Only fall back to `discord_dms` / `discord_guilds` search if no alias matches.\n\nTypical flow: `discord_notes(recall)` → if alias hit, use its channelId → else `discord_dms({query})` → `discord_open({channelId})` → `discord_view()`.",
+  "description": "Switch Discord to a specific channel (DM, group DM, or guild channel), the way the sidebar does. Optionally jump to a message via `messageId`. `ok` is true only once the channel's messages are really on the page, so `discord_view` can read them; otherwise `note` says what to do. Result includes the resolved channel + recipients.\n\nRULE: when the user names the target by phrase rather than ID (\"my group\", \"the gamers chat\", a nickname), call `discord_notes` `recall` FIRST — the user stores aliases there mapping phrases → channelIds. Only fall back to `discord_dms` / `discord_guilds` search if no alias matches.\n\nTypical flow: `discord_notes(recall)` → if alias hit, use its channelId → else `discord_dms({query})` → `discord_open({channelId})` → `discord_view()`.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -688,7 +688,7 @@
  },
  {
   "name": "discord_unread",
-  "description": "List channels with unread messages — the \"what did I miss?\" lookup. Always scans DMs + group DMs; pass `includeGuilds: true` to also walk every guild text channel the user has access to (heavier — only when needed). Each entry: `{ channelId, kind, name, guildId, guildName, unreadCount, mentionCount, oldestUnreadId, lastReadMessageId }`. Sorted by mentions, then unread count. Pass `mentionsOnly: true` to only return channels where someone pinged the viewer. Pipe a channelId into `discord_history({ after: oldestUnreadId })` to see exactly what was missed.",
+  "description": "List channels with unread messages — the \"what did I miss?\" lookup. Always scans DMs + group DMs; pass `includeGuilds: true` to also walk every guild text channel the user has access to (heavier — only when needed). Each entry: `{ channelId, kind, name, guildId, guildName, unreadCount, mentionCount, oldestUnreadId, lastReadMessageId, lastMessageId }`. Sorted by mentions, then unread count, then newest. Discord only knows a count for messages it has in memory, so the first `countTop` channels are counted by asking for their messages. For the rest `unreadCount` is what's in memory with `unreadCountAtLeast`, or null when nothing is (they have unread messages, how many isn't known); `unreadCountAtLeast` is also set at 100, the most one request sees. `notCounted` marks those channels and `channelsNotCounted` says how many there are, so `totalUnread` is a lower bound when it isn't 0. Pass `mentionsOnly: true` to only return channels where someone pinged the viewer. Pipe a `lastReadMessageId` into `discord_history({ after })` to see exactly what was missed.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -705,6 +705,12 @@
      "minimum": 1,
      "maximum": 500,
      "description": "Cap on results (default 100)."
+    },
+    "countTop": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 25,
+     "description": "How many channels without a known count to count by asking Discord (default 10; one request each)."
     }
    }
   }

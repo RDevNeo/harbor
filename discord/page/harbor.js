@@ -30,6 +30,9 @@ const NEEDS = {
     MessageStore: { props: [["getMessage", "getMessages"]] },
     MessageActions: { props: [["sendMessage", "editMessage"]] },
     ChannelActions: { props: [["selectChannel", "selectVoiceChannel"]] },
+    // selectChannel only moves a store; these change what's on the page, as the sidebar does.
+    ChannelRouter: { find: W => (W.Common?.ChannelRouter?.transitionToChannel ? W.Common.ChannelRouter : undefined) },
+    NavigationRouter: { find: W => (W.Common?.NavigationRouter?.transitionTo ? W.Common.NavigationRouter : undefined) },
     RelationshipStore: { props: [["getRelationshipType", "isFriend"]] },
     PresenceStore: { props: [["getStatus", "getActivities"], ["getStatus", "isMobileOnline"]], optional: true },
     TypingStore: { props: [["getTypingUsers", "isTyping"]], optional: true },
@@ -51,12 +54,20 @@ const NEEDS = {
     // The same module emits both events; found by what its functions dispatch.
     ReactionActions: {
         lazy: true,
-        find: W => W.find(m => m && typeof m === "object"
-            && Object.values(m).some(v => typeof v === "function" && /"MESSAGE_REACTION_ADD"/.test(v.toString()))
-            && Object.values(m).some(v => typeof v === "function" && /"MESSAGE_REACTION_REMOVE"/.test(v.toString()))),
+        // Over the module cache by hand: W.find gives up at a module whose exports throw when read.
+        find: W => {
+            const sources = m => { try { return Object.values(m).filter(v => typeof v === "function").map(v => Function.prototype.toString.call(v)); } catch { return []; } };
+            for (const id in W.wreq.c) {
+                let m;
+                try { m = W.wreq.c[id]?.exports; } catch { continue; }
+                if (!m || typeof m !== "object") continue;
+                const fns = sources(m);
+                if (fns.some(f => f.includes('"MESSAGE_REACTION_ADD"')) && fns.some(f => f.includes('"MESSAGE_REACTION_REMOVE"'))) return m;
+            }
+        },
     },
     PreloadedUserSettings: { find: W => (W.findAll?.(m => m?.ProtoClass && m?.updateAsync) ?? []).find(m => m.type === 1) },
-    "source:chat-messages": { source: "chat-messages-", lazy: true },
+    "source:chat-messages": { source: "chat-messages", lazy: true },
     "source:messagesWrapper": { source: "messagesWrapper", lazy: true },
     "source:optionButtonWrapper": { source: "optionButtonWrapper", optional: true, lazy: true },
 };
@@ -97,6 +108,42 @@ function api(url, init = {}) {
         if (sp) headers["x-super-properties"] = sp;
     } catch { /* optional */ }
     return fetch(url, { ...init, headers });
+}
+
+/* ------------------------------------------------------------ navigation -- */
+
+/** How long a channel gets to show up after navigating, its first messages coming from the network. */
+const RENDER_WAIT_MS = 10_000;
+
+/** Whether the page really shows this channel: its route, and its messages in the list (or a
+ * loaded channel with none). The store alone says nothing about what's on the page. */
+function shows(channelId, messageId) {
+    if (!location.pathname.split("/").includes(channelId)) return false;
+    if (!document.querySelector('[data-list-id="chat-messages"]')) return false;
+    if (messageId) return !!document.getElementById(`chat-messages-${channelId}-${messageId}`);
+    if (document.querySelector(`[id^="chat-messages-${channelId}-"]`)) return true;
+    const loaded = need("MessageStore")?.getMessages?.(channelId);
+    return !!loaded?.ready && !loaded.length;
+}
+
+/** Goes to a channel as the sidebar does; whether it's on the page by the end. */
+async function navigate(channelId, guildId, messageId) {
+    if (shows(channelId, messageId)) return true;
+    const known = !!need("ChannelStore")?.getChannel?.(channelId);
+    const router = need("ChannelRouter");
+    if (known && !messageId && router) router.transitionToChannel(channelId);
+    else {
+        const nav = need("NavigationRouter");
+        if (!nav) throw new Error("NavigationRouter not found — webpack module shape may have changed.");
+        // A DM that was only just created isn't in the store yet: the router would skip it.
+        nav.transitionTo(`/channels/${guildId ?? "@me"}/${channelId}` + (messageId ? "/" + messageId : ""));
+    }
+    const until = Date.now() + RENDER_WAIT_MS;
+    while (Date.now() < until) {
+        if (shows(channelId, messageId)) return true;
+        await sleep(100);
+    }
+    return false;
 }
 
 /* ------------------------------------------------------- send message -- */
@@ -1207,30 +1254,14 @@ async function bridgeOpenChannel(args) {
 
     const ChannelStore = need("ChannelStore");
     const SelectedChannelStore = need("SelectedChannelStore");
-    const ChannelActions = need("ChannelActions");
     const GuildStore = need("GuildStore");
     const UserStore = need("UserStore");
-
-    if (!ChannelActions?.selectChannel)
-        throw new Error("ChannelActions.selectChannel not found — webpack module shape may have changed.");
 
     const channel = ChannelStore?.getChannel?.(args.channelId);
     if (!channel) throw new Error("Channel not found in ChannelStore: " + args.channelId);
 
     const guildId = channel.guild_id || null;
-    ChannelActions.selectChannel({
-        guildId,
-        channelId: args.channelId,
-        messageId: args.messageId,
-    });
-
-    // Selection dispatches synchronously, but the renderer redraw takes a
-    // frame or two. Poll briefly so callers get an accurate "did it flip?".
-    const deadline = Date.now() + 2500;
-    while (Date.now() < deadline) {
-        if (SelectedChannelStore?.getChannelId?.() === args.channelId) break;
-        await new Promise(r => setTimeout(r, 50));
-    }
+    const rendered = await navigate(args.channelId, guildId, args.messageId);
 
     const guild = guildId ? GuildStore?.getGuild?.(guildId) : null;
     const renderName = (u) => u?.globalName ?? u?.global_name ?? u?.username ?? null;
@@ -1240,10 +1271,11 @@ async function bridgeOpenChannel(args) {
         return u ? { id: u.id, username: u.username, name: renderName(u) } : { id: rid };
     });
 
-    const current = SelectedChannelStore?.getChannelId?.();
     return {
-        ok: current === args.channelId,
-        currentChannelId: current,
+        ok: rendered,
+        ...(rendered ? {} : { note: "Discord didn't show this channel in time, so discord_view won't see its messages. It may have no message list (a forum or voice channel), or still be loading: try again, or use discord_history." }),
+        currentChannelId: SelectedChannelStore?.getChannelId?.() ?? null,
+        path: location.pathname,
         channel: {
             id: channel.id,
             name: channel.name || (recipients[0]?.name ?? recipients[0]?.username ?? null),
@@ -1252,7 +1284,7 @@ async function bridgeOpenChannel(args) {
             guildName: guild?.name || null,
             recipients: recipients.length ? recipients : undefined,
         },
-        scrolledToMessage: args.messageId || null,
+        scrolledToMessage: rendered ? args.messageId || null : null,
     };
 }
 
@@ -1616,7 +1648,10 @@ async function bridgeMember(args) {
  * channels (when `includeGuilds`). For each, asks ReadStateStore for unread
  * count + mention count + oldest unread id.
  */
-function bridgeUnread(args = {}) {
+/** Between the per-channel requests of discord_unread. */
+const COUNT_GAP_MS = 300;
+
+async function bridgeUnread(args = {}) {
 
     const ChannelStore = need("ChannelStore");
     const ReadStateStore = need("ReadStateStore");
@@ -1631,6 +1666,8 @@ function bridgeUnread(args = {}) {
     const renderName = (u) => u?.globalName ?? u?.global_name ?? u?.username ?? null;
     const limit = Math.max(1, Math.min(500, args.limit ?? 100));
     const mentionsOnly = !!args.mentionsOnly;
+    // Counting asks Discord once a channel, so only the ones at the top of the list.
+    const countTop = Math.max(0, Math.min(25, args.countTop ?? 10));
 
     const channelIds = [];
     if (typeof SortStore?.getPrivateChannelIds === "function") {
@@ -1651,19 +1688,19 @@ function bridgeUnread(args = {}) {
     }
 
     const out = [];
-    let totalUnread = 0;
     let totalMentions = 0;
     for (const cid of channelIds) {
         const mentions = ReadStateStore.getMentionCount?.(cid) || 0;
+        // Discord counts unread messages from the ones it has in memory: 0 for a channel not
+        // opened yet, whatever is there, and too low for one partly loaded.
         const unread = ReadStateStore.getUnreadCount?.(cid) || 0;
         const has = ReadStateStore.hasUnread?.(cid);
         if (!unread && !mentions && !has) continue;
         if (mentionsOnly && !mentions) continue;
-        totalUnread += unread;
         totalMentions += mentions;
         const ch = ChannelStore?.getChannel?.(cid);
         const oldest = ReadStateStore.getOldestUnreadMessageId?.(cid) || null;
-        const lastRead = ReadStateStore.lastMessageId?.(cid) || null;
+        const lastRead = ReadStateStore.ackMessageId?.(cid) || null;
         const isDm = ch && (ch.type === 1 || ch.type === 3);
         let name = ch?.name || null;
         if (isDm) {
@@ -1683,20 +1720,50 @@ function bridgeUnread(args = {}) {
             name,
             guildId: ch?.guild_id || null,
             guildName: ch?.guild_id ? GuildStore?.getGuild?.(ch.guild_id)?.name ?? null : null,
-            unreadCount: unread,
+            unreadCount: has ? null : unread,
+            memoryCount: unread,
             mentionCount: mentions,
             oldestUnreadId: oldest,
             lastReadMessageId: lastRead,
+            lastMessageId: ReadStateStore.lastMessageId?.(cid) || null,
         });
     }
 
-    out.sort((a, b) => (b.mentionCount - a.mentionCount) || (b.unreadCount - a.unreadCount));
+    const newest = (a, b) => (BigInt(b.lastMessageId ?? 0) > BigInt(a.lastMessageId ?? 0) ? 1 : -1);
+    out.sort((a, b) => (b.mentionCount - a.mentionCount) || (b.memoryCount - a.memoryCount) || newest(a, b));
+    const shown = out.slice(0, limit);
+
+    // The rest of the truth comes from the messages themselves.
+    const token = getAuthToken();
+    let asked = 0;
+    for (const c of shown) {
+        if (c.unreadCount !== null) continue;
+        if (asked >= countTop) break;
+        if (asked++) await sleep(COUNT_GAP_MS);
+        try {
+            const msgs = await restFetchMessages(c.channelId, { after: c.lastReadMessageId ?? undefined, limit: 100 }, token);
+            c.unreadCount = msgs.length;
+            if (msgs.length >= 100) c.unreadCountAtLeast = true;
+            c.oldestUnreadId = msgs.at(-1)?.id ?? c.oldestUnreadId;
+        } catch { /* stays unknown: the channel may not be readable */ }
+    }
+    // What's left is all Discord knows: at least that many, or unknown.
+    for (const c of out) {
+        if (c.unreadCount === null && c.memoryCount > 0) {
+            c.unreadCount = c.memoryCount;
+            c.unreadCountAtLeast = true;
+            c.notCounted = true;
+        } else if (c.unreadCount === null) c.notCounted = true;
+        delete c.memoryCount;
+    }
     return {
         channelsScanned: channelIds.length,
-        totalUnread,
+        totalUnread: out.reduce((n, c) => n + (c.unreadCount ?? 0), 0),
+        // Channels with unread messages that aren't in totalUnread.
+        channelsNotCounted: out.filter(c => c.notCounted).length,
         totalMentions,
         count: out.length,
-        channels: out.slice(0, limit),
+        channels: shown,
     };
 }
 
@@ -1854,22 +1921,12 @@ async function bridgeDmOpen(args) {
 
     const UserStore = need("UserStore");
     const RelationshipStore = need("RelationshipStore");
-    const ChannelActions = need("ChannelActions");
-    const SelectedChannelStore = need("SelectedChannelStore");
     const renderName = (u) => u?.global_name ?? u?.globalName ?? u?.username ?? null;
 
     // Resolving the channel via REST is not enough — the agent's mental model
-    // of `dmOpen` is "navigate to this DM". Without selectChannel the renderer
-    // stays on the prior channel, and a follow-up `sendMessage` would have to
-    // pre-select itself. Do it here so the name matches the behavior.
-    if (ChannelActions?.selectChannel && SelectedChannelStore?.getChannelId?.() !== ch.id) {
-        ChannelActions.selectChannel({ guildId: null, channelId: ch.id });
-        const deadline = Date.now() + 1500;
-        while (Date.now() < deadline) {
-            if (SelectedChannelStore?.getChannelId?.() === ch.id) break;
-            await new Promise(r => setTimeout(r, 25));
-        }
-    }
+    // of `dmOpen` is "navigate to this DM". Do it here so the name matches the
+    // behavior, and say whether it made it onto the page.
+    const rendered = await navigate(ch.id, null);
 
     const recipients = (ch.recipients || []).map((u) => {
         const cached = UserStore?.getUser?.(u.id);
@@ -1893,6 +1950,7 @@ async function bridgeDmOpen(args) {
         name,
         memberCount: isGroup ? recipients.length : undefined,
         recipients,
+        rendered,
         created: !existing,
     };
 }
@@ -2925,17 +2983,17 @@ const TOOLS = {
     discord_search: { run: bridgeSearchMessages, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_user_messages: { run: bridgeUserMessages, needs: ["AuthTokenStore", "GuildStore"] },
     discord_stats: { run: bridgeGetStats, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
-    discord_open: { run: bridgeOpenChannel, live: true, needs: ["ChannelActions", "ChannelStore", "GuildStore", "SelectedChannelStore", "UserStore"] },
+    discord_open: { run: bridgeOpenChannel, live: true, needs: ["ChannelRouter", "ChannelStore", "GuildStore", "MessageStore", "NavigationRouter", "SelectedChannelStore", "UserStore"] },
     discord_react: { run: bridgeReact, needs: ["ChannelStore", "MessageStore", "ReactionActions", "SelectedChannelStore", "UserStore"] },
     discord_edit: { run: bridgeEdit, needs: ["MessageActions", "MessageStore", "SelectedChannelStore", "UserStore"] },
     discord_delete: { run: bridgeDelete, needs: ["MessageActions", "MessageStore", "SelectedChannelStore", "UserStore"] },
     discord_pins: { run: bridgePins, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_threads: { run: bridgeThreads, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_member: { run: bridgeMember, needs: ["AuthTokenStore", "PresenceStore", "UserStore"] },
-    discord_unread: { run: bridgeUnread, live: true, needs: ["ChannelStore", "GuildChannelStore", "GuildStore", "PrivateChannelSortStore", "ReadStateStore", "RelationshipStore", "UserStore"] },
+    discord_unread: { run: bridgeUnread, live: true, needs: ["AuthTokenStore", "ChannelStore", "GuildChannelStore", "GuildStore", "PrivateChannelSortStore", "ReadStateStore", "RelationshipStore", "UserStore"] },
     discord_ack: { run: bridgeAck, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "ReadStateStore"] },
     discord_emoji: { run: bridgeEmoji, live: true, needs: ["EmojiStore", "GuildStore"] },
-    discord_dm_open: { run: bridgeDmOpen, needs: ["AuthTokenStore", "ChannelActions", "RelationshipStore", "SelectedChannelStore", "UserStore"] },
+    discord_dm_open: { run: bridgeDmOpen, needs: ["AuthTokenStore", "ChannelRouter", "ChannelStore", "MessageStore", "NavigationRouter", "RelationshipStore", "UserStore"] },
     discord_attachment: { run: bridgeAttachment, needs: ["AuthTokenStore", "MessageStore", "SelectedChannelStore"] },
     discord_resolveMessage: { run: bridgeResolveMessage, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
     discord_guilds: { run: bridgeListGuilds, live: true, needs: ["GuildStore", "SortedGuildStore"] },

@@ -264,7 +264,7 @@ fn status_text() -> String {
         "starting" | "setup" => "Discord is starting.",
         "signin" => "Discord is signing in.",
         "frozen" | "moving" => "Discord is frozen while idle: the next tool call wakes it.",
-        _ => "Discord isn't running: it starts on the first tool call (10 to 15 seconds).",
+        _ => "Discord isn't running: it starts on the first tool call, in a few seconds.",
     };
     let bad = s["failing"].as_array().map(|f| f.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
     let mut out = format!("{who} {run}");

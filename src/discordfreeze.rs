@@ -1,6 +1,6 @@
 //! Holding Discord's page still while nothing needs it: a frozen client uses no CPU and, once its
 //! memory is reclaimed, almost no RAM (with swap or zram), and a tool call has it back in a fraction
-//! of a second instead of the 10 to 15 s of a cold start.
+//! of a second instead of the seconds of a cold start and a full login.
 //!
 //! Frozen through cgroup v2, so nothing inside can notice or race it: the shell runs in its own
 //! systemd --user scope, and every cgroup its processes are in is frozen, because Chromium can

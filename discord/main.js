@@ -113,13 +113,29 @@ async function loaded() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/** The page paints at 1 fps while idle; tools that read the page need it to keep up. */
-let calm;
-function busy() {
-    if (!win?.webContents.isOffscreen()) return;
+/** The page paints at 1 fps while idle; tools that read the page need it to keep up, and a
+ * channel opening takes longer than a moment. */
+let calm, calls = 0;
+function fast() {
+    if (!win?.webContents.isOffscreen()) return false;
     win.webContents.setFrameRate(BUSY_FPS);
     clearTimeout(calm);
-    calm = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.setFrameRate(IDLE_FPS); }, 3000);
+    return true;
+}
+function busy() {
+    if (fast() && !calls) calm = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.setFrameRate(IDLE_FPS); }, 3000);
+}
+/** Full speed for the length of a call. A waitForMessage only waits, for up to 10 minutes. */
+async function during(name, run) {
+    if (name === "discord_waitForMessage") return run();
+    calls++;
+    fast();
+    try {
+        return await run();
+    } finally {
+        calls--;
+        busy();
+    }
 }
 
 /** What the login page shows, for Harbor's own sign-in card. */
@@ -196,7 +212,7 @@ async function quit() {
 const scratch = cfg.mode === "scratch" ? require("./scratch.js") : null;
 
 const ops = {
-    call: m => { busy(); return run(`$harbor.call(${JSON.stringify(m.name)}, ${JSON.stringify(m.args ?? {})})`); },
+    call: m => during(m.name, () => run(`$harbor.call(${JSON.stringify(m.name)}, ${JSON.stringify(m.args ?? {})})`)),
     rect: m => { busy(); return run(`$harbor.elementRect(${JSON.stringify(m.selector)})`); },
     capture,
     selftest: () => run("$harbor.selftest()"),
