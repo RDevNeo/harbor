@@ -71,6 +71,23 @@ else
 fi
 end
 
+# The video player, on an image with no mpv and none of the libraries it can use if they're there:
+# it has to load, stay locked down, and decode without a screen or a sound card.
+step "Video player"
+if [ -f "$H/.local/lib/harbor/libmpv-harbor.so" ]; then
+  [ -f "$H/.local/lib/harbor/video.installed" ] || fail "libmpv-harbor.so without video.installed"
+  ! command -v mpv >/dev/null 2>&1 || fail "this image has mpv: the test would prove nothing"
+  as ".local/bin/harbor --check-video /src/.github/smoke/clip.mp4 /src/.github/smoke/clip.webm /src/.github/smoke/hevc.mp4 /src/.github/smoke/av1.webm" > /tmp/video.log 2>&1 \
+    || { cat /tmp/video.log; fail "the video player doesn't work here"; }
+  cat /tmp/video.log
+  grep -q "^player: Harbor's own" /tmp/video.log || fail "it didn't load Harbor's own player"
+  grep -q "^options/config=no" /tmp/video.log || fail "the player reads a config"
+  grep -q "^a URL is refused" /tmp/video.log || fail "the player opens URLs"
+else
+  echo "::warning::no libmpv-harbor.so in this package"
+fi
+end
+
 step "Start under Xvfb"
 Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
 sleep 2

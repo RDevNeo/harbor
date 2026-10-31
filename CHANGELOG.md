@@ -5,6 +5,16 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Changed
+- Harbor brings its own video player, so videos play inside it with nothing to install: mpv is no
+  longer needed. It arrives by itself with this update, a download of about 5 MB that comes again
+  only when the player itself changes, and if you open a video before it's there Harbor shows
+  "Getting the player ready…" and starts as soon as it is. It plays mp4, mov and webm with H.264,
+  HEVC, VP8, VP9 and AV1 and the usual audio. It decodes on the graphics card where the system has
+  VA-API, and it uses less CPU than a system mpv did; where it doesn't, it decodes on the CPU. A
+  system mpv is only the fallback now, and the external player comes after that.
+- `harbor --check-video` says which player Harbor loads and tries it without a window or sound.
+
 ## [0.106.1] - 2026-10-31
 
 ### Fixed

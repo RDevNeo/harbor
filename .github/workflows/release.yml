@@ -2,7 +2,7 @@
 # smoke.yml has installed and started it on clean distro images. Every build and test runs on
 # boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes.
 #
-# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), install.sh,
+# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), install.sh,
 # harbor-android.apk (the phone app), SHA256SUMS, and a minisign .minisig for each. Harbor's
 # updater checks those signatures with the public key in src/update.rs.
 #
@@ -131,10 +131,17 @@ jobs:
     with:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
+  # The video player, rebuilt only when video/ changed (video.yml).
+  video:
+    uses: ./.github/workflows/video.yml
+    secrets: inherit
+    with:
+      build: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
   # archives and their checksum lists, and the attestations.
   package:
-    needs: [build, browser]
+    needs: [build, browser, video]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -203,6 +210,7 @@ jobs:
             echo "$ver" > "$d/VERSION"
             # The engine's id, also when this run has no engine (only runs by hand; tags always do).
             git rev-parse HEAD:browser > "$d/browser.id"
+            git rev-parse HEAD:video > "$d/video.id"
             cp LICENSE "$d/licenses/Harbor-MIT.txt"
             cp assets/fonts/OFL.txt "$d/licenses/Geist-OFL-1.1.txt"
             cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
@@ -230,6 +238,21 @@ jobs:
               echo "::warning::no $arch browser engine in this package"
             fi
           done
+          # The video player per arch, and its sources beside it, as its licence asks.
+          if [ "${{ needs.video.outputs.found }}" = "true" ]; then
+            for arch in x86_64 aarch64; do
+              v=pkg/harbor-video-$arch-linux
+              mkdir -p "$v"
+              install -m755 "art/harbor-video/$arch/libmpv-harbor.so" "$v/libmpv-harbor.so"
+              cp art/harbor-video/video.id "$v/video.id"
+              cp -r art/harbor-video/licenses "$v/licenses"
+            done
+            cp art/harbor-video/harbor-video-source.tar.gz dist/
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::a release needs the video player"; exit 1
+          else
+            echo "::warning::no video player in this package"
+          fi
           # A checksum list inside each archive: install.sh run from an extracted folder checks it offline.
           for x in pkg/*/; do
             (cd "$x" && find . -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
@@ -261,6 +284,7 @@ jobs:
           tar -C pkg -I "$z" -cf dist/harbor-aarch64-linux.tar.gz harbor-aarch64-linux
           for arch in x86_64 aarch64; do
             [ ! -d pkg/harbor-browser-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-browser-$arch-linux.tar.gz harbor-browser-$arch-linux
+            [ ! -d pkg/harbor-video-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-video-$arch-linux.tar.gz harbor-video-$arch-linux
           done
           cp packaging/install.sh dist/install.sh
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk

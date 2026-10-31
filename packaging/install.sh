@@ -15,11 +15,13 @@
 # it runs: x86_64 or aarch64 with glibc 2.39+. --no-browser leaves it out (and Harbor doesn't
 # fetch it later); --with-browser, the old way to ask for it, turns that back on.
 #
+# The video player (libmpv-harbor.so, about 5 MB) comes along too; without it Harbor fetches it later.
+#
 # Every download is checked against the release's minisign signature. Without minisign installed,
 # the static minisign pinned below is fetched (and checked against its SHA-256) for that. To install
 # without a signature check anyway: HARBOR_INSECURE=1.
 #
-# Layout: ~/.local/lib/harbor/{harbor,harbor-browser,harbor-android.apk}, ~/.local/bin/harbor (link),
+# Layout: ~/.local/lib/harbor/{harbor,harbor-browser,libmpv-harbor.so,harbor-android.apk}, ~/.local/bin/harbor (link),
 # ~/.local/share/applications/harbor.desktop, ~/.local/share/icons/hicolor/…/harbor.{svg,png}.
 # Harbor updates itself afterwards (Settings › General).
 set -eu
@@ -265,6 +267,30 @@ if [ "$BROWSER" = 1 ] && [ -z "$BSRC" ]; then
   fi
 fi
 
+# The video player: beside an extracted folder, or from the release. Harbor fetches it itself when
+# it can't be had here, so nothing here is a failure.
+VSRC=""
+if [ -n "$HERE" ]; then
+  side="$(dirname -- "$HERE")"
+  if [ -f "$side/harbor-video-$ARCH-linux/libmpv-harbor.so" ]; then
+    VSRC="$side/harbor-video-$ARCH-linux"
+  elif [ -f "$side/harbor-video-$ARCH-linux.tar.gz" ]; then
+    mkdir -p "$TMP/video"
+    tar -xzf "$side/harbor-video-$ARCH-linux.tar.gz" -C "$TMP/video"
+    VSRC="$TMP/video/harbor-video-$ARCH-linux"
+  fi
+  [ -z "$VSRC" ] || check_folder "$VSRC" "harbor-video-$ARCH-linux"
+elif grep -q "  harbor-video-$ARCH-linux.tar.gz\$" "$TMP/SHA256SUMS" 2>/dev/null; then
+  VR="harbor-video-$ARCH-linux.tar.gz"
+  say "Downloading the video player…"
+  if fetch "$VR"; then
+    verify "$VR"
+    mkdir -p "$TMP/video"
+    tar -xzf "$TMP/$VR" -C "$TMP/video"
+    VSRC="$TMP/video/harbor-video-$ARCH-linux"
+  fi
+fi
+
 mkdir -p "$LIB" "$BIN" "$APPS" "$ICONS/scalable/apps" "$ICONS/256x256/apps"
 STAGE="$LIB/.staging"
 rm -rf "$STAGE"
@@ -272,6 +298,7 @@ mkdir -p "$STAGE"
 cp -p "$SRC/harbor" "$STAGE/"
 cp -p "$SRC/VERSION" "$STAGE/VERSION"
 [ -f "$SRC/browser.id" ] && cp -p "$SRC/browser.id" "$STAGE/browser.id"
+[ -f "$SRC/video.id" ] && cp -p "$SRC/video.id" "$STAGE/video.id"
 cp -rp "$SRC/licenses" "$STAGE/licenses"
 if [ -n "$APK" ]; then
   cp -p "$APK" "$STAGE/harbor-android.apk"
@@ -282,11 +309,17 @@ if [ "$BROWSER" = 1 ] && [ -n "$BSRC" ]; then
   cp -p "$BSRC/harbor-browser" "$STAGE/"
   cp -p "$BSRC/browser.id" "$STAGE/browser.installed"
 fi
+if [ -n "$VSRC" ]; then
+  cp -p "$VSRC/libmpv-harbor.so" "$STAGE/"
+  cp -p "$VSRC/video.id" "$STAGE/video.installed"
+  rm -rf "$LIB/video-licenses"
+  cp -rp "$VSRC/licenses" "$LIB/video-licenses"
+fi
 # Helpers first, harbor last: a running Harbor sees its file change and reloads into the new
 # version (rename is atomic; running processes keep the old file).
 # (harbor-stream, the screen viewer, is gone since 0.18)
 rm -f "$LIB/harbor-stream"
-for f in harbor-browser harbor-android.apk harbor-android.version VERSION browser.id browser.installed; do
+for f in harbor-browser libmpv-harbor.so harbor-android.apk harbor-android.version VERSION browser.id browser.installed video.id video.installed; do
   [ -e "$STAGE/$f" ] && mv -f "$STAGE/$f" "$LIB/$f"
 done
 # --no-browser: no engine, now or from Harbor's own updates (the panel's "Install engine" undoes it).
@@ -326,5 +359,4 @@ command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1 || \
 missing=""
 command -v zenity >/dev/null 2>&1 || command -v kdialog >/dev/null 2>&1 || missing="$missing zenity"
 for c in git xdg-open notify-send; do command -v "$c" >/dev/null 2>&1 || missing="$missing $c"; done
-ldconfig -p 2>/dev/null | grep -q 'libmpv\.so' || missing="$missing mpv"
 [ -z "$missing" ] || say "Optional, not installed:$missing (see the README's list of what Harbor uses)."

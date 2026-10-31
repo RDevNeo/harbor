@@ -2,8 +2,9 @@
 //!
 //! libmpv does the hard parts: hardware decoding, audio and its sync, seeking. Its render API
 //! draws each frame into a texture here on the GPU, at the window's size, so a frame never comes
-//! back to the CPU as RGBA. It isn't a build dependency: it's looked up by name when a video
-//! opens, and without it the video opens in the system's player as it always did.
+//! back to the CPU as RGBA. It isn't a build dependency: Harbor ships its own copy beside itself
+//! (update.rs `video_lib`, built by video/build.sh), the system's is the fallback, and with neither
+//! a video opens in the system's player.
 //!
 //! One player at a time, on three threads:
 //! - The UI thread only calls `mpv_render_*` (libmpv's rule: a render thread that waits on the
@@ -41,7 +42,9 @@ const VOLUME_STEP: u32 = 5;
 /// The longest a closing video waits for mpv to let go of it, before its renderer ends anyway.
 const STOP_WAIT: Duration = Duration::from_secs(1);
 
-const WARN_NO_MPV: &str = "Install mpv to play videos inside Harbor";
+const WARN_NO_MPV: &str = "Harbor's video player isn't here yet, so this opened in your video player";
+/// How long a video waits for the player to arrive before it opens elsewhere.
+const WAIT_FOR_PLAYER: Duration = Duration::from_secs(300);
 
 // ---------------------------------------------------------------- libmpv
 
@@ -52,6 +55,7 @@ const RENDER_FLIP_Y: c_int = 4;
 const RENDER_X11_DISPLAY: c_int = 8;
 const RENDER_WL_DISPLAY: c_int = 9;
 const RENDER_BLOCK_FOR_TARGET_TIME: c_int = 12;
+const RENDER_DRM_DISPLAY_V2: c_int = 16;
 const RENDER_UPDATE_FRAME: u64 = 1;
 
 const EVENT_NONE: c_int = 0;
@@ -79,6 +83,16 @@ struct GlInit {
     ctx: *mut c_void,
     /// Gone from newer headers; libmpv.so.1 still reads it.
     extra_exts: *const c_char,
+}
+
+/// `mpv_opengl_drm_params_v2`: only `render_fd` matters here.
+#[repr(C)]
+struct DrmParams {
+    fd: c_int,
+    crtc_id: c_int,
+    connector_id: c_int,
+    atomic_request_ptr: *mut c_void,
+    render_fd: c_int,
 }
 
 #[repr(C)]
@@ -135,6 +149,8 @@ api! {
     terminate_destroy: fn(*mut c_void);
     set_option_string: fn(*mut c_void, *const c_char, *const c_char) -> c_int;
     set_property_string: fn(*mut c_void, *const c_char, *const c_char) -> c_int;
+    get_property_string: fn(*mut c_void, *const c_char) -> *mut c_char;
+    free: fn(*mut c_void);
     command: fn(*mut c_void, *const *const c_char) -> c_int;
     observe_property: fn(*mut c_void, u64, *const c_char, c_int) -> c_int;
     wait_event: fn(*mut c_void, f64) -> *const Event;
@@ -148,12 +164,116 @@ api! {
 }
 
 static API: OnceLock<Api> = OnceLock::new();
+/// What Harbor's own player can use on this system (only with that one).
+static OWN: OnceLock<Optional> = OnceLock::new();
 
-/// libmpv, loaded on the first call that finds it (one that doesn't looks again next time: it may
-/// have been installed since). Loading it takes a moment: never on the UI thread.
+/// What Harbor's own player finds of the system's optional libraries. It links none of them: their
+/// symbols are weak, so one that's missing is a null, and what would call it must stay off.
+struct Optional {
+    /// Audio outputs, best first; it plays without any.
+    ao: CString,
+    /// VA-API: libva and its DRM part, EGL to show its frames, and a libva new enough.
+    va: bool,
+}
+
+/// Loads a system library for Harbor's own player to find; true when it's there.
+fn global(name: &CStr) -> bool {
+    !unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) }.is_null()
+}
+
+fn has_symbol(name: &CStr) -> bool {
+    !unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) }.is_null()
+}
+
+/// The newest of `0.3.65` as (0, 3, 65).
+fn version_of(text: &str) -> Option<(u32, u32, u32)> {
+    let mut it = text.trim().split('.').map(|n| n.parse().ok());
+    Some((it.next()??, it.next()??, it.next()??))
+}
+
+/// The PipeWire the player was built against (video/build.sh): older ones miss what it calls.
+const PIPEWIRE_MIN: (u32, u32, u32) = (0, 3, 65);
+
+fn pipewire_new_enough() -> bool {
+    let f = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"pw_get_library_version".as_ptr()) };
+    if f.is_null() {
+        return false;
+    }
+    let f = unsafe { std::mem::transmute::<*mut c_void, unsafe extern "C" fn() -> *const c_char>(f) };
+    version_of(&unsafe { CStr::from_ptr(f()) }.to_string_lossy()).is_some_and(|v| v >= PIPEWIRE_MIN)
+}
+
+fn audio_outputs(pipewire: bool, pulse: bool, alsa: bool) -> String {
+    let all = [(pipewire, "pipewire"), (pulse, "pulse"), (alsa, "alsa"), (true, "null")];
+    all.iter().filter(|(on, _)| *on).map(|(_, name)| *name).collect::<Vec<_>>().join(",")
+}
+
+fn optional() -> Optional {
+    let va = global(c"libva.so.2") && global(c"libva-drm.so.2") && global(c"libEGL.so.1") && has_symbol(c"vaSyncBuffer");
+    let pipewire = global(c"libpipewire-0.3.so.0") && pipewire_new_enough();
+    let ao = audio_outputs(pipewire, global(c"libpulse.so.0"), global(c"libasound.so.2"));
+    Optional { ao: CString::new(ao).unwrap_or_default(), va }
+}
+
+/// The render node of the GPU the window's EGL context runs on: with two GPUs VA-API must share
+/// frames with that one. Call with the context current; None when EGL can't say.
+fn egl_render_node() -> Option<CString> {
+    const EGL_DEVICE_EXT: c_int = 0x322c;
+    const EGL_DRM_RENDER_NODE_FILE_EXT: c_int = 0x3377;
+    type Display = unsafe extern "C" fn() -> *mut c_void;
+    type QueryAttrib = unsafe extern "C" fn(*mut c_void, c_int, *mut isize) -> c_int;
+    type QueryString = unsafe extern "C" fn(*mut c_void, c_int) -> *const c_char;
+    let proc = get_proc()?;
+    unsafe {
+        let current = libc::dlsym(libc::RTLD_DEFAULT, c"eglGetCurrentDisplay".as_ptr());
+        let (attrib, device) = (proc(c"eglQueryDisplayAttribEXT".as_ptr()), proc(c"eglQueryDeviceStringEXT".as_ptr()));
+        if current.is_null() || attrib.is_null() || device.is_null() {
+            return None;
+        }
+        let display = std::mem::transmute::<*mut c_void, Display>(current)();
+        let mut id = 0isize;
+        if std::mem::transmute::<*mut c_void, QueryAttrib>(attrib)(display, EGL_DEVICE_EXT, &raw mut id) == 0 {
+            return None;
+        }
+        let node = std::mem::transmute::<*mut c_void, QueryString>(device)(id as *mut c_void, EGL_DRM_RENDER_NODE_FILE_EXT);
+        (!node.is_null()).then(|| CStr::from_ptr(node).to_owned())
+    }
+}
+
+/// A DRM render node for VA-API, needing no display server; -1 without one. The player keeps
+/// using it until its render context is gone.
+fn render_node() -> c_int {
+    if let Some(path) = egl_render_node() {
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
+        if fd >= 0 {
+            return fd;
+        }
+    }
+    for n in 128..136 {
+        let Ok(path) = CString::new(format!("/dev/dri/renderD{n}")) else { continue };
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
+        if fd >= 0 {
+            return fd;
+        }
+    }
+    -1
+}
+
+/// libmpv, loaded on the first call that finds one: Harbor's own, known good, else the system's
+/// (one that finds none looks again next time). Loading it takes a moment: never on the UI thread.
 fn load_api() -> Option<&'static Api> {
     if let Some(api) = API.get() {
         return Some(api);
+    }
+    if let Some(own) = crate::update::video_lib().and_then(|p| CString::new(p.as_os_str().as_bytes()).ok()) {
+        let found = optional();
+        let lib = unsafe { libc::dlopen(own.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if !lib.is_null() {
+            if let Some(api) = unsafe { Api::load(lib) } {
+                let _ = OWN.set(found);
+                return Some(API.get_or_init(|| api));
+            }
+        }
     }
     for name in [c"libmpv.so.2", c"libmpv.so.1"] {
         // RTLD_LOCAL: its FFmpeg and friends stay out of everything else's way.
@@ -252,6 +372,8 @@ fn push(q: &mut Vec<Cmd>, c: Cmd) {
 enum Stage {
     #[default]
     Starting,
+    /// Harbor's own player is still on its way.
+    Preparing,
     Playing,
     Failed(String),
     /// No libmpv here: the file to open in the system's player.
@@ -359,7 +481,7 @@ fn file_of(key: &str, fetch: Option<Fetch>) -> Result<PathBuf, String> {
     }
 }
 
-unsafe fn start(api: &Api, paused: bool, volume: u32) -> Option<*mut c_void> {
+unsafe fn start(api: &Api, paused: bool, volume: u32, blind: bool) -> Option<*mut c_void> {
     unsafe {
         let core = (api.create)();
         if core.is_null() {
@@ -371,6 +493,18 @@ unsafe fn start(api: &Api, paused: bool, volume: u32) -> Option<*mut c_void> {
         let volume = CString::new(volume.to_string()).ok()?;
         (api.set_option_string)(core, c"volume".as_ptr(), volume.as_ptr());
         (api.set_option_string)(core, c"pause".as_ptr(), if paused { c"yes" } else { c"no" }.as_ptr());
+        if let Some(own) = OWN.get() {
+            (api.set_option_string)(core, c"ao".as_ptr(), own.ao.as_ptr());
+            if !own.va {
+                (api.set_option_string)(core, c"hwdec".as_ptr(), c"no".as_ptr());
+                (api.set_option_string)(core, c"gpu-hwdec-interop".as_ptr(), c"no".as_ptr());
+            }
+        }
+        if blind {
+            for (name, value) in [(c"vo", c"null"), (c"ao", c"null"), (c"hwdec", c"no"), (c"keep-open", c"no"), (c"untimed", c"yes")] {
+                (api.set_option_string)(core, name.as_ptr(), value.as_ptr());
+            }
+        }
         if let Some(log) = log_file() {
             (api.set_option_string)(core, c"log-file".as_ptr(), [log.as_bytes(), b".mpv\0"].concat().as_ptr().cast());
         }
@@ -382,15 +516,40 @@ unsafe fn start(api: &Api, paused: bool, volume: u32) -> Option<*mut c_void> {
     }
 }
 
+/// A video opened before Harbor's own player got here: it comes first, without a failure in
+/// between. False when the viewer closed meanwhile.
+fn wait_for_player(s: &Shared) -> bool {
+    let began = Instant::now();
+    while API.get().is_none() && crate::update::video_lib().is_none() && began.elapsed() < WAIT_FOR_PLAYER {
+        crate::update::video_auto(&s.ctx, true);
+        if !crate::update::video_coming() {
+            return true;
+        }
+        if s.lock().stage != Stage::Preparing {
+            s.fail(Stage::Preparing);
+        }
+        if s.lock().cmds.contains(&Cmd::Quit) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    true
+}
+
 /// Runs one video from start to end (the viewer's `Quit`, sent after its render context is gone).
 fn control(s: Arc<Shared>, key: String, fetch: Option<Fetch>, paused: bool) {
     let file = match file_of(&key, fetch) {
         Ok(f) => f,
         Err(e) => return s.fail(Stage::Failed(e)),
     };
+    if !wait_for_player(&s) {
+        return;
+    }
     let Some(api) = load_api() else { return s.fail(Stage::NoMpv(file)) };
+    // (However long that took, it wasn't a window out of sight.)
+    s.drawn();
     let Ok(path) = CString::new(file.as_os_str().as_bytes()) else { return s.fail(Stage::Failed("not a file Harbor shows".into())) };
-    let Some(core) = (unsafe { start(api, paused, VOLUME.load(Ordering::Relaxed)) }) else { return s.fail(Stage::Failed("mpv didn't start".into())) };
+    let Some(core) = (unsafe { start(api, paused, VOLUME.load(Ordering::Relaxed), false) }) else { return s.fail(Stage::Failed("mpv didn't start".into())) };
     let logging = log_file().is_some();
     unsafe {
         (api.set_wakeup_callback)(core, woken, Arc::as_ptr(&s) as *mut c_void);
@@ -522,6 +681,90 @@ fn note(line: &str) {
     }
 }
 
+/// A property as text, empty without it.
+unsafe fn property(api: &Api, core: *mut c_void, name: &CStr) -> String {
+    unsafe {
+        let v = (api.get_property_string)(core, name.as_ptr());
+        if v.is_null() {
+            return String::new();
+        }
+        let s = CStr::from_ptr(v).to_string_lossy().into_owned();
+        (api.free)(v.cast());
+        s
+    }
+}
+
+/// Plays `path` through without a picture or sound: what it decoded, or why it couldn't.
+unsafe fn play_through(api: &Api, core: *mut c_void, path: &CStr) -> Result<String, String> {
+    let argv = [c"loadfile".as_ptr(), path.as_ptr(), std::ptr::null()];
+    unsafe { (api.command)(core, argv.as_ptr()) };
+    let until = Instant::now() + Duration::from_secs(60);
+    let mut seen = String::new();
+    while Instant::now() < until {
+        let e = unsafe { &*(api.wait_event)(core, 1.0) };
+        match e.id {
+            EVENT_PLAYBACK_RESTART => {
+                let size = unsafe { property(api, core, c"dwidth") };
+                seen = unsafe { format!("{} ({size} wide), {}", property(api, core, c"video-codec"), property(api, core, c"audio-codec")) };
+            }
+            EVENT_END_FILE => {
+                let end = unsafe { &*(e.data as *const EndFile) };
+                return if end.reason == END_FILE_ERROR { Err(unsafe { CStr::from_ptr((api.error_string)(end.error)) }.to_string_lossy().into_owned()) } else { Ok(seen) };
+            }
+            _ => {}
+        }
+    }
+    Err("took too long".into())
+}
+
+/// `harbor --check-video [file…]`: loads the player the way a video would, says which one it got
+/// and whether it's as locked down as it should be, and plays `files` through without a picture
+/// or sound. The install tests use it (.github/smoke-install.sh), and it changes nothing.
+pub fn check(files: &[String]) -> i32 {
+    let Some(api) = load_api() else {
+        println!("no video player: Harbor's own isn't installed and this system has no libmpv");
+        return 1;
+    };
+    match (OWN.get(), crate::update::video_lib()) {
+        (Some(own), Some(path)) => println!("player: Harbor's own, {} (audio: {}, VA-API: {})", path.display(), own.ao.to_string_lossy(), if own.va { "yes" } else { "no" }),
+        _ => println!("player: the system's libmpv"),
+    }
+    let Some(core) = (unsafe { start(api, false, 0, true) }) else {
+        println!("it didn't start");
+        return 1;
+    };
+    let mut code = 0;
+    println!("{}, {}", unsafe { property(api, core, c"mpv-version") }, unsafe { property(api, core, c"ffmpeg-version") });
+    for name in [c"options/config", c"options/load-scripts", c"options/ytdl", c"options/access-references", c"options/input-default-bindings", c"options/resume-playback"] {
+        let value = unsafe { property(api, core, name) };
+        println!("{}={value}", name.to_string_lossy());
+        // (A build without Lua has no ytdl option at all.)
+        if value != "no" && !value.is_empty() {
+            code = 1;
+        }
+    }
+    println!("protocols: {}", unsafe { property(api, core, c"protocol-list") });
+    match unsafe { play_through(api, core, c"http://127.0.0.1:9/a.mp4") } {
+        Err(why) => println!("a URL is refused: {why}"),
+        Ok(_) => {
+            println!("a URL was played");
+            code = 1;
+        }
+    }
+    for file in files {
+        let played = playable(Path::new(file)).and_then(|f| CString::new(f.as_os_str().as_bytes()).map_err(|e| e.to_string())).and_then(|f| unsafe { play_through(api, core, &f) });
+        match played {
+            Ok(what) => println!("{file}: {what}"),
+            Err(why) => {
+                println!("{file}: can't play it: {why}");
+                code = 1;
+            }
+        }
+    }
+    unsafe { (api.terminate_destroy)(core) };
+    code
+}
+
 // ---------------------------------------------------------------- the player, on the UI thread
 
 /// The texture frames are drawn into, kept for the window's life (egui can't let go of a texture
@@ -616,18 +859,25 @@ unsafe extern "C" fn gl_proc(_: *mut c_void, name: *const c_char) -> *mut c_void
 
 /// libmpv's renderer for `core`, on the window's GL context. No advanced control: with it the core
 /// waits for this thread, and a window out of sight gets no frames to answer in.
-unsafe fn renderer(api: &Api, core: *mut c_void, frame: &eframe::Frame, s: &Arc<Shared>) -> Option<*mut c_void> {
+unsafe fn renderer(api: &Api, core: *mut c_void, frame: &eframe::Frame, s: &Arc<Shared>, node: &mut c_int) -> Option<*mut c_void> {
     get_proc()?;
+    if OWN.get().is_some_and(|o| o.va) {
+        *node = render_node();
+    }
     let (display, handle) = match frame.display_handle().map(|h| h.as_raw()) {
         Ok(RawDisplayHandle::Wayland(h)) => (RENDER_WL_DISPLAY, h.display.as_ptr()),
         Ok(RawDisplayHandle::Xlib(h)) => h.display.map_or((0, std::ptr::null_mut()), |d| (RENDER_X11_DISPLAY, d.as_ptr())),
         _ => (0, std::ptr::null_mut()),
     };
     let mut init = GlInit { get_proc_address: gl_proc, ctx: std::ptr::null_mut(), extra_exts: std::ptr::null() };
+    // Harbor's own player reaches VA-API through a render node: it has no display code (X11's is
+    // GPL-only), and so it works under any display server.
+    let mut drm = DrmParams { fd: -1, crtc_id: 0, connector_id: 0, atomic_request_ptr: std::ptr::null_mut(), render_fd: *node };
+    let own = OWN.get().is_some_and(|o| o.va) && *node >= 0;
     let mut params = [
         Param { kind: RENDER_API_TYPE, data: c"opengl".as_ptr() as *mut c_void },
         Param { kind: RENDER_OPENGL_INIT, data: (&raw mut init).cast() },
-        Param { kind: display, data: handle },
+        Param { kind: if own { RENDER_DRM_DISPLAY_V2 } else { display }, data: if own { (&raw mut drm).cast() } else { handle } },
         Param { kind: 0, data: std::ptr::null_mut() },
     ];
     let mut render = std::ptr::null_mut();
@@ -644,6 +894,8 @@ struct Player {
     key: String,
     s: Arc<Shared>,
     render: Option<Handle>,
+    /// The render node VA-API uses, -1 without one.
+    node: c_int,
     /// mpv couldn't draw in this window (it says so in the viewer).
     broken: bool,
     closing: bool,
@@ -679,6 +931,9 @@ impl Player {
         let t = Instant::now();
         if let (Some(render), Some(api)) = (self.render.take(), API.get()) {
             unsafe { (api.render_context_free)(render.0) };
+        }
+        if self.node >= 0 {
+            unsafe { libc::close(self.node) };
         }
         if log_file().is_some() {
             let avg = self.render_us / self.frames.max(1);
@@ -728,7 +983,7 @@ fn spawn(ctx: egui::Context, key: String, fetch: Option<Fetch>, play: bool) -> P
     let (for_thread, file) = (s.clone(), key.clone());
     std::thread::spawn(move || control(for_thread, file, fetch, !play));
     let moved = s.ctx.input(|i| i.time);
-    Player { key, s, render: None, broken: false, closing: false, closed: Instant::now(), drawn: false, moved, drag: None, muted: false, frames: 0, render_us: 0, render_max: 0, create_us: 0 }
+    Player { key, s, render: None, node: -1, broken: false, closing: false, closed: Instant::now(), drawn: false, moved, drag: None, muted: false, frames: 0, render_us: 0, render_max: 0, create_us: 0 }
 }
 
 /// A video is showing in the viewer (or about to).
@@ -806,7 +1061,7 @@ pub fn pump(ctx: &egui::Context, frame: &mut eframe::Frame) {
         let core = p.s.lock().core.as_ref().map(|c| c.0).filter(|_| !p.broken);
         let Some(core) = core else { return };
         let t = Instant::now();
-        match unsafe { renderer(api, core, frame, &p.s) } {
+        match unsafe { renderer(api, core, frame, &p.s, &mut p.node) } {
             Some(r) => {
                 p.render = Some(Handle(r));
                 p.create_us = t.elapsed().as_micros() as u64;
@@ -988,6 +1243,12 @@ pub fn controls(ui: &mut Ui, screen: Rect) -> Drawn {
             }
             return Drawn { alpha: 1.0, shut: false };
         }
+        Stage::Preparing => {
+            ui.painter().rect_filled(Rect::from_center_size(screen.center(), vec2(220.0, 84.0)), CornerRadius::same(RADIUS_MD), Color32::from_black_alpha(170));
+            w::spinner(ui.painter(), screen.center() - vec2(0.0, 14.0), 12.0, Color32::WHITE);
+            ui.painter().text(screen.center() + vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "Getting the player ready…", FontId::proportional(14.0), Color32::from_gray(230));
+            return Drawn { alpha: 1.0, shut: false };
+        }
         Stage::Starting | Stage::Playing => {}
     }
     if !started {
@@ -1072,6 +1333,18 @@ pub fn controls(ui: &mut Ui, screen: Rect) -> Drawn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_player_uses_only_what_the_system_has() {
+        assert_eq!(audio_outputs(true, true, true), "pipewire,pulse,alsa,null");
+        assert_eq!(audio_outputs(false, true, false), "pulse,null");
+        // No audio at all still plays the picture.
+        assert_eq!(audio_outputs(false, false, false), "null");
+        assert_eq!(version_of("0.3.65"), Some((0, 3, 65)));
+        assert!(version_of("1.6.9").is_some_and(|v| v >= PIPEWIRE_MIN));
+        assert!(version_of("0.3.48").is_some_and(|v| v < PIPEWIRE_MIN));
+        assert_eq!(version_of("1.0"), None);
+    }
 
     #[test]
     fn the_clock_reads_like_a_player() {

@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF2'
+Usage: scripts/boat/video [--out DIR] [--quiet] [x86_64|aarch64|source ...]
+
+Builds Harbor's video engine from this working tree (video/build.sh: libmpv and FFmpeg, LGPL only,
+as one libmpv-harbor.so) on a fresh `large` boat.dev sandbox from the snapshot `harbor-build`, in
+its own image (.github/boat/video.sh). With no target: x86_64, aarch64 and the source archive, as
+video.yml does for a release. Output streams here; exits non-zero when it fails. The sandbox is
+always deleted, also on error, Ctrl+C or kill (see scripts/boat/check --help).
+
+Options:
+  --out DIR    copy what was built to DIR
+  -q, --quiet  print only progress and the summary; the full output stays in /tmp/<sandbox name>.log
+  -h, --help   this help
+
+Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
+EOF2
+}
+out="" quiet="" targets=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) out=$2; shift ;;
+    -q|--quiet) quiet=1 ;;
+    -h|--help) usage; exit 0 ;;
+    x86_64|aarch64|source) targets+=("$1") ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+. "$(dirname "$0")/lib.sh"
+
+summary() {
+  [ -f "$log" ] || return 0
+  echo
+  say "summary"
+  grep -E '^<== |^== .* done|^needs glibc|optional symbols|needs more than|strong symbols|^exports |^license' "$log" | sed 's/^<== //; s/^/  /' || true
+}
+
+sandbox
+upload
+remote -- bash .github/boat/video.sh ${targets[@]+"${targets[@]}"}
+if [ -n "$out" ]; then
+  mkdir -p "$out"
+  "$boat" exec "$id" -- tar -czf out.tgz -C out/video .
+  "$boat" scp "$id:/home/user/out.tgz" "$out/video-out.tgz" >/dev/null
+  tar -xzf "$out/video-out.tgz" -C "$out"
+  rm -f "$out/video-out.tgz"
+fi

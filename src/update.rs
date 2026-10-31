@@ -9,7 +9,8 @@
 //!
 //! The previous files are kept in `.previous/` (hard links), for "Restore previous version".
 //! The browser engine (`harbor-browser`) comes with every update, and an installed copy
-//! without it fetches it in the background (`browser_auto`).
+//! without it fetches it in the background (`browser_auto`). So does the video player
+//! (`VIDEO_LIB`, `video_auto`).
 //!
 //! Builds from a source tree have no marker and are never touched.
 
@@ -243,10 +244,21 @@ fn install(version: &str) -> Result<(), String> {
                 Err(e) => eprintln!("harbor: browser engine not updated: {e}"),
             }
         }
+        // The video player the same way; only when it changed, so an update stays small.
+        let mut video = None;
+        if video_stale(&dir, &read(&core.join("video.id"))) {
+            match fetch(version, &format!("harbor-video-{ARCH}-linux"), &stage) {
+                Ok(v) => video = Some(v),
+                Err(e) => eprintln!("harbor: video player not updated: {e}"),
+            }
+        }
         let prev = dir.join(".previous");
         let _ = std::fs::remove_dir_all(&prev);
         std::fs::create_dir_all(&prev).map_err(|e| e.to_string())?;
         std::fs::write(prev.join("VERSION"), current()).map_err(|e| e.to_string())?;
+        if let Some(v) = &video {
+            put_video(v, &dir)?;
+        }
         if let Some(b) = &browser {
             replace(&b.join("harbor-browser"), &dir.join("harbor-browser"), Some(&prev))?;
             replace(&b.join("browser.id"), &dir.join("browser.installed"), None)?;
@@ -255,7 +267,7 @@ fn install(version: &str) -> Result<(), String> {
         if dir.join("harbor-stream").is_file() {
             let _ = std::fs::rename(dir.join("harbor-stream"), prev.join("harbor-stream"));
         }
-        for f in ["VERSION", "browser.id"] {
+        for f in ["VERSION", "browser.id", "video.id"] {
             if core.join(f).is_file() {
                 replace(&core.join(f), &dir.join(f), None)?;
             }
@@ -464,6 +476,7 @@ pub fn tick(auto: bool, ctx: &eframe::egui::Context) {
             // The browser engine, once the first update check had its turn.
             if started.elapsed() >= FIRST_CHECK + Duration::from_secs(15) {
                 browser_auto(&ctx, false);
+                video_auto(&ctx, false);
             }
             let last = *LAST_CHECK.lock().unwrap();
             let wait = next_check(started, last, Instant::now());
@@ -785,6 +798,83 @@ fn start_browser(ctx: &eframe::egui::Context) -> bool {
     started
 }
 
+// ------------------------------------------------------------------ video player
+
+/// The video player (video.rs): libmpv and FFmpeg as one library, from the release like the
+/// browser engine, with the same signature check, beside this executable.
+const VIDEO_LIB: &str = "libmpv-harbor.so";
+
+static VIDEO_RUNNING: AtomicBool = AtomicBool::new(false);
+/// (next background attempt, failures in a row).
+static VIDEO_NEXT: Mutex<(Option<Instant>, u32)> = Mutex::new((None, 0));
+
+/// Harbor's own video player, when it's here: an absolute path beside this very executable,
+/// which nothing in a project or the environment can point elsewhere.
+pub fn video_lib() -> Option<PathBuf> {
+    install_dir().map(|d| d.join(VIDEO_LIB)).filter(|p| p.is_file())
+}
+
+/// Whether `dir` should get the player with id `id`: missing, or another id than installed. An
+/// update from before it has no id yet (`id` empty): that counts only when the player is missing.
+fn video_stale(dir: &Path, id: &str) -> bool {
+    !dir.join(VIDEO_LIB).is_file() || (!id.is_empty() && read(&dir.join("video.installed")) != id)
+}
+
+/// Puts an unpacked `harbor-video-<arch>-linux` in the install folder.
+fn put_video(from: &Path, dir: &Path) -> Result<(), String> {
+    if !from.join(VIDEO_LIB).is_file() {
+        return Err("the archive has no player".into());
+    }
+    replace(&from.join(VIDEO_LIB), &dir.join(VIDEO_LIB), None)?;
+    replace(&from.join("video.id"), &dir.join("video.installed"), None)?;
+    let _ = std::fs::remove_dir_all(dir.join("video-licenses"));
+    let _ = std::fs::rename(from.join("licenses"), dir.join("video-licenses"));
+    Ok(())
+}
+
+/// An installed copy without the player (it came with an update from before it, or a download
+/// failed) fetches it by itself: from the update scheduler shortly after start, and when a video
+/// opens (`asked`). Failures retry later, by themselves.
+pub fn video_auto(ctx: &eframe::egui::Context, asked: bool) {
+    let Some(dir) = install_dir() else { return };
+    if BUSY.load(Ordering::SeqCst) || matches!(state(), State::Installing(_) | State::Installed(_)) {
+        return;
+    }
+    if !video_stale(&dir, &read(&dir.join("video.id"))) {
+        return;
+    }
+    let (next, fails) = *VIDEO_NEXT.lock().unwrap();
+    let due = if asked { fails == 0 } else { next.is_none_or(|t| Instant::now() >= t) };
+    if !due {
+        return;
+    }
+    VIDEO_RUNNING.store(true, Ordering::SeqCst);
+    let started = spawn(ctx, move || {
+        let stage = dir.join(".staging-video");
+        let _ = std::fs::remove_dir_all(&stage);
+        let r = std::fs::create_dir_all(&stage).map_err(|e| e.to_string()).and_then(|()| fetch(VERSION, &format!("harbor-video-{ARCH}-linux"), &stage)).and_then(|v| put_video(&v, &dir));
+        let _ = std::fs::remove_dir_all(&stage);
+        let mut next = VIDEO_NEXT.lock().unwrap();
+        match r {
+            Ok(()) => *next = (None, 0),
+            Err(e) => {
+                eprintln!("harbor: video player download failed: {e}");
+                next.1 += 1;
+                next.0 = Some(Instant::now() + retry_after(next.1));
+            }
+        }
+        VIDEO_RUNNING.store(false, Ordering::SeqCst);
+    });
+    if !started {
+        VIDEO_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// The player is on its way: being fetched, or coming with an update that's running.
+pub fn video_coming() -> bool {
+    VIDEO_RUNNING.load(Ordering::SeqCst) || (BUSY.load(Ordering::SeqCst) && install_dir().is_some_and(|d| video_stale(&d, "")))
+}
+
 /// After the `n`th failure in a row.
 fn retry_after(n: u32) -> Duration {
     (BROWSER_RETRY * 2u32.saturating_pow(n.saturating_sub(1).min(10))).min(BROWSER_RETRY_MAX)
@@ -826,6 +916,24 @@ pub fn busy() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_video_player_comes_only_when_it_changed() {
+        let d = std::env::temp_dir().join(format!("harbor-video-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        // Updated from before it: nothing here, and no id either.
+        assert!(video_stale(&d, ""));
+        assert!(video_stale(&d, "abc"));
+        std::fs::write(d.join(VIDEO_LIB), "x").unwrap();
+        std::fs::write(d.join("video.installed"), "abc\n").unwrap();
+        // The update's player is the one here: not downloaded again.
+        assert!(!video_stale(&d, "abc"));
+        assert!(video_stale(&d, "def"));
+        // A player from a release that didn't say which it is stays.
+        assert!(!video_stale(&d, ""));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn versions() {

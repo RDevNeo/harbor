@@ -1,0 +1,27 @@
+VA-API through a DRM render node needs no display server, and handing its frames to OpenGL needs
+only libdrm's headers. mpv ties both to its DRM video output, which isn't built here (X11, its other
+way to VA-API, is GPL-only). Harbor passes the render node with MPV_RENDER_PARAM_DRM_DISPLAY_V2.
+--- a/meson.build
++++ b/meson.build
+@@ -1433,7 +1433,7 @@
+ libva = dependency('libva', version: '>= 1.1.0', required: get_option('vaapi'))
+
+ vaapi_drm = dependency('libva-drm', version: '>= 1.1.0', required:
+-    get_option('vaapi-drm').require(libva.found() and features['drm']))
++    get_option('vaapi-drm').require(libva.found()))
+ features += {'vaapi-drm': vaapi_drm.found()}
+ if features['vaapi-drm']
+     dependencies += vaapi_drm
+@@ -1474,9 +1474,10 @@
+                      'video/out/hwdec/dmabuf_interop_pl.c')
+ endif
+
+-features += {'dmabuf-interop-gl': features['egl'] and drm.found()}
++libdrm_headers = dependency('libdrm')
++features += {'dmabuf-interop-gl': features['egl']}
+ if features['dmabuf-interop-gl']
+-    dependencies += drm.partial_dependency(includes: true, compile_args: true)
++    dependencies += libdrm_headers.partial_dependency(includes: true, compile_args: true)
+     sources += files('video/out/hwdec/dmabuf_interop_gl.c')
+ endif
+

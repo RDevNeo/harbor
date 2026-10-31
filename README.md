@@ -76,7 +76,7 @@ Optional (only that feature is off without it):
 | `zenity` (or `kdialog`) | file pickers: Attach, project and device icons, Devices uploads (drag and drop and paste work without it) |
 | `wl-clipboard` | reliable clipboard on Wayland (arboard is the fallback) |
 | `git`, `gh` | projects, diffs, cloning, the Pull requests and Issues pages |
-| `mpv` (its `libmpv`: `libmpv2` on Debian and Ubuntu) | playing videos inside Harbor (without it they open in your video player) |
+| `libva` and a VA-API driver | hardware decoding of videos (Harbor brings its own player; without these it decodes on the CPU) |
 | `notify-send`, `xdg-open` | notifications, opening links and files |
 | `ssh` | terminals, files and agents on your other PCs |
 | `rg` | the grep tool for agents on other PCs working on this PC's files |

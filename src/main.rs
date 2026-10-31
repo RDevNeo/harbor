@@ -124,6 +124,9 @@ fn main() -> eframe::Result {
         println!("harbor {}", update::version_label());
         return Ok(());
     }
+    if args.get(1).map(String::as_str) == Some("--check-video") {
+        std::process::exit(video::check(&args[2..]));
+    }
     // From a terminal, also when a new version won't start: `harbor --update`, `harbor --restore-previous`.
     if let Some(code) = args.get(1).and_then(|a| update::cli(a)) {
         std::process::exit(code);

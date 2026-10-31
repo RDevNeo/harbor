@@ -38,6 +38,8 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
     for aarch64 (browser.yml).
   - `.github/boat/browser-android.sh`: the phone app's Servo engine, arm64-v8a and armeabi-v7a, with
     the NDK (browser.yml).
+  - `.github/boat/video.sh`: Harbor's video player, libmpv and FFmpeg as one library for x86_64 and
+    aarch64 (video/build.sh, video.yml). `scripts/boat/video` runs it on the working tree.
   - `.github/boat/smoke.sh`: the install tests on clean distro images (smoke.yml).
   - `.github/boat/run.sh`: runs a command on a sandbox and follows it; a lost connection to boat
     doesn't fail it.

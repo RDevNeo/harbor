@@ -1,0 +1,28 @@
+libmpv-harbor.so, the video player Harbor uses, is libmpv with FFmpeg and the libraries below linked
+into one shared library. The library as a whole is under the GNU Lesser General Public License
+version 2.1 or later: FFmpeg and mpv were built without their GPL parts (mpv: -Dgpl=false; FFmpeg:
+neither --enable-gpl nor --enable-nonfree).
+
+  mpv          LGPL 2.1 or later   https://mpv.io
+  FFmpeg       LGPL 2.1 or later   https://ffmpeg.org
+  libplacebo   LGPL 2.1 or later   https://libplacebo.org
+  FriBidi      LGPL 2.1 or later   https://github.com/fribidi/fribidi
+  libass       ISC                 https://github.com/libass/libass
+  HarfBuzz     MIT                 https://harfbuzz.github.io
+  FreeType     FTL                 https://freetype.org
+  dav1d        BSD 2-Clause        https://code.videolan.org/videolan/dav1d
+  zlib         zlib                https://zlib.net
+  fast_float   MIT or Apache-2.0   https://github.com/fastfloat/fast_float
+  PipeWire     MIT (headers only)  https://pipewire.org
+  nv-codec-headers  MIT (headers)  https://github.com/FFmpeg/nv-codec-headers
+  Vulkan-Headers  Apache-2.0 or MIT (headers, not used)  https://github.com/KhronosGroup/Vulkan-Headers
+
+It finds the system's libva, EGL, PipeWire, PulseAudio and ALSA at run time when they're there; none
+of them is part of it. Harbor itself (MIT) only loads this library at run time. The sources of all of it, the one small
+change made to mpv, and the script that builds it are in harbor-video-source.tar.gz, published with
+every Harbor release beside this file's archive. You may change them, build your own and put it in
+place of libmpv-harbor.so in Harbor's install folder: Harbor checks the library it downloads, not
+the one it loads, though its next update of this library replaces yours.
+
+This product contains FreeType, portions of which are copyright The FreeType Project
+(https://freetype.org). All rights reserved.
