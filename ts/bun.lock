@@ -51,6 +51,9 @@
         "@harbor/store": "workspace:*",
         "markdown-it": "15.0.3",
       },
+      "devDependencies": {
+        "@harbor/agents": "workspace:*",
+      },
     },
     "packages/store": {
       "name": "@harbor/store",

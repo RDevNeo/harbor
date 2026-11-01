@@ -5,6 +5,7 @@ import { mcpshim, serve } from "./packages/mcp/src/index.ts";
 import { AccountService, discoverAsk, hostPort, lanAddrs, lanPortmapNet, loadOrCreate, meshCli, ncCli, Portmap, readMe } from "./packages/net/src/index.ts";
 import { dataDir, stateDir, Store } from "./packages/store/src/index.ts";
 import pkg from "./package.json";
+import { startHub } from "./hub.ts";
 
 type Command = (args: string[]) => Promise<number> | number;
 
@@ -22,6 +23,15 @@ function apiPort(s: Store): number {
 const commands: Record<string, Command> = {
   "--version": () => {
     console.log(`harbor ${pkg.version} (ts)`);
+    return 0;
+  },
+  "--background": async () => {
+    const h = await startHub({ version: pkg.version });
+    await new Promise<void>((resolve) => {
+      process.once("SIGTERM", resolve);
+      process.once("SIGINT", resolve);
+    });
+    await h.stop();
     return 0;
   },
   turn: async (args) => {

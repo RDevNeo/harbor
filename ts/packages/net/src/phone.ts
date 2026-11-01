@@ -6,7 +6,7 @@ import { blocks } from "./markdown.ts";
 import { forHome, type Mesh } from "./mesh.ts";
 import type { StoreReplica } from "./meshstore.ts";
 import { dest } from "./shared.ts";
-import { hashStr, type Json } from "./wire.ts";
+import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 
 const CLIP = 16 << 10;
@@ -19,16 +19,36 @@ export interface PhoneAgents {
   stop(chat: Chat): Promise<void>;
 }
 
-/** The providers' lists `/v1/state` carries (the agents package's providers). */
-export interface PhoneProviders {
-  accounts: Json[];
-  models: Record<string, Json>;
-  efforts: Record<string, Json>;
-  defaultEfforts: Record<string, Json>;
-  access: Record<string, Json>;
-  defaults: { account: string; model: string; effort: string; access: string };
-  /** The accounts a chat may switch to (api.rs `allowed_accounts`). */
-  allowedAccounts(c: Chat): string[];
+export type Choice = readonly [key: string, label: string, detail: string];
+
+/** A provider account as `@harbor/agents` lists it (providers `Account`). */
+export interface CatalogAccount {
+  id: string;
+  kind: string;
+  name: string;
+  badge: string;
+  bin: string | null;
+  loggedIn: boolean | null;
+  usage: { label: string; percent: number }[];
+}
+
+/** The providers' side of `/v1/state`: `@harbor/agents`' providers module and the app's lists. */
+export interface Catalog {
+  /** Provider kinds by label ("Claude", "Codex", …), in order. */
+  kinds: readonly string[];
+  accounts(): CatalogAccount[];
+  models(kind: string): { id: string; label: string; more: boolean }[];
+  efforts(kind: string): readonly Choice[];
+  defaultEffort(kind: string): string;
+  access(kind: string): readonly Choice[];
+  hasFast(kind: string): boolean;
+  /** The new-chat composer's picks (Rust's `draft.sel`). */
+  defaults(): { account: string; model: string; effort: string; access: string; device: string };
+  fast(): boolean;
+  /** Why a started Claude chat can't move anywhere now (relocate.rs). */
+  relocateBlocker?(chat: Chat): string | null;
+  deviceWhy?(chat: Chat): Json;
+  movingTo?(chat: Chat): string | null;
 }
 
 export interface PhoneDeps {
@@ -39,7 +59,10 @@ export interface PhoneDeps {
   version: string;
   myFp: () => string;
   agents: PhoneAgents | null;
-  providers?: () => PhoneProviders;
+  catalog?: Catalog;
+  /** `voice` in `/v1/state`: whether this PC transcribes a phone's recording, and in which language. */
+  voice?: () => { transcribe: boolean; why: string | null; lang: string };
+  updates?: () => { hub_update: Json; provider_updates: Json };
   /** The media a text names or shows (media.rs `find`); none without the media package. */
   find?: (text: string, chat: Chat) => Media[];
   /** The app's version code and url (`GET /v1/app`). */
@@ -250,7 +273,7 @@ export class PhoneRoutes {
       model: c.model,
       effort: c.effort,
       access: c.access,
-      fast: false,
+      fast: this.d.catalog?.fast() ?? false,
       settled: c.settled,
       retired: c.retired,
       running: this.running(c),
@@ -270,12 +293,53 @@ export class PhoneRoutes {
       unread: false,
       failed: false,
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),
-      switchable: { account: false, model: false, effort: false, access: false, device: false, fast: false },
-      allowed_accounts: this.d.providers?.().allowedAccounts(c) ?? [],
+      ...this.runSettings(c),
       worktree: null,
       pr: null,
       snoozed_until_ms: null,
       snoozed_label: null,
+    };
+  }
+
+  private kindOf(c: Chat): string {
+    return this.d.catalog?.accounts().find((a) => a.id === c.account)?.kind ?? "Claude";
+  }
+
+  /** api.rs `allowed_accounts`. */
+  allowedAccounts(c: Chat): string[] {
+    const cat = this.d.catalog;
+    if (!cat) return [];
+    const locked = c.role === "lead" ? "Claude" : c.started ? (cat.accounts().find((a) => a.id === c.account)?.kind ?? null) : null;
+    return cat
+      .accounts()
+      .filter((a) => a.bin !== null && (locked === null || a.kind === locked))
+      .map((a) => a.id);
+  }
+
+  /** `switchable`, `allowed_accounts`, `switch_reason`, `device_why`, `moving_to` (api.rs `chat_json`). */
+  private runSettings(c: Chat): Record<string, Json> {
+    const cat = this.d.catalog;
+    const kind = this.kindOf(c);
+    const allowed = this.allowedAccounts(c);
+    const efforts = cat?.efforts(kind) ?? [];
+    const access = cat?.access(kind) ?? [];
+    const fast = cat?.hasFast(kind) ?? false;
+    const blocker = c.started && kind === "Claude" ? (cat?.relocateBlocker?.(c) ?? null) : null;
+    const why: Record<string, Json> = {};
+    if (!allowed.some((a) => a !== c.account)) why.account = c.role === "lead" ? "A project's lead runs on Claude" : c.started ? `A started chat stays on ${kind}` : "No other account";
+    if (efforts.length === 0) why.effort = `${kind} has no effort levels`;
+    if (access.length <= 1) why.access = `${kind} has one access level`;
+    if (c.started && kind === "Claude") {
+      if (blocker !== null) why.device = blocker;
+    } else if (c.started) why.device = "Only Claude chats move between devices for now";
+    else if (kind !== "Claude") why.device = "Only Claude chats run on another device";
+    if (!fast) why.fast = `${kind} has no fast mode`;
+    return {
+      switchable: { account: allowed.some((a) => a !== c.account), model: true, effort: efforts.length > 0, access: access.length > 1, device: kind === "Claude" && (!c.started || blocker === null), fast },
+      allowed_accounts: allowed,
+      switch_reason: why,
+      device_why: !c.started || c.home !== "" ? null : (cat?.deviceWhy?.(c) ?? {}),
+      moving_to: cat?.movingTo?.(c) ?? null,
     };
   }
 
@@ -291,7 +355,23 @@ export class PhoneRoutes {
       settled: leads.filter((c) => c.settled).map((c) => this.idOf(c, global)),
       snoozed: [],
     };
-    const p = this.d.providers?.() ?? { accounts: [], models: {}, efforts: {}, defaultEfforts: {}, access: {}, defaults: { account: "", model: "", effort: "", access: "full" }, allowedAccounts: () => [] };
+    const cat = this.d.catalog;
+    const slug = (k: string) => k.toLowerCase();
+    const choice = (c: Choice) => ({ id: c[0], label: c[1], desc: c[2] });
+    const perKind = <T extends Json>(f: (k: string) => T): Record<string, Json> => Object.fromEntries((cat?.kinds ?? []).map((k) => [slug(k), f(k)]));
+    const accounts: Json[] = (cat?.accounts() ?? [])
+      .filter((a) => a.bin !== null)
+      .map((a) => ({
+        id: a.id,
+        label: a.kind === "Claude" ? `Claude · ${a.badge}` : a.kind,
+        name: a.name,
+        kind: slug(a.kind),
+        signed_in: a.loggedIn ?? true,
+        can_start: a.kind === "Claude",
+        usage: a.usage.map((u) => ({ label: u.label, percent: new F64(Math.round(u.percent * 1000) / 10) })),
+      }));
+    const sel = cat?.defaults() ?? { account: "", model: "", effort: "", access: "full", device: "" };
+    const updates = this.d.updates?.() ?? { hub_update: null, provider_updates: null };
     const me = hub.mesh.me;
     const peers = hub.mesh.on ? [...hub.mesh.peers.values()] : [];
     const devices: Json[] = [{ id: "", label: me.name, icon: "monitor", online: true }, ...peers.map((x) => ({ id: x.id, label: x.name, icon: "monitor", online: x.online, hub: true }))];
@@ -309,19 +389,19 @@ export class PhoneRoutes {
       projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path })),
       chats: chats.map((c) => this.chatJson(c, global)),
       tree,
-      accounts: p.accounts,
-      models: p.models,
-      efforts: p.efforts,
-      default_efforts: p.defaultEfforts,
-      access: p.access,
+      accounts,
+      models: perKind((k) => (cat?.models(k) ?? []).map((m) => ({ id: m.id, label: m.label, more: m.more }))),
+      efforts: perKind((k) => (cat?.efforts(k) ?? []).map(choice)),
+      default_efforts: perKind((k) => cat?.defaultEffort(k) ?? ""),
+      access: perKind((k) => (cat?.access(k) ?? []).map(choice)),
       devices,
-      fast: false,
-      defaults: { ...p.defaults, device: "", project_id: null },
+      fast: cat?.fast() ?? false,
+      defaults: { ...sel, project_id: null },
       app: this.d.app?.() ?? { version_code: 0, url: "/app.apk" },
-      hub_update: null,
-      provider_updates: null,
+      hub_update: updates.hub_update,
+      provider_updates: updates.provider_updates,
       profile_check: null,
-      voice: { transcribe: false, why: "voice isn't in this build yet", lang: "auto" },
+      voice: this.d.voice?.() ?? { transcribe: false, why: "voice isn't in this build yet", lang: "auto" },
     };
   }
 
@@ -416,7 +496,7 @@ export class PhoneRoutes {
     const pref = body.project_id;
     const repo = typeof pref === "number" ? (repos.find((r) => r.id === pref) ?? null) : typeof pref === "string" ? (repos.find((r) => r.path === pref) ?? null) : null;
     if (pref !== undefined && pref !== null && !repo) return err(404, "no such project");
-    const p = this.d.providers?.().defaults;
+    const p = this.d.catalog?.defaults();
     const s = (k: string, d: string) => (typeof body[k] === "string" ? (body[k] as string) : d);
     const text = s("text", "");
     const title = s("title", "") || text.split("\n")[0]?.trim().slice(0, 80) || "New chat";
@@ -438,4 +518,54 @@ export class PhoneRoutes {
     const { files: _files, ...rest } = body;
     return this.d.mesh.forward(dest(peer), peer.name, method, path, rest, [], [sender, ""], null);
   }
+}
+
+/** The new-chat composer's picks as the Rust app reads them at start (app.rs `Sel`), Claude's old High default moved to Medium once. */
+export function composerDefaults(kv: { get(k: string): string | null; set(k: string, v: string): void }, accounts: CatalogAccount[], claudeDefault: string): { account: string; model: string; effort: string; access: string; device: string } {
+  const get = (k: string, d: string) => kv.get(k) ?? d;
+  const aliases: Record<string, string> = { opus: "claude-opus-5-5", "": "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
+  const m = get("default_model", "claude-opus-5-5");
+  let effort = get("default_effort", "");
+  if (kv.get("effort_default_medium") === null) {
+    const account = get("default_account", "claude");
+    const a = accounts.find((x) => x.id === account);
+    if ((a === undefined || a.kind === "Claude") && effort === "high") {
+      effort = claudeDefault;
+      kv.set("default_effort", effort);
+    }
+    kv.set("effort_default_medium", "1");
+  }
+  return { account: get("default_account", "claude"), model: aliases[m] ?? m, effort, access: get("default_access", "full"), device: get("default_device", "") };
+}
+
+/** `@harbor/agents`' providers module as far as the catalog needs it. */
+export interface ProvidersModule<K extends string> {
+  KINDS: readonly K[];
+  staticModels(k: K): { id: string; label: string; more: boolean }[];
+  efforts(k: K): readonly Choice[];
+  defaultEffort(k: K): string;
+  access(k: K): readonly Choice[];
+  hasFast(k: K): boolean;
+}
+
+/** `models` overrides `staticModels` per kind; the composer's defaults are read once, here. */
+export function catalogOf<K extends string>(p: ProvidersModule<K>, accounts: () => CatalogAccount[], kv: { get(k: string): string | null; set(k: string, v: string): void }, models: Map<string, { id: string; label: string; more: boolean }[]> = new Map()): Catalog {
+  const kind = (s: string): K | undefined => p.KINDS.find((x) => x === s);
+  const claude = kind("Claude");
+  const sel = composerDefaults(kv, accounts(), claude === undefined ? "" : p.defaultEffort(claude));
+  const per = <T>(s: string, f: (k: K) => T, none: T): T => {
+    const k = kind(s);
+    return k === undefined ? none : f(k);
+  };
+  return {
+    kinds: p.KINDS,
+    accounts,
+    models: (s) => models.get(s) ?? per(s, (k) => p.staticModels(k), []),
+    efforts: (s) => per(s, (k) => p.efforts(k), []),
+    defaultEffort: (s) => per(s, (k) => p.defaultEffort(k), ""),
+    access: (s) => per(s, (k) => p.access(k), []),
+    hasFast: (s) => per(s, (k) => p.hasFast(k), false),
+    defaults: () => sel,
+    fast: () => kv.get("fast_mode") === "1",
+  };
 }

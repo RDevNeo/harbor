@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
-import { Store, type Chat } from "@harbor/store";
+import { blankChat, Store, type Chat } from "@harbor/store";
 import { accountDecide, isHarborToken, verifyHarborToken, type AccountKey } from "../src/account.ts";
 import { Api } from "../src/api.ts";
 import { readAnswerHead } from "../src/client.ts";
@@ -13,11 +13,12 @@ import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
 import { StoreReplica } from "../src/meshstore.ts";
-import { cardJson, clock, PhoneRoutes } from "../src/phone.ts";
+import { cardJson, catalogOf, clock, PhoneRoutes, type CatalogAccount } from "../src/phone.ts";
+import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
 import { actions, project } from "../src/view.ts";
 import { fixture } from "./fixture.ts";
-import { wire } from "../src/wire.ts";
+import { wire, type Json } from "../src/wire.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-phone-"));
 const stops: (() => void)[] = [];
@@ -119,6 +120,37 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect(v.images).toEqual([{ name: "photo.jpg", url: "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512&chat=1" }]);
     expect([v.actions, typeof v.time]).toEqual([["copy", "quote", "mention"], "string"]);
     expect(v.parts).toBeUndefined();
+  });
+
+  test("run settings follow the providers: a lead stays on Claude, a started chat on its provider", () => {
+    const store = Store.openAt(join(tmp, "catalog.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const acct = (id: string, kind: string, bin: string | null): CatalogAccount => ({ id, kind, name: id, badge: "AB", bin, loggedIn: true, usage: [{ label: "5h", percent: 0.4213 }] });
+    const accounts = [acct("claude", "Claude", "/bin/true"), acct("claude2", "Claude", "/bin/true"), acct("codex", "Codex", "/bin/true"), acct("gemini", "Gemini", null)];
+    store.set("default_effort", "high");
+    const catalog = catalogOf(providers, () => accounts, store);
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", agents: null, catalog });
+    expect(store.get("default_effort")).toBe(providers.defaultEffort("Claude"));
+    const lead = store.createChat(blankChat({ title: "l", role: "lead", account: "claude", started: true }));
+    const sub = store.createChat(blankChat({ title: "s", role: "sub", account: "codex", started: true }));
+    const fresh = store.createChat(blankChat({ title: "f", role: "chat", account: "codex" }));
+    const s = routes.state("tok:0", false) as { chats: { id: number; allowed_accounts: string[]; switch_reason: Record<string, string>; switchable: Record<string, boolean> }[]; accounts: { id: string; label: string; usage: Json[] }[]; defaults: { model: string } };
+    const of = (id: number) => s.chats.find((c) => c.id === id);
+    expect(of(lead.id)?.allowed_accounts).toEqual(["claude", "claude2"]);
+    expect(of(lead.id)?.switchable.account).toBe(true);
+    expect(of(sub.id)?.allowed_accounts).toEqual(["codex"]);
+    expect(of(sub.id)?.switch_reason.account).toBe("A started chat stays on Codex");
+    expect(of(sub.id)?.switch_reason.device).toBe("Only Claude chats move between devices for now");
+    expect(of(fresh.id)?.allowed_accounts).toEqual(["claude", "claude2", "codex"]);
+    expect(of(fresh.id)?.switch_reason.device).toBe("Only Claude chats run on another device");
+    expect(s.accounts.map((a) => [a.id, a.label])).toEqual([
+      ["claude", "Claude · AB"],
+      ["claude2", "Claude · AB"],
+      ["codex", "Codex"],
+    ]);
+    expect(wire(s.accounts[0]?.usage ?? [])).toBe('[{"label":"5h","percent":42.1}]');
+    expect(s.defaults.model).toBe("claude-opus-5-5");
   });
 
   test("a signed-in phone over pinned TLS starts a chat, reads it, sends, and hears of the reply", async () => {

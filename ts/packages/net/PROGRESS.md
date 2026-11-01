@@ -11,10 +11,10 @@ identity. Nothing here has talked to the real mesh, relay, account service or Cl
 - [ ] The unchanged Android app connects to the TypeScript hub and drives a chat. NOT run: there is no
   phone or emulator here. What did run: a test client with its own key and a signed Harbor token over
   pinned TLS 1.2 refused for another device/workspace, then state → new chat → items → send → long-poll
-  → rename → delete (`test/phone.test.ts`); and `rig/phone.sh`: one synthetic db served by the Rust hub
-  and by the TypeScript hub gives byte-identical `GET /v1/chats/{id}/items` (revisions aside).
-  `/v1/state` still differs where providers/agents aren't wired (accounts, models, efforts, access,
-  switchable, update banners, voice): those come from other packages.
+  → rename → delete (`test/phone.test.ts`); and `rig/phone.sh`: one synthetic db and identity served
+  by the Rust hub, then by `harbor --background` (ts/hub.ts), give byte-identical `GET /v1/state` and
+  `GET /v1/chats/{id}/items` (revisions aside; no provider CLI installed in the namespace). Send and
+  stop still answer 503 until the agents Engine is wired; update banners wait on @harbor/update.
 - [x] A Rust PC and a TypeScript PC see each other's chats, directly and through a relay (`rig/mesh.sh`,
   `RELAY=rust` and `RELAY=ts`): each holds the other's chat with its items, byte for byte.
 - [ ] Discovery, port mapping and account sign-in work. Ported and tested against fakes on loopback

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Run inside `unshare -Urn` only: the same synthetic harbor.db served by the Rust hub and by the
-# TypeScript hub, and their phone API answers compared (loopback, a pairing token from before accounts).
+# Run inside `unshare -Urn` only: one synthetic harbor.db and identity served by the Rust hub, then by
+# `harbor --background`, and their phone API answers compared (loopback, a pairing token from before accounts).
 set -u
 ip link set lo up
-T=${RIG_TMP:?a scratch folder}; rm -rf $T; mkdir -p $T/a/{home,data,state,cfg,cache,run} $T/t/data; chmod 700 $T/a/run
+T=${RIG_TMP:?a scratch folder}; rm -rf $T; mkdir -p $T/a/{home,data,state,cfg,cache,run}; chmod 700 $T/a/run
 B=${HARBOR_REF:?a Rust harbor binary}; BUN=${BUN:-$(command -v bun)}; TS=$(cd "$(dirname "$0")/../../.." && pwd)
 export HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 PATH=/usr/bin TZ=UTC
 unset WAYLAND_DISPLAY DISPLAY
@@ -36,10 +36,10 @@ for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:47930/ && break; sl
 for c in 1 2; do get 47930 "/v1/chats/$c/items?since=0" $T/rust-$c.json; done
 get 47930 /v1/state $T/rust-state.json
 kill $PA; wait $PA 2>/dev/null
-mkdir -p $T/t/data && cp $DB* $T/t/data/
-(cd $TS && env DIR=$T/t PORT=47931 ID=pc:rig NAME=rig TOKEN=$TOK SECS=6 $BUN packages/net/rig/peer.ts > $T/t.log 2>&1) & PT=$!
-for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:47931/ && break; sleep 0.2; done
-for c in 1 2; do get 47931 "/v1/chats/$c/items?since=0" $T/ts-$c.json; done
-get 47931 /v1/state $T/ts-state.json
+(cd $TS && env $A $BUN harbor.ts --background > $T/t.log 2>&1) & PT=$!
+for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:47930/ && break; sleep 0.2; done
+for c in 1 2; do get 47930 "/v1/chats/$c/items?since=0" $T/ts-$c.json; done
+get 47930 /v1/state $T/ts-state.json
+kill $PT
 wait $PT
 cd $TS && $BUN packages/net/rig/compare.ts $T
