@@ -33,9 +33,11 @@ import {
   type CatalogAccount,
   type Call,
   type Dest,
+  type MeshApp,
   type Reply,
 } from "./packages/net/src/index.ts";
 import { dataDir, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
+import { type Services, startServices } from "./services.ts";
 
 export interface HubOptions {
   version: string;
@@ -48,6 +50,8 @@ export interface RunningHub {
   api: Api;
   mesh: Mesh;
   phone: PhoneRoutes;
+  engine: Engine;
+  services: Services;
   stop(): Promise<void>;
 }
 
@@ -94,6 +98,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const account = new AccountService({ kv: store, stateDir: state, identity: () => id, me: () => hub.mesh.me, addrs: meshAddrs, version: o.version, env });
   account.load();
   let engine: Engine | null = null;
+  let services: Services | null = null;
+  let phoneRoute: (call: Call) => Promise<Reply> = async () => err(503, "Harbor is starting");
   const replica = new StoreReplica({
     items: (chat) => (engine ? engine.transcript(chat).items : store.items(chat)),
     live: (chat) => {
@@ -103,16 +109,25 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     store,
     hub,
+    route: (call) => phoneRoute(call),
     version: o.version,
     accounts: () => accounts.filter((a) => a.bin !== null).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
   });
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;
+  const meshApp: MeshApp = {
+    helloExtra: () => replica.helloExtra(),
+    chats: (since, full) => replica.chats(since, full),
+    items: (chat, since) => replica.items(chat, since),
+    applyChats: (peer, epoch, body) => replica.applyChats(peer, epoch, body),
+    applyItems: (peer, epoch, hid, body) => replica.applyItems(peer, epoch, hid, body),
+    route: async (call) => (await services?.routeMesh(call)) ?? replica.route(call),
+  };
   const mesh = new Mesh({
     hub,
     kv: store,
     id: () => id,
-    app: replica,
+    app: meshApp,
     workspacePeers: () => account.meshPeers(),
     myAddrs: meshAddrs,
     uploadsDir,
@@ -180,8 +195,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const route = async (call: Call): Promise<Reply> => {
     if (call.method === "GET" && call.path.join("/") === "v1/voice") return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
-    return phone.route(call);
+    return (await services?.routePhone(call)) ?? phone.route(call);
   };
+  phoneRoute = route;
   const apk = () => {
     const p = join(dataDir(env), "harbor-android.apk");
     return existsSync(p) ? p : null;
@@ -216,6 +232,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     reached: (ip) => portmap.reached(ip),
     env,
   });
+  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, account, composer: () => catalog.defaults(), accounts: () => accounts });
   const bound = await api.listen();
   hub.net = { addrs: addrs(), bound, error: hub.net.error };
   mesh.start();
@@ -247,10 +264,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     api,
     mesh,
     phone,
+    engine: live,
+    services,
     stop: async () => {
       clearInterval(tick);
       if (engineTimer) clearTimeout(engineTimer);
       clearInterval(refresh);
+      services?.stop();
       mesh.stop();
       disc?.stop();
       stopMap();

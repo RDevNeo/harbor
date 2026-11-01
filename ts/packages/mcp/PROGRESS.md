@@ -230,7 +230,7 @@ did not in 8 tries. Not found yet whether it is the ClientHello rewind (`rewound
 `startServices` does what Rust's app start did for this package: `setHarborVersion`, `wire()` (the agents' servers, bridge, workspace,
 remote and agent env), `bridge.setSlash` (the ui's slash scan), `machines.setHub` and `machines.publish` (every 10 s), the
 control socket and the webhook listener (`connect`), `hookcert.start`, and a `GhApi` over `Work`, net's mesh and markdown.
-`hub.ts` (`harbor --background`) builds an `Engine` when the window gives none (`HubOptions.engine`), passes the services' two
+`hub.ts` (`harbor --background`) starts them with its own `Engine` and passes the services' two
 routers in: `routePhone` (`/v1/prs*`, `/v1/issues*`) in front of the phone routes, `routeMesh` (`/mesh/v1/share`, `/mesh/v1/tool`,
 `/mesh/v1/issues*`) in front of the replica's, and the phone routes as the replica's `/mesh/v1/call` target, so "Fix with…" forwarded
 from another PC lands.
