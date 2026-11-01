@@ -16,6 +16,7 @@ import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
 import { control } from "@harbor/mcp";
 import { Data, mentionOf as fromStore } from "./data.ts";
+import { web } from "./logic/browser.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
@@ -1635,7 +1636,7 @@ export class Shell {
   }
 
   private openExternal(url: string): void {
-    if (!/^(https?|mailto):/.test(url)) return;
+    if (!web(url) && !/^mailto:/i.test(url)) return;
     Bun.spawn(["xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
   }
 }
