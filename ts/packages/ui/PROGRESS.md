@@ -69,7 +69,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | listdetail | done: the split, tabs, divider and menu keys of the PR and Issues pages (`src/logic/listdetail.ts`, `slint/listdetail.slint`) | 4 of 4 |
 | accountui, secretsui, remoteui, phonesui | done as Settings tabs (Account, Secrets, Devices, Phones); mesh actions run on the hub, not in the window yet | 0 of 0 |
 | terminal | done: in the surface panes' tabs (`slint/terminal.slint`, `src/terminal.ts`, a Bun PTY parsed by @xterm/headless) | 1 of 1 |
-| tray, background | modules done (`src/tray.ts` StatusNotifierItem over D-Bus, `src/background.ts`); not started by the window yet | see `test/tray.test.ts`, `test/background.test.ts` |
+| tray, background | tray: started with the window (Open raises it, Quit closes it); Settings' Quit and "Start Harbor when I log in" work. Background (window closed, Harbor stays): not wired; Slint can't unmap a window on Wayland (`hide()` ends the loop but the window stays drawn until its handle is collected, and the Shell's closures keep it), and the Reloader can't restart a source run (`cfg.exe` is bun). Needs: a restart into `--background` on close and back on focus, for compiled and source runs (`src/tray.ts`, `src/background.ts`) | see `test/tray.test.ts`, `test/background.test.ts` |
 | browser | not started | 0 of 0 |
 
 Entries that still open the "isn't in the TypeScript app yet" dialog (checked from `ts/run.sh` with

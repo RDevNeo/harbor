@@ -93,7 +93,10 @@ export async function runApp(o: RunOptions): Promise<number> {
     return 0;
   }
   if (ui && data) {
-    await ui.runShell(data, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f) });
+    let closeWindow = (): void => {};
+    const tray = ui.trayStart({ onOpen: () => single.raise(), onQuit: () => closeWindow() });
+    await ui.runShell(data, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), closer: (f) => (closeWindow = f) });
+    tray?.stop();
   }
   await stopAll();
   return 0;

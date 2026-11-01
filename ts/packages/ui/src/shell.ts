@@ -78,6 +78,8 @@ export class Shell {
   private pageBack: number | null = null;
   private workOf: Work | null = null;
   private readonly pages: PageHost;
+  /** Quit Harbor completely; without a background controller, closing the window is quitting. */
+  onQuit: (() => void) | null = null;
   private chatId = 0;
   private draftRepo: number | null = null;
   /** The draft is the project's page: its first message starts the project's main chat. */
@@ -214,6 +216,7 @@ export class Shell {
       ask: (title, text, ok, act) => this.dialog(title, text, ok, false, "", (yes, input) => yes && act(input)),
       remote: (repo) => this.gitStatus.get(repo)?.remote ?? null,
       work: () => (this.workOf ??= new Work(this.engine)),
+      quit: () => (this.onQuit ? this.onQuit() : this.win.hide()),
       terminal: (title, cwd, argv) => this.surfaces.openTerminal(title, cwd, argv),
       projectDir: (id) => {
         const r = this.data.repos.find((x) => x.id === id);
@@ -2171,6 +2174,9 @@ export interface ShellHooks {
   snapshotWith?: (read: () => Record<string, unknown>) => void;
   /** The first frame is on screen. */
   shown?: () => void;
+  quit?: () => void;
+  /** Gets a function that closes this window (the tray's Quit while it is open). */
+  closer?: (close: () => void) => void;
 }
 
 export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
@@ -2192,6 +2198,8 @@ export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
   if (process.env.HARBOR_VIEW === "chat" && data.chat(last)) shell.openChat(last);
   if (hooks.restore) shell.restore(hooks.restore);
   hooks.snapshotWith?.(() => shell.snapshot());
+  shell.onQuit = hooks.quit ?? null;
+  hooks.closer?.(() => win.hide());
   win.show();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);

@@ -1,9 +1,10 @@
+import { basename } from "node:path";
 import { homedir } from "node:os";
 import { type Store } from "@harbor/store";
 import { voiceCtl } from "@harbor/media";
 import { mcp } from "@harbor/mcp";
 import { providers } from "@harbor/agents";
-import { autostart } from "../background.ts";
+import { autostart, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
 import { generalSections, navTabs, setGeneral, type SettingSection } from "../logic/settings.ts";
@@ -69,6 +70,7 @@ export interface SettingsView {
 /** What the page needs from the window around it; the buttons that need a terminal, a clipboard or a browser go through here. */
 export interface SettingsDeps {
   store: Store;
+  quit: () => void;
   keys: Keys;
   speech: voiceCtl.VoiceCtl;
   theme: { dark: () => boolean; set: (dark: boolean, compact: boolean) => void };
@@ -145,6 +147,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     bus.tabs = navTabs(q);
   };
   bus.toggled = (k, v) => {
+    if (k === "autostart") setAutostart(v, { exe: basename(process.execPath) === "bun" ? null : process.execPath, managed: false });
     setGeneral(store, k, v);
     setNotifications(store, k, v);
     voiceToggled(speech, k, v);
@@ -198,6 +201,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     return err;
   };
   bus.pressed = (k) => {
+    if (k === "quit") deps.quit();
     notifyPressed(k, deps.notify);
     void voicePressed(speech, k).then(() => show());
   };

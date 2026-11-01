@@ -32,6 +32,7 @@ await mountSettings(
   bus,
   {
     store,
+    quit: () => process.exit(0),
     keys: Keys.load(store),
     speech: settingsSpeech(store),
     theme: {

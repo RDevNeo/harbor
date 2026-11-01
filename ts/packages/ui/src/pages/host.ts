@@ -47,6 +47,7 @@ export interface PageShell {
   /** The remote the project's git status found, if known. */
   remote: (repo: number) => string | null;
   work: () => Work;
+  quit: () => void;
   /** Runs `argv` in a terminal tab of the bottom pane (app.rs `open_terminal`). */
   terminal: (title: string, cwd: string, argv: string[]) => void;
   /** A project's folder on this PC. */
@@ -71,6 +72,7 @@ export class PageHost {
         busOf<SettingsView>(s.win, "SettingsBus"),
         {
           store,
+          quit: () => s.quit(),
           keys: s.keys,
           speech: settingsSpeech(store),
           theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
