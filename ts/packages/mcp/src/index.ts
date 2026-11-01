@@ -13,3 +13,4 @@ export * as discordfreeze from "./discordfreeze.ts";
 export * as discordhost from "./discordhost.ts";
 export * as discordrepair from "./discordrepair.ts";
 export * as discordsetup from "./discordsetup.ts";
+export * as issues from "./github/issues.ts";

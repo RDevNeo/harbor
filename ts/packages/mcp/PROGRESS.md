@@ -154,3 +154,25 @@ and repair (a Claude run with only repair's MCP server, 3 attempts per failure, 
   parts (cgroup file parsing, reclaim against a fake cgroup folder) and SIGSTOP end to end, not against a real systemd scope.
 - Not wired yet: `serve.ts` cases for `discord`, `discord-host` and `discord-repair` (the lead's dispatcher), and
   `mcp.integrate({ discord })`.
+
+## issues (src/issues.rs -> src/github/issues.ts)
+
+Headless data layer done: Rust tests ported 8 of 8 (same names), plus 16 new tests. The egui page (toolbar, menus, rows, the
+`App` glue, `Menu`/`Sub`/`Issues` state, group icons) is drawing and is not ported.
+
+- What runs: `fetchIssues` (query building with the 5-repo chunks, `gh api graphql`, parse, dedup, mentions and accounts of the
+  viewer), `parseQuery` (issue syntax on top of `parseBaseQuery`), `groups`, `mine`, `accounts`, `notes`, `shortError`, `merge`,
+  `owner`, `otherProjects`, `authors`, `assignees`, `milestones`, `labels`, `sortGroup`, `sortLabel`, `stateOf`, `isoSecs`, `trusted`,
+  `activeFilters`. `issuesPort` (real `gh`) and `createIssuesPort(run)` (injected runner) are `IssuesPort`s for `GhApi`.
+- The `gh` runner is a function `(args, timeoutMs) => GhRun` (`missing`, `failed` or `exit` with ok, stdout, stderr). `runGh` is
+  the real one: Harbor's agent environment (`agentProcessEnv`, so `GH_CONFIG_DIR` is Harbor's and `GH_TOKEN` is dropped), `which("gh")`,
+  a 90 s kill. Tests use a fake runner and a fake `gh` shell script first in `PATH`; nothing reaches GitHub.
+- `runGh` and `graphql(run, query, what)` are own copies of prs.rs `graphql` and `GH_TIMEOUT`, so this file has no dependency on
+  `github/gh.ts`; swap them for it when it lands. The PR search syntax (`parseBaseQuery`, prs.rs `parse_query`) is also copied here,
+  with `iso_secs` and `trusted` (autowork.rs); swap for `prs.ts` / `autowork` exports later.
+- Errors are thrown `Error`s with the Rust text (`fetch` rejects as Rust returned `Err(String)`).
+- Types come from `ghapi.ts`. `Group` has no icon there, so groups carry `key` and `label` only.
+- `merge` and `parse` copy what they take: inputs are never changed (Rust moved them).
+- `milestone` filter: `undefined` any, `null` none, string a title (Rust `Option<Option<String>>`).
+- Ties in `authors`/`assignees`/`milestones` that differ only by case keep first-seen order (Rust's HashMap order was random).
+- Not wired: `GhApi` construction with `issuesPort` is the lead's call (`deps.issues`).
