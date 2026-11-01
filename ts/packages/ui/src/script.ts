@@ -59,7 +59,7 @@ export function runStep(w: slint.Window, s: Step): void {
       break;
     case "ctrl":
       w.dispatchEvent({ type: "key-pressed", text: CONTROL });
-      press(w, arg);
+      press(w, KEYS[arg] ?? arg);
       w.dispatchEvent({ type: "key-released", text: CONTROL });
       break;
   }

@@ -585,3 +585,16 @@ describe("a chat being handed to another PC", () => {
     store.close();
   });
 });
+
+test("a copy written into the store from its home PC shows: the chat list and its new items", () => {
+  const { e, store, changed } = setup();
+  const c = newChat(store, { home: "pc:laptop", homeId: 7 });
+  expect(e.chat(c.id)).toBeUndefined();
+  e.storeChanged(null);
+  expect(e.chat(c.id)?.home).toBe("pc:laptop");
+  expect(e.transcript(c.id).items).toEqual([]);
+  store.saveItems(c.id, [{ kind: "text", text: "from the laptop", at: 1 }]);
+  e.storeChanged(c.id);
+  expect(e.transcript(c.id).items).toEqual([{ kind: "text", text: "from the laptop", at: 1 }]);
+  expect(changed).toEqual([null, c.id]);
+});

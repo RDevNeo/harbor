@@ -10,6 +10,7 @@ import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
+import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
@@ -43,6 +44,18 @@ import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, typ
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
+
+const solo: ShellMesh = {
+  me: () => "",
+  home: (c) => (c.home === "" ? null : { name: c.home, online: false }),
+  peer: () => null,
+  remote: () => null,
+  typers: () => [],
+  viewers: () => [],
+  forward: async () => ({ status: 503, body: { error: "this window has no hub" } }),
+  create: async () => ({ status: 503, body: { error: "this window has no hub" } }),
+  lease: () => {},
+};
 
 interface Sel {
   account: string;
@@ -187,6 +200,8 @@ export class Shell {
   private readonly prs: chatpr.ChatPrs;
   private readonly workspaces: () => Workspaces;
   private readonly hub: ShellHub;
+  private readonly meshChat: MeshChat;
+  private viewing: { id: number; focused: boolean } | null = null;
   private shownProjects: number[] = [];
   private selection: { seq: number; text: string } | null = null;
   private selButton: SelectionButton | null = null;
@@ -225,6 +240,14 @@ export class Shell {
     this.prs = hub.prs;
     this.workspaces = hub.workspaces;
     this.hub = hub;
+    this.meshChat = new MeshChat(hub.mesh ?? solo, {
+      restore: (chat, text, mentions, append) => this.restoreSend(chat, text, mentions, append),
+      changed: () => this.refreshAll(),
+      opened: (id) => {
+        this.data.reload();
+        this.openChat(id);
+      },
+    });
     const get = (k: string, d: string) => data.store.get(k) ?? d;
     const model = get("default_model", "claude-opus-5-5");
     this.sel = {
@@ -378,6 +401,7 @@ export class Shell {
       this.refreshTeam();
     };
     w.stop_agent = (id) => {
+      if (this.meshChat.stop(this.data.chat(id))) return;
       this.engine.pending.delete(id);
       this.engine.stop(id);
     };
@@ -464,6 +488,7 @@ export class Shell {
     };
     w.edited = (t) => {
       this.drafts.set(this.key(), t);
+      if (this.view === "chat") this.meshChat.typed(this.chatId, t.trim() !== "" || (this.mentions.get(this.chatId) ?? []).length > 0, { text: t, mentions: this.mentions.get(this.chatId) ?? [] });
       setTimeout(() => this.refreshMenu(), 0);
     };
     w.key = (e) => this.composerKey(e);
@@ -544,6 +569,7 @@ export class Shell {
     };
     w.strip_stop = (id) => {
       w.strip_asking = 0;
+      if (this.meshChat.stop(this.data.chat(id))) return;
       this.engine.pending.delete(id);
       this.engine.stop(id);
     };
@@ -684,10 +710,11 @@ export class Shell {
     w.hero_subtitle = chat ? `The lead plans and delegates to subagents in ${repo?.name ?? ""}.` : (repo?.name ?? "No project");
     w.hero_link = !chat;
     w.hero_note = !chat && this.draftMain ? "Starts the project's main chat: its row opens it from now on" : "";
-    w.read_only = chat?.role === "chat";
-    w.read_only_text = "This is an earlier chat, kept read-only. Start a new chat in the project to continue.";
-    w.read_only_action = chat?.repoId !== null && chat?.repoId !== undefined ? "New chat" : "";
-    w.chat_running = chat ? this.engine.running(chat.id) : false;
+    const away = chat ? this.meshChat.readOnly(chat) : null;
+    w.read_only = chat?.role === "chat" || away !== null;
+    w.read_only_text = away ?? "This is an earlier chat, kept read-only. Start a new chat in the project to continue.";
+    w.read_only_action = away === null && chat?.repoId !== null && chat?.repoId !== undefined ? "New chat" : "";
+    w.chat_running = chat ? this.running(chat.id) : false;
     this.refreshComposer();
     this.refreshCards();
   }
@@ -1008,6 +1035,10 @@ export class Shell {
   private setSettled(id: number, on: boolean): void {
     const c = this.data.chat(id);
     if (!c) return;
+    if (this.meshChat.patch(c, { settled: on })) {
+      this.engine.unread.delete(id);
+      return;
+    }
     c.settled = on;
     this.data.saveChat(c);
     if (on && this.view === "chat" && this.chatId === id) {
@@ -1062,8 +1093,10 @@ export class Shell {
     const sel = this.chatSel();
     const kind = this.kind(sel);
     const acc = this.account(sel.account);
-    const running = this.view === "chat" && this.engine.running(this.chatId);
-    const steer = running && this.engine.steering(this.chatId) !== "no" && this.engine.followDefault() === "steer";
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    const copy = this.meshChat.foreign(open);
+    const running = this.view === "chat" && this.running(this.chatId);
+    const steer = running && (copy || this.engine.steering(this.chatId) !== "no") && this.engine.followDefault() === "steer";
     const draftEmpty = this.win.draft.trim() === "";
     const editing = this.queueEdit !== null && this.queueEdit.chat === this.key();
     const resume = this.view === "chat" && draftEmpty && this.resumable(this.chatId);
@@ -1087,10 +1120,14 @@ export class Shell {
               ? "Queue: it runs after the current turn"
               : resume
                 ? "Resume queue: the next queued message starts"
-                : "Send (Enter)",
+                : this.view === "chat"
+                  ? this.meshChat.sendTip(this.chatId)
+                  : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
-      typing: "",
+      typing: this.view === "chat" ? this.meshChat.typing(this.chatId) : "",
       notice: "",
+      remote: this.meshChat.runsOn(open),
+      error: this.meshChat.error(this.key()),
     };
     this.win.composer = state;
     void providerLogo(kindOfAccount(sel.account), token("fg", this.dark)).then((p) => {
@@ -1240,8 +1277,8 @@ export class Shell {
         this.refreshCards();
         return true;
       }
-      if (chat !== null && this.engine.running(chat)) {
-        this.engine.esc(chat);
+      if (chat !== null && this.running(chat)) {
+        if (!this.meshChat.stop(this.data.chat(chat))) this.engine.esc(chat);
         return true;
       }
     }
@@ -1323,8 +1360,8 @@ export class Shell {
       return true;
     }
     if (this.page !== null && w.dialog_id === "" && (p.key === "Escape" ? this.pages.esc(this.page) : this.page === "prs" && this.pages.shortcut(p))) return true;
-    if (this.keys.matches("stop_turn", p) && this.view === "chat" && this.engine.running(this.chatId)) {
-      this.engine.esc(this.chatId);
+    if (this.keys.matches("stop_turn", p) && this.view === "chat" && this.running(this.chatId)) {
+      if (!this.meshChat.stop(this.data.chat(this.chatId))) this.engine.esc(this.chatId);
       return true;
     }
     return false;
@@ -1383,9 +1420,34 @@ export class Shell {
     }
     if (text === "" && files.length === 0 && this.messageMentions().length === 0) return;
     const mentions = (this.mentions.get(from) ?? []).filter((m) => !isChat(m) || text.includes(m.title));
+    const clear = (): void => {
+      this.mentions.delete(from);
+      this.drafts.delete(from);
+      this.attached.delete(from);
+      this.win.draft = "";
+      this.refreshFiles();
+    };
+    const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    if (this.meshChat.foreign(open)) {
+      clear();
+      this.meshChat.typed(open.id, false, null);
+      this.meshChat.send(open, text, files, mentions, mode);
+      this.refreshAll();
+      return;
+    }
+    const joinsMain = this.view !== "chat" && this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
+    if (this.view !== "chat" && joinsMain === null && this.sel.device !== "") {
+      const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
+      const body = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: this.sel.account, model: this.sel.model, effort: this.sel.effort, access: this.sel.access, text };
+      if (this.meshChat.create(this.sel.device, body, files, this.draftRepo, DRAFT, { text, mentions })) {
+        clear();
+        this.refreshAll();
+        return;
+      }
+    }
     let id = this.view === "chat" ? this.chatId : DRAFT;
     if (id === DRAFT) {
-      const joins = this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
+      const joins = joinsMain;
       id = joins ?? this.engine.newThread(this.draftRepo, text, this.sel).id;
       if (this.draftMain && this.draftRepo !== null && joins === null) this.data.store.setMainChat(this.draftRepo, id);
       this.view = "chat";
@@ -1491,8 +1553,39 @@ export class Shell {
   }
 
   private stop(id: number): void {
-    this.engine.stop(id);
+    if (!this.meshChat.stop(this.data.chat(id))) this.engine.stop(id);
     this.refreshAll();
+  }
+
+  private tickMesh(): void {
+    const open = this.view === "chat" ? this.chatId : null;
+    if (this.viewing !== null && this.viewing.id !== open) {
+      this.meshChat.viewed(this.viewing.id, false, false);
+      this.viewing = null;
+    }
+    if (open === null) return;
+    const focused = this.data.visible(open);
+    this.meshChat.viewed(open, focused, true);
+    this.viewing = { id: open, focused };
+    if (this.meshChat.foreign(this.data.chat(open))) {
+      this.win.chat_running = this.running(open);
+      this.refreshComposer();
+    }
+  }
+
+  /** Here or, for another PC's chat, on its home PC. */
+  private running(id: number): boolean {
+    return this.engine.running(id) || this.meshChat.running(this.data.chat(id));
+  }
+
+  /** mesh.rs `Msg::Done`: a message that didn't go comes back into its composer. */
+  private restoreSend(chat: number, text: string, mentions: Mention[], append: boolean): void {
+    const cur = this.key() === chat ? this.win.draft : (this.drafts.get(chat) ?? "");
+    const next = append ? cur + text : cur.trim() === "" && text !== "" ? text : cur;
+    this.drafts.set(chat, next);
+    if ((this.mentions.get(chat) ?? []).length === 0 && mentions.length > 0) this.mentions.set(chat, mentions);
+    if (this.key() === chat) this.win.draft = next;
+    this.refreshComposer();
   }
 
   /**
@@ -1557,6 +1650,7 @@ export class Shell {
   private wasRunning = new Set<number>();
 
   tick(): void {
+    this.tickMesh();
     // devices.rs: phones' "last seen" and PCs' online state change by themselves.
     if (this.devicesShown()) this.refreshDevices();
     this.voice?.poll();
@@ -2016,6 +2110,11 @@ export class Shell {
     if (this.view === "chat") {
       const c = this.data.chat(this.chatId);
       if (!c) return;
+      if (this.meshChat.foreign(c) && patch.device === undefined) {
+        const n = { account: c.account, model: c.model, effort: c.effort, access: c.access, ...patch };
+        this.meshChat.patch(c, { account: n.account, model: n.model, effort: n.effort, access: n.access });
+        return;
+      }
       if (patch.account !== undefined) c.account = patch.account;
       if (patch.model !== undefined) c.model = patch.model;
       if (patch.effort !== undefined) c.effort = patch.effort;
@@ -2639,6 +2738,7 @@ export class Shell {
 
   /** fork.rs `fork_from`: a new chat with the conversation up to that reply. */
   private fork(id: number, reply: number): void {
+    if (this.meshChat.fork(this.data.chat(id), reply)) return;
     const c = this.engine.forkFrom(id, reply);
     if (!c) return;
     this.data.reload();
@@ -2797,6 +2897,8 @@ export interface ShellHub extends PageHub {
   movePc: (chatId: number, peerId: string) => Promise<string>;
   /** Harbor's own video player (update.rs `video_lib`, `video_auto`); without it the system's libmpv. */
   player?: import("@harbor/media").video.PlayerSource;
+  /** Chats homed on other PCs and the leases (mesh.rs); none without a hub. */
+  mesh?: ShellMesh;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

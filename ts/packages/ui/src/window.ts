@@ -155,6 +155,8 @@ export interface ComposerState {
   hint: string;
   typing: string;
   notice: string;
+  remote: string;
+  error: string;
 }
 
 export interface DeviceRow {

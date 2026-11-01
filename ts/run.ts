@@ -148,6 +148,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       deviceHost: run.deviceHost,
       moveTargets: (chatId: number) => run.move.targetsNow(chatId),
       movePc: (chatId: number, peerId: string) => run.move.movePc(chatId, peerId),
+      mesh: run.windowMesh,
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
     };

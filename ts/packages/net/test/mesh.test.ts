@@ -206,6 +206,7 @@ interface Pc {
   mesh: Mesh;
   replica: StoreReplica;
   port: number;
+  heard: (number | null)[];
 }
 
 async function pc(name: string): Promise<Pc> {
@@ -214,7 +215,8 @@ async function pc(name: string): Promise<Pc> {
   const hub = new Hub([], 0);
   hub.mesh.me = { id: `pc:${name}`, name };
   store.set("mesh_enabled", "1");
-  const replica = new StoreReplica({ store, hub, version: "0.0.0-test" });
+  const heard: (number | null)[] = [];
+  const replica = new StoreReplica({ store, hub, version: "0.0.0-test", copied: (chat) => void heard.push(chat) });
   let api: Api | null = null;
   const mesh = new Mesh({
     hub,
@@ -246,7 +248,7 @@ async function pc(name: string): Promise<Pc> {
     mesh.stop();
     a.close();
   });
-  return { id, hub, store, mesh, replica, port: hub.port };
+  return { id, hub, store, mesh, replica, port: hub.port, heard };
 }
 
 async function until(f: () => boolean, ms = 15_000): Promise<boolean> {
@@ -290,6 +292,9 @@ describe("two TypeScript PCs", () => {
       return c !== undefined && b.store.items(c.id).length === 2;
     });
     expect(grown).toBe(true);
+    // The window hears of both: the list of copies and the copy's new items.
+    expect(b.heard).toContain(null);
+    expect(b.heard).toContain(copy?.id ?? -1);
     // The copy is never served back as its own, and the hubs list knows the peer.
     expect(b.replica.chats(0, true).chats).toEqual([]);
     const hubs = b.mesh.hubs() as { hubs: { id: string; online: boolean }[] };

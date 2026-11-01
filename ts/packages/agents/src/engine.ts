@@ -246,6 +246,13 @@ export class Engine {
     return this.chats.find((c) => c.id === id);
   }
 
+  /** The store changed under the engine (copies from other PCs): a chat's items (its id) or the chats (null). */
+  storeChanged(id: number | null): void {
+    if (id === null) this.reload();
+    else if (!this.turns.has(id)) this.transcripts.delete(id);
+    this.changed(id);
+  }
+
   repo(id: number | null): Repo | undefined {
     return id === null ? undefined : this.repos.find((r) => r.id === id);
   }

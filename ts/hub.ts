@@ -89,7 +89,9 @@ import {
   type MovePcAccount,
   type Reply,
   preview,
+  outgoingCtx,
 } from "./packages/net/src/index.ts";
+import { WindowMesh } from "./windowmesh.ts";
 import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
@@ -135,6 +137,7 @@ export interface RunningHub {
   engine: Engine;
   move: MovePc;
   runOn: RunOn;
+  windowMesh: WindowMesh;
   funnel: Funnel;
   prs: chatpr.ChatPrs;
   account: AccountService;
@@ -336,6 +339,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     version: o.version,
     update: () => (o.updater ? asJson(o.updater.info()) : null),
     accounts: () => accounts.filter((a) => a.bin !== null).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
+    copied: (chat) => engine?.storeChanged(chat),
   });
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;
@@ -515,6 +519,19 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const dir = r ? repoDir(r) : null;
       if (dir === null || !existsSync(dir)) return null;
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
+    },
+  });
+  const windowMesh = new WindowMesh({
+    hub,
+    mesh,
+    replica,
+    phone,
+    env,
+    chat: (id) => (engine ? engine.chat(id) : store.chats().find((c) => c.id === id)),
+    ownerName: () => account.ownerName(),
+    ctx: (repo) => {
+      const r = repo === null ? undefined : store.repos().find((x) => x.id === repo);
+      return outgoingCtx(store, { home: home(), dataDir: dataDir(env), hostname: hostname() }, owners, r ? repoDir(r) : null);
     },
   });
   // The hooks below run once the engine exists.
@@ -757,6 +774,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     engine: live,
     move: mover,
     runOn,
+    windowMesh,
     setBusyIn: (f) => {
       busyIn = f;
     },

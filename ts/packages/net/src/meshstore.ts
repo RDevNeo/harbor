@@ -52,6 +52,8 @@ export interface StoreReplicaOptions {
   queued?: (chat: number) => number;
   /** The name of the worktree folder a chat runs in. */
   worktree?: (chat: Chat) => string | null;
+  /** Copies were written: a copy's items (its id), or the list and settings (null). */
+  copied?: (chat: number | null) => void;
 }
 
 /** A git remote as projects are matched by it: host and path, lowercase, no ".git". */
@@ -348,6 +350,7 @@ export class StoreReplica implements MeshApp {
       this.remote.delete(id);
     }
     this.reload();
+    this.o.copied?.(null);
     return wants;
   }
 
@@ -371,6 +374,7 @@ export class StoreReplica implements MeshApp {
     this.isince.set(`${peer}\0${hid}`, [epoch, whole ? (int(body.rev) ?? 0) : 0]);
     this.o.store.saveItems(id, items);
     this.o.hub.touch(id, false);
+    this.o.copied?.(id);
   }
 
   async route(call: Call): Promise<Reply> {
