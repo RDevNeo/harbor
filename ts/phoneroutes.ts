@@ -2,7 +2,7 @@ import { actions, apiMoveTargets, apiPeople, codeState, movePcBlocker, movePcTar
 import { type Chat, cost, type Store } from "./packages/store/src/index.ts";
 import { type Engine, providers } from "./packages/agents/src/index.ts";
 import { forkable } from "./packages/agents/src/fork.ts";
-import { hookcert, machines } from "./packages/mcp/src/index.ts";
+import { machines } from "./packages/mcp/src/index.ts";
 import { agentSettled, loadMarks } from "./packages/ui/src/logic/teamui.ts";
 import { excerptOf, mentionAgent, mentionOf, mentionToJson, type MentionableItem } from "./packages/ui/src/logic/mentions.ts";
 import { parseSnooze, snoozePresets, snoozePreview } from "./packages/ui/src/logic/sidebar.ts";
@@ -241,10 +241,12 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     });
     const processes = e.procs.filter((p) => p.lead === lead).map((p) => ({ id: p.id, name: p.name, cmd: p.cmd, url: p.url, started_ms: p.started }));
     const wakeups = e.timers.filter((t) => t.chatId === lead).map((t) => ({ id: t.id, at_ms: t.at * 1000, reason: t.reason }));
-    const base = hookcert.publicBase();
     const webhooks = e.webhooks
       .filter((w) => home === "" && w.repoId === repo)
-      .map((w) => ({ id: w.id, name: w.name, description: w.description, hits: w.hits, last_ms: w.lastHit * 1000, public: base !== null, url: base !== null ? `${base}/${w.token}` : e.hookUrl(w.token) }));
+      .map((w) => {
+        const [local, pub] = e.hookUrl(w.token);
+        return { id: w.id, name: w.name, description: w.description, hits: w.hits, last_ms: w.lastHit * 1000, public: pub !== null, url: pub ?? local };
+      });
     return plain({ lead, project_id: repo, home, agents, processes, wakeups, webhooks });
   };
 

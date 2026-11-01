@@ -170,7 +170,7 @@ test("a_chat_is_snoozed_woken_settled_and_retitled_from_a_phone", async () => {
 });
 
 test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
-  const lead = h.store.createChat(blankChat({ title: "Lead", account: "claude", role: "lead", name: "lead" }));
+  const lead = h.store.createChat(blankChat({ title: "Lead", account: "claude", role: "lead", name: "lead", repoId: chat }));
   const sub = h.store.createChat(blankChat({ title: "Task", account: "claude", role: "sub", parent: lead.id, name: "worker" }));
   h.store.saveItems(lead.id, [
     { kind: "user", text: "do it", files: [], at: 5, mentions: [], sender: "", intent: "" },
@@ -183,7 +183,11 @@ test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
   expect(part.mention).toMatchObject({ excerpt: true, text: "dusted", len: 6 });
   expect((await json("GET", `/v1/chats/${lead.id}/mention?seq=9`))[0]).toBe(404);
   const [, team] = await json("GET", `/v1/chats/${sub.id}/team`);
-  expect(team).toMatchObject({ lead: lead.id, agents: [{ id: sub.id, name: "worker", title: "Task", running: false, queued: 0, settled: false }], processes: [], wakeups: [], webhooks: [] });
+  expect(team).toMatchObject({ lead: lead.id, project_id: chat, agents: [{ id: sub.id, name: "worker", title: "Task", running: false, queued: 0, settled: false }], processes: [], wakeups: [], webhooks: [] });
+  h.store.addWebhook(chat, "deploys", "tok123", "Vercel");
+  h.engine.reload();
+  const [, withHooks] = await json("GET", `/v1/chats/${lead.id}/team`);
+  expect((withHooks.webhooks as { name: string; url: unknown; public: boolean }[]).map((w) => [w.name, typeof w.url, w.public])).toEqual([["deploys", "string", false]]);
   const [, usage] = await json("GET", "/v1/usage");
   expect(Object.keys(usage).sort()).toEqual(["accounts", "days", "projects"]);
   const [, versions] = await json("GET", "/v1/versions");
