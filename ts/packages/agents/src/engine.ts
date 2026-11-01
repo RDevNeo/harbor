@@ -1388,6 +1388,18 @@ export class Engine {
       .reduce((n, c) => n + (this.pending.get(c.id)?.length ?? 0), 0);
   }
 
+  /** Messages held for the chat: the queue's and those waiting for its turn to end (api.rs `queued_count`). */
+  queuedCount(id: number): number {
+    return this.queued(id).length + (this.pending.get(id)?.length ?? 0);
+  }
+
+  /** A phone or window opened the chat: its blue dot and failed mark go. True when it had either. */
+  opened(id: number): boolean {
+    const a = this.unread.delete(id);
+    const b = this.failed.delete(id);
+    return a || b;
+  }
+
   /** The lead's subagents with a turn running now, longest running first, with seconds running. */
   runningSubs(lead: number): [Chat, number][] {
     return this.subsOf(lead)

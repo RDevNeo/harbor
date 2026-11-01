@@ -56,7 +56,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 
 ## Unwired (honest, but not done)
 
-- Phone API: `pr`, `unread`, `failed` and a lead's `working` while its sub-agents run are fixed placeholders in `packages/net/src/phone.ts`; no data in the comparisons uses them. Owner: net.
+- Phone API: the `status` under a transcript (`/items`) still has fixed `working.subagents`/text, `waiting`, `limit`, `agents` and `folder` in `packages/net/src/phone.ts`. Chat `pr`, `unread`, `failed`, `working` and `queued` are real and compared with Rust (`packages/store/rig/chatstate.sh`). Owner: net.
 
 - Dictation: `dictate.Mesh` is wired in `hub.ts`; `Ask` reaches only `claude`, and not while a usage limit blocks it (the Engine holds store's `Limits` now).
 - `packages/media`: Whisper (built-in) never ran against a real model; `voice::builtin_downloads_and_transcribes` is ported up to the

@@ -54,6 +54,18 @@ async function request(sock: TLSSocket, method: string, path: string, auth: stri
 }
 
 describe("the phone API's chats (api.rs App side)", () => {
+  test("a_chat_is_exported_to_peers_with_its_pull_request_and_worktree_name", () => {
+    const store = Store.openAt(join(tmp, "export.db"));
+    const c = store.createChat(blankChat({ title: "mine" }));
+    const pr = { number: 7, state: "open", label: "PR #7 · Open", title: "Add it", url: "https://github.com/o/r/pull/7" };
+    const hub = new Hub([], 0);
+    const bare = new StoreReplica({ store, hub, version: "t" }).chats(0, true).chats[0] as Record<string, Json>;
+    expect([bare.pr, bare.worktree]).toEqual([null, null]);
+    const replica = new StoreReplica({ store, hub, version: "t", pr: (x) => (x.id === c.id ? pr : null), worktree: () => "fix-login" });
+    const out = replica.chats(0, true).chats[0] as Record<string, Json>;
+    expect([out.pr, out.worktree]).toEqual([pr, "fix-login"]);
+  });
+
   test("user_text_is_sent_in_parts_when_it_has_links_tags_or_commands", () => {
     const user = (text: string, mentions: Mention[] = []) => {
       const cards = project([{ kind: "user", text, files: [], at: 0, mentions, sender: "", intent: "" }], false, []);
@@ -232,6 +244,11 @@ describe("the phone API's chats (api.rs App side)", () => {
       recapSeen: (id) => {
         calls.push(`seen ${id}`);
       },
+      unread: () => false,
+      failed: () => false,
+      opened: () => false,
+      subsQueued: () => 0,
+      queuedCount: () => 0,
     };
     const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
     const c = store.createChat(blankChat({ title: "q", role: "lead", name: "lead" }));
@@ -284,6 +301,11 @@ describe("the phone API's chats (api.rs App side)", () => {
       queueResume: () => {},
       recap: () => [null, null],
       recapSeen: () => {},
+      unread: () => false,
+      failed: () => false,
+      opened: () => false,
+      subsQueued: () => 0,
+      queuedCount: () => 0,
     };
     const mesh = new Mesh({ hub, kv: new MemKv(), id: () => hubId, app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
     const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-test", myFp: () => hubId.fp, engine, uploadsDir: tmp });

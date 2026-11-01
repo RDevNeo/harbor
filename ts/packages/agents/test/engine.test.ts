@@ -120,6 +120,8 @@ describe("a chat's turn", () => {
     expect(saved?.started).toBe(true);
     expect(saved?.sessionId).toBe(c.sessionId);
     expect(e.unread.has(c.id)).toBe(true);
+    expect(e.opened(c.id)).toBe(true);
+    expect([e.unread.has(c.id), e.failed.has(c.id), e.opened(c.id)]).toEqual([false, false, false]);
     // Its folder is gone once its events are out.
     expect(readdirSync(detach.root()).filter((d) => d.startsWith(`${c.id}-`))).toEqual([]);
     store.close();

@@ -42,6 +42,15 @@ export interface PhoneEngine {
   recap(id: number): [string | null, string | null];
   /** A phone opened the chat: its recap counts as seen. */
   recapSeen(id: number): void;
+  /** Finished while nobody had the chat open, not opened since; whether that last turn failed. */
+  unread(id: number): boolean;
+  failed(id: number): boolean;
+  /** A phone opened the chat: both marks go; true when it had one. */
+  opened(id: number): boolean;
+  /** Messages held for a chat (api.rs `queued_count`). */
+  queuedCount(id: number): number;
+  /** Messages waiting for a lead's idle sub-agents. */
+  subsQueued(lead: number): number;
   /** The folder of the git worktree the chat works in, when it has one. */
   worktreeOf?(id: number): string | null;
 }
@@ -104,6 +113,8 @@ export interface PhoneDeps {
   runSettings?: RunSettings;
   /** Settings › Devices as the desktop lists them: the configured SSH devices and the tailnet's PCs, with whether each is online (null: not known). */
   devices?: () => [RemoteHost, boolean | null][];
+  /** The pull request of the branch a chat works on, as chat JSON `pr` says it (null: none); a copy's as its home PC says it. */
+  pr?: (chat: Chat) => Json;
 }
 
 export interface RunSettings {
@@ -294,6 +305,25 @@ export class PhoneRoutes {
     return !c.retired && (c.home === "" || this.d.hub.mesh.online(c.home));
   }
 
+  private since(id: number): number | null {
+    const own = this.d.engine?.runningSince(id) ?? null;
+    if (own !== null) return own;
+    const r = this.d.replica.remote.get(id);
+    return r?.running ? (r.sinceMs ?? Date.now()) : null;
+  }
+
+  /** api.rs `team_working`: a lead works while a sub-agent runs or has work queued. */
+  private teamWorking(c: Chat): boolean {
+    if (c.role !== "lead") return this.running(c);
+    const team = this.chats().filter((x) => x.id === c.id || (x.role === "sub" && x.parent === c.id));
+    return team.some((x) => this.since(x.id) !== null) || (this.d.engine?.subsQueued(c.id) ?? 0) > 0;
+  }
+
+  private queuedCount(c: Chat): number {
+    if (c.home !== "") return this.d.replica.remote.get(c.id)?.queued ?? 0;
+    return this.d.engine?.queuedCount(c.id) ?? 0;
+  }
+
   private running(c: Chat): boolean {
     if (c.home !== "") return this.d.replica.remote.get(c.id)?.running ?? false;
     return this.d.engine?.running(c.id) ?? false;
@@ -361,8 +391,8 @@ export class PhoneRoutes {
       settled: c.settled,
       retired: c.retired,
       running: this.running(c),
-      queued: c.home !== "" ? (this.d.replica.remote.get(c.id)?.queued ?? 0) : 0,
-      working: this.running(c),
+      queued: this.queuedCount(c),
+      working: this.teamWorking(c),
       updated_ms: c.updated * 1000,
       rev: hub.chatRev(c.id),
       gid: c.gid,
@@ -374,12 +404,12 @@ export class PhoneRoutes {
       main: this.isMain(c),
       typing: this.typing(c.id),
       draft: this.draft(c.id),
-      unread: false,
-      failed: false,
+      unread: this.d.engine?.unread(c.id) ?? false,
+      failed: this.d.engine?.failed(c.id) ?? false,
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),
       ...this.runSettings(c),
       worktree: this.worktree(c),
-      pr: null,
+      pr: this.d.pr?.(c) ?? null,
       snoozed_until_ms: this.snoozeUntil(`c${c.id}`) === null ? null : (this.snoozeUntil(`c${c.id}`) ?? 0) * 1000,
       snoozed_label: sidebartree.snoozedLabel(this.snoozeUntil(`c${c.id}`), now(), utcOffset(now())),
     };
@@ -533,6 +563,7 @@ export class PhoneRoutes {
     const hub = this.d.hub;
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
     this.d.engine?.recapSeen(c.id);
+    if (this.d.engine?.opened(c.id)) hub.bump();
     const forks = this.d.replica.remote.get(c.id)?.forks ?? [];
     const cards = project(items, c.role === "lead", forks);
     const revs = this.revs.get(c.id) ?? [];
@@ -561,7 +592,7 @@ export class PhoneRoutes {
         if (v.kind === "chat_link") v.chat = this.chats().find((x) => x.gid === v.gid)?.id ?? null;
         return v;
       });
-    return { rev: hub.rev(), count: items.length, running: this.running(c), queued: 0, typing: this.typing(c.id), draft: this.draft(c.id), status: this.status(c.id), items: out };
+    return { rev: hub.rev(), count: items.length, running: this.running(c), queued: this.queuedCount(c), typing: this.typing(c.id), draft: this.draft(c.id), status: this.status(c.id), items: out };
   }
 
   /** api.rs `api_route` for the calls this build answers. */

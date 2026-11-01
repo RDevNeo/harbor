@@ -42,6 +42,10 @@ export interface StoreReplicaOptions {
   update?: () => Json;
   about?: () => { owner: string; github: string; owner_suggested: boolean };
   followUp?: () => "steer" | "queue";
+  /** Its branch's pull request as chat JSON `pr` says it (null: none). */
+  pr?: (chat: Chat) => Json;
+  /** The name of the worktree folder a chat runs in. */
+  worktree?: (chat: Chat) => string | null;
 }
 
 /** A git remote as projects are matched by it: host and path, lowercase, no ".git". */
@@ -160,8 +164,8 @@ export class StoreReplica implements MeshApp {
       typing,
       draft: draft ? draftJson(draft) : null,
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),
-      worktree: null,
-      pr: null,
+      worktree: this.o.worktree?.(c) ?? null,
+      pr: this.o.pr?.(c) ?? null,
       cwd: this.cwd(c),
     };
   }

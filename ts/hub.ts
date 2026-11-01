@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
+import { basename, join } from "node:path";
+import { chatpr, commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
 import { dictate, media, parakeet, voice } from "./packages/media/src/index.ts";
 import {
   AccountService,
@@ -78,6 +78,7 @@ export interface RunningHub {
   mesh: Mesh;
   phone: PhoneRoutes;
   engine: Engine;
+  prs: chatpr.ChatPrs;
   services: Services;
   stop(): Promise<void>;
 }
@@ -165,7 +166,26 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   account.load();
   let services: Services | null = null;
   let phoneRoute: (call: Call) => Promise<Reply> = async () => err(503, "Harbor is starting");
+  const prs = new chatpr.ChatPrs({
+    store,
+    chats: () => store.chats(),
+    chat: (chatId) => store.chats().find((x) => x.id === chatId),
+    folders: (c) => {
+      const r = engine?.repo(c.repoId);
+      return engine && r ? { repo: repoDir(r), dir: engine.worktreeOf(c) ?? repoDir(r) } : null;
+    },
+    changed: (chatId) => hub.touch(chatId, true),
+  });
+  const prOf = (c: Chat): Json => {
+    const p = c.home !== "" ? chatpr.prFrom(replica.remote.get(c.id)?.pr) : prs.of(c);
+    return p ? asJson(chatpr.prJson(p)) : null;
+  };
   const replica = new StoreReplica({
+    pr: prOf,
+    worktree: (c) => {
+      const w = engine?.worktreeOf(c) ?? null;
+      return w === null ? null : basename(w);
+    },
     items: (chat) => (engine ? engine.transcript(chat).items : store.items(chat)),
     live: (chat) => {
       if (!engine) return null;
@@ -234,6 +254,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     version: o.version,
     myFp: () => id.fp,
     devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
+    pr: prOf,
     engine: null,
     uploadsDir,
     updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: providerUpdates() }),
@@ -275,6 +296,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
     keepMedia: (text, cwd) => media.keep(text, cwd),
+    turnEnded: (id) => prs.want(id, null),
     noteTurn: (id, sub, failed, said) => {
       const c = eng().chat(id);
       if (!c) return;
@@ -318,11 +340,17 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     queueResume: (id) => live.queueResume(id),
     recap: (id) => live.recaps.shownFor(id),
     recapSeen: (id) => live.recaps.seen(id),
+    unread: (id) => live.unread.has(id),
+    failed: (id) => live.failed.has(id),
+    opened: (id) => live.opened(id),
+    subsQueued: (lead) => live.subsQueued(lead),
+    queuedCount: (id) => live.queuedCount(id),
   };
   live.reattachTurns();
   let engineTimer: ReturnType<typeof setTimeout> | null = null;
   const engineTick = () => {
     const next = live.tick();
+    if (!offline) prs.sweep((c) => live.worktreeOf(c) !== null);
     engineTimer = setTimeout(engineTick, Math.min(Math.max(next ?? 1000, 50), 1000));
   };
   engineTick();
@@ -417,6 +445,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mesh,
     phone,
     engine: live,
+    prs,
     services,
     stop: async () => {
       clearInterval(tick);

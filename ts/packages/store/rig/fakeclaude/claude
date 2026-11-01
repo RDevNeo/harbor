@@ -1,0 +1,19 @@
+#!/usr/bin/python3
+import json, os, sys, time, uuid
+if '--version' in sys.argv: print('2.1.311 (Claude Code)'); sys.exit()
+if '-p' not in sys.argv: sys.exit(0)
+try: stdin=sys.stdin.readline()
+except Exception: stdin=''
+sid=str(uuid.uuid4())
+out=lambda o:(sys.stdout.write(json.dumps(o)+'\n'),sys.stdout.flush())
+out({"type":"system","subtype":"init","session_id":sid,"mcp_servers":[]})
+if 'boom' in stdin: sys.exit(1)
+secs=4.0 if 'hold' in stdin else 0.3
+text=''; t0=time.time(); i=0
+while time.time()-t0<secs:
+    d='word '
+    text+=d; i+=1
+    out({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":d}},"parent_tool_use_id":None,"session_id":sid})
+    time.sleep(0.025)
+out({"type":"assistant","message":{"content":[{"type":"text","text":text}]},"parent_tool_use_id":None,"session_id":sid})
+out({"type":"result","subtype":"success","is_error":False,"result":text,"duration_ms":int(secs*1000),"num_turns":1,"total_cost_usd":0.0,"usage":{"input_tokens":10,"output_tokens":i},"session_id":sid})
