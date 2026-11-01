@@ -85,6 +85,7 @@ Wiring left for the app (ports, not stubs; each has a default or a setter):
 - `hookcert.start({ kv, tokens, send, wake })`: `tokens` is the live webhooks' token set, `send` is control's hook sink.
 
 Not done: nothing from these four modules is missing. Not tested: a real Let's Encrypt or Pebble run (needs the internet), a real router.
+
 ## discord, discordhost, discordfreeze, discordrepair, discordsetup (src/discord*.rs -> src/discord*.ts)
 
 Done. Rust tests ported: 20 of 20 (freeze 3, setup 4, discord 4, repair 2, host 7), plus 49 tests that run the code against fakes:
@@ -115,6 +116,7 @@ and repair (a Claude run with only repair's MCP server, 3 attempts per failure, 
 - Added to the Rust behaviour for testing: `HARBOR_DISCORD_SHELL_URL` (base URL for the shell download; the files are still checked
   against `SHA256SUMS`) and a `sums` argument to `ensureElectron`. Downloads use `fetch` (redirects, three tries) instead of `curl`;
   the attachment fetch has the same limits as before (https only, Discord's CDN only, the byte cap, 45 s).
+- The shell is fetched at `HARBOR_DISCORD_REF`, else `HARBOR_GIT_SHA` (a build can set it), else `v<version>` (Rust took the commit at compile time).
 - The shell's `SHA256SUMS` is embedded with a text import of the repo's `discord/SHA256SUMS`, as Rust's `include_str!`.
 - Zip reading uses `node:zlib` and the central directory, no dependency.
 - The shell is started detached (own session and process group, so the whole tree can be frozen or killed), the engine's pid is
