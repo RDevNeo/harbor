@@ -51,7 +51,8 @@ component Header {
     in property <string> icon;
     in property <string> title;
     in property <int> count;
-    height: 24px;
+    // teamui.rs `header`: a `ui.horizontal`, at least interact_size.y tall.
+    height: 32px;
     HorizontalLayout {
         spacing: 6px;
         Glyph {
@@ -209,9 +210,9 @@ export component TeamPanel inherits Rectangle {
     border-color: Theme.border;
     Flickable {
         x: 12px;
-        y: 16px;
+        y: 12px;
         width: parent.width - 24px;
-        height: parent.height - 28px;
+        height: parent.height - 24px;
         content-height: col.preferred-height;
         col := VerticalLayout {
             width: parent.width;
@@ -238,7 +239,7 @@ export component TeamPanel inherits Rectangle {
                 }
             }
             if root.procs.length > 0: Rectangle {
-                height: 8px;
+                height: 0px;
             }
             if root.procs.length > 0: Header {
                 icon: Icons.activity;
@@ -341,7 +342,7 @@ export component TeamPanel inherits Rectangle {
                 }
             }
             Rectangle {
-                height: 8px;
+                height: 0px;
             }
             Header {
                 icon: Icons.alarm;
@@ -408,7 +409,7 @@ export component TeamPanel inherits Rectangle {
                 }
             }
             if root.has-project: Rectangle {
-                height: 8px;
+                height: 0px;
             }
             if root.has-project: Header {
                 icon: Icons.webhook;
@@ -477,17 +478,25 @@ export component TeamPanel inherits Rectangle {
                     }
                 }
             }
+            // teamui.rs: 8px, then egui's CollapsingHeader (a 32px row, its filled triangle, the body indented 18px).
             if root.earlier.length > 0: Rectangle {
-                height: 30px;
+                height: 38px;
                 HorizontalLayout {
                     y: 6px;
-                    height: 24px;
+                    height: 32px;
                     spacing: 6px;
-                    Glyph {
+                    Rectangle {
                         width: 12px;
-                        icon: root.earlier-open ? Icons.down : Icons.right;
-                        size: 12px;
-                        color: Theme.subtle;
+                        Path {
+                            x: 6px;
+                            y: (parent.height - 6px) / 2;
+                            width: 6px;
+                            height: 6px;
+                            viewbox-width: 6;
+                            viewbox-height: 6;
+                            commands: root.earlier-open ? "M 0 0 L 6 0 L 3 6 Z" : "M 0 0 L 6 3 L 0 6 Z";
+                            fill: Theme.subtle;
+                        }
                     }
                     Text {
                         text: "Earlier chats (" + root.earlier.length + ")";
@@ -505,6 +514,7 @@ export component TeamPanel inherits Rectangle {
                 }
             }
             if root.earlier-open: VerticalLayout {
+                padding-left: 18px;
                 spacing: 2px;
                 for c in root.earlier: MenuRow {
                     icon: Icons.message;

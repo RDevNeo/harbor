@@ -705,7 +705,9 @@ export component AppWindow inherits Window {
                             HorizontalLayout {
                                 padding: 16px;
                                 spacing: 12px;
+                                // A 32px row in egui, and its frame's stroke drawn outside it.
                                 Text {
+                                    min-height: 34px;
                                     horizontal-stretch: 1;
                                     text: root.read-only-text;
                                     font-size: 14px;

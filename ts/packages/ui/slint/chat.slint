@@ -131,6 +131,7 @@ component UserBubble {
     in property <CardData> card;
     in property <length> avail;
     callback link(string);
+    callback open-media(string);
     property <length> hug: max(measure.preferred-width, from-measure.preferred-width);
     measure := StyledText {
         visible: false;
@@ -143,7 +144,9 @@ component UserBubble {
         text: root.card.sender != "" ? "from " + root.card.sender : "";
         font-size: 12px;
     }
-    property <length> w: max(min(hug + 2px, avail * 0.8 - 28px), 40px) + 28px;
+    // chat.rs: at least 220px with files, three thumbnails' width with images.
+    property <length> need: max(hug, root.card.files.length > 0 ? 220px : 0px, root.card.media.length > 0 ? min(3, root.card.media.length) * 140px - 8px : 0px);
+    property <length> w: max(min(need + 2px, avail * 0.8 - 28px), 40px) + 28px;
     VerticalLayout {
         spacing: 2px;
         if root.card.steer: HorizontalLayout {
@@ -176,7 +179,31 @@ component UserBubble {
                     padding-right: 14px;
                     padding-top: 10px;
                     padding-bottom: 9px;
-                    spacing: 4px;
+                    spacing: Theme.compact ? 8px : 12px;
+                    if root.card.media.length > 0: HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        for m in root.card.media: Rectangle {
+                            width: 132px;
+                            height: 96px;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            clip: true;
+                            Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: m.image;
+                                image-fit: cover;
+                            }
+                            TipArea {
+                                tip: m.path;
+                                clicked => {
+                                    root.open-media(m.path);
+                                }
+                            }
+                        }
+                    }
                     body := StyledText {
                         text: root.card.blocks[0].text;
                         default-font-size: 14px;
@@ -187,27 +214,39 @@ component UserBubble {
                             root.link(u);
                         }
                     }
-                    for f in root.card.files: HorizontalLayout {
-                        spacing: 6px;
+                    for f in root.card.files: Rectangle {
+                        min-height: file-name.min-height;
+                        preferred-height: file-name.preferred-height;
                         Glyph {
+                            x: 0;
+                            y: 2px;
                             width: 12px;
+                            height: 12px;
                             icon: Icons.clip;
                             size: 12px;
                             color: Theme.subtle;
                         }
-                        Text {
-                            text: f;
-                            font-size: 12px;
-                            color: Theme.subtle;
-                            overflow: elide;
+                        file-name := VerticalLayout {
+                            padding-left: 18px;
+                            Text {
+                                text: f;
+                                font-size: 12px;
+                                color: Theme.subtle;
+                                wrap: word-wrap;
+                            }
                         }
                     }
-                    if root.card.sender != "": Text {
-                        text: "from " + root.card.sender;
-                        font-size: 12px;
-                        color: Theme.subtle;
-                        horizontal-alignment: right;
-                        overflow: elide;
+                    // chat.rs pulls "from …" 6px up.
+                    if root.card.sender != "": Rectangle {
+                        height: from-text.preferred-height - 6px;
+                        from-text := Text {
+                            y: -6px;
+                            text: "from " + root.card.sender;
+                            font-size: 12px;
+                            color: Theme.subtle;
+                            horizontal-alignment: right;
+                            overflow: elide;
+                        }
                     }
                 }
             }
@@ -287,6 +326,9 @@ export component CardView inherits TouchArea {
             link(u) => {
                 root.link(u);
             }
+            open-media(p) => {
+                root.open-media(p);
+            }
         }
         if root.card.kind == "text": VerticalLayout {
             spacing: 0px;
@@ -301,8 +343,9 @@ export component CardView inherits TouchArea {
                 }
             }
         }
+        // egui's `ui.horizontal` is at least interact_size.y (32px) tall.
         if root.card.kind == "group": HorizontalLayout {
-            height: 18px;
+            height: 32px;
             spacing: 6px;
             alignment: start;
             Glyph {
@@ -318,7 +361,7 @@ export component CardView inherits TouchArea {
                 vertical-alignment: center;
             }
             if root.card.pending && root.running: Spinner {
-                y: 3px;
+                y: 10px;
                 size: 12px;
             }
             TouchArea {
@@ -333,14 +376,23 @@ export component CardView inherits TouchArea {
         }
         if root.card.kind == "thinking": VerticalLayout {
             spacing: 4px;
+            // egui's CollapsingHeader: its filled triangle, then the label.
             HorizontalLayout {
+                height: 32px;
                 spacing: 6px;
                 alignment: start;
-                Glyph {
-                    width: 13px;
-                    icon: root.card.open ? Icons.down : Icons.right;
-                    size: 12px;
-                    color: Theme.subtle;
+                Rectangle {
+                    width: 12px;
+                    Path {
+                        x: 6px;
+                        y: (parent.height - 6px) / 2;
+                        width: 6px;
+                        height: 6px;
+                        viewbox-width: 6;
+                        viewbox-height: 6;
+                        commands: root.card.open ? "M 0 0 L 6 0 L 3 6 Z" : "M 0 0 L 6 3 L 0 6 Z";
+                        fill: Theme.subtle;
+                    }
                 }
                 Glyph {
                     width: 13px;
@@ -352,6 +404,7 @@ export component CardView inherits TouchArea {
                     text: "Thinking";
                     font-size: 13px;
                     color: Theme.subtle;
+                    vertical-alignment: center;
                 }
             }
             if root.card.open: Text {
@@ -451,8 +504,8 @@ export component CardView inherits TouchArea {
             box6 := VerticalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
-                padding-top: 8px;
-                padding-bottom: 8px;
+                padding-top: 9px;
+                padding-bottom: 9px;
                 Text {
                     text: root.card.text;
                     font-family: "Geist Mono";
@@ -538,8 +591,8 @@ export component CardView inherits TouchArea {
                 }
             }
         }
-        if root.card.media.length > 0: HorizontalLayout {
-            alignment: root.card.kind == "user" ? LayoutAlignment.end : LayoutAlignment.start;
+        if root.card.media.length > 0 && root.card.kind != "user": HorizontalLayout {
+            alignment: LayoutAlignment.start;
             padding-left: root.card.kind == "tool" ? 30px : 0px;
             spacing: 8px;
             for m in root.card.media: Rectangle {
