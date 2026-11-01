@@ -691,7 +691,7 @@ export component AppWindow inherits Window {
                     }
                     composer-box := VerticalLayout {
                         x: body.side;
-                        y: body.centred ? body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px) : parent.height - self.height;
+                        y: body.centred ? floor((body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px)) / 1px) * 1px : parent.height - self.height;
                         width: body.column;
                         height: self.preferred-height;
                         padding-top: body.centred ? 0px : 8px;

@@ -116,13 +116,15 @@ export component MdBlockView {
                 }
             }
         }
-        // egui's frame stroke sits outside the code's rect: a pixel wider each side.
+        // egui strokes the frame outside the code's rect: a pixel past it on every side.
         if root.block.kind == "code": Rectangle {
             min-height: box0.min-height;
             preferred-height: box0.preferred-height;
             Rectangle {
                 x: -1px;
+                y: -1px;
                 width: parent.width + 2px;
+                height: parent.height + 2px;
                 background: Theme.bg200;
                 border-width: 1px;
                 border-color: Theme.border;
@@ -131,8 +133,8 @@ export component MdBlockView {
             box0 := VerticalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
-                padding-top: 8px;
-                padding-bottom: 7px;
+                padding-top: 7px;
+                padding-bottom: 6px;
                 Text {
                     text: root.block.code;
                     font-family: "Geist Mono";

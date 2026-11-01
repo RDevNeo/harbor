@@ -340,7 +340,7 @@ export component Composer {
         clip.text = "";
     }
     property <length> line: 20px;
-    property <length> text-h: min(max(field.preferred-height, 3 * line + 3px), root.max-h);
+    property <length> text-h: min(max(field.preferred-height, 3 * line + 2px), root.max-h);
     VerticalLayout {
         spacing: 8px;
         if root.strip-rows.length > 0: AgentStrip {
@@ -427,8 +427,8 @@ export component Composer {
             VerticalLayout {
                 padding-left: 18px;
                 padding-right: 14px;
-                padding-top: 16px;
-                padding-bottom: 12px;
+                padding-top: 17px;
+                padding-bottom: 14px;
                 spacing: 0px;
                 if root.state.typing != "": HorizontalLayout {
                     alignment: end;

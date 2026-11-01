@@ -1698,6 +1698,7 @@ export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
   if (hooks.restore) shell.restore(hooks.restore);
   hooks.snapshotWith?.(() => shell.snapshot());
   win.show();
+  win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
   hooks.shown?.();
   const tick = setInterval(() => shell.tick(), 1000);
