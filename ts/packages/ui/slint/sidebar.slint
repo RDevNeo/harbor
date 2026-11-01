@@ -22,6 +22,7 @@ component ThreadRow {
     callback open();
     callback settle(bool);
     callback snooze();
+    // At the pointer, in window coordinates.
     callback menu(length, length);
     property <bool> hovering: area.has-hover || settle-btn.hovered || snooze-btn.hovered;
     property <bool> indented: data.kind == "thread";
@@ -38,7 +39,7 @@ component ThreadRow {
             }
             pointer-event(e) => {
                 if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
-                    root.menu(self.mouse-x, self.mouse-y);
+                    root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                 }
             }
         }
@@ -118,7 +119,7 @@ component ProjectRow {
         }
         pointer-event(e) => {
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
-                root.menu(self.mouse-x, self.mouse-y);
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
     }
@@ -329,7 +330,7 @@ export component Sidebar inherits Rectangle {
                                 root.snooze("r" + r.id, self.absolute-position.x + self.width, self.absolute-position.y);
                             }
                             menu(x, y) => {
-                                root.project-menu(r.id, self.absolute-position.x + x, self.absolute-position.y + y);
+                                root.project-menu(r.id, x, y);
                             }
                         }
                     }
@@ -345,7 +346,7 @@ export component Sidebar inherits Rectangle {
                             root.snooze("c" + r.id, self.absolute-position.x + self.width, self.absolute-position.y);
                         }
                         menu(x, y) => {
-                            root.chat-menu(r.id, self.absolute-position.x + x, self.absolute-position.y + y);
+                            root.chat-menu(r.id, x, y);
                         }
                     }
                     if r.kind == "label": VerticalLayout {
@@ -413,7 +414,7 @@ export component Sidebar inherits Rectangle {
                         root.settle(r.id, on);
                     }
                     menu(x, y) => {
-                        root.chat-menu(r.id, self.absolute-position.x + x, self.absolute-position.y + y);
+                        root.chat-menu(r.id, x, y);
                     }
                 }
             }

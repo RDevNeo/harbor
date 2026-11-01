@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as slint from "slint-ui";
@@ -102,8 +102,10 @@ export class Shell {
 
   /** Images in the transcript, once the media package is loaded. */
   useMedia(pkg: typeof import("@harbor/media")): void {
+    this.media = pkg;
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId));
   }
+  private media: typeof import("@harbor/media") | null = null;
   private stripFold = new Map<number, boolean>();
   private popActions: (() => void)[] = [];
   private dialogAction: ((ok: boolean, input: string) => void) | null = null;
@@ -705,18 +707,31 @@ export class Shell {
   /** A project's icon (sidebar.rs `avatar`): its own or its website's, looked up once; null: the initial. */
   private avatar(repo: number): Pixels | null {
     if (this.avatars.has(repo)) return this.avatars.get(repo) ?? null;
+    this.loadIcon(repo, false);
+    return null;
+  }
+
+  /** sidebar.rs `load_icon`: `refresh` looks the website's icon up again. */
+  private loadIcon(repo: number, refresh: boolean): void {
     this.avatars.set(repo, null);
     const r = this.data.repo(repo);
-    if (!r) return null;
+    if (!r) return;
     void import("@harbor/media")
-      .then(({ favicon }) => favicon.resolve(repo, r.local ?? r.path, r.name, false, !this.data.offline))
+      .then(({ favicon }) => favicon.resolve(repo, r.local ?? r.path, r.name, refresh, !this.data.offline))
       .then((img) => {
-        if (!img) return;
         this.avatars.set(repo, img);
         this.refreshSidebar();
       })
       .catch(() => {});
-    return null;
+  }
+
+  /** sidebar.rs `pick_icon`: an image of the user's own as the project's icon. */
+  private async pickIcon(repo: number): Promise<void> {
+    const r = this.data.repo(repo);
+    if (!r) return;
+    const { favicon, picker } = await import("@harbor/media");
+    const [file] = await picker.pick({ title: "Project icon", filter: ["Images", picker.IMAGES], dir: r.local ?? r.path });
+    if (file !== undefined && favicon.setCustom(repo, file)) this.loadIcon(repo, false);
   }
 
   private setSettled(id: number, on: boolean): void {
@@ -1221,7 +1236,7 @@ export class Shell {
   }
 
 
-  private popup(id: string, x: number, y: number, items: (PopItem & { act?: () => void })[], width = 240, above = false): void {
+  private popup(id: string, x: number, y: number, items: (PopItem & { act?: () => void })[], width = 240, above = false, native = false): void {
     const w = this.win;
     this.popActions = items.map((i) => i.act ?? (() => {}));
     sync(
@@ -1232,6 +1247,7 @@ export class Shell {
     w.pop_y = y;
     w.pop_w = width;
     w.pop_above = above;
+    w.pop_native = native;
     w.pop_id = id;
   }
 
@@ -1410,9 +1426,10 @@ export class Shell {
   private chatMenu(id: number, x: number, y: number): void {
     const c = this.data.chat(id);
     if (!c) return;
-    const items: (PopItem & { act?: () => void })[] = [this.item("Rename", () => this.renameDialog(id)), this.item(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled))];
+    const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, extra), kind: "native" as const });
+    const items: (PopItem & { act?: () => void })[] = [native("Rename", () => this.renameDialog(id)), native(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled))];
     if (c.role === "lead" && c.repoId !== null && this.data.repo(c.repoId)) {
-      items.push(this.item("Make main chat", () => this.makeMain(id), { desc: "The project's row opens this chat" }));
+      items.push(native("Make main chat", () => this.makeMain(id), { desc: "The project's row opens this chat, and what you write on the project's page goes here" }));
     }
     if (c.role !== "sub") {
       let why = "";
@@ -1421,10 +1438,11 @@ export class Shell {
       } catch (e) {
         why = e instanceof Error ? e.message : String(e);
       }
-      items.push(why === "" ? this.item("Move to project…", () => this.moveMenu(id, x, y)) : this.item("Move to project…", () => {}, { enabled: false, desc: why }));
+      items.push(why === "" ? native("Move to project…", () => this.moveMenu(id, x, y), { badge: "submenu" }) : native("Move to project…", () => {}, { enabled: false, desc: why }));
+      items.push(native("Move to PC…", () => {}, { enabled: false, desc: "Moving a chat to another PC isn't in the TypeScript app yet" }));
     }
-    items.push(this.separator(), this.item("Delete", () => this.deleteDialog(id), { icon: ICONS.TRASH }));
-    this.popup("chat", x, y, items, 240);
+    items.push(native("Delete", () => this.deleteDialog(id)));
+    this.popup("chat", x, y, items, 240, false, true);
   }
 
   /** team.rs `make_main`: the chat becomes its project's main chat (back from Settled or snooze). */
@@ -1459,19 +1477,32 @@ export class Shell {
     setTimeout(() => this.popup("move", x, y, items, 280), 0);
   }
 
+  /** sidebar.rs's project row menu, egui's own context menu. */
   private projectMenu(id: number, x: number, y: number): void {
-    const items: (PopItem & { act?: () => void })[] = [];
+    const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, extra), kind: "native" as const });
     const stored = this.data.repo(id)?.remote ?? "";
     const remote = this.gitStatus.get(id)?.remote ?? (stored === "" ? null : git.webUrl(stored));
-    if (remote) items.push(this.item("Open remote", () => this.openExternal(remote), { icon: ICONS.EXTERNAL }));
+    const github = remote !== null && /^https:\/\/github\.com\//.test(remote);
+    const items: (PopItem & { act?: () => void })[] = [native("Open terminal", () => this.unported("Terminal"), { icon: ICONS.TERMINAL })];
+    if (github) items.push(native("Pull requests", () => this.unported("Pull requests"), { icon: ICONS.PULL }), native("Issues", () => this.unported("Issues"), { icon: ICONS.CIRCLE_DOT }));
+    if (remote) items.push(native("Open remote", () => this.openExternal(remote), { icon: ICONS.EXTERNAL }));
     const main = this.data.mainChat(id);
     if (main !== null) {
-      if (items.length > 0) items.push(this.separator());
-      items.push(this.item("Rename main chat", () => this.renameDialog(main)), this.item("Settle main chat", () => this.setSettled(main, true), { desc: "The project's next message starts a new main chat" }));
+      items.push(this.separator(), native("Rename main chat", () => this.renameDialog(main)), native("Settle main chat", () => this.setSettled(main, true), { desc: "It goes to Settled; the project's next message starts a new main chat" }));
     }
-    if (items.length > 0) items.push(this.separator());
-    items.push(this.item("Remove from Harbor", () => this.removeRepoDialog(id), { icon: ICONS.TRASH }));
-    this.popup("project-row", x, y, items, 260);
+    items.push(this.separator(), native("Refresh icon", () => this.loadIcon(id, true)), native("Choose icon…", () => void this.pickIcon(id)));
+    if (this.media !== null && existsSync(this.media.favicon.customPath(id))) {
+      items.push(
+        native("Use website icon", () => {
+          void import("@harbor/media").then(({ favicon }) => {
+            favicon.clearCustom(id);
+            this.loadIcon(id, false);
+          });
+        }),
+      );
+    }
+    items.push(this.separator(), native("Remove from Harbor", () => this.removeRepoDialog(id)));
+    this.popup("project-row", x, y, items, 260, false, true);
   }
 
   /** sidebar.rs `snooze_menu`: presets, a time typed by hand with its preview, Unsnooze. */
