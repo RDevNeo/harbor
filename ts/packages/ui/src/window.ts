@@ -223,6 +223,7 @@ export interface AppWindow extends slint.ComponentHandle {
   team_wakeups: slint.Model<WakeRow>;
   team_hooks: slint.Model<HookRow>;
   team_procs: slint.Model<ProcItem>;
+  team_earlier: slint.Model<{ id: number; title: string; ago: string }>;
   proc_stop: (id: number) => void;
   proc_toggle: (id: number) => void;
   proc_open: (url: string) => void;

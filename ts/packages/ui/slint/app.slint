@@ -10,10 +10,10 @@ import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
 import { Composer, ComposerState, MenuEntry, StripRow, FileItem } from "composer.slint";
 import { MdBlock } from "markdown.slint";
-import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem } from "team.slint";
+import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
 
-export { Theme, Icons, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem }
+export { Theme, Icons, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem, EarlierChat }
 
 export struct PopItem {
     kind: string,
@@ -353,6 +353,7 @@ export component AppWindow inherits Window {
     in property <[WakeRow]> team-wakeups;
     in property <[HookRow]> team-hooks;
     in property <[ProcItem]> team-procs;
+    in property <[EarlierChat]> team-earlier;
     callback proc-stop(int);
     callback proc-toggle(int);
     callback proc-open(string);
@@ -603,6 +604,10 @@ export component AppWindow inherits Window {
                         wakeups: root.team-wakeups;
                         hooks: root.team-hooks;
                         procs: root.team-procs;
+                        earlier: root.team-earlier;
+                        open-chat(id) => {
+                            root.open-chat(id);
+                        }
                         proc-stop(id) => {
                             root.proc-stop(id);
                         }

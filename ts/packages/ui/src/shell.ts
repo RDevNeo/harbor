@@ -13,11 +13,11 @@ import { isImage } from "./logic/images.ts";
 import { Keys } from "./logic/keys.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { localHm, until } from "./logic/team.ts";
-import { agentCard, agentSettled, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
+import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
 import { control } from "@harbor/mcp";
 import { Data } from "./data.ts";
 import { ICONS, type IconName } from "./icons.ts";
-import { tilde } from "./logic/app.ts";
+import { ago, tilde } from "./logic/app.ts";
 import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
 import { defuse, imageCount, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -85,6 +85,7 @@ export class Shell {
   private hookRows = new slint.ArrayModel<HookRow>([]);
   private procRows = new slint.ArrayModel<ProcItem>([]);
   private procsOpen = new Set<number>();
+  private earlierRows = new slint.ArrayModel<{ id: number; title: string; ago: string }>([]);
   private logos = new Map<string, Pixels>();
   private railItems = new slint.ArrayModel<RailItem>([]);
   private modelRows = new slint.ArrayModel<ModelRow>([]);
@@ -142,6 +143,7 @@ export class Shell {
     win.team_wakeups = this.wakeRows;
     win.team_hooks = this.hookRows;
     win.team_procs = this.procRows;
+    win.team_earlier = this.earlierRows;
     win.team_on = data.store.get("show_team") !== "0";
     win.team_settled_open = data.store.get("agents_settled_open") === "1";
     this.wire();
@@ -456,8 +458,14 @@ export class Shell {
       sync(this.wakeRows, []);
       sync(this.hookRows, []);
       sync(this.procRows, []);
+      sync(this.earlierRows, []);
       return;
     }
+    sync(
+      this.earlierRows,
+      lead.repoId === null ? [] : earlierChats(this.data.chats, lead.repoId).map((c) => ({ id: c.id, title: c.title, ago: ago(c.updated, now()) })),
+      sameJson,
+    );
     sync(
       this.procRows,
       this.engine.procs
@@ -1465,6 +1473,10 @@ export async function run(data: Data): Promise<void> {
   const shell = new Shell(win, data);
   data.onChange = (id) => shell.changed(id);
   data.visible = (id) => shell.showing(id);
+  data.onNotificationOpen = (gids) => {
+    const c = data.chats.find((x) => gids.includes(x.gid));
+    if (c) shell.openChat(c.id);
+  };
   data.engine.reattachTurns();
   void import("@harbor/media").then((pkg) => {
     shell.useMedia(pkg);

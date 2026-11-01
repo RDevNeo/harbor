@@ -44,8 +44,8 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | chatmention | done as logic; `$chat` menu works and the mention is kept on the message; the context sent to the agent (`fillChatMention`) waits for the agents Engine | 4 of 4 |
 | keys | done: the window's shortcuts go through `Keys` with the user's kv `keybindings` (send, send the other way, steer with the oldest queued, stop, sidebar, new thread, team, palette, settings) | 1 of 1 |
 | agentstrip | done as logic; not drawn yet | 4 of 4 |
-| teamui | done: the team panel beside a lead chat (agents with Settle / Stop, processes with their URL, Stop and output, wake-ups with Wake now / Cancel, webhooks with Copy / Delete, Settled); earlier chats not drawn yet; a process's URL opens in the desktop's browser, not Harbor's | 0 of 0 |
-| app | partial: window, views, turns through the Engine, theme (following Omarchy), density, last chat; `ago`, `tilde`, `clipMiddle` and the rest of its pure functions in `logic/app.ts` | 2 of 2 |
+| teamui | done: the team panel beside a lead chat (agents with Settle / Stop, processes with their URL, Stop and output, wake-ups with Wake now / Cancel, webhooks with Copy / Delete, Settled, Earlier chats); a process's URL opens in the desktop's browser, not Harbor's | 0 of 0 |
+| app | partial: window, views, turns through the Engine, theme (following Omarchy), density, last chat, desktop notifications when a chat off screen finishes or needs you (`@harbor/net`'s notifier; a click opens the chat); `ago`, `tilde`, `clipMiddle` and the rest of its pure functions in `logic/app.ts` | 2 of 2 |
 | main | partial: `harbor` with no command opens the window (ts/harbor.ts calls `openWindow()` after `wire()`); the phone hub isn't started with it yet (`harbor --background` runs it alone) | 0 of 0 |
 | pages, palette, addproject, terminal, browser, tray, background, remoteui, accountui, phonesui, secretsui, listdetail, prs, issues, prdetail, issuedetail | not started (the queue's "ui pages" item); their buttons say so in a dialog | 0 of 0 |
 

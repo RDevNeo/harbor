@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, Glyph, Badge, Tone, TipArea, AccountMark, Variant } from "widgets.slint";
+import { Btn, Glyph, Badge, Tone, TipArea, AccountMark, Variant, MenuRow } from "widgets.slint";
 
 export struct AgentRow {
     id: int,
@@ -30,6 +30,12 @@ export struct HookRow {
     calls: string,
     description: string,
     url: string,
+}
+
+export struct EarlierChat {
+    id: int,
+    title: string,
+    ago: string,
 }
 
 export struct ProcItem {
@@ -182,6 +188,9 @@ export component TeamPanel inherits Rectangle {
     in property <[WakeRow]> wakeups;
     in property <[HookRow]> hooks;
     in property <[ProcItem]> procs;
+    in property <[EarlierChat]> earlier;
+    in-out property <bool> earlier-open;
+    callback open-chat(int);
     in property <bool> has-project;
     in-out property <bool> settled-open;
     callback open-agent(int);
@@ -465,6 +474,45 @@ export component TeamPanel inherits Rectangle {
                         font-size: 12px;
                         color: Theme.subtle;
                         wrap: word-wrap;
+                    }
+                }
+            }
+            if root.earlier.length > 0: Rectangle {
+                height: 30px;
+                HorizontalLayout {
+                    y: 6px;
+                    height: 24px;
+                    spacing: 6px;
+                    Glyph {
+                        width: 12px;
+                        icon: root.earlier-open ? Icons.down : Icons.right;
+                        size: 12px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        text: "Earlier chats (" + root.earlier.length + ")";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { }
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.earlier-open = !root.earlier-open;
+                    }
+                }
+            }
+            if root.earlier-open: VerticalLayout {
+                spacing: 2px;
+                for c in root.earlier: MenuRow {
+                    icon: Icons.message;
+                    label: c.title;
+                    right: c.ago;
+                    right-color: Theme.gray-800;
+                    clicked => {
+                        root.open-chat(c.id);
                     }
                 }
             }

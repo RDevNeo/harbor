@@ -2,6 +2,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Account, Engine, providers } from "@harbor/agents";
+import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { Chat, Item, Repo, Store, Timer } from "@harbor/store";
 import { prompt as mentionsPrompt } from "./logic/mentions.ts";
 import { expands, personalDir, slashPrompt } from "./logic/slash.ts";
@@ -16,16 +17,27 @@ export class Data {
   onChange: (chatId: number | null) => void = () => {};
   /** The chat is on screen with the window focused. */
   visible: (chatId: number) => boolean = () => false;
+  /** A notification was clicked: open these chats (global ids). */
+  onNotificationOpen: (gids: string[]) => void = () => {};
+  readonly notifier: Notifier;
 
   constructor(store: Store) {
     this.store = store;
     this.accounts = providers.discover();
+    const desktop = new Desktop({ send: spawnNotifySend, prefs: loadPrefs(store), onOpen: () => this.onNotificationOpen(desktop.takeOpen()) });
+    this.notifier = new Notifier({ notes: new Notes(), desktop });
     this.engine = new Engine({
       store,
       accounts: () => this.accounts,
       changed: (id) => this.onChange(id),
       visible: (id) => this.visible(id),
       slashPrompt: (id, text, files) => this.slashPrompt(id, text, files),
+      noteTurn: (id, sub, failed, said) => {
+        const c = this.chat(id);
+        if (!c || this.visible(id)) return;
+        const project = c.repoId === null ? null : (this.repo(c.repoId)?.name ?? null);
+        this.notifier.noteTurn({ gid: c.gid, title: c.title, name: c.name, home: c.home, project }, sub, failed, said);
+      },
       mentionsPrompt: (ms) => mentionsPrompt(ms.map((m) => ({ ...m, kind: m.kind === "chat" ? "chat" : "" }))),
     });
   }
