@@ -1,6 +1,7 @@
 // Preloaded by cost.py when HTS_LOOPSTATS=1; it reads $HTS_LOOPSTATS_OUT.
 import { createRequire } from "node:module";
 import { appendFileSync } from "node:fs";
+import { heapStats } from "bun:jsc";
 
 interface Slot { n: number; cpu: number; wall: number; max: number }
 const req = createRequire(import.meta.url);
@@ -58,6 +59,9 @@ setInterval(() => {
     process_events: { calls_s: Math.round((pe.n / dt) * 10000) / 10, cpu_pct: pct(pe.cpu), wall_pct: pct(pe.wall), max_ms: Math.round(pe.max * 10) / 10 },
     set_property: { cpu_pct: pct(setCpu), top },
     rest_cpu_pct: pct(total - pe.cpu - setCpu),
+    js_heap_mb: Math.round(heapStats().heapSize / 1048576),
+    js_heap_capacity_mb: Math.round(heapStats().heapCapacity / 1048576),
+    js_extra_mb: Math.round(heapStats().extraMemorySize / 1048576),
   }) + "\n");
   pe = slot();
   props = new Map();

@@ -203,7 +203,51 @@ def shot(path):
     subprocess.run(["grim", path], env=dict(os.environ, XDG_RUNTIME_DIR=RT, WAYLAND_DISPLAY="wayland-1"))
 
 
+def keys(pid):
+    """From just before each wtype to the app reading the key, and to its next commit (WAYLAND_DEBUG stamps UTC)."""
+    env = dict(os.environ, XDG_RUNTIME_DIR=RT, WAYLAND_DISPLAY="wayland-1")
+    log = f"{TMP}/app.log"
+    start = os.path.getsize(log)
+    sent = []
+    for _ in range(15):
+        # wtype drops its first key: F13 goes first, x 300 ms later (wtype's own start is in every number).
+        t = time.time() + 0.3
+        subprocess.run(["wtype", "-k", "F13", "-s", "300", "x"], env=env)
+        sent.append(t)
+        time.sleep(1.2 + 0.1 * (len(sent) % 5))
+    time.sleep(1)
+    day = time.time() // 86400 * 86400
+    events = []
+    for l in open(log, errors="replace").read()[start:].splitlines():
+        if not l.startswith("[") or len(l) < 17:
+            continue
+        h, m, sec = l[1:16].split(":")
+        t = day + int(h) * 3600 + int(m) * 60 + float(sec)
+        if ".key(" in l and l.rstrip().endswith(", 1)"):
+            events.append((t, "key"))
+        elif "wl_surface" in l and ".commit()" in l:
+            events.append((t, "commit"))
+    read, frame = [], []
+    for t0 in sent:
+        k = next((t for t, e in events if e == "key" and t >= t0), None)
+        if k is None:
+            continue
+        c = next((t for t, e in events if e == "commit" and t >= k), None)
+        read.append(round((k - t0) * 1000, 1))
+        if c is not None:
+            frame.append(round((c - t0) * 1000, 1))
+    med = lambda v: sorted(v)[len(v) // 2] if v else None
+    return {"send_to_read_ms": sorted(read), "send_to_frame_ms": sorted(frame), "median_read_ms": med(read), "median_frame_ms": med(frame)}
+
+
 def stage(name):
+    if name == "keys":
+        p, pid = start({"WAYLAND_DEBUG": "client"})
+        try:
+            time.sleep(SETTLE)
+            return keys(pid)
+        finally:
+            stop(p, pid)
     if name == "idle":
         p, pid = start({})
     elif name == "chat":

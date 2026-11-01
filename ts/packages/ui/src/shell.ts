@@ -1474,25 +1474,49 @@ export class Shell {
     this.refreshAll();
   }
 
-  /** The Engine changed chat `id` (null: several): redrawn at most every 50 ms while it streams. */
+  /**
+   * The Engine changed chat `id` (null: several). While a reply streams, the open transcript is redrawn at most
+   * every 50 ms, the rest of the window and the sidebar at most every 250 ms.
+   */
   changed(id: number | null): void {
     if (id === null || (this.view === "chat" && id === this.chatId)) this.cardsDirty = true;
     this.sidebarDirty = true;
-    if (this.flush !== null) return;
+    this.schedule(50);
+  }
+
+  private schedule(ms: number): void {
+    const due = performance.now() + ms;
+    if (this.flush !== null) {
+      if (this.flushDue <= due) return;
+      clearTimeout(this.flush);
+    }
+    this.flushDue = due;
     this.flush = setTimeout(() => {
       this.flush = null;
+      const t = performance.now();
+      const slow = t - this.restAt >= 250;
       if (this.cardsDirty) {
         this.cardsDirty = false;
-        this.refreshView();
-      }
-      if (this.sidebarDirty) {
+        if (slow) this.refreshView();
+        else {
+          this.refreshCards();
+          this.viewDirty = true;
+        }
+      } else if (this.viewDirty && slow) this.refreshView();
+      if (this.sidebarDirty && slow) this.refreshSidebar();
+      if (slow) {
+        this.restAt = t;
+        this.viewDirty = false;
         this.sidebarDirty = false;
-        this.refreshSidebar();
       }
-    }, 50);
+      if (this.viewDirty || this.sidebarDirty) this.schedule(Math.max(50, this.restAt + 250 - t));
+    }, ms);
   }
 
   private sidebarDirty = false;
+  private flushDue = 0;
+  private viewDirty = false;
+  private restAt = 0;
   private flush: ReturnType<typeof setTimeout> | null = null;
 
   /** Light or dark follows Omarchy's theme while the mode is System (theme.rs `refresh`). */
