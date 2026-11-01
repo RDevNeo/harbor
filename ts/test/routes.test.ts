@@ -127,14 +127,7 @@ async function answered(route: string): Promise<boolean> {
 }
 
 const PENDING: string[] = [
-  "GET /v1/branches",
-  "GET /v1/workspace",
   "POST /mesh/v1/preview",
-  "POST /v1/branches",
-  "POST /v1/chats/{}/clone",
-  "POST /v1/chats/{}/run_on",
-  "POST /v1/chats/{}/worktree",
-  "POST /v1/chats/{}/worktree/rename",
 ];
 
 test("every_route_the_rust_hub_answers_is_answered_by_the_ts_hub", async () => {

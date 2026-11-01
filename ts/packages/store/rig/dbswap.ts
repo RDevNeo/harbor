@@ -54,7 +54,7 @@ if (cmd === "same") {
       const o = a as Record<string, unknown>;
       const n = b as Record<string, unknown>;
       for (const k of new Set([...Object.keys(o), ...Object.keys(n)])) {
-        if (/^(rev|updated_ms|since_ms|seen|mem_available_mb|web_client_id|browser)$/.test(k) || (k === "until_ms" && p.includes(".presets[")) || (k === "at" && (p.endsWith(".mention") || p.endsWith(".suggested"))) || (k === "gid" && mode.includes("byid")) || (k === "hub" && p === "") || (k === "updated" && p.includes(".items["))) continue;
+        if (/^(rev|updated_ms|since_ms|seen|mem_available_mb|web_client_id|browser)$/.test(k) || (k === "until_ms" && p.includes(".presets[")) || (k === "at" && (p.endsWith(".mention") || p.endsWith(".suggested"))) || (k === "gid" && mode.includes("byid")) || (k === "hub" && p === "") || (k === "updated" && p.includes(".items[")) || ((k === "at" || k === "time") && p.includes(".items["))) continue;
         if (!(k in n)) out.set(`${q}.${k} only in Rust`, (out.get(`${q}.${k} only in Rust`) ?? 0) + 1);
         else if (!(k in o)) out.set(`${q}.${k} only in TS`, (out.get(`${q}.${k} only in TS`) ?? 0) + 1);
         else walk(o[k], n[k], `${p}.${k}`);

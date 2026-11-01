@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
+import { ProjectClones } from "./projectclones.ts";
+import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
 import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
@@ -19,7 +21,6 @@ import {
   receiveDelivery,
   Api,
   catalogOf,
-  CloneState,
   dest,
   discoverStart,
   err,
@@ -84,7 +85,7 @@ import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/s
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone">;
 
 export interface HubOptions {
   version: string;
@@ -238,7 +239,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const p = c.home !== "" ? chatpr.prFrom(replica.remote.get(c.id)?.pr) : prs.of(c);
     return p ? asJson(chatpr.prJson(p)) : null;
   };
-  const clones = new CloneState();
+  const projectClones = new ProjectClones({ store, engine: () => eng(), hub, mesh: () => mesh, phone: () => phone, touch: () => hub.touch(null, true) });
+  const clones = projectClones.state;
+  const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
@@ -406,8 +409,20 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
     pr: prOf,
+    dropChat: (c) => worktrees.drop(c),
+    worktrees: {
+      make: async (repo, base, about) => {
+        const info = worktrees.info({ t: "draft", repo });
+        return info ? worktrees.make(info.repo, base, about) : null;
+      },
+      attach: (chat, made) => worktrees.attach(chat, made as worktree.Made),
+      discard: (repo, made) => {
+        const info = worktrees.info({ t: "draft", repo });
+        if (info) void worktrees.discard(info.repo, (made as worktree.Made).dir);
+      },
+    },
     openedFrom: (chat, gid, title) => eng().notice(chat, "chat", openchat.openedBy(title), `${openchat.LINK}${gid}`),
-    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish() }),
+    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
     profileCheck: profileCheckNow,
     bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),
@@ -452,6 +467,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     turnEnded: (id) => prs.want(id, null),
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
     hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
+    missingFolder: (c) => projectClones.missingFolder(c),
+    holdForClone: (c, prompt, files) => projectClones.holdForClone(c, prompt, files),
   };
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
@@ -533,6 +550,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     subsQueued: (lead) => live.subsQueued(lead),
     queuedCount: (id) => live.queuedCount(id),
     mainChat: (repo) => live.mainChat(repo),
+    forksOf: (id) => live.forksOf(id),
   };
   live.reattachTurns();
   live.limits.load();
@@ -542,6 +560,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const next = live.tick();
     if (!offline) {
       prs.sweep((c) => live.worktreeOf(c) !== null);
+      worktrees.tickMoves();
       profileFull = Date.now() - profileAt >= 10_000;
       if (profileFull) profileAt = Date.now();
       detectNow();

@@ -67,6 +67,10 @@ export interface EngineHost {
   homeName?(chat: Chat): string;
   /** `open_chat` on another PC (`machine`), through the mesh. */
   openElsewhere?(me: Chat, machine: string, args: unknown): Promise<string>;
+  /** Why a chat's project folder isn't on this PC (null: it is, or the chat has none); say it in the transcript. */
+  missingFolder?(chat: Chat): string | null;
+  /** A turn is about to start without its project's folder: true when the turn waits for a clone of it (clone.rs `clone_for_turn`). */
+  holdForClone?(chat: Chat, prompt: string, files: readonly string[]): boolean;
   /** Text in the chat's composer (recaps wait while there is some). */
   draft?(chatId: number): string;
   /** An undone message goes back to the chat's composer (ui), with its attachments and mentions. */
@@ -280,6 +284,25 @@ export class Engine {
     this.persist(id);
   }
 
+  /** Something the lead's agents are told at the start of their next turn: its worktree's branch or folder changed under them. */
+  noteWorktree(lead: number, text: string): void {
+    for (const id of [lead, ...this.subsOf(lead).map((s) => s.id)]) {
+      const k = `worktree_note:${id}`;
+      const old = this.store.get(k) ?? "";
+      this.store.set(k, old === "" ? text : `${old}\n${text}`);
+    }
+  }
+
+  /** What goes before a turn's prompt about its worktree having changed ("" if nothing); a slash command's turn leaves it for the next one. */
+  takeNote(id: number, prompt: string): string {
+    if (prompt.startsWith("/")) return "";
+    const k = `worktree_note:${id}`;
+    const n = this.store.get(k) ?? "";
+    if (n === "") return n;
+    this.store.set(k, "");
+    return `[Harbor: ${n}]\n\n`;
+  }
+
   /** The worktree a chat runs in (sub-agents: their lead's), if any. */
   worktreeOf(c: Chat): string | null {
     const id = c.role === "sub" ? c.parent : c.id;
@@ -363,6 +386,7 @@ export class Engine {
       return;
     }
     if (this.limits.limitGuard(id, prompt, files)) return;
+    prompt = this.takeNote(id, prompt) + prompt;
     const chat = this.chat(id);
     if (!chat) return;
     const account = this.account(chat.account);
@@ -376,12 +400,20 @@ export class Engine {
       this.persist(id);
       return;
     }
-    const cwd = this.chatCwd(chat);
-    if ((!remote || remote.workspace) && !existsSync(cwd)) {
-      tr.items.push({ kind: "error", text: `The project folder ${cwd} isn't on this PC.` });
-      this.persist(id);
-      return;
+    const missing = (): string | null => this.host.missingFolder?.(chat) ?? (!existsSync(this.chatCwd(chat)) ? `The project folder ${this.chatCwd(chat)} isn't on this PC.` : null);
+    if ((!remote || remote.workspace) && missing() !== null) {
+      if (this.host.holdForClone?.(chat, prompt, files)) {
+        this.persist(id);
+        return;
+      }
+      const why = missing();
+      if (why !== null) {
+        tr.items.push({ kind: "error", text: why });
+        this.persist(id);
+        return;
+      }
     }
+    const cwd = this.chatCwd(chat);
     const context = this.host.turnContext?.(chat, remote !== null) ?? agent.ownContext();
     // Claude resumes sessions of its folder only: a moved chat's is brought over.
     if (!remote && account.kind === "Claude" && chat.started && chat.sessionId !== "") {

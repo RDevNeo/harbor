@@ -233,7 +233,7 @@ export function isNamed(name: string, want: string): boolean {
 }
 
 /** Every branch name the repository knows, local and remote ("harbor/x" for "origin/harbor/x" too). */
-async function takenBranches(repo: string): Promise<Set<string>> {
+export async function takenBranches(repo: string): Promise<Set<string>> {
   const set = new Set<string>();
   try {
     const b = await branches(repo);
@@ -249,7 +249,7 @@ async function takenBranches(repo: string): Promise<Set<string>> {
 }
 
 /** `want`, or `want-2`, `want-3`…: the first whose folder and branch (`harbor/<id>`) are both free. */
-function freeId(rootDir: string, project: string, want: string, taken: Set<string>): string | null {
+export function freeId(rootDir: string, project: string, want: string, taken: Set<string>): string | null {
   for (let n = 1; n < 100; n++) {
     const id = n === 1 ? want : `${want}-${n}`;
     if (!existsSync(join(rootDir, `${project}-${id}`)) && !taken.has(`harbor/${id}`)) return id;

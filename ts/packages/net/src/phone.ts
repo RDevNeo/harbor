@@ -55,6 +55,7 @@ export interface PhoneEngine {
   /** The folder of the git worktree the chat works in, when it has one. */
   worktreeOf?(id: number): string | null;
   mainChat(repo: number): number | null;
+  forksOf(id: number): [number, number][];
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -133,6 +134,14 @@ export interface PhoneDeps {
   openedFrom?: (chat: number, gid: string, title: string) => void;
   /** "Move to PC…"; without it the two calls answer 404. */
   move?: PhoneMove;
+  /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
+  worktrees?: {
+    make(repo: number | null, base: string, about: string): Promise<unknown>;
+    attach(chat: number, made: unknown): void;
+    discard(repo: number | null, made: unknown): void;
+  };
+  /** A chat is about to be deleted: its worktree goes too. */
+  dropChat?: (chat: Chat) => void;
 }
 
 export interface RunSettings {
@@ -584,7 +593,7 @@ export class PhoneRoutes {
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
     this.d.engine?.recapSeen(c.id);
     if (this.d.engine?.opened(c.id)) hub.bump();
-    const forks = this.d.replica.remote.get(c.id)?.forks ?? [];
+    const forks = c.home !== "" ? (this.d.replica.remote.get(c.id)?.forks ?? []) : (this.d.engine?.forksOf(c.id) ?? []);
     const cards = project(items, c.role === "lead", forks);
     const revs = this.revs.get(c.id) ?? [];
     const look = this.d.commits?.(c) ?? null;
@@ -675,6 +684,7 @@ export class PhoneRoutes {
     }
     if (m === "DELETE" && p.length === 3) {
       this.d.engine?.stop(c.id);
+      this.d.dropChat?.(c);
       this.d.store.deleteChat(c.id);
       const rev = this.d.hub.touch(null, true);
       this.d.hub.mesh.gone.push([rev, c.id]);
@@ -787,13 +797,18 @@ export class PhoneRoutes {
       if (path !== null) files.push({ name: basename(path), data: readFileSync(path) });
     }
     const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, files, [sender, ""], null);
+    return this.mapNew(peer.id, r, global);
+  }
+
+  /** mesh.rs `map_new`: a chat made on another PC, answered with its copy's id here (waited for a few seconds). */
+  async mapNew(home: string, r: Reply, global: boolean): Promise<Reply> {
     const rb = obj(r.body);
     const hid = typeof rb.id === "number" && Number.isInteger(rb.id) && r.status < 300 ? rb.id : null;
     if (hid === null) return r;
     if (global) return { status: r.status, body: { ...(rb as Record<string, Json>), id: (rb.gid ?? null) as Json } };
     const until = Date.now() + 8000;
     for (;;) {
-      const local = this.d.hub.mesh.localId(peer.id, hid);
+      const local = this.d.hub.mesh.localId(home, hid);
       if (local !== null) return { status: r.status, body: { ...(rb as Record<string, Json>), id: local } };
       if (Date.now() >= until) return { status: r.status, body: { ...(rb as Record<string, Json>), id: null } };
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -807,6 +822,21 @@ export class PhoneRoutes {
     const found = this.createRepo(body);
     if (!("repo" in found)) return found;
     const repo = found.repo;
+    let made: unknown = null;
+    if (body.worktree === true && (typeof body.device !== "string" || body.device === "") && this.d.worktrees) {
+      const about = [body.title, body.text].find((t) => typeof t === "string" && t.trim() !== "");
+      try {
+        made = await this.d.worktrees.make(repo, typeof body.base === "string" ? body.base : "", typeof about === "string" ? about : "");
+      } catch (x) {
+        return err(409, x instanceof Error ? x.message : String(x));
+      }
+    }
+    const r = await this.createHere(body, sender, global, repo, made);
+    if (made !== null && r.status >= 300) this.d.worktrees?.discard(repo, made);
+    return r;
+  }
+
+  private async createHere(body: Record<string, unknown>, sender: string, global: boolean, repo: number | null, wt: unknown): Promise<Reply> {
     const cat = this.d.catalog;
     const d = cat?.defaults() ?? { account: "claude", model: "", effort: "", access: "full", device: "" };
     const s = (k: string, dflt: string) => (typeof body[k] === "string" ? (body[k] as string) : dflt);
@@ -843,6 +873,7 @@ export class PhoneRoutes {
     const sel = { account, model, effort, access, device };
     const made = e ? e.newThread(repo, text, sel) : this.d.store.createChat(blankChat({ repoId: repo, title: text.split("\n")[0]?.trim().slice(0, 60) || "New thread", ...sel, access: parseAccess(access), role: "lead", name: "lead" }));
     if (main !== null) this.d.store.setMainChat(main, made.id);
+    if (wt !== null) this.d.worktrees?.attach(made.id, wt);
     let c: Chat = { ...made, effort, access: parseAccess(access), device };
     const title = typeof body.title === "string" ? [...body.title.trim()].slice(0, 80).join("") : "";
     if (title !== "") c = { ...c, title };

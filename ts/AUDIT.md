@@ -56,7 +56,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 
 ## Unwired (honest, but not done)
 
-- Phone API: the routes the Rust hub answers and the TS hub does not are listed in `PENDING` in `test/routes.test.ts` (11: Move to PC `move_pc` and `/mesh/v1/adopt`, the worktree bar, `clone`, `run_on`, mesh `preview`); the test fails on any other. Everything else is compared with Rust by `packages/store/rig/chatstate.sh` and `meshexport.sh`. Owner: net (store-port did the comparison).
+- Phone API: the routes the Rust hub answers and the TS hub does not are listed in `PENDING` in `test/routes.test.ts` (1: mesh `preview`); the test fails on any other. Everything else is compared with Rust by `packages/store/rig/chatstate.sh` and `meshexport.sh`. Owner: net (store-port did the comparison).
 
 - Dictation: `dictate.Mesh` is wired in `hub.ts`; `Ask` reaches only `claude`, and not while a usage limit blocks it (the Engine holds store's `Limits` now).
 - `packages/media`: Whisper (built-in) never ran against a real model; `voice::builtin_downloads_and_transcribes` is ported up to the

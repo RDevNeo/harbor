@@ -8,6 +8,10 @@ import { excerptOf, mentionAgent, mentionOf, mentionToJson, type MentionableItem
 import { parseSnooze, snoozePresets, snoozePreview } from "./packages/ui/src/logic/sidebar.ts";
 import { sidebartree } from "./packages/store/src/index.ts";
 import { composerRoutes } from "./phonecomposer.ts";
+import { basename } from "node:path";
+import { worktree as wt } from "./packages/agents/src/index.ts";
+import type { ProjectClones } from "./projectclones.ts";
+import type { Target, Worktrees } from "./worktrees.ts";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { commits } from "./packages/agents/src/index.ts";
@@ -28,6 +32,9 @@ export interface RouteHost {
   profile: ProfileScheduler;
   profileCheck(): Json;
   republish(): void;
+  worktrees: Worktrees;
+  projectClones: ProjectClones;
+  wantPr(chat: number): void;
 }
 
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -162,6 +169,13 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
         const m = whole === null ? null : b2.text === null ? whole : excerptOf(whole, b2.text);
         return m === null ? bad : ok({ mention: mentionToJson(m) });
       }
+      case "clone": {
+        const failed = h.projectClones.cloneHere(c, typeof b.path === "string" ? b.path.trim() : "");
+        return failed === null ? ok({ ok: true }) : err(409, failed);
+      }
+      case "run_on":
+        if (!h.hub.mesh.on) return err(409, "the PCs aren't sharing chats now: turn the mesh on, or start the chat on that PC");
+        return h.projectClones.runOnOwner(c, h.hub.callerLabel(call.token, call.device), call.global);
       case "team":
         return ok(team(c));
       case "slash":
@@ -344,6 +358,101 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     return plain(apiMoveTargets(blocker, targets, codeError));
   };
 
+  const targetOf = (call: Call): Target | Reply => {
+    const ref = query(call, "chat");
+    return ref !== null && ref !== "" ? chatTarget(ref) : { t: "draft", repo: composer.repoRef(query(call, "project") ?? "") };
+  };
+  const chatTarget = (ref: string): Target | Reply => {
+    const c = resolve(ref);
+    return c ? { t: "chat", id: c.id } : err(404, "no such chat");
+  };
+  const isReply = (t: Target | Reply): t is Reply => "status" in t;
+  const headLine = async (dir: string): Promise<string> => {
+    const hd = await wt.head(dir);
+    return hd ? wt.headLabel(hd) : "";
+  };
+
+  const workspaceInfo = async (call: Call): Promise<Reply> => {
+    const target = targetOf(call);
+    if (isReply(target)) return target;
+    if (target.t === "chat") h.wantPr(target.id);
+    const info = h.worktrees.info(target);
+    if (!info) return ok({ git: false });
+    const newWorktree = target.t === "draft" && query(call, "worktree") === "1";
+    const base = query(call, "base") ?? "";
+    const c = target.t === "chat" ? h.engine().chat(target.id) : undefined;
+    const lead = c ? (c.role === "sub" ? (c.parent ?? c.id) : c.id) : null;
+    const to = lead === null ? null : h.worktrees.folderTo(lead);
+    const waits = lead !== null && to !== null ? h.worktrees.folderBusy(lead) : null;
+    const hd = await wt.head(info.dir);
+    const folderRename = info.rename === null;
+    const rename = info.rename !== null ? info.rename : hd !== null && hd.branch === "" ? "it's detached: switch to a branch first" : null;
+    const pushed = rename === null ? await wt.pushedAs(info.dir) : null;
+    return ok({
+      git: true,
+      mode: info.worktree !== null || newWorktree ? "worktree" : "checkout",
+      name: info.worktree === null ? null : basename(info.worktree),
+      path: info.worktree ?? info.repo,
+      branch: hd ? wt.headLabel(hd) : "",
+      dirty: hd?.dirty ?? 0,
+      base: newWorktree ? (base === "" ? (hd?.branch ?? "") : base) : "",
+      can_move: info.canMove === null,
+      move_why: info.canMove,
+      branch_lock: newWorktree ? null : info.branchLock,
+      pending: h.worktrees.busy?.what ?? null,
+      can_rename: rename === null,
+      can_rename_folder: folderRename,
+      rename_why: rename,
+      pushed,
+      folder_waits: waits,
+      folder_to: to,
+      folder_named: lead !== null && h.worktrees.folderNamed(lead),
+    });
+  };
+
+  const branchList = async (call: Call): Promise<Reply> => {
+    const target = targetOf(call);
+    if (isReply(target)) return target;
+    const info = h.worktrees.info(target);
+    if (!info) return err(409, "not a git project");
+    const q = (query(call, "q") ?? "").trim();
+    let b: wt.Branches;
+    try {
+      b = await wt.branches(info.dir);
+    } catch (x) {
+      return err(409, x instanceof Error ? x.message : String(x));
+    }
+    const hd = (await wt.head(info.dir)) ?? { branch: "", detached: "", dirty: 0 };
+    const rows = wt.rank(b, q, 100);
+    return ok({
+      current: hd.branch,
+      dirty: hd.dirty,
+      warning: hd.dirty > 0 ? `${hd.dirty} uncommitted change${hd.dirty === 1 ? "" : "s"} here: they come along to the branch you switch to, and git refuses if they'd be overwritten.` : null,
+      checkout_note: info.worktree === null ? "Switches the project's checkout (other threads there see it too)" : null,
+      branches: rows.map((r) => ({ name: r.name, remote: r.remote, current: !r.remote && r.name === hd.branch })),
+      can_create: q !== "" && !b.local.includes(q) && (await wt.validBranch(info.dir, q)),
+      branch_lock: info.branchLock,
+    });
+  };
+
+  const switchBranch = async (call: Call): Promise<Reply> => {
+    const b = body(call);
+    const id = (v: unknown): string | null => (typeof v === "string" ? v : typeof v === "number" ? String(v) : null);
+    const chatRef = id(b.chat);
+    const target: Target | Reply = chatRef !== null && chatRef !== "" ? chatTarget(chatRef) : { t: "draft", repo: composer.repoRef(id(b.project) ?? "") };
+    if (isReply(target)) return target;
+    const row = typeof b.switch === "string" ? { name: b.switch, remote: b.remote === true } : null;
+    const create = row === null && typeof b.create === "string" ? b.create : null;
+    if (row === null && create === null) return err(400, "switch or create a branch");
+    try {
+      await h.worktrees.branch(target, row, create);
+    } catch (x) {
+      return err(409, x instanceof Error ? x.message : String(x));
+    }
+    const info = h.worktrees.info(target);
+    return ok({ ok: true, branch: info ? await headLine(info.dir) : "" });
+  };
+
   const people = (): Json => {
     const e = h.engine();
     const own = h.versionsOwn();
@@ -382,8 +491,30 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     const m = call.method;
     const name = p[3] ?? "";
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 5 && m === "GET" && p[3] === "commit") return commit(chat, p[4] ?? "", query(call, "diff") === "1");
+    if (p[0] === "v1" && p[1] === "chats" && chat !== null && m === "POST" && p[3] === "worktree" && p.length === 4) {
+      try {
+        const dir = await h.worktrees.moveToWorktree(chat.id);
+        return ok({ ok: true, name: basename(dir), path: dir });
+      } catch (x) {
+        return err(409, x instanceof Error ? x.message : String(x));
+      }
+    }
+    if (p[0] === "v1" && p[1] === "chats" && chat !== null && m === "POST" && p[3] === "worktree" && p[4] === "rename" && p.length === 5) {
+      const b = body(call);
+      try {
+        if (typeof b.folder === "string") {
+          const d = h.worktrees.renameFolder(chat.id, b.folder);
+          return ok({ ok: true, name: d.folder, path: d.path, folder_waits: d.waits, said: wt.renameSaid(d) });
+        }
+        if (typeof b.branch !== "string") return err(400, "branch or folder: the new name");
+        const d = await h.worktrees.renameBranch(chat.id, b.branch, b.remote !== false, true);
+        return ok({ ok: true, branch: d.renamed.branch, old: d.renamed.old, remote: d.renamed.remote, name: d.folder, path: d.path, folder_waits: d.waits, said: wt.renameSaid(d) });
+      } catch (x) {
+        return err(409, x instanceof Error ? x.message : String(x));
+      }
+    }
     if (p[0] === "v1" && p[1] === "chats" && chat !== null && p.length === 4) {
-      if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "snooze", "mention", "slash", "move"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
+      if ((m === "POST" && ["main", "stop_all", "retire", "fork", "continue", "cancel_limit", "continue_on", "snooze", "mention", "slash", "move", "clone", "run_on"].includes(name)) || (m === "DELETE" && name === "snooze")) return action(chat, name, call);
       if (m === "GET" && ["mention", "team", "slash", "tags"].includes(name)) return action(chat, name, call);
       if (m === "GET" && name === "move_targets") return ok(await moveTargets(chat));
       return null;
@@ -402,6 +533,9 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       if (p[2] === "discord") return discordCall(p[3] ?? "", body(call));
     }
     if (p.length !== 2) return null;
+    if (m === "GET" && p[1] === "workspace") return workspaceInfo(call);
+    if (m === "GET" && p[1] === "branches") return branchList(call);
+    if (m === "POST" && p[1] === "branches") return switchBranch(call);
     if (m === "GET" && p[1] === "slash") return ok(composer.slashDraft(call));
     if (m === "GET" && p[1] === "tags") return ok(await composer.tagsDraft(call));
     if (m === "GET" && p[1] === "palette") {

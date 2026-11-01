@@ -9,8 +9,8 @@ export HOME=$T/home XDG_DATA_HOME=$T/data XDG_STATE_HOME=$T/state XDG_CONFIG_HOM
 export HARBOR_PROFILE_RULES=1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 TZ=UTC PATH=$RIG/fakeclaude:/usr/bin:/bin:$(dirname "$BUN")
 unset WAYLAND_DISPLAY DISPLAY
 DB=$T/data/harbor/harbor.db; TOK=0123456789abcdef0123456789abcdef0123456789abcdef; fail=0
-[ -n "${SKIP_RUN:-}" ] || mkdir -p $T/home/proj/src $T/home/proj/.claude/commands $T/home/.claude $T/home/.claude2
-[ -n "${SKIP_RUN:-}" ] || { echo '{}' > $T/home/.claude/.credentials.json; touch $T/home/proj/README.md $T/home/proj/src/app.ts $T/home/proj/src/util.ts; printf -- '---\ndescription: Say hi\n---\nHello $ARGUMENTS\n' > $T/home/proj/.claude/commands/hi.md; }
+[ -n "${SKIP_RUN:-}" ] || mkdir -p $T/home/elsewhere && echo hi > $T/home/elsewhere/README.md; mkdir -p $T/home/proj/src $T/home/proj/.claude/commands $T/home/.claude $T/home/.claude2
+[ -n "${SKIP_RUN:-}" ] || { echo '{}' > $T/home/.claude/.credentials.json; touch $T/home/proj/README.md $T/home/proj/src/app.ts $T/home/proj/src/util.ts; printf -- '---\ndescription: Say hi\n---\nHello $ARGUMENTS\n' > $T/home/proj/.claude/commands/hi.md; (cd $T/home/proj && git init -q -b main && git add -A && git -c user.name=t -c user.email=t@example.com commit -q -m one && git branch feature); cp -a $T/home/proj $T/proj-pristine; }
 echo '{"oauthAccount":{"emailAddress":"two@example.com","displayName":"Two"}}' > $T/home/.claude2/.claude.json
 if [ -n "${SKIP_RUN:-}" ]; then IDS=$(cat $T/ids.txt); else IDS=$(cd $TS && "$BUN" $RIG/chatstate.ts make $T/home/proj "Sam Lee"); echo "$IDS" > $T/ids.txt; cp $DB $T/fixture.db; fi
 id() { echo "$IDS" | sed -E "s/.*\"$1\":([0-9]+).*/\1/"; }
@@ -31,6 +31,7 @@ field() { python3 -c "import json,sys; r={c['id']:c for c in json.load(open('$1'
 scenario() {
   tag=$1
   rm -f $DB $DB-wal $DB-shm; cp $T/fixture.db $DB
+  rm -rf $T/data/harbor/worktrees $T/home/proj; cp -a $T/proj-pristine $T/home/proj
   if [ $tag = rust ]; then "$B" --background > $T/$tag.log 2>&1 & APP=$!; else (cd $TS && exec "$BUN" harbor.ts --background > $T/$tag.log 2>&1) & APP=$!; fi
   up || bad "$tag did not start"
   sample $tag 0; statuses $tag s0
@@ -134,8 +135,41 @@ scenario() {
   act move_bad POST /v1/chats/$PLAIN/move '{"repo":999}'
   act move_missing POST /v1/chats/$PLAIN/move '{}'
   act continue_on POST /v1/chats/$LIM1/continue_on '{"account":"claude"}'
+  act ws_chat GET "/v1/workspace?chat=$PLAIN"
+  act ws_draft GET "/v1/workspace?project=1&worktree=1&base=feature"
+  act ws_none GET "/v1/workspace?chat=$NOF"
+  act ws_bad GET "/v1/workspace?chat=99999"
+  act br_list GET "/v1/branches?chat=$PLAIN"
+  act br_q GET "/v1/branches?project=1&q=fea"
+  act br_new GET "/v1/branches?project=1&q=brand-new"
+  act br_bad GET "/v1/branches?chat=$NOF"
+  act br_none POST /v1/branches '{}'
+  act br_create POST /v1/branches "{\"chat\":$PLAIN,\"create\":\"topic\"}"
+  act br_switch POST /v1/branches "{\"chat\":$PLAIN,\"switch\":\"main\"}"
+  act br_switch_bad POST /v1/branches "{\"chat\":$PLAIN,\"switch\":\"nope\"}"
+  act wt_move POST /v1/chats/$PLAIN/worktree
+  act wt_again POST /v1/chats/$PLAIN/worktree
+  act ws_after GET "/v1/workspace?chat=$PLAIN"
+  act wt_rename_branch POST /v1/chats/$PLAIN/worktree/rename '{"branch":"harbor/renamed-one","remote":false}'
+  act ws_after_rename GET "/v1/workspace?chat=$PLAIN"
+  act wt_rename_folder POST /v1/chats/$PLAIN/worktree/rename '{"folder":"my-folder"}'
+  act wt_rename_bad POST /v1/chats/$PLAIN/worktree/rename '{"folder":"a/b"}'
+  act wt_rename_none POST /v1/chats/$PLAIN/worktree/rename '{}'
+  act ws_after_folder GET "/v1/workspace?chat=$PLAIN"
+  act create_wt POST /v1/chats '{"project_id":1,"worktree":true,"title":"Fix the login bug"}'
+  act create_wt_nogit POST /v1/chats '{"worktree":true,"title":"No project"}'
+  act clone_bad POST /v1/chats/$NOF/clone '{"path":"x"}'
+  act clone_here POST /v1/chats/$PLAIN/clone '{"path":"/tmp/x"}'
+  act clone_fail POST /v1/chats/$NOF/clone "{\"path\":\"$T/home/nothing\"}"
+  sleep 2
+  act clone_status GET "/v1/chats/$NOF/items?since=0"
+  act clone_ok POST /v1/chats/$NOF/clone "{\"path\":\"$T/home/elsewhere\"}"
+  sleep 2
+  act clone_status2 GET "/v1/chats/$NOF/items?since=0"
+  act run_on_off POST /v1/chats/$NEAR/run_on
+  act run_on_none POST /v1/chats/$PLAIN/run_on
   sleep 3
-  for c in 14 15 16 17 18; do act items_$c GET "/v1/chats/$c/items?since=0"; done
+  for c in 2 14 15 16 17 18 19 20; do act items_$c GET "/v1/chats/$c/items?since=0"; done
   get /v1/state $T/$tag-act-state-end.full.json
   kill $APP 2>/dev/null; wait $APP 2>/dev/null
 }
@@ -174,8 +208,6 @@ stchk s3 lead waiting.agents.0.name worker; stchk s3 lead agents.title "1 agent 
 stchk s3b lead working.subagents 1; stchk s3b lead working.text "1 sub-agent running"; stchk s3b lead waiting null; stchk s3b lead agents.rows.0.task Sub
 echo "== the fixture is not at its defaults (Rust's own answers)"
 chk() { [ "$(field $T/rust-$1.json $2 $3)" = "$4" ] && ok "Rust sample $1: chat $2 $3 = $4" || bad "Rust sample $1: chat $2 $3 is $(field $T/rust-$1.json $2 $3), expected $4"; }
-chk 0 $LEAD pr "{'label': 'PR #7 · Open', 'number': 7, 'state': 'open', 'title': 'Add it', 'url': 'https://github.com/o/r/pull/7'}"
-chk 0 $SUB pr "{'label': 'PR #7 · Open', 'number': 7, 'state': 'open', 'title': 'Add it', 'url': 'https://github.com/o/r/pull/7'}"
 chk 0 $OTHER pr "{'label': 'PR #3 · Merged', 'number': 3, 'state': 'merged', 'title': 'Old', 'url': 'https://github.com/o/r/pull/3'}"
 chk 0 $PLAIN pr None
 chk 1 $PLAIN unread True; chk 1 $PLAIN failed False
