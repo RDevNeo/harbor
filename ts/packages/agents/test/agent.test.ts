@@ -161,8 +161,14 @@ test("remote_turn_sends_the_login_on_stdin", async () => {
 
 test("a remote turn without the net package says so instead of running", async () => {
   const remote: agent.RemoteSpec = { ssh: [], host: "box", name: "box", family: "posix", dir: "~", setup: [], bridge: false, commands: false, workspace: false, token: null, note: "" };
-  await expect(agent.build(spec({ remote }))).rejects.toThrow(/doesn't have yet/);
-  await expect(agent.build(spec({ remote, account: { ...claude(), kind: "Codex", id: "codex" } }))).rejects.toThrow("only Claude Code runs on other devices so far, not Codex");
+  const was = { ...agent.integrations };
+  agent.integrate({ remote: null, bridge: null, workspace: null });
+  try {
+    await expect(agent.build(spec({ remote }))).rejects.toThrow(/doesn't have yet/);
+    await expect(agent.build(spec({ remote, account: { ...claude(), kind: "Codex", id: "codex" } }))).rejects.toThrow("only Claude Code runs on other devices so far, not Codex");
+  } finally {
+    agent.integrate(was);
+  }
 });
 
 describe("command lines per provider", () => {
