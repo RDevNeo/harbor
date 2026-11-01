@@ -56,7 +56,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 
 ## Unwired (honest, but not done)
 
-- Phone API: chat `pr`, `unread`, `failed`, `working`, `queued` and the bars under a transcript are real and compared with Rust (`packages/store/rig/chatstate.sh`). Not answered at all (404 "no such call"): snooze (GET, POST, DELETE), `main`, `mention`, `team`, `move_targets`, `slash`, `tags`, `usage`, `people`, `palette`, `versions`, `apps/gmail`, `apps/discord` and the chat actions fork, retire, move, move_pc, slash, stop_all, continue, cancel_limit, continue_on, clone, run_on. Owner: net.
+- Phone API: the routes the Rust hub answers and the TS hub does not are listed in `PENDING` in `test/routes.test.ts` (11: Move to PC `move_pc` and `/mesh/v1/adopt`, the worktree bar, `clone`, `run_on`, mesh `preview`); the test fails on any other. Everything else is compared with Rust by `packages/store/rig/chatstate.sh` and `meshexport.sh`. Owner: net (store-port did the comparison).
 
 - Dictation: `dictate.Mesh` is wired in `hub.ts`; `Ask` reaches only `claude`, and not while a usage limit blocks it (the Engine holds store's `Limits` now).
 - `packages/media`: Whisper (built-in) never ran against a real model; `voice::builtin_downloads_and_transcribes` is ported up to the

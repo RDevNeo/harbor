@@ -119,6 +119,8 @@ export interface PhoneDeps {
   bars?: (chat: number, nowMs: number) => Record<string, Json>;
   /** "Is this you?": this PC's detected owner, until confirmed (null: nothing to ask). */
   profileCheck?: () => Json;
+  /** The calls the app around answers beyond chats' core: a chat's actions, the snooze sheet, usage, people, palette…; null when the call is not one of them. */
+  more?: (call: Call, chat: Chat | null) => Promise<Reply | null>;
 }
 
 export interface RunSettings {
@@ -309,7 +311,7 @@ export class PhoneRoutes {
     return !c.retired && (c.home === "" || this.d.hub.mesh.online(c.home));
   }
 
-  private since(id: number): number | null {
+  since(id: number): number | null {
     const own = this.d.engine?.runningSince(id) ?? null;
     if (own !== null) return own;
     const r = this.d.replica.remote.get(id);
@@ -323,7 +325,7 @@ export class PhoneRoutes {
     return team.some((x) => this.since(x.id) !== null) || (this.d.engine?.subsQueued(c.id) ?? 0) > 0;
   }
 
-  private queuedCount(c: Chat): number {
+  queuedCount(c: Chat): number {
     if (c.home !== "") return this.d.replica.remote.get(c.id)?.queued ?? 0;
     return this.d.engine?.queuedCount(c.id) ?? 0;
   }
@@ -608,7 +610,7 @@ export class PhoneRoutes {
     const body = obj(call.body);
     const sender = this.d.hub.callerLabel(call.token, call.device);
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global));
-    if (p[0] !== "v1" || p[1] !== "chats") return err(404, "no such call");
+    if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global);
     const c = this.chatOf(p[2] ?? "");
     if (!c) return err(404, "no such chat");
@@ -629,6 +631,8 @@ export class PhoneRoutes {
     }
     if (p[3] === "queue" || (m === "POST" && p.length === 4 && p[3] === "resume")) return this.queue(c, m, p, body, call.device);
     if (m === "PATCH" && p.length === 3) {
+      const title = typeof body.title === "string" ? body.title.trim() : null;
+      if (title === "") return err(400, "empty title");
       let n: Chat = c;
       let fast: boolean | null = null;
       const rs = this.d.runSettings;
@@ -642,17 +646,21 @@ export class PhoneRoutes {
           throw e;
         }
       } else if (["account", "model", "effort", "access", "device", "fast"].some((k) => body[k] !== undefined && body[k] !== null)) return err(503, "run settings can't change in this build");
-      if (typeof body.title === "string" && body.title.trim() !== "") n = { ...n, title: body.title.trim() };
+      if (title !== null) n = { ...n, title: [...title].slice(0, 200).join("") };
+      if (typeof body.settled === "boolean") {
+        n = { ...n, settled: body.settled };
+        this.d.engine?.opened(c.id);
+      }
       if (n !== c) {
         this.d.store.saveChat(n);
         this.d.engine?.reload();
         this.d.replica.touch(c.id);
       }
       if (fast !== null) rs?.setFast(fast);
-      return ok({ ok: true });
+      return ok({ ok: true, chat: this.chatJson(this.chats().find((x) => x.id === c.id) ?? n, call.global) });
     }
     if (m === "DELETE" && p.length === 3) {
-      if (this.d.engine?.running(c.id)) return err(409, "the chat is running: stop it first");
+      this.d.engine?.stop(c.id);
       this.d.store.deleteChat(c.id);
       const rev = this.d.hub.touch(null, true);
       this.d.hub.mesh.gone.push([rev, c.id]);
@@ -660,7 +668,7 @@ export class PhoneRoutes {
       this.d.engine?.reload();
       return ok({ ok: true });
     }
-    return err(404, "no such call");
+    return (await this.d.more?.(call, c)) ?? err(404, "no such call");
   }
 
   /** api.rs `api_route`'s queue ops (queue.rs). */
@@ -689,7 +697,7 @@ export class PhoneRoutes {
     return done ? ok({ ok: true }) : gone;
   }
 
-  private uploadId(path: string): string | null {
+  uploadId(path: string): string | null {
     const dir = this.d.uploadsDir;
     if (!dir || !path.startsWith(`${dir}/`)) return null;
     const rel = path.slice(dir.length + 1);

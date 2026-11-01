@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import { phoneRoutes } from "./phoneroutes.ts";
 import { statusBars } from "./statusbars.ts";
 import { chatpr, commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
-import { dictate, media, parakeet, voice } from "./packages/media/src/index.ts";
+import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
@@ -14,6 +15,8 @@ import {
   type PairedDevice,
   pairedDevices,
   aboutOwner,
+  acceptMemory,
+  receiveDelivery,
   Api,
   catalogOf,
   CloneState,
@@ -21,6 +24,7 @@ import {
   discoverStart,
   err,
   hostPort,
+  hostname,
   http,
   Hub,
   placeOf,
@@ -32,6 +36,15 @@ import {
   ownerOf,
   type OwnerSources,
   profileCheck,
+  ProfileScheduler,
+  detectProfiles,
+  GITHUB_KEY,
+  gatherVersions,
+  meshPcs,
+  OWNER_KEY,
+  type Peer,
+  profileInputs,
+  versionsInput,
   profileCheckJson,
   profileFullName,
   profileNodeEnv,
@@ -134,12 +147,17 @@ export function phoneAddrs(port: number, all: string[], pub: string | null): str
 }
 
 /** The phone's and another PC's Update, Check and Automatically (api.rs `/v1/hub/*`); null: not an update route. */
-async function updateRoute(u: Updater, call: Call): Promise<Reply | null> {
+async function updateRoute(u: Updater | null, call: Call, store: Store): Promise<Reply | null> {
   const [v, hubSeg, what] = call.path;
   if (call.method !== "POST" || v !== "v1" || hubSeg !== "hub" || call.path.length !== 3) return null;
-  if (what === "auto") return ok({ ok: true, auto: true });
+  if (what === "auto") {
+    const on = typeof call.body === "object" && call.body !== null ? (call.body as { on?: unknown }).on : undefined;
+    if (typeof on !== "boolean") return err(400, 'send {"on": true} or false');
+    store.set("auto_update", on ? "1" : "0");
+    return ok({ ok: true, auto: on });
+  }
   if (what !== "update" && what !== "check") return null;
-  if (!u.managed()) return err(409, "this Harbor was built from source, so it doesn't update itself");
+  if (u === null || !u.managed()) return err(409, "this Harbor was built from source, so it doesn't update itself");
   if (what === "check") {
     void u.check();
     return { status: 202, body: { ok: true, checking: true } };
@@ -148,6 +166,17 @@ async function updateRoute(u: Updater, call: Call): Promise<Reply | null> {
   if (s.t === "available") void u.installNow();
   else void u.checkAndInstall();
   return s.t === "available" ? ok({ ok: true }) : { status: 202, body: { ok: true, checking: true } };
+}
+
+function downloadsDir(): string {
+  const home = process.env.HOME ?? "";
+  try {
+    const d = Bun.spawnSync(["xdg-user-dir", "DOWNLOAD"], { stdin: "ignore", stderr: "ignore" }).stdout.toString().trim();
+    if (d !== "" && d !== home && existsSync(d)) return d;
+  } catch {
+    // no xdg-user-dir
+  }
+  return join(home, "Downloads");
 }
 
 /** Harbor without its window (Rust's `--background`): the phone API, the mesh, discovery, port mapping and the account loop. */
@@ -209,6 +238,50 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
+  const profile = new ProfileScheduler();
+  const profileCheckNow = (): Json => profileCheckJson(profileCheck(store, { confirmed: ownerConfirmed(store, owners), owner: ownerOf(store, owners), github: githubOf(store, owners) }));
+  const peersNow = (): Peer[] => [...hub.mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const detectNow = (): void => {
+    if (!engine || profile.running || !(profileFull || profile.want)) return;
+    const live = engine;
+    const [versions] = gatherVersions(versionsInput(hub, versionsOwn()));
+    const pcs = meshPcs({
+      kv: store,
+      owners,
+      me: hub.mesh.me,
+      hostname: hostname(),
+      meshOn: hub.mesh.on,
+      localPhones: hub.localPhones().map((p) => ({ name: p.name, app: p.app })),
+      versions,
+      accounts: accounts.filter((a) => a.bin !== null).map((a) => providers.short(a)),
+      hosts: peersNow(),
+      elsewhere: hub.elsewhere,
+    });
+    const main = accounts.find((a) => a.id === "claude" && a.bin !== null && a.loggedIn === true);
+    const askable = main !== undefined && live.limits.blocked(main.id) === undefined && !(live.limits.quota.get(main.id) ?? []).some(([, used]) => used >= 0.9) && env.HARBOR_PROFILE_RULES === undefined;
+    const inputs = () =>
+      profileInputs({
+        pcs,
+        typedOwner: store.get(OWNER_KEY) ?? "",
+        typedGithub: store.get(GITHUB_KEY) ?? "",
+        accounts: accounts.map((a) => ({ id: a.id, installed: a.bin !== null, loggedIn: a.loggedIn, short: providers.short(a), name: a.name, email: a.email })),
+        ask: askable ? { model: recap.MODEL, run: (system, prompt) => recap.askWithin(providers.binStr(main), providers.accountEnv(main), system, prompt, 120_000) } : null,
+      });
+    const job = profile.tick({ nowMs: Date.now(), full: profileFull, kv: store, confirmed: ownerConfirmed(store, owners), inputs });
+    if (!job) return;
+    void detectProfiles(job.inputs, job.sig, profileEnv).then(
+      (d) => {
+        profile.finish(d, store);
+        services?.publish();
+        hub.touch(null, true);
+      },
+      () => {
+        profile.running = false;
+      },
+    );
+  };
+  let profileFull = false;
+  const versionsOwn = () => ({ hostname: hostname(), version: o.version, update: o.updater ? asJson(o.updater.info()) : null, served: apkInfo()?.code ?? 0 });
   const homeName = (c: Chat): string => (c.home !== "" ? hub.mesh.nameOf(c.home) : hub.mesh.me.name);
   const replica = new StoreReplica({
     about: () => aboutOwner(store, owners),
@@ -241,10 +314,42 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     items: (chat, since) => replica.items(chat, since),
     applyChats: (peer, epoch, body) => replica.applyChats(peer, epoch, body),
     applyItems: (peer, epoch, hid, body) => replica.applyItems(peer, epoch, hid, body),
-    route: async (call) => (await services?.routeMesh(call)) ?? replica.route(call),
+    route: async (call) => (await services?.routeMesh(call)) ?? (await meshMore(call)) ?? replica.route(call),
+  };
+  const meshMore = async (call: Call): Promise<Reply | null> => {
+    if (call.path[0] !== "mesh" || call.path[1] !== "v1" || call.path.length !== 3) return null;
+    const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? call.body : {};
+    switch (`${call.method} ${call.path[2]}`) {
+      case "GET voice":
+        return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
+      case "POST memory": {
+        const r = acceptMemory(store, b);
+        return r.ok ? ok({ ok: true, changed: r.value }) : err(404, r.error);
+      }
+      case "POST phones":
+        store.set("api_enabled", "1");
+        hub.enabled = true;
+        return ok({ ok: true });
+      default:
+        return null;
+    }
   };
   const mesh = new Mesh({
     hub,
+    transcribe: async (wav, lang) => {
+      const [status, body] = await dictate.servePeer(voicePeers, wav, lang);
+      return { status, body: body as Json };
+    },
+    deliver: (from, kind, name, len, read) =>
+      receiveDelivery(from, kind, name, len, {
+        downloads: () => downloadsDir(),
+        home: home(),
+        copyText: (text) => void clipboard.copyText(text),
+        copyImage: (bytes) => void clipboard.copyImage(bytes),
+        open: (path) => void Bun.spawn(["xdg-open", path], { stdio: ["ignore", "ignore", "ignore"] }).exited.catch(() => undefined),
+        notify: (title, body) => notifier.post("pc", `deliver:${title}`, title, body, "", false),
+        read,
+      }),
     kv: store,
     id: () => id,
     app: meshApp,
@@ -291,11 +396,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
     pr: prOf,
+    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish() }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
-    profileCheck: () => {
-      const confirmed = ownerConfirmed(store, owners);
-      return profileCheckJson(profileCheck(store, { confirmed, owner: ownerOf(store, owners), github: githubOf(store, owners) }));
-    },
+    profileCheck: profileCheckNow,
     bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),
     engine: null,
     uploadsDir,
@@ -391,16 +494,37 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   live.reattachTurns();
   live.limits.load();
   let engineTimer: ReturnType<typeof setTimeout> | null = null;
+  let profileAt = 0;
   const engineTick = () => {
     const next = live.tick();
-    if (!offline) prs.sweep((c) => live.worktreeOf(c) !== null);
+    if (!offline) {
+      prs.sweep((c) => live.worktreeOf(c) !== null);
+      profileFull = Date.now() - profileAt >= 10_000;
+      if (profileFull) profileAt = Date.now();
+      detectNow();
+    }
     engineTimer = setTimeout(engineTick, Math.min(Math.max(next ?? 1000, 50), 1000));
   };
   engineTick();
   const route = async (call: Call): Promise<Reply> => {
-    const updated = o.updater ? await updateRoute(o.updater, call) : null;
+    const updated = await updateRoute(o.updater ?? null, call, store);
     if (updated !== null) return updated;
-    if (call.method === "GET" && call.path.join("/") === "v1/voice") return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
+    const at = `${call.method} ${call.path.join("/")}`;
+    if (at === "GET v1/voice") return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
+    if (at === "PUT v1/voice/settings") {
+      const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
+      dictate.set({ ...(typeof b.cleanup === "boolean" ? { cleanup: b.cleanup } : {}), ...(typeof b.keep_loaded_min === "number" && Number.isInteger(b.keep_loaded_min) && b.keep_loaded_min >= 0 ? { keepMin: b.keep_loaded_min } : {}) }, true);
+      dictate.setWords({ ...(typeof b.commands === "boolean" ? { commands: b.commands } : {}), ...(Array.isArray(b.dictionary) ? { dict: dictwords.parse(b.dictionary) } : {}) }, true);
+      return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
+    }
+    if (at === "POST v1/voice/cleanup") {
+      const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
+      return ok({ text: await dictate.cleanupText(typeof b.text === "string" ? b.text : "") });
+    }
+    if (at === "POST v1/providers/update") {
+      const started = provupdate.updateAll(accounts);
+      return started === false ? err(409, "no provider update to install") : ok({ ok: true });
+    }
     return (await services?.routePhone(call)) ?? phone.route(call);
   };
   phoneRoute = route;
@@ -443,7 +567,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     reached: (ip) => portmap.reached(ip),
     env,
   });
-  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : o.hookPort === undefined ? {} : { hookPort: o.hookPort }) });
+  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, versionsOwn: () => ({ update: versionsOwn().update, served: versionsOwn().served }), account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : o.hookPort === undefined ? {} : { hookPort: o.hookPort }) });
   if (!offline) {
     const bound = await api.listen();
     hub.net = { addrs: addrs(), bound, error: hub.net.error };

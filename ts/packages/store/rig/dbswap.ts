@@ -33,20 +33,28 @@ if (cmd === "same") {
   console.log(`${names.length} files compared, ${names.length - bad.length} identical, ${bad.length} differ${bad.length > 0 ? `: ${bad.slice(0, 5).join(", ")}` : ""}`);
   if (bad.length > 0 || names.length === 0) process.exit(1);
 } else if (cmd === "statediff") {
-  const [x = "", y = ""] = args;
+  const [x = "", y = "", mode = ""] = args;
   const out = new Map<string, number>();
+  const sortKey = (v: unknown): string => {
+    const o = typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+    return String(o.id ?? o.gid ?? o.title ?? JSON.stringify(v));
+  };
   const walk = (a: unknown, b: unknown, p: string): void => {
     const q = p.replace(/\[\d+\]/g, "[]").replace(/\.[0-9a-f-]{32,36}(?=\.|$)/g, ".<gid>");
     const note = (kind: string): void => void out.set(`${q} ${kind}`, (out.get(`${q} ${kind}`) ?? 0) + 1);
     if (typeof a !== typeof b || Array.isArray(a) !== Array.isArray(b) || (a === null) !== (b === null)) return note("type");
     if (Array.isArray(a) && Array.isArray(b)) {
+      if (mode.includes("sort")) {
+        a.sort((x, y) => sortKey(x).localeCompare(sortKey(y)));
+        b.sort((x, y) => sortKey(x).localeCompare(sortKey(y)));
+      }
       if (a.length !== b.length) note("length");
       a.slice(0, b.length).forEach((v, i) => walk(v, b[i], `${p}[${i}]`));
     } else if (typeof a === "object" && a !== null && typeof b === "object" && b !== null) {
       const o = a as Record<string, unknown>;
       const n = b as Record<string, unknown>;
       for (const k of new Set([...Object.keys(o), ...Object.keys(n)])) {
-        if (/^(rev|updated_ms|since_ms)$/.test(k)) continue;
+        if (/^(rev|updated_ms|since_ms|seen|mem_available_mb|web_client_id|browser)$/.test(k) || (k === "until_ms" && p.includes(".presets[")) || (k === "at" && (p.endsWith(".mention") || p.endsWith(".suggested"))) || (k === "gid" && mode.includes("byid")) || (k === "hub" && p === "") || (k === "updated" && p.includes(".items["))) continue;
         if (!(k in n)) out.set(`${q}.${k} only in Rust`, (out.get(`${q}.${k} only in Rust`) ?? 0) + 1);
         else if (!(k in o)) out.set(`${q}.${k} only in TS`, (out.get(`${q}.${k} only in TS`) ?? 0) + 1);
         else walk(o[k], n[k], `${p}.${k}`);
@@ -56,7 +64,7 @@ if (cmd === "same") {
   const byGid = (v: unknown): unknown => {
     if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
     const o = { ...(v as Record<string, unknown>) };
-    if (Array.isArray(o.chats)) o.chats = Object.fromEntries((o.chats as { gid?: string; id?: number }[]).map((c) => [c.gid ?? String(c.id), c]));
+    if (Array.isArray(o.chats)) o.chats = Object.fromEntries((o.chats as { gid?: string; id?: number }[]).map((c) => [mode.includes("byid") ? String(c.id) : (c.gid ?? String(c.id)), c]));
     return o;
   };
   walk(byGid(load(x)), byGid(load(y)), "");

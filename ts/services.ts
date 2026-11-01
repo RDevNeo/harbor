@@ -36,6 +36,8 @@ export interface ServicesOptions {
   accounts: () => readonly Account[];
   /** The first port the webhook listener tries; false: none, and no public webhook address either (ts/run.sh's offline mode). */
   hookPort?: number | false;
+  /** This PC's Harbor update info and the phone app it serves, for the agents' version list. */
+  versionsOwn?: () => { update: unknown; served: number };
 }
 
 export interface Services {
@@ -44,6 +46,8 @@ export interface Services {
   routePhone(call: Call): Promise<Reply> | null;
   /** What another PC asks of this one beyond chats: its share, a tool call, its issues; null when the call is not one. */
   routeMesh(call: Call): Promise<Reply> | null;
+  /** Hands the mesh listener this PC's share levels and projects again. */
+  publish(): void;
   stop(): void;
 }
 
@@ -126,7 +130,7 @@ export async function startServices(o: ServicesOptions): Promise<Services> {
   machines.setHub({
     me: () => o.hub.mesh.me,
     peers: () => [...o.hub.mesh.peers.values()],
-    versions: () => versionsText(versionsInput(o.hub, { hostname: hostname(), version: o.version, update: null, served: 0 })),
+    versions: () => versionsText(versionsInput(o.hub, { hostname: hostname(), version: o.version, update: null, served: 0, ...o.versionsOwn?.() })),
   });
   const publish = (): void => {
     machines.publish(o.store, o.engine.repos.map((r): machines.Project => [r.name, repoDir(r)]), issuedIds(o.store));
@@ -149,6 +153,7 @@ export async function startServices(o: ServicesOptions): Promise<Services> {
       if (a === "issues") return asReply(gh.handle(call));
       return null;
     },
+    publish,
     stop() {
       clearInterval(timer);
       link.stop();

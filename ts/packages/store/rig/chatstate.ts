@@ -5,8 +5,9 @@ import { Store, blankChat, dataDir } from "../src/index.ts";
 const [cmd, ...args] = process.argv.slice(2);
 
 if (cmd === "make") {
-  const [home = ""] = args;
+  const [home = "", confirmed = ""] = args;
   const s = Store.open(dataDir());
+  if (confirmed !== "") s.set("owner_name", confirmed);
   const repo = s.addRepo(home);
   const gone = s.addRepo(resolve(home, "../gone"));
   const away = s.addRepo(resolve(home, "../away"));

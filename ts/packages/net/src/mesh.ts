@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { hostname } from "node:os";
-import type { Call, ConnPeer } from "./api.ts";
+import { type Call, type ConnPeer, MAX_AUDIO } from "./api.ts";
 import { exchange, get, http, jsonBody } from "./client.ts";
 import { err, header, ok, parseJson, query, readBody, segments, type Reader, type Reply, type Request } from "./http.ts";
 import type { Hub, PairedPhone } from "./hub.ts";
@@ -49,6 +49,10 @@ export interface MeshDeps {
   uploadsDir: string;
   /** api.ts's upload, for `/mesh/v1/upload`. */
   upload: (r: Reader, req: Request) => Promise<Reply>;
+  /** `POST /mesh/v1/transcribe`: a recording from a peer, transcribed here (voice package). */
+  transcribe?: (wav: Uint8Array, lang: string) => Promise<Reply>;
+  /** `POST /mesh/v1/deliver`: what Devices › Send on that PC sent, taken by this one (`receiveDelivery`). */
+  deliver?: (from: string, kind: string, name: string, len: number, read: (len: number, max: number) => Promise<Buffer>) => Promise<Reply>;
   notes?: { last(): number; ownSince(since: number): [Json[], number] };
   env?: Record<string, string | undefined>;
   wake?: () => void;
@@ -345,6 +349,19 @@ export class Mesh {
     }
     if (is("POST", "mesh", "v1", "upload")) {
       return this.d.upload(r, { ...req, query: [["name", query(req, "name") ?? "file"]] });
+    }
+    if (is("POST", "mesh", "v1", "transcribe") && this.d.transcribe) {
+      if (req.len > MAX_AUDIO) return err(413, "recording too long");
+      let wav: Buffer;
+      try {
+        wav = await readBody(r, req.len, MAX_AUDIO);
+      } catch {
+        return err(413, "recording too long");
+      }
+      return this.d.transcribe(wav, query(req, "lang") ?? "auto");
+    }
+    if (is("POST", "mesh", "v1", "deliver") && this.d.deliver) {
+      return this.d.deliver(shared.nameOf(peer), query(req, "kind") ?? "", query(req, "name") ?? "file", req.len, (len, max) => readBody(r, len, max));
     }
     if (is("POST", "mesh", "v1", "lease")) {
       const b = await this.json(r, req);

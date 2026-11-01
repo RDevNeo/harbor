@@ -4,15 +4,15 @@ ip link set lo up
 [ "$(ip -o link show | wc -l)" = 1 ] || { echo "refusing to run outside unshare -Urn (a network interface is visible)" >&2; exit 99; }
 B=${HARBOR_REF:?a Rust harbor 0.108.0 binary}
 BUN=${BUN:-$(command -v bun)}; TS=$(cd "$(dirname "$0")/../../.." && pwd); RIG=$TS/packages/store/rig
-T=${RIG_TMP:?a scratch folder}; rm -rf $T; mkdir -p $T/{home,data/harbor,state,cfg,cache,run}; chmod 700 $T/run
+T=${RIG_TMP:?a scratch folder}; [ -n "${SKIP_RUN:-}" ] || { rm -rf $T; mkdir -p $T/{home,data/harbor,state,cfg,cache,run}; chmod 700 $T/run; }
 export HOME=$T/home XDG_DATA_HOME=$T/data XDG_STATE_HOME=$T/state XDG_CONFIG_HOME=$T/cfg XDG_CACHE_HOME=$T/cache XDG_RUNTIME_DIR=$T/run HARBOR_SOCK=$T/run/h.sock
-export HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 TZ=UTC PATH=$RIG/fakeclaude:/usr/bin:/bin:$(dirname "$BUN")
+export HARBOR_PROFILE_RULES=1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 TZ=UTC PATH=$RIG/fakeclaude:/usr/bin:/bin:$(dirname "$BUN")
 unset WAYLAND_DISPLAY DISPLAY
 DB=$T/data/harbor/harbor.db; TOK=0123456789abcdef0123456789abcdef0123456789abcdef; fail=0
-mkdir -p $T/home/proj $T/home/.claude $T/home/.claude2
-echo '{}' > $T/home/.claude/.credentials.json
+[ -n "${SKIP_RUN:-}" ] || mkdir -p $T/home/proj/src $T/home/proj/.claude/commands $T/home/.claude $T/home/.claude2
+[ -n "${SKIP_RUN:-}" ] || { echo '{}' > $T/home/.claude/.credentials.json; touch $T/home/proj/README.md $T/home/proj/src/app.ts $T/home/proj/src/util.ts; printf -- '---\ndescription: Say hi\n---\nHello $ARGUMENTS\n' > $T/home/proj/.claude/commands/hi.md; }
 echo '{"oauthAccount":{"emailAddress":"two@example.com","displayName":"Two"}}' > $T/home/.claude2/.claude.json
-IDS=$(cd $TS && "$BUN" $RIG/chatstate.ts make $T/home/proj); cp $DB $T/fixture.db
+if [ -n "${SKIP_RUN:-}" ]; then IDS=$(cat $T/ids.txt); else IDS=$(cd $TS && "$BUN" $RIG/chatstate.ts make $T/home/proj "Sam Lee"); echo "$IDS" > $T/ids.txt; cp $DB $T/fixture.db; fi
 id() { echo "$IDS" | sed -E "s/.*\"$1\":([0-9]+).*/\1/"; }
 LIM1=$(id lim1); LIM2=$(id lim2); NOF=$(id nof); FAR=$(id far); NEAR=$(id near)
 PLAIN=$(id plain); FAILING=$(id failing); LEAD=$(id lead); SUB=$(id sub); OTHER=$(id other)
@@ -41,13 +41,89 @@ scenario() {
   sleep 1; post /v1/chats/$SUB/send '{"text":"later","mode":"queue"}'; sleep 1; sample $tag 3; statuses $tag s3
   post /v1/chats/$LEAD/send '{"text":"hold lead"}'; sleep 1; sample $tag 3b; statuses $tag s3b
   sleep 10; sample $tag 4; statuses $tag s4
-  for r in app hubs snooze usage people palette tags slash voice versions inbox apps/gmail apps/discord chats/$LEAD/team chats/$PLAIN/move_targets chats/$PLAIN/slash chats/$PLAIN/tags chats/$PLAIN/mention; do
+  get /v1/usage /dev/null; sleep 2
+  for r in app hubs snooze usage people tags slash voice versions inbox apps/discord chats/$LEAD/team chats/$PLAIN/move_targets chats/$PLAIN/slash chats/$PLAIN/tags chats/$PLAIN/mention; do
     get "/v1/$r" $T/$tag-route-$(echo $r | tr / _).json
   done
+  act() { n=$1; m=$2; u=$3; b=${4:-}; curl -s --max-time 30 -H "Authorization: Bearer $TOK" -X $m -d "$b" "http://127.0.0.1:47930$u" | sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<gid>/g' > $T/$tag-act-$n.json; }
+  act snooze_get GET "/v1/snooze?text=18:00&off=0&chat=$PLAIN"
+  act snooze_bad POST /v1/chats/$PLAIN/snooze '{"text":"soon"}'
+  act snooze_set POST /v1/chats/$PLAIN/snooze '{"text":"18:00","off":0}'
+  act snooze_get2 GET "/v1/snooze?chat=$PLAIN&off=0"
+  get /v1/state $T/$tag-act-state-snoozed.full.json
+  act snooze_del DELETE /v1/chats/$PLAIN/snooze
+  act main_sub POST /v1/chats/$SUB/main
+  act main_lead POST /v1/chats/$LEAD/main
+  act fork_bad POST /v1/chats/$PLAIN/fork '{}'
+  act fork_early POST /v1/chats/$PLAIN/fork '{"seq":0}'
+  act fork POST /v1/chats/$PLAIN/fork '{"seq":1}'
+  act continue_on_bad POST /v1/chats/$LIM1/continue_on '{"account":"zzz"}'
+  act cancel_limit POST /v1/chats/$LIM2/cancel_limit
+  act stop_all POST /v1/chats/$LEAD/stop_all '{}'
+  act retire_lead POST /v1/chats/$LEAD/retire
+  act retire_sub POST /v1/chats/$SUB/retire
+  act gmail_info GET /v1/apps/gmail
+  act move_targets_sub GET /v1/chats/$SUB/move_targets
+  act commit_bad GET /v1/chats/$PLAIN/commit/zzzz
+  act commit_none GET /v1/chats/$NOF/commit/abcdef1
+  act gmail_bad POST /v1/apps/gmail/default '{"email":"nobody@example.com"}'
+  act gmail_unknown POST /v1/apps/gmail/nope
+  act discord_unknown POST /v1/apps/discord/nope
+  act discord_signin POST /v1/apps/discord/signin
+  act hub_auto_bad POST /v1/hub/auto
+  act hub_auto POST /v1/hub/auto '{"on":false}'
+  act hub_check POST /v1/hub/check
+  act voice_cleanup POST /v1/voice/cleanup '{"text":"hello there my friend"}'
+  act voice_settings PUT /v1/voice/settings '{"cleanup":false,"keep_loaded_min":7,"commands":false}'
+  act mention_get GET "/v1/chats/$PLAIN/mention?seq=0"
+  act mention_bad GET "/v1/chats/$PLAIN/mention?seq=99"
+  act mention_post POST /v1/chats/$PLAIN/mention '{"seq":0,"text":"hel"}'
+  act mention_all POST /v1/chats/$PLAIN/mention '{"seq":0,"text":"hello"}'
+  act mention_empty POST /v1/chats/$PLAIN/mention '{"seq":0,"text":"  "}'
+  act team_sub GET /v1/chats/$SUB/team
+  act slash_plan POST /v1/chats/$PLAIN/slash '{"command":"plan"}'
+  act slash_default POST /v1/chats/$PLAIN/slash '{"command":"default"}'
+  act slash_model POST /v1/chats/$PLAIN/slash '{"command":"model"}'
+  act slash_nope POST /v1/chats/$PLAIN/slash '{"command":"x"}'
+  act slash_clear POST /v1/chats/$PLAIN/slash '{"command":"clear-queue"}'
+  act slash_fork POST /v1/chats/$OTHER/slash '{"command":"fork"}'
+  act slash_settle POST /v1/chats/$OTHER/slash '{"command":"settle"}'
+  act slash_chat GET /v1/chats/$PLAIN/slash
+  act slash_draft GET "/v1/slash?account=claude&access=plan&project=$(echo $IDS | sed -E 's/.*/1/')"
+  act tags_chats GET "/v1/tags?trigger=\$&q="
+  act tags_chats_q GET "/v1/chats/$PLAIN/tags?trigger=\$&q=lim"
+  act tags_files_first GET "/v1/chats/$PLAIN/tags?trigger=@&q="
+  sleep 2
+  act tags_files GET "/v1/chats/$PLAIN/tags?trigger=@&q=app"
+  act tags_files_all GET "/v1/tags?trigger=@&project=1&q="
+  act tags_refs GET "/v1/chats/$PLAIN/tags?trigger=%23&q="
+  act palette_q GET "/v1/palette?q=lim&chat=$PLAIN"
+  act palette_run_bad POST /v1/palette/run '{"id":"nope"}'
+  act palette_run_page POST /v1/palette/run '{"id":"page:prs"}'
+  act palette_run_fast POST /v1/palette/run '{"id":"act:fast:on"}'
+  act palette_run_settle POST /v1/palette/run "{\"id\":\"act:settle:$PLAIN\",\"chat\":$PLAIN}"
+  act palette_run_fork POST /v1/palette/run "{\"id\":\"act:fork:$OTHER\",\"chat\":$OTHER}"
+  act palette_after GET "/v1/palette?q=settled&chat=$PLAIN"
+  act people_detect PATCH /v1/people '{"op":"detect"}'
+  sleep 3
+  act people_detected GET /v1/people
+  act people_set PATCH /v1/people '{"owner":"Sam Lee","github":"samlee","send_context":false,"share_github":false,"share":{"pc":"pc:far","level":"read"}}'
+  act people_confirm PATCH /v1/people '{"op":"confirm"}'
+  act patch_title PATCH /v1/chats/$PLAIN '{"title":"  A new title  "}'
+  act patch_empty PATCH /v1/chats/$PLAIN '{"title":"   "}'
+  act patch_settled PATCH /v1/chats/$OTHER '{"settled":false}'
+  act patch_run PATCH /v1/chats/$FAILING '{"access":"plan"}'
+  act patch_bad PATCH /v1/chats/$FAILING '{"access":"root"}'
+  act move_none POST /v1/chats/$PLAIN/move '{"repo":null}'
+  act move_path POST /v1/chats/$PLAIN/move "{\"repo\":\"$T/home/proj\"}"
+  act move_bad POST /v1/chats/$PLAIN/move '{"repo":999}'
+  act move_missing POST /v1/chats/$PLAIN/move '{}'
+  act continue_on POST /v1/chats/$LIM1/continue_on '{"account":"claude"}'
+  sleep 3
+  get /v1/state $T/$tag-act-state-end.full.json
   kill $APP 2>/dev/null; wait $APP 2>/dev/null
 }
-scenario rust
-scenario ts
+[ -n "${SKIP_RUN:-}" ] || { scenario rust; scenario ts; }
 for n in 0 1 2 3 3b 4; do
   if cmp -s $T/rust-$n.json $T/ts-$n.json; then ok "sample $n: Rust and TS give the same pr, unread, failed, working and running for all 5 chats"; else bad "sample $n differs"; diff <(python3 -m json.tool $T/rust-$n.json) <(python3 -m json.tool $T/ts-$n.json) | head -20; fi
 done
@@ -58,6 +134,15 @@ done
 for f in $(cd $T && ls rust-route-*.json); do
   d=$("$BUN" $RIG/dbswap.ts statediff $T/$f $T/ts-${f#rust-} | tail -1)
   case "$d" in *" 0 kinds"*) ok "${f#rust-route-}: same";; *) bad "${f#rust-route-}: $d"; "$BUN" $RIG/dbswap.ts statediff $T/$f $T/ts-${f#rust-} | head -8;; esac
+done
+for f in $(cd $T && ls rust-act-*.json | grep -v "\.full\.json"); do
+  n=${f#rust-act-}
+  d=$("$BUN" $RIG/dbswap.ts statediff $T/$f $T/ts-act-$n sort | tail -1)
+  case "$d" in *" 0 kinds"*) ok "action ${n%.json}: $(head -c 90 $T/$f)";; *) bad "action ${n%.json} differs"; "$BUN" $RIG/dbswap.ts statediff $T/$f $T/ts-act-$n sort | head -10;; esac
+done
+for n in snoozed end; do
+  d=$("$BUN" $RIG/dbswap.ts statediff $T/rust-act-state-$n.full.json $T/ts-act-state-$n.full.json byid,sort | tail -1)
+  case "$d" in *" 0 kinds"*) ok "/v1/state after the actions ($n): no difference";; *) bad "/v1/state after the actions ($n): $d"; "$BUN" $RIG/dbswap.ts statediff $T/rust-act-state-$n.full.json $T/ts-act-state-$n.full.json byid,sort | head;; esac
 done
 for n in s0 s3 s3b s4; do for w in lead sub lim1 lim2 nof far near; do
   if cmp -s $T/rust-$n-$w.st.json $T/ts-$n-$w.st.json; then ok "status $n of $w: Rust and TS say the same"; else bad "status $n of $w differs"; diff <(python3 -m json.tool $T/rust-$n-$w.st.json) <(python3 -m json.tool $T/ts-$n-$w.st.json) | head -20; fi
