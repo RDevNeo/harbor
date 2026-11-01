@@ -11,7 +11,7 @@ SWAY = os.path.expanduser("~/.cache/hts/tmp/sway/root/usr")
 SECS = float(os.environ.get("HTS_SECS", "25"))
 SETTLE = float(os.environ.get("HTS_SETTLE", "20"))
 STREAM = float(os.environ.get("HTS_STREAM_S", "40"))
-SEND = "800,240,click,3;800,240,key:hello,5;800,240,key:Return,6"
+SEND = os.environ.get("HTS_SEND", "800,240,click,3;800,240,key:hello,5;800,240,key:Return,6")
 MARK = "HTS_COST_RUN"
 
 INNER = r"""
@@ -49,7 +49,9 @@ def sway_up():
     for s in glob.glob(f"{RT}/*"):
         os.remove(s) if not os.path.isdir(s) else None
     conf = f"{TMP}/sway.conf"
-    open(conf, "w").write(open(f"{HERE}/sway.conf").read())
+    out = os.environ.get("HTS_OUTPUT", "")
+    text = open(f"{HERE}/sway.conf").read()
+    open(conf, "w").write(text.replace("resolution 1400x900", out) if out else text)
     env = dict(os.environ, XDG_RUNTIME_DIR=RT, WLR_BACKENDS="headless", WLR_LIBINPUT_NO_DEVICES="1",
                LD_LIBRARY_PATH=f"{SWAY}/lib", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
     for k in ("DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "HYPRLAND_INSTANCE_SIGNATURE"):
@@ -160,6 +162,17 @@ def mem(pid):
     return out
 
 
+def maps(pid, n=8):
+    size, name = {}, "?"
+    for line in open(f"/proc/{pid}/smaps"):
+        head = line.split()
+        if "-" in head[0] and ":" not in head[0] and len(head) >= 5:
+            name = os.path.basename(head[5]) if len(head) > 5 else "[anon]"
+        elif head[0] == "Rss:":
+            size[name] = size.get(name, 0) + int(head[1])
+    return [[k, round(v / 1024, 1)] for k, v in sorted(size.items(), key=lambda x: -x[1])[:n]]
+
+
 def marked(pid):
     """Every other process of this run (run.sh, the turn runner, the fake claude): they carry the mark."""
     want = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
@@ -267,6 +280,8 @@ def stage(name):
         p, pid = start({"HARBOR_VIEW": "chat"})
     elif name == "stream":
         p, pid = start({"HARBOR_POINTER": SEND})
+    elif name == "spin":
+        p, pid = start({"HARBOR_POINTER": SEND, "HTS_FAKE_TOOL": "1", **({"HARBOR_VIEW": "chat"} if os.environ.get("HTS_VIEW") == "chat" else {})})
     else:
         raise SystemExit(f"unknown stage {name}")
     try:
@@ -278,6 +293,7 @@ def stage(name):
                 raise SystemExit("stream: the fake claude isn't running, the message wasn't sent")
         r = sample(pid, SECS if name != "stream" else STREAM - 15)
         r["mem_mb"] = mem(pid)
+        r["maps_mb"] = maps(pid)
         r["threads"] = len(os.listdir(f"/proc/{pid}/task"))
         shot(f"{TMP}/{name}.png")
         if name == "stream":
