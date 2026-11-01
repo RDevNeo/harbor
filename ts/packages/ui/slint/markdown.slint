@@ -1,4 +1,6 @@
 import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn } from "widgets.slint";
 
 export struct MdBlock {
     kind: string,
@@ -25,6 +27,7 @@ export component MdBlockView {
     in property <MdBlock> block;
     in property <length> size: 16px;
     callback link(string);
+    callback copy(string);
     property <length> indent: block.quote * 14px;
     min-height: inner.min-height;
     preferred-height: inner.preferred-height;
@@ -97,6 +100,19 @@ export component MdBlockView {
                         font-size: root.size - 1px;
                         color: Theme.fg;
                         wrap: word-wrap;
+                    }
+                }
+                code-area := TouchArea { }
+                copy-btn := Btn {
+                    x: parent.width - 32px;
+                    y: 4px;
+                    visible: code-area.has-hover || self.hovered;
+                    icon: Icons.copy;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Copy";
+                    clicked => {
+                        root.copy(root.block.code);
                     }
                 }
             }

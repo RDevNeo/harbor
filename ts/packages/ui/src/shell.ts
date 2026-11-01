@@ -1219,22 +1219,68 @@ export class Shell {
   private chatMenu(id: number, x: number, y: number): void {
     const c = this.data.chat(id);
     if (!c) return;
-    this.popup(
-      "chat",
-      x,
-      y,
-      [
-        this.item("Rename", () => this.renameDialog(id)),
-        this.item(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled)),
-        this.separator(),
-        this.item("Delete", () => this.deleteDialog(id), { icon: ICONS.TRASH }),
-      ],
-      200,
-    );
+    const items: (PopItem & { act?: () => void })[] = [this.item("Rename", () => this.renameDialog(id)), this.item(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled))];
+    if (c.role === "lead" && c.repoId !== null && this.data.repo(c.repoId)) {
+      items.push(this.item("Make main chat", () => this.makeMain(id), { desc: "The project's row opens this chat" }));
+    }
+    if (c.role !== "sub") {
+      let why = "";
+      try {
+        this.engine.movable(id);
+      } catch (e) {
+        why = e instanceof Error ? e.message : String(e);
+      }
+      items.push(why === "" ? this.item("Move to project…", () => this.moveMenu(id, x, y)) : this.item("Move to project…", () => {}, { enabled: false, desc: why }));
+    }
+    items.push(this.separator(), this.item("Delete", () => this.deleteDialog(id), { icon: ICONS.TRASH }));
+    this.popup("chat", x, y, items, 240);
+  }
+
+  /** team.rs `make_main`: the chat becomes its project's main chat (back from Settled or snooze). */
+  private makeMain(id: number): void {
+    const c = this.data.chat(id);
+    if (!c || c.repoId === null) return;
+    if (c.settled) {
+      c.settled = false;
+      this.data.saveChat(c);
+    }
+    this.data.setSnooze(`c${id}`, null, () => {});
+    this.data.store.setMainChat(c.repoId, id);
+    this.refreshAll();
+  }
+
+  /** sidebar.rs `move_menu`: the chat and its sub-agents to another project, or none. */
+  private moveMenu(id: number, x: number, y: number): void {
+    const c = this.data.chat(id);
+    if (!c) return;
+    const move = (repo: number | null) => () => {
+      try {
+        this.engine.moveChat(id, repo);
+      } catch (e) {
+        this.dialog("Couldn't move this chat", e instanceof Error ? e.message : String(e), "OK", false, null, () => {});
+      }
+      this.data.reload();
+      this.refreshAll();
+    };
+    const items: (PopItem & { act?: () => void })[] = [this.item("No project", move(null), { icon: ICONS.MESSAGE, desc: "Home folder", checked: c.repoId === null })];
+    if (this.data.repos.length > 0) items.push(this.separator());
+    for (const r of this.data.repos) items.push(this.item(r.name, move(r.id), { icon: ICONS.FOLDER, desc: tilde(r.local ?? r.path, homedir()), checked: c.repoId === r.id }));
+    setTimeout(() => this.popup("move", x, y, items, 280), 0);
   }
 
   private projectMenu(id: number, x: number, y: number): void {
-    this.popup("project-row", x, y, [this.item("Remove from Harbor", () => this.removeRepoDialog(id), { icon: ICONS.TRASH })], 220);
+    const items: (PopItem & { act?: () => void })[] = [];
+    const stored = this.data.repo(id)?.remote ?? "";
+    const remote = this.gitStatus.get(id)?.remote ?? (stored === "" ? null : git.webUrl(stored));
+    if (remote) items.push(this.item("Open remote", () => this.openExternal(remote), { icon: ICONS.EXTERNAL }));
+    const main = this.data.mainChat(id);
+    if (main !== null) {
+      if (items.length > 0) items.push(this.separator());
+      items.push(this.item("Rename main chat", () => this.renameDialog(main)), this.item("Settle main chat", () => this.setSettled(main, true), { desc: "The project's next message starts a new main chat" }));
+    }
+    if (items.length > 0) items.push(this.separator());
+    items.push(this.item("Remove from Harbor", () => this.removeRepoDialog(id), { icon: ICONS.TRASH }));
+    this.popup("project-row", x, y, items, 260);
   }
 
   /** sidebar.rs `snooze_menu`: presets, a time typed by hand with its preview, Unsnooze. */

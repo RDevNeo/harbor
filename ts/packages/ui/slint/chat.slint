@@ -277,6 +277,7 @@ export component CardView inherits TouchArea {
     callback open-url(string);
     callback act(int, string);
     callback open-media(string);
+    callback copy-text(string);
     property <bool> right: card.kind == "user";
     min-height: inner.min-height;
     preferred-height: inner.preferred-height;
@@ -296,6 +297,9 @@ export component CardView inherits TouchArea {
                 size: 16px;
                 link(u) => {
                     root.link(u);
+                }
+                copy(t) => {
+                    root.copy-text(t);
                 }
             }
         }
@@ -617,6 +621,7 @@ export component Transcript {
     callback open-url(string);
     callback act(int, string);
     callback open-media(string);
+    callback copy-text(string);
     out property <bool> at-end: -list.content-y + list.height >= list.content-height - 48px;
     // Stuck to the end while it grows (egui's stick_to_bottom) until scrolled up.
     in-out property <bool> follow: true;
@@ -677,6 +682,9 @@ export component Transcript {
                     }
                     open-media(p) => {
                         root.open-media(p);
+                    }
+                    copy-text(t) => {
+                        root.copy-text(t);
                     }
                     toggle(seq) => {
                         root.toggle(seq);
