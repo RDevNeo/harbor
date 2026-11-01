@@ -6,8 +6,8 @@ import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@h
 import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
 import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
-import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
-import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint } from "./logic/mentions.ts";
+import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
+import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { updateToast } from "./logic/hubseam.ts";
@@ -176,6 +176,9 @@ export class Shell {
   private readonly hub: ShellHub;
   private shownProjects: number[] = [];
   private selection: { seq: number; text: string } | null = null;
+  private selButton: SelectionButton | null = null;
+  private selTimer: ReturnType<typeof setTimeout> | null = null;
+  private selHover = false;
   private noteFocus: Mention | null = null;
   private readonly deviceRows = new slint.ArrayModel<DeviceRow>([]);
   private readonly transferRows = new slint.ArrayModel<TransferRow>([]);
@@ -301,6 +304,10 @@ export class Shell {
       this.selection = null;
       w.sel_shown = false;
       if (s) this.cardAction(s.seq, "excerpt", s.text);
+    };
+    w.sel_hover = (on) => {
+      this.selHover = on;
+      this.stepSelButton();
     };
     w.devices = this.deviceRows;
     w.transfers = this.transferRows;
@@ -1139,7 +1146,7 @@ export class Shell {
   }
 
   private composerKey(e: KeyEvent): boolean {
-    if (this.win.lb_open) return this.globalKey(e);
+    if (this.win.lb_open || this.escOfViewer(e)) return this.globalKey(e);
     const m = e.modifiers;
     const p = pressOf(e.text, m);
     if (this.menu.length > 0) {
@@ -1154,6 +1161,8 @@ export class Shell {
       }
     }
     const chat = this.view === "chat" ? this.chatId : null;
+    const scroll = transcriptKey(e.text, m);
+    if (scroll === "up" || scroll === "down") return true;
     if ((p.ctrl && !p.alt && !p.shift && p.key.toLowerCase() === "v") || (p.shift && p.key === "Insert")) void this.pasteImage();
     if (this.keys.matches("voice", p) && this.win.pop_id === "") {
       this.mic();
@@ -1202,7 +1211,12 @@ export class Shell {
     return false;
   }
 
+  private escOfViewer(e: KeyEvent): boolean {
+    return e.text === "\u{1b}" && (this.images?.heldEsc(e.repeat) ?? false);
+  }
+
   private globalKey(e: KeyEvent): boolean {
+    if (this.escOfViewer(e)) return true;
     const p = pressOf(e.text, e.modifiers);
     const w = this.win;
     if (w.lb_open && this.images) {
@@ -1250,6 +1264,11 @@ export class Shell {
     }
     if (p.key === "Escape" && w.pop_id !== "") {
       this.closePopup();
+      return true;
+    }
+    const scroll = transcriptKey(e.text, e.modifiers);
+    if (scroll !== null && this.page === null && this.view === "chat" && !w.lb_open && w.pop_id === "") {
+      w.transcript_key(scroll);
       return true;
     }
     if (this.page !== null && w.dialog_id === "" && (p.key === "Escape" ? this.pages.esc(this.page) : this.page === "prs" && this.pages.shortcut(p))) return true;
@@ -2601,9 +2620,16 @@ export class Shell {
         return;
       }
       this.selection = sel;
-      w.sel_shown = sel.text.trim() !== "";
+      this.selButton = sel.text.trim() !== "" ? new SelectionButton(performance.now() / 1000) : null;
+      this.selHover = false;
       w.sel_x = sel.x;
       w.sel_y = sel.y;
+      this.stepSelButton();
+      return;
+    }
+    const scroll = /^scroll:(up|down|home|end)$/.exec(url)?.[1];
+    if (scroll === "up" || scroll === "down" || scroll === "home" || scroll === "end") {
+      if (!this.win.lb_open) this.win.transcript_key(scroll);
       return;
     }
     if (url.startsWith("at:")) {
@@ -2624,6 +2650,19 @@ export class Shell {
     }
     if (url.startsWith("harbor:")) return;
     this.openExternal(url);
+  }
+
+  private stepSelButton(): void {
+    if (this.selTimer !== null) clearTimeout(this.selTimer);
+    this.selTimer = null;
+    const b = this.selButton;
+    if (b === null || this.selection === null) {
+      this.win.sel_shown = false;
+      return;
+    }
+    const s = b.step(performance.now() / 1000, false, this.selHover);
+    this.win.sel_shown = s.show;
+    if (s.wake !== null) this.selTimer = setTimeout(() => this.stepSelButton(), s.wake * 1000 + 5);
   }
 
   private openExternal(url: string): void {

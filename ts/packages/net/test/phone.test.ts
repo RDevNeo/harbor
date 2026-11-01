@@ -14,7 +14,7 @@ import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
 import { newPeer } from "../src/shared.ts";
 import { StoreReplica } from "../src/meshstore.ts";
-import { cardJson, catalogOf, clock, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
+import { cardJson, catalogOf, clock, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
 import { actions, project } from "../src/view.ts";
@@ -270,6 +270,56 @@ describe("the phone API's chats (api.rs App side)", () => {
     const items = (await call("GET", `v1/chats/${c.id}/items`)).body as { status: Record<string, unknown> };
     expect(calls.at(-1)).toBe(`seen ${c.id}`);
     expect([items.status.recap, items.status.suggestion, items.status.can_steer, items.status.follow_up, items.status.queue]).toEqual(["Fixed the build.", "Run the tests", true, "queue", [{ id: 4, text: "next" }]]);
+  });
+
+  test("a_message_of_only_mentions_is_sent", async () => {
+    expect(nothingToSend("", 0, 0)).toBe(true);
+    expect(nothingToSend("  \n", 0, 0)).toBe(true);
+    expect(nothingToSend("", 0, 1)).toBe(false);
+    expect(nothingToSend("", 1, 0)).toBe(false);
+    expect(nothingToSend("hi", 0, 0)).toBe(false);
+    const store = Store.openAt(join(tmp, "mentions-only.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const sent: Array<[string, Mention[]]> = [];
+    const engine: PhoneEngine = {
+      running: () => false,
+      runningSince: () => 0,
+      transcript: () => ({ items: [] }),
+      send: (_id, text, o) => {
+        sent.push([text, o.mentions ?? []]);
+      },
+      stop: () => {},
+      queued: () => [],
+      takeQueue: () => [],
+      queueJson: () => [],
+      steering: () => "now",
+      followDefault: () => "queue",
+      held: () => false,
+      newThread: (repo) => store.createChat(blankChat({ repoId: repo })),
+      reload: () => {},
+      queuePromote: () => false,
+      queueMove: () => false,
+      queueUpdate: () => false,
+      queueRemove: () => false,
+      queueResume: () => {},
+      recap: () => [null, null],
+      recapSeen: () => {},
+      unread: () => false,
+      failed: () => false,
+      opened: () => false,
+      subsQueued: () => 0,
+      queuedCount: () => 0,
+      mainChat: () => null,
+      forksOf: () => [],
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
+    const c = store.createChat(blankChat({ title: "m" }));
+    const call = (body: unknown) => routes.route({ method: "POST", path: `v1/chats/${c.id}/send`.split("/"), query: [], body, token: "", device: "Pixel", global: false });
+    expect((await call({ text: " " })).status).toBe(400);
+    expect((await call({ text: "", mentions: [{ item: 3, from: "Claude", text: "hi" }] })).status).toBe(200);
+    expect(sent.map(([t, ms]) => [t, ms.map((m) => [m.item, m.from, m.text])])).toEqual([["", [[3, "Claude", "hi"]]]]);
+    store.close();
   });
 
   test("a signed-in phone over pinned TLS starts a chat, reads it, sends, and hears of the reply", async () => {

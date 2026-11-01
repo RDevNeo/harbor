@@ -931,6 +931,17 @@ export component Transcript {
         root.follow = true;
         list.content-y = min(0px, list.height - col.preferred-height);
     }
+    public function scroll-by(dy: length) {
+        list.content-y = max(min(0px, list.height - list.content-height), min(0px, list.content-y + dy));
+        root.follow = root.at-end;
+    }
+    public function page(dir: int) {
+        root.scroll-by(dir * list.height * 0.9);
+    }
+    public function scroll-to-top() {
+        list.content-y = 0px;
+        root.follow = root.at-end;
+    }
     // egui's item spacing in the transcript, between rows that aren't cards.
     property <length> gap: Theme.compact ? 8px : 12px;
     property <length> gutter: root.width < 520px ? 12px : 24px;
@@ -1056,6 +1067,28 @@ export component Transcript {
                         root.open-url(u);
                     }
                 }
+            }
+        }
+    }
+    // chat.rs `scroll_to_bottom_button`: floats over the lower edge while reading back.
+    if !root.at-end: Rectangle {
+        x: (root.width - 34px) / 2;
+        y: root.height - 14px - 34px;
+        width: 34px;
+        height: 34px;
+        border-radius: 17px;
+        background: down-area.has-hover ? Theme.gray-200 : Theme.gray-100;
+        border-width: 1px;
+        border-color: Theme.border;
+        Glyph {
+            icon: Icons.down;
+            size: 16px;
+            color: Theme.fg;
+        }
+        down-area := TipArea {
+            tip: "Scroll to bottom";
+            clicked => {
+                root.scroll-to-end();
             }
         }
     }

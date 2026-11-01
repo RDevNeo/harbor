@@ -827,7 +827,7 @@ export class Viewer implements VideoHooks {
     const m = keys.has("m");
     const f = keys.has("f");
     const esc = keys.has("escape");
-    if (!(space || left || right || up || down || m || f || esc)) return { previous, next, close: false };
+    if (!(space || left || right || up || down || m || f)) return { previous, next, close: esc };
     const p = this.player;
     if (p === null) return { previous, next, close: esc };
     p.moved = this.env.now();
@@ -837,10 +837,7 @@ export class Viewer implements VideoHooks {
     if (up || down) this.changeVolume(p, up ? this.level + VOLUME_STEP : Math.max(this.level - VOLUME_STEP, 0));
     if (m) this.toggleMute();
     if (f) this.toggleFullscreen();
-    // Esc leaves full screen first, then the viewer.
-    const leave = esc && this.env.host.fullscreen();
-    if (leave) this.toggleFullscreen();
-    return { previous, next, close: esc && !leave };
+    return { previous, next, close: esc };
   }
 
   private changeVolume(p: Player, percent: number): void {

@@ -310,6 +310,7 @@ export interface AppWindow extends slint.ComponentHandle {
   sel_x: number;
   sel_y: number;
   sel_mention: () => void;
+  sel_hover: (on: boolean) => void;
   settings: () => void;
   prs: () => void;
   issues: () => void;
@@ -507,6 +508,7 @@ export interface AppWindow extends slint.ComponentHandle {
   focus_composer(): void;
   set_cursor(at: number): void;
   scroll_to_end(): void;
+  transcript_key(k: "up" | "down" | "home" | "end"): void;
   copy_text(t: string): void;
 }
 

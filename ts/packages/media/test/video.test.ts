@@ -225,9 +225,18 @@ test("keys: space, arrows, m and f drive the player and the rest is left to the 
   ]);
   viewer.takeKeys(["f"]);
   expect(log.fullCalls).toEqual([true]);
-  expect(viewer.takeKeys(["escape"])).toEqual({ previous: false, next: false, close: false });
-  expect(log.fullCalls).toEqual([true, false]);
+  viewer.shutdown();
+});
+
+test("esc_closes_a_video_in_full_screen_too", async () => {
+  const { viewer, log, clip } = waitingViewer();
+  viewer.open(clip, undefined, true);
+  await until("preparing", () => viewer.snapshot()?.stage.kind === "preparing");
+  viewer.takeKeys(["f"]);
+  expect(log.fullCalls).toEqual([true]);
   expect(viewer.takeKeys(["escape"])).toEqual({ previous: false, next: false, close: true });
+  viewer.close();
+  expect(log.fullCalls).toEqual([true, false]);
   viewer.shutdown();
 });
 

@@ -54,7 +54,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | usertext | done as logic; the window shows chat mentions as links, tags and commands blue; erase-whole keys not wired | 15 of 15 |
 | slash | done as logic; the menu shows and inserts; Harbor commands model, effort, plan, default, new, settle, fork, clear-queue run | 12 of 12 |
 | tags | done as logic; `@file` menu works; `#issue` needs refs from `gh`, not wired | 9 of 9 |
-| mentions | done: Mention from a message's hover bar (and "@" on tool calls, notices and messages) adds a chip over the composer with its tooltip and remove; the message goes to the agent quoted; text selected in a reply's paragraph gets "Mention selection" and goes as an excerpt (its button sits above the paragraph's start: Slint doesn't say where the drag ended; a selection stays within one paragraph); each waiting mention has its note box (Enter goes on to the message, Shift+Enter a new line), focused when a selection was just mentioned | 5 of 5 |
+| mentions | done: Mention from a message's hover bar (and "@" on tool calls, notices and messages) adds a chip over the composer with its tooltip and remove; the message goes to the agent quoted; text selected in a reply's paragraph gets "Mention selection" and goes as an excerpt (its button sits above the paragraph's start: Slint doesn't say where the drag ended; a selection stays within one paragraph); each waiting mention has its note box (Enter goes on to the message, Shift+Enter a new line), focused when a selection was just mentioned; the button waits 0.6 s and goes after 5 s unless the pointer is on it (0.109). Not done: a sent message's mention chips (and so pointing at a message and lighting up just its excerpt): `locate`, `merged`, `scrollTarget` are ported as logic, nothing calls them yet | 13 of 13 |
 | chatmention | done as logic; `$chat` menu works and the mention is kept on the message; the context sent to the agent (`fillChatMention`) waits for the agents Engine | 4 of 4 |
 | keys | done: the window's shortcuts go through `Keys` with the user's kv `keybindings` (send, send the other way, steer with the oldest queued, stop, sidebar, new thread, team, palette, settings) | 1 of 1 |
 | agentstrip | done as logic; not drawn yet | 4 of 4 |
@@ -122,6 +122,22 @@ compile, cards, cursors, scripted input).
   skrifa's advances and Slint's elide reserves more room, and the worktree/PR marks after an elided
   title sit up to 4px further right. Accepted rather than matching epaint's layout letter by letter.
 - The window shows what isn't ported as disabled buttons or a dialog naming it; nothing pretends to work.
+
+## Rust 0.109.0 (ca83ee7), ported on 2026-11-01
+
+- chat.rs: the round "Scroll to bottom" button over the transcript while reading back; PageUp, PageDown,
+  Home and End scroll the transcript when no text field holds them and no viewer is open. The composer swallows
+  PageUp/PageDown and keeps Home/End, as egui's focused field does; a reply's text, once clicked, passes all four
+  on, but Slint's read-only field keeps Home and End to itself (seen in the rig: PageUp scrolls, Home and End
+  don't from there). A read-only chat has nothing focused, so no key arrives. Not done: egui's
+  `line_scroll_speed` 60 (Slint's wheel step is its own) and theme.rs's scroll bar style (no bar in Slint).
+- widgets.rs `menu_pad` and theme.rs `menu_margin` 6: the sidebar's chat and project menus (the egui-style
+  `native` rows). The other context menus here are rengaf MenuItems with 8px of their own already.
+- images.rs: the Esc that closes the lightbox reaches nothing else while it repeats (`Images.heldEsc`).
+- mentions.rs: see the row above.
+- Seen in a private sway (synthetic db, from source): the button over a scrolled-up transcript, PageUp from a
+  reply's text, the project menu's padding. Not compared pixel by pixel with Rust 0.109.0; the selection
+  button's timing and the Esc of the lightbox were tested as logic only.
 
 ## How a new page plugs in
 

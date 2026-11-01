@@ -150,6 +150,13 @@ export class ComposerMenus {
   }
 }
 
+const TRANSCRIPT_KEYS: Record<string, "up" | "down" | "home" | "end"> = { "\u{f72c}": "up", "\u{f72d}": "down", "\u{f729}": "home", "\u{f72b}": "end" };
+
+/** chat.rs: PageUp, PageDown, Home and End without modifiers scroll the transcript. */
+export function transcriptKey(text: string, m: { control: boolean; shift: boolean; alt: boolean; meta: boolean }): "up" | "down" | "home" | "end" | null {
+  return m.control || m.shift || m.alt || m.meta ? null : (TRANSCRIPT_KEYS[text] ?? null);
+}
+
 export function pressOf(text: string, m: { control: boolean; shift: boolean; alt: boolean }): KeyPress {
   const names: Record<string, string> = { "\n": "Enter", "\r": "Enter", "\t": "Tab", "\u{1b}": "Escape", "\u{f700}": "ArrowUp", "\u{f701}": "ArrowDown", "\u{f702}": "ArrowLeft", "\u{f703}": "ArrowRight", "\u{8}": "Backspace", "\u{7f}": "Delete" };
   return { key: names[text] ?? text, ctrl: m.control, shift: m.shift, alt: m.alt };

@@ -155,6 +155,10 @@ export interface RunSettings {
 }
 
 /** What tells an item's versions apart without serializing it: a tool's input and result are set once, so their lengths stand in for them; replies and thinking grow while they stream; the rest are small. */
+export function nothingToSend(text: string, files: number, mentions: number): boolean {
+  return text.trim() === "" && files === 0 && mentions === 0;
+}
+
 export function fingerprint(it: Item): bigint {
   if (it.kind === "tool") return hashStr(JSON.stringify(["tool", it.id, it.name, it.summary, it.input.length, it.result === null ? null : it.result.length, it.is_error]));
   if (it.kind === "text") return hashStr(JSON.stringify([1, it.text, it.at]));
@@ -752,14 +756,14 @@ export class PhoneRoutes {
       if (path === null) return err(400, `unknown upload ${id}`);
       files.push(path);
     }
-    if (text === "" && files.length === 0) return err(400, "nothing to send");
+    const mentions = (Array.isArray(body.mentions) ? body.mentions : []).map((m) => mention(typeof m === "object" && m !== null ? (m as Partial<Mention>) : {}));
+    if (nothingToSend(text, files.length, mentions.length)) return err(400, "nothing to send");
     if (c.retired) return err(409, "this agent was retired");
     const e = this.d.engine;
     if (!e) return err(503, "agents aren't available in this build");
     const before = e.queued(c.id).filter((q) => q.intent === "").length;
     const running = e.running(c.id);
     const mode = body.mode === "steer" ? "steer" : "queue";
-    const mentions = (Array.isArray(body.mentions) ? body.mentions : []).map((m) => mention(typeof m === "object" && m !== null ? (m as Partial<Mention>) : {}));
     this.d.hub.clearDraft(c.id);
     e.send(c.id, text, { files, mentions, mode, sender, device });
     const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;

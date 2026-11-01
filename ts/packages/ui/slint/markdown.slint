@@ -94,6 +94,16 @@ component Selectable inherits Rectangle {
         // egui's selection colour, see-through: here it lies over the words.
         selection-background-color: (Theme.dark ? #004287 : #90d1ff).with-alpha(0.6);
         selection-foreground-color: transparent;
+        key-pressed(e) => {
+            if e.modifiers.control || e.modifiers.shift || e.modifiers.alt || e.modifiers.meta {
+                return reject;
+            }
+            if e.text == Key.PageUp || e.text == Key.PageDown || e.text == Key.Home || e.text == Key.End {
+                root.link("scroll:" + (e.text == Key.PageUp ? "up" : e.text == Key.PageDown ? "down" : e.text == Key.Home ? "home" : "end"));
+                return accept;
+            }
+            reject
+        }
         changed cursor-position-byte-offset => {
             if root.key != "" && self.has-focus && self.anchor-position-byte-offset == self.cursor-position-byte-offset {
                 root.link("at:" + root.key + ":" + self.cursor-position-byte-offset);

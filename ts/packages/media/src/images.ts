@@ -142,6 +142,7 @@ export class Images {
   private card = 0;
   private clicked: number | null = null;
   private held: Record<LightboxKey, boolean> = { prev: false, next: false, close: false };
+  private escHeld = false;
   private bytes = new Map<string, Uint8Array>();
   private queue: Job[] = [];
   private workers = 0;
@@ -332,7 +333,17 @@ export class Images {
   }
 
   pressKey(k: LightboxKey): void {
-    if (this.opened !== null) this.held[k] = true;
+    if (this.opened === null) return;
+    this.held[k] = true;
+    if (k === "close") this.escHeld = true;
+  }
+
+  /** An Esc while the viewer is shut: true while it repeats the press that closed it, which reaches nothing behind. */
+  heldEsc(repeat: boolean): boolean {
+    if (this.opened !== null || !this.escHeld) return false;
+    if (repeat) return true;
+    this.escHeld = false;
+    return false;
   }
 
   applyKeys(): void {

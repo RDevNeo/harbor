@@ -56,6 +56,24 @@ test("the_viewer_stops_at_either_end_and_widens_to_the_card", () => {
   expect(imgs.isOpen()).toBe(false);
 });
 
+test("esc_closes_the_viewer_and_reaches_nothing_else", () => {
+  const imgs = new Images();
+  expect(imgs.heldEsc(false)).toBe(false);
+  imgs.inCard(1);
+  imgs.openClicked("/x/a.png", ["/x/a.png"]);
+  imgs.pressKey("close");
+  expect(imgs.heldEsc(true)).toBe(false);
+  imgs.applyKeys();
+  expect(imgs.isOpen()).toBe(false);
+  expect(imgs.heldEsc(true)).toBe(true);
+  expect(imgs.heldEsc(true)).toBe(true);
+  expect(imgs.heldEsc(false)).toBe(false);
+  expect(imgs.heldEsc(true)).toBe(false);
+  imgs.openClicked("/x/a.png", ["/x/a.png"]);
+  imgs.close();
+  expect(imgs.heldEsc(true)).toBe(false);
+});
+
 test("decodes_a_normal_png", async () => {
   const { image, dims } = await decode("t.png", await png(64, 64), 384);
   expect(dims).toEqual([64, 64]);
