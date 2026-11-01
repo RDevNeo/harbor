@@ -272,7 +272,7 @@ export type Conn =
   | { tls: false; sock: Socket; peer: null; remote: string; local: string };
 
 /** A socket with data already read off it, as one stream again. */
-function rewound(s: Socket, first: Buffer): Duplex {
+export function rewound(s: Duplex, first: Buffer): Duplex {
   const d = new Duplex({
     read() {
       s.resume();
@@ -289,7 +289,7 @@ function rewound(s: Socket, first: Buffer): Duplex {
       cb(err);
     },
   });
-  d.push(first);
+  if (first.length > 0) d.push(first);
   s.on("data", (x: Buffer) => {
     if (!d.push(x)) s.pause();
   });

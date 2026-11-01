@@ -2,7 +2,8 @@ import { connect as tcpConnect, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { canonical, isLoopback, parseIp } from "./ip.ts";
 import { socketAddr, type Dest } from "./shared.ts";
-import { connect as tlsConnect, tailnetIp, type Identity } from "./tls.ts";
+import { rewound, connect as tlsConnect, tailnetIp, type Identity } from "./tls.ts";
+import { wire, type Json } from "./wire.ts";
 
 const CONNECT = 3000;
 const MAX_ANSWER = 64 << 20;
@@ -171,7 +172,7 @@ export async function exchange(s: Duplex, host: string, method: string, path: st
 export async function relayOpen(via: Dest, fp: string, port: number, wait = 20_000): Promise<Duplex> {
   const sa = socketAddr(via.addr);
   if (!sa) throw new Error("no address");
-  const { sock } = await tlsConnect({ id: identity(), pin: via.fp, host: sa.ip, port: sa.port, timeout: CONNECT });
+  const { sock } = await tlsConnect({ id: via.as ?? identity(), pin: via.fp, host: sa.ip, port: sa.port, timeout: CONNECT });
   sock.write(`POST /relay/v1/${fp}/${port} HTTP/1.1\r\nHost: ${via.addr}\r\nContent-Length: 0\r\n\r\n`);
   const timer = setTimeout(() => sock.destroy(new Error("the relay didn't answer")), wait);
   try {
@@ -189,8 +190,7 @@ export async function relayOpen(via: Dest, fp: string, port: number, wait = 20_0
       sock.destroy();
       throw new Error(msg);
     }
-    if (rest.length > 0) sock.unshift(rest);
-    return sock;
+    return rewound(sock, rest);
   } finally {
     clearTimeout(timer);
   }
@@ -202,8 +202,8 @@ export async function open(dest: Dest, wait = 20_000): Promise<Duplex> {
   if (!sa) throw new Error("no address");
   if (dest.via) {
     if (dest.fp === "" || dest.via.via) throw new Error("not sent: a relay needs the peer's key, and only one relay");
-    const outer = await relayOpen(dest.via, dest.fp, sa.port, wait);
-    return (await tlsConnect({ id: identity(), pin: dest.fp, stream: outer, timeout: wait })).sock;
+    const outer = await relayOpen({ ...dest.via, as: dest.as }, dest.fp, sa.port, wait);
+    return (await tlsConnect({ id: dest.as ?? identity(), pin: dest.fp, stream: outer, timeout: wait })).sock;
   }
   if (dest.fp === "") {
     const ip = parseIp(sa.ip);
@@ -211,7 +211,7 @@ export async function open(dest: Dest, wait = 20_000): Promise<Duplex> {
     return tcp(sa.ip, sa.port, CONNECT);
   }
   if (unreachable(dest.addr)) throw new Error("unreachable (HARBOR_UNREACHABLE)");
-  return (await tlsConnect({ id: identity(), pin: dest.fp, host: sa.ip, port: sa.port, timeout: CONNECT })).sock;
+  return (await tlsConnect({ id: dest.as ?? identity(), pin: dest.fp, host: sa.ip, port: sa.port, timeout: CONNECT })).sock;
 }
 
 /** A request to a peer as it came: status, content type, Content-Range and bytes. */
@@ -231,8 +231,8 @@ export async function http(dest: Dest, method: string, path: string, body: Body 
   return [a.status, JSON.parse(Buffer.from(a.body).toString("utf8")) as unknown];
 }
 
-export function jsonBody(v: unknown): Body {
-  return { ctype: "application/json", data: JSON.stringify(v) };
+export function jsonBody(v: Json): Body {
+  return { ctype: "application/json", data: wire(v) };
 }
 
 /** GET that must answer 200 (mesh.rs `get`). */

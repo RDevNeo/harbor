@@ -39,6 +39,9 @@
     "packages/net": {
       "name": "@harbor/net",
       "version": "0.0.0",
+      "dependencies": {
+        "@harbor/store": "workspace:*",
+      },
     },
     "packages/store": {
       "name": "@harbor/store",

@@ -10,3 +10,6 @@ export * from "./api.ts";
 export * from "./discover.ts";
 export * from "./portmap.ts";
 export * from "./account.ts";
+export * from "./relay.ts";
+export * from "./mesh.ts";
+export * from "./meshstore.ts";

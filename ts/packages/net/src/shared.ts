@@ -12,6 +12,8 @@ export interface Dest {
   addr: string;
   fp: string;
   via?: Dest | undefined;
+  /** The key this PC shows there, when not the process's own (several PCs in one test). */
+  as?: import("./tls.ts").Identity | undefined;
 }
 
 /** Another PC's Harbor. Serialized fields match mesh.rs's `Peer` in kv `mesh_peers`. */
