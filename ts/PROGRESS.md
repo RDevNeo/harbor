@@ -104,6 +104,124 @@ test. For Harbor: Bun's cost is about 0.4-0.9 % of one core all day and 80 wakeu
 on a laptop on battery. A smarter loop (tick only while Slint has timers, animations or input) is a task for
 the `ui` package; `slint.runEventLoop()` itself cannot run under Bun (Findings).
 
+## Running cost of the real app (2026-11-01)
+
+`rig/cost.py`: `ts/run.sh` on a scrambled db (`strip.py`) inside `unshare -Urnm`, on its own headless sway at
+1400x900, the fake `claude` streaming 40 text deltas a second; every stage holds `~/.cache/hts/check.lock`.
+CPU is `utime+stime` of every thread over 25 s, wakeups are voluntary context switches of every thread per
+second, RAM is `smaps_rollup` Rss + Swap. Same PC as the table above (i5-10210U, other agents' programs
+running, load 0.5-1.5). Idle is the start screen (new thread, composer focused, its cursor blinking) 20 s after
+start; "chat" opens the last chat. The stream is a 40 s reply sent with HARBOR_POINTER, sampled for 25 s from
+4 s in; "end of reply" is its last 3 s. Before is a1121e3, after is e8f4c11, two runs each unless noted.
+
+| | Before | After | Target | Rust 0.108.0 (table above) |
+| --- | --- | --- | --- | --- |
+| Idle CPU, start screen | 1.04 % | 1.16 / 0.72 % (the first run at load 1.5) | under 0.3 % | 0.00 % |
+| Idle CPU, a chat open | 1.08 % | 0.80 / 0.80 % | under 0.3 % | 0.00 % |
+| Idle wakeups/s (window's thread) | 86 (68) | 48 / 46 (20 / 20) | under 10 | 0.9 |
+| CPU while a reply streams | 42.8 % | 10.9 / 11.1 % | under 10 % | 1.25 % |
+| CPU near the end of a 40 s reply | 79.3 % | 10.7 / 12.0 % | | |
+| RAM idle / streaming | 368 / 408 MB | 372-376 / 405-410 MB | under 250 MB | 124 MB |
+| Key press to frame, median / worst | 15.4 / 26.9 ms | 11.7 / 28.4 ms (one of 15; the other 14 at most 13.2 ms) | not slower | |
+| `harbor --version` / `mcp` / `turn`, compiled, peak RSS | 83 / 87 / 87 MB | 51 / 57 / 56 MB | | `mcp` 22 MB |
+
+Key press to frame: 15 key presses with `wtype` (the time includes wtype's own start, about 8 ms), to the
+app's next `wl_surface.commit` in its WAYLAND_DEBUG log (`cost.py keys`).
+
+### Where the time went, and what each lever gave
+
+Profiled with Bun's `--cpu-prof`, `rig/loopstats.ts` (CPU inside Slint's `processEvents`, inside `setProperty`
+and the rest, per 5 s), `rig/stacks.py` (eu-stack samples of the window's thread, Slint and Skia frames by
+name) and per-refresh timers. Bun's profiler charges wall time to native calls, so its native numbers were
+not used; the CPU split comes from `process.cpuUsage()` around each call.
+
+- The renderer is not the cost and the rig is not software rendering: Slint draws with Skia on OpenGL on the
+  Intel GPU (`renderD129`, i915, no llvmpipe threads). Rendering was 25-30 % of the window thread's samples;
+  the rest was Slint's interpreter. A real desktop will be about the same.
+- 1. Slint's layout (the big one, 092fa44). 85-90 % of the streaming CPU was in
+  `processEvents`, and grew with the reply (20 % → 70 % of a core over 40 s). Slint's interpreter measures
+  every element holding wrapping text again, at every level of the layouts above it, each time any of them
+  changes (`box_layout_info_ortho_with_measure` → `layout_item_info_at_cross_width`, uncached), and a
+  `preferred-height` forwarded upwards is rewritten into the same measuring call. Each transcript row and
+  each block of a reply is now sized from a property that holds its own `preferred-height` (Slint caches
+  those), and the streaming reply's blocks live in one model across updates, so one changed block is
+  measured, not the whole transcript. `rig/layoutbench.ts` compares the constructs. 42.8 % → 19.4 %, and
+  flat: the end of the reply costs what its start does.
+- 2. Reparse and relay only the streaming block: the relay part is the live model above. The JavaScript
+  parse of the growing reply costs about 0.5 % of a core; not worth more.
+- 3. Coalescing (321a56f, then e8f4c11): the shell already flushed every 50 ms, but each flush also redrew the header, composer,
+  team panel and the whole sidebar (3-4 % of a core for the sidebar alone). Now a flush redraws the transcript
+  every 80 ms; the rest of the window and the sidebar follow at most every 250 ms, with a last refresh when
+  the reply ends. 19.9 % → 11.9 % (the split), then 14.9 % → 11.3 % (50 → 80 ms, three runs each).
+- 4. The loop (321a56f). A Worker blocks in `poll(2)` (bun:ffi) on winit's epoll fd, found as the new
+  epoll fd that watches a socket, and wakes the loop when the compositor sends something or Slint asks for a
+  frame; every change JavaScript makes to a window (properties, models, calls) asks for a turn; Slint's
+  timers get one every 100 ms. Window-thread wakeups 68 → 19 a second. Key to frame got faster, not slower
+  (median 15.4 → 12.3 ms, worst 26.9 → 12.7 ms on that commit). The idle CPU hardly moved: the empty 16 ms
+  turns were cheap. `HARBOR_FIXED_TICK=1` keeps the old loop.
+- 5. Partial rendering (e8f4c11; Skia, `SLINT_SKIA_PARTIAL_RENDERING`, set through libc's `setenv` because Bun's
+  `process.env` doesn't reach native code): the cursor's blink repainted the whole window twice a second for
+  about 3 ms each. Idle 0.88-1.0 % → 0.72 %, streaming 11.3-12.8 % → 11.1 %. The final frame is identical.
+- Moving Engine and parsing into a Worker: rejected. With the above, the JavaScript part of a stream is
+  about 4-5 % of a core, most of it the per-flush refreshes and the Engine reading the provider's output. A
+  Worker moves that to another core rather than removing it, adds a second JavaScript heap (about 20-30 MB
+  against a RAM target already missed), and every Engine call the window makes would become a message.
+
+### What is left, and why
+
+- Idle CPU: 0.72-1.16 %, not under 0.3 %. What remains is the composer's blinking cursor (Slint repaints
+  for it twice a second; partial rendering made each repaint cheap, not free), the 1 s JavaScript ticks
+  (shell, Engine, theme check) and the 100 ms timer turns. An unfocused or hidden window doesn't blink. Rust
+  0.108.0 doesn't blink its cursor, so its 0.00 % is not the same screen.
+- Wakeups: about 45 a second in all, 19 on the window's thread; Bun's own threads (`mi-scavenger` about 11,
+  JSC's GC helpers, a `pump_events` monitor 4) add the rest, so under 10 is out of reach under Bun even with a
+  silent window.
+- RAM: 372-376 MB idle, not 250 MB. The JavaScript heap is about 20-25 MB. Compiling `app.slint` in Slint's
+  interpreter adds 198 MB before the window shows (the glibc heap: 168 MB in use after compiling, not freed
+  by GC or `malloc_trim`; about 13 KB per line of `.slint`, 17,000 lines); showing the window adds about
+  80 MB (GL driver, the NVIDIA EGL libraries that libglvnd loads on this hybrid laptop, fonts, Skia). The bare
+  window with no Harbor logic is 320 MB. Evicting transcripts or loading chats lazily can't reach the target:
+  the transcript data is a few MB. Below 250 MB needs the UI compiled to native code instead of interpreted,
+  or a much smaller UI.
+- `harbor mcp` 57 MB and `harbor turn` 56 MB against Rust's 22 MB: a compiled hello-world is 16 MB; the rest
+  is mostly the executable's own pages (the whole app bundle is one file) and the modules each entry pulls in
+  through package indexes (`wire.ts` loads all of `@harbor/mcp`). A separate small entry would mean another
+  release artifact.
+
+### Bun against Node, the real window
+
+The Phase 0 table above used a small proto window. `rig/runtimes.ts` runs the real `app.slint` with a reply
+streaming into it (no Harbor package, no Bun API) under Bun 1.4.3 with the new loop and under Node v26.7.0
+with Slint's libuv integration; two runs each.
+
+| | Idle CPU | Idle wakeups/s | Streaming CPU | RSS |
+| --- | --- | --- | --- | --- |
+| Bun, new loop | 0.79 / 0.79 % | 173 / 201 | 7.3 / 7.5 % | 310-323 MB |
+| Node, `runEventLoop()` | 0.32 / 0.31 % | 11 / 12 | 7.0 % | 347-355 MB |
+
+Streaming costs the same: the cost is Slint's, not the runtime's. Node idles at less than half the CPU and a
+fifteenth of the wakeups, because Slint's own loop sleeps exactly until its next timer; Bun has no such hook,
+so the loop here turns every 100 ms for timers, and Bun's own threads wake on their own. Node uses about
+35 MB more. The full app can't run on Node at all today (`bun:sqlite`, `Bun.serve`, `bun:ffi`, `Bun.spawn`
+in 53 files). Switching would buy about 0.4 % of a core at idle and nothing while streaming: not worth a
+port. The same idle saving under Bun needs a small native piece instead: slint-node exposing the time until
+Slint's next timer (or Bun gaining `uv_backend_fd`), which would let the loop sleep exactly. It belongs in
+the runtime lane and would change only with Slint upgrades.
+
+### Found on the way
+
+- When the compositor goes away, the app doesn't exit: winit's `pump_events` thread spins at 50 % of a core,
+  or `processEvents` throws "The Slint platform does not provide an event loop".
+- Each paragraph draws its text twice (the styled text and a near-transparent `TextInput` over it for
+  selection); where the two wrap differently, a faint word shows at the end of the line. It was there before
+  these changes.
+- Each `setRowData` of a struct holding a JavaScript `Model` adds a hidden `__slint_model#N` property on the
+  window that keeps that model alive (slint-node's `js_into_rust_model`).
+- `model-logo` and other image properties are new images on every set, so Slint can't skip them as equal;
+  now they are set at most four times a second.
+- Rigs that stop sway or Bun by name kill other agents' runs; `cost.py` starts both through links in its own
+  folder.
+
 ## glibc: the newest `GLIBC_` symbol each piece needs (plan's Hard rule: 2.35)
 
 Read with `objdump -T` (x86_64) and `readelf --dyn-syms` (aarch64 files, which are the npm tarballs and
@@ -233,6 +351,11 @@ compare these numbers with the x86_64 table: different CPU, virtual display, a V
 ## Next
 
 Phase 1 onwards. Open for Phase 0: the owner reads the table.
+
+Running cost, for the owner to decide (Running cost above): RAM under 250 MB needs the UI compiled to native
+code or made much smaller; idle near Node's needs slint-node to say when Slint's next timer is due (a runtime
+lane piece that changes with Slint upgrades only). Not started: exit when the compositor goes away instead of
+spinning; one text per paragraph instead of two.
 
 ## Blockers
 
