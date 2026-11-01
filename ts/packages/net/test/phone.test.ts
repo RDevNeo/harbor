@@ -15,7 +15,8 @@ import { Mesh } from "../src/mesh.ts";
 import { StoreReplica } from "../src/meshstore.ts";
 import { cardJson, clock, PhoneRoutes } from "../src/phone.ts";
 import { connect, generateIdentity } from "../src/tls.ts";
-import { project } from "../src/view.ts";
+import { actions, project } from "../src/view.ts";
+import { fixture } from "./fixture.ts";
 import { wire } from "../src/wire.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "harbor-phone-"));
@@ -52,6 +53,34 @@ async function request(sock: TLSSocket, method: string, path: string, auth: stri
 }
 
 describe("the phone API's chats (api.rs App side)", () => {
+  test("card_images_name_their_chat", () => {
+    const cards = project([{ kind: "user", text: "", files: ["/x/a.png"], at: 0, mentions: [], sender: "", intent: "" }], false, []);
+    const v = cardJson(cards[0] as (typeof cards)[number], 1, () => [], "g 1");
+    expect(v.images).toEqual([{ name: "a.png", url: "/v1/image?path=%2Fx%2Fa.png&max=512&chat=g%201" }]);
+    const t = project([{ kind: "text", text: "hi", at: 0 }], false, []);
+    expect(cardJson(t[0] as (typeof t)[number], 1, () => [], "1").images).toEqual([]);
+  });
+
+  test("the_phone_sees_what_the_desktop_draws", () => {
+    const items = fixture();
+    const desktop = project(items, true, [[8, 42]]);
+    const phone = desktop.map((c) => cardJson(c, 1, () => [], "1"));
+    expect(phone).toHaveLength(items.length);
+    desktop.forEach((d, i) => {
+      const p = phone[i] as Record<string, unknown>;
+      expect([p.kind, p.seq, Array.isArray(p.forks_after) ? p.forks_after.length : 0]).toEqual([d.card.kind, d.seq, d.forksAfter.length]);
+      expect(p.actions ?? []).toEqual(actions(d.card));
+      const c = d.card;
+      if (c.kind === "text") expect([p.markdown, p.forkable]).toEqual([c.text, c.forkable]);
+      if (c.kind === "tool") expect(p.label).toBe(c.label);
+      if (c.kind === "message") expect([p.from, p.to, p.text]).toEqual([c.from, c.to, c.text]);
+      if (c.kind === "notice") expect(p.url).toBe(c.url);
+    });
+    expect(phone.filter((p) => p.kind !== "hidden").map((p) => p.kind)).toEqual(["user", "text", "text", "error"]);
+    expect(phone[9]?.kind).toBe("hidden");
+    expect(phone[8]?.forks_after).toEqual([42]);
+  });
+
   test("card_json for a reply: blocks, actions, time, rev and the chat on image addresses", () => {
     const cards = project([{ kind: "user", text: "look", files: ["/p/a.png"], at: 1761200000, mentions: [], sender: "", intent: "" }], false, []);
     const v = cardJson(cards[0] as (typeof cards)[number], 7, () => [], "gid-1");

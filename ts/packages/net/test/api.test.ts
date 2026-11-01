@@ -402,7 +402,7 @@ describe("hub (api.rs)", () => {
     expect([p[1]?.group, p[1]?.seen]).toEqual(["gb", 0]);
   });
 
-  test("phone versions outlive a restart (kv phones_seen; the versions part is versions.ts's)", () => {
+  test("phone_versions_outlive_a_restart", () => {
     const hub = new Hub([tok("a", "ga"), tok("b", "gb")], 0);
     hub.seen.set("a", ["Pixel", 1_700_000_000]);
     hub.apps.set("a", 66000);
