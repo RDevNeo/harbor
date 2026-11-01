@@ -3,3 +3,5 @@ export { run as runTurn, setAgentEnv, signedOutEnv, type AgentEnv, type Meta } f
 export * as providers from "./providers.ts";
 export type { Account, Kind, Model } from "./providers.ts";
 export * as oauth from "./oauth.ts";
+export * as agent from "./agent.ts";
+export { integrate, Turn, type Event, type Integrations, type Steering, type TurnSpec } from "./agent.ts";
