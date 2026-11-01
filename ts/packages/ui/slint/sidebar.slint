@@ -21,7 +21,8 @@ component ThreadRow {
     in property <SideRow> data;
     callback open();
     callback settle(bool);
-    callback snooze();
+    // Under the clock button, in window coordinates.
+    callback snooze(length, length);
     // At the pointer, in window coordinates.
     callback menu(length, length);
     property <bool> hovering: area.has-hover || settle-btn.hovered || snooze-btn.hovered;
@@ -81,7 +82,7 @@ component ThreadRow {
                 pressed: root.data.snoozed;
                 tip: "Snooze";
                 clicked => {
-                    root.snooze();
+                    root.snooze(self.absolute-position.x, self.absolute-position.y + self.height);
                 }
             }
             Rectangle {
@@ -104,7 +105,7 @@ component ProjectRow {
     in property <SideRow> data;
     callback open();
     callback new-chat();
-    callback snooze();
+    callback snooze(length, length);
     callback menu(length, length);
     property <bool> hovering: area.has-hover || plus.hovered || snooze.hovered;
     height: Theme.row-h + 2px;
@@ -180,7 +181,7 @@ component ProjectRow {
             pressed: root.data.snoozed;
             tip: "Snooze";
             clicked => {
-                root.snooze();
+                root.snooze(self.absolute-position.x, self.absolute-position.y + self.height);
             }
         }
     }
@@ -326,8 +327,8 @@ export component Sidebar inherits Rectangle {
                             new-chat => {
                                 root.new-chat(r.id);
                             }
-                            snooze => {
-                                root.snooze("r" + r.id, self.absolute-position.x + self.width, self.absolute-position.y);
+                            snooze(x, y) => {
+                                root.snooze("r" + r.id, x, y);
                             }
                             menu(x, y) => {
                                 root.project-menu(r.id, x, y);
@@ -342,8 +343,8 @@ export component Sidebar inherits Rectangle {
                         settle(on) => {
                             root.settle(r.id, on);
                         }
-                        snooze => {
-                            root.snooze("c" + r.id, self.absolute-position.x + self.width, self.absolute-position.y);
+                        snooze(x, y) => {
+                            root.snooze("c" + r.id, x, y);
                         }
                         menu(x, y) => {
                             root.chat-menu(r.id, x, y);

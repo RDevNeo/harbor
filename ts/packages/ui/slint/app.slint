@@ -921,16 +921,12 @@ export component AppWindow inherits Window {
                             background: Theme.border;
                         }
                         if it.kind == "input": VerticalLayout {
-                            padding-top: 4px;
                             spacing: 4px;
                             HorizontalLayout {
                                 spacing: 4px;
                                 Input {
                                     hint: it.label;
                                     text <=> root.pop-input;
-                                    init => {
-                                        self.focus-field();
-                                    }
                                     edited(t) => {
                                         root.pop-input-edited(t);
                                     }

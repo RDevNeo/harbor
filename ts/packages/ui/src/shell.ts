@@ -1514,7 +1514,7 @@ export class Shell {
     const t = now();
     const off = utcOffset();
     const apply = (until: number | null) => this.data.setSnooze(key, until, this.refreshAllBound);
-    const items: (PopItem & { act?: () => void })[] = [this.label("Snooze until")];
+    const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Snooze until"), kind: "caption" }];
     for (const [label, until] of snoozePresets(t, off)) items.push(this.item(label, () => apply(until), { icon: ICONS.CLOCK }));
     items.push(this.separator(), { ...this.item("Custom: 5h, 2d, 18:00", () => {}, { desc: "Snooze until then" }), kind: "input" });
     if (this.data.snoozed().has(key)) items.push(this.separator(), this.item("Unsnooze", () => apply(null), { icon: ICONS.X }));
@@ -1533,7 +1533,7 @@ export class Shell {
       this.closePopup();
       apply(until);
     };
-    this.popup("snooze", x, y, items, 240);
+    this.popup("snooze", x, y, items, 220);
   }
 
   private refreshAllBound = (): void => this.refreshAll();
