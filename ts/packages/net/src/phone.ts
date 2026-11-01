@@ -1,16 +1,17 @@
 import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
 import type { providers } from "@harbor/agents";
-import { blankChat, itemHash, mention, parseAccess, sidebartree, usertext, type Chat, type Item, type Mention, type Store } from "@harbor/store";
+import { blankChat, itemHash, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { forHome, type Mesh } from "./mesh.ts";
+import { sameRemote } from "./meshstore.ts";
 import type { StoreReplica } from "./meshstore.ts";
-import { statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.ts";
-import { dest } from "./shared.ts";
+import { dest, type Peer } from "./shared.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 
@@ -53,6 +54,7 @@ export interface PhoneEngine {
   subsQueued(lead: number): number;
   /** The folder of the git worktree the chat works in, when it has one. */
   worktreeOf?(id: number): string | null;
+  mainChat(repo: number): number | null;
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -121,6 +123,8 @@ export interface PhoneDeps {
   profileCheck?: () => Json;
   /** The calls the app around answers beyond chats' core: a chat's actions, the snooze sheet, usage, people, palette…; null when the call is not one of them. */
   more?: (call: Call, chat: Chat | null) => Promise<Reply | null>;
+  /** A chat an agent opened: its first notice names the chat that opened it (openchat.rs). */
+  openedFrom?: (chat: number, gid: string, title: string) => void;
 }
 
 export interface RunSettings {
@@ -728,24 +732,116 @@ export class PhoneRoutes {
     return ok({ ok: true, queued, steering: running && !queued && c.home === "" });
   }
 
-  private async create(body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
+  /** api.rs `api_create_repo`: the project a new chat asks for (`project_id`, or `project` from another PC); a reply when it can't be had. */
+  private createRepo(body: Record<string, unknown>): { repo: number | null } | Reply {
     const repos = this.d.store.repos();
     const pref = body.project_id;
-    const repo = typeof pref === "number" ? (repos.find((r) => r.id === pref) ?? null) : typeof pref === "string" ? (repos.find((r) => r.path === pref) ?? null) : null;
-    if (pref !== undefined && pref !== null && !repo) return err(404, "no such project");
-    const p = this.d.catalog?.defaults();
-    const s = (k: string, d: string) => (typeof body[k] === "string" ? (body[k] as string) : d);
-    const text = s("text", "");
-    const title = s("title", "") || text.split("\n")[0]?.trim().slice(0, 80) || "New chat";
-    const sel = { account: s("account", p?.account ?? "claude"), model: s("model", p?.model ?? ""), effort: s("effort", p?.effort ?? ""), access: s("access", p?.access ?? "full"), device: s("device", p?.device ?? "") };
-    const e = this.d.engine;
-    const c = e ? e.newThread(repo?.id ?? null, text, sel) : this.d.store.createChat(blankChat({ repoId: repo?.id ?? null, title, ...sel, access: parseAccess(sel.access), role: "lead", name: "lead" }));
-    if (typeof body.title === "string" && body.title.trim() !== "" && c.title !== body.title.trim()) {
-      this.d.store.saveChat({ ...c, title: body.title.trim() });
-      e?.reload();
+    if ((pref === undefined || pref === null) && typeof body.project === "object" && body.project !== null && !Array.isArray(body.project)) {
+      const p = body.project as Record<string, unknown>;
+      const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "");
+      const [path, name, remote] = [str("path"), str("name"), str("remote")];
+      const found = repos.find((r) => r.path === path) ?? repos.find((r) => sameRemote(r.remote, remote)) ?? repos.find((r) => name !== "" && r.name === name);
+      if (found) {
+        if (!existsSync(repoDir(found)) && remote !== "" && found.remote !== remote) this.d.store.setRepoRemote(found.id, remote);
+        return { repo: found.id };
+      }
+      if (remote !== "" && path !== "") {
+        const id = this.d.store.addRepo(path);
+        this.d.store.setRepoRemote(id, remote);
+        this.d.engine?.reload();
+        return { repo: id };
+      }
+      const here = hostname();
+      if (remote === "") return err(409, `${name} isn't a project on ${here} and has no Git remote to clone there: add its folder to Harbor on that PC first`);
+      return err(409, `${name} isn't a project on ${here} yet`);
     }
+    if (pref === undefined || pref === null) return { repo: null };
+    if (typeof pref === "string") {
+      const r = repos.find((x) => x.path === pref);
+      return r ? { repo: r.id } : err(400, "no such project");
+    }
+    const r = typeof pref === "number" && Number.isInteger(pref) ? repos.find((x) => x.id === pref) : undefined;
+    return r ? { repo: r.id } : err(400, "no such project");
+  }
+
+  /** mesh.rs `mesh_proxy` and `map_new`: a new chat on another PC's Harbor, answered with the copy of it that arrives here. */
+  private async createOnPeer(peer: Peer, body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
+    if (!peer.online || !this.d.mesh) return err(409, `${peer.name} is off: pick a PC that's on`);
+    const pref = body.project_id;
+    const repos = this.d.store.repos();
+    const repo = typeof pref === "string" ? repos.find((r) => r.path === pref) : typeof pref === "number" ? repos.find((r) => r.id === pref) : undefined;
+    const { project_id: _p, files: ids, ...rest } = body;
+    const files: { name: string; data: Uint8Array }[] = [];
+    for (const f of Array.isArray(ids) ? ids : []) {
+      const path = this.d.uploadsDir && typeof f === "string" ? resolveUpload(this.d.uploadsDir, f) : null;
+      if (path !== null) files.push({ name: basename(path), data: readFileSync(path) });
+    }
+    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, files, [sender, ""], null);
+    const rb = obj(r.body);
+    const hid = typeof rb.id === "number" && Number.isInteger(rb.id) && r.status < 300 ? rb.id : null;
+    if (hid === null) return r;
+    if (global) return { status: r.status, body: { ...(rb as Record<string, Json>), id: (rb.gid ?? null) as Json } };
+    const until = Date.now() + 8000;
+    for (;;) {
+      const local = this.d.hub.mesh.localId(peer.id, hid);
+      if (local !== null) return { status: r.status, body: { ...(rb as Record<string, Json>), id: local } };
+      if (Date.now() >= until) return { status: r.status, body: { ...(rb as Record<string, Json>), id: null } };
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  /** api.rs `api_create_in`. */
+  private async create(body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
+    const peer = this.d.hub.mesh.on && typeof body.device === "string" ? this.d.hub.mesh.peer(body.device) : null;
+    if (peer !== null) return this.createOnPeer(peer, body, sender, global);
+    const found = this.createRepo(body);
+    if (!("repo" in found)) return found;
+    const repo = found.repo;
+    const cat = this.d.catalog;
+    const d = cat?.defaults() ?? { account: "claude", model: "", effort: "", access: "full", device: "" };
+    const s = (k: string, dflt: string) => (typeof body[k] === "string" ? (body[k] as string) : dflt);
+    const account = s("account", d.account);
+    const kindOf = (id: string): string | undefined => cat?.accounts().find((a) => a.id === id)?.kind;
+    const kind = cat ? kindOf(account) : "Claude";
+    if (kind === undefined) return err(400, `no account ${account}`);
+    if (kind !== "Claude") return err(400, `new chats start on a Claude account; ${kind} works as a subagent`);
+    const effort = s("effort", kind === (kindOf(d.account) ?? "Claude") ? d.effort : "");
+    if (cat && effort !== "" && !cat.efforts(kind).some((e) => e[0] === effort)) return err(400, `${kind} has no effort ${effort}`);
+    const access = s("access", "full");
+    if (cat && !cat.access(kind).some((a) => a[0] === access)) return err(400, `${kind} has no access level ${access}`);
+    const device = s("device", "");
+    const text = s("text", "").trim();
+    const files: string[] = [];
+    for (const f of Array.isArray(body.files) ? body.files : []) {
+      const id = typeof f === "string" ? f : "";
+      const path = this.d.uploadsDir ? resolveUpload(this.d.uploadsDir, id) : null;
+      if (path === null) return err(400, `unknown upload ${id}`);
+      files.push(path);
+    }
+    if (typeof body.fast === "boolean" && body.fast !== (cat?.fast() ?? false)) this.d.runSettings?.setFast(body.fast);
+    const model = s("model", account === d.account ? d.model : "");
+    const e = this.d.engine;
+    const main = repo !== null && body.main === true ? repo : null;
+    if (main !== null && e) {
+      const m = e.mainChat(main);
+      if (m !== null) {
+        const mc = this.chats().find((x) => x.id === m);
+        if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender);
+        return ok({ id: global ? (mc?.gid ?? "") : m, gid: mc?.gid ?? "" });
+      }
+    }
+    const sel = { account, model, effort, access, device };
+    const made = e ? e.newThread(repo, text, sel) : this.d.store.createChat(blankChat({ repoId: repo, title: text.split("\n")[0]?.trim().slice(0, 60) || "New thread", ...sel, access: parseAccess(access), role: "lead", name: "lead" }));
+    if (main !== null) this.d.store.setMainChat(main, made.id);
+    let c: Chat = { ...made, effort, access: parseAccess(access), device };
+    const title = typeof body.title === "string" ? [...body.title.trim()].slice(0, 80).join("") : "";
+    if (title !== "") c = { ...c, title };
+    this.d.store.saveChat(c);
+    e?.reload();
+    const from = obj(body.opened_from);
+    if (typeof from.gid === "string" && typeof from.title === "string") this.d.openedFrom?.(c.id, from.gid, from.title);
     this.d.replica.touch(c.id);
-    if (text.trim() !== "") {
+    if (text !== "" || files.length > 0) {
       const sent = await this.send(c, { text, files: body.files ?? [] }, sender);
       if (sent.status !== 200) return sent;
     }

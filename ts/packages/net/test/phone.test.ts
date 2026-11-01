@@ -252,6 +252,7 @@ describe("the phone API's chats (api.rs App side)", () => {
       opened: () => false,
       subsQueued: () => 0,
       queuedCount: () => 0,
+      mainChat: () => null,
     };
     const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
     const c = store.createChat(blankChat({ title: "q", role: "lead", name: "lead" }));
@@ -309,6 +310,7 @@ describe("the phone API's chats (api.rs App side)", () => {
       opened: () => false,
       subsQueued: () => 0,
       queuedCount: () => 0,
+      mainChat: () => null,
     };
     const mesh = new Mesh({ hub, kv: new MemKv(), id: () => hubId, app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
     const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-test", myFp: () => hubId.fp, engine, uploadsDir: tmp });

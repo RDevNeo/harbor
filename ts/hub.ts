@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { statusBars } from "./statusbars.ts";
-import { chatpr, commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
+import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { mcp } from "./packages/mcp/src/index.ts";
 import {
@@ -39,7 +39,6 @@ import {
   ProfileScheduler,
   detectProfiles,
   GITHUB_KEY,
-  gatherVersions,
   meshPcs,
   OWNER_KEY,
   type Peer,
@@ -396,6 +395,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
     pr: prOf,
+    openedFrom: (chat, gid, title) => eng().notice(chat, "chat", openchat.openedBy(title), `${openchat.LINK}${gid}`),
     more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish() }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
     profileCheck: profileCheckNow,
@@ -490,6 +490,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     opened: (id) => live.opened(id),
     subsQueued: (lead) => live.subsQueued(lead),
     queuedCount: (id) => live.queuedCount(id),
+    mainChat: (repo) => live.mainChat(repo),
   };
   live.reattachTurns();
   live.limits.load();

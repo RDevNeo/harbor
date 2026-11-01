@@ -114,12 +114,28 @@ scenario() {
   act patch_settled PATCH /v1/chats/$OTHER '{"settled":false}'
   act patch_run PATCH /v1/chats/$FAILING '{"access":"plan"}'
   act patch_bad PATCH /v1/chats/$FAILING '{"access":"root"}'
+  act create_ok POST /v1/chats '{"project_id":1,"title":"  Made by phone  "}'
+  act create_main POST /v1/chats '{"project_id":1,"main":true}'
+  act create_bad_project POST /v1/chats '{"project_id":999}'
+  act create_bad_path POST /v1/chats '{"project_id":"/nope"}'
+  act create_bad_account POST /v1/chats '{"account":"nope"}'
+  act create_codex POST /v1/chats '{"account":"codex"}'
+  act create_bad_effort POST /v1/chats '{"effort":"turbo"}'
+  act create_bad_access POST /v1/chats '{"access":"root"}'
+  act create_bad_upload POST /v1/chats '{"text":"x","files":["nope"]}'
+  act create_opened POST /v1/chats '{"project_id":1,"title":"Opened","opened_from":{"gid":"11111111-2222-4333-8444-555555555555","title":"Parent"}}'
+  act create_project POST /v1/chats "{\"project\":{\"path\":\"$T/home/proj\",\"name\":\"proj\",\"remote\":\"\"}}"
+  act create_project_unknown POST /v1/chats '{"project":{"path":"/x/y","name":"zzz","remote":""}}'
+  act create_project_remote POST /v1/chats '{"project":{"path":"/x/yy","name":"zzz","remote":"git@github.com:o/zzz.git"}}'
+  act create_fast POST /v1/chats '{"fast":true}'
+  act create_device POST /v1/chats '{"device":"pc:far","title":"On far"}'
   act move_none POST /v1/chats/$PLAIN/move '{"repo":null}'
   act move_path POST /v1/chats/$PLAIN/move "{\"repo\":\"$T/home/proj\"}"
   act move_bad POST /v1/chats/$PLAIN/move '{"repo":999}'
   act move_missing POST /v1/chats/$PLAIN/move '{}'
   act continue_on POST /v1/chats/$LIM1/continue_on '{"account":"claude"}'
   sleep 3
+  for c in 14 15 16 17 18; do act items_$c GET "/v1/chats/$c/items?since=0"; done
   get /v1/state $T/$tag-act-state-end.full.json
   kill $APP 2>/dev/null; wait $APP 2>/dev/null
 }
