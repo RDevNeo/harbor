@@ -76,6 +76,8 @@ export interface ApiDeps {
   appInfo: () => Json;
   /** The APK this PC serves, if any. */
   apk: () => string | null;
+  /** A file of the live preview this PC offers (update's preview.ts `offeredFile`). */
+  previewFile?: (kind: string, id: string) => string | null;
   /** `/mesh/…` (mesh.rs `serve`); the body is still on the reader. */
   mesh: (peer: ConnPeer, req: Request, r: Reader) => Promise<Reply>;
   /** A peer that may share chats with this PC (mesh.rs `admitted`). */
@@ -344,6 +346,10 @@ export class Api {
       if (!paired || !hub.mesh.on) return onlyPaired();
       return this.serveApk(w, false);
     }
+    if (is("mesh", "v1", "preview", "file") && req.method === "GET") {
+      if (!this.d.meshAdmitted(peer, req)) return onlyPaired();
+      return this.servePreview(w, query(req, "kind") ?? "", query(req, "id") ?? "");
+    }
     if (is("mesh", "v1", "image") && req.method === "GET") {
       if (!(hub.mesh.on && this.d.meshAdmitted(peer, req))) return onlyPaired();
       return this.serveImage(w, query(req, "path") ?? "", maxOf(req));
@@ -527,6 +533,19 @@ export class Api {
       w.end();
       return;
     }
+    createReadStream(path).pipe(w);
+  }
+
+  private servePreview(w: Duplex, kind: string, id: string): void {
+    const path = this.d.previewFile?.(kind, id) ?? null;
+    let len = -1;
+    try {
+      if (path !== null) len = statSync(path).size;
+    } catch {
+      len = -1;
+    }
+    if (path === null || len < 0) return sendJson(w, 404, { error: "that preview isn't on offer here" });
+    w.write(response(200, "application/octet-stream", len, ""));
     createReadStream(path).pipe(w);
   }
 

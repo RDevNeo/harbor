@@ -28,3 +28,4 @@ export * from "./view.ts";
 export * from "./markdown.ts";
 export * from "./phone.ts";
 export * from "./netcli.ts";
+export * as preview from "./preview.ts";

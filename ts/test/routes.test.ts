@@ -127,7 +127,6 @@ async function answered(route: string): Promise<boolean> {
 }
 
 const PENDING: string[] = [
-  "POST /mesh/v1/preview",
 ];
 
 test("every_route_the_rust_hub_answers_is_answered_by_the_ts_hub", async () => {

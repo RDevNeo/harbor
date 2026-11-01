@@ -1,5 +1,5 @@
 import { control, setHarborVersion } from "./packages/mcp/src/index.ts";
-import { directoryPcWorkspaces } from "./packages/net/src/index.ts";
+import { directoryPcWorkspaces, preview as meshPreview } from "./packages/net/src/index.ts";
 import { dataDir, single, Store } from "./packages/store/src/index.ts";
 import {
   Reloader,
@@ -36,11 +36,27 @@ export async function runApp(o: RunOptions): Promise<number> {
   const offline = isOffline();
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
+  let taking = Promise.resolve();
   const run = await startHub({
     version: o.version,
     updater,
     store,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
+    preview: {
+      refuses: (full, offer) => preview.refuses(cfg, full, offer),
+      take: (from, name, offer) => {
+        // One offer at a time: its file is fetched to a fixed name.
+        taking = taking.then(async () => {
+          try {
+            await preview.fetchOffer(cfg, { id: offer.id, sha256: offer.sha256, note: offer.note, kind: "bundle" }, name, (kind, to) => meshPreview.fetchPreviewFile(from, offer.id, kind, to));
+            await reloader?.now();
+          } catch (e) {
+            cfg.log(`preview ${offer.id} not taken: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        });
+      },
+      file: (kind, id) => preview.offeredFile(cfg, kind, id),
+    },
   });
   const engine = run.engine;
   const data = made.data;
@@ -60,7 +76,11 @@ export async function runApp(o: RunOptions): Promise<number> {
           (e: unknown) => i.call.reply(false, e instanceof Error ? e.message : String(e)),
         );
       } else if (i.kind === "preview") {
-        if (i.here) void reloader?.now();
+        const { offer, here } = i;
+        void (async () => {
+          if (offer && !offline) await meshPreview.announcePreview(run.hub.mesh, offer);
+          if (here) await reloader?.now();
+        })();
       } else if (i.kind === "focus") {
         if (!o.window) reopen();
       } else if (i.kind === "previewBack") {

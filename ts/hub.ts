@@ -6,7 +6,7 @@ import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
 import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
-import { Funnel, hookcert, mcp } from "./packages/mcp/src/index.ts";
+import { Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
   deviceSshArgs,
@@ -80,6 +80,7 @@ import {
   type MeshApp,
   type MovePcAccount,
   type Reply,
+  preview,
 } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
@@ -96,6 +97,17 @@ export interface HubOptions {
   engine?: (host: HubHost, notes: Notes, voice: dictate.Mesh) => Engine;
   /** The first port the webhook listener tries (false: none); a test hub keeps off the real one's. */
   hookPort?: number | false;
+  /** Live previews between PCs (update's preview.ts, run by the process that can restart into one). */
+  preview?: HubPreview;
+}
+
+export interface HubPreview {
+  /** Why this PC won't take `offer` from a PC with or without full access here; null: it will. */
+  refuses(fullAccess: boolean, offer: preview.PreviewOffer): string | null;
+  /** Fetches the offer from `from`, then restarts into it. */
+  take(from: Dest, name: string, offer: preview.PreviewOffer): void;
+  /** A file of this PC's own offer. */
+  file(kind: string, id: string): string | null;
 }
 
 /** HARBOR_OFFLINE=1 (ts/run.sh, on a copy of someone's data): no mesh, relay, account, discovery or listening, and
@@ -340,6 +352,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       case "POST memory": {
         const r = acceptMemory(store, b);
         return r.ok ? ok({ ok: true, changed: r.value }) : err(404, r.error);
+      }
+      case "POST preview": {
+        const offer = preview.previewOffer(b);
+        if (offer === null) return err(400, "no offer");
+        const why = o.preview ? o.preview.refuses(machines.fullAccess(call.device), offer) : "previews are off on this PC";
+        if (why !== null) return err(403, why);
+        const p = hub.mesh.peers.get(call.device);
+        if (!p) return err(404, "unknown PC");
+        o.preview?.take(dest(p), p.name, offer);
+        return ok({ taking: true });
       }
       case "POST phones":
         store.set("api_enabled", "1");
@@ -602,6 +624,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     account: account.phoneAuth(),
     appInfo: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
     apk,
+    ...(o.preview ? { previewFile: (kind: string, id: string) => o.preview?.file(kind, id) ?? null } : {}),
     mesh: (p, q, r) => mesh.serve(p, q, r),
     meshAdmitted: (p, q) => mesh.admitted(p, q),
     relay: (p, q, r, w) => relayServe({ hub, myFp: () => id.fp, isPhone: (pp, rq) => { try { return api?.caller(pp, rq).level === null; } catch { return false; } } }, p, q, r, w),
