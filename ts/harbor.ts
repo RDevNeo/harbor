@@ -1,20 +1,65 @@
 // `harbor <command>`: the command-line entry points agents and helper processes call. Each
 // package adds its own command here.
 import { runTurn } from "./packages/agents/src/index.ts";
+import { mcpshim, serve } from "./packages/mcp/src/index.ts";
+import { AccountService, discoverAsk, hostPort, lanAddrs, lanPortmapNet, loadOrCreate, meshCli, ncCli, Portmap, readMe } from "./packages/net/src/index.ts";
+import { dataDir, stateDir, Store } from "./packages/store/src/index.ts";
+import pkg from "./package.json";
 
 type Command = (args: string[]) => Promise<number> | number;
 
+const io = { out: (l: string) => console.log(l), err: (l: string) => console.error(l) };
+
+function store(): Store {
+  return Store.open(dataDir());
+}
+
+function apiPort(s: Store): number {
+  const p = s.get("api_port") ?? "";
+  return /^\d+$/.test(p) ? Number(p) : 47930;
+}
+
 const commands: Record<string, Command> = {
+  "--version": () => {
+    console.log(`harbor ${pkg.version} (ts)`);
+    return 0;
+  },
   turn: async (args) => {
     await runTurn(args);
     return 0;
   },
+  mcp: async (args) => {
+    await mcpshim.run(args, { version: pkg.version });
+    return 0;
+  },
+  app: (args) => serve.serve(args),
+  net: (args) => {
+    const s = store();
+    return new Portmap({ kv: s, net: lanPortmapNet() }).cli(args, { log: io.out, err: io.err });
+  },
+  nc: (args) => ncCli(args, { kv: store(), id: loadOrCreate(stateDir()), io, stdin: process.stdin, stdout: process.stdout }),
+  mesh: (args) => meshCli(args, { kv: store(), id: loadOrCreate(stateDir()), io, ask: () => discoverAsk({ waitMs: 1500, myFp: loadOrCreate(stateDir()).fp }) }),
+  account: (args) => {
+    const s = store();
+    const port = apiPort(s);
+    const svc = new AccountService({
+      kv: s,
+      stateDir: stateDir(),
+      identity: () => loadOrCreate(stateDir()),
+      me: () => readMe(s),
+      addrs: () => lanAddrs().map((a) => hostPort(a, port)),
+      version: pkg.version,
+    });
+    return svc.cli(args, io);
+  },
 };
+commands["-V"] = commands["--version"] as Command;
 
 const [name, ...rest] = process.argv.slice(2);
 const cmd = name === undefined ? undefined : commands[name];
 if (cmd === undefined) {
-  console.error(`harbor: ${name === undefined ? "no command given" : `unknown command ${name}`} (this build has: ${Object.keys(commands).join(", ")})`);
+  const what = name === undefined ? "the window isn't in this build yet" : `unknown command ${name}`;
+  console.error(`harbor: ${what} (this build has: ${Object.keys(commands).join(", ")})`);
   process.exit(2);
 }
 process.exit(await cmd(rest));
