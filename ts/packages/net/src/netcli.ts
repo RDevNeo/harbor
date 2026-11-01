@@ -184,6 +184,8 @@ export interface NcDeps {
   stdin: Duplex | NodeJS.ReadableStream;
   stdout: NodeJS.WritableStream;
   env?: Record<string, string | undefined>;
+  /** A name Harbor can't reach is tried through Tailscale's own `nc`, when it is installed: its exit code, or null when there is none to try. */
+  tailnetNc?: (host: string, port: number) => Promise<number> | null;
 }
 
 function bridge(s: Duplex, stdin: NodeJS.ReadableStream, stdout: NodeJS.WritableStream): Promise<number> {
@@ -235,6 +237,8 @@ export async function ncCli(args: string[], d: NcDeps): Promise<number> {
     c.once("error", () => resolve(null));
   });
   if (s) return bridge(s, d.stdin, d.stdout);
+  const through = d.tailnetNc?.(host, port) ?? null;
+  if (through !== null) return await through;
   d.io.err(`harbor nc: can't reach ${host}:${port}`);
   return 1;
 }

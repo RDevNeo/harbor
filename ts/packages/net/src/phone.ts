@@ -1,17 +1,22 @@
 import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
 import type { providers } from "@harbor/agents";
-import { blankChat, itemHash, mention, parseAccess, type Chat, type Item, type Mention, type Store } from "@harbor/store";
+import { blankChat, itemHash, mention, parseAccess, sidebartree, usertext, type Chat, type Item, type Mention, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { forHome, type Mesh } from "./mesh.ts";
 import type { StoreReplica } from "./meshstore.ts";
+import { statSync } from "node:fs";
+import { basename } from "node:path";
+import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.ts";
 import { dest } from "./shared.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 
 const CLIP = 16 << 10;
+const now = (): number => Math.floor(Date.now() / 1000);
+const utcOffset = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
 /** `@harbor/agents`' Engine as far as the phone routes use it. */
 export interface PhoneEngine {
@@ -37,6 +42,8 @@ export interface PhoneEngine {
   recap(id: number): [string | null, string | null];
   /** A phone opened the chat: its recap counts as seen. */
   recapSeen(id: number): void;
+  /** The folder of the git worktree the chat works in, when it has one. */
+  worktreeOf?(id: number): string | null;
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -95,6 +102,8 @@ export interface PhoneDeps {
   commits?: (chat: Chat) => CommitLookup | null;
   /** What a PATCH of a chat's account, model, effort, access, device or fast mode is checked against. */
   runSettings?: RunSettings;
+  /** Settings › Devices as the desktop lists them: the configured SSH devices and the tailnet's PCs, with whether each is online (null: not known). */
+  devices?: () => [RemoteHost, boolean | null][];
 }
 
 export interface RunSettings {
@@ -150,6 +159,12 @@ function mediaJson(m: Media): Record<string, Json> {
   return v;
 }
 
+function deviceIcon(h: RemoteHost): string {
+  if (ICONS.some(([n]) => n === h.icon)) return h.icon;
+  if (h.os === "macOS") return "laptop";
+  return h.os === "" && !isFound(h) ? "terminal" : "monitor";
+}
+
 function mentionJson(m: { from: string; text: string; excerpt: boolean; note: string; kind: string; chat: string; title: string }): Json {
   const text = m.kind === "chat" ? m.from : (m.text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "");
   const v: Record<string, Json> = { from: m.from, text, excerpt: m.excerpt, note: m.note.trim() };
@@ -189,6 +204,10 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
     case "user":
       v = { text: c.text, files: c.files.map(fileName), images, mentions: c.mentions.map(mentionJson), at: c.at, sender: c.sender };
       if (c.intent !== "") v.intent = c.intent;
+      {
+        const ps = usertext.parts(c.text, c.mentions);
+        if (!usertext.plain(ps)) v.parts = usertext.wire(ps);
+      }
       break;
     case "text": {
       const label = (md: string) => (refs ? refs.strip(md) : md);
@@ -352,18 +371,49 @@ export class PhoneRoutes {
       writable: this.writable(c),
       role: c.role,
       parent: parent === null ? null : this.idOf(parent, global),
-      main: false,
+      main: this.isMain(c),
       typing: this.typing(c.id),
       draft: this.draft(c.id),
       unread: false,
       failed: false,
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),
       ...this.runSettings(c),
-      worktree: null,
+      worktree: this.worktree(c),
       pr: null,
-      snoozed_until_ms: null,
-      snoozed_label: null,
+      snoozed_until_ms: this.snoozeUntil(`c${c.id}`) === null ? null : (this.snoozeUntil(`c${c.id}`) ?? 0) * 1000,
+      snoozed_label: sidebartree.snoozedLabel(this.snoozeUntil(`c${c.id}`), now(), utcOffset(now())),
     };
+  }
+
+  private snoozeUntil(key: string): number | null {
+    try {
+      const v: unknown = JSON.parse(this.d.store.get("snoozed") ?? "{}");
+      const t = typeof v === "object" && v !== null ? (v as Record<string, unknown>)[key] : undefined;
+      return typeof t === "number" && t > now() ? t : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private isMain(c: Chat): boolean {
+    if (c.repoId === null) return false;
+    return this.d.store.mainChats().get(c.repoId) === c.id && sidebartree.isMainOf(c, c.repoId);
+  }
+
+  private worktree(c: Chat): Json {
+    if (c.home !== "") {
+      const name = this.d.replica.remote.get(c.id)?.worktree ?? null;
+      return name === null ? null : { name, path: null, gone: false };
+    }
+    const w = this.d.engine?.worktreeOf?.(c.id) ?? null;
+    if (w === null) return null;
+    let gone = true;
+    try {
+      gone = !statSync(w).isDirectory();
+    } catch {
+      // the folder is gone
+    }
+    return { name: basename(w), path: w, gone };
   }
 
   private kindOf(c: Chat): string {
@@ -413,12 +463,13 @@ export class PhoneRoutes {
     const chats = this.chats();
     const repos = this.d.store.repos();
     const pid = (id: number) => (global ? (repos.find((r) => r.id === id)?.path ?? id) : id);
-    const leads = chats.filter((c) => c.role === "lead").sort((a, b) => b.updated - a.updated || b.id - a.id);
+    const placed = sidebartree.tree(repos.map((r) => r.id), chats, this.d.store.mainChats(), (key) => this.snoozeUntil(key) !== null);
+    const idsOf = (list: number[]): Json[] => list.map((id) => this.idOf(chats.find((c) => c.id === id) as Chat, global));
     const tree = {
-      projects: repos.map((r) => ({ id: pid(r.id), snoozed: false, main: null, chats: leads.filter((c) => !c.settled && c.repoId === r.id).map((c) => this.idOf(c, global)) })),
-      threads: leads.filter((c) => !c.settled && (c.repoId === null || !repos.some((r) => r.id === c.repoId))).map((c) => this.idOf(c, global)),
-      settled: leads.filter((c) => c.settled).map((c) => this.idOf(c, global)),
-      snoozed: [],
+      projects: placed.projects.map((p) => ({ id: pid(p.id), snoozed: p.snoozed, main: p.main === null ? null : idsOf([p.main])[0] ?? null, chats: idsOf(p.chats) })),
+      threads: idsOf(placed.threads),
+      settled: idsOf(placed.settled),
+      snoozed: idsOf(placed.snoozed),
     };
     const cat = this.d.catalog;
     const slug = (k: string) => k.toLowerCase();
@@ -438,8 +489,16 @@ export class PhoneRoutes {
     const sel = cat?.defaults() ?? { account: "", model: "", effort: "", access: "full", device: "" };
     const updates = this.d.updates?.() ?? { hub_update: null, provider_updates: null };
     const me = hub.mesh.me;
-    const peers = hub.mesh.on ? [...hub.mesh.peers.values()] : [];
-    const devices: Json[] = [{ id: "", label: me.name, icon: "monitor", online: true }, ...peers.map((x) => ({ id: x.id, label: x.name, icon: "monitor", online: x.online, hub: true }))];
+    const peers = hub.mesh.on ? [...hub.mesh.peers.values()].sort((x, y) => Number(y.online) - Number(x.online) || Buffer.compare(Buffer.from(x.name), Buffer.from(y.name))) : [];
+    const devices: Record<string, Json>[] = [{ id: "", label: me.name === "" ? hostname() : me.name, icon: "monitor", online: true }];
+    for (const [h, online] of this.d.devices?.() ?? []) if (!h.hidden) devices.push({ id: h.id, label: hostLabel(h), icon: deviceIcon(h), online });
+    for (const x of peers) {
+      const d = devices.find((y) => y.id === x.id);
+      if (d) {
+        d.hub = true;
+        d.online = x.online;
+      } else devices.push({ id: x.id, label: x.name, icon: "monitor", online: x.online, hub: true });
+    }
     return {
       version: this.d.version,
       hub_id: me.id,

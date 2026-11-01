@@ -61,7 +61,9 @@ const commands: Record<string, Command> = {
   nc: async (args) => {
     const { loadOrCreate, ncCli } = await import("./packages/net/src/index.ts");
     const { stateDir } = await import("./packages/store/src/index.ts");
-    return ncCli(args, { kv: await store(), id: loadOrCreate(stateDir()), io, stdin: process.stdin, stdout: process.stdout });
+    const tailnetNc = (host: string, port: number): Promise<number> | null =>
+      Bun.which("tailscale") === null ? null : Bun.spawn(["tailscale", "nc", host, String(port)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exited;
+    return ncCli(args, { kv: await store(), id: loadOrCreate(stateDir()), io, stdin: process.stdin, stdout: process.stdout, tailnetNc });
   },
   mesh: async (args) => {
     const { discoverAsk, loadOrCreate, meshCli } = await import("./packages/net/src/index.ts");

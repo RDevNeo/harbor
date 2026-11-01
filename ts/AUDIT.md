@@ -56,8 +56,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 
 ## Unwired (honest, but not done)
 
-- Phone API against Rust, on a real-content copy and the scrambled one (`HARD-RULES.md`): `parts` (user text with tags, commands and chat links) is not sent; `/v1/state.devices` lacks the tailnet devices (and with them `switchable.device`/`switch_reason.device` on a real-content copy); the chat list is ordered by update time only after a restart (Rust appends a new chat at the end of its live list); a commit pill can be found in an ancestor repository of an empty project folder, which the Rust hub does not do. Owner: net.
-- Fresh-install mesh id is `pc:<host>` where Rust writes `ts:<host>` (an existing `mesh_id` is kept). Owner: net.
+- Phone API: `pr`, `unread`, `failed` and a lead's `working` while its sub-agents run are fixed placeholders in `packages/net/src/phone.ts`; no data in the comparisons uses them. Owner: net.
 
 - Dictation: `dictate.Mesh` is wired in `hub.ts`; `Ask` reaches only `claude`, and not while a usage limit blocks it (the Engine holds store's `Limits` now).
 - `packages/media`: Whisper (built-in) never ran against a real model; `voice::builtin_downloads_and_transcribes` is ported up to the

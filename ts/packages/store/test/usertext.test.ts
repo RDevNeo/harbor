@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { Mention } from "../src/logic/item.ts";
-import { tokens } from "../src/logic/tags.ts";
+import type { Mention } from "../src/index.ts";
+import { tokens } from "../src/tagsyntax.ts";
 import {
   commands,
   defuse,
@@ -25,7 +25,7 @@ import {
   whole,
   wire,
   withoutImages,
-} from "../src/logic/usertext.ts";
+} from "../src/usertext.ts";
 
 function chat(title: string, gid: string): Mention {
   return { item: 0, from: "", at: 0, text: "", len: 0, excerpt: false, note: "", kind: "chat", chat: gid, title };

@@ -8,7 +8,7 @@ export HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 HARBOR_A
 unset WAYLAND_DISPLAY DISPLAY
 mk() { d=$T/$1; mkdir -p $d/{home,data,state,cfg,cache,run,turn,work}; chmod 700 $d/run; echo "HOME=$d/home XDG_DATA_HOME=$d/data XDG_STATE_HOME=$d/state XDG_CONFIG_HOME=$d/cfg XDG_CACHE_HOME=$d/cache XDG_RUNTIME_DIR=$d/run HARBOR_SOCK=$d/run/h.sock"; }
 RE=$(mk rust); TE=$(mk ts)
-norm() { sed -E "s#$T/(rust|ts)#T#g; s/harbor 0\.[0-9.]+ \([0-9a-f]+\)/harbor VERSION/; s/harbor 0\.[0-9.]+ \(ts\)/harbor VERSION/; s/[0-9a-f]{64}/FP/g; s/[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}/FP4/g" ; }
+norm() { sed -E "s#$T/(rust|ts)#T#g; s/harbor 0\.[0-9.]+ \([0-9a-f]+\)/harbor VERSION/; s/harbor 0\.[0-9.]+ \(ts\)/harbor VERSION/; s/[A-Z0-9]{5}-[A-Z0-9]{5}/CODE/g; s/[0-9a-f]{64}/FP/g; s/[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}/FP4/g" ; }
 same=0; diff=0
 try() {
   label=$1; shift

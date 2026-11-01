@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
-import { blankChat, mention, Store, type Chat } from "@harbor/store";
+import { blankChat, mention, Store, type Chat, type Mention } from "@harbor/store";
 import { accountDecide, isHarborToken, verifyHarborToken, type AccountKey } from "../src/account.ts";
 import { Api } from "../src/api.ts";
 import { readAnswerHead } from "../src/client.ts";
@@ -54,6 +54,17 @@ async function request(sock: TLSSocket, method: string, path: string, auth: stri
 }
 
 describe("the phone API's chats (api.rs App side)", () => {
+  test("user_text_is_sent_in_parts_when_it_has_links_tags_or_commands", () => {
+    const user = (text: string, mentions: Mention[] = []) => {
+      const cards = project([{ kind: "user", text, files: [], at: 0, mentions, sender: "", intent: "" }], false, []);
+      return cardJson(cards[0] as (typeof cards)[number], 1, () => [], "1");
+    };
+    expect(user("plain words").parts).toBeUndefined();
+    const chat = mention({ kind: "chat", chat: "g-1", title: "Fix login" });
+    expect(user("see Fix login /review", [chat]).parts).toEqual([{ text: "see " }, { text: "Fix login", kind: "chat", chat: "g-1" }, { text: " " }, { text: "/review", kind: "command" }]);
+    expect(user("fix #4 in @src/a.ts").parts).toEqual([{ text: "fix " }, { text: "#4", kind: "tag" }, { text: " in " }, { text: "@src/a.ts", kind: "tag" }]);
+  });
+
   test("a_mention_on_the_wire_is_its_first_line_or_its_chat_row", () => {
     const m = (over: Partial<Parameters<typeof mention>[0]>) => mention({ from: "me", ...over });
     const cards = project(

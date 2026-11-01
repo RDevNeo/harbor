@@ -12,6 +12,13 @@ import {
   hostPort,
   http,
   Hub,
+  placeOf,
+  relocateBlocker,
+  relocateWhy,
+  deviceWhy,
+  type RemoteHost,
+  Remotes,
+  systemRunner,
   lanAddrs,
   lanPortmapNet,
   loadOrCreate,
@@ -39,7 +46,7 @@ import {
   type MeshApp,
   type Reply,
 } from "./packages/net/src/index.ts";
-import { dataDir, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 import { notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
@@ -195,6 +202,30 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     env,
   });
   mesh.reread();
+  const remotes = new Remotes({
+    home: home(),
+    dataDir: dataDir(env),
+    runner: systemRunner,
+    selfExe: () => process.execPath,
+    which: (bin) => providers.which(bin),
+    mesh: () => ({ allowed: hub.mesh.allowed, peers: hub.mesh.peers }),
+    lanAddrs: () => lanAddrs(env),
+  });
+  await remotes.refresh();
+  const deviceList = (): [RemoteHost, boolean | null][] => remotes.devices(loadRemote(store), remotes.tailnetCached());
+  const blockerOf = (c: Chat): string | null => {
+    const subs = store.chats().filter((x) => x.parent === c.id);
+    const chats = [c, ...subs].map((x) => ({ id: x.id, name: x.name, device: x.device, claude: accounts.find((y) => y.id === x.account)?.kind === "Claude", running: engine?.running(x.id) ?? false }));
+    const lead = deviceList().find(([h]) => h.id === c.device)?.[0];
+    return relocateBlocker({ foreignHome: c.home !== "" ? hub.mesh.nameOf(c.home) : null, isSub: c.role === "sub", movingTo: null, chats, leadDevice: lead ? { os: lead.os } : null });
+  };
+  catalog.relocateBlocker = blockerOf;
+  catalog.deviceWhy = (c) => {
+    const devs = deviceList();
+    const hosts = [...hub.mesh.peers.values()];
+    const ids = ["", ...devs.filter(([h]) => !h.hidden).map(([h]) => h.id), ...hosts.map((p) => p.id)];
+    return deviceWhy(c.started, c.home !== "", ids, (id) => relocateWhy({ started: c.started, device: c.device, to: id, blocker: () => blockerOf(c), place: placeOf(id, hosts, devs), meshOn: hub.mesh.on }));
+  };
   const phone = new PhoneRoutes({
     store,
     hub,
@@ -202,6 +233,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mesh,
     version: o.version,
     myFp: () => id.fp,
+    devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
     engine: null,
     uploadsDir,
     updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: providerUpdates() }),
@@ -269,6 +301,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     held: (id) => live.queue.held.has(id),
     newThread: (repo, first, sel) => live.newThread(repo, first, sel),
     reload: () => live.reload(),
+    worktreeOf: (id) => {
+      const c = store.chats().find((x) => x.id === id);
+      return c ? live.worktreeOf(c) : null;
+    },
     queuePromote: (id, q) => live.queuePromote(id, q),
     queueMove: (id, q, to) => live.queueMove(id, q, to),
     queueUpdate: (id, q, text, mentions, editing) => live.queueUpdate(id, q, text, mentions, editing),

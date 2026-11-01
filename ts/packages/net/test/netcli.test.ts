@@ -154,4 +154,17 @@ describe("harbor nc (relay.rs cli)", () => {
     const x = io();
     expect(await ncCli(["only-a-host"], { kv, id: me, io: x.io, stdin: new PassThrough(), stdout: new PassThrough() })).toBe(2);
   });
+
+  test("a_name_nothing_reaches_goes_to_tailscales_nc_when_there_is_one", async () => {
+    const kv = new MemKv();
+    const me = generateIdentity();
+    const asked: [string, number][] = [];
+    const x = io();
+    const base = { kv, id: me, io: x.io, stdin: new PassThrough(), stdout: new PassThrough(), env: {} };
+    expect(await ncCli(["127.0.0.1", "9"], { ...base, tailnetNc: (h, p) => (asked.push([h, p]), Promise.resolve(7)) })).toBe(7);
+    expect(asked).toEqual([["127.0.0.1", 9]]);
+    expect(x.o.err).toEqual([]);
+    expect(await ncCli(["127.0.0.1", "9"], { ...base, tailnetNc: () => null })).toBe(1);
+    expect(x.o.err).toEqual(["harbor nc: can't reach 127.0.0.1:9"]);
+  });
 });

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { hostname } from "node:os";
 import type { Call, ConnPeer } from "./api.ts";
 import { exchange, get, http, jsonBody } from "./client.ts";
@@ -53,13 +54,25 @@ export interface MeshDeps {
   wake?: () => void;
 }
 
-/** This PC's peer id and name: HARBOR_MESH_ID, else kv `mesh_id`, else "pc:<hostname>" kept in kv. */
-export function readMe(kv: Kv, env: Record<string, string | undefined> = process.env): Me {
+/** `tailscale status --json`, or an empty object when Tailscale isn't installed or doesn't answer. */
+export function tailscaleStatus(env: Record<string, string | undefined> = process.env): unknown {
+  if (!Bun.which("tailscale", { PATH: env.PATH ?? "" })) return {};
+  const r = spawnSync("tailscale", ["status", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000, ...(env === process.env ? {} : { env: env as NodeJS.ProcessEnv }) });
+  try {
+    return JSON.parse(r.stdout) as unknown;
+  } catch {
+    return {};
+  }
+}
+
+/** This PC's peer id and name: HARBOR_MESH_ID, else kv `mesh_id`, else "ts:<MagicDNS name>" when Tailscale knows one, else "pc:<hostname>", kept in kv. */
+export function readMe(kv: Kv, env: Record<string, string | undefined> = process.env, status: () => unknown = () => tailscaleStatus(env)): Me {
   let id = env.HARBOR_MESH_ID ?? "";
   if (id === "") {
     id = kv.get("mesh_id") ?? "";
     if (id === "") {
-      id = `pc:${hostname().split(".")[0] ?? ""}`;
+      id = parseMe(status())[0].id;
+      if (id === "") id = `pc:${hostname().split(".")[0] ?? ""}`;
       kv.set("mesh_id", id);
     }
   }

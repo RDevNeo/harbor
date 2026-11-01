@@ -9,7 +9,7 @@ import { http, httpPart, setHello } from "../src/client.ts";
 import { err, type Request } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
-import { forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, parseWhois, partOf, showCode, startsTurn, statusNode } from "../src/mesh.ts";
+import { forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, parseWhois, partOf, showCode, startsTurn, statusNode } from "../src/mesh.ts";
 import { StoreReplica, sameRemote } from "../src/meshstore.ts";
 import { relayServe } from "../src/relay.ts";
 import { admit, allowedKey, cleanAddrs, downOf, label, loadAllowed, peerId, type Allowed, type Node } from "../src/shared.ts";
@@ -49,6 +49,17 @@ describe("mesh.rs", () => {
     expect(downOf(["connection timed out", "Connection refused (os error 111)"])).toBe("harbor");
     expect(downOf(["connection timed out", "No route to host (os error 113)"])).toBe("pc");
     expect(downOf([])).toBe("pc");
+  });
+
+  test("a_fresh_mesh_id_is_the_magicdns_name_else_the_hostname_and_is_kept", () => {
+    const tailnet = { Self: { DNSName: "desk.example.ts.net.", ID: "n" } };
+    const kv = new MemKv();
+    expect(readMe(kv, {}, () => tailnet)).toEqual({ id: "ts:desk", name: "desk" });
+    expect(kv.get("mesh_id")).toBe("ts:desk");
+    expect(readMe(kv, {}, () => ({}))).toEqual({ id: "ts:desk", name: "desk" });
+    const bare = new MemKv();
+    expect(readMe(bare, {}, () => ({})).id).toMatch(/^pc:./);
+    expect(readMe(new MemKv(), { HARBOR_MESH_ID: "ts:x", HARBOR_MESH_NAME: "Ex" }, () => tailnet)).toEqual({ id: "ts:x", name: "Ex" });
   });
 
   test("identity_from_tailscale", () => {

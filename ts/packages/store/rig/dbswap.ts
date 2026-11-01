@@ -29,17 +29,8 @@ if (cmd === "same") {
 } else if (cmd === "samedir") {
   const [dir = "", from = "", to = ""] = args;
   const names = readdirSync(dir).filter((f) => f.startsWith(`${from}-`));
-  const dropParts = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (k, x: unknown) => (k === "parts" ? undefined : x)));
-  const bad: string[] = [];
-  const partsOnly: string[] = [];
-  for (const f of names) {
-    const a = load(join(dir, f));
-    const b = load(join(dir, f.replace(`${from}-`, `${to}-`)));
-    if (JSON.stringify(a) === JSON.stringify(b)) continue;
-    if (JSON.stringify(dropParts(a)) === JSON.stringify(dropParts(b))) partsOnly.push(f);
-    else bad.push(f);
-  }
-  console.log(`${names.length} chats compared: ${names.length - bad.length - partsOnly.length} identical, ${partsOnly.length} differ only by the user-text "parts" the TS hub does not send yet, ${bad.length} differ otherwise${bad.length > 0 ? `: ${bad.slice(0, 5).join(", ")}` : ""}`);
+  const bad = names.filter((f) => JSON.stringify(load(join(dir, f))) !== JSON.stringify(load(join(dir, f.replace(`${from}-`, `${to}-`)))));
+  console.log(`${names.length} files compared, ${names.length - bad.length} identical, ${bad.length} differ${bad.length > 0 ? `: ${bad.slice(0, 5).join(", ")}` : ""}`);
   if (bad.length > 0 || names.length === 0) process.exit(1);
 } else if (cmd === "statediff") {
   const [x = "", y = ""] = args;

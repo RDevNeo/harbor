@@ -16,7 +16,7 @@ ok() { echo "PASS $*"; }
 bad() { echo "FAIL $*"; fail=1; }
 get() { curl -s --max-time 30 -H "Authorization: Bearer $TOK" "http://127.0.0.1:47930$1" > "$2"; }
 post() { curl -s --max-time 30 -H "Authorization: Bearer $TOK" -X POST -d "$2" "http://127.0.0.1:47930$1"; }
-up() { for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:47930/ && return 0; sleep 0.2; done; return 1; }
+up() { for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:47930/ && { get /v1/state /dev/null; sleep 2; return 0; }; sleep 0.2; done; return 1; }
 rust() { "$B" --background > $T/rust-$1.log 2>&1 & APP=$!; up || bad "rust $1 did not start"; }
 tsapp() { (cd $TS && exec ${TS_CMD:-"$BUN" harbor.ts} --background > $T/ts-$1.log 2>&1) & APP=$!; up || bad "ts $1 did not start"; }
 stop() { kill $APP 2>/dev/null; wait $APP 2>/dev/null; }
