@@ -34,7 +34,7 @@ export interface ServicesOptions {
   /** The new-chat composer's picks (account, model, effort), which Fix and Merge threads start from. */
   composer: () => { account: string; model: string; effort: string };
   accounts: () => readonly Account[];
-  /** The first port the webhook listener tries; false: none. */
+  /** The first port the webhook listener tries; false: none, and no public webhook address either (ts/run.sh's offline mode). */
   hookPort?: number | false;
 }
 
@@ -137,7 +137,7 @@ export async function startServices(o: ServicesOptions): Promise<Services> {
   const hostPortImpl = hostPort(o, work, slugs, src);
   const gh = ghwire.createGhApi({ shared: o.hub.mesh, mesh: o.mesh, host: hostPortImpl, blocks: (md) => blocks(md), deviceId });
   const link = connect.connect({ engine: o.engine, ...(env.HARBOR_SOCK ? { socket: env.HARBOR_SOCK } : {}), ...(o.hookPort === undefined ? {} : { hooks: o.hookPort }) });
-  const hooks = hookcert.start({ kv: o.store, tokens: { has: (t) => o.engine.webhooks.some((w) => w.token === t) }, send: (h) => void connect.deliverHook(o.engine, h), wake: () => undefined });
+  const hooks = o.hookPort === false ? null : hookcert.start({ kv: o.store, tokens: { has: (t) => o.engine.webhooks.some((w) => w.token === t) }, send: (h) => void connect.deliverHook(o.engine, h), wake: () => undefined });
   return {
     gh,
     routePhone: (call) => (call.path[0] === "v1" && (call.path[1] === "prs" || call.path[1] === "issues") ? asReply(gh.handle(call)) : null),
@@ -152,7 +152,7 @@ export async function startServices(o: ServicesOptions): Promise<Services> {
     stop() {
       clearInterval(timer);
       link.stop();
-      hooks.stop();
+      hooks?.stop();
     },
   };
 }

@@ -16,5 +16,5 @@ else
   echo "run.sh: no harbor.db on this PC: starting empty in $tmp"
 fi
 export XDG_DATA_HOME="$tmp/data" XDG_STATE_HOME="$tmp/state" XDG_CACHE_HOME="$tmp/cache"
-export HARBOR_SOCK="$tmp/harbor.sock" HARBOR_LISTEN=127.0.0.1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1
+export HARBOR_OFFLINE=1 HARBOR_SOCK="$tmp/harbor.sock" HARBOR_LISTEN=127.0.0.1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1
 exec "$bun" harbor.ts "$@"

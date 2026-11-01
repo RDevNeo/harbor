@@ -65,6 +65,9 @@ export interface EngineHost {
   restoreDraft?(chatId: number, text: string, files: string[], mentions: Mention[]): void;
   /** Tools other packages answer (secrets, chats across PCs, open_chat); undefined: not theirs. */
   tool?(chat: Chat, name: string, args: unknown): Promise<string> | undefined;
+  /** Running on a copy of someone's data (ts/run.sh): only a message the person sends starts a turn. No timer,
+   *  usage-limit wait, recap or turn left running by the copy's Harbor acts on its own. */
+  offline?: boolean;
 }
 
 /** A chat's transcript while it's loaded, with the parts of a turn still streaming. */
@@ -195,6 +198,7 @@ export class Engine {
   /** The app's tick: queued messages to idle chats, due wake-ups, recaps. Returns ms until something is due (null: nothing). */
   tick(): number | null {
     this.queueDrain();
+    if (this.host.offline) return null;
     const timers = this.fireTimers();
     const recap = this.recaps.tick();
     const waits = this.limits.fireLimitTimers();
@@ -672,6 +676,7 @@ export class Engine {
 
     /** At startup: picks up the turns an earlier Harbor (Rust or TypeScript) left running or that ended while it was away. */
   reattachTurns(rootDir: string = detach.root()): void {
+    if (this.host.offline) return;
     const left = detach.leftovers(rootDir);
     detach.followOrder(left);
     for (const [dir, meta] of left) {

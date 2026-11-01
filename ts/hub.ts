@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { commits, Engine, providers, recap } from "./packages/agents/src/index.ts";
+import { commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
 import { dictate, parakeet, voice } from "./packages/media/src/index.ts";
 import {
   AccountService,
@@ -41,12 +41,21 @@ import { dataDir, repoDir, stateDir, Store } from "./packages/store/src/index.ts
 import { notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline">;
+
 export interface HubOptions {
   version: string;
   env?: Record<string, string | undefined>;
   updater?: Updater;
   store?: Store;
-  engine?: Engine;
+  /** The window's Engine, made with the hub's host and notes (the phones' notifications). */
+  engine?: (host: HubHost, notes: Notes) => Engine;
+}
+
+/** HARBOR_OFFLINE=1 (ts/run.sh, on a copy of someone's data): no mesh, relay, account, discovery or listening, and
+ *  the Engine acts only on what the person sends. */
+export function isOffline(env: Record<string, string | undefined> = process.env): boolean {
+  return env.HARBOR_OFFLINE === "1";
 }
 
 const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
@@ -64,6 +73,18 @@ export interface RunningHub {
 
 function catalogAccount(a: providers.Account): CatalogAccount {
   return { id: a.id, kind: a.kind, name: a.name, badge: a.badge, bin: a.bin, loggedIn: a.loggedIn, usage: a.usage.map((u) => ({ label: u.label, percent: u.percent })) };
+}
+
+/** The phones' banner for provider CLIs that are behind (api.rs `updates_json`); null when there's nothing to say. */
+export function providerUpdates(st: provupdate.Status = provupdate.status()): Json {
+  if (st.items.length === 0 && !st.updating && st.error === null) return null;
+  return {
+    items: st.items.map((p) => ({ kind: p.kind.toLowerCase(), label: p.kind, logo: provupdate.logoFile(p.kind), current: p.current, latest: p.latest })),
+    names: provupdate.names(st.items),
+    key: provupdate.key(st.items),
+    updating: st.updating,
+    error: st.error,
+  };
 }
 
 /** Where phones should try this PC: the network's IPv4 first, the router's public address, then IPv6 and Tailscale's (api.rs `phone_addrs`). */
@@ -95,6 +116,7 @@ async function updateRoute(u: Updater, call: Call): Promise<Reply | null> {
 /** Harbor without its window (Rust's `--background`): the phone API, the mesh, discovery, port mapping and the account loop. */
 export async function startHub(o: HubOptions): Promise<RunningHub> {
   const env = o.env ?? process.env;
+  const offline = isOffline(env);
   const store = o.store ?? Store.open(dataDir(env));
   const state = stateDir(env);
   const id = loadOrCreate(state);
@@ -177,7 +199,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     engine: null,
     uploadsDir,
-    updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: null }),
+    updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: providerUpdates() }),
     catalog,
     voice: () => ({ transcribe: true, why: null, lang: voice.config()[0] }),
     commits: (c) => {
@@ -187,16 +209,16 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
     },
   });
-  engine = o.engine ?? new Engine({
-    store,
-    accounts: () => accounts,
+  const host: HubHost = {
     changed: (chat) => {
       hub.touch(chat, true);
     },
     isForeign: (chat) => hub.mesh.foreign.has(chat),
     hostname: () => hub.mesh.me.name,
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
-  });
+    offline,
+  };
+  engine = o.engine ? o.engine(host, notes) : new Engine({ store, accounts: () => accounts, ...host });
   const live = engine;
   phone.d.engine = {
     running: (id) => live.running(id),
@@ -276,13 +298,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     reached: (ip) => portmap.reached(ip),
     env,
   });
-  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, account, composer: () => catalog.defaults(), accounts: () => accounts });
-  const bound = await api.listen();
-  hub.net = { addrs: addrs(), bound, error: hub.net.error };
-  mesh.start();
-  const disc = await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
-  const stopMap = env.HARBOR_LISTEN === undefined ? portmap.start(port, () => store.get("net_map") !== "0") : () => {};
-  const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && existsSync(join(state, "account.json"));
+  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : {}) });
+  if (!offline) {
+    const bound = await api.listen();
+    hub.net = { addrs: addrs(), bound, error: hub.net.error };
+    mesh.start();
+  }
+  const disc = offline ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
+  const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => store.get("net_map") !== "0") : () => {};
+  const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   if (signIn) account.start();
   const tick = setInterval(() => {
     hub.enabled = store.get("api_enabled") === "1";
@@ -300,9 +324,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     replica.reload();
     if (o.updater) for (const p of hub.mesh.peers.values()) o.updater.peerNews(p.update);
   }, 10_000);
+  const stopProviderNews = provupdate.onChange(() => hub.touch(null, true));
   const refresh = setInterval(() => {
     accounts = providers.discover();
     mirrorDictation();
+    if (!offline) provupdate.tick(accounts);
   }, 60_000);
   return {
     store,
@@ -316,6 +342,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       clearInterval(tick);
       if (engineTimer) clearTimeout(engineTimer);
       clearInterval(refresh);
+      stopProviderNews();
       services?.stop();
       mesh.stop();
       disc?.stop();

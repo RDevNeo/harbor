@@ -79,7 +79,8 @@ export function clearCustom(repo: number): void {
   rmSync(customPath(repo), { force: true });
 }
 
-export async function resolve(repo: number, root: string, name: string, refresh: boolean): Promise<Decoded | null> {
+/** `online` false: the project's own icons only, the website's is not fetched. */
+export async function resolve(repo: number, root: string, name: string, refresh: boolean, online = true): Promise<Decoded | null> {
   const custom = customPath(repo);
   if (isFile(custom)) {
     const img = await decode(custom);
@@ -97,7 +98,7 @@ export async function resolve(repo: number, root: string, name: string, refresh:
   }
   watch(repo, null);
   const domain = website(root);
-  if (domain === null) return null;
+  if (domain === null || !online) return null;
   const file = await fetchSiteIcon(domain, refresh);
   return file === null ? null : decode(file);
 }

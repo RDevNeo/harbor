@@ -5,7 +5,10 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 
 ## What runs
 
-- `bun ts/harbor.ts` with no command (and `ts/run.sh`, see `ts/README.md`) opens the window on harbor.db:
+- `bun ts/harbor.ts` with no command opens the window on the hub (`ts/run.ts`): the window's Engine is
+  the hub's, so phones, the mesh, the control socket, webhooks and GitHub pages see what it does.
+  `ts/run.sh` runs the same on a copy of the data with `HARBOR_OFFLINE=1` (see `ts/README.md`).
+  The window shows harbor.db:
   sidebar with projects, chats, statuses ("1h", Working, Done, Failed), Settled, search; the draft
   ("What should we work on?") with the project picker; a chat's transcript with markdown; the composer
   with model / effort / access menus and the `/`, `@file` and `$chat` menus. A message starts a real
@@ -97,5 +100,5 @@ compile, cards, cursors, scripted input).
 
 ## Blockers
 
-- One warning ("rowData returned data type that cannot be represented in Rust") shows once when the
-  first card of a new chat streams in; the screen is right. Not tracked down yet.
+- None open. (The "rowData … cannot be represented in Rust" warning was `blankStatus()`'s `#00000000`:
+  Slint's JS binding takes `#rrggbb`, colour names and `rgba()`, not 8-digit hex. Fixed.)

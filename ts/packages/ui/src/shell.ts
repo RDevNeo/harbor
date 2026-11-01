@@ -708,7 +708,7 @@ export class Shell {
     const r = this.data.repo(repo);
     if (!r) return null;
     void import("@harbor/media")
-      .then(({ favicon }) => favicon.resolve(repo, r.local ?? r.path, r.name, false))
+      .then(({ favicon }) => favicon.resolve(repo, r.local ?? r.path, r.name, false, !this.data.offline))
       .then((img) => {
         if (!img) return;
         this.avatars.set(repo, img);
@@ -1193,7 +1193,7 @@ export class Shell {
     this.refreshAll();
   }
 
-  /** Once a second: queued messages and wake-ups due, and the Working timers. */
+  /** Once a second: the theme, git after a turn, the Working timers (the hub ticks the Engine). */
   private wasRunning = new Set<number>();
 
   tick(): void {
@@ -1203,8 +1203,6 @@ export class Shell {
       if (!this.engine.running(id) && repo !== null && repo !== undefined) this.gitOf(repo, true);
     }
     this.wasRunning = new Set(this.engine.turns.keys());
-    this.engine.queueDrain();
-    this.engine.fireTimers();
     if (this.engine.turns.size > 0) {
       if (this.view === "chat" && this.engine.running(this.chatId)) this.refreshCards();
       this.refreshSidebar();
@@ -1690,7 +1688,6 @@ export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
     const c = data.chats.find((x) => gids.includes(x.gid));
     if (c) shell.openChat(c.id);
   };
-  data.engine.reattachTurns();
   void import("@harbor/media").then((pkg) => {
     shell.useMedia(pkg);
     shell.changed(null);

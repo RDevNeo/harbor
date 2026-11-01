@@ -88,7 +88,7 @@ export class Work {
   tick(data: { issues: aw.IssueData | null; prs: aw.PrData | null; projects: aw.Project[] }, refresh: () => void, composer: { account: string; model: string; effort: string }): void {
     const fix = this.autoFix();
     const merge = this.autoMerge();
-    if (!fix && !merge) return;
+    if ((!fix && !merge) || this.e.host.offline) return;
     const t = Date.now();
     if (this.lastTick !== null && t - this.lastTick < aw.TICK_MS) return;
     this.lastTick = t;

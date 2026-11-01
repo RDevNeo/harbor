@@ -19,10 +19,16 @@ copy of this PC's Harbor data and never touches the real files:
 - `harbor.db` is copied with `VACUUM INTO` from a read-only handle. In the copy every chat starts a
   new agent session (a resumed one would add turns to the installed Harbor's chat), and the settings
   that reach other PCs, phones, the account service and secrets are dropped.
-- No `identity.pem` is copied: the copy has a throwaway identity. It joins no mesh and connects to no
-  relay or account service.
-- Agent turns are real: they run with your own Claude Code login, in the chat's project folder, as
-  the installed Harbor's would.
+- No `identity.pem` is copied: the copy has a throwaway identity.
+- It runs offline (`HARBOR_OFFLINE=1`): no mesh, discovery, relay, account service, port mapping or
+  update check, nothing listening for phones or webhooks, no project icons fetched from websites.
+- Nothing from the copy acts on its own: wake-ups, usage-limit waits, recaps, Auto-Fix and
+  Auto-Merge don't run, and turns the installed Harbor left running aren't picked up. A turn starts
+  only when you send a message (and what you queue behind it). `test/offline.test.ts` checks this on
+  a db with due wake-ups, a waiting prompt, peers and webhooks: no turn starts and no connection is
+  attempted.
+- Agent turns you start are real: they run with your own Claude Code login, in the chat's project
+  folder, as the installed Harbor's would.
 
 What works and what doesn't yet: `ts/packages/ui/PROGRESS.md`. Everything not ported says so when
 clicked.

@@ -353,6 +353,6 @@ export async function loadWindow(): Promise<AppWindow> {
   return new ctor();
 }
 
-export const blankStatus = (): StatusData => ({ kind: "text", text: "", icon: "", color: "#00000000" });
+export const blankStatus = (): StatusData => ({ kind: "text", text: "", icon: "", color: "transparent" });
 
 export const noPixels: Pixels = { width: 1, height: 1, data: new Uint8Array(4) };

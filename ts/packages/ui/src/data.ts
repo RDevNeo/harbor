@@ -1,7 +1,7 @@
 // The pages read through here, never the database: the Engine of @harbor/agents keeps chats and turns.
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { type Account, Engine, providers } from "@harbor/agents";
+import { type Account, Engine, type EngineHost, providers } from "@harbor/agents";
 import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { Chat, Item, Mention as StoreMention, Repo, Store, Timer } from "@harbor/store";
 import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
@@ -23,15 +23,20 @@ export class Data {
   onRestoreDraft: (chatId: number, text: string, files: string[], mentions: Mention[]) => void = () => {};
   readonly notifier: Notifier;
 
-  constructor(store: Store) {
+  /** `hub`: the hooks of the hub this window belongs to, and its notes (what phones are told). */
+  constructor(store: Store, hub: Partial<EngineHost> = {}, notes = new Notes()) {
     this.store = store;
     this.accounts = providers.discover();
     const desktop = new Desktop({ send: spawnNotifySend, prefs: loadPrefs(store), onOpen: () => this.onNotificationOpen(desktop.takeOpen()) });
-    this.notifier = new Notifier({ notes: new Notes(), desktop });
+    this.notifier = new Notifier({ notes, desktop });
     this.engine = new Engine({
+      ...hub,
       store,
       accounts: () => this.accounts,
-      changed: (id) => this.onChange(id),
+      changed: (id) => {
+        this.onChange(id);
+        hub.changed?.(id);
+      },
       visible: (id) => this.visible(id),
       slashPrompt: (id, text, files) => this.slashPrompt(id, text, files),
       noteTurn: (id, sub, failed, said) => {
@@ -43,6 +48,10 @@ export class Data {
       mentionsPrompt: (ms) => mentionsPrompt(ms.map(mentionOf)),
       restoreDraft: (id, text, files, ms) => this.onRestoreDraft(id, text, files, ms.map(mentionOf)),
     });
+  }
+
+  get offline(): boolean {
+    return this.engine.host.offline === true;
   }
 
   get chats(): Chat[] {

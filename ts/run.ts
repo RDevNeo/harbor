@@ -11,7 +11,7 @@ import {
   watchFiles,
   type Snapshot,
 } from "./packages/update/src/index.ts";
-import { startHub } from "./hub.ts";
+import { isOffline, startHub } from "./hub.ts";
 import { wire } from "./wire.ts";
 
 export interface RunOptions {
@@ -32,17 +32,17 @@ export async function runApp(o: RunOptions): Promise<number> {
   let reloader: Reloader | null = null;
   const updater = new Updater(cfg, { swap: () => void reloader?.now() });
   const store = Store.open(dataDir());
+  const offline = isOffline();
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
-  const data = ui ? new ui.Data(store) : null;
-  const run = await startHub({ version: o.version, updater, store, ...(data ? { engine: data.engine } : {}) });
+  const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
+  const run = await startHub({
+    version: o.version,
+    updater,
+    store,
+    ...(ui ? { engine: (host, notes) => (made.data = new ui.Data(store, host, notes)).engine } : {}),
+  });
   const engine = run.engine;
-  if (data) {
-    const shown = data.onChange;
-    data.onChange = (id) => {
-      shown(id);
-      run.hub.touch(id, true);
-    };
-  }
+  const data = made.data;
 
   let snapshot: () => Snapshot = () => ({});
   const sock = control.startSocket<never, never, preview.Offer>({
@@ -80,9 +80,9 @@ export async function runApp(o: RunOptions): Promise<number> {
 
   const bundle = runtimeInfo()?.bundle;
   if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([cfg.exe, bundle], () => void reloader?.now());
-  updater.start();
+  if (!offline) updater.start();
 
-  const restore = takeSnapshot(run.store);
+  const restore = offline ? null : takeSnapshot(run.store);
   if (!o.window) {
     void confirmStart(cfg);
     await new Promise<void>((resolve) => {
