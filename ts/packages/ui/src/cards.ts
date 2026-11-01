@@ -4,7 +4,7 @@ import { actions, type Card, groupLabel, groups, project } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { type Part, parts } from "./logic/usertext.ts";
-import { type Block, blocks, escape } from "./markdown.ts";
+import { type Block, blocks, escape, type Placed, place } from "./markdown.ts";
 import type { CardData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
@@ -38,34 +38,45 @@ function styled(md: string): slint.StyledText {
   }
 }
 
-function blockData(b: Block): MdBlockData {
-  const base: MdBlockData = { kind: b.kind, text: slint.StyledText.fromPlainText(""), code: "", level: 0, marker: "", depth: 0, quote: b.quote, cells: [], header: false, gap: 0 };
+function blockData(b: Block, at: Placed): MdBlockData {
+  const base: MdBlockData = {
+    kind: b.kind,
+    text: slint.StyledText.fromPlainText(""),
+    code: "",
+    level: 0,
+    marker: "",
+    depth: 0,
+    quote: b.quote,
+    cols: [],
+    rows: 0,
+    gap: at.gap,
+    after: at.after,
+    bar_top: at.barTop,
+    bar_bottom: at.barBottom,
+  };
   switch (b.kind) {
     case "p":
       return { ...base, text: styled(b.text) };
     case "h":
-      return { ...base, text: styled(`**${b.text}**`), level: b.level };
+      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level };
     case "li":
       return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth };
     case "code":
       return { ...base, code: b.text };
     case "hr":
       return base;
-    case "tr":
-      return { ...base, cells: b.cells.map((c) => styled(b.header ? `**${c}**` : c)), header: b.header };
+    case "table": {
+      const width = Math.max(0, ...b.rows.map((r) => r.length));
+      const cols = Array.from({ length: width }, (_, c) => ({ cells: b.rows.map((r) => styled(r[c] ?? "")) }));
+      return { ...base, cols, rows: b.rows.length };
+    }
   }
 }
 
-/** Space between blocks, as egui_commonmark lays a reply out: a line between blocks, none inside a list or table. */
-export const BLOCK_GAP = 16;
-
 export function mdBlocks(md: string): MdBlockData[] {
   const bs = blocks(md);
-  return bs.map((b, i) => {
-    const prev = bs[i - 1];
-    const tight = prev !== undefined && ((prev.kind === "li" && b.kind === "li") || (prev.kind === "tr" && b.kind === "tr"));
-    return { ...blockData(b), gap: i === 0 || tight ? 0 : BLOCK_GAP };
-  });
+  const at = place(bs);
+  return bs.map((b, i) => blockData(b, at[i] as Placed));
 }
 
 export function userText(ps: readonly Part[]): slint.StyledText {
@@ -134,7 +145,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "hidden":
       return null;
     case "user":
-      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cells: [], header: false, gap: 0 }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
+      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0 }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
     case "text": {
       const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
       return { ...d, kind: "text", blocks: mdBlocks(md), text: c.text };

@@ -25,8 +25,11 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 - Checked in the private compositor rig against the Rust app on the same synthetic db, dark and light
   (`shots/`: draft, chat, chat light, model picker; `-rust` and `-ts`): the draft screen, sidebar,
   top bar, composer, team panel and transcript match in layout, fonts, sizes and colours to a pixel
-  or two. Known differences: markdown bold is drawn bold (see Decisions); transcript text can't be
-  selected.
+  or two. Replies were re-checked block by block against fixed documents (`shots/markdown-*`): the
+  gaps between blocks follow egui_commonmark's newline rules (`markdown.ts` `place`), headings,
+  bullets, numbers, quotes, code frames and tables are drawn as egui draws them. Known differences:
+  markdown bold is drawn bold (see Decisions); transcript text can't be selected; line height inside
+  a paragraph is 20.7px against egui's 21, so long paragraphs drift a pixel per three lines.
 - `.slint` files, fonts and the Lucide icons load from source and from `bun build --compile` the same
   way: `src/assets.ts` imports each one as a file and writes them once into a folder named by their
   hash (`$XDG_RUNTIME_DIR/harbor-ui-<hash>`), which Slint loads. Checked by compiling the window's

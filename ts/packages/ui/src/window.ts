@@ -35,9 +35,12 @@ export interface MdBlockData {
   marker: string;
   depth: number;
   quote: number;
-  cells: slint.StyledText[];
-  header: boolean;
+  cols: { cells: slint.StyledText[] }[];
+  rows: number;
   gap: number;
+  after: number;
+  bar_top: number;
+  bar_bottom: number;
 }
 
 export interface MediaRow {
