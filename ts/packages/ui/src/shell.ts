@@ -1726,7 +1726,7 @@ export class Shell {
   private renameDialog(id: number): void {
     const c = this.data.chat(id);
     if (!c) return;
-    this.dialog("Rename chat", "", "Salvar Alterações", false, c.title, (ok, title) => {
+    this.dialog("Rename chat", "", "Save changes", false, c.title, (ok, title) => {
       if (!ok || title.trim() === "") return;
       c.title = title.trim();
       this.data.saveChat(c);

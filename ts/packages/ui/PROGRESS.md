@@ -89,6 +89,8 @@ compile, cards, cursors, scripted input).
 - Markdown bold is drawn regular, as the Rust app draws it (egui_commonmark gives it the strong
   colour, not a bold face), so the screens match. One line in `markdown.ts` `span` brings bold back
   if the owner wants it.
+- Rename's button reads "Save changes". Rust bug: the Rust app's says "Salvar Alterações"
+  (pages.rs `Dialog::Rename`), Portuguese in an English window.
 - The window shows what isn't ported as disabled buttons or a dialog naming it; nothing pretends to work.
 
 ## How a new page plugs in
