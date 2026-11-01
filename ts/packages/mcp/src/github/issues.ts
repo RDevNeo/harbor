@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import type { Assignee, Checks, Group, Issue, IssueFetched, IssueFilters, IssueSort, IssueState, IssuesPort, Review, Rgb, Source } from "../ghapi.ts";
 import { hexRgb } from "../ghapi.ts";
-import { agentProcessEnv, osError } from "../shell.ts";
-import { which } from "../sys.ts";
+import { type GhRun, ghRun } from "./gh.ts";
+import { stateOf } from "./issuedetail.ts";
+import { graphql, isoSecs } from "./prs.ts";
 
 type Obj = Record<string, unknown>;
 const get = (v: unknown, k: string): unknown => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Obj)[k] : undefined);
@@ -12,75 +12,6 @@ const text = (v: unknown): string | undefined => (typeof v === "string" ? v : un
 const lc = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 const eqi = (a: string, b: string): boolean => lc(a) === lc(b);
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
-export const GH_TIMEOUT_MS = 90_000;
-
-export type GhRun = { kind: "missing" } | { kind: "failed"; why: string } | { kind: "exit"; ok: boolean; stdout: string; stderr: string };
-export type GhRunner = (args: string[], timeoutMs: number) => Promise<GhRun>;
-
-/** `gh` with Harbor's agent environment (its own sign-in, not the user's). */
-export const runGh: GhRunner = async (args, timeoutMs) => {
-  const env = await agentProcessEnv();
-  const bin = which("gh", env);
-  if (bin === undefined) return { kind: "missing" };
-  return new Promise<GhRun>((resolve) => {
-    const child = spawn(bin, args, { env, stdio: ["ignore", "pipe", "pipe"] });
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (r: GhRun): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(r);
-    };
-    timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish({ kind: "failed", why: `timed out after ${Math.round(timeoutMs / 1000)}s` });
-    }, timeoutMs);
-    child.stdout.on("data", (b: Buffer) => out.push(b));
-    child.stderr.on("data", (b: Buffer) => err.push(b));
-    child.on("error", (e) => finish((e as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "missing" } : { kind: "failed", why: osError(e) }));
-    child.on("close", (code) => finish({ kind: "exit", ok: code === 0, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }));
-  });
-};
-
-/** `gh api graphql`; `what` names the list in the "install gh" hint. Partial answers (some searches failed) still count. */
-export async function graphql(run: GhRunner, query: string, what: string): Promise<unknown> {
-  const r = await run(["api", "graphql", "-f", `query=${query}`], GH_TIMEOUT_MS);
-  if (r.kind === "missing") throw new Error(`The GitHub CLI (gh) isn't installed. Install it and run \`gh auth login\` to see your ${what}.`);
-  if (r.kind === "failed") throw new Error(`gh: ${r.why}`);
-  let v: unknown = null;
-  try {
-    v = JSON.parse(r.stdout);
-  } catch {
-    // an unreadable answer counts as an empty one
-  }
-  if (!r.ok && (get(v, "data") ?? null) === null) {
-    const e = r.stderr.trim();
-    throw new Error(e.includes("auth login") || e.includes("not logged") ? "Not signed in to GitHub. Run `gh auth login`." : e);
-  }
-  return v;
-}
-
-export function isoSecs(s: string): number | undefined {
-  const n = (a: number, b: number): number | undefined => {
-    const x = s.slice(a, b);
-    return x.length === b - a && /^[+-]?[0-9]+$/.test(x) ? Number(x) : undefined;
-  };
-  const y0 = n(0, 4);
-  const m = n(5, 7);
-  const d = n(8, 10);
-  if (y0 === undefined || m === undefined || d === undefined) return undefined;
-  const [hh, mm, ss] = [n(11, 13) ?? 0, n(14, 16) ?? 0, n(17, 19) ?? 0];
-  const y = m <= 2 ? y0 - 1 : y0;
-  const era = Math.floor(y / 400);
-  const yoe = y - era * 400;
-  const doy = Math.floor((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + d - 1;
-  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
-  return (era * 146097 + doe - 719468) * 86400 + hh * 3600 + mm * 60 + ss;
-}
 
 export function trusted(association: string): boolean {
   return association === "OWNER" || association === "MEMBER" || association === "COLLABORATOR";
@@ -113,8 +44,8 @@ export function query(state: IssueFilters["state"], repos: string[]): string {
   return `${q}}`;
 }
 
-export async function fetchIssues(run: GhRunner, state: IssueFilters["state"], repos: string[]): Promise<IssueFetched> {
-  return parse(await graphql(run, query(state, repos), "issues"));
+export async function fetchIssues(state: IssueFilters["state"], repos: string[], run: GhRun = ghRun): Promise<IssueFetched> {
+  return parse(await graphql(query(state, repos), "issues", run));
 }
 
 export function parse(v: unknown): IssueFetched {
@@ -166,12 +97,6 @@ function node(n: unknown): Issue | undefined {
   };
 }
 
-/** GitHub's state and stateReason ("OPEN", "CLOSED" + "COMPLETED" / "NOT_PLANNED" / "DUPLICATE"). */
-export function stateOf(state: string, reason: string): IssueState {
-  const r = reason.toUpperCase();
-  if (state.toUpperCase() === "OPEN") return "open";
-  return r === "NOT_PLANNED" || r === "DUPLICATE" ? "not_planned" : "done";
-}
 
 
 export interface BaseQuery {
@@ -572,8 +497,8 @@ const SORT_LABELS: Record<IssueSort, string> = {
 
 export const sortLabel = (sort: IssueSort): string => SORT_LABELS[sort];
 
-export function createIssuesPort(run: GhRunner = runGh): IssuesPort {
-  return { fetch: (state, repos) => fetchIssues(run, state, repos), groups, mine, accounts, notes, authors, assignees, milestones, labels, otherProjects, owner, merge, shortError, sortLabel };
+export function createIssuesPort(run: GhRun = ghRun): IssuesPort {
+  return { fetch: (state, repos) => fetchIssues(state, repos, run), groups, mine, accounts, notes, authors, assignees, milestones, labels, otherProjects, owner, merge, shortError, sortLabel };
 }
 
 export const issuesPort: IssuesPort = createIssuesPort();

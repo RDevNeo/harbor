@@ -26,7 +26,8 @@ import {
   dir,
 } from "./apps.ts";
 import { type Json, isObject, parseObject } from "./json.ts";
-import { selfExe, which } from "./sys.ts";
+import { providers } from "@harbor/agents";
+import { selfExe } from "./sys.ts";
 
 export * from "./apps.ts";
 export * from "./http.ts";
@@ -161,7 +162,7 @@ export async function agentEnvAs(signedInHere: boolean): Promise<EnvVar[]> {
   set("GH_CONFIG_DIR", gh ? ghDir() : ghOutDir());
   set("GIT_TERMINAL_PROMPT", "0");
   const helper = gh
-    ? `!'${which("gh") ?? "gh"}' auth git-credential`
+    ? `!'${providers.which("gh") ?? "gh"}' auth git-credential`
     : "!f() { test \"$1\" = get && echo 'Harbor: GitHub is not signed in. Sign in under Settings > Integrations > Apps.' >&2; }; f";
   const git: [string, string][] = [
     ["credential.helper", ""],

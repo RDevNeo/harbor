@@ -1,7 +1,8 @@
 import "./sandbox.ts";
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
-import { OUTPUT_MAX, Tail, quote, shell } from "../src/shell.ts";
+import { shQuote } from "@harbor/net";
+import { OUTPUT_MAX, Tail, shell } from "../src/shell.ts";
 
 test("shell_keeps_the_end_and_returns_despite_background_children: shell keeps the end and returns despite background children", async () => {
   const dir = tmpdir();
@@ -35,6 +36,6 @@ test("the tail never starts inside a character", () => {
   expect(text.startsWith("[… ")).toBe(true);
 });
 
-test("quote wraps in single quotes", () => {
-  expect(quote("it's")).toBe("'it'\\''s'");
+test("shQuote wraps in single quotes", () => {
+  expect(shQuote("it's")).toBe("'it'\\''s'");
 });

@@ -1,12 +1,12 @@
 import { realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { type Body, type Dest, dest, http as meshHttp, jsonBody, type Kv, type Me, type Peer } from "@harbor/net";
+import { type Body, type Dest, dest, hostname, http as meshHttp, jsonBody, type Kv, type Me, type Peer, shQuote } from "@harbor/net";
 import { home, privateDir, randomHex } from "@harbor/store";
 import { argStr, argStrings, argUint } from "./args.ts";
 import { isObject, type Json } from "./json.ts";
 import { signedIn } from "./mcp.ts";
-import { hostname, quote, shell } from "./shell.ts";
+import { shell } from "./shell.ts";
 import { harborVersion } from "./version.ts";
 import { call as workspaceCall, resolve, TOOLS, tools as workspaceTools } from "./workspace.ts";
 
@@ -236,7 +236,7 @@ export async function gh(args: unknown, full: boolean): Promise<{ ok: boolean; t
     if (why !== null) return { ok: false, text: why };
   }
   if (!signedIn("github")) return { ok: false, text: `GitHub isn't signed in in Harbor on ${hostname()}` };
-  const script = `exec 2>&1\nGH_PAGER=cat GH_PROMPT_DISABLED=1 GH_BROWSER=false BROWSER=false exec gh ${argv.map(quote).join(" ")}`;
+  const script = `exec 2>&1\nGH_PAGER=cat GH_PROMPT_DISABLED=1 GH_BROWSER=false BROWSER=false exec gh ${argv.map(shQuote).join(" ")}`;
   const scratch = join(tmpdir(), `harbor-gh-${randomHex(8)}`);
   const wanted = argStr(args, "cwd");
   let dir: string;

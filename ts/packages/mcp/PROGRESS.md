@@ -224,3 +224,19 @@ provides it, and `ensureLead` (Rust's `ensure_lead` needs the composer's account
 Known flake: hookcert's TLS tests fail now and then when many processes load the PC at once (a handshake is refused: "disconnected
 before secure TLS connection was established"); six parallel runs of the file fail some of the time, a single run under CPU load
 did not in 8 tries. Not found yet whether it is the ClientHello rewind (`rewound`) or Bun's TLSSocket over a Duplex.
+
+## Start-up wiring (ts/services.ts, called by ts/hub.ts)
+
+`startServices` does what Rust's app start did for this package: `setHarborVersion`, `wire()` (the agents' servers, bridge, workspace,
+remote and agent env), `bridge.setSlash` (the ui's slash scan), `machines.setHub` and `machines.publish` (every 10 s), the
+control socket and the webhook listener (`connect`), `hookcert.start`, and a `GhApi` over `Work`, net's mesh and markdown.
+`hub.ts` (`harbor --background`) builds an `Engine` when the window gives none (`HubOptions.engine`), passes the services' two
+routers in: `routePhone` (`/v1/prs*`, `/v1/issues*`) in front of the phone routes, `routeMesh` (`/mesh/v1/share`, `/mesh/v1/tool`,
+`/mesh/v1/issues*`) in front of the replica's, and the phone routes as the replica's `/mesh/v1/call` target, so "Fix with…" forwarded
+from another PC lands.
+Smoke test (isolated temp XDG dirs, `unshare -Urn`): `harbor.ts --background` made `harbor.sock`, and `harbor.ts mcp --chat 4242` called
+through it got the engine's "unknown agent".
+Not wired: the window still builds its own Engine in `ui` and does not call `startHub`; the update info in `/versions` is null until
+the update package's `Updater` runs in the hub; `ensureLead` for a webhook on a project with no lead.
+The duplicate helpers are gone: `which`/`childPath` (agents' providers), `openUrl` (agents' git, kept behind `setOpener` for tests),
+`hostname`/`shQuote` (net), and the issues module's `graphql`, `isoSecs`, `stateOf` and gh runner (prs.ts, issuedetail.ts, gh.ts).

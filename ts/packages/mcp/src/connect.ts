@@ -1,35 +1,6 @@
-import { type Engine, type Integrations, integrate as integrateAgents, setAgentEnv, team } from "@harbor/agents";
-import * as bridge from "./bridge.ts";
+import { type Engine, team } from "@harbor/agents";
 import { type Hook, type Incoming, type Listener, type SocketOptions, startHooks, startSocket } from "./control.ts";
-import type { Json } from "./json.ts";
-import { grantFrom, NAME as MACHINES } from "./machines.ts";
-import { agentEnvAs, claudeConfig, claudeServers, codexArgs } from "./mcp.ts";
-import * as workspace from "./workspace.ts";
 
-type AgentGrant = Parameters<NonNullable<Integrations["bridge"]>["grant"]>[0];
-type BridgeGrant = Parameters<typeof bridge.grant>[0];
-
-const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v ?? null)) as Json;
-
-function asGrant(g: AgentGrant): BridgeGrant {
-  const servers = asJson(g.servers);
-  return { ...g, servers: typeof servers === "object" && servers !== null && !Array.isArray(servers) ? servers : {}, machines: grantFrom(g.machines) };
-}
-
-export function wireAgents(): void {
-  integrateAgents({
-    servers: { claudeConfig: (chat, extra, apps) => claudeConfig(chat, extra.map(([k, v]) => [k, asJson(v)]), apps), claudeServers: (extra) => claudeServers(extra ? [extra[0], asJson(extra[1])] : undefined), codexArgs, machinesName: MACHINES },
-    bridge: {
-      grant: (g) => bridge.grant(asGrant(g)),
-      revoke: bridge.revoke,
-      resume: bridge.resume,
-      remoteConfig: (g, port) => bridge.remoteConfig(asGrant(g), port),
-      origin: bridge.ORIGIN,
-    },
-    workspace: { forAccess: workspace.forAccess, replaced: workspace.REPLACED, note: workspace.note },
-  });
-  setAgentEnv((signedIn) => agentEnvAs(signedIn));
-}
 
 export interface ConnectOptions<A, M, O> {
   engine: Engine;
@@ -65,7 +36,6 @@ export function deliverHook(engine: Engine, h: Hook, ensureLead?: (repo: number)
 }
 
 export function connect<A = never, M = never, O = never>(o: ConnectOptions<A, M, O>): Connected {
-  wireAgents();
   const send = (i: Incoming<A, M, O>): void => {
     if (i.kind === "tool") {
       const { chatId, tool, args, reply } = i.call;

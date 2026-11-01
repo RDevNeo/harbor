@@ -22,3 +22,4 @@ export * as ghdetails from "./github/details.ts";
 export * as ghmesh from "./ghmesh.ts";
 export * as ghwire from "./github/api.ts";
 export * as connect from "./connect.ts";
+export * as version from "./version.ts";

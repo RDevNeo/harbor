@@ -9,7 +9,8 @@ import { home, writePrivate } from "@harbor/store";
 import { argStr, argUint } from "./args.ts";
 import { isObject, type Json } from "./json.ts";
 import { grantFrom, type Grant as MachinesGrant, mcp as machinesMcp, NAME as MACHINES } from "./machines.ts";
-import { agentProcessEnv, hostname, OUTPUT_MAX, shell, token } from "./shell.ts";
+import { hostname } from "@harbor/net";
+import { agentProcessEnv, OUTPUT_MAX, shell, token } from "./shell.ts";
 import { harborVersion } from "./version.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
 

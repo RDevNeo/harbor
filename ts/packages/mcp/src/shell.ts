@@ -1,24 +1,9 @@
 import { type ChildProcess, spawn, type StdioOptions } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { providers } from "@harbor/agents";
 import { randomHex } from "@harbor/store";
 import { agentEnv } from "./mcp.ts";
-import { childPath } from "./sys.ts";
 
 export const OUTPUT_MAX = 40_000;
-
-export function hostname(): string {
-  try {
-    const s = readFileSync("/etc/hostname", "utf8").trim();
-    if (s !== "") return s;
-  } catch {
-    // no /etc/hostname
-  }
-  return "this PC";
-}
-
-export function quote(s: string): string {
-  return `'${s.replaceAll("'", "'\\''")}'`;
-}
 
 export function token(): string {
   return randomHex(18);
@@ -45,7 +30,7 @@ export function osError(e: unknown): string {
 }
 
 export async function agentProcessEnv(): Promise<Record<string, string>> {
-  const env: Record<string, string | undefined> = { ...process.env, PATH: childPath() };
+  const env: Record<string, string | undefined> = { ...process.env, PATH: providers.childPath() };
   for (const [k, v] of await agentEnv()) {
     if (v === undefined) delete env[k];
     else env[k] = v;

@@ -5,8 +5,9 @@ import { dirname, extname, join } from "node:path";
 import { home } from "@harbor/store";
 import { argBool, argStr, argUint } from "./args.ts";
 import type { Json } from "./json.ts";
-import { capture, hostname, osError, quote, shell, shellCommand, token } from "./shell.ts";
-import { childPath } from "./sys.ts";
+import { hostname, shQuote } from "@harbor/net";
+import { capture, osError, shell, shellCommand, token } from "./shell.ts";
+import { providers } from "@harbor/agents";
 
 export const TOOLS: readonly string[] = ["bash", "read", "write", "edit", "glob", "grep"];
 /** Claude Code's own tools these stand in for, and others that would act on the device's files or shell (LSP, Monitor, worktrees), disallowed there. */
@@ -369,7 +370,7 @@ async function rg(args: string[], target: string): Promise<string | { error: str
 function agentPathEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-  env.PATH = childPath();
+  env.PATH = providers.childPath();
   return env;
 }
 
@@ -398,7 +399,7 @@ async function bash(cwd: string, chatId: number, a: unknown): Promise<Called> {
     return text(true, `Started in the background (process group ${child.pid}); its output goes to ${log}. Read that file to follow it; stop it with \`kill -- -${child.pid}\`.`);
   }
   const pwd = join(tmpdir(), `harbor-pwd-${tag.slice(0, 12)}`);
-  const script = `trap 'pwd >| ${quote(pwd)} 2>/dev/null' EXIT\nexec 2>&1\n${command}`;
+  const script = `trap 'pwd >| ${shQuote(pwd)} 2>/dev/null' EXIT\nexec 2>&1\n${command}`;
   const ms = Math.min(600_000, Math.max(1000, argUint(a, "timeout") ?? 120_000));
   const r = await shell(script, here, ms);
   try {

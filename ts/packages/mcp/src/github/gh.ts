@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Dest } from "../ghapi.ts";
 import { agentEnv } from "../mcp.ts";
-import { childPath, which } from "../sys.ts";
+import { providers } from "@harbor/agents";
 
 export const GH_TIMEOUT = 90_000;
 
@@ -25,7 +25,7 @@ export class GhSpawnError extends Error {
 }
 
 async function ghEnv(): Promise<Record<string, string>> {
-  const env: Record<string, string | undefined> = { ...process.env, PATH: childPath() };
+  const env: Record<string, string | undefined> = { ...process.env, PATH: providers.childPath() };
   for (const [k, v] of await agentEnv()) {
     if (v === undefined) delete env[k];
     else env[k] = v;
@@ -38,8 +38,8 @@ async function ghEnv(): Promise<Record<string, string>> {
 /** Runs `gh` as Harbor's agents see it; the child is killed after `timeoutMs`. */
 export function realGh(timeoutMs: number = GH_TIMEOUT): GhRun {
   return async (args) => {
-    const bin = which("gh");
-    if (bin === undefined) throw new GhSpawnError("missing", "No such file or directory (os error 2)");
+    const bin = providers.which("gh");
+    if (bin === null) throw new GhSpawnError("missing", "No such file or directory (os error 2)");
     const env = await ghEnv();
     return new Promise<GhOut>((resolve, reject) => {
       const out: Buffer[] = [];

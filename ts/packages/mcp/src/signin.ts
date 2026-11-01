@@ -30,7 +30,8 @@ import {
 } from "./apps.ts";
 import { b64url, dec, form, enc, getJson, http, random, sha256 } from "./http.ts";
 import { type Json, isObject } from "./json.ts";
-import { childPath, openUrl, which } from "./sys.ts";
+import { providers } from "@harbor/agents";
+import { openUrl } from "./sys.ts";
 
 interface Flow {
   pending: Pending;
@@ -142,7 +143,7 @@ interface Cmd {
 function ghLoginCmd(): Cmd {
   const d = ghDir();
   return {
-    argv: [which("gh") ?? "gh", "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--skip-ssh-key", "--insecure-storage", "--scopes", "workflow"],
+    argv: [providers.which("gh") ?? "gh", "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--skip-ssh-key", "--insecure-storage", "--scopes", "workflow"],
     env: { ...process.env, GH_CONFIG_DIR: d, GIT_CONFIG_GLOBAL: join(d, "gitconfig"), GH_BROWSER: "true", GH_TOKEN: undefined, GITHUB_TOKEN: undefined },
   };
 }
@@ -173,7 +174,7 @@ async function eachLine(stream: ReadableStream<Uint8Array>, onLine: (l: string) 
 
 async function deviceLogin(id: string, flow: Flow, cmd: Cmd, update: (p: Pending) => void): Promise<void> {
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries({ ...cmd.env, PATH: childPath() })) if (v !== undefined) env[k] = v;
+  for (const [k, v] of Object.entries({ ...cmd.env, PATH: providers.childPath() })) if (v !== undefined) env[k] = v;
   const opts: { env: Record<string, string>; stdin: "ignore"; stdout: "pipe"; stderr: "pipe"; cwd?: string } = { env, stdin: "ignore", stdout: "pipe", stderr: "pipe" };
   if (cmd.cwd !== undefined) opts.cwd = cmd.cwd;
   const child = Bun.spawn(cmd.argv, opts);

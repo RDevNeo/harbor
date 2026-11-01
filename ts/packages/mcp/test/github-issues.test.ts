@@ -4,10 +4,13 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Group, Issue, IssueFetched, IssueFilters, Source } from "../src/ghapi.ts";
+import { type GhOut, type GhRun, GhSpawnError } from "../src/github/gh.ts";
+import { stateOf } from "../src/github/issuedetail.ts";
 import {
-  type GhRun, type GhRunner, accounts, activeFilters, assignees, authors, createIssuesPort, defaultFilters, fetchIssues, graphql, groups, isoSecs, labels, merge, milestones, notes, otherProjects,
-  owner, parse, parseBaseQuery, parseQuery, query, runGh, shortError, sortGroup, sortLabel, stateOf, trusted,
+  accounts, activeFilters, assignees, authors, createIssuesPort, defaultFilters, fetchIssues, groups, labels, merge, milestones, notes, otherProjects,
+  owner, parse, parseBaseQuery, parseQuery, query, shortError, sortGroup, sortLabel, trusted,
 } from "../src/github/issues.ts";
+import { graphql, isoSecs } from "../src/github/prs.ts";
 
 const issue = (n: number, author: string): Issue => ({
   number: n,
@@ -287,37 +290,36 @@ const answer = {
     assigned: { nodes: [{ number: 7, title: "Seven", url: "https://github.com/o/r/issues/7", state: "OPEN", updatedAt: "2026-01-02T00:00:00Z", authorAssociation: "OWNER", closedByPullRequestsReferences: { nodes: [{ state: "OPEN" }] } }] },
   },
 };
-const exit = (stdout: string, ok = true, stderr = ""): GhRun => ({ kind: "exit", ok, stdout, stderr });
+const exit = (stdout: string, ok = true, stderr = ""): GhOut => ({ code: ok ? 0 : 1, stdout, stderr });
 const failsWith = (p: Promise<unknown>): Promise<string> => p.then(() => "no error", (e: unknown) => (e instanceof Error ? e.message : String(e)));
 
 test("fetch asks gh api graphql and parses the answer", async () => {
   const calls: string[][] = [];
-  const run: GhRunner = async (args, ms) => {
-    calls.push([...args, String(ms)]);
+  const run: GhRun = async (args) => {
+    calls.push([...args]);
     return exit(JSON.stringify(answer));
   };
   const got = await createIssuesPort(run).fetch("open", ["o/r"]);
   expect(calls.length).toBe(1);
   expect(calls[0]?.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
   expect(calls[0]?.[3]).toBe(`query=${query("open", ["o/r"])}`);
-  expect(calls[0]?.[4]).toBe("90000");
   expect(got.viewer).toBe("kim");
   expect(got.items[0]).toMatchObject({ number: 7, accounts: ["kim"], linked_pr: true, author_trusted: true, author: "ghost", state: "open", milestone: null });
 });
 
 test("a partial answer counts and an unreadable one is empty", async () => {
-  const partial = await fetchIssues(async () => exit(JSON.stringify(answer), false, "one search failed"), "all", []);
+  const partial = await fetchIssues("all", [], async () => exit(JSON.stringify(answer), false, "one search failed"));
   expect(partial.items.length).toBe(1);
-  const empty = await fetchIssues(async () => exit("not json"), "all", []);
+  const empty = await fetchIssues("all", [], async () => exit("not json"));
   expect(empty).toEqual({ viewer: "", items: [], sources: [] });
 });
 
 test("gh failures say what to do", async () => {
-  expect(await failsWith(graphql(async () => ({ kind: "missing" }), "q", "issues"))).toBe("The GitHub CLI (gh) isn't installed. Install it and run `gh auth login` to see your issues.");
-  expect(await failsWith(graphql(async () => ({ kind: "failed", why: "timed out after 90s" }), "q", "issues"))).toBe("gh: timed out after 90s");
-  expect(await failsWith(graphql(async () => exit("", false, "To get started with GitHub CLI, please run:  gh auth login\n"), "q", "issues"))).toBe("Not signed in to GitHub. Run `gh auth login`.");
-  expect(await failsWith(graphql(async () => exit("", false, "you are not logged in"), "q", "issues"))).toBe("Not signed in to GitHub. Run `gh auth login`.");
-  expect(await failsWith(graphql(async () => exit('{"data":null}', false, " rate limited \n"), "q", "issues"))).toBe("rate limited");
+  expect(await failsWith(graphql("q", "issues", async () => { throw new GhSpawnError("missing", "No such file or directory (os error 2)"); }))).toBe("The GitHub CLI (gh) isn't installed. Install it and run `gh auth login` to see your issues.");
+  expect(await failsWith(graphql("q", "issues", async () => { throw new GhSpawnError("timeout", "timed out after 90s"); }))).toBe("gh: timed out after 90s");
+  expect(await failsWith(graphql("q", "issues", async () => exit("", false, "To get started with GitHub CLI, please run:  gh auth login\n")))).toBe("Not signed in to GitHub. Run `gh auth login`.");
+  expect(await failsWith(graphql("q", "issues", async () => exit("", false, "you are not logged in")))).toBe("Not signed in to GitHub. Run `gh auth login`.");
+  expect(await failsWith(graphql("q", "issues", async () => exit('{"data":null}', false, " rate limited \n")))).toBe("rate limited");
 });
 
 let work = "";
@@ -367,16 +369,6 @@ test("the real runner reports a failing gh and its exit", async () => {
   expect(await failsWith(createIssuesPort().fetch("open", []))).toBe("Not signed in to GitHub. Run `gh auth login`.");
   fakeGh(`echo '{"data":{"viewer":{"login":"kim"}}}'\necho 'one search failed' >&2\nexit 1`);
   expect((await createIssuesPort().fetch("open", [])).viewer).toBe("kim");
-  const r = await runGh(["x"], 5000);
-  expect(r).toEqual({ kind: "exit", ok: false, stdout: '{"data":{"viewer":{"login":"kim"}}}\n', stderr: "one search failed\n" });
-});
-
-test("the real runner stops a gh that does not answer", async () => {
-  fakeGh("exec sleep 30");
-  const started = Date.now();
-  const r = await runGh(["api"], 1000);
-  expect(r).toEqual({ kind: "failed", why: "timed out after 1s" });
-  expect(Date.now() - started).toBeLessThan(5000);
 });
 
 test("the real runner says so when gh is not installed", async () => {
@@ -384,7 +376,6 @@ test("the real runner says so when gh is not installed", async () => {
   const keep = process.env.PATH;
   process.env.PATH = empty;
   try {
-    expect(await runGh(["api"], 1000)).toEqual({ kind: "missing" });
     expect(await failsWith(createIssuesPort().fetch("open", []))).toContain("The GitHub CLI (gh) isn't installed");
   } finally {
     if (keep === undefined) delete process.env.PATH;
