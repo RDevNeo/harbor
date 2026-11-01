@@ -33,6 +33,14 @@ Phase 0 only (prototype and measure). The gate stays closed until the owner deci
   real tty and size, resize, colours, cursor moves, title, alternate screen, Ctrl+C, wide characters, a
   20,000-line burst, exit code.
 
+- Voice on x86_64: `proto/voice.ts`, `proto/voice-check.ts`. The model Harbor uses (Parakeet TDT 0.6B v3
+  int8, hashes checked against `parakeet.rs`) under Bun: 3.1 s to load, about 1 GB RSS, 0.4 s for a 3.8 s
+  English sample, German and Spanish right too, language detected by the model.
+- `bun build --compile`: `proto/build.ts`. The Slint addon and the `.slint` source work from inside the
+  executable, and so does the plan's split: a compiled runtime loading a separate `harbor-app.js`
+  (`proto/runtime.ts`; 126.7 MB runtime, 14 KB bundle). The sherpa addon works from inside it too, once
+  `libonnxruntime.so` and `libsherpa-onnx-c-api.so` are on `LD_LIBRARY_PATH`.
+
 Environment of `proto/main.ts`, for the rigs: `HTS_DB` (the copy, required), `HTS_CWD` (scratch folder
 for turns), `HTS_CLAUDE`, `HTS_MODEL`, `HTS_OPEN` (open that many chats), `HTS_PROMPT` (send at start).
 
@@ -49,9 +57,16 @@ for turns), `HTS_CLAUDE`, `HTS_MODEL`, `HTS_OPEN` (open that many chats), `HTS_P
   the handshake instead of failing it, so a stranger completes TLS and sees the connection close before
   any request is read.
 
+- The compiler breaks slint-ui's loader: its stub for the absent `rust-module-dev.cjs` throws without
+  `MODULE_NOT_FOUND`, so the executable dies at start. `proto/build.ts` works around it with a plugin, and
+  also drops the musl addon that `bun install` fetches on glibc (33 MB of dead weight).
+- `--trim` does nothing on Bun 1.4.3: the flag is accepted, the size doesn't change, and `bun compile`
+  doesn't exist. It is real only on Bun canary.
+- Addons extract to `/tmp/.bun-*.node` at start, so a compiled Harbor needs a `/tmp` that allows exec.
+
 ## Next
 
-Voice, on x86_64.
+Comparison table, Bun vs Node idle, glibc, video finding, then aarch64.
 
 ## Blockers
 
