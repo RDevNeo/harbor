@@ -226,7 +226,6 @@ export class Shell {
       leave: () => this.leavePage(),
       dark: () => this.dark,
       theme: (dark, compact) => this.applyTheme(dark, compact),
-      unported: (what) => this.unported(what),
       toast: (m) => this.toast(m),
       hub: () => this.hub,
       openExternal: (url) => this.openExternal(url),

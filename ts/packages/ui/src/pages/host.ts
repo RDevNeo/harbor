@@ -46,7 +46,6 @@ export interface PageShell {
   leave: () => void;
   dark: () => boolean;
   theme: (dark: boolean, compact: boolean) => void;
-  unported: (what: string) => void;
   toast: (message: string) => void;
   hub: () => PageHub;
   openExternal: (url: string) => void;
@@ -107,10 +106,10 @@ export class PageHost {
     }
     this.settings.then(
       (h) => h.show(tab),
-      () => {
+      (e: unknown) => {
         this.settings = null;
         this.s.leave();
-        this.s.unported("Settings");
+        this.s.toast(`Settings couldn't open: ${e instanceof Error ? e.message : String(e)}`);
       },
     );
   }
@@ -159,7 +158,7 @@ export class PageHost {
   private job(title: string, what: string, ask: boolean, start: (extra: string) => Chat | null): void {
     const go = (extra: string): void => {
       const chat = start(extra);
-      if (chat === null) this.s.unported(`${title}: no account to run the agent with`);
+      if (chat === null) this.s.toast(`${title}: no account to run the agent with`);
       else this.s.openChat(chat.id);
     };
     if (ask) this.s.ask(`${title} with ${this.agentLabel()}`, what, "Start", (t) => {
