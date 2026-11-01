@@ -45,7 +45,7 @@ await mountSettings(
     back: () => {},
     providers: { login: () => {}, addClaudeAccount: () => {}, updateAll: () => {} },
     integrations: { discordWindow: () => {} },
-    webhooks: { terminal: () => {}, checkFunnel: () => {}, disableFunnel: () => {}, kick: () => {} },
+    webhooks: { terminal: () => {}, checkFunnel: () => Promise.resolve(), disableFunnel: () => {}, kick: () => {} },
     funnel: () => ({ base: null, stale: null }),
     qr: () => ({ width: 1, height: 1, data: new Uint8Array(4) }),
     notify,

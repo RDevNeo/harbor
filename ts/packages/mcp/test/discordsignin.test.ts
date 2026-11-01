@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { accountName, cancel, login, signedIn, status } from "../src/discord.ts";
+import { accountName, cancel, login, signedIn, status, window as signinWindow } from "../src/discord.ts";
 import type { Pending } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
 import { type Started, fakeLog, plan, repoDiscord, rig, startHost, until } from "./discordkit.ts";
@@ -60,6 +60,17 @@ test("a captcha opens the real window when there is a desktop", async () => {
   await until(() => fakeLog(r.root).some((l) => l.op === "show"));
   await until(() => signin(s).window === true);
   expect(signin(s).note).toBe("Finish in Discord's window");
+  await cancel();
+  await until(() => s.host.phase() === "stopped");
+});
+
+test("the Settings card's email and password button asks the host for Discord's own window", async () => {
+  const s = await started([{ ev: "qr", url: "https://discord.com/ra/abc" }]);
+  await s.host.handle({ op: "signin", accept: true, display: { wayland: "w", x11: "", runtime: "/run/user/test" } });
+  await until(() => signin(s).qr === "https://discord.com/ra/abc");
+  await signinWindow();
+  expect(fakeLog(r.root).some((l) => l.op === "show")).toBe(true);
+  expect([signin(s).window, signin(s).note]).toEqual([true, "Finish in Discord's window"]);
   await cancel();
   await until(() => s.host.phase() === "stopped");
 });

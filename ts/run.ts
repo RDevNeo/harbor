@@ -114,7 +114,13 @@ export async function runApp(o: RunOptions): Promise<number> {
       closeWindow();
     };
     const tray = offline ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
-    await ui.runShell(data, { prs: run.prs, workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }) }, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f) });
+    const hub = {
+      prs: run.prs,
+      workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),
+      gh: run.services.gh,
+      checkUpdates: async () => (await updater.check(), updater.info().status),
+    };
+    await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f) });
     tray?.stop();
     if (!quitting && run.store.get("bg_keep") !== "0") {
       const note = ui.stillRunning(run.store, tray !== null);

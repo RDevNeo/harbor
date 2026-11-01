@@ -1,4 +1,4 @@
-import { ghdetails, issues as ghissues } from "@harbor/mcp";
+import { type ghapi, ghdetails, issues as ghissues } from "@harbor/mcp";
 import { attachIssues, type IssuesView } from "../issues.ts";
 import type { IssuesHost } from "../logic/issues.ts";
 import type { Keys } from "../logic/keys.ts";
@@ -11,18 +11,25 @@ export type IssuesDeps = Pick<IssuesHost, "projects" | "agentLabel" | "agents" |
   close: () => void;
   keys: Keys;
   github: Pixels;
+  /** The hub's GitHub API, which merges in the other PCs' Issues; without it the page lists this PC's own through `gh`. */
+  gh: ghapi.GhApi | null;
 };
 
-/** The Issues page on the `IssuesBus`: GitHub through `gh`, no avatars, no mesh to reach issues on other PCs. */
+/** The Issues page on the `IssuesBus`: GitHub through `gh` and, with the hub's API, the mesh's PCs; no avatars. */
 export function mountIssues(bus: IssuesView, deps: IssuesDeps) {
-  const projects = deps.projects;
+  const { gh, projects } = deps;
+  let page: ReturnType<typeof attachIssues> | null = null;
   const host: IssuesHost = {
     ...deps,
-    fetch: (state) => ghissues.fetchIssues(state, projects().map((p) => p.repo)),
-    peer: () => undefined,
-    details: ghdetails.detailsPort({ http: () => Promise.reject(new Error("no mesh in this app")) }),
+    fetch: gh === null ? (state) => ghissues.fetchIssues(state, projects().map((p) => p.repo)) : (state) => gh.mergedIssues(state, true),
+    peer: (issue, project) => {
+      const p = gh?.issuePeer(issue.url, page?.filters.account, project);
+      return p === undefined ? undefined : { name: p.name, dest: p.dest };
+    },
+    details: gh?.details ?? ghdetails.detailsPort({ http: () => Promise.reject(new Error("no mesh in this app")) }),
     avatar: () => Promise.resolve(null),
     now: () => Math.floor(Date.now() / 1000),
   };
-  return attachIssues(bus, host, { close: deps.close, keys: deps.keys, github: deps.github });
+  page = attachIssues(bus, host, { close: deps.close, keys: deps.keys, github: deps.github });
+  return page;
 }

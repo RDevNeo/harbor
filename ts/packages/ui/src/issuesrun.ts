@@ -42,6 +42,7 @@ function githubOf(url: string): string | undefined {
 
 const github = await appMark("github", token("fg", win.dark), win.dark);
 const page = mountIssues(bus, {
+  gh: null,
   projects: () => projects,
   agentLabel: () => "Claude",
   agents: () => [{ id: "claude", label: "Claude", current: true }],

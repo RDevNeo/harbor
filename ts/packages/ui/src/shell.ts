@@ -9,9 +9,10 @@ import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./comp
 import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
+import { updateToast } from "./logic/hubseam.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
-import { type Page, PageHost } from "./pages/host.ts";
+import { type Page, type PageHub, PageHost } from "./pages/host.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
 import { Keys, label as keyLabel } from "./logic/keys.ts";
@@ -169,6 +170,7 @@ export class Shell {
   });
   private readonly prs: chatpr.ChatPrs;
   private readonly workspaces: () => Workspaces;
+  private readonly hub: ShellHub;
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -190,6 +192,7 @@ export class Shell {
     this.data = data;
     this.prs = hub.prs;
     this.workspaces = hub.workspaces;
+    this.hub = hub;
     const get = (k: string, d: string) => data.store.get(k) ?? d;
     const model = get("default_model", "claude-opus-5-5");
     this.sel = {
@@ -224,6 +227,8 @@ export class Shell {
       dark: () => this.dark,
       theme: (dark, compact) => this.applyTheme(dark, compact),
       unported: (what) => this.unported(what),
+      toast: (m) => this.toast(m),
+      hub: () => this.hub,
       openExternal: (url) => this.openExternal(url),
       openChat: (id) => this.openChat(id),
       draftWith: (project, text) => {
@@ -2123,7 +2128,7 @@ export class Shell {
         this.win.sidebar_open = !this.win.sidebar_open;
         break;
       case "check_updates":
-        this.unported("Checking for updates");
+        this.checkUpdates();
         break;
       case "toggle_terminal":
         this.surfaces.toggleTerminal(this.cwdHere());
@@ -2132,6 +2137,14 @@ export class Shell {
         this.surfaces.toggleBrowser(this.browserUrl());
         break;
     }
+  }
+
+  private checkUpdates(): void {
+    this.toast("Checking for updates\u{2026}");
+    this.hub.checkUpdates().then(
+      (status) => this.toast(updateToast(status)),
+      (e: unknown) => this.toast(`Update check failed: ${e instanceof Error ? e.message : String(e)}`),
+    );
   }
 
   private unported(what: string): void {
@@ -2237,7 +2250,7 @@ interface Draft {
 }
 
 /** What the window takes from the running hub. */
-export interface ShellHub {
+export interface ShellHub extends PageHub {
   prs: chatpr.ChatPrs;
   workspaces: () => Workspaces;
 }

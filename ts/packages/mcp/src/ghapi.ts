@@ -676,14 +676,7 @@ export class GhApi {
 
   private async issueList(call: Call, refresh: boolean): Promise<Reply> {
     const { filters: f, sort, search } = issueFilters(call);
-    let d = this.issues.get(f.state, refresh);
-    if (d === undefined) {
-      const mesh = this.deps.mesh;
-      const peers = mesh.enabled() ? mesh.peers() : [];
-      const name = mesh.me().name;
-      d = await fetchMerged(this.deps, f.state, refresh, name === "" ? "This PC" : name, peers, () => this.ownList(f.state, refresh));
-      this.issues.keep(f.state, d);
-    }
+    const d = await this.mergedIssues(f.state, refresh);
     const v = issuesPage(this.deps.issues, d, f, search, sort);
     v.projects = allProjects(this.deps.issues, await this.deps.host.projects(call.global), d);
     return ok(v);
@@ -702,7 +695,27 @@ export class GhApi {
     }
   }
 
-  private issuePeer(url: string, prefer: string | undefined, project: boolean): Peer | undefined {
+  /** The Issues of this PC and of every PC of the mesh, kept for `issuePeer` and `fixAway` to find an item in. */
+  async mergedIssues(state: IssueFilters["state"], refresh: boolean): Promise<IssueFetched> {
+    const hit = this.issues.get(state, refresh);
+    if (hit !== undefined) return hit;
+    const mesh = this.deps.mesh;
+    const peers = mesh.enabled() ? mesh.peers() : [];
+    const name = mesh.me().name;
+    const d = await fetchMerged(this.deps, state, refresh, name === "" ? "This PC" : name, peers, () => this.ownList(state, refresh));
+    this.issues.keep(state, d);
+    return d;
+  }
+
+  get details(): DetailsPort {
+    return this.deps.details;
+  }
+
+  get pcName(): string {
+    return this.deps.mesh.me().name;
+  }
+
+  issuePeer(url: string, prefer: string | undefined, project: boolean): Peer | undefined {
     const found = this.issues.find((d) => {
       const i = d.items.find((x) => x.url === url);
       return i ? { d, i } : undefined;
@@ -729,11 +742,16 @@ export class GhApi {
     const extra = str(obj(call.body).extra) ?? "";
     const project = this.deps.host.projectOf(issue.repo);
     if (project !== undefined) return this.deps.host.agentThread(call.global, { kind: "fix", project, issue, extra });
-    const peer = this.issuePeer(url, str(obj(call.body).account), true);
+    const sender: [string, string] = [`${call.device === "" ? "Phone" : call.device} via ${this.deps.mesh.me().name}`, this.deps.deviceId(call.token)];
+    return this.fixAway(url, extra, str(obj(call.body).account), sender, call.global);
+  }
+
+  /** Starts the fix on the PC that has the issue's repo as a project; the reply's `id` is the chat's copy here once it arrives. */
+  async fixAway(url: string, extra: string, prefer: string | undefined, sender: [name: string, device: string], global: boolean): Promise<Reply> {
+    const peer = this.issuePeer(url, prefer, true);
     if (!peer) return err(409, NOT_PROJECT);
     const { mesh, host } = this.deps;
-    const sender: [string, string] = [`${call.device === "" ? "Phone" : call.device} via ${mesh.me().name}`, this.deps.deviceId(call.token)];
     const reply = await mesh.forward(peer, { method: "POST", path: ["v1", "issues", "fix"], body: { url, extra }, sender, ctx: host.ctx() });
-    return await mesh.mapNew(peer.id, reply, call.global);
+    return await mesh.mapNew(peer.id, reply, global);
   }
 }

@@ -417,6 +417,23 @@ test("Fix with… starts here, or forwards to the pc that has the project", asyn
   expect(await alone.api.handle(call([], { method: "POST", path: ["v1", "issues", "fix"], body: { url } }))).toEqual({ status: 409, body: { error: NOT_PROJECT } });
 });
 
+test("the window's Issues list is the merged one, and its Fix goes to the pc that has the project under the desk's own name", async () => {
+  const r = rig();
+  const url = "https://github.com/o/r/issues/3";
+  expect(await r.api.fixAway(url, "", undefined, ["desk", "pc:desk"], false)).toEqual({ status: 409, body: { error: NOT_PROJECT } });
+  peerOwns(r, ["o/r"]);
+  const list = await r.api.mergedIssues("open", true);
+  expect(list.items.map((i) => i.url)).toContain(url);
+  expect(r.api.issuePeer(url, undefined, true)?.id).toBe("ts:lap");
+  expect(r.api.pcName).toBe("desk");
+  const reply = await r.api.fixAway(url, "carefully", undefined, ["desk", "pc:desk"], false);
+  expect(reply.body).toEqual({ home: "ts:lap", global: false, id: 5, gid: "g5" });
+  expect(r.forwarded).toEqual([{ peer: "ts:lap", path: ["v1", "issues", "fix"], body: { url, extra: "carefully" }, sender: ["desk", "pc:desk"] }]);
+  const fetches = r.issueFetches;
+  await r.api.mergedIssues("open", false);
+  expect(r.issueFetches).toBe(fetches);
+});
+
 test("unknown calls are 404", async () => {
   const r = rig();
   expect(await r.api.handle(call([], { path: ["v1", "nope"] }))).toEqual({ status: 404, body: { error: "unknown call" } });

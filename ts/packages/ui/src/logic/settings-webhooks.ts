@@ -110,7 +110,8 @@ export interface WebhooksHost {
   /** Runs a shell command in a terminal titled "Tailscale Funnel". */
   terminal(title: string, script: string): void;
   deleteWebhook(id: number): void;
-  checkFunnel(): void;
+  /** Asks Tailscale again; resolves once the answer is in. */
+  checkFunnel(): Promise<void>;
   disableFunnel(): void;
   kick(): void;
 }
@@ -135,8 +136,8 @@ export function webhooksAct(kv: Kv, host: WebhooksHost, port: number, what: stri
       } else host.terminal("Tailscale Funnel", `${control.funnelEnableCmd(port)} && echo && echo 'Done. Press Check in Harbor.'`);
       break;
     case "funnel-check":
-      host.checkFunnel();
-      break;
+      void host.checkFunnel().then(() => host.changed());
+      return;
     case "copy":
       host.copy(a);
       return;

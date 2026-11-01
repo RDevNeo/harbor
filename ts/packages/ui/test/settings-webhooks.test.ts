@@ -73,7 +73,10 @@ function rig() {
     copy: (t) => calls.push(`copy ${t}`),
     terminal: (title, script) => calls.push(`terminal ${title}: ${script}`),
     deleteWebhook: (id) => calls.push(`delete ${id}`),
-    checkFunnel: () => calls.push("checkFunnel"),
+    checkFunnel: () => {
+      calls.push("checkFunnel");
+      return Promise.resolve();
+    },
     disableFunnel: () => calls.push("disableFunnel"),
     kick: () => calls.push("kick"),
   };
@@ -108,4 +111,13 @@ test("webhooks runs Tailscale's commands in a terminal and deletes a hook by id"
     "changed",
     "copy http://127.0.0.1:47920/hooks/tok",
   ]);
+});
+
+test("webhooks redraws the Funnel row once Tailscale has answered, not before", async () => {
+  const r = rig();
+  webhooksAct(r.kv, r.host, 47920, "funnel-check", "");
+  expect(r.calls).toEqual(["checkFunnel"]);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(r.calls).toEqual(["checkFunnel", "changed"]);
 });

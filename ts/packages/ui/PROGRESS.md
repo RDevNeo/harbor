@@ -72,10 +72,14 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | tray, background | tray: started with the window (Open raises it, Quit closes it); Settings' Quit and "Start Harbor when I log in" work. Background (window closed, Harbor stays): not wired; Slint can't unmap a window on Wayland (`hide()` ends the loop but the window stays drawn until its handle is collected, and the Shell's closures keep it), and the Reloader can't restart a source run (`cfg.exe` is bun). Needs: a restart into `--background` on close and back on focus, for compiled and source runs (`src/tray.ts`, `src/background.ts`) | see `test/tray.test.ts`, `test/background.test.ts` |
 | browser | not started | 0 of 0 |
 
-Entries that still open the "isn't in the TypeScript app yet" dialog (checked from `ts/run.sh` with
-`HARBOR_POINTER` in the private rig): Providers' Update (the agent CLI updater), Webhooks' Funnel Check
-and Disable, Integrations' Discord sign-in window, Fix on another PC, and the palette's "Check for
-updates". Terminal entries (project menu, palette, Providers' Sign in / Install / Add Claude account,
+No entry of Settings, Issues or the palette opens the "isn't in the TypeScript app yet" dialog any more
+(the Shell keeps it for slash commands it doesn't know and for a Settings page that fails to load). The
+window reaches the hub running beside it through `ShellHooks.hub` (`gh`: the Issues list merged with the
+mesh's PCs and Fix on another PC; `checkUpdates`: the palette's "Check for updates", which toasts the
+updater's status line). Providers' Update runs `provupdate.updateAll`; the Webhooks Funnel row reads
+`tailscale funnel status` at start and on Check; the Discord card's email-and-password button asks the
+Discord host for its window. A Fix on another PC and Discord's window need a second PC and the Discord
+host, so they are covered by tests and not shown in the rig. Terminal entries (project menu, palette, Providers' Sign in / Install / Add Claude account,
 Webhooks' Funnel steps, a PR's Check out) open a terminal tab in the bottom pane.
 
 Rust tests of the shell's modules: 80 of 80 ported, all passing (71 here, view.rs's 9 in `@harbor/net`).

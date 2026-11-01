@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { git, providers, type Account, type Work } from "@harbor/agents";
+import { git, providers, provupdate, type Account, type Work } from "@harbor/agents";
 import { type voiceCtl } from "@harbor/media";
-import { Desktop, spawnNotifySend, testNote } from "@harbor/net";
-import { prs as ghprs } from "@harbor/mcp";
+import { Desktop, hostname, spawnNotifySend, testNote } from "@harbor/net";
+import { control, discord, hookcert, type ghapi, prs as ghprs } from "@harbor/mcp";
 import { type Chat } from "@harbor/store";
 import { type Data } from "../data.ts";
+import { Funnel } from "../logic/funnel.ts";
+import { fixOnPeer, localDevice } from "../logic/hubseam.ts";
 import { type Keys, type KeyPress } from "../logic/keys.ts";
 import { type Item } from "../logic/palette.ts";
 import { type Tab } from "../logic/pages.ts";
@@ -25,6 +27,14 @@ type IssuesPage = ReturnType<typeof mountIssues>;
 
 export type Page = "settings" | "prs" | "issues";
 
+/** What the window asks of the hub running in the same process. */
+export interface PageHub {
+  /** The GitHub API the phone and the other PCs of the mesh use: its Issues list is the merged one. */
+  gh: ghapi.GhApi;
+  /** Looks for a release now and gives the updater's status line once it has an answer. */
+  checkUpdates: () => Promise<string>;
+}
+
 /** What the pages ask of the main window around them. */
 export interface PageShell {
   win: AppWindow;
@@ -37,6 +47,8 @@ export interface PageShell {
   dark: () => boolean;
   theme: (dark: boolean, compact: boolean) => void;
   unported: (what: string) => void;
+  toast: (message: string) => void;
+  hub: () => PageHub;
   openExternal: (url: string) => void;
   openChat: (id: number) => void;
   /** A new draft in `project` holding `text`. */
@@ -63,6 +75,7 @@ export class PageHost {
   private prs: PrsHandle | null = null;
   private issues: IssuesPage | null = null;
   private palette: PaletteHandle | null = null;
+  private readonly funnel = new Funnel(() => providers.which("tailscale") !== null, control.HOOK_PORT);
 
   constructor(private readonly s: PageShell) {}
 
@@ -71,6 +84,7 @@ export class PageHost {
     const store = this.s.data.store;
     if (this.settings === null) {
       const s = this.s;
+      void this.funnel.check().then(() => this.settings).then((h) => h?.show()).catch(() => {});
       this.settings = loadQr().then((qr) => mountSettings(
         busOf<SettingsView>(s.win, "SettingsBus"),
         {
@@ -80,10 +94,10 @@ export class PageHost {
           speech: s.dictation() ?? settingsSpeech(store),
           theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
           back: () => s.leave(),
-          providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), updateAll: () => s.unported("Updating the agent CLIs") },
-          integrations: { discordWindow: () => s.unported("Discord sign-in") },
-          webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => s.unported("Tailscale Funnel"), disableFunnel: () => s.unported("Tailscale Funnel"), kick: () => {} },
-          funnel: () => ({ base: null, stale: null }),
+          providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), updateAll: (accounts) => void provupdate.updateAll(accounts) },
+          integrations: { discordWindow: () => void discord.window().catch(() => {}) },
+          webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => this.funnel.check(), disableFunnel: () => this.funnel.forget(), kick: () => hookcert.kick() },
+          funnel: () => this.funnel,
           qr,
           notify: { sendTest: () => void new Desktop({ send: spawnNotifySend }).testPopup(testNote()) },
           copy: (text) => s.win.copy_text(text),
@@ -154,6 +168,23 @@ export class PageHost {
     else go("");
   }
 
+  private fixAway(issue: ghapi.Issue, ask: boolean): void {
+    const gh = this.s.hub().gh;
+    const go = (extra: string): void => {
+      void fixOnPeer(gh, issue.url, extra, this.issues?.filters.account, localDevice(process.env, hostname()), {
+        toast: (m) => this.s.toast(m),
+        open: (chat) => {
+          this.s.data.reload();
+          this.s.openChat(chat);
+        },
+      });
+    };
+    if (ask) this.s.ask(`Fix with ${this.agentLabel()}`, `#${issue.number} ${issue.title}`, "Start", (t) => {
+      if (t.trim() !== "") go(t.trim());
+    });
+    else go("");
+  }
+
   openPrs(project?: number): void {
     const s = this.s;
     s.show("prs");
@@ -200,7 +231,7 @@ export class PageHost {
         agents: () => this.agents(),
         pickAgent: (id) => s.data.store.set("gh_agent_account", id),
         fix: (id, issue, ask) => {
-          if (id === 0) s.unported("Fixing an issue on another PC");
+          if (id === 0) this.fixAway(issue, ask);
           else this.job("Fix", `#${issue.number} ${issue.title}`, ask, (extra) => s.work().fixIssue(id, issue, extra, s.composer()));
         },
         openUrl: git.openUrl,
@@ -209,6 +240,7 @@ export class PageHost {
         close: () => s.leave(),
         keys: s.keys,
         github,
+        gh: s.hub().gh,
       });
       this.issues = page;
       if (project !== undefined) this.pick(page, project);

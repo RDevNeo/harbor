@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { type Store } from "@harbor/store";
 import { voiceCtl } from "@harbor/media";
 import { mcp } from "@harbor/mcp";
-import { providers } from "@harbor/agents";
+import { providers, provupdate } from "@harbor/agents";
 import { autostart, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
@@ -139,6 +139,9 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     bus.blocks = blocks.get(tab)?.blocks() ?? [];
   }
 
+  provupdate.onChange(() => {
+    if (tab === "providers") show();
+  });
   bus.pick = (s) => {
     tab = tabFromSlug(s) ?? tab;
     show();
