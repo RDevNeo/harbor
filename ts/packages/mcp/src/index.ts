@@ -14,3 +14,8 @@ export * as discordhost from "./discordhost.ts";
 export * as discordrepair from "./discordrepair.ts";
 export * as discordsetup from "./discordsetup.ts";
 export * as issues from "./github/issues.ts";
+export * as gh from "./github/gh.ts";
+export * as prs from "./github/prs.ts";
+export * as prdetail from "./github/prdetail.ts";
+export * as issuedetail from "./github/issuedetail.ts";
+export * as ghdetails from "./github/details.ts";

@@ -176,3 +176,30 @@ Headless data layer done: Rust tests ported 8 of 8 (same names), plus 16 new tes
 - `milestone` filter: `undefined` any, `null` none, string a title (Rust `Option<Option<String>>`).
 - Ties in `authors`/`assignees`/`milestones` that differ only by case keep first-seen order (Rust's HashMap order was random).
 - Not wired: `GhApi` construction with `issuesPort` is the lead's call (`deps.issues`).
+
+## prs, prdetail, issuedetail (src/prs.rs, prdetail.rs, issuedetail.rs -> src/github/)
+
+Headless data layer only; the egui drawing code belongs to the ui package. Rust tests ported: 9 of 9 (`query_syntax`, `iso`,
+`grouping_and_filters`, `sorts`, `remotes`; `html_in_markdown`, `diff_lines`, `view_json` of prdetail; `view_json` of issuedetail),
+plus 32 new tests: the other sorts and the search ranking, toolbar and search-box filters together, the GraphQL query text and
+its chunks of five repos, parsing of a reply (several searches, duplicates, odd nodes), `graphql` failures, `ago`/`thousands`/`hexRgb`,
+check and reviewer mapping, diffs of several files, `fetch_on`/`set_open_on` against a fake mesh http, the real runner against a fake
+`gh` shell script in a temp dir on PATH (agent environment, exit code, 90 s timeout, no `gh` installed), and `GhApi` served by the real ports.
+
+- `github/gh.ts`: `GhRun = (args) => Promise<{ code, stdout, stderr }>` is the injectable runner. `ghRun` is the real one: `which("gh")`,
+  `process.env` with `PATH = childPath()` and the `agentEnv()` overrides (so Harbor's `gh` login, not the user's, answers), stdin closed,
+  killed after `GH_TIMEOUT` (90 s; `realGh(ms)` for another limit). It throws `GhSpawnError` (`missing`, `timeout`, `other`), as Rust told
+  `ErrorKind::NotFound` from the rest. `gh(args, run)` is Rust's `prdetail::gh`: stdout, or stderr, or "gh failed".
+- `github/prs.ts`: everything of prs.rs that is not drawing. `Sort`/`StateF`/`Involvement`/`Filters` are the string unions of `ghapi.ts`
+  (`PrSort`, `PrFilters`); `defaultFilters()` is `Filters::default()`. `fetch`, `graphql`, `query` and `sortGroup` take the runner last
+  (default `ghRun`). `ago(ts, now?)` takes the clock. `prsPort` is the `PrsPort` for `GhApi`; `makePrsPort(run)` builds one on a fake.
+  The pure `Group` has no icon (drawing). Not ported: `pr_projects`, `gh_repos`, `load_prs`, `prs_loaded`, avatars (they read the
+  App's repos and git status; the ui package decides, `githubRepo` is there for it).
+- `github/prdetail.ts`: `fetch`, `parse`, `cleanMd`, `parseDiff` (same names as `clean_md`/`parse_diff` in camel case), `repoOf`.
+- `github/issuedetail.ts`: `fetch`, `fetchRaw`, `fetchOn(http, dest, url)`, `setOpenOn(http, dest, url, open)`, `parse`, `repoOf`. The
+  mesh http is injected as `MeshHttp = (dest, method, path, body, waitMs) => Promise<[status, body]>`; the wait is `GH_TIMEOUT`. `stateOf`
+  is a copy of issues.rs `state_of` so this file does not wait for `issues.ts`.
+- `github/details.ts`: `detailsPort({ http, run? })` is the `DetailsPort` for `GhApi`.
+- Types stay in `ghapi.ts` (`Pr`, `PrFetched`, `PrFull`, `IssueFull`, `DiffLine`, `Note`, `Group`); the github files import them from there.
+- The index exports them as `gh`, `prs`, `prdetail`, `issuedetail` and `ghdetails`.
+- Left: wiring `prsPort`/`detailsPort` into the app's `GhDeps` (needs the mesh package's http and the issues port), and the ui side.
