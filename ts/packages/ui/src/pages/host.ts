@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { git, providers, type Account, type Work } from "@harbor/agents";
+import { type voiceCtl } from "@harbor/media";
 import { Desktop, spawnNotifySend, testNote } from "@harbor/net";
 import { prs as ghprs } from "@harbor/mcp";
 import { type Chat } from "@harbor/store";
@@ -47,6 +48,8 @@ export interface PageShell {
   /** The remote the project's git status found, if known. */
   remote: (repo: number) => string | null;
   work: () => Work;
+  /** The window's dictation, null until @harbor/media has loaded. */
+  dictation: () => voiceCtl.VoiceCtl | null;
   quit: () => void;
   /** Runs `argv` in a terminal tab of the bottom pane (app.rs `open_terminal`). */
   terminal: (title: string, cwd: string, argv: string[]) => void;
@@ -74,7 +77,7 @@ export class PageHost {
           store,
           quit: () => s.quit(),
           keys: s.keys,
-          speech: settingsSpeech(store),
+          speech: s.dictation() ?? settingsSpeech(store),
           theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
           back: () => s.leave(),
           providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), updateAll: () => s.unported("Updating the agent CLIs") },

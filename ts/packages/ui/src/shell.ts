@@ -216,6 +216,7 @@ export class Shell {
       ask: (title, text, ok, act) => this.dialog(title, text, ok, false, "", (yes, input) => yes && act(input)),
       remote: (repo) => this.gitStatus.get(repo)?.remote ?? null,
       work: () => (this.workOf ??= new Work(this.engine)),
+      dictation: () => this.dictation,
       quit: () => (this.onQuit ? this.onQuit() : this.win.hide()),
       terminal: (title, cwd, argv) => this.surfaces.openTerminal(title, cwd, argv),
       projectDir: (id) => {
