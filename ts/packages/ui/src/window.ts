@@ -147,6 +147,21 @@ export interface TransferRow {
   frac: number;
 }
 
+export interface BrowserData {
+  state: "page" | "stopped" | "starting" | "build" | "absent";
+  url: string;
+  loading: boolean;
+  back: boolean;
+  forward: boolean;
+  external: boolean;
+  has_frame: boolean;
+  frame: Pixels;
+  cursor: string;
+  error_host: string;
+  error_local: boolean;
+  why: string;
+}
+
 export interface FilesData {
   path: string;
   loading: boolean;
@@ -380,6 +395,16 @@ export interface AppWindow extends slint.ComponentHandle {
   bottom_file_clearable: boolean;
   files_act: (d: string, action: string, i: number) => void;
   files_go: (d: string, path: string) => void;
+  right_browser: BrowserData;
+  bottom_browser: BrowserData;
+  browser_servers: slint.Model<string>;
+  browser_nav: (d: string, action: string) => void;
+  browser_go: (d: string, url: string) => void;
+  browser_missing: (d: string) => void;
+  browser_resized: (d: string, w: number, h: number) => void;
+  browser_pointer: (d: string, kind: string, x: number, y: number, button: number) => void;
+  browser_wheel: (d: string, x: number, y: number, dx: number, dy: number) => void;
+  browser_key: (d: string, text: string, down: boolean, ctrl: boolean, shift: boolean, alt: boolean, meta: boolean) => void;
   open_media: (path: string) => void;
 
   draft: string;

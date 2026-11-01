@@ -8,6 +8,7 @@ import { Icons } from "icons.slint";
 import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
 import { DeviceRow, TransferRow } from "devices.slint";
 import { FilesData, FileRow } from "files.slint";
+import { BrowserData } from "browser.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
 import { TermKey } from "terminal.slint";
 import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
@@ -388,6 +389,16 @@ export component AppWindow inherits Window {
     in property <bool> bottom-file-clearable;
     callback files-act(string, string, int);
     callback files-go(string, string);
+    in property <BrowserData> right-browser;
+    in property <BrowserData> bottom-browser;
+    in property <[string]> browser-servers;
+    callback browser-nav(string, string);
+    callback browser-go(string, string);
+    callback browser-missing(string);
+    callback browser-resized(string, float, float);
+    callback browser-pointer(string, string, float, float, int);
+    callback browser-wheel(string, float, float, float, float);
+    callback browser-key(string, string, bool, bool, bool, bool, bool);
     callback settings();
     callback prs();
     callback issues();
@@ -1097,6 +1108,29 @@ export component AppWindow inherits Window {
         files-go(p) => {
             root.files-go("right", p);
         }
+        browser: root.right-browser;
+        servers: root.browser-servers;
+        browser-nav(a) => {
+            root.browser-nav("right", a);
+        }
+        browser-go(u) => {
+            root.browser-go("right", u);
+        }
+        browser-missing => {
+            root.browser-missing("right");
+        }
+        browser-resized(w, h) => {
+            root.browser-resized("right", w, h);
+        }
+        browser-pointer(k, x, y, b) => {
+            root.browser-pointer("right", k, x, y, b);
+        }
+        browser-wheel(x, y, dx, dy) => {
+            root.browser-wheel("right", x, y, dx, dy);
+        }
+        browser-key(t, d, c, sh, a, m) => {
+            root.browser-key("right", t, d, c, sh, a, m);
+        }
         term-resized(w, h) => {
             root.term-resized("right", w, h, self.cell-w, self.cell-h);
         }
@@ -1186,6 +1220,29 @@ export component AppWindow inherits Window {
         }
         files-go(p) => {
             root.files-go("bottom", p);
+        }
+        browser: root.bottom-browser;
+        servers: root.browser-servers;
+        browser-nav(a) => {
+            root.browser-nav("bottom", a);
+        }
+        browser-go(u) => {
+            root.browser-go("bottom", u);
+        }
+        browser-missing => {
+            root.browser-missing("bottom");
+        }
+        browser-resized(w, h) => {
+            root.browser-resized("bottom", w, h);
+        }
+        browser-pointer(k, x, y, b) => {
+            root.browser-pointer("bottom", k, x, y, b);
+        }
+        browser-wheel(x, y, dx, dy) => {
+            root.browser-wheel("bottom", x, y, dx, dy);
+        }
+        browser-key(t, d, c, sh, a, m) => {
+            root.browser-key("bottom", t, d, c, sh, a, m);
         }
         term-resized(w, h) => {
             root.term-resized("bottom", w, h, self.cell-w, self.cell-h);

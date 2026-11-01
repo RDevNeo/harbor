@@ -4,6 +4,7 @@ import { Btn, Glyph, KeyCap, TipArea } from "widgets.slint";
 import { TerminalView, TermLine, TermKey } from "terminal.slint";
 import { DevicesView, DeviceRow, TransferRow } from "devices.slint";
 import { FilesView, FilesData, FileRow } from "files.slint";
+import { BrowserView, BrowserData } from "browser.slint";
 
 export struct SurfaceTab {
     kind: string,
@@ -203,6 +204,15 @@ export component SurfacePane inherits Rectangle {
     in property <bool> file-clearable;
     callback files-act(string, int);
     callback files-go(string);
+    in property <BrowserData> browser;
+    in property <[string]> servers;
+    callback browser-nav(string);
+    callback browser-go(string);
+    callback browser-missing();
+    callback browser-resized(float, float);
+    callback browser-pointer(string, float, float, int);
+    callback browser-wheel(float, float, float, float);
+    callback browser-key(string, bool, bool, bool, bool, bool);
     public function focus-chooser() {
         chooser.grab();
     }
@@ -366,12 +376,34 @@ export component SurfacePane inherits Rectangle {
             root.files-go(p);
         }
     }
-    if root.kind == "browser": Text {
-        y: root.top + max(root.height * 0.4 - 90px, 16px);
-        height: 20px;
-        text: "The browser isn't in the TypeScript app yet";
-        font-size: 14px;
-        color: Theme.subtle;
-        horizontal-alignment: center;
+    if root.kind == "browser": BrowserView {
+        y: root.top;
+        height: root.height - self.y;
+        data: root.browser;
+        servers: root.servers;
+        nav(a) => {
+            root.browser-nav(a);
+        }
+        go(u) => {
+            root.browser-go(u);
+        }
+        missing-act => {
+            root.browser-missing();
+        }
+        close => {
+            root.close(root.active);
+        }
+        page-resized(w, h) => {
+            root.browser-resized(w, h);
+        }
+        pointer(k, x, y, b) => {
+            root.browser-pointer(k, x, y, b);
+        }
+        wheel(x, y, dx, dy) => {
+            root.browser-wheel(x, y, dx, dy);
+        }
+        key(t, d, c, s, a, m) => {
+            root.browser-key(t, d, c, s, a, m);
+        }
     }
 }

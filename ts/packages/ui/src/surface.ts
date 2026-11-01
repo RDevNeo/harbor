@@ -10,12 +10,19 @@ export interface PaneTerm {
   kill(): void;
 }
 
+/** What a pane needs of a browser engine (browser.ts `BrowserEngine`). */
+export interface PaneEngine {
+  readonly title: string;
+  load(url: string): void;
+  kill(): void;
+}
+
 /** What a pane needs of a PC's file browser (net's `FileBrowser`). */
 export interface PaneFiles {
   title(): string;
 }
 
-export type Surface<T extends PaneTerm = PaneTerm> = { kind: "chooser" } | { kind: "terminal"; term: T } | { kind: "browser"; url: string } | { kind: "devices" } | { kind: "files"; files: PaneFiles };
+export type Surface<T extends PaneTerm = PaneTerm> = { kind: "chooser" } | { kind: "terminal"; term: T } | { kind: "browser"; url: string; engine?: PaneEngine } | { kind: "devices" } | { kind: "files"; files: PaneFiles };
 
 export interface Pane<T extends PaneTerm> {
   surfaces: Surface<T>[];
@@ -38,8 +45,11 @@ export function title(s: Surface): string {
       return "New";
     case "terminal":
       return s.term.title;
-    case "browser":
-      return s.url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    case "browser": {
+      // surface.rs: the page's title once it has one (not Servo's error page's).
+      const t = s.engine?.title ?? "";
+      return t !== "" && t !== "Error loading page" ? t : s.url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    }
     case "devices":
       return "Devices";
     case "files":
@@ -72,9 +82,11 @@ export class Surfaces<T extends PaneTerm> {
     this.host.changed();
   }
 
+  /** Its browser engines stop (their URL is kept); terminals keep running. */
   hide(d: Dock): void {
     if (this.max === d) this.max = null;
     this.panes[d].open = false;
+    for (const s of this.panes[d].surfaces) if (s.kind === "browser") this.stopEngine(s);
     this.host.changed();
   }
 
@@ -110,6 +122,7 @@ export class Surfaces<T extends PaneTerm> {
     const p = this.panes[d];
     const [gone] = p.surfaces.splice(i, 1);
     if (gone?.kind === "terminal") gone.term.kill();
+    if (gone?.kind === "browser") gone.engine?.kill();
     if (p.surfaces.length === 0) {
       p.active = 0;
       this.hide(d);
@@ -145,6 +158,7 @@ export class Surfaces<T extends PaneTerm> {
       const s = this.panes[dock].surfaces[i];
       if (s?.kind === "browser") {
         s.url = url;
+        s.engine?.load(url);
         return this.show(dock, i);
       }
     }
@@ -172,9 +186,15 @@ export class Surfaces<T extends PaneTerm> {
     this.show(d, p.surfaces.length - 1);
   }
 
+  stopEngine(s: Surface<T> & { kind: "browser" }): void {
+    s.engine?.kill();
+    delete s.engine;
+  }
+
   /** Every terminal ends with the window. */
   dispose(): void {
     for (const p of Object.values(this.panes)) for (const s of p.surfaces) if (s.kind === "terminal") s.term.kill();
+    for (const p of Object.values(this.panes)) for (const s of p.surfaces) if (s.kind === "browser") this.stopEngine(s);
   }
 }
 
