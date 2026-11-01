@@ -451,6 +451,7 @@ export component AppWindow inherits Window {
     in property <string> read-only-action;
     callback read-only-act();
     callback toggle(int);
+    callback transcript-near-top();
     callback link(string);
     callback open-url(string);
     callback card-act(int, string);
@@ -469,6 +470,7 @@ export component AppWindow inherits Window {
     callback send();
     callback stop();
     callback attach();
+    callback resume-reply();
     callback mic();
     callback remove-file(int);
     callback menu-pick(int);
@@ -591,6 +593,13 @@ export component AppWindow inherits Window {
         composer-el.copy-text(t);
     }
     out property <bool> at-end: transcript.at-end;
+    out property <length> transcript-height: transcript.content-height;
+    public function transcript-grew-above(before: length) {
+        transcript.grew-above(before);
+    }
+    public function transcript-anchor-off() {
+        transcript.anchor-off();
+    }
 
     property <length> content-w: 760px;
     // app.rs `sidebar_narrow`: a right pane at its minimum leaves the chat its 440px, or the sidebar becomes a drawer.
@@ -834,6 +843,9 @@ export component AppWindow inherits Window {
                         toggle(seq) => {
                             root.toggle(seq);
                         }
+                        near-top => {
+                            root.transcript-near-top();
+                        }
                         link(u) => {
                             root.link(u);
                         }
@@ -930,6 +942,9 @@ export component AppWindow inherits Window {
                             }
                             send => {
                                 root.send();
+                            }
+                            resume-reply => {
+                                root.resume-reply();
                             }
                             stop => {
                                 root.stop();

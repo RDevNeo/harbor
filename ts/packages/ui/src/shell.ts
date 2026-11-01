@@ -5,7 +5,7 @@ import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
 import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
-import { newOpened, type Opened, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
+import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
@@ -41,6 +41,18 @@ import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
 import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type BrowserData } from "./window.ts";
+
+/** How long the reader stays at a chat's end before the earlier pages they scrolled up to are let go. */
+const TRIM_MS = 30_000;
+
+/** After cards and images were let go: the engine's collector runs rarely when little else allocates, so their
+ * memory would stay until then. */
+function collectSoon(): void {
+  setTimeout(() => Bun.gc(true), 200);
+}
+
+/** What the composer's Resume button sends. */
+export const RESUME_TEXT = "Resume from where you left off: continue what you were saying or doing.";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -446,9 +458,11 @@ export class Shell {
       this.newDraft(c?.repoId ?? null);
     };
     w.toggle = (seq) => {
+      if (seq === EARLIER) return this.loadEarlier();
       toggleCard(this.openedOf(this.chatId), seq);
       this.refreshCards();
     };
+    w.transcript_near_top = () => this.loadEarlier();
     w.link = (url) => this.openLink(url);
     w.open_url = (url) => this.openExternal(url);
     w.card_act = (seq, a) => this.cardAction(seq, a);
@@ -493,6 +507,7 @@ export class Shell {
     };
     w.key = (e) => this.composerKey(e);
     w.send = () => this.send();
+    w.resume_reply = () => this.resumeReply();
     w.stop = () => this.stop(this.chatId);
     w.attach = () => void this.attach();
     w.mic = () => this.mic();
@@ -850,14 +865,57 @@ export class Shell {
     return out;
   }
 
+  /** Scrolled near the top of what's built: one more page of earlier cards above, the view kept where it was. */
+  private loadEarlier(): void {
+    if (this.view !== "chat" || this.cards.rowCount() < 2 || this.cards.rowData(1)?.kind !== "earlier") return;
+    const o = this.openedOf(this.chatId);
+    if (Date.now() - o.grew < 250) return;
+    const above = this.win.transcript_height;
+    earlier(o);
+    this.atEndSince = null;
+    this.refreshCards();
+    this.win.transcript_grew_above(above);
+    // The page's images come in over the next moments; then the view goes back to its usual anchoring.
+    if (this.anchorOff !== null) clearTimeout(this.anchorOff);
+    this.anchorOff = setTimeout(() => {
+      this.anchorOff = null;
+      this.win.transcript_anchor_off();
+    }, 3000);
+  }
+
+  /** Once the reader has been at the end of a chat for TRIM_MS, earlier pages they loaded are let go. */
+  private trimEarlier(): void {
+    if (this.view !== "chat" || !this.win.at_end) {
+      this.atEndSince = null;
+      return;
+    }
+    const t = Date.now();
+    this.atEndSince ??= t;
+    if (t - this.atEndSince < TRIM_MS) return;
+    const o = this.opened.get(this.chatId);
+    if (o && trim(o)) {
+      this.refreshCards();
+      collectSoon();
+    }
+  }
+
+  private atEndSince: number | null = null;
+  private anchorOff: ReturnType<typeof setTimeout> | null = null;
+
   private refreshCards(): void {
     const shown = this.view === "chat" ? this.chatId : null;
-    if (this.cardsOf !== null && this.cardsOf !== shown) this.engine.release(this.cardsOf);
+    if (this.cardsOf !== null && this.cardsOf !== shown) {
+      this.engine.release(this.cardsOf);
+      const o = this.opened.get(this.cardsOf);
+      if (o && o.memo.size > PAGE) collectSoon();
+      if (o) forget(o);
+    }
     this.cardsOf = shown;
     if (this.view !== "chat") {
       sync(this.cards, []);
       sync(this.liveBlocks, []);
       this.win.live_seq = -1;
+      this.mediaRows?.sweep();
       return;
     }
     const chat = this.data.chat(this.chatId);
@@ -876,6 +934,7 @@ export class Shell {
       this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing })),
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
     );
+    rows?.sweep();
     sync(this.cards, withQueue(this.live(next, running), queue), sameCard);
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
@@ -1131,6 +1190,7 @@ export class Shell {
       notice: "",
       remote: this.meshChat.runsOn(open),
       error: this.meshChat.error(this.key()),
+      can_resume_reply: this.view === "chat" && !running && !resume && !editing && draftEmpty && open !== undefined && this.items(open.id).length > 0,
     };
     this.win.composer = state;
     void providerLogo(kindOfAccount(sel.account), token("fg", this.dark)).then((p) => {
@@ -1467,6 +1527,13 @@ export class Shell {
     setTimeout(() => this.win.scroll_to_end(), 30);
   }
 
+  /** The composer's Resume: an ordinary message asking the agent to go on, sent the way Enter would. */
+  private resumeReply(): void {
+    if (this.view !== "chat" || this.running(this.chatId) || this.win.draft.trim() !== "" || (this.attached.get(this.chatId)?.length ?? 0) > 0) return;
+    this.win.draft = RESUME_TEXT;
+    this.send();
+  }
+
   /** Stopped with messages still queued: they wait for Resume (or the next message). */
   private resumable(id: number): boolean {
     return !this.engine.running(id) && this.engine.queue.held.has(id) && this.engine.queued(id).length > 0;
@@ -1665,6 +1732,7 @@ export class Shell {
     }
     this.wasRunning = new Set(this.engine.turns.keys());
     this.spin();
+    this.trimEarlier();
   }
 
   private spin(): void {

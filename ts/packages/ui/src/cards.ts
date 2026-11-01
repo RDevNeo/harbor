@@ -9,18 +9,43 @@ import type { CardData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
 export interface Opened {
-  /** How many of the latest cards are built; "Show earlier messages" raises it. */
+  /** How many of the latest cards are built: scrolling up (or "Show earlier messages") raises it by PAGE,
+   * and `trim` puts it back once the reader is at the end again. */
   limit: number;
+  /** When `limit` last grew (ms), for `trim`. */
+  grew: number;
+  /** The cards built for the cards shown, by seq: streaming changes one item at a time, so the others keep
+   * their card and their markdown isn't parsed again. Cards that leave the window leave this too. */
+  memo: Map<number, { item: Item; sig: string; data: CardData | null }>;
   /** Tool runs opened (by the seq of their first card). */
   groups: Set<number>;
   /** Tool calls, notices and thinking expanded. */
   cards: Set<number>;
 }
 
-export const PAGE = 80;
+export const PAGE = 15;
 export const EARLIER = -5;
 
-export const newOpened = (): Opened => ({ limit: PAGE, groups: new Set(), cards: new Set() });
+export const newOpened = (): Opened => ({ limit: PAGE, grew: 0, memo: new Map(), groups: new Set(), cards: new Set() });
+
+/** One more page of earlier cards. */
+export function earlier(open: Opened, at = Date.now()): void {
+  open.limit += PAGE;
+  open.grew = at;
+}
+
+/** Back to the latest PAGE cards; the next build lets the others' cards (and so their images) go. False: nothing to trim. */
+export function trim(open: Opened): boolean {
+  if (open.limit <= PAGE) return false;
+  open.limit = PAGE;
+  return true;
+}
+
+/** A chat no longer shown keeps none of its built cards. */
+export function forget(open: Opened): void {
+  open.limit = PAGE;
+  open.memo.clear();
+}
 
 const TOOL_TEXT_MAX = 4000;
 const RESULT_MAX = 8000;
@@ -203,8 +228,6 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
 }
 
 /** Every card the transcript draws, a 24px space at each end and the status line if any. */
-// Streaming changes one item at a time: the others keep their card, so their markdown isn't parsed again.
-const memo = new WeakMap<Item, { sig: string; data: CardData | null }>();
 
 function signature(it: Item, open: Opened, seq: number, media: string): string {
   const body = it.kind === "tool" ? `${it.input.length}:${it.result?.length ?? -1}:${it.is_error}` : "text" in it ? String(it.text.length) : "";
@@ -218,6 +241,7 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
   const from = visible.length > open.limit ? (visible[visible.length - open.limit]?.seq ?? 0) : 0;
   const shown = all.filter((s) => s.seq >= from && (s.group === null || s.group >= from));
   const out: CardData[] = [{ ...blank(-1), kind: "space" }];
+  const built = new Set<number>();
   if (from > 0) out.push({ ...blank(EARLIER), kind: "earlier", label: `Show earlier messages (${visible.length - open.limit})` });
   const fork = (seq: number, f: number) => out.push({ ...blank(seq), kind: "divider", icon: ICONS.FORK, text: "Conversation fork", label: "Open fork", url: `harbor:chat-id/${f}/0` });
   for (const s of shown) {
@@ -233,12 +257,16 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     const item = items[s.seq];
     const media = mediaOf(s.card);
     const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) : "";
-    const hit = item ? memo.get(item) : undefined;
-    const c = hit && hit.sig === sig ? hit.data : cardData(s.card, s.seq, open, off, () => media);
-    if (item) memo.set(item, { sig, data: c });
+    const hit = open.memo.get(s.seq);
+    const c = hit && hit.item === item && hit.sig === sig ? hit.data : cardData(s.card, s.seq, open, off, () => media);
+    if (item) {
+      open.memo.set(s.seq, { item, sig, data: c });
+      built.add(s.seq);
+    }
     if (c) out.push(c);
     for (const f of s.forksAfter) fork(s.seq, f);
   }
+  for (const k of open.memo.keys()) if (!built.has(k)) open.memo.delete(k);
   if (status !== "") out.push({ ...blank(-2), kind: "status", text: status });
   out.push({ ...blank(-3), kind: "space" });
   return out;
@@ -252,7 +280,7 @@ export function groupSeq(first: number): number {
 /** Opens or folds what a click on card `seq` toggles: a run's row, a tool call, a notice, thinking. */
 export function toggle(open: Opened, seq: number): void {
   if (seq === EARLIER) {
-    open.limit += PAGE;
+    earlier(open);
     return;
   }
   const [set, key] = seq <= -10 ? [open.groups, -seq - 10] : [open.cards, seq];

@@ -158,6 +158,8 @@ export interface ComposerState {
   notice: string;
   remote: string;
   error: string;
+  /** An idle chat with a transcript and nothing typed: the Resume button asks the agent to go on. */
+  can_resume_reply: boolean;
 }
 
 export interface DeviceRow {
@@ -386,6 +388,9 @@ export interface AppWindow extends slint.ComponentHandle {
   read_only_action: string;
   read_only_act: () => void;
   toggle: (seq: number) => void;
+  resume_reply: () => void;
+  /** The transcript was scrolled near the top of the cards built. */
+  transcript_near_top: () => void;
   link: (url: string) => void;
   open_url: (url: string) => void;
   card_act: (seq: number, action: string) => void;
@@ -548,6 +553,12 @@ export interface AppWindow extends slint.ComponentHandle {
 
   global_key: (e: KeyEvent) => boolean;
   readonly at_end: boolean;
+  /** The transcript's content height (px), for `transcript_grew_above`. */
+  readonly transcript_height: number;
+  /** Cards were added above: keeps the view on what it showed when the content was `before` px tall. */
+  transcript_grew_above(before: number): void;
+  /** The view goes back to keeping its distance from the top while content changes. */
+  transcript_anchor_off(): void;
   focus_composer(): void;
   set_cursor(at: number): void;
   scroll_to_end(): void;

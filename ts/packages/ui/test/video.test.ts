@@ -33,3 +33,34 @@ test("the viewer's keys are video.rs `take_keys`: Space, the arrows, M, F, Esc, 
   expect(VIDEO_KEYS.Escape).toBe("escape");
   expect(VIDEO_KEYS.q).toBeUndefined();
 });
+
+test("only the images of the cards last built stay decoded; one let go while decoding isn't kept", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
+  const [a, b, c] = ["a.png", "b.png", "c.png"].map((n) => join(dir, n)) as [string, string, string];
+  for (const f of [a, b, c]) writeFileSync(f, png);
+  let loads = 0;
+  const rows = new MediaRows(media, () => void loads++);
+  const card = (f: string) => ({ kind: "text" as const, text: `![shot](${f})`, at: 1, forkable: false });
+  const settle = async (n: number) => {
+    for (let i = 0; i < 100 && loads < n; i++) await Bun.sleep(20);
+  };
+  expect(rows.rows(card(a), dir, 760)).toHaveLength(0);
+  rows.sweep();
+  await settle(1);
+  expect(rows.rows(card(a), dir, 760)).toHaveLength(1);
+  rows.sweep();
+  // A build without `a`'s card lets it go: shown again, it's decoded again.
+  rows.rows(card(b), dir, 760);
+  rows.sweep();
+  await settle(2);
+  expect(rows.rows(card(a), dir, 760)).toHaveLength(0);
+  rows.sweep();
+  await settle(3);
+  expect(loads).toBe(3);
+  // `c` starts decoding, then two builds pass without it: its result is dropped and nobody is told.
+  rows.rows(card(c), dir, 760);
+  rows.sweep();
+  rows.sweep();
+  await Bun.sleep(300);
+  expect(loads).toBe(3);
+});

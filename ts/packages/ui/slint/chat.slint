@@ -978,16 +978,48 @@ export component Transcript {
     callback open-media(string);
     callback copy-text(string);
     callback queue-menu(int, length, length);
+    // Scrolled within a screen of the top while earlier cards wait: the shell builds a page more.
+    callback near-top();
     out property <bool> at-end: -list.content-y + list.height >= list.content-height - 48px;
+    out property <length> content-height: col.preferred-height;
+    function check-top() {
+        if !root.follow && -list.content-y < list.height {
+            root.near-top();
+        }
+    }
+    // Cards were put above: the view keeps its distance from the content's end while their height (and
+    // their images') comes in, so it shows what it did. Off with `anchor-off`, a card toggled or the end.
+    property <bool> anchoring;
+    property <length> from-end;
+    public function grew-above(before: length) {
+        root.anchoring = true;
+        root.from-end = before + list.content-y;
+        root.apply-anchor();
+    }
+    public function anchor-off() {
+        root.anchoring = false;
+    }
+    function apply-anchor() {
+        list.content-y = max(min(0px, list.height - list.content-height), min(0px, root.from-end - list.content-height));
+    }
+    // A scroll while anchored moves the anchor with it.
+    function moved() {
+        if root.anchoring {
+            root.from-end = list.content-height + list.content-y;
+        }
+        root.check-top();
+    }
     // Stuck to the end while it grows (egui's stick_to_bottom) until scrolled up.
     in-out property <bool> follow: true;
     public function scroll-to-end() {
         root.follow = true;
+        root.anchoring = false;
         list.content-y = min(0px, list.height - col.preferred-height);
     }
     public function scroll-by(dy: length) {
         list.content-y = max(min(0px, list.height - list.content-height), min(0px, list.content-y + dy));
         root.follow = root.at-end;
+        root.moved();
     }
     public function page(dir: int) {
         root.scroll-by(dir * list.height * 0.9);
@@ -995,6 +1027,7 @@ export component Transcript {
     public function scroll-to-top() {
         list.content-y = 0px;
         root.follow = root.at-end;
+        root.moved();
     }
     // egui's item spacing in the transcript, between rows that aren't cards.
     property <length> gap: Theme.compact ? 8px : 12px;
@@ -1009,6 +1042,8 @@ export component Transcript {
         changed content-height => {
             if root.follow {
                 self.content-y = min(0px, self.height - self.content-height);
+            } else if root.anchoring {
+                root.apply-anchor();
             }
         }
         changed height => {
@@ -1018,6 +1053,10 @@ export component Transcript {
         }
         flicked => {
             root.follow = root.at-end;
+            if root.follow {
+                root.anchoring = false;
+            }
+            root.moved();
         }
         col := VerticalLayout {
             x: root.side;
@@ -1061,6 +1100,20 @@ export component Transcript {
                         card: c;
                         avail: root.column;
                         gap: root.gap;
+                    }
+                    // cards.ts "earlier": scrolling up loads them; the button is for keys and short windows.
+                    if c.kind == "earlier": HorizontalLayout {
+                        alignment: center;
+                        padding-bottom: root.gap;
+                        Btn {
+                            text: c.label;
+                            icon: Icons.up;
+                            size: xs;
+                            variant: ghost-muted;
+                            clicked => {
+                                root.toggle(c.seq);
+                            }
+                        }
                     }
                     if c.kind == "queue-head": HorizontalLayout {
                         alignment: end;
@@ -1123,6 +1176,7 @@ export component Transcript {
                             root.copy-text(t);
                         }
                         toggle(seq) => {
+                            root.anchoring = false;
                             root.toggle(seq);
                         }
                         link(u) => {

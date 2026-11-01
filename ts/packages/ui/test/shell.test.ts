@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { EARLIER, groupSeq, newOpened, QUEUE_MORE, queueCards, type QueuedView, stripDrawn, subsRunning, toggle, transcriptCards, withQueue } from "../src/cards.ts";
+import { EARLIER, earlier, forget, groupSeq, newOpened, QUEUE_MORE, queueCards, type QueuedView, stripDrawn, subsRunning, toggle, transcriptCards, trim, withQueue } from "../src/cards.ts";
 import { byteAt, charAt, pressOf } from "../src/composer.ts";
 import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
@@ -65,11 +65,32 @@ test("a long transcript builds its latest cards and offers the earlier ones", ()
   const open = newOpened();
   let cards = transcriptCards(items, true, [], open, "");
   expect(cards[1]?.kind).toBe("earlier");
-  expect(cards[1]?.label).toBe("Show earlier messages (120)");
-  expect(cards.filter((c) => c.kind === "text")).toHaveLength(80);
+  expect(cards[1]?.label).toBe("Show earlier messages (185)");
+  expect(cards.filter((c) => c.kind === "text")).toHaveLength(15);
   toggle(open, EARLIER);
   cards = transcriptCards(items, true, [], open, "");
-  expect(cards.filter((c) => c.kind === "text")).toHaveLength(160);
+  expect(cards.filter((c) => c.kind === "text")).toHaveLength(30);
+  expect(open.memo.size).toBe(30);
+});
+
+test("pages scrolled up to are let go: trimmed back to the latest, and nothing kept for a chat left", () => {
+  const items: Item[] = Array.from({ length: 300 }, (_, i): Item => ({ kind: "text", text: `reply ${i}`, at: i }));
+  const open = newOpened();
+  transcriptCards(items, false, [], open, "");
+  const latest = transcriptCards(items, false, [], open, "").find((c) => c.seq === 299);
+  earlier(open);
+  earlier(open);
+  expect(transcriptCards(items, false, [], open, "").filter((c) => c.kind === "text")).toHaveLength(45);
+  expect(open.memo.size).toBe(45);
+  expect(trim(open)).toBe(true);
+  expect(trim(open)).toBe(false);
+  const cards = transcriptCards(items, false, [], open, "");
+  expect(cards.filter((c) => c.kind === "text")).toHaveLength(15);
+  expect(open.memo.size).toBe(15);
+  // The latest cards kept their built data through the trim.
+  expect(cards.find((c) => c.seq === 299)).toBe(latest);
+  forget(open);
+  expect(open.memo.size).toBe(0);
 });
 
 const queued = (id: number, text: string, more: Partial<QueuedView> = {}): QueuedView => ({ id, text, files: 0, written: false, steering: false, note: "", editing: "", ...more });
