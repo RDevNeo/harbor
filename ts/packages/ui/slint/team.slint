@@ -1,0 +1,407 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, Badge, Tone, TipArea, AccountMark, Variant } from "widgets.slint";
+
+export struct AgentRow {
+    id: int,
+    name: string,
+    model: string,
+    task: string,
+    status: string,
+    status-icon: string,
+    status-color: color,
+    running: bool,
+    settled: bool,
+    logo: image,
+    badge: string,
+}
+
+export struct WakeRow {
+    id: int,
+    time: string,
+    tip: string,
+    reason: string,
+}
+
+export struct HookRow {
+    id: int,
+    name: string,
+    public: bool,
+    calls: string,
+    description: string,
+    url: string,
+}
+
+component Header {
+    in property <string> icon;
+    in property <string> title;
+    in property <int> count;
+    height: 24px;
+    HorizontalLayout {
+        spacing: 6px;
+        Glyph {
+            width: 14px;
+            icon: root.icon;
+            size: 14px;
+            color: Theme.subtle;
+        }
+        Text {
+            text: root.title;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: -0.28px;
+            color: Theme.fg;
+            vertical-alignment: center;
+        }
+        if root.count > 0: Text {
+            text: root.count;
+            font-family: "Geist Mono";
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Rectangle { }
+    }
+}
+
+component Hint inherits Text {
+    font-size: 13px;
+    color: Theme.subtle;
+    wrap: word-wrap;
+}
+
+component AgentCard inherits TouchArea {
+    in property <AgentRow> agent;
+    callback open();
+    callback settle(bool);
+    callback stop();
+    height: 74px;
+    mouse-cursor: pointer;
+    clicked => {
+        root.open();
+    }
+    Rectangle {
+        background: root.has-hover ? Theme.gray-100 : Theme.bg100;
+        border-width: 1px;
+        border-color: root.agent.running ? Theme.blue-600 : Theme.border;
+        border-radius: Theme.radius-lg;
+    }
+    AccountMark {
+        x: 10px;
+        y: 10px;
+        width: 18px;
+        height: 18px;
+        logo: root.agent.logo;
+        badge: root.agent.badge;
+    }
+    Text {
+        x: 36px;
+        y: 10px;
+        width: parent.width - 46px - (status.visible ? status.preferred-width + 8px : 70px);
+        text: root.agent.name;
+        font-size: 14px;
+        font-weight: 500;
+        color: Theme.fg;
+        overflow: elide;
+    }
+    if root.agent.status-icon != "" && status.visible: Glyph {
+        x: status.x - 16px;
+        y: 11px;
+        width: 13px;
+        height: status.preferred-height;
+        icon: root.agent.status-icon;
+        size: 12px;
+        color: root.agent.status-color;
+    }
+    status := Text {
+        visible: !(root.has-hover && !root.agent.running && root.agent.status-color != Theme.amber-900);
+        x: parent.width - 10px - self.width;
+        y: 11px;
+        width: min(self.preferred-width, parent.width * 0.45);
+        text: root.agent.status;
+        font-size: 12px;
+        color: root.agent.status-color;
+        overflow: elide;
+    }
+    Text {
+        x: 36px;
+        y: 29px;
+        width: parent.width - 46px;
+        text: root.agent.model;
+        font-family: "Geist Mono";
+        font-size: 12px;
+        color: Theme.subtle;
+        overflow: elide;
+    }
+    Text {
+        x: 10px;
+        y: 50px;
+        width: parent.width - 20px;
+        text: root.agent.task;
+        font-size: 12.5px;
+        color: Theme.fg;
+        overflow: elide;
+    }
+    if !status.visible: Btn {
+        x: parent.width - 4px - self.width;
+        y: 4px;
+        icon: root.agent.settled ? Icons.unarchive : Icons.check;
+        text: root.agent.settled ? "Unsettle" : "Settle";
+        size: xs;
+        variant: ghost-muted;
+        tip: root.agent.settled ? "Back to the active agents" : "Move to Settled";
+        clicked => {
+            root.settle(!root.agent.settled);
+        }
+    }
+    if root.has-hover && root.agent.running: Btn {
+        x: parent.width - 34px;
+        y: 26px;
+        icon: Icons.stop;
+        size: icon-xs;
+        variant: Variant.stop;
+        tip: "Stop";
+        clicked => {
+            root.stop();
+        }
+    }
+}
+
+export component TeamPanel inherits Rectangle {
+    in property <[AgentRow]> agents;
+    in property <[AgentRow]> settled;
+    in property <[WakeRow]> wakeups;
+    in property <[HookRow]> hooks;
+    in property <bool> has-project;
+    in-out property <bool> settled-open;
+    callback open-agent(int);
+    callback settle-agent(int, bool);
+    callback stop-agent(int);
+    callback cancel-wakeup(int);
+    callback wake-now(int);
+    callback copy-hook(string);
+    callback delete-hook(int);
+    callback settled-toggled(bool);
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+    Flickable {
+        x: 12px;
+        y: 16px;
+        width: parent.width - 24px;
+        height: parent.height - 28px;
+        content-height: col.preferred-height;
+        col := VerticalLayout {
+            width: parent.width;
+            alignment: start;
+            spacing: 6px;
+            Header {
+                icon: Icons.users;
+                title: "Agents";
+                count: root.agents.length;
+            }
+            if root.agents.length == 0: Hint {
+                text: root.settled.length == 0 ? "The lead spawns subagents here as it delegates work." : "No agents working. Earlier ones are under Settled.";
+            }
+            for a in root.agents: AgentCard {
+                agent: a;
+                open => {
+                    root.open-agent(a.id);
+                }
+                settle(on) => {
+                    root.settle-agent(a.id, on);
+                }
+                stop => {
+                    root.stop-agent(a.id);
+                }
+            }
+            Rectangle {
+                height: 8px;
+            }
+            Header {
+                icon: Icons.alarm;
+                title: "Wake-ups";
+                count: root.wakeups.length;
+            }
+            if root.wakeups.length == 0: Hint {
+                text: "Ask the lead to check back later, e.g. \"look at the deploy in 20 minutes\".";
+            }
+            for w in root.wakeups: Rectangle {
+                background: Theme.bg100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                min-height: wake-col.min-height;
+                preferred-height: wake-col.preferred-height;
+                wake-col := VerticalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Glyph {
+                            width: 15px;
+                            icon: Icons.alarm;
+                            size: 15px;
+                            color: Theme.subtle;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: w.time;
+                            font-size: 16px;
+                            font-weight: 600;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                            TipArea {
+                                tip: w.tip;
+                                mouse-cursor: default;
+                            }
+                        }
+                        Btn {
+                            icon: Icons.play;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Wake now";
+                            clicked => {
+                                root.wake-now(w.id);
+                            }
+                        }
+                        Btn {
+                            icon: Icons.x;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Cancel";
+                            clicked => {
+                                root.cancel-wakeup(w.id);
+                            }
+                        }
+                    }
+                    Hint {
+                        text: w.reason;
+                    }
+                }
+            }
+            if root.has-project: Rectangle {
+                height: 8px;
+            }
+            if root.has-project: Header {
+                icon: Icons.webhook;
+                title: "Webhooks";
+                count: root.hooks.length;
+            }
+            if root.has-project && root.hooks.length == 0: Hint {
+                text: "Ask the lead for a webhook to react to GitHub, Vercel, Stripe…";
+            }
+            for h in root.hooks: Rectangle {
+                background: Theme.bg100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                min-height: hook-col.min-height;
+                preferred-height: hook-col.preferred-height;
+                hook-col := VerticalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: h.name;
+                            font-size: 14px;
+                            font-weight: 500;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                        }
+                        Badge {
+                            y: 3px;
+                            text: h.public ? "Public" : "Local";
+                            tone: h.public ? Tone.green : Tone.gray;
+                        }
+                        Rectangle { }
+                        Btn {
+                            icon: Icons.copy;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Copy " + h.url;
+                            clicked => {
+                                root.copy-hook(h.url);
+                            }
+                        }
+                        Btn {
+                            icon: Icons.trash;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Delete";
+                            clicked => {
+                                root.delete-hook(h.id);
+                            }
+                        }
+                    }
+                    Text {
+                        text: h.calls;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                    }
+                    if h.description != "": Text {
+                        text: h.description;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            if root.settled.length > 0: Rectangle {
+                height: 40px;
+                settled-text := Text {
+                    x: 2px;
+                    y: 8px;
+                    height: 32px;
+                    text: "Settled (" + root.settled.length + ")";
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    x: settled-text.preferred-width + 12px;
+                    y: 24px;
+                    width: max(0px, parent.width - self.x - 26px);
+                    height: 1px;
+                    background: settled-area.has-hover ? Theme.gray-600 : Theme.gray-500;
+                }
+                Glyph {
+                    x: parent.width - 17px;
+                    y: 8px;
+                    width: 14px;
+                    height: 32px;
+                    icon: root.settled-open ? Icons.down : Icons.up;
+                    size: 14px;
+                    color: Theme.subtle;
+                }
+                settled-area := TipArea {
+                    tip: "Agents idle for 30 min or more";
+                    clicked => {
+                        root.settled-open = !root.settled-open;
+                        root.settled-toggled(root.settled-open);
+                    }
+                }
+            }
+            if root.settled-open: VerticalLayout {
+                spacing: 6px;
+                for a in root.settled: AgentCard {
+                    agent: a;
+                    open => {
+                        root.open-agent(a.id);
+                    }
+                    settle(on) => {
+                        root.settle-agent(a.id, on);
+                    }
+                    stop => {
+                        root.stop-agent(a.id);
+                    }
+                }
+            }
+        }
+    }
+}

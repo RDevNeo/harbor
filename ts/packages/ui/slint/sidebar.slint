@@ -1,0 +1,487 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, StatusData, StatusView, SearchField, Empty, Dot, TipArea } from "widgets.slint";
+
+export struct SideRow {
+    kind: string,
+    id: int,
+    title: string,
+    active: bool,
+    status: StatusData,
+    letter: string,
+    avatar: image,
+    has-avatar: bool,
+    settled: bool,
+    snoozed: bool,
+    worktree: int,
+    tip: string,
+}
+
+component ThreadRow {
+    in property <SideRow> data;
+    callback open();
+    callback settle(bool);
+    callback snooze();
+    callback menu(length, length);
+    property <bool> hovering: area.has-hover || settle-btn.hovered || snooze-btn.hovered;
+    property <bool> indented: data.kind == "thread";
+    height: Theme.row-h;
+    Rectangle {
+        x: root.indented ? 14px : 0px;
+        width: parent.width - self.x;
+        background: root.data.active || root.hovering ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+        area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.open();
+            }
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                    root.menu(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+        if !root.indented: Glyph {
+            x: 8px;
+            width: 16px;
+            icon: Icons.message;
+            size: 14px;
+            color: root.data.active ? Theme.fg : Theme.subtle;
+        }
+        Text {
+            x: root.indented ? 8px : 32px;
+            width: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree > 0 ? 20px : 0px);
+            text: root.data.title;
+            font-size: 14px;
+            font-weight: root.data.active ? 500 : 400;
+            color: Theme.fg;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        status := StatusView {
+            visible: !root.hovering;
+            x: parent.width - 8px - self.width;
+            width: self.preferred-width;
+            status: root.data.status;
+        }
+        actions := HorizontalLayout {
+            visible: root.hovering;
+            x: parent.width - 2px - self.preferred-width;
+            y: (parent.height - 28px) / 2;
+            height: 28px;
+            spacing: 0px;
+            snooze-btn := Btn {
+                visible: !root.data.settled;
+                width: root.data.settled ? 0px : 28px;
+                icon: Icons.clock;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.data.snoozed;
+                tip: "Snooze";
+                clicked => {
+                    root.snooze();
+                }
+            }
+            Rectangle {
+                width: root.data.settled ? 0px : 4px;
+            }
+            settle-btn := Btn {
+                icon: root.data.settled ? Icons.unarchive : Icons.check;
+                text: root.data.settled ? "Unsettle" : "Settle";
+                size: xs;
+                variant: ghost-muted;
+                clicked => {
+                    root.settle(!root.data.settled);
+                }
+            }
+        }
+    }
+}
+
+component ProjectRow {
+    in property <SideRow> data;
+    callback open();
+    callback new-chat();
+    callback snooze();
+    callback menu(length, length);
+    property <bool> hovering: area.has-hover || plus.hovered || snooze.hovered;
+    height: Theme.row-h + 2px;
+    Rectangle {
+        background: root.data.active || root.hovering ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+    }
+    area := TipArea {
+        tip: root.data.tip;
+        clicked => {
+            root.open();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.menu(self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+    if root.data.has-avatar: Image {
+        x: 8px;
+        width: 16px;
+        height: 16px;
+        source: root.data.avatar;
+    }
+    if !root.data.has-avatar: Rectangle {
+        x: 8px;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        background: root.data.active || root.hovering ? Theme.gray-400 : Theme.gray-300;
+        Text {
+            text: root.data.letter;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: Theme.fg;
+        }
+    }
+    Text {
+        x: 32px;
+        width: parent.width - 32px - (root.hovering ? 64px : status.preferred-width + 16px);
+        text: root.data.title;
+        font-size: 14px;
+        font-weight: root.data.active ? 500 : 400;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    status := StatusView {
+        visible: !root.hovering;
+        x: parent.width - 8px - self.width;
+        width: self.preferred-width;
+        status: root.data.status;
+    }
+    HorizontalLayout {
+        visible: root.hovering;
+        x: parent.width - 2px - self.preferred-width;
+        y: (parent.height - 28px) / 2;
+        height: 28px;
+        spacing: 4px;
+        plus := Btn {
+            icon: Icons.plus;
+            size: icon-xs;
+            variant: ghost-muted;
+            tip: "New chat in this project";
+            clicked => {
+                root.new-chat();
+            }
+        }
+        snooze := Btn {
+            icon: Icons.clock;
+            size: icon-xs;
+            variant: ghost-muted;
+            pressed: root.data.snoozed;
+            tip: "Snooze";
+            clicked => {
+                root.snooze();
+            }
+        }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <[SideRow]> rows;
+    in property <[SideRow]> settled;
+    in property <int> settled-count;
+    in-out property <bool> settled-open;
+    in-out property <string> search <=> search-field.text;
+    in property <int> running;
+    in property <string> empty-kind;
+    in property <bool> pages-back;
+    callback open-chat(int);
+    callback open-project(int);
+    callback new-chat(int);
+    callback new-thread();
+    callback add-project();
+    callback settle(int, bool);
+    callback snooze(string, length, length);
+    callback chat-menu(int, length, length);
+    callback project-menu(int, length, length);
+    callback searched(string);
+    callback hide();
+    callback palette();
+    callback filter(length, length);
+    callback settings();
+    callback prs();
+    callback issues();
+    callback back();
+    callback refresh();
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 11px;
+        padding-top: 13px;
+        spacing: 2px;
+        HorizontalLayout {
+            height: 28px;
+            spacing: 6px;
+            Btn {
+                icon: Icons.panel-left-close;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Hide sidebar (Ctrl+B)";
+                clicked => {
+                    root.hide();
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: "Harbor";
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.search;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Search everything (Ctrl+K)";
+                clicked => {
+                    root.palette();
+                }
+            }
+        }
+        Rectangle {
+            height: 3px;
+        }
+        HorizontalLayout {
+            height: 32px;
+            spacing: 2px;
+            search-field := SearchField {
+                horizontal-stretch: 1;
+                hint: "Search";
+                edited(t) => {
+                    root.searched(t);
+                }
+            }
+            filter-btn := Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.filter;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Order and view";
+                clicked => {
+                    root.filter(self.absolute-position.x, self.absolute-position.y + self.height);
+                }
+            }
+            Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.folder-plus;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Add project";
+                clicked => {
+                    root.add-project();
+                }
+            }
+            Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.compose;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "New thread (Ctrl+N)";
+                clicked => {
+                    root.new-thread();
+                }
+            }
+        }
+        Rectangle {
+            height: 7px;
+        }
+        list := Flickable {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                if root.empty-kind != "": VerticalLayout {
+                    padding-top: 24px;
+                    Empty {
+                        icon: root.empty-kind == "search" ? Icons.search : Icons.folder-plus;
+                        title: root.empty-kind == "search" ? "No match" : "No projects yet";
+                        desc: root.empty-kind == "search" ? "" : "Add a folder or clone a repository to start.";
+                        action: root.empty-kind == "search" ? "" : "Add project";
+                        act => {
+                            root.add-project();
+                        }
+                    }
+                }
+                for r in root.rows: VerticalLayout {
+                    if r.kind == "project": VerticalLayout {
+                        padding-bottom: 2px;
+                        ProjectRow {
+                            data: r;
+                            open => {
+                                root.open-project(r.id);
+                            }
+                            new-chat => {
+                                root.new-chat(r.id);
+                            }
+                            snooze => {
+                                root.snooze("r" + r.id, self.absolute-position.x + self.width, self.absolute-position.y);
+                            }
+                            menu(x, y) => {
+                                root.project-menu(r.id, self.absolute-position.x + x, self.absolute-position.y + y);
+                            }
+                        }
+                    }
+                    if r.kind == "thread" || r.kind == "loose": ThreadRow {
+                        data: r;
+                        open => {
+                            root.open-chat(r.id);
+                        }
+                        settle(on) => {
+                            root.settle(r.id, on);
+                        }
+                        snooze => {
+                            root.snooze("c" + r.id, self.absolute-position.x + self.width, self.absolute-position.y);
+                        }
+                        menu(x, y) => {
+                            root.chat-menu(r.id, self.absolute-position.x + x, self.absolute-position.y + y);
+                        }
+                    }
+                    if r.kind == "label": VerticalLayout {
+                        padding-top: 6px;
+                        Text {
+                            height: 16px;
+                            text: "  Threads";
+                            font-size: 12px;
+                            color: Theme.subtle;
+                        }
+                    }
+                }
+            }
+        }
+        if root.settled-count > 0: Rectangle {
+            height: Theme.row-h;
+            background: settled-area.has-hover ? Theme.accent : transparent;
+            border-radius: Theme.radius-md;
+            settled-label := Text {
+                x: 8px;
+                text: "Settled";
+                font-size: 12px;
+                font-weight: 500;
+                color: settled-area.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
+                vertical-alignment: center;
+            }
+            Rectangle {
+                x: 8px + settled-label.preferred-width + 6px;
+                width: max(count.preferred-width, 8px) + 12px;
+                height: 20px;
+                border-radius: Theme.radius-md;
+                background: Theme.gray-200;
+                count := Text {
+                    text: root.settled-count;
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: Theme.subtle;
+                }
+            }
+            Glyph {
+                x: parent.width - 21px;
+                width: 14px;
+                icon: root.settled-open ? Icons.down : Icons.up;
+                size: 14px;
+                color: settled-label.color;
+            }
+            settled-area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settled-open = !root.settled-open;
+                }
+            }
+        }
+        if root.settled-count > 0 && root.settled-open: Flickable {
+            height: min(root.settled-count * 34px, 220px);
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                for r in root.settled: ThreadRow {
+                    data: r;
+                    open => {
+                        root.open-chat(r.id);
+                    }
+                    settle(on) => {
+                        root.settle(r.id, on);
+                    }
+                    menu(x, y) => {
+                        root.chat-menu(r.id, self.absolute-position.x + x, self.absolute-position.y + y);
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            height: 40px;
+            padding-top: 9px;
+            padding-bottom: 3px;
+            spacing: 4px;
+            if root.pages-back: Btn {
+                icon: Icons.arrow-left;
+                text: "Back";
+                size: xs;
+                variant: ghost-muted;
+                tip: "Back (Esc)";
+                clicked => {
+                    root.back();
+                }
+            }
+            if !root.pages-back: Btn {
+                icon: Icons.settings;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Settings (Ctrl+,)";
+                clicked => {
+                    root.settings();
+                }
+            }
+            if !root.pages-back: Btn {
+                icon: Icons.pull;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Pull requests";
+                clicked => {
+                    root.prs();
+                }
+            }
+            if !root.pages-back: Btn {
+                icon: Icons.circle-dot;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Issues";
+                clicked => {
+                    root.issues();
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if root.running > 0: Dot {
+                y: (parent.height - self.height) / 2;
+                color: Theme.blue-700;
+            }
+            if root.running > 0: Text {
+                text: root.running + " running";
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.refresh;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Refresh providers, projects and git";
+                clicked => {
+                    root.refresh();
+                }
+            }
+        }
+    }
+}

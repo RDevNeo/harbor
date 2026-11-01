@@ -1,0 +1,133 @@
+import { Theme } from "theme.slint";
+
+export struct MdBlock {
+    kind: string,
+    text: styled-text,
+    code: string,
+    level: int,
+    marker: string,
+    depth: int,
+    quote: int,
+    cells: [styled-text],
+    header: bool,
+    gap: length,
+}
+
+component Inline inherits StyledText {
+    in property <length> size: 16px;
+    default-font-size: size;
+    default-font-family: "Geist";
+    default-color: Theme.fg;
+    link-color: Theme.blue-900;
+}
+
+export component MdBlockView {
+    in property <MdBlock> block;
+    in property <length> size: 16px;
+    callback link(string);
+    property <length> indent: block.quote * 14px;
+    min-height: inner.min-height;
+    preferred-height: inner.preferred-height;
+    inner := HorizontalLayout {
+        padding-left: root.indent;
+        padding-top: root.block.gap;
+        spacing: 0px;
+        if root.block.quote > 0: Rectangle {
+            width: 3px;
+            background: Theme.gray-500;
+        }
+        VerticalLayout {
+            padding-left: root.block.quote > 0 ? 11px : 0px;
+            if root.block.kind == "p": Inline {
+                text: root.block.text;
+                size: root.size;
+                link-clicked(u) => {
+                    root.link(u);
+                }
+            }
+            if root.block.kind == "h": VerticalLayout {
+                padding-top: 4px;
+                Inline {
+                    text: root.block.text;
+                    size: root.block.level == 1 ? root.size * 23 / 16 : root.block.level == 2 ? root.size * 20 / 16 : root.block.level == 3 ? root.size * 18 / 16 : root.size;
+                    link-clicked(u) => {
+                        root.link(u);
+                    }
+                }
+            }
+            if root.block.kind == "li": Rectangle {
+                property <length> gutter: root.block.depth * 20px + (root.block.marker == "•" ? 20px : max(marker.preferred-width, 14px) + 6px);
+                min-height: li-text.min-height;
+                preferred-height: li-text.preferred-height;
+                marker := Text {
+                    x: root.block.depth * 20px;
+                    y: 0;
+                    width: root.block.marker == "•" ? 14px : self.preferred-width;
+                    text: root.block.marker;
+                    font-size: root.size;
+                    color: Theme.fg;
+                    horizontal-alignment: center;
+                }
+                li-text := VerticalLayout {
+                    padding-left: parent.gutter;
+                    Inline {
+                        text: root.block.text;
+                        size: root.size;
+                        link-clicked(u) => {
+                            root.link(u);
+                        }
+                    }
+                }
+            }
+            if root.block.kind == "code": Rectangle {
+                min-height: box0.min-height;
+                preferred-height: box0.preferred-height;
+                background: Theme.bg200;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-md;
+                box0 := VerticalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    Text {
+                        text: root.block.code;
+                        font-family: "Geist Mono";
+                        font-size: root.size - 1px;
+                        color: Theme.fg;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            if root.block.kind == "hr": VerticalLayout {
+                padding-top: 6px;
+                padding-bottom: 6px;
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+            if root.block.kind == "tr": Rectangle {
+                min-height: box1.min-height;
+                preferred-height: box1.preferred-height;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: root.block.header ? Theme.bg200 : transparent;
+                box1 := HorizontalLayout {
+                    for c in root.block.cells: VerticalLayout {
+                        horizontal-stretch: 1;
+                        padding: 6px;
+                        Inline {
+                            text: c;
+                            size: root.size - 2px;
+                            link-clicked(u) => {
+                                root.link(u);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
