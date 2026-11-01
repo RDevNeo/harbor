@@ -85,6 +85,90 @@ restart_now() {
     exec setsid -f env -i "${E[@]}" "$EXE" "${A[@]}" < /dev/null > /dev/null 2>&1)
 }
 
+RUN=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+CHECK_S=${HARBOR_CHECK_S:-5}
+
+# What the session's own programs were started with: a script run over ssh or from cron has none of it.
+session_var() {
+  local p
+  for p in /proc/[0-9]*; do
+    [ -O "$p" ] && tr '\0' '\n' < "$p/environ" | sed -n "s/^$1=//p"
+  done 2> /dev/null | sort | uniq -c | sort -rn | awk '{print $2}'
+}
+
+display_socket() {
+  local d f
+  for d in ${WAYLAND_DISPLAY:-} $(session_var WAYLAND_DISPLAY); do
+    case $d in /*) f=$d ;; *) f=$RUN/$d ;; esac
+    [ -S "$f" ] && { echo "$f"; return 0; }
+  done
+  for f in $(ls -t "$RUN"/wayland-* 2>/dev/null); do
+    case $f in *.lock) ;; *) [ -S "$f" ] && { echo "$f"; return 0; } ;; esac
+  done
+  return 1
+}
+
+# yes: the compositor shows a window of pid $1 (it has drawn: a toplevel maps on its first buffer); no; or unknown.
+HYPR_SIG=""
+SWAY_SOCK=""
+find_compositor() {
+  local sig
+  if command -v hyprctl > /dev/null; then
+    for sig in ${HYPRLAND_INSTANCE_SIGNATURE:-} $(session_var HYPRLAND_INSTANCE_SIGNATURE); do
+      [ -S "$RUN/hypr/$sig/.socket.sock" ] && { HYPR_SIG=$sig; break; }
+    done
+  fi
+  command -v swaymsg > /dev/null && SWAY_SOCK=${SWAYSOCK:-$(ls "$RUN"/sway-ipc.*.sock 2>/dev/null | head -1)}
+}
+compositor_shows() {
+  if [ -n "$HYPR_SIG" ]; then
+    HYPRLAND_INSTANCE_SIGNATURE=$HYPR_SIG XDG_RUNTIME_DIR=$RUN hyprctl clients -j 2> /dev/null |
+      python3 -I -c 'import json,sys; sys.exit(0 if any(c.get("pid")==int(sys.argv[1]) and c.get("mapped") for c in json.load(sys.stdin)) else 1)' "$1" && echo yes || echo no
+    return
+  fi
+  if [ -S "$SWAY_SOCK" ]; then
+    SWAYSOCK=$SWAY_SOCK swaymsg -t get_tree 2> /dev/null | python3 -I -c 'import json,sys
+def walk(n):
+    yield n
+    for c in n.get("nodes",[])+n.get("floating_nodes",[]): yield from walk(c)
+sys.exit(0 if any(n.get("pid")==int(sys.argv[1]) and n.get("visible") for n in walk(json.load(sys.stdin))) else 1)' "$1" && { echo yes; return; }
+    echo no; return
+  fi
+  echo unknown
+}
+
+preflight() {
+  local new=$1 disp tmp pid rc seen=unknown i out
+  disp=$(display_socket) || die "found no Wayland session in $RUN: can't check that $new opens its window; run this from the desktop session"
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/harbor-preflight.XXXXXX") || die "no temp folder"
+  mkdir -p "$tmp/home" "$tmp/data" "$tmp/state" "$tmp/config" "$tmp/cache" "$tmp/run" && chmod 700 "$tmp" "$tmp/run"
+  out=$tmp/output.txt
+  find_compositor
+  say "Checking that $new opens its window: an empty Harbor window shows for about $CHECK_S s."
+  env -i HOME="$tmp/home" XDG_DATA_HOME="$tmp/data" XDG_STATE_HOME="$tmp/state" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" \
+    XDG_RUNTIME_DIR="$tmp/run" WAYLAND_DISPLAY="$disp" HARBOR_SOCK="$tmp/run/harbor.sock" HARBOR_OFFLINE=1 HARBOR_LISTEN=127.0.0.1 \
+    HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_UPDATE_WORKER=off DBUS_SESSION_BUS_ADDRESS="unix:path=$tmp/run/bus" \
+    PATH=/usr/bin:/bin LANG="${LANG:-C.UTF-8}" "$new" --check-window "$CHECK_S" < /dev/null > "$out" 2>&1 &
+  pid=$!
+  for ((i = 0; i < (CHECK_S + 45) * 5; i++)); do
+    kill -0 "$pid" 2> /dev/null || break
+    [ "$seen" = yes ] || seen=$(compositor_shows "$pid")
+    sleep 0.2
+  done
+  kill -0 "$pid" 2> /dev/null && { kill -KILL "$pid"; sleep 0.5; echo "harbor: still running after $((CHECK_S + 45)) s" >> "$out"; }
+  wait "$pid"; rc=$?
+  rm -rf "$tmp/home" "$tmp/data" "$tmp/state" "$tmp/config" "$tmp/cache" "$tmp/run"
+  if [ "$rc" != 0 ] || [ "$seen" = no ]; then
+    [ "$rc" = 0 ] && echo "harbor: the compositor never showed its window" >> "$out"
+    printf 'install-one: %s did not open its window here (exit %s); nothing was changed. Its error:\n' "$new" "$rc" >&2
+    grep -E '^(error|harbor:|thread .* panicked)' "$out" | head -5 | sed 's/^/  /' >&2
+    printf '  (everything it printed: %s)\n' "$out" >&2
+    exit 1
+  fi
+  say "Its window opened and stayed up: $(grep -m1 '^window ok: ' "$out" | sed 's/^window ok: //')$([ "$seen" = yes ] && echo "; the compositor showed it" || echo "; no hyprctl or swaymsg here to ask the compositor whether it drew")."
+  rm -rf "$tmp"
+}
+
 # A pairing token from before accounts works in full over loopback: the phone's Update, which restarts the Rust app in place.
 legacy_token() {
   sql "$DATA/harbor.db" "select v from kv where k='api_tokens'" 2>/dev/null |
@@ -171,6 +255,7 @@ install_cmd() {
     [ "$rv" = "$EXPECT_RUST" ] || die "$EXE is Harbor ${rv:-unknown}; this switch is for Rust $EXPECT_RUST (HARBOR_EXPECT_RUST=... to override)"
     [ "$(cat "$LIB/VERSION" 2>/dev/null)" = "$rv" ] || die "$LIB/VERSION says '$(cat "$LIB/VERSION" 2>/dev/null)', but $EXE is $rv: an update is half done"
   fi
+  preflight "$new"
   pids=$(app_pids)
   backup
   say "Backup: $BACKUP (harbor.db by VACUUM INTO, identity.pem, secrets.json, account.json, kv keys, .previous), mode 0700."

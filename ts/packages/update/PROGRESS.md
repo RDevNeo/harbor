@@ -45,7 +45,10 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
 - **Clean start / rollback**: a window launch writes `starting.json` and arms a watchdog (`harbor start-watch <pid>`). The bundle
   calls `confirmStart()` after its first frame (2 s alive). Pid dead or 30 s without confirmation: the watchdog restores `.previous`
   (bundle, and runtime if that update replaced it), writes `.skip` and `rolled-back.json`, and starts Harbor again. Where the
-  watchdog dies with the app (a systemd unit) the next start finds the unconfirmed attempt and does the same. `info()` carries
+  watchdog dies with the app (a systemd unit) the next start finds the unconfirmed attempt and does the same. With nothing to go
+  back to it only records the failure: started again, the same build would fail and arm another watchdog. Until the start is
+  confirmed, a start whose stderr is not a terminal writes it to `start.log` in the install folder; a failed start keeps it as
+  `failed-start.log`, named by `rolled-back.json`'s `log`. `info()` carries
   `skipped` and `rolled_back` for the mesh; `notices.rollbackToast` is the user's notice.
 - **Previews** are unsigned bundles (`harbor-preview.js`, `preview.json`, opt-in file `.preview`), same watchdog; they are
   announced with `preview_kind: "bundle"` and a Rust sender's binary offer (no `kind`) is refused, so mixed meshes can't hand a
@@ -104,10 +107,18 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
   place with its screen and queue (`reload_now`), about 5 s after the swap. Without such a token (`status` says so) it waits for the
   Update button, a phone's Update or Rust's quiet moment. `restart` stops it and starts the new one with its environment.
   `undo` puts Rust back and the original `.previous`; the db only with `--restore-db`, once per backup.
+  Before it changes anything, `install` runs `harbor --check-window 5` from the new binary on the PC's own display, on a temp data
+  folder, offline, and wants it up for 5 s and, where `hyprctl` or `swaymsg` can say so, the compositor showing its window. Without
+  `WAYLAND_DISPLAY` it takes the session's from the user's running programs, else the newest socket in the runtime folder. On a
+  failure it prints the app's error and stops.
 - **Rig** `ts/rig/install-one/switch.sh` (inside `unshare -Urnm`): Rust 0.109.0 from its signed release archive installed by its own
   `install.sh` in a fake home, a scrambled harbor.db (319 chats, 74,706 items), throwaway identities, a fake `claude` and a fake `curl`. The gap
   before Rust restarts: a turn Rust starts then runs on the TypeScript runner and Rust follows it to its reply; `harbor mcp`
-  (initialize, tools/list, tools/call) and `harbor app gmail` from the TypeScript binary are answered by the old Rust app.
+  (initialize, tools/list, tools/call) and `harbor app gmail` from the TypeScript binary are answered by the old Rust app. Each PC has
+  its own headless sway for the preflight; a binary whose window can't load Slint (`BAD_TS_BIN`) and a PC with no Wayland session are
+  refused with nothing changed.
+- **Window rig** `ts/rig/window.sh` (in `check.sh`): the built single executable and runtime + `harbor-app.js` must open and draw the
+  window. Only `--version` and `--check-native` had been run on the build from cd91a8c, which exited at start on the owner's PC.
 
 ## Wiring other packages must do
 

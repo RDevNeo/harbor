@@ -1,11 +1,14 @@
 #!/bin/bash
 # Run inside `unshare -Urnm` only. RUST_REL: an extracted harbor-x86_64-linux folder of Rust 0.109.0 (its signature checked);
-# TS_BIN: the single TypeScript executable; SCRAMBLED_DB: a scrambled harbor.db; RIG_TMP: a scratch folder.
+# TS_BIN: the single TypeScript executable; BAD_TS_BIN: one whose window doesn't open (loop.ts loading Slint by createRequire);
+# SCRAMBLED_DB: a scrambled harbor.db; SWAY: the sway prefix (bin/, lib/); RIG_TMP: a scratch folder.
 set -u
 mount -t sysfs sysfs /sys 2>/dev/null
 [ "$(ls /sys/class/net)" = lo ] || { echo "refused: run inside unshare -Urnm (a network namespace with only lo)" >&2; exit 99; }
 ip link set lo up
-REL=${RUST_REL:?}; NEW=${TS_BIN:?}; SRC=${SCRAMBLED_DB:?}; T=${RIG_TMP:?}
+# install-one.sh opens the new binary's window: on each PC's own headless sway, never on the PC's screen.
+for c in /dev/dri/card*; do mount --bind /dev/null "$c" || { echo "refused: can't hide $c" >&2; exit 99; }; done
+REL=${RUST_REL:?}; NEW=${TS_BIN:?}; BAD=${BAD_TS_BIN:?}; SRC=${SCRAMBLED_DB:?}; SW=${SWAY:?}; T=${RIG_TMP:?}
 HERE=$(cd "$(dirname "$0")" && pwd); ONE=$HERE/../../scripts/install-one.sh
 rm -rf "$T"; mkdir -p "$T"
 fail=0
@@ -17,7 +20,13 @@ TOK=0123456789abcdef0123456789abcdef0123456789abcdef
 pc_env() { # name port
   local h=$T/$1/home
   mkdir -p "$h" "$T/$1/run"; chmod 700 "$T/$1/run"
-  echo "HOME=$h XDG_DATA_HOME=$h/.local/share XDG_STATE_HOME=$h/.local/state XDG_CONFIG_HOME=$h/.config XDG_CACHE_HOME=$h/.cache XDG_RUNTIME_DIR=$T/$1/run PATH=$HERE/fakebin:/usr/bin:/bin HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 HARBOR_UPDATE_WORKER=off RIG_CURL_LOG=$T/$1/curl.log RIG_HOLD_S=${RIG_HOLD_S:-75} TZ=UTC"
+  echo "HOME=$h XDG_DATA_HOME=$h/.local/share XDG_STATE_HOME=$h/.local/state XDG_CONFIG_HOME=$h/.config XDG_CACHE_HOME=$h/.cache XDG_RUNTIME_DIR=$T/$1/run PATH=$HERE/fakebin:/usr/bin:/bin HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_LISTEN=127.0.0.1 HARBOR_UPDATE_WORKER=off RIG_CURL_LOG=$T/$1/curl.log RIG_HOLD_S=${RIG_HOLD_S:-75} RIG_SWAY=$SW TZ=UTC"
+}
+# A headless sway in the PC's runtime folder, where install-one.sh finds its socket without WAYLAND_DISPLAY.
+sway_for() {
+  LD_LIBRARY_PATH=$SW/lib env -i HOME=$T/$1 XDG_RUNTIME_DIR=$T/$1/run WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 LD_LIBRARY_PATH=$SW/lib "$SW/bin/sway" -c "$HERE/../sway.conf" > "$T/$1/sway.log" 2>&1 &
+  for _ in $(seq 100); do ls "$T/$1"/run/wayland-? > /dev/null 2>&1 && return 0; sleep 0.1; done
+  return 1
 }
 on() { local n=$1; shift; env -i $(pc_env "$n") "$@"; }
 lib() { echo "$T/$1/home/.local/lib/harbor"; }
@@ -75,10 +84,25 @@ RUNNER=$(pgrep -f "^$L/harbor turn" | head -1)
 check "a detached turn runs (chat $C, runner ${RUNNER:-none})" test -n "$RUNNER" -a -n "$C"
 CHATS0=$(sqlite3 "$(db a)" "select count(*) from chats")
 
+echo "== 1b. install-one.sh refuses a binary whose window doesn't open, and changes nothing"
+check "a.'s own sway is up" sway_for a
+VERSION0=$(cat "$L/VERSION")
+on a bash "$ONE" install "$BAD" --wait 6 --no-trigger > "$T/a/bad.txt" 2>&1; rc=$?
+sed 's/^/   /' "$T/a/bad.txt"
+check "install exits 1" test $rc = 1
+check "and says the window didn't open, with the app's error" grep -q "did not open its window" "$T/a/bad.txt"
+check "  (Cannot find module)" grep -q "Cannot find module" "$T/a/bad.txt"
+check "harbor is still Rust, VERSION unchanged, no .previous" test "$(sha "$L/harbor")" = "$RUST_SHA" -a "$(cat "$L/VERSION")" = "$VERSION0" -a ! -e "$L/.previous"
+check "no backup was made" test ! -e "$T/a/home/.local/state/harbor-switch"
+check "the Rust app is still pid $P1" test "$(apppid a)" = "$P1"
+on a XDG_RUNTIME_DIR="$T/a/nowhere" bash "$ONE" install "$NEW" --wait 6 --no-trigger > "$T/a/nodisplay.txt" 2>&1; rc=$?
+check "with no Wayland session it refuses too ($(cat "$T/a/nodisplay.txt"))" test $rc = 1 -a "$(sha "$L/harbor")" = "$RUST_SHA"
+
 echo "== 2. install-one.sh install, Rust running a turn and asking before it updates"
 on a bash "$ONE" install "$NEW" --wait 6 --no-trigger > "$T/a/install1.txt" 2>&1; rc=$?
 cat "$T/a/install1.txt"
 check "install exits 0" test $rc = 0
+check "its preflight saw the window on the PC's sway, found without WAYLAND_DISPLAY" grep -q "Its window opened and stayed up: .*the compositor showed it" "$T/a/install1.txt"
 check "the Rust app is still pid $P1 and waits for Update" grep -q "hasn't restarted yet" "$T/a/install1.txt"
 check ".previous/harbor is the Rust binary" test "$(sha "$L/.previous/harbor")" = "$RUST_SHA"
 check ".previous/VERSION is 0.109.0" test "$(cat "$L/.previous/VERSION")" = 0.109.0
@@ -205,6 +229,7 @@ stopall
 echo "== 6. A TypeScript PC beside a Rust PC for ${MESH_S:-300} s"
 install_rust r 47940 pc:rig-r
 install_rust t 47941 pc:rig-t
+sway_for t
 on t bash "$ONE" install "$NEW" > "$T/t/install.txt" 2>&1
 check "t switched while stopped" grep -q "wasn't running" "$T/t/install.txt"
 RFP=$(fp_of r); TFP=$(fp_of t)
