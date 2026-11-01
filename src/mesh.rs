@@ -481,7 +481,7 @@ pub enum Msg {
     /// A peer came or went.
     Peer,
     /// A forwarded call from this PC's window ended.
-    Done { chat: i64, what: &'static str, reply: Reply, restore: Option<String> },
+    Done { chat: i64, what: &'static str, reply: Reply, restore: Option<(String, Vec<crate::mentions::Mention>)> },
 }
 
 // ================================================================== identity
@@ -2220,11 +2220,12 @@ impl App {
                 if reply.status >= 300 {
                     let e = reply.body["error"].as_str().unwrap_or("it didn't work").to_string();
                     self.mesh.error = Some((chat, format!("Couldn't {what}: {e}"), Instant::now()));
-                    if let Some(text) = restore.filter(|t| !t.is_empty()) {
+                    if let Some((text, mentions)) = restore {
                         let d = self.drafts.entry(chat).or_default();
-                        if d.trim().is_empty() {
+                        if d.trim().is_empty() && !text.is_empty() {
                             *d = text;
                         }
+                        self.restore_mentions(chat, mentions);
                     }
                 } else {
                     if what == crate::clone::RUN_THERE || what == crate::clone::RAN_THERE {
@@ -2617,14 +2618,15 @@ impl App {
     // ---------------------------------------------------------------- forwarding
 
     /// Forwards a call about a copy to its home PC. False for this PC's own chats.
-    fn mesh_forward(&mut self, chat: i64, what: &'static str, method: &str, tail: &[&str], body: Value, files: Vec<PathBuf>, restore: Option<String>) -> bool {
+    fn mesh_forward(&mut self, chat: i64, what: &'static str, method: &str, tail: &[&str], body: Value, files: Vec<PathBuf>, restore: Option<(String, Vec<crate::mentions::Mention>)>) -> bool {
         let Some(c) = self.chat(chat).filter(|c| c.foreign()).cloned() else { return false };
         let peer = self.shared().peer(&c.home).unwrap_or_default();
         let name = self.shared().name_of(&c.home);
         if !peer.online {
             self.mesh.error = Some((chat, format!("Couldn't {what}: {name} is off, so this chat is read-only until it's back"), Instant::now()));
-            if let Some(text) = restore.filter(|t| !t.is_empty()) {
+            if let Some((text, mentions)) = restore {
                 self.drafts.entry(chat).or_default().push_str(&text);
+                self.restore_mentions(chat, mentions);
             }
             return true;
         }
@@ -2651,7 +2653,15 @@ impl App {
     pub fn mesh_send(&mut self, chat: i64, text: &str, files: &[PathBuf], mentions: &[crate::mentions::Mention]) -> bool {
         let mode = self.queue.mode.unwrap_or(crate::queue::Mode::Queue);
         let body = json!({ "text": text, "mentions": mentions, "mode": mode.as_str() });
-        self.mesh_forward(chat, "send", "POST", &["send"], body, files.to_vec(), Some(text.to_string()))
+        self.mesh_forward(chat, "send", "POST", &["send"], body, files.to_vec(), Some((text.to_string(), mentions.to_vec())))
+    }
+
+    /// Mentions of a message that didn't go come back into the composer, unless it holds others now.
+    fn restore_mentions(&mut self, chat: i64, mentions: Vec<crate::mentions::Mention>) {
+        let d = self.mentions.drafts.entry(chat).or_default();
+        if d.is_empty() {
+            *d = mentions;
+        }
     }
 
     pub fn mesh_stop(&mut self, chat: i64) -> bool {
@@ -2706,7 +2716,7 @@ impl App {
     pub fn mesh_create(&mut self, text: &str, files: &[PathBuf]) -> bool {
         let sel = self.draft.sel.clone();
         let Some(peer) = self.shared().peer(&sel.device) else { return false };
-        let restore = Some(text.to_string());
+        let restore = Some((text.to_string(), vec![]));
         if !peer.online {
             self.mesh.error = Some((crate::app::DRAFT, format!("{} is off: pick a PC that's on", peer.name), Instant::now()));
             self.drafts.entry(crate::app::DRAFT).or_default().push_str(text);

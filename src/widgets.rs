@@ -910,7 +910,7 @@ impl Tip for Response {
 }
 
 /// The tooltip's inverted panel, painted over egui's own popup frame (whose margin is
-/// `menu_margin`, 4) around whatever `add` puts in; `margin` is the air inside it. Text in
+/// `menu_margin`) around whatever `add` puts in; `margin` is the air inside it. Text in
 /// it defaults to the inverted foreground.
 pub fn tip_panel<R>(ui: &mut Ui, margin: Margin, add: impl FnOnce(&mut Ui) -> R) -> R {
     let t = tokens(ui);
@@ -921,9 +921,15 @@ pub fn tip_panel<R>(ui: &mut Ui, margin: Margin, add: impl FnOnce(&mut Ui) -> R)
         ui.visuals_mut().override_text_color = Some(fg);
         add(ui)
     });
-    let frame = out.response.rect.expand(5.0);
+    let frame = out.response.rect.expand(ui.style().spacing.menu_margin.left as f32 + 1.0);
     painter.set(bg, egui::epaint::RectShape::filled(frame, CornerRadius::same(RADIUS_MD), fill));
     out.inner
+}
+
+/// Room between a menu item's text and its hover highlight: egui's menu style squeezes
+/// `button_padding` to 2x0. Call first in a `context_menu` / `menu_button` closure.
+pub fn menu_pad(ui: &mut Ui) {
+    ui.spacing_mut().button_padding = Vec2::new(8.0, 4.0);
 }
 
 /// A muted line inside `tip_panel`: the inverted foreground, faded.

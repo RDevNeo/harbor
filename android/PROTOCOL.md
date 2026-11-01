@@ -324,7 +324,11 @@ refetch everything.
   Projects never settle, only chats do. Older hubs sent a project `settled`; clients ignore it,
   and current hubs no longer send it.
 - `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, cursor, grok,
-  gemini, meta, opencode). An empty effort list: send `""`. `default_efforts` (optional, older
+  gemini, meta, opencode). The phone draws the chat's model and effort as two small badges right
+  over the composer (the provider's logo and the model's `label`; the effort's `label`, no badge
+  with an empty effort list), each opening its picker. An account the hub doesn't list (another
+  PC's chat, on an account only that PC has): the provider is the kind whose `models` hold the
+  chat's model. An empty effort list: send `""`. `default_efforts` (optional, older
   hubs leave it out) is what an empty `effort` means for each kind (Harbor's `medium` for
   Claude since 0.84, the CLI's own default for the others): show a chat's or the defaults' `""`
   as that level, and pick it for a new chat.
@@ -551,8 +555,8 @@ the desktop shows nothing:
   lead chat's composer, drawn after the typing line. A rounded box with one row per running
   sub-agent: its account mark (the provider logo `logo`, a file in the APK's `assets/logos/`,
   48×48 RGBA when 9216 bytes, else an alpha mask in the text colour; `badge` in its corner),
-  `name` in semibold and a green working dot right after it, with a ring that swells and fades
-  every 1.6 s (rows out of step); then a stop icon. The stop icon turns the row into "Stop
+  `name` in semibold and a blue working dot right after it, with a ring that swells and fades
+  every 1.6 s (rows out of step); then a red stop button. The stop button turns the row into "Stop
   `name`?" with **Cancel** and a red **Stop** (`POST /v1/chats/{id}/stop` of that agent), one row
   at a time; it cancels itself after 5 s or when another row is touched. Tapping a row opens that
   agent's chat (`id`); a long press shows `model`, `task` and "Working for 2m" (since `since_ms`).
@@ -562,15 +566,15 @@ the desktop shows nothing:
   overlapping, `title` ("3 agents working"), "  ·  " and the names, and a chevron; the rows show
   only once it is tapped open (a per-screen choice). `header` (default `folded`): draw that
   title row even unfolded (no chevron; a tap opens the Agents panel), as `title` then says
-  what's queued ("1 agent working  ·  2 queued"). A stop icon sits in the top right corner of
-  the box, beside the first row: **Stop all**, which asks first ("Stop 3 running sub-agents?",
-  "Stop the main agent and …" while the lead's own turn runs) and then sends
-  `POST /v1/chats/{id}/stop_all` with `{"hold": true}`.
+  what's queued ("1 agent working  ·  2 queued"). From two agents on the title row always shows
+  and ends in a red **Stop all**, which asks first ("Stop 3 running sub-agents?", "Stop the main
+  agent and …" while the lead's own turn runs) and then sends
+  `POST /v1/chats/{id}/stop_all` with `{"hold": true}`. One agent has no Stop all: its row's
+  stop is the only one, and it never folds away.
 - `recap: "…"` (optional string, missing when there is none; older hubs never send it): the
-  session recap (Claude Code's "away summary"), drawn after the agent strip, right over the
-  composer: "recap: " in semibold then the text in italics, both gray-900, wrapping. The hub
-  writes it once the user has been away for 3 minutes after a turn, and drops it when the next
-  turn starts.
+  session recap (Claude Code's "away summary"), which the hub writes once the user has been away
+  for 3 minutes after a turn and drops when the next turn starts. This app doesn't draw it (the
+  desktop does); apps before 0.109 draw it after the agent strip, right over the composer.
 - `suggestion: "…"` (optional string, missing when there is none): the message the user would
   likely send next. While the composer is empty it is the composer's placeholder, in gray-700
   instead of the usual placeholder colour, with a small "⇥ Use" chip in the composer's row (the

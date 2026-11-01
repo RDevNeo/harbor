@@ -263,6 +263,7 @@ impl App {
             self.open(View::Chat(c.id));
         }
         resp.context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
             if ui.button("Rename").clicked() {
                 self.dialog = Some(Dialog::Rename { chat: c.id, title: c.title.clone() });
             }
@@ -298,6 +299,7 @@ impl App {
             return;
         }
         ui.menu_button("Move to project…", |ui| {
+            crate::widgets::menu_pad(ui);
             ui.set_min_width(220.0);
             let mut to: Option<Option<i64>> = None;
             if w::menu_item(ui, ic::MESSAGE, "No project", Some("Home folder"), c.repo_id.is_none()).clicked() {
@@ -855,6 +857,7 @@ impl App {
         let id = r.id;
         let out = resp.clone();
         resp.tip(crate::app::tilde(&path)).context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
             // A project without a GitHub remote (a plain folder, another host) has none of these.
             let github = self.pr_projects().iter().any(|p| p.0 == id);
             if ui.button(format!("{}  Open terminal", ic::TERMINAL)).clicked() {

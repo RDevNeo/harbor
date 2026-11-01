@@ -354,6 +354,8 @@ impl Theme {
         }
         w.noninteractive.corner_radius = CornerRadius::same(RADIUS_MD);
 
+        // A wheel notch moves 40 points by default; 3 lines of text is nearer 60.
+        ctx.options_mut(|o| o.input_options.line_scroll_speed = 60.0);
         ctx.all_styles_mut(|s| {
             s.visuals = v.clone();
             s.text_styles = text_styles();
@@ -361,20 +363,27 @@ impl Theme {
             s.spacing.button_padding = Vec2::new(12.0, 6.0);
             s.spacing.interact_size = Vec2::new(32.0, 32.0);
             s.spacing.window_margin = Margin::same(24);
-            s.spacing.menu_margin = Margin::same(4);
+            // Air between a menu's frame and its items; `tip_panel` reads it back, so tooltips don't grow.
+            s.spacing.menu_margin = Margin::same(6);
             s.spacing.combo_width = 140.0;
-            // rengaf ScrollArea: a 10px track whose thumb is the border colour, rounded-full.
-            s.spacing.scroll.bar_width = 8.0;
+            // rengaf ScrollArea, floating: `bar_width` is the hit area under the pointer,
+            // `floating_width` what's painted at rest.
+            s.spacing.scroll.bar_width = 14.0;
             s.spacing.scroll.floating = true;
-            // The thumb is the text colour, faded to about the border's (gray-400) while the
-            // pointer is over the area, and to gray-600 while it's on the bar.
+            s.spacing.scroll.floating_width = 6.0;
+            s.spacing.scroll.floating_allocated_width = 0.0;
+            s.spacing.scroll.handle_min_length = 48.0;
+            s.spacing.scroll.bar_inner_margin = 2.0;
+            s.spacing.scroll.bar_outer_margin = 0.0;
+            // The thumb is the text colour; the track shows faintly while the pointer is on the
+            // bar, so clicking it to jump is visible.
             s.spacing.scroll.foreground_color = true;
             s.spacing.scroll.dormant_handle_opacity = 0.0;
-            s.spacing.scroll.active_handle_opacity = 0.22;
-            s.spacing.scroll.interact_handle_opacity = 0.45;
+            s.spacing.scroll.active_handle_opacity = 0.32;
+            s.spacing.scroll.interact_handle_opacity = 0.6;
             s.spacing.scroll.dormant_background_opacity = 0.0;
             s.spacing.scroll.active_background_opacity = 0.0;
-            s.spacing.scroll.interact_background_opacity = 0.0;
+            s.spacing.scroll.interact_background_opacity = 0.08;
             s.spacing.tooltip_width = 280.0;
             s.interaction.selectable_labels = true;
         });

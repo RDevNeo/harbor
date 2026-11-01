@@ -290,6 +290,7 @@ fn tab(ui: &mut Ui, i: usize, icon: &str, text: &str, active: bool, n: usize) ->
         act = Some(TabAct::Activate(i));
     }
     resp.on_hover_cursor(CursorIcon::PointingHand).context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
         if ui.button("Close").clicked() {
             act = Some(TabAct::Close(i));
             ui.close();

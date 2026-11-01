@@ -83,6 +83,8 @@ struct Cache {
     opened: Option<usize>,
     /// ← → Esc taken early in the frame (see [`take_keys`]): previous, next, close.
     keys: [bool; 3],
+    /// The Esc that closed the viewer is still down (see [`take_keys`]).
+    esc_held: bool,
     bytes: HashMap<String, Arc<[u8]>>,
     queue: VecDeque<Job>,
     workers: usize,
@@ -479,6 +481,16 @@ pub fn close(ctx: &egui::Context) {
 /// lightbox draws last, and by then a focused composer would have had → (it takes a suggestion).
 pub fn take_keys(ctx: &egui::Context) {
     if !is_open(ctx) {
+        // That press closed the viewer and nothing else, however long it's held: no repeat of it
+        // reaches a drawer, a page or a menu behind.
+        let s = shared(ctx);
+        let mut c = lock(&s);
+        if c.esc_held {
+            c.esc_held = ctx.input_mut(|i| {
+                i.events.retain(|e| !matches!(e, egui::Event::Key { key: Key::Escape, repeat: true, .. }));
+                i.key_down(Key::Escape)
+            });
+        }
         return;
     }
     let none = egui::Modifiers::NONE;
@@ -489,6 +501,7 @@ pub fn take_keys(ctx: &egui::Context) {
     for (held, now) in c.keys.iter_mut().zip(keys) {
         *held |= now;
     }
+    c.esc_held |= keys[2];
 }
 
 /// Images drawn until the next call belong to transcript card `seq`.
@@ -853,6 +866,34 @@ mod tests {
         let mut out = Vec::new();
         image::RgbaImage::new(w, h).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
         out
+    }
+
+    #[test]
+    fn esc_closes_the_viewer_and_reaches_nothing_else() {
+        let esc = |pressed, repeat| egui::RawInput { events: vec![egui::Event::Key { key: Key::Escape, physical_key: None, pressed, repeat, modifiers: egui::Modifiers::NONE }], ..Default::default() };
+        // What a handler behind the viewer would see in a frame, after take_keys.
+        let frame = |ctx: &egui::Context, input| {
+            let mut seen = false;
+            ctx.run_ui(input, |ui| {
+                take_keys(ui.ctx());
+                seen = ui.input(|i| i.key_pressed(Key::Escape));
+            })
+            .textures_delta
+            .clear();
+            seen
+        };
+        let ctx = egui::Context::default();
+        assert!(frame(&ctx, esc(true, false)), "no viewer: Esc is everyone's");
+        let _ = frame(&ctx, esc(false, false));
+        in_card(&ctx, 1);
+        open_clicked(&ctx, "/x/a.png", &["/x/a.png".to_string()]);
+        assert!(!frame(&ctx, esc(true, false)), "the viewer takes it");
+        assert_eq!(lock(&shared(&ctx)).keys, [false, false, true]);
+        close(&ctx);
+        assert!(!frame(&ctx, esc(true, true)), "still held: the same press");
+        assert!(!frame(&ctx, Default::default()));
+        let _ = frame(&ctx, esc(false, false));
+        assert!(frame(&ctx, esc(true, false)), "the next press is a new one");
     }
 
     #[test]

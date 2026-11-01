@@ -30,8 +30,9 @@ public class Chat extends Base implements Images.Gallery {
     private String chatId;
     private WorkBar work;
     private ScrollView scroll;
+    /** Over the transcript's lower edge while it's scrolled up from the latest message. */
+    private View jump;
     private LinearLayout content, status;
-    private TextView recapLine;     // the hub's recap in the bars, hidden while typing
     private Composer comp;
     private EditText composer;
     private Attach attach;
@@ -100,7 +101,7 @@ public class Chat extends Base implements Images.Gallery {
         content = Ui.col(this);
         content.setPadding(0, Ui.dp(4), 0, Ui.dp(12));
         scroll.addView(content);
-        // The bars under it grow (the agent strip unfolds, a recap arrives): the transcript keeps
+        // The bars under it grow (the agent strip unfolds): the transcript keeps
         // its end in view when it was there, instead of new cards sliding under the bars.
         scroll.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
@@ -109,12 +110,24 @@ public class Chat extends Base implements Images.Gallery {
         // The transcript and the bars under it; the slash menu floats over their bottom.
         FrameLayout stage = new FrameLayout(this);
         LinearLayout above = Ui.col(this);
-        above.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        FrameLayout reading = new FrameLayout(this);
+        reading.addView(scroll, frameFill());
+        // "Scroll to bottom": glides to the end; arriving there makes new output follow again
+        // (apply's atBottom). A touch on the transcript stops the glide, so it never fights a drag.
+        jump = Ui.roundButton(this, Ui.I_DOWN, Ui.CARD, Ui.FG, 40, v -> scroll.smoothScrollTo(0, content.getHeight()));
+        jump.setBackground(Ui.press(Ui.CARD, Ui.LINE, 20));
+        jump.setElevation(Ui.dp(3));
+        jump.setContentDescription("Scroll to bottom");
+        jump.setVisibility(View.GONE);
+        reading.addView(jump, Ui.margins(new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL), 0, 0, 0, 12));
+        scroll.setOnScrollChangeListener((sv, sx, sy, osx, osy) -> showJump());
+        content.addOnLayoutChangeListener((cv, cl, ct, cr, cb, col, cot, cor, cob) -> showJump());
+        above.addView(reading, new LinearLayout.LayoutParams(-1, 0, 1));
 
         // The desktop's bars under the transcript: queued messages, working, waiting for
         // sub-agents, usage limit; and who else is typing.
         status = Ui.col(this);
-        status.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(6));
+        status.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(2));
         above.addView(status, Ui.fill());
         stage.addView(above, frameFill());
         root.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -133,9 +146,6 @@ public class Chat extends Base implements Images.Gallery {
         comp.edit.onSelection = () -> { slash.update(); tags.update(); };
         comp.edit.backOpen = () -> slash.open() || tags.open();
         comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
-        // The recap steps aside while typing: the keyboard leaves little room for the transcript.
-        comp.edit.getViewTreeObserver().addOnGlobalFocusChangeListener((was, now) -> recapWhileTyping());
-        comp.edit.getViewTreeObserver().addOnGlobalLayoutListener(this::recapWhileTyping);
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         comp.onSend = this::send;
         comp.onStop = this::stop;
@@ -143,17 +153,14 @@ public class Chat extends Base implements Images.Gallery {
         comp.onSendMenu = this::sendMenu;
         comp.onType = this::typed;
         attach.onChange = this::typed;
-        comp.onPill = () -> {
-            if (run == null) return;
-            Sheet sh = new Sheet(this, "Run settings");
-            run.rows(this, sh, (f, v) -> { sh.dismiss(); change(f, v); });
-            sh.show();
-        };
+        comp.onModel = () -> { if (run != null) run.pickModel(this, this::change); };
+        comp.onEffort = () -> { if (run != null) run.pickEffort(this, this::change); };
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
-        // The composer, and under it where the agent works and its branch (WorkBar).
+        // The model's badges, the composer, and under it where the agent works and its branch (WorkBar).
         work = new WorkBar(this, hub);
         work.chat = chatId;
         LinearLayout below = Ui.col(this);
+        below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 0, 8, -4));
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
@@ -248,7 +255,7 @@ public class Chat extends Base implements Images.Gallery {
         barTitle.setText(t.isEmpty() ? "New chat" : t);
         JSONObject st = Hub.states.get(hub.id);
         run = new Run(st, c);
-        comp.pill.setText(run.pill());
+        run.badges(comp);
         String k = run.kind();
         composer.setHint("Chat with " + (k.isEmpty() ? "Claude" : Character.toUpperCase(k.charAt(0)) + k.substring(1)) + "…");
         String dev = run.deviceLabel(), acc = run.accountLabel();
@@ -450,6 +457,12 @@ public class Chat extends Base implements Images.Gallery {
         });
     }
 
+    /** The jump button shows while the transcript is scrolled up from its end (apply's threshold). */
+    private void showJump() {
+        boolean up = loaded && scroll.getScrollY() + scroll.getHeight() < content.getHeight() - Ui.dp(120);
+        jump.setVisibility(up ? View.VISIBLE : View.GONE);
+    }
+
     /** Scrolls to the end once the new items are laid out. */
     private void toEnd() {
         android.view.ViewTreeObserver o = content.getViewTreeObserver();
@@ -552,29 +565,10 @@ public class Chat extends Base implements Images.Gallery {
         drawQueue(waitingQ, b.optBoolean("held"), b.optBoolean("can_steer"));
         comp.follow(b.optBoolean("can_steer"), b.optBoolean("held"), followUp(this));
         strip(b.optJSONObject("agents"));
-        // The hub's recap over the composer, its suggestion in the empty composer (Recap.java).
-        TextView recap = Recap.line(this, b);
-        if (recap != null) status.addView(recap, Ui.margins(Ui.fill(), 0, 4, 0, 4));
-        recapLine = recap;
-        Recap.suggest(comp, b.optString("suggestion", ""));
-        recapWhileTyping();
+        // Its suggestion in the empty composer (Suggest.java).
+        Suggest.set(comp, b.optString("suggestion", ""));
+        status.setVisibility(status.getChildCount() > 0 ? View.VISIBLE : View.GONE);
         comp.running(running);
-    }
-
-    /** Hides the recap while the composer has focus with the keyboard up (it comes back when the
-     *  keyboard closes), and the bars with it when it was their only line. */
-    private void recapWhileTyping() {
-        boolean typing = comp.edit.hasFocus();
-        if (typing && android.os.Build.VERSION.SDK_INT >= 30) {
-            android.view.WindowInsets in = comp.edit.getRootWindowInsets();
-            typing = in == null || in.isVisible(android.view.WindowInsets.Type.ime());
-        }
-        int want = typing ? View.GONE : View.VISIBLE;
-        if (recapLine != null && recapLine.getVisibility() != want) recapLine.setVisibility(want);
-        boolean any = false;
-        for (int i = 0; i < status.getChildCount() && !any; i++) any = status.getChildAt(i).getVisibility() != View.GONE;
-        int bars = any ? View.VISIBLE : View.GONE;
-        if (status.getVisibility() != bars) status.setVisibility(bars);
     }
 
     /** The desktop's agent strip over the composer (agentstrip.rs, PROTOCOL.md "status.agents"):
@@ -583,89 +577,79 @@ public class Chat extends Base implements Images.Gallery {
         stripRows.clear();
         JSONArray rows = s == null ? null : s.optJSONArray("rows");
         if (rows == null || rows.length() == 0) { stripAsk(""); return; }
-        boolean folded = s.optBoolean("folded");
-        boolean open = !folded || (stripOpen != null && stripOpen);
-        // The rows, and Stop all in the top row's corner (`POST stop_all`), which asks first.
-        LinearLayout outer = Ui.row(this);
-        outer.setGravity(Gravity.TOP);
-        outer.setBackground(Ui.round(Ui.BG2, Ui.LINE, 12));
-        outer.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
+        int n = rows.length();
+        boolean folded = s.optBoolean("folded") && Labels.stopAll(n);
+        boolean open = Labels.rowsOpen(n, folded, stripOpen);
         LinearLayout box = Ui.col(this);
-        outer.addView(box, Ui.weight());
-        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.RED);
-        stop.setBackground(Ui.press(0, 0, 8));
-        stop.setContentDescription("Stop all");
-        stop.setOnClickListener(v -> stopAll(rows.length()));
-        outer.addView(stop, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
-        if (s.optBoolean("header", folded)) {
+        box.setBackground(Ui.round(Ui.BG2, Ui.LINE, 16));
+        box.setPadding(Ui.dp(2), Ui.dp(2), Ui.dp(2), Ui.dp(2));
+        if (Labels.header(n, s.optBoolean("header", folded))) {
             LinearLayout h = Ui.row(this);
-            h.setPadding(Ui.dp(8), Ui.dp(8), Ui.dp(10), Ui.dp(8));
+            h.setPadding(Ui.dp(10), 0, Ui.dp(4), 0);
+            h.setMinimumHeight(Ui.dp(44));
             LinearLayout marks = Ui.row(this);
-            for (int i = 0; i < Math.min(rows.length(), 4); i++) {
+            for (int i = 0; i < Math.min(n, 4); i++) {
                 JSONObject r = rows.optJSONObject(i);
-                View m = Ui.accountMark(this, r == null ? "" : r.optString("logo"), "", 16);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16));
+                View m = Ui.accountMark(this, r == null ? "" : r.optString("logo"), "", 18);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18));
                 if (i > 0) lp.leftMargin = -Ui.dp(4);
                 marks.addView(m, lp);
             }
             h.addView(marks);
             StringBuilder names = new StringBuilder();
-            for (int i = 0; i < rows.length(); i++) {
+            for (int i = 0; i < n; i++) {
                 JSONObject r = rows.optJSONObject(i);
                 if (r != null) names.append(names.length() > 0 ? ", " : "").append(r.optString("name"));
             }
             h.addView(Ui.bold(this, s.optString("title"), 14, Ui.FG), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
             h.addView(Ui.subtitle(Ui.text(this, "  ·  " + names, 14, Ui.G700)), Ui.weight());
             // Folded it unfolds; unfolded (it says what's queued) it opens the Agents panel.
-            h.setBackground(Ui.press(0, 0, 8));
+            h.setBackground(Ui.press(0, 0, 14));
             if (folded) {
                 h.addView(Ui.icon(this, open ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
                 h.setOnClickListener(v -> { stripOpen = !open; drawBars(); });
             } else h.setOnClickListener(v -> openRight());
+            // `POST stop_all`, which asks first.
+            if (Labels.stopAll(n)) h.addView(stripChip("Stop all", true, () -> stopAll(n)), Ui.margins(Ui.wrap(), 8, 0, 4, 0));
             box.addView(h, Ui.fill());
         }
-        if (open) for (int i = 0; i < rows.length(); i++) {
+        if (open) for (int i = 0; i < n; i++) {
             JSONObject r = rows.optJSONObject(i);
             if (r != null) box.addView(stripRow(r, i), Ui.fill());
         }
-        status.addView(outer, Ui.margins(Ui.fill(), 0, 4, 0, 4));
+        status.addView(box, Ui.margins(Ui.fill(), 0, 4, 0, 4));
         // A "Stop api?" whose agent finished (or folded away) goes with it.
         stripAsk(stripRows.containsKey(stripAsk) ? stripAsk : "");
     }
 
-    /** One agent: mark, name and its working dot, and a stop icon that turns the row into
+    /** One agent: mark, name and its working dot, and a red stop that turns the row into
      *  "Stop api? Cancel / Stop" (the desktop's on hover; a phone has none, so it stays). */
     private View stripRow(JSONObject r, int nth) {
         String id = r.optString("id");
         String name = r.optString("name");
         LinearLayout row = Ui.row(this);
-        row.setPadding(Ui.dp(8), Ui.dp(2), Ui.dp(2), Ui.dp(2));
-        row.setMinimumHeight(Ui.dp(40));
-        row.setBackground(Ui.press(0, 0, 8));
-        row.addView(Ui.accountMark(this, r.optString("logo"), r.optString("badge"), 18));
+        row.setPadding(Ui.dp(10), 0, 0, 0);
+        row.setMinimumHeight(Ui.dp(48));
+        row.setBackground(Ui.press(0, 0, 14));
+        row.addView(Ui.accountMark(this, r.optString("logo"), r.optString("badge"), 22));
         // Name and dot together, the name giving way on a narrow screen (a wrap-content row
         // shrinks its weighted child only when it overflows).
         LinearLayout idle = Ui.row(this);
         LinearLayout named = Ui.row(this);
-        named.addView(Ui.subtitle(Ui.bold(this, name, 14, Ui.FG)), new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        named.addView(Ui.subtitle(Ui.bold(this, name, 15, Ui.FG)), new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         named.addView(new Pulse(this, nth * 0.37f), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
-        idle.addView(named, Ui.weight());
-        TextView stop = Ui.icon(this, Ui.I_STOP, 15, Ui.RED);
-        stop.setBackground(Ui.press(0, 0, 8));
-        stop.setContentDescription("Stop " + name);
-        stop.setOnClickListener(v -> stripAsk(id));
-        idle.addView(stop, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
-        row.addView(idle, Ui.margins(Ui.weight(), 8, 0, 0, 0));
+        FrameLayout slot = new FrameLayout(this);
+        slot.addView(named, new FrameLayout.LayoutParams(-2, -2, Gravity.START | Gravity.CENTER_VERTICAL));
+        idle.addView(slot, Ui.weight());
+        idle.addView(stripStop("Stop " + name, () -> stripAsk(id)), new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)));
+        row.addView(idle, Ui.margins(Ui.weight(), 8, 0, 2, 0));
         LinearLayout ask = Ui.row(this);
-        ask.addView(Ui.subtitle(Ui.text(this, "Stop " + name + "?", 14, Ui.G700)), Ui.weight());
-        ask.addView(small("Cancel", () -> stripAsk("")), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-        TextView yes = small("Stop", () -> {
+        ask.addView(Ui.subtitle(Ui.text(this, "Stop " + name + "?", 14, Ui.G900)), Ui.weight());
+        ask.addView(stripChip("Cancel", false, () -> stripAsk("")), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
+        ask.addView(stripChip("Stop", true, () -> {
             stripAsk("");
             Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + id + "/stop", null), x -> load(false));
-        });
-        yes.setTextColor(Ui.ON_STOP);
-        yes.setBackground(Ui.press(Ui.STOP, 0, 14));
-        ask.addView(yes, Ui.margins(Ui.wrap(), 6, 0, 4, 0));
+        }), Ui.margins(Ui.wrap(), 6, 0, 6, 0));
         row.addView(ask, Ui.margins(Ui.weight(), 8, 0, 0, 0));
         stripRows.put(id, new View[]{idle, ask});
         // Touching another row answers an open "Stop api?" with Cancel.
@@ -687,6 +671,30 @@ public class Chat extends Base implements Images.Gallery {
             return true;
         });
         return row;
+    }
+
+    /** A row's stop: the composer's red disc, small, in a 44 dp tap target. */
+    private View stripStop(String description, Runnable on) {
+        FrameLayout f = new FrameLayout(this);
+        f.setBackground(Ui.press(0, 0, 22));
+        TextView stop = Ui.icon(this, Ui.I_STOP, 14, Ui.ON_STOP);
+        stop.setBackground(Ui.round(Ui.STOP, 0, 15));
+        f.addView(stop, new FrameLayout.LayoutParams(Ui.dp(30), Ui.dp(30), Gravity.CENTER));
+        f.setContentDescription(description);
+        f.setOnClickListener(v -> on.run());
+        return f;
+    }
+
+    /** A strip chip: 28 dp to the eye, 44 dp to the thumb; `stop` makes it the red one. */
+    private TextView stripChip(String label, boolean stop, Runnable on) {
+        TextView t = Ui.bold(this, label, 13, stop ? Ui.ON_STOP : Ui.FG);
+        t.setSingleLine(true);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
+        t.setMinHeight(Ui.dp(44));
+        t.setBackground(new android.graphics.drawable.InsetDrawable(stop ? Ui.press(Ui.STOP, 0, 14) : Ui.press(Ui.CARD, Ui.LINE, 14), 0, Ui.dp(8), 0, Ui.dp(8)));
+        t.setOnClickListener(v -> on.run());
+        return t;
     }
 
     /** Opens the "Stop api?" of the agent `id` ("": none), one at a time; it cancels itself

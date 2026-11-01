@@ -5,6 +5,35 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+### Added
+- A "Scroll to bottom" button floats over the transcript while you read further up, on the desktop
+  and the phone. A click goes to the end and the chat follows new output again.
+- PageUp, PageDown, Home and End move the transcript on the desktop when no text field has focus.
+
+### Changed
+- The phone app no longer shows the recap (the desktop still does). The suggested next message
+  stays in the empty composer.
+- The phone shows the chat's model and effort as two badges over the composer, with the provider's
+  logo and the same names as the desktop, also for chats that run on another PC. A tap opens each
+  one's picker. The other run settings stay in the + sheet.
+- The phone's agent bar is cleaner: one agent has exactly one stop, every stop is red, rows are
+  taller with a 44 dp stop, and Stop all sits in the title row from two agents on.
+- Scrollbars are easier to grab on the desktop: wider under the pointer, with a longer and clearer
+  handle, and a wheel notch moves further.
+- Menus have more room around and between their items on the desktop.
+- "Mention selection" waits until the selection has rested for 0.6 seconds and goes away after 5,
+  while the text stays selected.
+
+### Fixed
+- Esc closes a full-screen video at once, instead of only leaving full screen, and holding it
+  after closing an image reaches nothing behind it.
+- A message of only mentioned messages, sent to a chat that runs on another PC, no longer fails
+  with "nothing to send" (that PC must run this version), and a mention left unsent from a failed
+  send comes back into the composer.
+- Clicking an excerpt's chip scrolls to the excerpt and highlights just its text, not the whole
+  message, also across lines, list items and formatted text. A folded tool call opens for it. If
+  the text can't be found the whole message lights up, as before.
+
 ## [0.108.0] - 2026-10-31
 
 ### Added

@@ -1212,6 +1212,7 @@ impl App {
                                 }
                                 let proj = projects.iter().find(|x| x.2.eq_ignore_ascii_case(&p.repo)).map(|x| x.0);
                                 resp.context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
                                     if ui.button(format!("{}  Open in side panel", ic::PANEL_RIGHT)).clicked() {
                                         open_url = Some(p.url.clone());
                                         ui.close();

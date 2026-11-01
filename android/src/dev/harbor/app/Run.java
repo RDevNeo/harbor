@@ -37,7 +37,28 @@ final class Run {
         }
     }
 
-    String kind() { return kindOf(account); }
+    String kind() {
+        String k = kindOf(account);
+        return k.isEmpty() ? kindOfModel() : k;
+    }
+
+    /** Another PC's chat can run on an account this PC doesn't have, and then only its model says
+     *  the provider. Claude's list first: other providers can offer Claude's models too. */
+    private String kindOfModel() {
+        if (model.isEmpty()) return "";
+        if (has(Chat.byKind(st, "models", "claude"), model)) return "claude";
+        JSONObject all = st.optJSONObject("models");
+        if (all != null) for (java.util.Iterator<String> k = all.keys(); k.hasNext(); ) {
+            String kind = k.next();
+            if (has(all.optJSONArray(kind), model)) return kind;
+        }
+        return model.startsWith("claude-") ? "claude" : "";
+    }
+
+    private static boolean has(JSONArray list, String id) {
+        if (list != null) for (int i = 0; i < list.length(); i++) if (Hub.optId(list.opt(i)).equals(id)) return true;
+        return false;
+    }
 
     String kindOf(String acc) {
         JSONArray a = st.optJSONArray("accounts");
@@ -97,7 +118,7 @@ final class Run {
         return sb.toString();
     }
 
-    String modelLabel() { return model.isEmpty() ? "Default model" : Hub.labelOf(models(), model); }
+    String modelLabel() { return model.isEmpty() ? "Default model" : Labels.modelName(Hub.labelOf(models(), model)); }
     String effortLabel() {
         String e = effort.isEmpty() ? defaultEffort() : effort;
         return e.isEmpty() ? "" : Hub.labelOf(efforts(), e);
@@ -121,10 +142,9 @@ final class Run {
         return "Project";
     }
 
-    /** "Opus 5.5 Medium", the composer pill. */
-    String pill() {
-        String e = effortLabel();
-        return e.isEmpty() ? modelLabel() : modelLabel() + " " + e;
+    /** The badges over the composer: logo, "Opus 5.5" and "Medium". */
+    void badges(Composer comp) {
+        comp.badges(Labels.logo(kind()), modelLabel(), Labels.effortBadge(effortLabel(), efforts().length() > 0));
     }
 
     // ---- a new chat's choices stay valid ----

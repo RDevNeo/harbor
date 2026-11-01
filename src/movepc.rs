@@ -1017,6 +1017,7 @@ impl App {
             return;
         }
         ui.menu_button("Move to PC…", |ui| {
+            crate::widgets::menu_pad(ui);
             ui.set_min_width(240.0);
             let mut to: Option<(String, String)> = None;
             for t in &targets {

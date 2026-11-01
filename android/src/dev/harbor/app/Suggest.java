@@ -1,31 +1,15 @@
 package dev.harbor.app;
 
 import android.content.Context;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.TextView;
 
-import org.json.JSONObject;
-
-/** The hub's session recap and prompt suggestion (recap.rs, PROTOCOL.md "status"), drawn like the
- *  desktop: "recap: …" dim over the composer, the text in italics; the suggestion as the empty
- *  composer's grayer placeholder, which the "⇥ Use" chip puts into the text (the desktop's Tab). */
-final class Recap {
-    private Recap() { }
-
-    /** The recap line, or null when the hub has none. */
-    static TextView line(Context c, JSONObject status) {
-        String text = status == null ? "" : status.optString("recap", "");
-        if (text.isEmpty()) return null;
-        SpannableStringBuilder s = new SpannableStringBuilder("recap: ");
-        s.setSpan(new Ui.Font(Ui.semi, 0), 0, s.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        int at = s.length();
-        s.append(text);
-        s.setSpan(new Ui.Font(Ui.sans, -0.2f), at, s.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        return Ui.text(c, s, 14, Ui.G900);
-    }
+/** The hub's prompt suggestion (recap.rs, PROTOCOL.md "status"), drawn like the desktop: the empty
+ *  composer's grayer placeholder, which the "⇥ Use" chip puts into the text (the desktop's Tab).
+ *  The session recap beside it in the same reply is the desktop's alone. */
+final class Suggest {
+    private Suggest() { }
 
     /** The chip that takes the suggestion; hidden until there is one. */
     static TextView useChip(Context c, Composer comp) {
@@ -63,7 +47,7 @@ final class Recap {
     }
 
     /** The hub's suggestion for this chat ("" or null: none). */
-    static void suggest(Composer comp, String s) {
+    static void set(Composer comp, String s) {
         comp.ghost = s == null || s.isEmpty() ? null : s;
         refresh(comp);
     }

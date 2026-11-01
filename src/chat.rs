@@ -10,7 +10,7 @@ use crate::theme::{self, RADIUS_LG, RADIUS_MD};
 use crate::widgets::{self as w, Tone};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense,
-    Stroke, Ui, Vec2, pos2,
+    Pos2, Stroke, Ui, Vec2, pos2,
 };
 use egui_commonmark::CommonMarkViewer;
 
@@ -41,6 +41,24 @@ fn item_sig(item: &Item) -> (u8, usize) {
         Item::Notice { text, detail, .. } => (6, text.len() + detail.len()),
         Item::Message { text, .. } => (7, text.len()),
     }
+}
+
+const SCROLL_BTN: f32 = 34.0;
+
+/// The round "Scroll to bottom" button floating over the transcript's lower edge, centred at
+/// `c`. Only its own circle takes clicks; true when pressed.
+fn scroll_to_bottom_button(ctx: &egui::Context, chat: i64, c: Pos2, t: &crate::theme::Tokens) -> bool {
+    egui::Area::new(Id::NULL.with(("scroll-to-bottom-btn", chat)))
+        .order(egui::Order::Middle)
+        .fixed_pos(c - Vec2::splat(SCROLL_BTN / 2.0))
+        .show(ctx, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(SCROLL_BTN), Sense::click());
+            let fill = if resp.hovered() { t.gray(200) } else { t.gray(100) };
+            ui.painter().circle(rect.center(), SCROLL_BTN / 2.0, fill, Stroke::new(1.0, t.border()));
+            ic::glyph(ui.painter(), rect.center(), ic::DOWN, 16.0, t.fg());
+            resp.on_hover_cursor(egui::CursorIcon::PointingHand).tip("Scroll to bottom").clicked()
+        })
+        .inner
 }
 
 pub fn centered(ui: &mut Ui, max: f32, add: impl FnOnce(&mut Ui)) {
@@ -358,9 +376,14 @@ impl App {
         crate::images::set_source(ui.ctx(), source);
         // (A click on the composer's attachments isn't one of the chat's images.)
         crate::images::take_opened(ui.ctx());
+        // Unanimated: a glide would land on the end it set out for and stop there while new
+        // output arrives, instead of sticking to the bottom again.
+        let jump = Id::NULL.with(("scroll-to-bottom", id));
+        let to_end = ui.data_mut(|d| d.remove_temp::<bool>(jump)).unwrap_or(false);
         let out = ScrollArea::vertical()
             .auto_shrink([false, false])
             .stick_to_bottom(true)
+            .animated(!to_end)
             .id_salt(("transcript", id))
             .show(ui, |ui| {
                 centered(ui, CONTENT_W, |ui| {
@@ -368,6 +391,32 @@ impl App {
                     self.transcript(ui, id, team_running);
                     ui.add_space(24.0);
                 });
+                // PageUp/PageDown/Home/End scroll the transcript unless a text field has the
+                // keyboard or a viewer is open (it takes the same keys).
+                let ctx = ui.ctx().clone();
+                if !ctx.egui_wants_keyboard_input() && !crate::images::is_open(&ctx) && !crate::video::is_open() {
+                    let page = ui.clip_rect().height() * 0.9;
+                    let none = egui::Modifiers::NONE;
+                    let (up, down, home, end) = ctx.input_mut(|i| {
+                        (i.consume_key(none, Key::PageUp), i.consume_key(none, Key::PageDown), i.consume_key(none, Key::Home), i.consume_key(none, Key::End))
+                    });
+                    if up {
+                        ui.scroll_with_delta(Vec2::new(0.0, page));
+                    }
+                    if down {
+                        ui.scroll_with_delta(Vec2::new(0.0, -page));
+                    }
+                    if home {
+                        ui.scroll_with_delta(Vec2::new(0.0, 1.0e7));
+                    }
+                    if end {
+                        ui.data_mut(|d| d.insert_temp(jump, true));
+                        ctx.request_repaint();
+                    }
+                }
+                if to_end {
+                    ui.scroll_to_cursor(Some(Align::BOTTOM));
+                }
             });
         // An image of the chat opened: ← → browse its message's images, its strip's too.
         if let Some(card) = crate::images::take_opened(ui.ctx()) {
@@ -378,6 +427,13 @@ impl App {
         // Scrolled up to older messages: an automatic update waits (reload.rs), as the restart
         // would bring the transcript back to its end.
         self.reading_back = out.state.clamped_offset().y + out.inner_rect.height() < out.content_size.y - 48.0;
+        if self.reading_back {
+            let c = pos2(out.inner_rect.center().x, out.inner_rect.bottom() - 14.0 - SCROLL_BTN / 2.0);
+            if scroll_to_bottom_button(ui.ctx(), id, c, &t) {
+                ui.data_mut(|d| d.insert_temp(jump, true));
+                ui.ctx().request_repaint();
+            }
+        }
     }
 
     /// The images of card `seq` in chat `id`, in order (view.rs `gallery`): what the lightbox
@@ -419,7 +475,7 @@ impl App {
         }
         if let Some(text) = crate::mentions::take_settled(ui.ctx()) {
             self.mentions.selected = match self.mentions.press {
-                Some((c, item)) if c == id => Some(crate::mentions::Selected { chat: c, item, text, offset: None }),
+                Some((c, item)) if c == id => Some(crate::mentions::Selected { chat: c, item, text, offset: None, settled_at: ui.input(|x| x.time), shown_at: None, gone: false }),
                 _ => None,
             };
         }
@@ -436,7 +492,12 @@ impl App {
                 }
                 continue;
             }
-            let flashing = self.mentions.flash.is_some_and(|(c, f, _, _)| c == id && f == i);
+            let flash = self.mentions.flash.as_ref().filter(|f| f.chat == id && f.item == i);
+            let flashing = flash.is_some();
+            // An excerpt of a tool call or a notice is inside what they fold away.
+            if flash.is_some_and(|f| f.seeking()) {
+                self.expanded_tools.insert((id, i));
+            }
             if let Some(g) = shown.group {
                 let key = (id, g);
                 // A mention pointing inside a folded run opens it.
@@ -472,6 +533,7 @@ impl App {
                     }
                 }
             }
+            let seek = self.mentions.seek(ui, id, i);
             crate::images::in_card(ui.ctx(), i);
             use crate::view::Card;
             match &shown.card {
@@ -868,11 +930,11 @@ impl App {
                     // Just settled: the pointer is where the drag ended.
                     sel.offset = Some(ui.input(|x| x.pointer.latest_pos()).map_or(Vec2::ZERO, |p| p - rect.min));
                 }
-                if mention_selection_button(ui, rect, sel.offset.unwrap_or_default()) {
+                if mention_selection_button(ui, rect, sel) {
                     action = Some(MsgAction::MentionExcerpt(i, sel.text.clone()));
                 }
             }
-            self.mentions.flash(ui, id, i, rect);
+            self.mentions.flash(ui, id, i, rect, seek);
             ui.data_mut(|d| d.insert_temp(height_key, (width, ui.cursor().top() - top)));
         }
         match action {
@@ -890,7 +952,7 @@ impl App {
             Some(MsgAction::OpenAt(chat, i)) => {
                 if self.chat(chat).is_some() {
                     self.open(View::Chat(chat));
-                    self.point_at(ui.ctx(), chat, i);
+                    self.point_at(ui.ctx(), chat, i, None);
                 }
             }
             Some(MsgAction::Quote(text)) => {
@@ -1835,12 +1897,34 @@ enum MsgAction {
     Commit(String),
 }
 
-/// A row under a message, visible only while the message (or the row) is hovered:
-/// time plus icon buttons, aligned like the message. Returns the clicked button.
+/// The selection must rest this long, mouse released and still, before its button shows.
+const MENTION_SETTLE_SECS: f64 = 0.6;
+/// The button goes away this long after it showed (restarted while the pointer is on it).
+const MENTION_HIDE_SECS: f64 = 5.0;
+/// A pointer faster than this (points per second) is still navigating: the wait restarts.
+const MENTION_MOVING_SPEED: f32 = 60.0;
+
 /// The "Mention selection" button, floating above where a text selection in the
-/// message at `item` ended (`at`, from its top left). True when pressed: it acts on
-/// the press, as that press also ends egui's selection.
-fn mention_selection_button(ui: &mut Ui, item: Rect, at: Vec2) -> bool {
+/// message at `item` ended (`sel.offset`, from its top left).
+/// True when pressed: it acts on the press, as that press also ends egui's selection.
+fn mention_selection_button(ui: &mut Ui, item: Rect, sel: &mut crate::mentions::Selected) -> bool {
+    let now = ui.input(|x| x.time);
+    if sel.gone {
+        return false;
+    }
+    if sel.shown_at.is_none() {
+        // Waiting: a press or a moving pointer restarts it.
+        if ui.input(|x| x.pointer.any_down() || x.pointer.velocity().length() > MENTION_MOVING_SPEED) {
+            sel.settled_at = now;
+        }
+        let wait = MENTION_SETTLE_SECS - (now - sel.settled_at);
+        if wait > 0.0 {
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(wait));
+            return false;
+        }
+        sel.shown_at = Some(now);
+    }
+    let at = sel.offset.unwrap_or_default();
     let label = format!("{}  Mention selection", ic::AT_SIGN);
     let b = w::btn(&label).xs();
     let size = Vec2::new(b.width(ui), 28.0);
@@ -1857,7 +1941,19 @@ fn mention_selection_button(ui: &mut Ui, item: Rect, at: Vec2) -> bool {
         .fixed_pos(r.min)
         .constrain_to(clip)
         .show(ui.ctx(), |ui| b.show(ui).on_hover_cursor(egui::CursorIcon::PointingHand));
-    shown.inner.contains_pointer() && ui.input(|x| x.pointer.primary_pressed())
+    let hovered = shown.inner.contains_pointer();
+    if hovered {
+        sel.shown_at = Some(now);
+        return ui.input(|x| x.pointer.primary_pressed());
+    }
+    let left = MENTION_HIDE_SECS - (now - sel.shown_at.unwrap_or(now));
+    if left <= 0.0 {
+        sel.gone = true;
+        ui.ctx().request_repaint();
+    } else {
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(left));
+    }
+    false
 }
 
 /// The hover bar's buttons for a card's actions (view.rs): icon and tooltip.
@@ -1887,6 +1983,8 @@ fn msg_action(a: crate::view::Action, text: &str, i: usize) -> MsgAction {
     }
 }
 
+/// A row under a message, visible only while the message (or the row) is hovered:
+/// time plus icon buttons, aligned like the message. Returns the clicked button.
 fn hover_actions(ui: &mut Ui, msg: Rect, right: bool, at: i64, buttons: &[(&str, &str)]) -> Option<usize> {
     ui.add_space(-8.0);
     let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());

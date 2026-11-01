@@ -276,19 +276,6 @@ final class Ui {
         return t;
     }
 
-    /** A soft pill (fill G100) with a label, like the composer's model pill. */
-    static TextView pill(Context c, CharSequence label, View.OnClickListener on) {
-        TextView t = text(c, label, 15, FG);
-        t.setGravity(Gravity.CENTER);
-        t.setSingleLine(true);
-        t.setEllipsize(TextUtils.TruncateAt.END);
-        t.setPadding(dp(16), 0, dp(16), 0);
-        t.setBackground(press(G100, 0, 22));
-        t.setOnClickListener(on);
-        t.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)));
-        return t;
-    }
-
     static EditText input(Context c, String hint, boolean multi) {
         EditText e = new EditText(c);
         e.setHint(hint);

@@ -296,7 +296,7 @@ impl App {
                 crate::picker::show_toast(ctx, why);
             }
         } else {
-            self.point_at(ctx, chat_id, m.item);
+            self.point_at(ctx, chat_id, m.item, m.excerpt.then_some(m.text.as_str()));
         }
     }
 

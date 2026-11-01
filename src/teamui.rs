@@ -383,6 +383,7 @@ impl App {
             self.open(View::Chat(c.id));
         }
         resp.context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
             if ui.button(format!("{}  Delete agent", ic::TRASH)).clicked() {
                 self.dialog = Some(crate::app::Dialog::DeleteChat(c.id));
             }

@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** A new session: the serif prompt, which project it runs in, and the composer with the run
- *  settings (account, model, effort, access, device, fast) in its + sheet and model pill.
+ *  settings (account, model, effort, access, device, fast) in its + sheet and model badges.
  *  Remembers the last picks per hub. */
 public class NewChat extends Base {
     private JSONObject st;
@@ -69,16 +69,13 @@ public class NewChat extends Base {
         attach = new Attach(this, hub, null);
         comp = new Composer(this, attach, "Chat with Claude…");
         comp.onSend = this::start;
-        comp.onPill = () -> {
-            if (run == null) return;
-            Sheet sh = new Sheet(this, "Run settings");
-            run.rows(this, sh, (f, v) -> { sh.dismiss(); change(f, v); });
-            sh.show();
-        };
+        comp.onModel = () -> { if (run != null) run.pickModel(this, this::change); };
+        comp.onEffort = () -> { if (run != null) run.pickEffort(this, this::change); };
         comp.onPlus = () -> Composer.addSheet(this, attach, run, this::change);
         // Under the composer: Current checkout or New worktree, and the branch (WorkBar).
         work = new WorkBar(this, hub);
         LinearLayout below = Ui.col(this);
+        below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 0, 8, -4));
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
@@ -195,7 +192,7 @@ public class NewChat extends Base {
 
     private void show() {
         slash.settings(run.account + "/" + run.device + "/" + run.access + "/" + run.project, "", "");
-        comp.pill.setText(run.pill());
+        run.badges(comp);
         project.setText(run.projectLabel() + "  ▾");
         mainNote.setVisibility(main() ? View.VISIBLE : View.GONE);
         // A worktree is this PC's: not for a chat that runs on another device.

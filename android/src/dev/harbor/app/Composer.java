@@ -29,13 +29,17 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The rounded composer card: attachments, the text, and a row with +, the model pill, the
- *  mic (speech to text) and the round send button, which turns into Stop while a turn runs and
- *  nothing is typed. An image pasted into the text is attached (Edit). */
+/** The rounded composer card: attachments, the text, and a row with +, the mic (speech to text)
+ *  and the round send button, which turns into Stop while a turn runs and nothing is typed. An
+ *  image pasted into the text is attached (Edit). Its screen puts `badges`, the model and the
+ *  effort, right over the card. */
 final class Composer {
     final LinearLayout view;
     final Edit edit;
-    final TextView pill;
+    final LinearLayout badges;
+    private final LinearLayout modelBadge;
+    private final TextView modelText, effortBadge;
+    private String modelLogo;
     private final FrameLayout send;
     private final TextView sendGlyph;
     private final Activity a;
@@ -47,12 +51,12 @@ final class Composer {
     private boolean running, canSteer, held, editing;
     /** What the send button does while the agent works: "steer" or "queue" (Chat.followUp). */
     private String mode = "queue";
-    /** The usual placeholder; the hub's suggested next message and its Use chip (Recap.java). */
+    /** The usual placeholder; the hub's suggested next message and its Use chip (Suggest.java). */
     final String hint;
     String ghost;
     TextView use;
 
-    Runnable onSend, onStop, onPlus, onPill, onType, onResume, onSendMenu;
+    Runnable onSend, onStop, onPlus, onModel, onEffort, onType, onResume, onSendMenu;
     /** The draft's mentioned messages (Chat.drawMentions), over the files. */
     final LinearLayout mentions;
     private LinearLayout whoRow;
@@ -110,9 +114,9 @@ final class Composer {
         // tag): never in the button row, where it pushed the send button out of the card.
         FrameLayout box = new FrameLayout(a);
         box.addView(edit, new FrameLayout.LayoutParams(-1, -2));
-        use = Recap.useChip(a, this);
+        use = Suggest.useChip(a, this);
         box.addView(use, Ui.margins(new FrameLayout.LayoutParams(-2, Ui.dp(28), Gravity.TOP | Gravity.END), 0, 8, 6, 0));
-        Recap.tapToUse(this);
+        Suggest.tapToUse(this);
         // Who else writes in this chat (the draft here is theirs then), as the desktop's corner.
         whoRow = Ui.row(a);
         whoRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -130,12 +134,7 @@ final class Composer {
         LinearLayout row = Ui.row(a);
         row.setPadding(Ui.dp(4), Ui.dp(4), 0, 0);
         row.addView(Ui.roundButton(a, Ui.I_PLUS, Ui.G100, Ui.FG, 44, v -> { if (onPlus != null) onPlus.run(); }));
-        pill = Ui.pill(a, "", v -> { if (onPill != null) onPill.run(); });
-        // The pill hugs its label inside the room the fixed buttons leave, and ellipsizes there:
-        // no width or font scale can push mic or send out of the card.
-        FrameLayout slot = new FrameLayout(a);
-        slot.addView(pill, new FrameLayout.LayoutParams(-2, Ui.dp(44), Gravity.START | Gravity.CENTER_VERTICAL));
-        row.addView(slot, Ui.margins(new LinearLayout.LayoutParams(0, Ui.dp(44), 1), 8, 0, 0, 0));
+        row.addView(new View(a), new LinearLayout.LayoutParams(0, Ui.dp(44), 1));
         mic = Ui.roundButton(a, new Ui.Draw(Ui.Draw.MIC, Ui.FG), Ui.G100, Ui.FG, 44, v -> { if (voice != null) voice.toggle(); });
         mic.setContentDescription("Dictate");
         row.addView(mic, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
@@ -155,6 +154,26 @@ final class Composer {
         row.addView(send, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(44)), 8, 0, 0, 0));
         view.addView(row, Ui.fill());
         this.row = row;
+
+        // A wrap-content row shrinks its weighted child only when it overflows, so a long model name
+        // ellipsizes instead of pushing the effort badge out.
+        badges = Ui.row(a);
+        badges.setBaselineAligned(false);
+        modelBadge = Ui.row(a);
+        modelBadge.setPadding(Ui.dp(10), 0, Ui.dp(12), 0);
+        modelBadge.setBackground(badgeBackground());
+        modelBadge.setOnClickListener(v -> { if (onModel != null) onModel.run(); });
+        modelText = Ui.subtitle(Ui.text(a, "", 13, Ui.FG));
+        modelBadge.addView(modelText, Ui.margins(new LinearLayout.LayoutParams(-2, -2, 1), 6, 0, 0, 0));
+        badges.addView(modelBadge, new LinearLayout.LayoutParams(-2, Ui.dp(44), 1));
+        effortBadge = Ui.subtitle(Ui.text(a, "", 13, Ui.FG));
+        effortBadge.setGravity(Gravity.CENTER);
+        effortBadge.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
+        effortBadge.setBackground(badgeBackground());
+        effortBadge.setOnClickListener(v -> { if (onEffort != null) onEffort.run(); });
+        badges.addView(effortBadge, Ui.margins(new LinearLayout.LayoutParams(-2, Ui.dp(44)), 6, 0, 0, 0));
+        // Landscape with the keyboard up leaves no room for them; on a phone upright they stay.
+        edit.getViewTreeObserver().addOnGlobalLayoutListener(this::fitBadges);
 
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }
@@ -215,6 +234,40 @@ final class Composer {
         } finally { edit.renumbering = false; }
     }
 
+    /** Fills the badges: the provider's logo in assets/logos ("": a bot), the model's name, and
+     *  the effort ("": the provider has none, no badge). */
+    void badges(String logo, String model, String effort) {
+        if (!logo.equals(modelLogo)) {
+            if (modelLogo != null) modelBadge.removeViewAt(0);
+            modelLogo = logo;
+            android.graphics.Bitmap b = Ui.logo(a, logo);
+            View mark;
+            if (b != null) {
+                android.widget.ImageView iv = new android.widget.ImageView(a);
+                iv.setImageBitmap(b);
+                mark = iv;
+            } else mark = Ui.icon(a, Ui.I_BOT, 13, Ui.G700);
+            modelBadge.addView(mark, 0, new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)));
+        }
+        modelText.setText(model);
+        modelBadge.setContentDescription("Model: " + model);
+        effortBadge.setText(effort);
+        effortBadge.setContentDescription("Effort: " + effort);
+        effortBadge.setVisibility(effort.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private android.graphics.drawable.Drawable badgeBackground() {
+        return new android.graphics.drawable.InsetDrawable(Ui.press(Ui.CARD, Ui.LINE, 14), 0, Ui.dp(8), 0, Ui.dp(8));
+    }
+
+    /** The badges go with the card (a read-only chat has none) and where height is scarce. The
+     *  screen's height doesn't depend on them, so this can't flip back and forth. */
+    private void fitBadges() {
+        boolean room = view.getVisibility() == View.VISIBLE && a.findViewById(android.R.id.content).getHeight() >= Ui.dp(320);
+        int want = room ? View.VISIBLE : View.GONE;
+        if (badges.getVisibility() != want) badges.setVisibility(want);
+    }
+
     boolean empty() { return edit.getText().toString().trim().isEmpty(); }
 
     void running(boolean r) {
@@ -257,7 +310,7 @@ final class Composer {
         send.setBackground(Ui.press(stopping ? Ui.STOP : Ui.INK, 0, 22));
         sendGlyph.setTextColor(stopping ? Ui.ON_STOP : Ui.ON_INK);
         send.setContentDescription(d);
-        Recap.refresh(this);
+        Suggest.refresh(this);
     }
 
     // ---- pasting images ----

@@ -9,6 +9,9 @@
 //! `OutputCommand::TextSelectionSettled` (the text egui would copy); [`Selection`]
 //! catches it, and the transcript ties it to the message the drag started in.
 //!
+//! A click on the chip scrolls to that piece and lights up just its rows. A selection is what
+//! egui copied, not the message's markdown, so it's looked for in the glyphs the message paints.
+//!
 //! Each mention waiting in the composer has its own note box: what the user says about
 //! that message or excerpt. The note goes to the agent right under its quote.
 
@@ -26,6 +29,12 @@ use std::collections::HashMap;
 const MAX_CHARS: usize = 4000;
 /// How long a message stays highlighted after its chip is clicked.
 const FLASH_SECS: f64 = 1.6;
+/// Frames to look for an excerpt (a table lays out unseen on its first frame) before
+/// the whole message lights up instead.
+const SEEK_FRAMES: u8 = 5;
+/// A piece of painted text this short can sit inside an excerpt without being part of it
+/// (a list's number, a copy button): selections don't hold those.
+const SKIPPED_CHARS: usize = 16;
 
 /// A mentioned message: where it is (its item in the same chat) and what it said.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -66,6 +75,12 @@ pub struct Selected {
     pub text: String,
     /// Where the button goes, from the item's top left (set once the item is drawn).
     pub offset: Option<Vec2>,
+    /// When the selection last changed or the pointer last moved, in `Context` time.
+    pub settled_at: f64,
+    /// Since when the button shows (restarted while the pointer is on it).
+    pub shown_at: Option<f64>,
+    /// The button timed out: it stays away until a new selection.
+    pub gone: bool,
 }
 
 /// egui plugin keeping the text of the last settled label selection (a drag released,
@@ -102,12 +117,39 @@ pub fn has_selection(ctx: &egui::Context) -> bool {
     ctx.with_plugin(|s: &mut egui::text_selection::LabelSelectionState| s.has_selection()).unwrap_or(false)
 }
 
+/// A message pointed at: it scrolls into view and lights up, or just its excerpt does.
+pub struct Flash {
+    pub chat: i64,
+    pub item: usize,
+    since: f64,
+    /// The scroll to it is still due.
+    scroll: bool,
+    /// The excerpt, while it's still to be found in what the message paints.
+    seek: Option<String>,
+    tries: u8,
+    /// The excerpt's rows from the item's top left. Empty: the whole message lights up.
+    rows: Vec<Rect>,
+}
+
+impl Flash {
+    /// Still looking for an excerpt, which may be inside a folded tool call or notice.
+    pub fn seeking(&self) -> bool {
+        self.seek.is_some()
+    }
+}
+
+/// What [`State::seek`] left for [`State::flash`] while item is drawn.
+pub struct Seek {
+    from: usize,
+    view: Rect,
+}
+
 #[derive(Default)]
 pub struct State {
     /// Per composer (chat id), mentions waiting to be sent.
     pub drafts: HashMap<i64, Vec<Mention>>,
-    /// The message being pointed at: chat, item, start time, scroll still due.
-    pub flash: Option<(i64, usize, f64, bool)>,
+    /// The message being pointed at.
+    pub flash: Option<Flash>,
     /// The message (chat, item) the latest press in a transcript landed on.
     pub press: Option<(i64, usize)>,
     /// Selected text that can be mentioned.
@@ -117,28 +159,162 @@ pub struct State {
 }
 
 impl State {
+    /// Called by the transcript before drawing item `i`. An excerpt is found in the glyphs
+    /// the message paints, and egui paints no label outside the clip rect: until it's found
+    /// the item draws with no clip, and [`Self::flash`] puts the clip back on its shapes.
+    pub fn seek(&self, ui: &mut Ui, chat_id: i64, i: usize) -> Option<Seek> {
+        self.flash.as_ref().filter(|f| f.chat == chat_id && f.item == i && f.seeking())?;
+        let (view, from) = (ui.clip_rect(), ui.ctx().graphics(|g| g.get(ui.layer_id()).map_or(0, |l| l.next_idx().0)));
+        ui.set_clip_rect(Rect::EVERYTHING);
+        Some(Seek { from, view })
+    }
+
     /// Called by the transcript after drawing item `i` in `rect`: scrolls to it and
     /// paints the fading highlight while it's the one pointed at.
-    pub fn flash(&mut self, ui: &mut Ui, chat_id: i64, i: usize, rect: Rect) {
-        let Some((c, item, since, scroll)) = self.flash else { return };
-        if c != chat_id || item != i {
-            return;
+    pub fn flash(&mut self, ui: &mut Ui, chat_id: i64, i: usize, rect: Rect, seek: Option<Seek>) {
+        let Some(f) = self.flash.as_mut().filter(|f| f.chat == chat_id && f.item == i) else { return };
+        if let Some(s) = seek {
+            ui.set_clip_rect(s.view);
+            let rows = excerpt_rows(ui, &s, f.seek.as_deref().unwrap_or_default());
+            f.tries = f.tries.saturating_sub(1);
+            if rows.is_empty() && f.tries > 0 {
+                ui.ctx().request_repaint();
+                return;
+            }
+            f.seek = None;
+            f.rows = rows.iter().map(|r| r.translate(-rect.min.to_vec2())).collect();
         }
-        if scroll {
-            ui.scroll_to_rect(rect, Some(egui::Align::Center));
-            self.flash = Some((c, item, ui.input(|x| x.time), false));
+        let now = ui.input(|x| x.time);
+        if f.scroll {
+            let to = if f.rows.is_empty() { rect } else { scroll_target(&f.rows, ui.clip_rect().height()).translate(rect.min.to_vec2()) };
+            ui.scroll_to_rect(to, Some(egui::Align::Center));
+            f.since = now;
+            f.scroll = false;
         }
-        let age = ui.input(|x| x.time) - since;
+        let age = now - f.since;
         if age > FLASH_SECS {
             self.flash = None;
             return;
         }
         let t = w::tokens(ui);
         let a = (1.0 - age / FLASH_SECS) as f32;
-        let r = rect.expand2(Vec2::new(6.0, 4.0));
-        ui.painter().rect(r, CornerRadius::same(RADIUS_LG), w::alpha(t.blue(400), 0.25 * a), Stroke::new(1.5, w::alpha(t.blue(700), a)), StrokeKind::Outside);
+        let (fill, stroke) = (w::alpha(t.blue(400), 0.25 * a), Stroke::new(1.5, w::alpha(t.blue(700), a)));
+        if f.rows.is_empty() {
+            ui.painter().rect(rect.expand2(Vec2::new(6.0, 4.0)), CornerRadius::same(RADIUS_LG), fill, stroke, StrokeKind::Outside);
+        }
+        for r in &f.rows {
+            ui.painter().rect(r.translate(rect.min.to_vec2()).expand2(Vec2::new(2.0, 0.0)), CornerRadius::same(RADIUS_MD), fill, stroke, StrokeKind::Outside);
+        }
         ui.ctx().request_repaint();
     }
+}
+
+/// Text the item painted, with what it takes to place its glyphs.
+struct Painted {
+    pos: egui::Pos2,
+    galley: std::sync::Arc<egui::Galley>,
+    clip: Rect,
+}
+
+fn painted_in(shape: &egui::Shape, clip: Rect, out: &mut Vec<Painted>) {
+    match shape {
+        egui::Shape::Text(t) => out.push(Painted { pos: t.pos, galley: t.galley.clone(), clip }),
+        // A commit's pill (commits.rs).
+        egui::Shape::Vec(v) => v.iter().for_each(|s| painted_in(s, clip, out)),
+        _ => {}
+    }
+}
+
+/// The rows `excerpt` covers in what was painted since `s.from`, on screen; empty when it's
+/// not there. Those shapes get the clip they should have had.
+fn excerpt_rows(ui: &Ui, s: &Seek, excerpt: &str) -> Vec<Rect> {
+    let mut texts = vec![];
+    ui.ctx().graphics_mut(|g| {
+        let list = g.entry(ui.layer_id());
+        for k in s.from..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(k), |cs| {
+                painted_in(&cs.shape, cs.clip_rect, &mut texts);
+                cs.clip_rect = cs.clip_rect.intersect(s.view);
+            });
+        }
+    });
+    let pieces: Vec<Vec<char>> = texts.iter().map(|t| t.galley.rows.iter().flat_map(|r| r.glyphs.iter().map(|g| g.chr)).collect()).collect();
+    let Some(hits) = locate(&pieces, excerpt) else { return vec![] };
+    let mut rows = vec![];
+    for (p, range) in hits {
+        let t = &texts[p];
+        let mut at = 0;
+        for row in &t.galley.rows {
+            let n = row.glyphs.len();
+            let (a, b) = (range.start.max(at) - at, range.end.min(at + n).saturating_sub(at));
+            at += n;
+            if a >= b {
+                continue;
+            }
+            let (left, right) = (row.pos.x + row.glyphs[a].pos.x, row.pos.x + row.glyphs[b - 1].max_x());
+            let r = Rect::from_min_max(pos2(left, row.min_y()), pos2(right, row.max_y())).translate(t.pos.to_vec2());
+            // Sideways only: the excerpt itself may be off screen for now.
+            rows.push(Rect::from_x_y_ranges(r.left().max(t.clip.left())..=r.right().min(t.clip.right()), r.y_range()));
+        }
+    }
+    merged(rows)
+}
+
+/// `rows` with the pieces of a line as one (a paragraph's bold words are labels of their own).
+fn merged(rows: Vec<Rect>) -> Vec<Rect> {
+    let mut out: Vec<Rect> = vec![];
+    for r in rows {
+        match out.last_mut() {
+            Some(l) if (r.bottom().min(l.bottom()) - r.top().max(l.top())) > 0.5 * r.height().min(l.height()) && (r.left() - l.right()).abs() < r.height() * 1.5 => *l = l.union(r),
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// What to bring into a view `view` high: the rows, or their start when they don't fit.
+fn scroll_target(rows: &[Rect], view: f32) -> Rect {
+    let all = rows.iter().fold(Rect::NOTHING, |a, r| a.union(*r));
+    Rect::from_min_size(all.min, Vec2::new(all.width(), all.height().min(view * 0.8)))
+}
+
+/// Where `excerpt` lies in `pieces`, the text painted, in paint order: per piece touched, the
+/// range of its chars. Selections and glyphs differ in whitespace (egui joins labels with
+/// spaces and new lines of its own), so only the rest is compared. An ending "…" may be a cut.
+fn locate(pieces: &[Vec<char>], excerpt: &str) -> Option<Vec<(usize, std::ops::Range<usize>)>> {
+    let ink = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<Vec<char>>();
+    let whole = ink(excerpt);
+    let cut = ink(excerpt.trim().trim_matches('\u{2026}'));
+    [whole, cut].iter().filter(|n| !n.is_empty()).find_map(|needle| {
+        pieces.iter().enumerate().find_map(|(p, chars)| chars.iter().enumerate().filter(|(_, c)| **c == needle[0]).find_map(|(o, _)| follow(pieces, p, o, needle)))
+    })
+}
+
+/// `needle` read from char `o` of piece `p` on, if it's all there.
+fn follow(pieces: &[Vec<char>], mut p: usize, mut o: usize, needle: &[char]) -> Option<Vec<(usize, std::ops::Range<usize>)>> {
+    let mut out = vec![];
+    let mut n = 0;
+    while n < needle.len() {
+        let chars = pieces.get(p)?;
+        let mut span: Option<std::ops::Range<usize>> = None;
+        while o < chars.len() && n < needle.len() {
+            if !chars[o].is_whitespace() {
+                if chars[o] != needle[n] {
+                    break;
+                }
+                n += 1;
+                span = Some(span.map_or(o, |s| s.start)..o + 1);
+            }
+            o += 1;
+        }
+        if n < needle.len() && o < chars.len() && (span.is_some() || chars.iter().filter(|c| !c.is_whitespace()).count() > SKIPPED_CHARS) {
+            return None;
+        }
+        out.extend(span.map(|s| (p, s)));
+        p += 1;
+        o = 0;
+    }
+    Some(out)
 }
 
 impl Mention {
@@ -278,9 +454,11 @@ impl App {
         Some(if m.len <= MAX_CHARS && folded(text) == folded(&m.text) { m } else { excerpt(m, text) })
     }
 
-    /// Scrolls the chat to item `i` and highlights it for a moment.
-    pub fn point_at(&mut self, ctx: &egui::Context, chat_id: i64, i: usize) {
-        self.mentions.flash = Some((chat_id, i, ctx.input(|x| x.time), true));
+    /// Scrolls the chat to item `i` and highlights it for a moment: `excerpt`, if given and
+    /// found in it, or all of it.
+    pub fn point_at(&mut self, ctx: &egui::Context, chat_id: i64, i: usize, excerpt: Option<&str>) {
+        let seek = excerpt.filter(|e| !e.trim().is_empty()).map(str::to_string);
+        self.mentions.flash = Some(Flash { chat: chat_id, item: i, since: ctx.input(|x| x.time), scroll: true, seek, tries: SEEK_FRAMES, rows: vec![] });
         ctx.request_repaint();
     }
 }
@@ -472,5 +650,84 @@ mod tests {
         add(&mut list, excerpt(whole(1, "a b c"), "c"));
         assert_eq!(list.len(), 3);
         assert_eq!(folded(" a\n  b\tc "), "a b c");
+    }
+
+    fn pieces(texts: &[&str]) -> Vec<Vec<char>> {
+        texts.iter().map(|t| t.chars().collect()).collect()
+    }
+
+    /// What of `texts` `locate` picked, a string per piece.
+    fn found(texts: &[&str], excerpt: &str) -> Option<Vec<String>> {
+        let ps = pieces(texts);
+        locate(&ps, excerpt).map(|hits| hits.into_iter().map(|(p, r)| ps[p][r].iter().collect()).collect())
+    }
+
+    #[test]
+    fn an_excerpt_is_found_with_any_whitespace() {
+        assert_eq!(found(&["One two three four."], "two three"), Some(vec!["two three".into()]));
+        // Wrapped in the message, a line break in the selection, or the other way round.
+        assert_eq!(found(&["One two  three four."], "two\nthree"), Some(vec!["two  three".into()]));
+        assert_eq!(found(&["One two\nthree four."], "  two three\n"), Some(vec!["two\nthree".into()]));
+        // egui puts a space between two labels of a line that the text doesn't have.
+        assert_eq!(found(&["Run ", "cargo", "test now"], "Run cargo test now"), Some(vec!["Run".into(), "cargo".into(), "test now".into()]));
+    }
+
+    #[test]
+    fn an_excerpt_spans_labels_and_lines() {
+        // Bold in a paragraph: three labels, the selection reads straight through.
+        assert_eq!(found(&["First ", "bold", " last"], "st bold la"), Some(vec!["st".into(), "bold".into(), "la".into()]));
+        // Two paragraphs, and the blank line egui's selection puts between them.
+        assert_eq!(found(&["end of one.", "Start of two."], "of one.\n\nStart"), Some(vec!["of one.".into(), "Start".into()]));
+        // A list: its numbers are painted but can't be selected.
+        assert_eq!(found(&["1.", "First item", "2.", "Second item"], "First item\nSecond"), Some(vec!["First item".into(), "Second".into()]));
+    }
+
+    #[test]
+    fn a_long_gap_is_not_part_of_an_excerpt() {
+        assert_eq!(found(&["Alpha", "a whole paragraph that was not selected", "Beta"], "Alpha Beta"), None);
+    }
+
+    #[test]
+    fn the_end_of_a_cut_excerpt_is_found() {
+        // Cut with "…": what's before it counts.
+        assert_eq!(found(&["It answers nothing to send and stops."], "answers nothing\u{2026}"), Some(vec!["answers nothing".into()]));
+        assert_eq!(found(&["It answers nothing."], "\u{2026}answers\u{2026}"), Some(vec!["answers".into()]));
+        // The message's own "…" stays in.
+        assert_eq!(found(&["Well\u{2026} maybe"], "Well\u{2026}"), Some(vec!["Well\u{2026}".into()]));
+        // At `MAX_CHARS`, with no mark: the start of the selection.
+        let long = "word ".repeat(2000);
+        let m = excerpt(whole(0, &long), &long);
+        assert!(found(&[long.as_str()], &m.text).is_some());
+    }
+
+    #[test]
+    fn what_isnt_there_is_not_found() {
+        assert_eq!(found(&["Some text."], "other"), None);
+        assert_eq!(found(&["Some text."], "   "), None);
+        assert_eq!(found(&["Some text."], "\u{2026}"), None);
+        assert_eq!(found(&[], "x"), None);
+        // Runs out at the end of the message.
+        assert_eq!(found(&["Some text."], "text. And more"), None);
+    }
+
+    #[test]
+    fn the_first_start_that_goes_through_wins() {
+        // "ab" starts twice before the one that holds the rest.
+        assert_eq!(found(&["ab ab abc"], "abc"), Some(vec!["abc".into()]));
+    }
+
+    #[test]
+    fn a_line_of_labels_is_one_row_and_lines_stay_apart() {
+        let r = |l: f32, t: f32, w: f32| Rect::from_min_size(pos2(l, t), Vec2::new(w, 20.0));
+        assert_eq!(merged(vec![r(0.0, 0.0, 40.0), r(44.0, 1.0, 30.0), r(0.0, 20.0, 50.0)]), vec![r(0.0, 0.0, 74.0).union(r(44.0, 1.0, 30.0)), r(0.0, 20.0, 50.0)]);
+        // Two cells of a table are on one line, far apart.
+        assert_eq!(merged(vec![r(0.0, 0.0, 40.0), r(300.0, 0.0, 30.0)]).len(), 2);
+    }
+
+    #[test]
+    fn a_tall_excerpt_scrolls_to_its_start() {
+        let rows = [Rect::from_min_size(pos2(10.0, 100.0), Vec2::new(50.0, 20.0)), Rect::from_min_size(pos2(0.0, 120.0), Vec2::new(80.0, 900.0))];
+        assert_eq!(scroll_target(&rows, 2000.0), Rect::from_min_size(pos2(0.0, 100.0), Vec2::new(80.0, 920.0)));
+        assert_eq!(scroll_target(&rows, 500.0), Rect::from_min_size(pos2(0.0, 100.0), Vec2::new(80.0, 400.0)));
     }
 }

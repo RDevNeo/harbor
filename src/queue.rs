@@ -866,6 +866,7 @@ impl App {
                     let g = w::overlay(ui, r, |ui| w::btn(ic::GRIP).muted().icon_xs().show(ui)).tip("Right-click to move it up or down");
                     let n = place.unwrap_or(0);
                     g.context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
                         if n > 0 && ui.button("Move up").clicked() {
                             moves = Some((m.id, n - 1));
                             ui.close();

@@ -1136,8 +1136,8 @@ fn change_volume(p: &mut Player, percent: u32) {
 pub fn take_keys(ctx: &egui::Context) -> [bool; 3] {
     let none = egui::Modifiers::NONE;
     let [space, left, right, up, down, m, f, esc, prev, next] = ctx.input_mut(|i| [Key::Space, Key::ArrowLeft, Key::ArrowRight, Key::ArrowUp, Key::ArrowDown, Key::M, Key::F, Key::Escape, Key::PageUp, Key::PageDown].map(|k| i.consume_key(none, k)));
-    if !(space || left || right || up || down || m || f || esc) {
-        return [prev, next, false];
+    if !(space || left || right || up || down || m || f) {
+        return [prev, next, esc];
     }
     let mut v = viewer();
     let v = &mut *v;
@@ -1167,12 +1167,8 @@ pub fn take_keys(ctx: &egui::Context) -> [bool; 3] {
     if f {
         fullscreen(ctx, &mut v.was_full);
     }
-    // Esc leaves full screen first, then the viewer.
-    let leave = esc && ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-    if leave {
-        fullscreen(ctx, &mut v.was_full);
-    }
-    [prev, next, esc && !leave]
+    // Esc closes the viewer, in full screen too ([`close`] gives the window back its size).
+    [prev, next, esc]
 }
 
 /// "1:05", or "1:02:05" past an hour.
@@ -1333,6 +1329,16 @@ pub fn controls(ui: &mut Ui, screen: Rect) -> Drawn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn esc_closes_a_video_in_full_screen_too() {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput { events: vec![egui::Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }], ..Default::default() };
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().fullscreen = Some(true);
+        let mut keys = [false; 3];
+        ctx.run_ui(input, |ui| keys = take_keys(ui.ctx())).textures_delta.clear();
+        assert_eq!(keys, [false, false, true]);
+    }
 
     #[test]
     fn the_player_uses_only_what_the_system_has() {

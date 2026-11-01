@@ -1934,6 +1934,10 @@ fn serve(stream: TcpStream, hub: &Hub, tx: &Sender<crate::control::Incoming>, wa
     }
 }
 
+fn nothing_to_send(text: &str, files: usize, mentions: usize) -> bool {
+    text.trim().is_empty() && files == 0 && mentions == 0
+}
+
 /// A mention on a user's message, as the phone draws it: a message (author, snippet), or a
 /// chat (`kind` "chat", its global id and title; from 0.69).
 fn mention_json(m: &crate::mentions::Mention) -> Value {
@@ -3966,7 +3970,9 @@ impl App {
             Ok(f) => f,
             Err(r) => return r,
         };
-        if text.is_empty() && files.is_empty() {
+        // A message of only mentioned messages is a message (the composer sends it too).
+        let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
+        if nothing_to_send(&text, files.len(), mentions.len()) {
             return err(400, "nothing to send");
         }
         if self.chat(chat).is_some_and(|c| c.retired) {
@@ -3981,7 +3987,6 @@ impl App {
             self.api.hub.set_typing(chat, &self.sender_device, "", "", false, None);
             self.api.hub.clear_draft(chat);
         }
-        let mentions: Vec<crate::mentions::Mention> = serde_json::from_value(body["mentions"].clone()).unwrap_or_default();
         self.queue.mode = Some(mode);
         self.send_to(chat, text, files, mentions, ctx);
         let queued = self.queued(chat).iter().filter(|q| q.intent.is_empty()).count() > before;
@@ -4387,6 +4392,17 @@ mod tests {
         let kept = &hub.typing(6)[0].text;
         assert_eq!(kept.chars().count(), PREVIEW_CHARS);
         assert!(kept.ends_with('é'));
+    }
+
+    #[test]
+    fn a_message_of_only_mentions_is_sent() {
+        assert!(nothing_to_send("", 0, 0));
+        assert!(nothing_to_send("  \n", 0, 0));
+        assert!(!nothing_to_send("", 0, 1), "mentions alone");
+        assert!(!nothing_to_send("", 1, 0));
+        assert!(!nothing_to_send("hi", 0, 0));
+        let ms: Vec<crate::mentions::Mention> = serde_json::from_value(json!([{ "item": 3, "from": "Claude", "text": "hi" }])).unwrap();
+        assert_eq!(ms.len(), 1, "the wire form parses");
     }
 
     #[test]

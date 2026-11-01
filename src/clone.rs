@@ -468,7 +468,7 @@ impl App {
             "project": { "name": r.name, "path": r.path.to_string_lossy(), "remote": r.remote },
             "account": c.account, "model": c.model, "effort": c.effort, "access": c.access, "device": "", "text": text,
         });
-        let restore = Some(text);
+        let restore = Some((text, vec![]));
         let ctx = self.ctx_for(Some(r.id));
         let me = (self.shared().me().name, crate::api::local_device());
         let tx = self.inc_tx.clone();

@@ -484,6 +484,7 @@ impl App {
                     act = Some(Act::OpenWeb);
                 }
                 r.context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
                     if ui.button(format!("{}  Copy link", ic::COPY)).clicked() {
                         act = Some(Act::CopyLink);
                         ui.close();

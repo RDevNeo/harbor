@@ -567,6 +567,7 @@ impl App {
             let targets = self.switch_targets(chat_id, false);
             if !targets.is_empty() {
                 ui.menu_button(egui::RichText::new("Continue on…").text_style(crate::theme::ts("label-13")), |ui| {
+            crate::widgets::menu_pad(ui);
                     for id in &targets {
                         let name = self.account(id).map(|a| format!("{} · {}", a.short(), a.email)).unwrap_or_else(|| id.clone());
                         if ui.button(name).clicked() {

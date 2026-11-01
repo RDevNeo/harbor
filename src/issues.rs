@@ -919,6 +919,7 @@ impl App {
                                 // 0: no project here, another PC of the mesh has it (and runs the agent).
                                 let proj = projects.iter().find(|x| x.2.eq_ignore_ascii_case(&i.repo)).map(|x| x.0).or_else(|| self.issue_peer(i, true).map(|_| 0));
                                 resp.context_menu(|ui| {
+            crate::widgets::menu_pad(ui);
                                     if ui.button(format!("{}  Open in side panel", ic::PANEL_RIGHT)).clicked() {
                                         open_url = Some(i.url.clone());
                                         ui.close();
