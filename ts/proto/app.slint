@@ -1,0 +1,205 @@
+import { ListView, LineEdit, Button, Palette } from "std-widgets.slint";
+
+export struct SideRow {
+    id: int,
+    project: bool,
+    title: string,
+    active: bool,
+}
+
+export struct Card {
+    kind: string,
+    text: string,
+    meta: string,
+}
+
+global Theme {
+    out property <color> bg: #17181b;
+    out property <color> panel: #1f2125;
+    out property <color> line: #2e3136;
+    out property <color> text: #e6e6e6;
+    out property <color> muted: #8d9198;
+    out property <color> accent: #3b82f6;
+    out property <color> user: #2a2d33;
+    out property <color> danger: #e5484d;
+}
+
+component SideItem {
+    in property <SideRow> entry;
+    callback clicked();
+    height: root.entry.project ? 30px : 28px;
+
+    Rectangle {
+        background: root.entry.active ? Theme.user : area.has-hover ? #26282d : transparent;
+        border-radius: 6px;
+        x: 6px;
+        width: parent.width - 12px;
+    }
+
+    Text {
+        x: root.entry.project ? 12px : 22px;
+        width: parent.width - self.x - 12px;
+        height: parent.height;
+        text: root.entry.title;
+        overflow: elide;
+        vertical-alignment: center;
+        font-size: root.entry.project ? 12px : 13px;
+        font-weight: root.entry.project ? 600 : 400;
+        color: root.entry.project ? Theme.muted : Theme.text;
+    }
+
+    area := TouchArea {
+        enabled: !root.entry.project;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component CardView {
+    in property <Card> card;
+    VerticalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+
+        if root.card.kind == "user": Rectangle {
+            background: Theme.user;
+            border-radius: 10px;
+            VerticalLayout {
+                padding: 12px;
+                Text {
+                    text: root.card.text;
+                    wrap: word-wrap;
+                    color: Theme.text;
+                    font-size: 14px;
+                }
+            }
+        }
+        if root.card.kind == "text": Text {
+            text: root.card.text;
+            wrap: word-wrap;
+            color: Theme.text;
+            font-size: 14px;
+        }
+        if root.card.kind == "error": Text {
+            text: root.card.text;
+            wrap: word-wrap;
+            color: Theme.danger;
+            font-size: 13px;
+        }
+        if root.card.kind == "line": Text {
+            text: root.card.text;
+            overflow: elide;
+            color: Theme.muted;
+            font-size: 12px;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Harbor prototype";
+    preferred-width: 1400px;
+    preferred-height: 900px;
+    min-width: 640px;
+    min-height: 400px;
+    background: Theme.bg;
+    forward-focus: composer;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    in property <[SideRow]> rows;
+    in property <[Card]> cards;
+    in property <string> chat-title;
+    in property <string> status;
+    in property <bool> running;
+
+    callback open-chat(int);
+    callback send(string);
+    callback stop();
+
+    public function scroll-to-end() {
+        transcript.viewport-y = min(0px, transcript.visible-height - transcript.viewport-height);
+    }
+
+    HorizontalLayout {
+        Rectangle {
+            width: 280px;
+            background: Theme.panel;
+            VerticalLayout {
+                padding-top: 8px;
+                ListView {
+                    for row in root.rows: SideItem {
+                        entry: row;
+                        clicked => {
+                            root.open-chat(row.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            width: 1px;
+            background: Theme.line;
+        }
+
+        VerticalLayout {
+            Rectangle {
+                height: 44px;
+                HorizontalLayout {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    Text {
+                        text: root.chat-title;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        horizontal-stretch: 0;
+                        text: root.status;
+                        vertical-alignment: center;
+                        color: Theme.muted;
+                        font-size: 12px;
+                    }
+                }
+            }
+
+            transcript := ListView {
+                vertical-stretch: 1;
+                for card in root.cards: CardView {
+                    card: card;
+                }
+            }
+
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 8px;
+                composer := LineEdit {
+                    placeholder-text: "Message";
+                    accepted(text) => {
+                        root.send(text);
+                        self.text = "";
+                    }
+                }
+                Button {
+                    text: root.running ? "Stop" : "Send";
+                    clicked => {
+                        if root.running {
+                            root.stop();
+                        } else {
+                            root.send(composer.text);
+                            composer.text = "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
