@@ -17,6 +17,9 @@
     "packages/agents": {
       "name": "@harbor/agents",
       "version": "0.0.0",
+      "dependencies": {
+        "@harbor/store": "workspace:*",
+      },
     },
     "packages/mcp": {
       "name": "@harbor/mcp",
