@@ -7,6 +7,7 @@ import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
 import { DeviceRow, TransferRow } from "devices.slint";
+import { FilesData, FileRow } from "files.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
 import { TermKey } from "terminal.slint";
 import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
@@ -377,6 +378,16 @@ export component AppWindow inherits Window {
     callback device-terminal(string, string);
     callback device-settings();
     callback transfers-clear();
+    in property <FilesData> right-files;
+    in property <[FileRow]> right-file-rows;
+    in property <[TransferRow]> right-file-transfers;
+    in property <bool> right-file-clearable;
+    in property <FilesData> bottom-files;
+    in property <[FileRow]> bottom-file-rows;
+    in property <[TransferRow]> bottom-file-transfers;
+    in property <bool> bottom-file-clearable;
+    callback files-act(string, string, int);
+    callback files-go(string, string);
     callback settings();
     callback prs();
     callback issues();
@@ -1076,6 +1087,16 @@ export component AppWindow inherits Window {
         transfers-clear => {
             root.transfers-clear();
         }
+        files: root.right-files;
+        file-rows: root.right-file-rows;
+        file-transfers: root.right-file-transfers;
+        file-clearable: root.right-file-clearable;
+        files-act(a, i) => {
+            root.files-act("right", a, i);
+        }
+        files-go(p) => {
+            root.files-go("right", p);
+        }
         term-resized(w, h) => {
             root.term-resized("right", w, h, self.cell-w, self.cell-h);
         }
@@ -1155,6 +1176,16 @@ export component AppWindow inherits Window {
         }
         transfers-clear => {
             root.transfers-clear();
+        }
+        files: root.bottom-files;
+        file-rows: root.bottom-file-rows;
+        file-transfers: root.bottom-file-transfers;
+        file-clearable: root.bottom-file-clearable;
+        files-act(a, i) => {
+            root.files-act("bottom", a, i);
+        }
+        files-go(p) => {
+            root.files-go("bottom", p);
         }
         term-resized(w, h) => {
             root.term-resized("bottom", w, h, self.cell-w, self.cell-h);

@@ -10,7 +10,12 @@ export interface PaneTerm {
   kill(): void;
 }
 
-export type Surface<T extends PaneTerm = PaneTerm> = { kind: "chooser" } | { kind: "terminal"; term: T } | { kind: "browser"; url: string } | { kind: "devices" };
+/** What a pane needs of a PC's file browser (net's `FileBrowser`). */
+export interface PaneFiles {
+  title(): string;
+}
+
+export type Surface<T extends PaneTerm = PaneTerm> = { kind: "chooser" } | { kind: "terminal"; term: T } | { kind: "browser"; url: string } | { kind: "devices" } | { kind: "files"; files: PaneFiles };
 
 export interface Pane<T extends PaneTerm> {
   surfaces: Surface<T>[];
@@ -37,6 +42,8 @@ export function title(s: Surface): string {
       return s.url.replace(/^https?:\/\//, "").replace(/\/$/, "");
     case "devices":
       return "Devices";
+    case "files":
+      return s.files.title();
   }
 }
 
@@ -156,6 +163,13 @@ export class Surfaces<T extends PaneTerm> {
       if (i >= 0) return this.show(dock, i);
     }
     this.place(d, { kind: "devices" });
+  }
+
+  /** devices.rs: a PC's files open in a new tab each time. */
+  openFiles(d: Dock, files: PaneFiles): void {
+    const p = this.panes[d];
+    p.surfaces.push({ kind: "files", files });
+    this.show(d, p.surfaces.length - 1);
   }
 
   /** Every terminal ends with the window. */

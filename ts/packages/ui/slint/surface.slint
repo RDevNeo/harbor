@@ -3,6 +3,7 @@ import { Icons } from "icons.slint";
 import { Btn, Glyph, KeyCap, TipArea } from "widgets.slint";
 import { TerminalView, TermLine, TermKey } from "terminal.slint";
 import { DevicesView, DeviceRow, TransferRow } from "devices.slint";
+import { FilesView, FilesData, FileRow } from "files.slint";
 
 export struct SurfaceTab {
     kind: string,
@@ -196,6 +197,12 @@ export component SurfacePane inherits Rectangle {
     callback device-terminal(string);
     callback device-settings();
     callback transfers-clear();
+    in property <FilesData> files;
+    in property <[FileRow]> file-rows;
+    in property <[TransferRow]> file-transfers;
+    in property <bool> file-clearable;
+    callback files-act(string, int);
+    callback files-go(string);
     public function focus-chooser() {
         chooser.grab();
     }
@@ -321,10 +328,48 @@ export component SurfacePane inherits Rectangle {
             root.transfers-clear();
         }
     }
-    if root.kind == "browser" || root.kind == "files": Text {
+    if root.kind == "files": FilesView {
+        y: root.top;
+        height: root.height - self.y;
+        data: root.files;
+        entries: root.file-rows;
+        transfers: root.file-transfers;
+        clearable: root.file-clearable;
+        back => {
+            root.files-act("back", 0);
+        }
+        up => {
+            root.files-act("up", 0);
+        }
+        home => {
+            root.files-act("home", 0);
+        }
+        hidden => {
+            root.files-act("hidden", 0);
+        }
+        upload => {
+            root.files-act("upload", 0);
+        }
+        refresh => {
+            root.files-act("refresh", 0);
+        }
+        open(i) => {
+            root.files-act("open", i);
+        }
+        download(i) => {
+            root.files-act("download", i);
+        }
+        clear => {
+            root.files-act("clear", 0);
+        }
+        go(p) => {
+            root.files-go(p);
+        }
+    }
+    if root.kind == "browser": Text {
         y: root.top + max(root.height * 0.4 - 90px, 16px);
         height: 20px;
-        text: root.kind == "browser" ? "The browser isn't in the TypeScript app yet" : "Files aren't in the TypeScript app yet";
+        text: "The browser isn't in the TypeScript app yet";
         font-size: 14px;
         color: Theme.subtle;
         horizontal-alignment: center;

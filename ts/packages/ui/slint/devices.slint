@@ -130,6 +130,71 @@ component Device {
     }
 }
 
+// devices.rs `transfers_ui`: under the list, and under a PC's file browser.
+export component TransferList inherits VerticalLayout {
+    in property <[TransferRow]> transfers;
+    in property <bool> clearable;
+    callback clear();
+    spacing: 8px;
+    HorizontalLayout {
+        height: 22px;
+        Text {
+            text: "Transfers";
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        if root.clearable: Btn {
+            text: "Clear";
+            size: xs;
+            variant: ghost;
+            clicked => {
+                root.clear();
+            }
+        }
+    }
+    for x in root.transfers: HorizontalLayout {
+        spacing: 8px;
+        padding-bottom: 6px;
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            y: 0;
+            if x.state == TransferState.done || x.state == TransferState.error: Glyph {
+                icon: x.state == TransferState.error ? Icons.circle-x : Icons.circle-check;
+                size: 14px;
+                color: x.state == TransferState.error ? Theme.red-900 : Theme.green-900;
+            }
+            if x.state == TransferState.run || x.state == TransferState.wait: Spinner {
+                radius: 6px;
+                color: Theme.subtle;
+            }
+        }
+        VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: x.label;
+                font-size: 13px;
+                color: Theme.fg;
+                overflow: elide;
+            }
+            if x.state == TransferState.run: Meter {
+                max-width: 320px;
+                frac: x.frac;
+            }
+            Text {
+                text: x.line;
+                font-size: 12px;
+                color: x.state == TransferState.error ? Theme.red-900 : Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
 export component DevicesView inherits Rectangle {
     in property <[DeviceRow]> devices;
     in property <string> summary;
@@ -211,65 +276,12 @@ export component DevicesView inherits Rectangle {
                     }
                 }
             }
-            if root.transfers.length > 0: VerticalLayout {
+            if root.transfers.length > 0: TransferList {
                 padding-top: 8px + 14px;
-                spacing: 8px;
-                HorizontalLayout {
-                    height: 22px;
-                    Text {
-                        text: "Transfers";
-                        font-size: 12px;
-                        color: Theme.subtle;
-                        vertical-alignment: center;
-                    }
-                    Rectangle {
-                        horizontal-stretch: 1;
-                    }
-                    if root.clearable: Btn {
-                        text: "Clear";
-                        size: xs;
-                        variant: ghost;
-                        clicked => {
-                            root.clear();
-                        }
-                    }
-                }
-                for x in root.transfers: HorizontalLayout {
-                    spacing: 8px;
-                    padding-bottom: 6px;
-                    Rectangle {
-                        width: 16px;
-                        height: 16px;
-                        y: 0;
-                        if x.state == TransferState.done || x.state == TransferState.error: Glyph {
-                            icon: x.state == TransferState.error ? Icons.circle-x : Icons.circle-check;
-                            size: 14px;
-                            color: x.state == TransferState.error ? Theme.red-900 : Theme.green-900;
-                        }
-                        if x.state == TransferState.run || x.state == TransferState.wait: Spinner {
-                            radius: 6px;
-                            color: Theme.subtle;
-                        }
-                    }
-                    VerticalLayout {
-                        spacing: 4px;
-                        Text {
-                            text: x.label;
-                            font-size: 13px;
-                            color: Theme.fg;
-                            overflow: elide;
-                        }
-                        if x.state == TransferState.run: Meter {
-                            max-width: 320px;
-                            frac: x.frac;
-                        }
-                        Text {
-                            text: x.line;
-                            font-size: 12px;
-                            color: x.state == TransferState.error ? Theme.red-900 : Theme.subtle;
-                            wrap: word-wrap;
-                        }
-                    }
+                transfers: root.transfers;
+                clearable: root.clearable;
+                clear => {
+                    root.clear();
                 }
             }
         }

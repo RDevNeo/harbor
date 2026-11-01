@@ -1,0 +1,281 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, Separator, Spinner, TipArea } from "widgets.slint";
+import { TransferList, TransferRow } from "devices.slint";
+
+export struct FileRow {
+    name: string,
+    dir: bool,
+    image: bool,
+    meta: string,
+    thumb: image,
+    has-thumb: bool,
+}
+
+export struct FilesData {
+    path: string,
+    loading: bool,
+    error: string,
+    can-back: bool,
+    can-up: bool,
+    hidden: bool,
+}
+
+// devices.rs `Files::ui`: one row per entry, 34px, its download button on hover.
+component FileEntry {
+    in property <FileRow> e;
+    callback open();
+    callback download();
+    height: 34px;
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.open();
+        }
+        if area.has-hover: Rectangle {
+            background: Theme.gray-100;
+            border-radius: Theme.radius-md;
+        }
+        if root.e.has-thumb: Image {
+            x: 18px - 13px;
+            width: 26px;
+            height: 26px;
+            source: root.e.thumb;
+            image-fit: contain;
+        }
+        if !root.e.has-thumb: Glyph {
+            x: 18px - 13px;
+            width: 26px;
+            icon: root.e.dir ? Icons.folder : root.e.image ? Icons.file-image : Icons.file;
+            size: 16px;
+            color: root.e.dir ? Theme.blue-900 : Theme.subtle;
+        }
+        meta := Text {
+            x: root.width - 16px - 13px - 8px - self.width;
+            width: self.preferred-width;
+            text: root.e.meta;
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Text {
+            x: 40px;
+            width: max(root.width - 44px - meta.width - 44px, 40px);
+            text: root.e.name;
+            font-size: 13.5px;
+            color: Theme.fg;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if !root.e.dir && area.has-hover: Rectangle {
+            x: root.width - 16px - 13px;
+            width: 26px;
+            height: 26px;
+            border-radius: Theme.radius-md;
+            background: dl.has-hover ? Theme.gray-300 : transparent;
+            Glyph {
+                icon: Icons.download;
+                size: 14px;
+                color: dl.has-hover ? Theme.fg : Theme.subtle;
+            }
+            dl := TipArea {
+                tip: "Download to Downloads";
+                clicked => {
+                    root.download();
+                }
+            }
+        }
+    }
+}
+
+export component FilesView inherits Rectangle {
+    in property <FilesData> data;
+    in property <[FileRow]> entries;
+    in property <[TransferRow]> transfers;
+    in property <bool> clearable;
+    callback back();
+    callback up();
+    callback home();
+    callback go(string);
+    callback hidden();
+    callback upload();
+    callback refresh();
+    callback open(int);
+    callback download(int);
+    callback clear();
+    property <length> transfers-h: root.transfers.length == 0 ? 0px : 150px;
+    property <string> path: data.path;
+    changed path => {
+        if !field.has-focus {
+            field.text = root.path;
+        }
+    }
+    toolbar := HorizontalLayout {
+        y: 0;
+        height: 28px + 12px;
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 2px;
+        Btn {
+            icon: Icons.arrow-left;
+            size: icon-xs;
+            variant: ghost-muted;
+            enabled: root.data.can-back;
+            tip: "Back";
+            clicked => {
+                root.back();
+            }
+        }
+        Btn {
+            icon: Icons.corner-left-up;
+            size: icon-xs;
+            variant: ghost-muted;
+            enabled: root.data.can-up;
+            tip: "Up";
+            clicked => {
+                root.up();
+            }
+        }
+        Btn {
+            icon: Icons.house;
+            size: icon-xs;
+            variant: ghost-muted;
+            tip: "Home";
+            clicked => {
+                root.home();
+            }
+        }
+        Rectangle {
+            width: 6px;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            background: Theme.bg100;
+            border-width: 1px;
+            border-color: field.has-focus ? Theme.gray-700 : Theme.border;
+            border-radius: Theme.radius-md;
+            field := TextInput {
+                x: 8px;
+                width: parent.width - 16px;
+                // egui's path field: while it isn't being edited it shows where the browser is.
+                init => {
+                    self.text = root.data.path;
+                }
+                changed has-focus => {
+                    if !self.has-focus {
+                        self.text = root.data.path;
+                    }
+                }
+                font-family: "Geist Mono";
+                font-size: 13px;
+                color: Theme.fg;
+                single-line: true;
+                vertical-alignment: center;
+                accepted => {
+                    if self.text != "" {
+                        root.go(self.text);
+                    }
+                }
+            }
+        }
+        Rectangle {
+            width: 8px;
+        }
+        Btn {
+            icon: root.data.hidden ? Icons.eye : Icons.eye-off;
+            size: icon-xs;
+            variant: ghost-muted;
+            pressed: root.data.hidden;
+            tip: root.data.hidden ? "Hide hidden files" : "Show hidden files";
+            clicked => {
+                root.hidden();
+            }
+        }
+        Btn {
+            icon: Icons.upload;
+            size: icon-xs;
+            variant: ghost-muted;
+            tip: "Upload files here";
+            clicked => {
+                root.upload();
+            }
+        }
+        Btn {
+            icon: Icons.refresh;
+            size: icon-xs;
+            variant: ghost-muted;
+            enabled: !root.data.loading;
+            tip: "Refresh";
+            clicked => {
+                root.refresh();
+            }
+        }
+    }
+    Separator {
+        y: toolbar.height + 8px;
+        width: root.width;
+    }
+    property <length> list-top: toolbar.height + 8px + 1px + 8px;
+    if root.data.error != "": Text {
+        x: 14px;
+        y: root.list-top + 8px;
+        width: root.width - 28px;
+        text: root.data.error;
+        font-size: 13px;
+        color: Theme.red-900;
+        wrap: word-wrap;
+    }
+    if root.entries.length == 0 && root.data.loading: Spinner {
+        x: (root.width - self.width) / 2;
+        y: root.list-top + 20px;
+        radius: 7px;
+        color: Theme.subtle;
+    }
+    if root.entries.length == 0 && !root.data.loading && root.data.error == "": Text {
+        y: root.list-top + 20px;
+        width: root.width;
+        text: "Empty folder";
+        font-size: 13px;
+        color: Theme.subtle;
+        horizontal-alignment: center;
+    }
+    Flickable {
+        y: root.list-top + (root.data.error != "" ? 36px : 0px);
+        height: max(root.height - self.y - root.transfers-h, 80px);
+        interactive: false;
+        VerticalLayout {
+            alignment: start;
+            padding-left: 6px;
+            padding-right: 6px;
+            for e[i] in root.entries: FileEntry {
+                e: e;
+                open => {
+                    root.open(i);
+                }
+                download => {
+                    root.download(i);
+                }
+            }
+        }
+    }
+    if root.transfers.length > 0: Separator {
+        y: root.height - root.transfers-h;
+        width: root.width;
+    }
+    if root.transfers.length > 0: Flickable {
+        y: root.height - root.transfers-h + 9px;
+        height: root.transfers-h - 9px;
+        interactive: false;
+        TransferList {
+            x: 14px;
+            width: parent.width - 28px;
+            transfers: root.transfers;
+            clearable: root.clearable;
+            clear => {
+                root.clear();
+            }
+        }
+    }
+}

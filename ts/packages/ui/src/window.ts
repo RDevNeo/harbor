@@ -147,6 +147,24 @@ export interface TransferRow {
   frac: number;
 }
 
+export interface FilesData {
+  path: string;
+  loading: boolean;
+  error: string;
+  can_back: boolean;
+  can_up: boolean;
+  hidden: boolean;
+}
+
+export interface FileRow {
+  name: string;
+  dir: boolean;
+  image: boolean;
+  meta: string;
+  thumb: Pixels;
+  has_thumb: boolean;
+}
+
 export interface PopItem {
   kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native";
   icon: string;
@@ -352,6 +370,16 @@ export interface AppWindow extends slint.ComponentHandle {
   device_terminal: (d: string, key: string) => void;
   device_settings: () => void;
   transfers_clear: () => void;
+  right_files: FilesData;
+  right_file_rows: slint.Model<FileRow>;
+  right_file_transfers: slint.Model<TransferRow>;
+  right_file_clearable: boolean;
+  bottom_files: FilesData;
+  bottom_file_rows: slint.Model<FileRow>;
+  bottom_file_transfers: slint.Model<TransferRow>;
+  bottom_file_clearable: boolean;
+  files_act: (d: string, action: string, i: number) => void;
+  files_go: (d: string, path: string) => void;
   open_media: (path: string) => void;
 
   draft: string;

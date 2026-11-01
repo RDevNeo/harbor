@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
-import { clearDeviceTransfers, deviceCanSend, deviceDetails, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
+import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
@@ -37,7 +37,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow } from "./window.ts";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -177,6 +177,9 @@ export class Shell {
   private readonly transferRows = new slint.ArrayModel<TransferRow>([]);
   private transfers: DeviceTransfer[] = [];
   private paired: PairedDevice[] = [];
+  private readonly fileRows: Record<Dock, slint.ArrayModel<FileRow>> = { right: new slint.ArrayModel<FileRow>([]), bottom: new slint.ArrayModel<FileRow>([]) };
+  private readonly fileTransfers: Record<Dock, slint.ArrayModel<TransferRow>> = { right: new slint.ArrayModel<TransferRow>([]), bottom: new slint.ArrayModel<TransferRow>([]) };
+  private readonly thumbs = new Map<string, Pixels | null>();
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -289,7 +292,16 @@ export class Shell {
     w.transfers = this.transferRows;
     w.device_send = (key, x, y) => this.deviceMenu(key, x, y);
     w.device_terminal = (d, key) => this.deviceTerminal(d === "right" ? "right" : "bottom", key);
-    w.device_files = () => this.toast("A PC's files aren't in the TypeScript app yet");
+    w.device_files = (d, key) => this.deviceFiles(d === "right" ? "right" : "bottom", key);
+    w.right_file_rows = this.fileRows.right;
+    w.bottom_file_rows = this.fileRows.bottom;
+    w.right_file_transfers = this.fileTransfers.right;
+    w.bottom_file_transfers = this.fileTransfers.bottom;
+    w.files_act = (d, a, i) => this.filesAct(d === "right" ? "right" : "bottom", a, i);
+    w.files_go = (d, p) => {
+      const fb = this.filesOf(d === "right" ? "right" : "bottom");
+      if (fb && p.trim() !== "") fb.go(p.trim());
+    };
     w.device_settings = () => this.pages.openSettings("devices");
     w.transfers_clear = () => {
       this.transfers = clearDeviceTransfers(this.transfers);
@@ -1592,6 +1604,10 @@ export class Shell {
     const w = this.win;
     if (this.devicesShown()) this.refreshDevices();
     for (const d of ["right", "bottom"] as const) {
+      const fb = this.filesOf(d);
+      if (fb) this.refreshBrowsed(d, fb);
+    }
+    for (const d of ["right", "bottom"] as const) {
       const p = this.surfaces.panes[d];
       sync(
         this.paneTabs[d],
@@ -2027,7 +2043,7 @@ export class Shell {
     );
     sync(
       this.transferRows,
-      [...this.transfers].reverse().map((x) => ({ label: x.label, state: x.error !== null ? "error" : x.done ? "done" : x.waiting ? "wait" : "run", line: transferStatus(x), frac: x.size > 0 ? x.sent / x.size : 0 })),
+      [...this.transfers].reverse().map(transferRow),
       sameJson,
     );
     w.transfers_clearable = this.transfers.some((x) => x.done || x.error !== null);
@@ -2069,6 +2085,99 @@ export class Shell {
   private sendToDevice(d: PairedDevice, kind: DeviceSendKind, text: string | null, files: string[]): void {
     void deviceSend(d, kind, text, files, this.transfers, { ...this.hub.deviceEnv, wake: () => this.refreshDevices() });
     this.refreshDevices();
+  }
+
+  /** devices.rs `Action::Files`: a PC's files over ssh, in a new tab. */
+  private deviceFiles(d: Dock, key: string): void {
+    const dev = this.paired.find((p) => p.key === key);
+    const host = dev ? this.hub.deviceHost(dev) : null;
+    if (!dev || !host) return;
+    const home = homedir();
+    this.surfaces.openFiles(d, new FileBrowser(dev, host.ssh, null, { home, downloads: () => deviceDownloadsDir(home), wake: () => this.refreshPanes() }));
+  }
+
+  private filesOf(d: Dock): FileBrowser | null {
+    const s = this.surfaces.showing(d);
+    return s?.kind === "files" && s.files instanceof FileBrowser ? s.files : null;
+  }
+
+  private thumbOf(local: string): Pixels | null {
+    const got = this.thumbs.get(local);
+    if (got !== undefined) return got;
+    const media = this.media;
+    if (!media) return null;
+    this.thumbs.set(local, null);
+    media.images
+      .decode(local, null, media.images.THUMB_PX)
+      .then(({ image }) => {
+        this.thumbs.set(local, image);
+        this.refreshPanes();
+      })
+      .catch(() => {});
+    return null;
+  }
+
+  private refreshBrowsed(d: Dock, fb: FileBrowser): void {
+    const rows = fb.shown().map((e) => {
+      const image = !e.dir && deviceIsImage(e.name);
+      const local = image ? fb.preview(fb.join(e.name), e.size, e.mtime) : null;
+      const thumb = local === null ? null : this.thumbOf(local);
+      return { name: e.name, dir: e.dir, image, meta: e.dir ? "" : deviceHumanSize(e.size), thumb: thumb ?? noPixels, has_thumb: thumb !== null };
+    });
+    fb.pumpPreviews();
+    const transfers = [...fb.transfers].reverse().map(transferRow);
+    const data = { path: fb.path, loading: fb.loading, error: fb.error ?? "", can_back: fb.history.length > 0, can_up: fb.path !== "/", hidden: fb.showHidden };
+    const w = this.win;
+    sync(this.fileRows[d], rows, (a, b) => a.name === b.name && a.dir === b.dir && a.meta === b.meta && a.has_thumb === b.has_thumb);
+    sync(this.fileTransfers[d], transfers, sameJson);
+    if (d === "right") {
+      w.right_files = data;
+      w.right_file_clearable = fb.transfers.some((x) => x.done || x.error !== null);
+    } else {
+      w.bottom_files = data;
+      w.bottom_file_clearable = fb.transfers.some((x) => x.done || x.error !== null);
+    }
+  }
+
+  private filesAct(d: Dock, action: string, i: number): void {
+    const fb = this.filesOf(d);
+    if (!fb) return;
+    const e = fb.shown()[i];
+    switch (action) {
+      case "back":
+        fb.back();
+        break;
+      case "up": {
+        const p = fb.parent();
+        if (p !== null) fb.go(p);
+        break;
+      }
+      case "home":
+        fb.go("~");
+        break;
+      case "hidden":
+        fb.showHidden = !fb.showHidden;
+        break;
+      case "refresh":
+        fb.list(fb.path);
+        break;
+      case "upload":
+        void import("@harbor/media").then(async ({ picker }) => {
+          const files = await picker.pick({ title: "Upload files", multiple: true });
+          if (files.length > 0) fb.upload(files);
+        });
+        break;
+      case "open":
+        if (e) void fb.click(e).then((local) => local !== null && this.openImage(local));
+        break;
+      case "download":
+        if (e) void fb.downloadToDownloads(fb.join(e.name), e.size);
+        break;
+      case "clear":
+        fb.transfers = clearDeviceTransfers(fb.transfers);
+        break;
+    }
+    this.refreshPanes();
   }
 
   /** surface.rs: a terminal on a paired PC, ssh into it. */
@@ -2342,6 +2451,11 @@ interface Draft {
   text: string;
   files: string[];
   mentions: Mention[];
+}
+
+/** devices.rs `transfers_ui`: one transfer, newest first in the list. */
+function transferRow(x: DeviceTransfer): TransferRow {
+  return { label: x.label, state: x.error !== null ? "error" : x.done ? "done" : x.waiting ? "wait" : "run", line: transferStatus(x), frac: x.size > 0 ? x.sent / x.size : 0 };
 }
 
 /** What the window takes from the running hub. */
