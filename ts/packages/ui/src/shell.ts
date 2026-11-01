@@ -7,7 +7,7 @@ import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor
 import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
-import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
+import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { updateToast } from "./logic/hubseam.ts";
@@ -25,7 +25,7 @@ import { Data, mentionOf as fromStore } from "./data.ts";
 import { web } from "./logic/browser.ts";
 import { BrowserEngine, clearCrashes, crashing, helperPath, hostOf, keyMessages, sourceDir } from "./browser.ts";
 import { gridSize } from "./logic/terminal.ts";
-import { linkAt } from "./markdown.ts";
+import { linkAt, selectionAt } from "./markdown.ts";
 import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
@@ -174,6 +174,7 @@ export class Shell {
   private readonly workspaces: () => Workspaces;
   private readonly hub: ShellHub;
   private shownProjects: number[] = [];
+  private selection: { seq: number; text: string } | null = null;
   private readonly deviceRows = new slint.ArrayModel<DeviceRow>([]);
   private readonly transferRows = new slint.ArrayModel<TransferRow>([]);
   private transfers: DeviceTransfer[] = [];
@@ -292,6 +293,12 @@ export class Shell {
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
     w.reorder = (id, target, above) => this.reorder(id, target, above);
+    w.sel_mention = () => {
+      const s = this.selection;
+      this.selection = null;
+      w.sel_shown = false;
+      if (s) this.cardAction(s.seq, "excerpt", s.text);
+    };
     w.devices = this.deviceRows;
     w.transfers = this.transferRows;
     w.device_send = (key, x, y) => this.deviceMenu(key, x, y);
@@ -586,6 +593,8 @@ export class Shell {
     this.page = null;
     this.view = "chat";
     this.chatId = id;
+    this.selection = null;
+    this.win.sel_shown = false;
     this.engine.unread.delete(id);
     this.engine.failed.delete(id);
     this.data.store.set("last_chat", String(id));
@@ -2484,8 +2493,8 @@ export class Shell {
     this.openChat(c.id);
   }
 
-  /** A hover-bar button of message `seq` (chat.rs `msg_action`). */
-  private cardAction(seq: number, a: string): void {
+  /** A hover-bar button of message `seq` (chat.rs `msg_action`); "excerpt" mentions the `excerpt` selected in it. */
+  private cardAction(seq: number, a: string, excerpt = ""): void {
     if (a.startsWith("q-")) {
       this.queueAction(seq, a);
       return;
@@ -2504,8 +2513,9 @@ export class Shell {
       this.win.draft = `${quote}\n${this.win.draft}`;
       this.drafts.set(this.key(), this.win.draft);
       this.win.focus_composer();
-    } else if (a === "mention") {
-      const m = mentionOf(item, seq, mentionAgent({ sub: chat.role === "sub", name: chat.name }, this.kind(this.chatSel())));
+    } else if (a === "mention" || a === "excerpt") {
+      const whole = mentionOf(item, seq, mentionAgent({ sub: chat.role === "sub", name: chat.name }, this.kind(this.chatSel())));
+      const m = whole && a === "excerpt" ? excerptOf(whole, excerpt) : whole;
       if (!m) return;
       const list = this.mentions.get(this.key()) ?? [];
       addMention(list, m);
@@ -2519,6 +2529,25 @@ export class Shell {
 
 
   private openLink(url: string): void {
+    if (url.startsWith("sel:")) {
+      const sel = selectionAt(url);
+      const w = this.win;
+      if (sel === null) {
+        // The press on the button is what ends the selection: the button stays for that press.
+        const was = this.selection;
+        setTimeout(() => {
+          if (this.selection !== was) return;
+          this.selection = null;
+          w.sel_shown = false;
+        }, 150);
+        return;
+      }
+      this.selection = sel;
+      w.sel_shown = sel.text.trim() !== "";
+      w.sel_x = sel.x;
+      w.sel_y = sel.y;
+      return;
+    }
     if (url.startsWith("at:")) {
       const hit = linkAt(url);
       if (hit !== null) this.openLink(hit);

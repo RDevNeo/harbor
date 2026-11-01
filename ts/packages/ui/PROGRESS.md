@@ -54,7 +54,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | usertext | done as logic; the window shows chat mentions as links, tags and commands blue; erase-whole keys not wired | 15 of 15 |
 | slash | done as logic; the menu shows and inserts; Harbor commands model, effort, plan, default, new, settle, fork, clear-queue run | 12 of 12 |
 | tags | done as logic; `@file` menu works; `#issue` needs refs from `gh`, not wired | 9 of 9 |
-| mentions | done: Mention from a message's hover bar (and "@" on tool calls, notices and messages) adds a chip over the composer with its tooltip and remove; the message goes to the agent quoted; not yet: a note per mention, mentioning a selected excerpt (transcript text can't be selected) | 5 of 5 |
+| mentions | done: Mention from a message's hover bar (and "@" on tool calls, notices and messages) adds a chip over the composer with its tooltip and remove; the message goes to the agent quoted; text selected in a reply's paragraph gets "Mention selection" and goes as an excerpt (its button sits above the paragraph's start: Slint doesn't say where the drag ended; a selection stays within one paragraph); not yet: a note per mention | 5 of 5 |
 | chatmention | done as logic; `$chat` menu works and the mention is kept on the message; the context sent to the agent (`fillChatMention`) waits for the agents Engine | 4 of 4 |
 | keys | done: the window's shortcuts go through `Keys` with the user's kv `keybindings` (send, send the other way, steer with the oldest queued, stop, sidebar, new thread, team, palette, settings) | 1 of 1 |
 | agentstrip | done as logic; not drawn yet | 4 of 4 |

@@ -172,15 +172,25 @@ export function place(bs: readonly Block[]): Placed[] {
   return out;
 }
 
-/** Blocks' links by the key their selectable text reports a click with ("at:KEY:OFFSET"). */
-const linkTable = new Map<string, Link[]>();
+/** Blocks by the key their selectable text reports with: a click ("at:KEY:OFFSET") or a selection ("sel:KEY:FROM:TO"). */
+const blockTable = new Map<string, { links: Link[]; plain: string; seq: number }>();
 let nextKey = 0;
 
-export function registerLinks(links: Link[]): string {
-  if (links.length === 0) return "";
+/** A key for a block with links, or one in transcript item `seq` (its text can be mentioned); "" for neither. */
+export function registerBlock(plain: string, links: Link[], seq: number): string {
+  if (links.length === 0 && seq < 0) return "";
   const key = String(++nextKey);
-  linkTable.set(key, links);
+  blockTable.set(key, { links, plain, seq });
   return key;
+}
+
+/** A selection reported as "sel:KEY:FROM:TO:X:Y" (byte offsets in either order; where its button goes): its item and the text it covers; null when it isn't one. */
+export function selectionAt(report: string): { seq: number; text: string; x: number; y: number } | null {
+  const m = /^sel:(\d+):(\d+):(\d+):(-?[\d.]+):(-?[\d.]+)$/.exec(report);
+  const b = blockTable.get(m?.[1] ?? "");
+  if (!m || !b || b.seq < 0) return null;
+  const [from, to] = [Number(m[2]), Number(m[3])].sort((x, y) => x - y);
+  return { seq: b.seq, text: Buffer.from(b.plain).subarray(from, to).toString(), x: Number(m[4]), y: Number(m[5]) };
 }
 
 /** The URL under a click reported as "at:KEY:OFFSET", or null (not one, or not on a link). */
@@ -188,5 +198,5 @@ export function linkAt(report: string): string | null {
   const m = /^at:(\d+):(\d+)$/.exec(report);
   if (!m) return null;
   const at = Number(m[2]);
-  return linkTable.get(m[1] ?? "")?.find((l) => at >= l.from && at < l.to)?.url ?? null;
+  return blockTable.get(m[1] ?? "")?.links.find((l) => at >= l.from && at < l.to)?.url ?? null;
 }

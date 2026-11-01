@@ -306,6 +306,10 @@ export interface AppWindow extends slint.ComponentHandle {
   ws_filter: (x: number, y: number) => void;
   ws_all: () => void;
   reorder: (id: number, target: number, above: boolean) => void;
+  sel_shown: boolean;
+  sel_x: number;
+  sel_y: number;
+  sel_mention: () => void;
   settings: () => void;
   prs: () => void;
   issues: () => void;

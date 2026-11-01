@@ -4,7 +4,7 @@ import { actions, type Card, groupLabel, groups, project } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { type Part, parts } from "./logic/usertext.ts";
-import { type Block, blocks, escape, type Placed, place, registerLinks } from "./markdown.ts";
+import { type Block, blocks, escape, type Placed, place, registerBlock } from "./markdown.ts";
 import type { CardData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
@@ -38,7 +38,7 @@ function styled(md: string): slint.StyledText {
   }
 }
 
-function blockData(b: Block, at: Placed): MdBlockData {
+function blockData(b: Block, at: Placed, seq: number): MdBlockData {
   const base: MdBlockData = {
     kind: b.kind,
     text: slint.StyledText.fromPlainText(""),
@@ -59,11 +59,11 @@ function blockData(b: Block, at: Placed): MdBlockData {
   };
   switch (b.kind) {
     case "p":
-      return { ...base, text: styled(b.text), plain: b.plain, key: registerLinks(b.links) };
+      return { ...base, text: styled(b.text), plain: b.plain, key: registerBlock(b.plain, b.links, seq) };
     case "h":
-      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, key: registerLinks(b.links) };
+      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, key: registerBlock(b.plain, b.links, seq) };
     case "li":
-      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, key: registerLinks(b.links) };
+      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, key: registerBlock(b.plain, b.links, seq) };
     case "code":
       return { ...base, code: b.text };
     case "hr":
@@ -76,10 +76,11 @@ function blockData(b: Block, at: Placed): MdBlockData {
   }
 }
 
-export function mdBlocks(md: string): MdBlockData[] {
+/** `seq`: the transcript item the text is in, so a selection of it can be mentioned (-1: none). */
+export function mdBlocks(md: string, seq = -1): MdBlockData[] {
   const bs = blocks(md);
   const at = place(bs);
-  const out = bs.map((b, i) => blockData(b, at[i] as Placed));
+  const out = bs.map((b, i) => blockData(b, at[i] as Placed, seq));
   const last = out.at(-1);
   if (last && (last.kind === "p" || last.kind === "li" || last.kind === "h") && last.after === 0) last.trim = 3;
   return out;
@@ -154,7 +155,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
       return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
     case "text": {
       const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
-      return { ...d, kind: "text", blocks: mdBlocks(md), text: c.text };
+      return { ...d, kind: "text", blocks: mdBlocks(md, seq), text: c.text };
     }
     case "thinking":
       return { ...d, kind: "thinking", text: c.text, open: open.cards.has(seq) };

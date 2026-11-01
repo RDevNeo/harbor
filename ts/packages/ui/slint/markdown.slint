@@ -52,13 +52,36 @@ component Selectable inherits Rectangle {
     callback link(string);
     min-height: shown.min-height;
     preferred-height: shown.preferred-height;
+    property <bool> chose: field.has-focus && field.anchor-position-byte-offset != field.cursor-position-byte-offset;
+    changed chose => {
+        if !self.chose && root.key != "" {
+            root.told = "";
+            root.link("sel:");
+        }
+    }
+    // A selection settles once it rests for a tick: then it can be mentioned, above the block's start
+    // (Slint doesn't say where the drag ended).
+    property <string> seen;
+    property <string> told;
+    Timer {
+        interval: 250ms;
+        running: root.chose;
+        triggered => {
+            let now = field.anchor-position-byte-offset + ":" + field.cursor-position-byte-offset;
+            if now == root.seen && now != root.told {
+                root.told = now;
+                root.link("sel:" + root.key + ":" + now + ":" + root.absolute-position.x / 1px + ":" + root.absolute-position.y / 1px);
+            }
+            root.seen = now;
+        }
+    }
     shown := Inline {
         width: parent.width;
         text: root.text;
         size: root.size;
         ink: root.ink;
     }
-    TextInput {
+    field := TextInput {
         width: parent.width;
         height: parent.height;
         read-only: true;
@@ -75,6 +98,7 @@ component Selectable inherits Rectangle {
             if root.key != "" && self.has-focus && self.anchor-position-byte-offset == self.cursor-position-byte-offset {
                 root.link("at:" + root.key + ":" + self.cursor-position-byte-offset);
             }
+
         }
     }
 }

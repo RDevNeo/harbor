@@ -370,6 +370,10 @@ export component AppWindow inherits Window {
     callback ws-filter(length, length);
     callback ws-all();
     callback reorder(int, int, bool);
+    in property <bool> sel-shown;
+    in property <length> sel-x;
+    in property <length> sel-y;
+    callback sel-mention();
     in property <[DeviceRow]> devices;
     in property <string> devices-summary;
     in property <[TransferRow]> transfers;
@@ -1610,6 +1614,29 @@ export component AppWindow inherits Window {
         }
         copy-path => {
             root.lb-copy-path();
+        }
+    }
+
+    // chat.rs `mention_selection_button`: above the selected text, kept in the transcript.
+    if root.sel-shown && root.view == "chat": Rectangle {
+        x: max(root.left-edge + 8px, min(root.sel-x, root.width - root.right-shown - self.width - 8px));
+        // Rust anchors it at the pointer, about a line below the block's top.
+        y: max(root.sel-y + 10px - 28px - 10px, 52px);
+        width: sel-btn.preferred-width;
+        height: sel-btn.preferred-height;
+        sel-btn := Btn {
+            icon: Icons.at-sign;
+            text: "Mention selection";
+            size: xs;
+        }
+        // It acts on the press: the press also ends the text's selection.
+        TouchArea {
+            mouse-cursor: pointer;
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                    root.sel-mention();
+                }
+            }
         }
     }
 

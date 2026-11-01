@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import * as slint from "slint-ui";
-import { blocks, escape, inline, place, plainOf, ROW } from "../src/markdown.ts";
+import { blocks, escape, inline, place, plainOf, registerBlock, ROW, selectionAt } from "../src/markdown.ts";
 
 test("paragraphs, headings, breaks and rules", () => {
   expect(blocks("# Title\n\nOne\ntwo  \nthree\n\n---\n\nSub\n---")).toMatchObject([
@@ -83,4 +83,11 @@ test("a block's plain text and its links by byte offset, for selecting and click
     plain: "Café docs ok",
     links: [{ from: 6, to: 10, url: "https://x.dev" }],
   });
+});
+
+test("a selection in a reply's block reports its item and the text it covers", () => {
+  const key = registerBlock("Read the Harbor docs", [], 7);
+  expect(selectionAt(`sel:${key}:16:0:298:157`)).toEqual({ seq: 7, text: "Read the Harbor ", x: 298, y: 157 });
+  expect(selectionAt(`sel:${registerBlock("no item", [], -1)}:0:2:0:0`)).toBeNull();
+  expect(selectionAt("sel:")).toBeNull();
 });
