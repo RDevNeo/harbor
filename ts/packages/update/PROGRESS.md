@@ -148,8 +148,13 @@ What does not work yet:
 - In window mode the `Engine`'s host is `ui`'s `Data` (it has no `isForeign`/`chatLink`/`hostname` of the hub's host), so mixed-mesh chats
   are not told apart from this PC's own in the engine; `--background` keeps the hub's host.
 - Webhooks and the hook listener are not started; `provider_updates` is null; a preview is not announced to other PCs.
-- The runtime grew from 127 MB to 166 MB: `sharp` and its libvips are in it now (the bundle has no `node_modules`). `sharp` and
-  `sherpa-onnx-node` load only when first used; whether `sharp`'s libvips sidecar loads from inside the executable was not tried, so
-  image decoding in the bundle is unverified (sherpa needs its libs on `LD_LIBRARY_PATH`).
+- Native addons (audit item): the runtime (179 MB, was 127 MB) carries sharp's `.node` and libvips and sherpa's `.node` and libraries
+  as embedded files (`harbor:native`, listed per architecture by `scripts/build.ts`). `packages/update/src/native.ts` writes them once,
+  side by side, to `$XDG_CACHE_HOME/harbor/native-<hash>/` (about 50 MB; an older folder is removed) and `process.dlopen`s the addons by
+  path; their `$ORIGIN` rpaths find libvips and onnxruntime there, so no `LD_LIBRARY_PATH` is needed for `harbor --speech-worker`. The
+  bundle holds the JavaScript of `sharp` and `sherpa-onnx-node` and asks the runtime for the addon (a patch of `sharp/dist/sharp.mjs`
+  and a redirect of sherpa's `require`, both in `scripts/build.ts`). Built and run: `harbor --check-native` (sharp decodes a png and an
+  svg, sherpa loads), and a real Parakeet transcription through `harbor --speech-worker` ("Ask not what your country can do for you…",
+  3.6 s with load). The aarch64 files come from the arm runner's own `bun install`; not run here. libmpv (audit item 3) is not covered.
 - Assets (`.slint`, fonts, logos) are in the bundle and written once to `$XDG_RUNTIME_DIR/harbor-embedded-<hash>/` at start.
 - `ui`'s `blankStatus()` has an 8-digit colour (`#00000000`) that Slint's JS binding refuses for a brush.

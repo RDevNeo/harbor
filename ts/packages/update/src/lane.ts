@@ -4,6 +4,7 @@ export type Lane = "bundle" | "runtime";
 
 export const RUNTIME_SOURCES: readonly string[] = [
   "ts/runtime.ts",
+  "ts/globals.ts",
   ...[
     "commands",
     "config",
@@ -14,6 +15,7 @@ export const RUNTIME_SOURCES: readonly string[] = [
     "install",
     "launcher",
     "manifest",
+    "native",
     "minisign",
     "preview",
     "previewmeta",

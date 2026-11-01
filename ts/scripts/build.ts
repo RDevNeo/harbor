@@ -12,15 +12,53 @@ const noExtraBinaries: BunPlugin = {
   },
 };
 
-// Native addons that need files beside them are loaded when first used, so a command that never uses one starts without it.
-const lazyAddon = (name: string): string =>
-  `const load = () => globalThis.__harbor.${name}();
-module.exports = new Proxy(function () {}, {
-  apply: (_t, self, args) => Reflect.apply(load(), self, args),
-  construct: (_t, args) => Reflect.construct(load(), args),
-  get: (_t, key) => (key === "__esModule" ? false : load()[key]),
-  has: (_t, key) => key in load(),
-});`;
+function nativeFiles(): Record<string, string> {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const root = new URL("../node_modules/.bun/", import.meta.url).pathname;
+  const out: Record<string, string> = {};
+  const add = (pattern: string, key: (file: string) => string): void => {
+    for (const f of new Bun.Glob(pattern).scanSync({ cwd: root })) out[key(f)] = `${root}${f}`;
+  };
+  const base = (f: string): string => f.slice(f.lastIndexOf("/") + 1);
+  add(`@img+sharp-linux-${arch}@*/node_modules/@img/sharp-linux-${arch}/lib/*.node`, (f) => `sharp/@img/sharp-linux-${arch}/lib/${base(f)}`);
+  add(`@img+sharp-libvips-linux-${arch}@*/node_modules/@img/sharp-libvips-linux-${arch}/lib/libvips-cpp.so.*`, (f) => `sharp/@img/sharp-libvips-linux-${arch}/lib/${base(f)}`);
+  add(`sherpa-onnx-linux-${arch}@*/node_modules/sherpa-onnx-linux-${arch}/*.{node,so}`, (f) => `sherpa/${base(f)}`);
+  if (!Object.keys(out).some((k) => k.startsWith("sharp/@img/sharp-linux")) || !Object.keys(out).some((k) => k.startsWith("sherpa/"))) {
+    throw new Error("sharp's or sherpa's native files for this architecture are not installed (bun install)");
+  }
+  return out;
+}
+
+const nativeAddons: BunPlugin = {
+  name: "native-addons",
+  setup(build) {
+    build.onResolve({ filter: /^harbor:native$/ }, (a) => ({ path: a.path, namespace: "native" }));
+    build.onLoad({ filter: /.*/, namespace: "native" }, () => {
+      const files = Object.entries(nativeFiles());
+      const imports = files.map(([, p], i) => `import f${i} from ${JSON.stringify(p)} with { type: "file" };`);
+      return { contents: `${imports.join("\n")}\nexport const files = { ${files.map(([k], i) => `${JSON.stringify(k)}: f${i}`).join(", ")} };`, loader: "js" };
+    });
+  },
+};
+
+const addonsFromRuntime: BunPlugin = {
+  name: "addons-from-runtime",
+  setup(build) {
+    // sharp finds its addon through createRequire, which the bundler does not follow.
+    build.onLoad({ filter: /sharp\/dist\/sharp\.mjs$/ }, async (a) => ({
+      contents: (await Bun.file(a.path).text()).replace(
+        "const require = createRequire(import.meta.url);",
+        'const nodeRequire = createRequire(import.meta.url);\nconst require = (id) => (id.startsWith("@img/sharp-") && id.endsWith("/sharp.node") ? globalThis.__harbor.addon("sharp") : nodeRequire(id));',
+      ),
+      loader: "js",
+    }));
+    build.onResolve({ filter: /(\/|^)(sharp|sherpa-onnx)\.node$/ }, (a) => ({ path: a.path, namespace: "addon" }));
+    build.onLoad({ filter: /.*/, namespace: "addon" }, (a) => ({
+      contents: `module.exports = globalThis.__harbor.addon(${JSON.stringify(a.path.includes("sharp") ? "sharp" : "sherpa")});`,
+      loader: "js",
+    }));
+  },
+};
 
 // The bundle has no files beside it: each asset import becomes a file written once, under the content's hash, and its path.
 const embedAssets: BunPlugin = {
@@ -50,19 +88,16 @@ export default file;`,
 const runtimeSlint: BunPlugin = {
   name: "slint-from-runtime",
   setup(build) {
-    build.onResolve({ filter: /^(slint-ui(\/rust-module\.cjs)?|sherpa-onnx-node|sharp)$/ }, (a) => ({ path: a.path, namespace: "runtime" }));
+    build.onResolve({ filter: /^slint-ui(\/rust-module\.cjs)?$/ }, (a) => ({ path: a.path, namespace: "runtime" }));
     build.onLoad({ filter: /.*/, namespace: "runtime" }, (a) => ({
-      contents:
-        a.path === "sherpa-onnx-node" || a.path === "sharp"
-          ? lazyAddon(a.path === "sharp" ? "sharp" : "sherpa")
-          : `module.exports = globalThis.__harbor.${a.path === "slint-ui" ? "slint" : "native"};`,
+      contents: `module.exports = globalThis.__harbor.${a.path === "slint-ui" ? "slint" : "native"};`,
       loader: "js",
     }));
   },
 };
 
 const [kind, outfile, ...rest] = process.argv.slice(2);
-const opt = (name: string): string | undefined => rest[rest.indexOf(name) + 1];
+const opt = (name: string): string | undefined => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined);
 const defines = (pairs: Array<[string, string | undefined]>): Record<string, string> =>
   Object.fromEntries(pairs.filter((p): p is [string, string] => p[1] !== undefined).map(([k, v]) => [k, JSON.stringify(v)]));
 
@@ -75,7 +110,7 @@ const r =
   kind === "app"
     ? await Bun.build({
         entrypoints: [new URL("../app.ts", import.meta.url).pathname],
-        plugins: [embedAssets, runtimeSlint],
+        plugins: [embedAssets, runtimeSlint, addonsFromRuntime],
         target: "bun",
         minify: true,
         outdir: dirname(outfile),
@@ -84,9 +119,9 @@ const r =
       })
     : await Bun.build({
         entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
-        plugins: [noExtraBinaries],
+        plugins: [noExtraBinaries, nativeAddons],
         compile: { outfile },
-        minify: true,
+        minify: !rest.includes("--debug"),
         sourcemap: "none",
         define: defines([["HARBOR_RUNTIME_VERSION", opt("--version")]]),
       });

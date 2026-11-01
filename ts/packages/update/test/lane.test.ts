@@ -42,7 +42,7 @@ test("the list of runtime sources is exactly what the runtime entry imports", ()
     const rel = file.slice(root.length + 1);
     if (seen.has(rel)) return;
     seen.add(rel);
-    for (const m of readFileSync(file, "utf8").matchAll(/from "(\.[^"]+\.ts)"/g)) walk(resolve(dirname(file), m[1] ?? ""));
+    for (const m of readFileSync(file, "utf8").matchAll(/(?:from|import) "(\.[^"]+\.ts)"/g)) walk(resolve(dirname(file), m[1] ?? ""));
   };
   walk(join(root, "ts", "runtime.ts"));
   expect([...seen].sort()).toEqual([...RUNTIME_SOURCES].sort());

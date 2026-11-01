@@ -19,6 +19,16 @@ async function store() {
 // Each command loads only what it needs: `--version` or `harbor mcp` must not start the window's or the mesh's code.
 const commands: Record<string, Command> = {
   ...updateCommands,
+  "--check-native": async () => {
+    const { sharpLib } = await import("./packages/media/src/sharplib.ts");
+    const sharp = await sharpLib();
+    const png = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#f00" } }).png().toBuffer();
+    const svg = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#00f"/></svg>')).png().toBuffer();
+    console.log(`sharp: ok, libvips ${sharp.versions.vips}, a ${png.length} byte png, a ${svg.length} byte png from an svg`);
+    const sherpa = (await import("sherpa-onnx-node")).default;
+    console.log(`sherpa: ${typeof sherpa.OfflineRecognizer === "function" ? "ok" : "no recognizer"}`);
+    return typeof sherpa.OfflineRecognizer === "function" ? 0 : 1;
+  },
   "--version": () => {
     console.log(`harbor ${VERSION === DEV_VERSION ? `${pkg.version} (ts)` : versionLabel()}`);
     return 0;

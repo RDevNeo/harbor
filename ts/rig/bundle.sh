@@ -1,5 +1,5 @@
 #!/bin/bash
-# `turn` makes a real, paid Anthropic call; `window` needs a headless compositor (HTS_RT, see README.md); `swap` replaces the bundle of the running window.
+# `turn` makes a real, paid Anthropic call; `speech` needs the Parakeet model (MODEL); `window` and `swap` need a headless compositor (HTS_RT, see README.md).
 set -u
 HTS=${HTS:-$HOME/.cache/hts}
 TS=${TS:-$(cd "$(dirname "$0")/.." && pwd)}
@@ -9,7 +9,7 @@ T=$W/state
 BUN=${BUN:-$HOME/.bun/bin/bun}
 CLAUDE=${CLAUDE:-$HOME/.local/share/mise/installs/claude/latest/claude}
 REAL_HOME=$HOME
-[ $# -gt 0 ] || set -- version background turn window swap
+[ $# -gt 0 ] || set -- version native background turn window swap
 
 build() {
   rm -rf "$W"; mkdir -p "$B" "$T"/{home,data/harbor,state,cfg,run}
@@ -24,7 +24,7 @@ env_up() {
 }
 
 inside() {
-  [ "$1" = turn ] || ip link set lo up
+  [ "$1" = turn ] || [ "$1" = speech ] || ip link set lo up
   env_up
   case $1 in
     version) "$B/harbor" --version; "$B/harbor" bogus; echo "exit $?" ;;
@@ -33,6 +33,10 @@ inside() {
       sleep 4; echo "alive: $(kill -0 $bg 2>/dev/null && echo yes || echo no)"; ls "$XDG_RUNTIME_DIR"
       printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_processes","arguments":{}}}' | timeout 20 "$B/harbor" mcp --chat 1
       kill -TERM $bg; sleep 1; echo "stopped: $(kill -0 $bg 2>/dev/null && echo no || echo yes)"; cat "$W/bg.log" ;;
+    native) XDG_CACHE_HOME=$T/cache "$B/harbor" --check-native ;;
+    speech)
+      MODEL=${MODEL:-$HTS/tmp/parakeet}
+      XDG_CACHE_HOME=$T/cache "$BUN" "$TS/rig/speech.ts" "$B/harbor" "$MODEL" "$MODEL/test_wavs/en.wav" ;;
     turn)
       mkdir -p "$W/turn" "$W/scratch"
       printf '{"program":"%s","args":["-p","Reply with exactly: bundle ok","--model","haiku","--output-format","stream-json","--verbose","--no-session-persistence","--max-turns","1"],"cwd":"%s","env":[],"input":false}' "$CLAUDE" "$W/scratch" > "$W/turn/cmd.json"
@@ -61,8 +65,8 @@ if [ "${1:-}" = "--inside" ]; then shift; inside "$@"; exit; fi
 build
 for step in "$@"; do
   echo "=== $step"
-  if [ "$step" = turn ]; then
-    "$0" --inside turn
+  if [ "$step" = turn ] || [ "$step" = speech ]; then
+    "$0" --inside "$step"
   elif [ "$step" = window ] || [ "$step" = swap ]; then
     unshare -Urn env HTS_RT="${HTS_RT:?set HTS_RT to the compositor runtime folder}" "$0" --inside "$step"
   else

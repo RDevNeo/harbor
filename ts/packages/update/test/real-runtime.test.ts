@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 const here = dirname(new URL(import.meta.url).pathname);
@@ -15,8 +15,8 @@ function folder(prefix: string): string {
 }
 let dir = "";
 
-async function run(args: string[], isolated = true): Promise<{ out: string; err: string; code: number }> {
-  const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: isolated ? { ...process.env, HOME: dir, XDG_RUNTIME_DIR: dir } : process.env });
+async function run(args: string[], isolated = true, extra: Record<string, string> = {}): Promise<{ out: string; err: string; code: number }> {
+  const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: isolated ? { ...process.env, HOME: dir, XDG_RUNTIME_DIR: dir, ...extra } : process.env });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   return { out: out.trim(), err: err.trim(), code };
 }
@@ -106,4 +106,27 @@ test("harbor mcp answers the protocol itself and relays tool calls over the app'
   } finally {
     server.stop(true);
   }
+});
+
+test("the runtime's own sharp and sherpa load by path from where it wrote them: an image, an svg and the speech engine", async () => {
+  const cache = folder("cache-");
+  const r = await run([join(dir, "harbor"), "--check-native"], true, { XDG_CACHE_HOME: cache });
+  expect(r.err).toBe("");
+  expect(r.out).toMatch(/^sharp: ok, libvips \d+\.\d+\.\d+, a \d+ byte png, a \d+ byte png from an svg\nsherpa: ok$/);
+  expect(r.code).toBe(0);
+  expect(readdirSync(join(cache, "harbor")).filter((d) => d.startsWith("native-"))).toHaveLength(1);
+});
+
+test("harbor --speech-worker starts from the compiled binary with sherpa's libraries found, and answers a request it cannot serve", async () => {
+  const cache = folder("cache-");
+  const model = folder("model-");
+  const p = Bun.spawn([join(dir, "harbor"), "--speech-worker"], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, HOME: dir, XDG_CACHE_HOME: cache } });
+  p.stdin.write(`${JSON.stringify({ op: "load", dir: model })}\n`);
+  p.stdin.write(`${JSON.stringify({ op: "nonsense" })}\n`);
+  p.stdin.end();
+  const lines = (await new Response(p.stdout).text()).trim().split("\n").map((l) => JSON.parse(l) as { error?: string });
+  expect(await p.exited).toBe(0);
+  expect(lines[1]?.error).toBe("unknown request");
+  expect(lines[0]?.error).toBeDefined();
+  expect(lines[0]?.error).not.toMatch(/libonnxruntime|libsherpa|Could not load|cannot open shared object/);
 });
