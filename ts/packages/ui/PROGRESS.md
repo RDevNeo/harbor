@@ -22,14 +22,17 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
   "Steering…" over the status line. Checked against the Rust app in the rig, hover and edit states
   included. Copy, Quote and Mention on a message's
   hover bar work; a theme switch in Omarchy follows within a second.
-- Checked in the private compositor rig against the Rust app on the same synthetic db, dark and light
-  (`shots/`: draft, chat, chat light, model picker; `-rust` and `-ts`): the draft screen, sidebar,
-  top bar, composer, team panel and transcript match in layout, fonts, sizes and colours to a pixel
-  or two. Replies were re-checked block by block against fixed documents (`shots/markdown-*`): the
-  gaps between blocks follow egui_commonmark's newline rules (`markdown.ts` `place`), headings,
-  bullets, numbers, quotes, code frames and tables are drawn as egui draws them. Known differences:
-  transcript text can't be selected; line height inside a paragraph is 20.7px against egui's 21, so
-  long paragraphs drift a pixel per three lines.
+- Checked in the private compositor rig against the Rust app on the same synthetic db, by measuring
+  pixel rows and columns of both screenshots (`shots/*-rust.png` and `*-ts.png`), not by eye: an
+  earlier eyeball pass missed 2-26px gaps. Within a pixel or two, most to the pixel: the draft page,
+  sidebar (rows, search, hover buttons, Settled), top bar, composer, model picker, effort and access
+  popovers, the /, @ and $ menus, chat and project right-click menus (egui's own), snooze, dialogs,
+  team panel, transcript (replies block by block, user bubbles with files, tool runs and cards,
+  thinking, errors, the status line, "Up next"), read-only chats, both themes. Known differences:
+  transcript text can't be selected; Slint draws an inline `code` span boxed where egui draws it
+  plain; Slint's line height is 20.7px for a 16px reply against egui's 21 and 17 for 13px text
+  against egui's 16 (long paragraphs drift a pixel every few lines); egui's spinner dashes turn at
+  other angles.
 - `.slint` files, fonts and the Lucide icons load from source and from `bun build --compile` the same
   way: `src/assets.ts` imports each one as a file and writes them once into a folder named by their
   hash (`$XDG_RUNTIME_DIR/harbor-ui-<hash>`), which Slint loads. Checked by compiling the window's

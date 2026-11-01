@@ -85,9 +85,6 @@ component ThreadRow {
                     root.snooze(self.absolute-position.x, self.absolute-position.y + self.height);
                 }
             }
-            Rectangle {
-                width: root.data.settled ? 0px : 4px;
-            }
             settle-btn := Btn {
                 icon: root.data.settled ? Icons.unarchive : Icons.check;
                 text: root.data.settled ? "Unsettle" : "Settle";
