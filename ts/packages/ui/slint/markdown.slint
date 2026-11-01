@@ -55,8 +55,10 @@ export component MdBlockView {
         height: max(0px, root.height - root.block.bar-top - root.block.bar-bottom);
         background: Theme.gray-500;
     }
+    // egui wraps a line that would reach the column's edge exactly; Slint keeps it.
     inner := VerticalLayout {
         padding-left: root.indent;
+        padding-right: 1px;
         padding-top: root.block.gap;
         padding-bottom: root.block.after;
         if root.block.kind == "p": Inline {

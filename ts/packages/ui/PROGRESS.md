@@ -28,8 +28,8 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
   or two. Replies were re-checked block by block against fixed documents (`shots/markdown-*`): the
   gaps between blocks follow egui_commonmark's newline rules (`markdown.ts` `place`), headings,
   bullets, numbers, quotes, code frames and tables are drawn as egui draws them. Known differences:
-  markdown bold is drawn bold (see Decisions); transcript text can't be selected; line height inside
-  a paragraph is 20.7px against egui's 21, so long paragraphs drift a pixel per three lines.
+  transcript text can't be selected; line height inside a paragraph is 20.7px against egui's 21, so
+  long paragraphs drift a pixel per three lines.
 - `.slint` files, fonts and the Lucide icons load from source and from `bun build --compile` the same
   way: `src/assets.ts` imports each one as a file and writes them once into a folder named by their
   hash (`$XDG_RUNTIME_DIR/harbor-ui-<hash>`), which Slint loads. Checked by compiling the window's
@@ -83,8 +83,9 @@ compile, cards, cursors, scripted input).
   that crash the window at runtime.
 - `HARBOR_POINTER` (as in the Rust app) drives the window by Slint's `dispatchEvent` for the rig:
   synthetic Wayland clicks don't reach Slint's buttons and `wtype` drops keys.
-- Markdown bold is drawn bold. The Rust app's egui loads no bold face, so its bold reads as regular
-  text; that one difference from today's look is on purpose.
+- Markdown bold is drawn regular, as the Rust app draws it (egui_commonmark gives it the strong
+  colour, not a bold face), so the screens match. One line in `markdown.ts` `span` brings bold back
+  if the owner wants it.
 - The window shows what isn't ported as disabled buttons or a dialog naming it; nothing pretends to work.
 
 ## How a new page plugs in

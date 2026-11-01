@@ -38,16 +38,16 @@ test("quotes nest and hold other blocks", () => {
 });
 
 test("a table is one block, its header the first row", () => {
-  expect(blocks("| a | b |\n|---|:-:|\n| 1 | **2** |")).toEqual([{ kind: "table", rows: [["a", "b"], ["1", "**2**"]], quote: 0 }]);
+  expect(blocks("| a | b |\n|---|:-:|\n| 1 | **2** |")).toEqual([{ kind: "table", rows: [["a", "b"], ["1", "2"]], quote: 0 }]);
 });
 
 test("spans go back to inline markdown StyledText accepts and reads as the same text", () => {
   const [p] = blocks("**b** _i_ `c` ~~s~~ [l](http://x) <b>h</b> ![im](a.png) a*b `x``y`");
   expect(p?.kind).toBe("p");
   const text = p?.kind === "p" ? p.text : "";
-  expect(text).toBe("**b** *i* `c` ~~s~~ [l](<http://x>) \\<b\\>h\\</b\\> [im](<a.png>) a\\*b ```x``y```");
+  expect(text).toBe("b *i* `c` ~~s~~ [l](<http://x>) \\<b\\>h\\</b\\> [im](<a.png>) a\\*b ```x``y```");
   expect(() => slint.StyledText.fromMarkdown(text)).not.toThrow();
-  expect(inline([{ text: " bold ", bold: true }])).toBe(" **bold** ");
+  expect(inline([{ text: " bold ", bold: true }])).toBe(" bold ");
 });
 
 test("escaped text is read back as itself", () => {

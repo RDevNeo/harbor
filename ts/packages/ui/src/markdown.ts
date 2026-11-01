@@ -24,7 +24,8 @@ function code(s: string): string {
   return `${fence}${pad}${s}${pad}${fence}`;
 }
 
-/** One span as inline markdown; markers hug the text, so spaces at its ends stay outside them. */
+/** One span as inline markdown; markers hug the text, so spaces at its ends stay outside them. Bold stays
+ *  regular, as egui_commonmark draws it (the strong colour, which is the text's). */
 function span(s: Span): string {
   const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s.text);
   const [lead, body, tail] = [m?.[1] ?? "", m?.[2] ?? s.text, m?.[3] ?? ""];
@@ -32,7 +33,6 @@ function span(s: Span): string {
   let t = s.code ? code(body) : escape(body).replace(/\n/g, "\\\n");
   if (s.strike) t = `~~${t}~~`;
   if (s.italic) t = `*${t}*`;
-  if (s.bold) t = `**${t}**`;
   if (s.link !== undefined) t = `[${t}](<${s.link.replace(/[<>]/g, "")}>)`;
   return `${lead}${t}${tail}`;
 }
