@@ -19,3 +19,5 @@ export * as prs from "./github/prs.ts";
 export * as prdetail from "./github/prdetail.ts";
 export * as issuedetail from "./github/issuedetail.ts";
 export * as ghdetails from "./github/details.ts";
+export * as ghmesh from "./ghmesh.ts";
+export * as ghwire from "./github/api.ts";

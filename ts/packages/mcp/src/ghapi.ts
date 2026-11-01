@@ -225,7 +225,7 @@ export interface MeshPort {
   peer(id: string): Peer | undefined;
   http(dest: Dest, method: string, path: string, body: Json, waitMs: number): Promise<[status: number, body: Json]>;
   forward(peer: Peer, req: { method: string; path: string[]; body: Json; sender: [name: string, device: string]; ctx: Json }): Promise<Reply>;
-  mapNew(home: string, reply: Reply, global: boolean): Reply;
+  mapNew(home: string, reply: Reply, global: boolean): Reply | Promise<Reply>;
 }
 
 export interface HostPort {
@@ -734,6 +734,6 @@ export class GhApi {
     const { mesh, host } = this.deps;
     const sender: [string, string] = [`${call.device === "" ? "Phone" : call.device} via ${mesh.me().name}`, this.deps.deviceId(call.token)];
     const reply = await mesh.forward(peer, { method: "POST", path: ["v1", "issues", "fix"], body: { url, extra }, sender, ctx: host.ctx() });
-    return mesh.mapNew(peer.id, reply, call.global);
+    return await mesh.mapNew(peer.id, reply, call.global);
   }
 }

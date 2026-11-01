@@ -203,3 +203,11 @@ check and reviewer mapping, diffs of several files, `fetch_on`/`set_open_on` aga
 - Types stay in `ghapi.ts` (`Pr`, `PrFetched`, `PrFull`, `IssueFull`, `DiffLine`, `Note`, `Group`); the github files import them from there.
 - The index exports them as `gh`, `prs`, `prdetail`, `issuedetail` and `ghdetails`.
 - Left: wiring `prsPort`/`detailsPort` into the app's `GhDeps` (needs the mesh package's http and the issues port), and the ui side.
+
+## GhApi wiring (ghmesh.ts, github/api.ts)
+
+`createGhApi({ shared, mesh, host, blocks, deviceId })` builds a `GhApi` with the real `prsPort`, `issuesPort`, `detailsPort`
+and `meshPort(shared, mesh)` (net's `Shared` and `Mesh.forward`). Left to the app: `host` (`HostPort`: the project list, the
+agent label, and starting the "Merge with…" / "Fix with…" threads needs the agents Engine), `blocks` (net's markdown blocks)
+and calling `api.handle` from the phone API's `/v1/prs` and `/v1/issues` routes. `MeshPort.mapNew` is async here (Rust polled
+up to 8 s on a thread).
