@@ -117,6 +117,8 @@ export interface RunningHub {
   funnel: Funnel;
   prs: chatpr.ChatPrs;
   account: AccountService;
+  /** What else holds a worktree folder's rename back: the window's terminals open in it. */
+  setBusyIn(f: (dir: string) => string | null): void;
   /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
   devices(): { list: PairedDevice[]; served: number };
   deviceEnv: DeviceSendEnv;
@@ -241,7 +243,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const projectClones = new ProjectClones({ store, engine: () => eng(), hub, mesh: () => mesh, phone: () => phone, touch: () => hub.touch(null, true) });
   const clones = projectClones.state;
-  const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) });
+  let busyIn: (dir: string) => string | null = () => null;
+  const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
   const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
   const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
@@ -671,6 +674,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phone,
     engine: live,
     move: mover,
+    setBusyIn: (f) => {
+      busyIn = f;
+    },
     funnel,
     prs,
     account,

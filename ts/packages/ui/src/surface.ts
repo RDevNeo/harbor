@@ -191,6 +191,11 @@ export class Surfaces<T extends PaneTerm> {
     delete s.engine;
   }
 
+  terminalIn(dir: string): boolean {
+    const root = dir.replace(/\/+$/, "");
+    return Object.values(this.panes).some((p) => p.surfaces.some((s) => s.kind === "terminal" && s.term.alive && (s.term.cwd === root || s.term.cwd.startsWith(`${root}/`))));
+  }
+
   /** Every terminal ends with the window. */
   dispose(): void {
     for (const p of Object.values(this.panes)) for (const s of p.surfaces) if (s.kind === "terminal") s.term.kill();

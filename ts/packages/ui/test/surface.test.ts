@@ -76,3 +76,14 @@ test("dev servers: loopback and every-address listeners, not Harbor's own or pri
   const tcp6 = `${head}   0: 00000000000000000000000001000000:1771 00000000000000000000000000000000:0000 0A\n`;
   expect(listeningPorts([tcp, tcp6], 47920)).toEqual([3000, 6001, 8080]);
 });
+
+test("a live terminal in a folder or under it holds the folder; a dead one or a sibling doesn't", () => {
+  const { s, spawned } = panes();
+  s.openTerminal("wt", "/w/harbor-add-thing/src");
+  expect(s.terminalIn("/w/harbor-add-thing")).toBe(true);
+  expect(s.terminalIn("/w/harbor-add")).toBe(false);
+  s.hide("bottom");
+  expect(s.terminalIn("/w/harbor-add-thing/")).toBe(true);
+  for (const t of spawned) t.alive = false;
+  expect(s.terminalIn("/w/harbor-add-thing")).toBe(false);
+});

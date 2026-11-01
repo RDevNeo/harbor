@@ -1537,6 +1537,11 @@ export class Shell {
   }
 
   /** picker.rs `show_toast`: 8 seconds over the bottom edge. */
+  /** worktree.rs `ws_folder_busy`: a live terminal of a pane runs in `dir` or under it. */
+  terminalIn(dir: string): boolean {
+    return this.surfaces.terminalIn(dir);
+  }
+
   toast(message: string): void {
     this.win.toast = message;
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
@@ -2655,6 +2660,8 @@ export interface ShellHooks {
   closer?: (close: () => void) => void;
   /** Gets the window's toast, for what finishes behind it (a move to another PC). */
   toaster?: (toast: (text: string) => void) => void;
+  /** Gets why a folder can't be renamed now as far as the window knows (a terminal open in it). */
+  busyIn?: (busy: (dir: string) => string | null) => void;
 }
 
 export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Promise<void> {
@@ -2679,6 +2686,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   shell.onQuit = hooks.quit ?? null;
   hooks.closer?.(() => win.hide());
   hooks.toaster?.((t) => shell.toast(t));
+  hooks.busyIn?.((dir) => (shell.terminalIn(dir) ? "a terminal is open in it" : null));
   win.show();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
