@@ -55,7 +55,7 @@ const after = (v: string[], k: string): string | undefined => {
 };
 
 // A steer is a stream-json user message with `priority: "now"`; a plain one has none.
-test("steer message has priority now", () => {
+test("steer_message_has_priority_now", () => {
   const plain = JSON.parse(agent.claudeMessage("hi", []).trim()) as Record<string, unknown>;
   expect("priority" in plain).toBe(false);
   const steer = JSON.parse(agent.claudeMessage("also the square", [], "now").trim()) as { priority: string; type: string; message: { content: { text: string }[] } };
@@ -64,7 +64,7 @@ test("steer message has priority now", () => {
   expect(steer.message.content[0]?.text).toBe("also the square");
 });
 
-test("a stopped turn's late exit leaves the next turn", () => {
+test("a_stopped_turns_late_exit_leaves_the_next_turn", () => {
   const exit = (d: string): agent.Event => ({ type: "exited", ok: false, dir: d });
   expect(agent.isStaleExit(exit("/t/5-1"), "/t/5-2")).toBe(true);
   expect(agent.isStaleExit(exit("/t/5-2"), "/t/5-2")).toBe(false);
@@ -73,12 +73,12 @@ test("a stopped turn's late exit leaves the next turn", () => {
   expect(agent.isStaleExit({ type: "stderr", text: "x" }, "/t/5-2")).toBe(false);
 });
 
-test("a device's exit line is no event", () => {
+test("a_devices_exit_line_is_no_event", () => {
   expect(agent.parseClaude({ type: REMOTE_EXIT, code: 0 })).toEqual([]);
 });
 
 // A lead's access binds it: Read only and Auto-edit leads get no shell and no bypass; an untrusted project's own settings stay off.
-test("lead follows the chat's access", async () => {
+test("lead_follows_the_chats_access", async () => {
   const args = async (access: string, trusted: boolean): Promise<string[]> => (await agent.build(spec({ access, trusted, team: { role: "lead", system: "lead" } }))).cmd.args;
   for (const [access, mode] of [
     ["plan", "plan"],
@@ -112,7 +112,7 @@ const fakeBridge: agent.Bridge = {
 };
 
 // A remote turn carries the account's login: first on stdin, before the profile and the session lines; never in ssh's arguments.
-test("remote turn sends the login on stdin", async () => {
+test("remote_turn_sends_the_login_on_stdin", async () => {
   const was = { ...agent.integrations };
   agent.integrate({ remote: fakeRemote, bridge: fakeBridge });
   try {

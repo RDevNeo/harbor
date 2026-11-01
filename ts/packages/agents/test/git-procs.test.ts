@@ -9,11 +9,11 @@ import * as procs from "../src/procs.ts";
 const base = mkdtempSync(join(tmpdir(), "hts-gitprocs-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-test("ssh remotes have web urls", () => {
+test("ssh_remotes_have_web_urls", () => {
   for (const u of ["git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "ssh://git@github.com:22/o/r", "https://github.com/o/r.git"]) expect(git.webUrl(u)).toBe("https://github.com/o/r");
 });
 
-test("status ignores the repo's fsmonitor", async () => {
+test("status_ignores_repo_fsmonitor", async () => {
   const dir = join(base, "fsm");
   const marker = join(base, "fsm.ran");
   mkdirSync(dir);
@@ -31,7 +31,7 @@ test("a git query that hangs is cut off", async () => {
   await expect(git.outputWithin(["sleep", "5"], 200)).rejects.toBeInstanceOf(git.TimedOut);
 });
 
-test("trims a log to its end", () => {
+test("trims_a_log_to_its_end", () => {
   const p = join(base, "trim.log");
   writeFileSync(p, Array.from({ length: 1000 }, (_, i) => `line ${i}\n`).join(""));
   procs.trim(p, 100);
@@ -41,7 +41,7 @@ test("trims a log to its end", () => {
   expect(t.length).toBeLessThan(150);
 });
 
-test("finds a process group", async () => {
+test("finds_a_process_group", async () => {
   const c = Bun.spawn(["sleep", "30"], { detached: true });
   await Bun.sleep(50);
   expect(procs.group(c.pid)).toEqual([c.pid]);

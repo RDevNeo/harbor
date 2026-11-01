@@ -25,7 +25,7 @@ function creds(d: string, expiresAt: number): string {
 const read = (p: string): Record<string, Record<string, unknown>> => parse(readFileSync(p, "utf8")) as Record<string, Record<string, unknown>>;
 const NOW = 1_700_000_000_000;
 
-test("fresh token is used as is", () => {
+test("fresh_token_is_used_as_is", () => {
   const d = dir();
   let called = false;
   const p = creds(d, NOW + 3_600_000);
@@ -42,7 +42,7 @@ test("fresh token is used as is", () => {
   expect(oauth.credentialsPath("/x/.claude2")).toBe("/x/.claude2/.credentials.json");
 });
 
-test("expiring token is refreshed and written back", () => {
+test("expiring_token_is_refreshed_and_written_back", () => {
   const d = dir();
   // Four minutes left: within the skew.
   const p = creds(d, NOW + 4 * 60_000);
@@ -67,7 +67,7 @@ test("expiring token is refreshed and written back", () => {
   expect(readFileSync(p, "utf8")).toEndWith("}\n");
 });
 
-test("failed refresh keeps the stale token", () => {
+test("failed_refresh_keeps_the_stale_token", () => {
   const d = dir();
   const p = creds(d, NOW - 1);
   expect(oauth.tokenAt(p, NOW, () => null)).toBe("sk-ant-oat01-old");
@@ -76,7 +76,7 @@ test("failed refresh keeps the stale token", () => {
   expect(read(p).claudeAiOauth?.refreshToken).toBe("sk-ant-ort01-old");
 });
 
-test("not signed in means no token", () => {
+test("not_signed_in_means_no_token", () => {
   const d = dir();
   const p = join(d, ".credentials.json");
   expect(oauth.tokenAt(p, 0, () => null)).toBeNull();
@@ -89,7 +89,7 @@ test("not signed in means no token", () => {
   expect(oauth.tokenAt(p, 0, () => null)).toBeNull();
 });
 
-test("refresh answer defaults", () => {
+test("refresh_answer_defaults", () => {
   const v: Record<string, unknown> = { claudeAiOauth: { accessToken: "a", refreshToken: "r", expiresAt: 1 } };
   const login = (): Record<string, unknown> => v.claudeAiOauth as Record<string, unknown>;
   // No rotated refresh token, no expires_in: the old refresh token stays, 8 h.
@@ -105,7 +105,7 @@ test("refresh answer defaults", () => {
   expect(oauth.epochMs(null)).toBe(0);
 });
 
-test("a lent login is the access token alone", () => {
+test("a_lent_login_is_the_access_token_alone", () => {
   const d = dir();
   const acct = join(d, "acct");
   const overlay = join(d, "overlay");
@@ -134,7 +134,7 @@ test("a lent login is the access token alone", () => {
   expect(readFileSync(join(acct, ".credentials.json"), "utf8")).toContain("sk-ant-ort01-old");
 });
 
-test("npm install needs node", () => {
+test("npm_install_needs_node", () => {
   expect(installScript("Claude")).toBe(installHint("Claude"));
   const s = installScript("Codex");
   expect(s.startsWith("if ! command -v npm")).toBe(true);

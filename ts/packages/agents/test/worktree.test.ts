@@ -29,7 +29,7 @@ function repo(tag: string): string {
   return d;
 }
 
-test("ranks branches", () => {
+test("ranks_branches", () => {
   const b = { local: ["main", "feature/login"], remote: ["origin/main", "origin/fix-ui"] };
   const all = wt.rank(b, "", 10);
   // Remote copies of local branches are left out.
@@ -40,7 +40,7 @@ test("ranks branches", () => {
   expect(wt.rank(b, "fxu", 10)[0]?.name).toBe("origin/fix-ui");
 });
 
-test("switches, creates and cleans up", async () => {
+test("switches_creates_and_cleans_up", async () => {
   const d = repo("ops");
   expect((await wt.head(d))?.branch).toBe("main");
   await wt.switchTo(d, "feature/login", false);
@@ -63,7 +63,7 @@ test("switches, creates and cleans up", async () => {
   expect(existsSync(m.dir)).toBe(true);
 });
 
-test("a new worktree says its branch and base", async () => {
+test("a_new_worktree_says_its_branch_and_base", async () => {
   const d = repo("made");
   const root = `${d}.wts`;
   // From the checkout's branch (""): that's its base.
@@ -78,7 +78,7 @@ test("a new worktree says its branch and base", async () => {
   expect(m.branch).toMatch(/^harbor\/[0-9a-f]{6}$/);
 });
 
-test("Claude names new worktrees", async () => {
+test("claude_names_new_worktrees", async () => {
   const d = repo("claude");
   const root = `${d}.wts`;
   const proj = wt.projectPart(d);
@@ -104,7 +104,7 @@ test("Claude names new worktrees", async () => {
   expect(await m.late).toBe("late-name");
 });
 
-test("Claude's answers are cleaned into names", () => {
+test("claude_answers_are_cleaned_into_names", () => {
   expect(wt.cleanName("inline-chat-mention-links")).toBe("inline-chat-mention-links");
   expect(wt.cleanName("  `Harbor/Fix_Login Redirect`.\n")).toBe("fix-login-redirect");
   expect(wt.cleanName('"dark-mode"\nBecause the user wants…')).toBe("dark-mode");
@@ -118,7 +118,7 @@ test("Claude's answers are cleaned into names", () => {
   expect(wt.cleanName("")).toBeNull();
 });
 
-test("names come from what the chat is about", () => {
+test("names_come_from_what_the_chat_is_about", () => {
   expect(wt.slug("Main thread per project")).toBe("main-thread-per-project");
   expect(wt.slug("Fix the login bug where users get logged out")).toBe("fix-login-bug-users-get");
   expect(wt.slug("\n  Can you make the sidebar's chips blue? https://example.com/x")).toBe("make-sidebars-chips-blue");
@@ -132,7 +132,7 @@ test("names come from what the chat is about", () => {
   expect(wt.isNamed("app-fix", "app-fix") && wt.isNamed("app-fix-2", "app-fix") && !wt.isNamed("app-fix-it", "app-fix")).toBe(true);
 });
 
-test("named worktrees are unique and their folder follows a rename", async () => {
+test("named_worktrees_are_unique_and_their_folder_follows_a_rename", async () => {
   const d = repo("names");
   const root = `${d}.wts`;
   const proj = wt.projectPart(d);
@@ -164,7 +164,7 @@ test("named worktrees are unique and their folder follows a rename", async () =>
   expect(existsSync(to)).toBe(false);
 });
 
-test("a pushed branch is renamed on its remote or let go", async () => {
+test("a_pushed_branch_is_renamed_on_its_remote_or_let_go", async () => {
   const d = repo("push");
   const bare = `${d}.git`;
   expect(Bun.spawnSync(["git", "init", "-q", "--bare", bare]).success).toBe(true);
@@ -187,7 +187,7 @@ test("a pushed branch is renamed on its remote or let go", async () => {
   expect(await wt.pushedAs(m.dir)).toBeNull();
 });
 
-test("a folder name is one plain name, not taken", () => {
+test("a_folder_name_is_one_plain_name_not_taken", () => {
   const root = join(base, "fname");
   const dir = join(root, "app-fix");
   mkdirSync(dir, { recursive: true });

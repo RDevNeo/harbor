@@ -40,7 +40,7 @@ function withEnv(vars: Record<string, string | undefined>, f: () => void): void 
 
 const ROOT = "/home/u/.local/state/harbor/turns";
 
-test("finds the chat of a runner", () => {
+test("finds_the_chat_of_a_runner", () => {
   expect(detach.runnerChat(["/x/harbor", "turn", `${ROOT}/23-1792605157067846264`], ROOT)).toBe(23);
   // Its folder may be gone: the command line still names it.
   expect(detach.runnerChat(["/x/harbor (deleted)", "turn", `${ROOT}/7-1`], ROOT)).toBe(7);
@@ -48,7 +48,7 @@ test("finds the chat of a runner", () => {
   expect(detach.runnerChat(["/x/bun", "/src/ts/harbor.ts", "turn", `${ROOT}/9-1`], ROOT)).toBe(9);
 });
 
-test("ignores other processes and other harbors", () => {
+test("ignores_other_processes_and_other_harbors", () => {
   expect(detach.runnerChat(["/x/harbor", "mcp", "--chat", "23"], ROOT)).toBeUndefined();
   expect(detach.runnerChat(["/x/harbor"], ROOT)).toBeUndefined();
   // A test instance's turns live in another folder.
@@ -64,7 +64,7 @@ function lingeringSsh(dir: string, code: number) {
   return Bun.spawn(["sh", "-c", script], { stdout: out, stderr: "ignore", stdin: "ignore" });
 }
 
-test("a remote turn ends when ssh lingers after its agent", async () => {
+test("a_remote_turn_ends_when_ssh_lingers_after_its_agent", async () => {
   const dir = fresh("linger");
   writeFileSync(join(dir, "err"), "");
   const child = lingeringSsh(dir, 0);
@@ -83,7 +83,7 @@ test("a remote turn ends when ssh lingers after its agent", async () => {
   expect(await detach.waitRemote(quick, dir)).toBe(3);
 });
 
-test("a lingering ssh turn ends as a success", async () => {
+test("a_lingering_ssh_turn_ends_as_a_success", async () => {
   const root = fresh("linger-run");
   const dir = join(root, "7-1");
   mkdirSync(dir);
@@ -108,7 +108,7 @@ test("a lingering ssh turn ends as a success", async () => {
   expect(lines.some((l) => l.includes('"result"'))).toBe(true);
 });
 
-test("ssh lines that mean the device is out of reach", () => {
+test("ssh_lines_that_mean_the_device_is_out_of_reach", () => {
   const r = (l: string): string | undefined => {
     const x = detach.unreachable(l);
     return x ? `${x[0]}|${x[1]}` : undefined;
@@ -153,7 +153,7 @@ const tries = (t: string): number => {
   }
 };
 
-test("a device out of reach is tried again", async () => {
+test("a_device_out_of_reach_is_tried_again", async () => {
   // Fails twice (its address changed), then answers: the turn runs, with its whole input, and
   // the chat never sees ssh's failures.
   let [dir, t] = flakySsh(fresh("reach"), 3, "ssh: connect to host mac.local port 22: No route to host");
@@ -180,7 +180,7 @@ test("a device out of reach is tried again", async () => {
   expect(readFileSync(join(dir, "err"), "utf8")).toBe("user@box: Permission denied (publickey).\n");
 }, 15_000);
 
-test("a guest turn's commands run as its account", async () => {
+test("a_guest_turns_commands_run_as_its_account", async () => {
   const root = fresh("guest-run");
   const acct = join(root, "acct");
   const overlay = join(root, "guests/pc-b");
@@ -220,7 +220,7 @@ test("a guest turn's commands run as its account", async () => {
   expect(out).not.toContain("sk-ant-");
 });
 
-test("a stopped guest turn gives its login back", () => {
+test("a_stopped_guest_turn_gives_its_login_back", () => {
   const root = fresh("guest-stop");
   const creds = join(root, ".credentials.json");
   const turn = (env: unknown): void => writeFileSync(join(root, "cmd.json"), compact({ program: "sh", env }));
@@ -234,7 +234,7 @@ test("a stopped guest turn gives its login back", () => {
   expect(existsSync(creds)).toBe(false);
 });
 
-test("picks up a chat's live turn before an older stopped one", async () => {
+test("picks_up_a_chats_live_turn_before_an_older_stopped_one", async () => {
   const sleeper = Bun.spawn(["sleep", "30"]);
   const pid = sleeper.pid;
   const meta = (p: number): detach.Meta => ({ chat_id: 5, kind: "Claude", started: 1, base: 0, pid: p, pid_start: procStart(p) ?? 0 });
@@ -253,7 +253,7 @@ test("picks up a chat's live turn before an older stopped one", async () => {
   expect(left.map((l) => l[0])).toEqual(["/x/5-200", "/x/5-100", "/x/6-50"]);
 });
 
-test("sees a live runner by its process", async () => {
+test("sees_a_live_runner_by_its_process", async () => {
   // `python3 turn <dir>` (a script named "turn") has a runner's command line.
   const tmp = fresh("runner");
   writeFileSync(join(tmp, "turn"), "import time\ntime.sleep(10)\n");

@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { type Item, Store } from "@harbor/store";
 import * as recap from "../src/recap.ts";
 
-test("cleans like Claude Code", () => {
+test("cleans_like_claude_code", () => {
   expect(recap.clean("<suggestion>run the tests</suggestion>")).toBe("run the tests");
   expect(recap.clean("Suggestion: run the tests")).toBe("run the tests");
   expect(recap.clean("  suggested reply：push it ")).toBe("push it");
   expect(recap.clean("commit this")).toBe("commit this");
 });
 
-test("filters like Claude Code", () => {
+test("filters_like_claude_code", () => {
   for (const [s, why] of [
     ["", "empty"],
     ["done", "done"],
@@ -29,7 +29,7 @@ test("filters like Claude Code", () => {
   for (const ok of ["run the tests", "yes", "push", "/commit", "commit this and push it", "try it out"]) expect([ok, recap.suppressed(ok)]).toEqual([ok, null]);
 });
 
-test("counts words and caps", () => {
+test("counts_words_and_caps", () => {
   expect(recap.words("run the tests")).toBe(3);
   expect(recap.words("テストを実行")).toBe(2);
   const c = recap.cap("word ".repeat(120).trim(), 400);
@@ -38,7 +38,7 @@ test("counts words and caps", () => {
   expect(recap.cap("short", 400)).toBe("short");
 });
 
-test("context keeps the request and the end", () => {
+test("context_keeps_the_request_and_the_end", () => {
   const user = (text: string): Item => ({ kind: "user", text, files: [], at: 0, mentions: [], sender: "", intent: "" });
   const items: Item[] = [user("build the login page")];
   for (let i = 0; i < 400; i++) items.push({ kind: "text", text: `step ${i} done with some words to fill the line`, at: 0 });

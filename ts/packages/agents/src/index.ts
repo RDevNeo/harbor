@@ -18,3 +18,5 @@ export * as openchat from "./openchat.ts";
 export * as chatpr from "./chatpr.ts";
 export * as commits from "./commits.ts";
 export * as fork from "./fork.ts";
+export * as autowork from "./autowork.ts";
+export { Work } from "./work.ts";

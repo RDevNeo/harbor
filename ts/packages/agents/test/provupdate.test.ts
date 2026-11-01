@@ -8,7 +8,7 @@ import type { Account } from "../src/providers.ts";
 const base = mkdtempSync(join(tmpdir(), "hts-provupd-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-test("versions from CLI output", () => {
+test("versions_from_cli_output", () => {
   expect(pu.parseVersion("2.0.14 (Claude Code)\n")).toBe("2.0.14");
   expect(pu.parseVersion("codex-cli 0.46.0")).toBe("0.46.0");
   expect(pu.parseVersion("v1.2.3-beta.1")).toBe("1.2.3-beta.1");
@@ -16,7 +16,7 @@ test("versions from CLI output", () => {
   expect(pu.parseVersion("")).toBeNull();
 });
 
-test("names and keys", () => {
+test("names_and_keys", () => {
   const p = (kind: pu.Pending["kind"], latest: string): pu.Pending => ({ kind, current: "0.1.0", latest });
   expect(pu.names([p("Codex", "1.0.0")])).toBe("Codex");
   expect(pu.names([p("Codex", "1.0.0"), p("Claude", "2.0.0")])).toBe("Codex and Claude");
