@@ -188,6 +188,33 @@ not used; the CPU split comes from `process.cpuUsage()` around each call.
   through package indexes (`wire.ts` loads all of `@harbor/mcp`). A separate small entry would mean another
   release artifact.
 
+### On the desk PC (0.109.1-ts, 2026-11-01)
+
+Read from `/proc` of the installed app on the owner's desk PC (1920x1080 at scale 1.25, Intel GPU through
+Mesa, 322 chats, two paired PCs), then reproduced with `rig/cost.py` on a scrambled copy of a 323-chat db
+whose projects have real folders and icons.
+
+- RAM 614-634 MB against 370-380 MB in the rig. The glibc heap was the same (195 MB); the difference was
+  Bun's mimalloc arena, 239 MB against 46 MB. Both peers pull every chat's items at start, and the hub
+  answered through `engine.transcript()`, which keeps what it reads: every transcript of the PC ended up in
+  the JavaScript heap. Loading all 77,000 items of the copy takes the heap from 1 to 157 MB and RSS up
+  227 MB. A peer's pull now reads the store without keeping it (`itemsOf`), and the window lets an idle
+  chat's transcript go when another chat is shown (cdbe9d1). Peers fetch a chat's items only when its rev
+  changes, so the extra reads are rare. Expected on the desk PC: about 400 MB.
+- CPU 9-12 % of a core with one chat working. Not the display scale (1.25 measured the same as 1.0 in the
+  rig) and not the icons: a long chat open while its turn runs, even a quiet one, cost 8-9.3 %. A short
+  chat costs 1.8 %. Every frame walked every card of the transcript (eu-stack: the partial renderer's
+  item visit and the interpreter's property reads, nearly all of the busy samples), and three spinners and
+  the cursor each drew frames of their own, about six a second. Spinners now step together on one tick the
+  shell drives while turns run, with the Working timers in the same frame, and transcript rows more than a
+  screen away aren't drawn (a67932d). 9.3 / 8.0 % → 4.6 % at scale 1, 7.4 % → 4.1 % at 1.25; the
+  transcript draws the same after paging up eight screens.
+- Still on the desk PC: a turn that streams in a chat that isn't shown makes the hub answer both peers'
+  event polls and refresh the sidebar up to four times a second (97 wakeups a second on the window's
+  thread there, 40-50 in the rig). Not measured offline.
+- Rust 0.109.0 on the other PC, same `/proc` reading, 22 h up, window shown at 1920x1080, 323 chats, chats of
+  the desk PC working: 1.2 % CPU, 82 MB RSS but 962 MB in swap, so about 1 GB in all on a PC short of RAM.
+
 ### Bun against Node, the real window
 
 The Phase 0 table above used a small proto window. `rig/runtimes.ts` runs the real `app.slint` with a reply
