@@ -1921,7 +1921,10 @@ export class Shell {
         why = e instanceof Error ? e.message : String(e);
       }
       items.push(why === "" ? native("Move to project…", () => this.moveMenu(id, x, y), { badge: "submenu" }) : native("Move to project…", () => {}, { enabled: false, desc: why }));
-      items.push(native("Move to PC…", () => {}, { enabled: false, desc: "Moving a chat to another PC isn't in the TypeScript app yet" }));
+      // movepc.rs `move_pc_menu`: greyed out with why when the chat can't go to any PC.
+      const mv = this.hub.moveTargets(id);
+      const off = mv.targets.length === 0 ? (mv.why ?? "No other PCs: pair one in Settings › Devices") : mv.why;
+      items.push(off === null ? native("Move to PC…", () => this.movePcMenu(id, x, y), { badge: "submenu" }) : native("Move to PC…", () => {}, { enabled: false, desc: off }));
     }
     items.push(native("Delete", () => this.deleteDialog(id)));
     this.popup("chat", x, y, items, 240, false, true);
@@ -1938,6 +1941,17 @@ export class Shell {
     this.data.setSnooze(`c${id}`, null, () => {});
     this.data.store.setMainChat(c.repoId, id);
     this.refreshAll();
+  }
+
+  /** The PCs of the mesh the chat can move to; one that can't take it says why. */
+  private movePcMenu(id: number, x: number, y: number): void {
+    const go = (pc: string) => () =>
+      void this.hub.movePc(id, pc).then(
+        (n) => this.toast(`Moving to ${n}…`),
+        (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
+      );
+    const items = this.hub.moveTargets(id).targets.map((t) => this.item(t.name, go(t.id), { icon: ICONS.MONITOR, desc: t.why ?? "Goes on there", enabled: t.why === null }));
+    setTimeout(() => this.popup("move-pc", x, y, items, 240), 0);
   }
 
   /** sidebar.rs `move_menu`: the chat and its sub-agents to another project, or none. */
@@ -2636,6 +2650,8 @@ export interface ShellHooks {
   quit?: () => void;
   /** Gets a function that closes this window (the tray's Quit while it is open). */
   closer?: (close: () => void) => void;
+  /** Gets the window's toast, for what finishes behind it (a move to another PC). */
+  toaster?: (toast: (text: string) => void) => void;
 }
 
 export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Promise<void> {
@@ -2659,6 +2675,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   hooks.snapshotWith?.(() => shell.snapshot());
   shell.onQuit = hooks.quit ?? null;
   hooks.closer?.(() => win.hide());
+  hooks.toaster?.((t) => shell.toast(t));
   win.show();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);

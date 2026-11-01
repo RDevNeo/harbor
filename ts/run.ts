@@ -125,7 +125,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       movePc: (chatId: number, peerId: string) => run.move.movePc(chatId, peerId),
       checkUpdates: async () => (await updater.check(), updater.info().status),
     };
-    await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f) });
+    await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => (run.move.onToast = t) });
     tray?.stop();
     if (!quitting && run.store.get("bg_keep") !== "0") {
       const note = ui.stillRunning(run.store, tray !== null);
