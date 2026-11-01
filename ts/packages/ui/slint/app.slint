@@ -461,6 +461,9 @@ export component AppWindow inherits Window {
     in-out property <string> draft;
     in property <ComposerState> composer;
     in property <image> model-logo;
+    // Set and read back by the shell: pixels go in, a native image comes out, which models then share
+    // instead of each copying the pixels (`MediaRows`).
+    in-out property <image> image-scratch;
     in property <[FileItem]> files;
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
@@ -594,6 +597,8 @@ export component AppWindow inherits Window {
     }
     out property <bool> at-end: transcript.at-end;
     out property <length> transcript-height: transcript.content-height;
+    // The screen's pixels per logical pixel (1.25 on a 125% display): images are decoded to the size drawn.
+    out property <float> scale-factor: 1px / 1phx;
     public function transcript-grew-above(before: length) {
         transcript.grew-above(before);
     }

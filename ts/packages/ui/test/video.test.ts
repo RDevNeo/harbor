@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as media from "@harbor/media";
-import { MediaRows } from "../src/mediarows.ts";
+import { inlineCap, MediaRows } from "../src/mediarows.ts";
 import { VIDEO_KEYS } from "../src/videopane.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "hvid-"));
@@ -63,4 +63,13 @@ test("only the images of the cards last built stay decoded; one let go while dec
   rows.sweep();
   await Bun.sleep(300);
   expect(loads).toBe(3);
+});
+
+test("a large image is decoded to the width it's drawn at, in the screen's pixels", () => {
+  expect(inlineCap(760, 1, 1280)).toBe(480);
+  expect(inlineCap(760, 1.25, 1280)).toBe(600);
+  expect(inlineCap(760, 2, 1280)).toBe(960);
+  expect(inlineCap(760, 4, 1280)).toBe(1280);
+  expect(inlineCap(300, 1, 1280)).toBe(300);
+  expect(inlineCap(760, Number.NaN, 1280)).toBe(960);
 });

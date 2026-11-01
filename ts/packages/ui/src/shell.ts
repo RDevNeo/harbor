@@ -190,7 +190,7 @@ export class Shell {
     });
     this.voice.load();
     this.refreshVoice();
-    this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId));
+    this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId), (p) => this.nativeImage(p));
   }
   private media: typeof import("@harbor/media") | null = null;
   private voice: import("@harbor/media").voiceCtl.VoiceCtl | null = null;
@@ -926,7 +926,7 @@ export class Shell {
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760) : undefined);
+    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined);
     if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);
@@ -1525,6 +1525,19 @@ export class Shell {
     this.engine.send(id, text, { files, mentions, mode });
     this.refreshAll();
     setTimeout(() => this.win.scroll_to_end(), 30);
+  }
+
+  /** `p` converted once into the window's own image: read back, it's a handle the models share (a plain object of
+   * pixels is copied again each time a model row is read). Falls back to `p`. */
+  private nativeImage(p: Pixels): Pixels {
+    try {
+      this.win.image_scratch = p;
+      const n = this.win.image_scratch;
+      this.win.image_scratch = noPixels;
+      return n.width === p.width && n.height === p.height ? n : p;
+    } catch {
+      return p;
+    }
   }
 
   /** The composer's Resume: an ordinary message asking the agent to go on, sent the way Enter would. */

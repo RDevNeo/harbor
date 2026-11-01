@@ -5,9 +5,13 @@ import { noPixels, type MediaRow } from "./window.ts";
 type MediaPkg = typeof import("@harbor/media");
 
 const THUMB: [number, number] = [132, 96];
-/** A large image is drawn at most `inlineSize` (480×300): decoded to twice that, it stays sharp on a 2× screen at a
- * little over half the memory of MID_PX. */
-export const INLINE_PX = 960;
+/** A large image is drawn at most `inlineSize` (480×300 px, narrower in a narrow column): it's decoded to that width
+ * in the screen's own pixels (`scale`; 2 when unknown), never above `mid`, so it stays sharp and holds no more memory
+ * than drawing it needs. */
+export function inlineCap(column: number, scale: number, mid: number): number {
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 2;
+  return Math.min(mid, Math.ceil(Math.min(column, 480) * s));
+}
 
 /** A large image's size in the transcript: its own, shrunk to fit `box`. */
 export function fitIn(w: number, h: number, box: [number, number]): [number, number] {
@@ -25,26 +29,29 @@ export class MediaRows {
   constructor(
     private pkg: MediaPkg,
     private loaded: () => void,
+    /** The decoded pixels as an image the window holds, so the models share it and JS lets its copy go. */
+    private native: (p: Pixels) => Pixels = (p) => p,
   ) {}
 
-  rows(c: Card, cwd: string, column: number): MediaRow[] {
+  rows(c: Card, cwd: string, column: number, scale = 2): MediaRow[] {
     const out: MediaRow[] = [];
+    const cap = inlineCap(column, scale, this.pkg.images.MID_PX);
     for (const m of cardMedia(c, (t) => this.pkg.images.mediaIn(t, cwd))) {
       if (m.video) {
-        out.push(this.video(m.path, column));
+        out.push(this.video(m.path, column, cap));
         continue;
       }
       const large = m.shown;
-      const key = `${large ? "l" : "t"}:${m.path}`;
+      const key = large ? `l${cap}:${m.path}` : `t:${m.path}`;
       this.used.add(key);
       const img = this.got.get(key);
       if (img === undefined) {
         this.got.set(key, null);
         this.pkg.images
-          .decode(m.path, null, large ? INLINE_PX : this.pkg.images.THUMB_PX)
+          .decode(m.path, null, large ? cap : this.pkg.images.THUMB_PX)
           .then(({ image }) => {
             if (this.got.get(key) !== null) return;
-            this.got.set(key, image);
+            this.got.set(key, this.native(image));
             this.loaded();
           })
           .catch(() => {});
@@ -58,18 +65,18 @@ export class MediaRows {
   }
 
   /** images.rs `video`: its poster (a dark card until then, or without ffmpeg) under a play button. */
-  private video(path: string, column: number): MediaRow {
-    const key = `v:${path}`;
+  private video(path: string, column: number, cap: number): MediaRow {
+    const key = `v${cap}:${path}`;
     this.used.add(key);
     const max = this.pkg.images.inlineSize(column);
     const img = this.got.get(key);
     if (img === undefined) {
       this.got.set(key, null);
       this.pkg.images
-        .decode(path, null, INLINE_PX)
+        .decode(path, null, cap)
         .then(({ image }) => {
           if (this.got.get(key) !== null) return;
-          this.got.set(key, image);
+          this.got.set(key, this.native(image));
           this.loaded();
         })
         .catch(() => {

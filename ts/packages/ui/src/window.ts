@@ -451,6 +451,7 @@ export interface AppWindow extends slint.ComponentHandle {
   draft: string;
   composer: ComposerState;
   model_logo: Pixels;
+  image_scratch: Pixels;
   files: slint.Model<{ name: string; image: boolean }>;
   menu: slint.Model<MenuEntry>;
   menu_selected: number;
@@ -555,6 +556,8 @@ export interface AppWindow extends slint.ComponentHandle {
   readonly at_end: boolean;
   /** The transcript's content height (px), for `transcript_grew_above`. */
   readonly transcript_height: number;
+  /** Physical pixels per logical pixel. */
+  readonly scale_factor: number;
   /** Cards were added above: keeps the view on what it showed when the content was `before` px tall. */
   transcript_grew_above(before: number): void;
   /** The view goes back to keeping its distance from the top while content changes. */
