@@ -322,3 +322,49 @@ export function blockJson(b: Block): Ordered {
       return new Ordered([["type", "table"], ["rows", b.rows.map((r) => r.map((cell) => cell.map(spanJson)))]]);
   }
 }
+
+/** A commit a reply names, as the phone draws its pill (commits.rs `Commit`). */
+export interface CommitRef {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  at: number;
+}
+
+function split(spans: Span[], commits: Map<string, CommitRef>, tokens: (text: string) => [number, number][]): Span[] {
+  const out: Span[] = [];
+  for (const s of spans) {
+    if (s.link !== undefined || s.commit !== undefined) {
+      out.push(s);
+      continue;
+    }
+    if (s.code) {
+      const c = commits.get(s.text.trim());
+      out.push(c ? { ...s, commit: c.sha } : s);
+      continue;
+    }
+    let at = 0;
+    for (const [a, b] of tokens(s.text)) {
+      const c = commits.get(s.text.slice(a, b));
+      if (!c) continue;
+      if (a > at) out.push({ ...s, text: s.text.slice(at, a) });
+      out.push({ ...s, text: s.text.slice(a, b), commit: c.sha });
+      at = b;
+    }
+    if (at === 0) out.push(s);
+    else if (at < s.text.length) out.push({ ...s, text: s.text.slice(at) });
+  }
+  return out;
+}
+
+/** Spans that name a known commit become pills (commits.rs `mark`); code blocks are left alone. */
+export function markCommits(blocks: Block[], commits: Map<string, CommitRef>, tokens: (text: string) => [number, number][]): void {
+  if (commits.size === 0) return;
+  for (const b of blocks) {
+    if (b.type === "heading" || b.type === "paragraph") b.spans = split(b.spans, commits, tokens);
+    else if (b.type === "list") for (const i of b.items) markCommits(i, commits, tokens);
+    else if (b.type === "quote") markCommits(b.blocks, commits, tokens);
+    else if (b.type === "table") b.rows = b.rows.map((r) => r.map((cell) => split(cell, commits, tokens)));
+  }
+}

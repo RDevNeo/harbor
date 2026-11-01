@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { blockJson, blocks, type Block, type Span } from "../src/markdown.ts";
+import { blockJson, blocks, markCommits, type Block, type Span } from "../src/markdown.ts";
 import { wire } from "../src/wire.ts";
 
 const s = (text: string, more: Partial<Span> = {}): Span => ({ text, ...more });
@@ -78,5 +78,22 @@ describe("markdown → blocks (api.rs)", () => {
     expect(wire(blocks("**b**").map(blockJson))).toBe('[{"type":"paragraph","spans":[{"text":"b","bold":true}]}]');
     expect(wire(blockJson({ type: "rule" }))).toBe('{"type":"rule"}');
     expect(blocks("")).toEqual([]);
+  });
+});
+
+describe("commit pills (commits.rs)", () => {
+  test("phone_spans_are_split_at_commits", () => {
+    const full = "35cbb88a1f2e3d4c5b6a79880716253443526170";
+    const known = new Map([["35cbb88", { sha: full, short: "35cbb88", subject: "s", author: "a", at: 1 }]]);
+    const tokens = (t: string): [number, number][] => [...t.matchAll(/\b[0-9a-f]{7,40}\b/g)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+    const b = blocks("Released 35cbb88 today, see `35cbb88` and ```x```.\n\n```\n35cbb88\n```\n");
+    markCommits(b, known, tokens);
+    const spans = para(b[0]);
+    expect(spans[0]?.text).toBe("Released ");
+    expect([spans[1]?.text, spans[1]?.commit]).toEqual(["35cbb88", full]);
+    expect(spans[2]?.text).toBe(" today, see ");
+    expect([spans[3]?.code, spans[3]?.commit]).toEqual([true, full]);
+    expect(spans[2]?.commit).toBeUndefined();
+    expect(b[1]).toEqual({ type: "code", lang: "", text: "35cbb88" });
   });
 });

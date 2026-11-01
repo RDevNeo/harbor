@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { providers } from "./packages/agents/src/index.ts";
+import { commits, providers } from "./packages/agents/src/index.ts";
 import { dictate, voice } from "./packages/media/src/index.ts";
 import {
   AccountService,
@@ -35,7 +35,7 @@ import {
   type Dest,
   type Reply,
 } from "./packages/net/src/index.ts";
-import { dataDir, stateDir, Store } from "./packages/store/src/index.ts";
+import { dataDir, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 
 export interface HubOptions {
   version: string;
@@ -124,6 +124,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     agents: null,
     catalog,
     voice: () => ({ transcribe: true, why: null, lang: voice.config()[0] }),
+    commits: (c) => {
+      const r = c.repoId === null ? null : store.repos().find((x) => x.id === c.repoId);
+      const dir = r ? repoDir(r) : null;
+      if (dir === null || !existsSync(dir)) return null;
+      return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
+    },
   });
   const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
     on: () => hub.mesh.on,

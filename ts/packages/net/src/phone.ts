@@ -2,7 +2,7 @@ import { blankChat, itemHash, type Chat, type Item, type Store } from "@harbor/s
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, type Hub } from "./hub.ts";
-import { blocks } from "./markdown.ts";
+import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { forHome, type Mesh } from "./mesh.ts";
 import type { StoreReplica } from "./meshstore.ts";
 import { dest } from "./shared.ts";
@@ -70,6 +70,8 @@ export interface PhoneDeps {
   /** The user-facing local time of a unix second, "11:40 AM" (team.rs `clock`). */
   clock?: (at: number) => string;
   refs?: MediaRefs;
+  /** The commits a reply of `chat` names; their pills come once git has answered (then `chat` is touched). */
+  commits?: (chat: Chat) => CommitLookup | null;
 }
 
 export function clock(at: number): string {
@@ -130,7 +132,13 @@ export interface MediaRefs {
 }
 
 /** One card for the phone (api.rs `card_json`), its image addresses naming `chat`. */
-export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null): Record<string, Json> {
+/** The commits a reply names, found in the chat's project (agents' `commits.ofText`), and how a text splits into tokens. */
+export interface CommitLookup {
+  ofText(md: string): Map<string, CommitRef>;
+  tokens(text: string): [number, number][];
+}
+
+export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null, commits: CommitLookup | null = null): Record<string, Json> {
   const all = cardMedia(s.card, find);
   const images: Json[] = all.filter((m) => !m.video).map((m) => ({ name: m.url !== null ? mediaName(m) : fileName(m.path), url: imageUrl(m.path) }));
   const large = all.filter((m) => m.shown || m.video);
@@ -156,7 +164,11 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
           else for (const m of find(p.text)) if (m.shown) placed.push([m.path, n]);
         }
       }
-      v = { markdown: c.text, blocks: blocks(label(c.text)) as Json, images, at: c.at, forkable: c.forkable };
+      const bs = blocks(label(c.text));
+      const known = commits ? commits.ofText(c.text) : new Map<string, CommitRef>();
+      if (commits) markCommits(bs, known, (t) => commits.tokens(t));
+      v = { markdown: c.text, blocks: bs as Json, images, at: c.at, forkable: c.forkable };
+      if (known.size > 0) v.commits = Object.fromEntries([...known.values()].map((x) => [x.sha, { sha: x.sha, short: x.short, subject: x.subject, author: x.author, at: x.at }]));
       break;
     }
     case "thinking":
@@ -411,9 +423,11 @@ export class PhoneRoutes {
     const forks = this.d.replica.remote.get(c.id)?.forks ?? [];
     const cards = project(items, c.role === "lead", forks);
     const revs = this.revs.get(c.id) ?? [];
+    const look = this.d.commits?.(c) ?? null;
     const hashes = cards.map((s, i) => {
       const it = items[i];
-      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.forksAfter.join(",")}|${s.group ?? ""}`;
+      const shas = look && s.card.kind === "text" ? [...look.ofText(s.card.text).keys()].sort().join(",") : "";
+      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
       return (it ? itemHash(it) : 0n) ^ hashStr(extra);
     });
     revs.length = Math.min(revs.length, hashes.length);
@@ -430,7 +444,7 @@ export class PhoneRoutes {
     const out = cards
       .filter((s) => (revs[s.seq]?.[1] ?? 0) > since)
       .map((s) => {
-        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null);
+        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null, look);
         if (v.kind === "chat_link") v.chat = this.chats().find((x) => x.gid === v.gid)?.id ?? null;
         return v;
       });
