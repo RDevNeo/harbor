@@ -5,6 +5,7 @@ import { alive, BUNDLE_FILE, isFile, read } from "./files.ts";
 import { enabled, superseded } from "./preview.ts";
 import { forget, readMeta, SLOT } from "./previewmeta.ts";
 import { RELOADED_PID } from "./reload.ts";
+import { captureStart } from "./startlog.ts";
 import { beginAttempt, readAttempt, recoverUnconfirmed, watch } from "./startup.ts";
 import { newer, RUNTIME_VERSION } from "./version.ts";
 
@@ -119,7 +120,14 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
     chosen = choose(base);
     if (window && !secondary(base, opts.env ?? process.env)) {
       beginAttempt(base, { version: chosen.version, pid: process.pid, kind: chosen.kind, args: argv, id: chosen.id });
-      if (opts.armWatchdog !== false) (opts.spawn ?? watchdogSpawn)([base.exe, "start-watch", String(process.pid)]);
+      if (opts.armWatchdog !== false) {
+        const dir = base.dir;
+        captureStart(dir, () => {
+          const a = readAttempt(dir);
+          return a === null || a.pid !== process.pid || a.stage === "ok";
+        });
+        (opts.spawn ?? watchdogSpawn)([base.exe, "start-watch", String(process.pid)]);
+      }
     }
   }
   const own = useEmbedded(chosen, opts.embedded);

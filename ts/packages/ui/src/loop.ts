@@ -59,6 +59,9 @@ function backendFd(): number | null {
 }
 
 let touched: (() => void) | null = null;
+
+/** How the running loop is woken, and how many times the display's fd woke it. */
+export const loopState: { kind: "node" | "fixed" | "woken" | null; wakes: number } = { kind: null, wakes: 0 };
 let hooked = false;
 
 /** Every change JavaScript makes to a window (properties, models, functions) asks for a turn of Slint's loop. */
@@ -81,18 +84,28 @@ function hookChanges(): void {
 /** Resolves when the last window closes or quit() is called. */
 export function runLoop(tickMs: number = TICK_MS): Promise<void> {
   if (typeof Bun === "undefined") {
+    loopState.kind = "node";
     return slint.runEventLoop().then(() => undefined);
   }
   setQuitOnLastWindowClosed(true);
   const fd = process.env.HARBOR_FIXED_TICK ? null : backendFd();
+  loopState.kind = fd === null ? "fixed" : "woken";
   if (fd === null) return fixed(tickMs);
   return woken(fd, tickMs);
 }
 
 function fixed(tickMs: number): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const id = setInterval(() => {
-      if (processEvents() === ProcessEventsResult.Exited) {
+      let r: ProcessEventsResult;
+      try {
+        r = processEvents();
+      } catch (e) {
+        clearInterval(id);
+        reject(e);
+        return;
+      }
+      if (r === ProcessEventsResult.Exited) {
         clearInterval(id);
         resolve();
       }
@@ -105,7 +118,7 @@ function fixed(tickMs: number): Promise<void> {
  * right after JavaScript changes a window, and every IDLE_MS for its timers. A Worker waits on the fd.
  */
 function woken(fd: number, tickMs: number): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const waiter = new Worker(URL.createObjectURL(new Blob([(fdwaitText as unknown as { default: string }).default], { type: "application/typescript" })));
     waiter.unref();
     let waiting = false;
@@ -125,7 +138,14 @@ function woken(fd: number, tickMs: number): Promise<void> {
       timer = null;
       due = Number.POSITIVE_INFINITY;
       if (done) return;
-      if (processEvents() === ProcessEventsResult.Exited) {
+      let r: ProcessEventsResult;
+      try {
+        r = processEvents();
+      } catch (e) {
+        r = ProcessEventsResult.Exited;
+        reject(e);
+      }
+      if (r === ProcessEventsResult.Exited) {
         done = true;
         touched = null;
         waiter.terminate();
@@ -146,6 +166,7 @@ function woken(fd: number, tickMs: number): Promise<void> {
       at(IDLE_MS);
     };
     waiter.onmessage = () => {
+      loopState.wakes++;
       waiting = false;
       instant = performance.now() - armedAt < 1 ? instant + 1 : 0;
       at(0);

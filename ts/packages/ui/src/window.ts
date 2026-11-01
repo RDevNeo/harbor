@@ -559,19 +559,19 @@ function isCtor(v: unknown): v is new () => AppWindow {
   return typeof v === "function";
 }
 
-/**
- * Skia then repaints only what changed (a cursor's blink, the reply that grows) when the GL surface keeps
- * its buffer age. Slint reads the variable from the C environment, which Bun's process.env doesn't reach.
- */
-function partialRendering(): void {
-  if (process.platform !== "linux" || process.env.SLINT_SKIA_PARTIAL_RENDERING !== undefined) return;
+// Slint reads these from the C environment, which Bun's process.env doesn't reach. Held to winit, a start with no
+// display fails instead of falling back to the console's screen (linuxkms) with no window.
+function slintEnv(): void {
+  if (process.platform !== "linux") return;
   const libc = dlopen("libc.so.6", { setenv: { args: [FFIType.cstring, FFIType.cstring, FFIType.i32], returns: FFIType.i32 } });
-  libc.symbols.setenv(Buffer.from("SLINT_SKIA_PARTIAL_RENDERING\0"), Buffer.from("1\0"), 0);
+  for (const [k, v] of [["SLINT_SKIA_PARTIAL_RENDERING", "1"], ["SLINT_BACKEND", "winit"]] as const) {
+    if (process.env[k] === undefined) libc.symbols.setenv(Buffer.from(`${k}\0`), Buffer.from(`${v}\0`), 0);
+  }
   libc.close();
 }
 
 export async function loadWindow(): Promise<AppWindow> {
-  partialRendering();
+  slintEnv();
   const ui = slint.loadFile(join(await uiDir(), "app.slint"), { style: "fluent" });
   const ctor = Reflect.get(ui, "AppWindow");
   if (!isCtor(ctor)) throw new Error("app.slint has no AppWindow");

@@ -39,6 +39,7 @@ const commands: Record<string, Command> = {
     for (const line of r.lines) console.log(line);
     return r.code;
   },
+  "--check-window": async (args) => (await import("./run.ts")).checkWindow(args, version),
   "--speech-worker": async () => (await import("./packages/media/src/speech-worker.ts")).runSpeechWorker(),
   "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
   turn: async (args) => {

@@ -20,6 +20,7 @@ export const RUNTIME_SOURCES: readonly string[] = [
     "preview",
     "previewmeta",
     "reload",
+    "startlog",
     "startup",
     "version",
   ].map((n) => `ts/packages/update/src/${n}.ts`),

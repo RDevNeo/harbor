@@ -2914,7 +2914,7 @@ export interface ShellHooks {
   /** Gets a function that reads the screen's state, for the next restart. */
   snapshotWith?: (read: () => Record<string, unknown>) => void;
   /** The first frame is on screen. */
-  shown?: () => void;
+  shown?: (window: slint.Window) => void;
   quit?: () => void;
   /** Gets a function that closes this window (the tray's Quit while it is open). */
   closer?: (close: () => void) => void;
@@ -2950,7 +2950,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   win.show();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
-  hooks.shown?.();
+  hooks.shown?.(win.window);
   const tick = setInterval(() => shell.tick(), 1000);
   await runLoop();
   clearInterval(tick);

@@ -3,6 +3,7 @@ import type { UpdateConfig } from "./config.ts";
 import { alive, readJson, remove, writeAtomic } from "./files.ts";
 import { dirOf, hasPrevious, rollback } from "./install.ts";
 import { fail, readMeta, writeMeta } from "./previewmeta.ts";
+import { keepFailedLog } from "./startlog.ts";
 
 export const ATTEMPT = "starting.json";
 export const START_LIMIT_MS = 30_000;
@@ -64,15 +65,16 @@ export async function confirmStart(cfg: UpdateConfig, settleMs: number = SETTLE_
 export function failedStart(cfg: UpdateConfig, a: Attempt, why: string): "rolled-back" | "preview-failed" | "nothing-to-fall-back-to" {
   const dir = dirOf(cfg);
   remove(join(dir, ATTEMPT));
+  const log = keepFailedLog(dir);
   if (a.kind === "preview") {
     fail(dir, a.id, why);
     return "preview-failed";
   }
   if (!hasPrevious(cfg)) {
-    cfg.log(`${a.version} failed to start (${why}) and there is no earlier version to go back to`);
+    cfg.log(`${a.version} failed to start (${why}) and there is no earlier version to go back to${log === undefined ? "" : `; its errors are in ${log}`}`);
     return "nothing-to-fall-back-to";
   }
-  rollback(cfg, why);
+  rollback(cfg, why, log);
   return "rolled-back";
 }
 
@@ -111,7 +113,7 @@ export async function watch(cfg: UpdateConfig, pid: number, deps: WatchDeps): Pr
   }
   const a = readAttempt(dir);
   if (a === null || a.pid !== pid) return 0;
-  failedStart(cfg, a, why);
-  deps.relaunch(a.args);
+  // Started again with nothing to go back to, it would fail the same way, and arm another watchdog.
+  if (failedStart(cfg, a, why) !== "nothing-to-fall-back-to") deps.relaunch(a.args);
   return 0;
 }

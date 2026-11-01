@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { alive } from "../src/files.ts";
 import { rolledBack, skipped } from "../src/install.ts";
 import { readMeta, writeMeta, type Meta } from "../src/previewmeta.ts";
+import { FAILED_LOG, START_LOG, captureStart } from "../src/startlog.ts";
 import { ATTEMPT, START_LIMIT_MS, beginAttempt, confirmStart, failedStart, readAttempt, recoverUnconfirmed, watch } from "../src/startup.ts";
-import { cleanup, configFor, makeInstall, type Install } from "./support.ts";
+import { cleanup, configFor, makeInstall, tmp, type Install } from "./support.ts";
 
 afterEach(cleanup);
 
@@ -183,4 +184,44 @@ test("a watchdog for an attempt that was replaced does nothing", async () => {
   expect(await watch(cfg, 4_000_000, { relaunch: (a) => void started.push(a), kill: () => undefined })).toBe(0);
   expect(started).toEqual([]);
   expect(skipped(cfg, "1.1.0")).toBe(false);
+});
+
+test("a failed start keeps what it wrote to stderr as failed-start.log, and rolled-back.json says where", () => {
+  const inst = makeInstall({ version: "1.1.0" });
+  withPrevious(inst);
+  const cfg = configFor(inst, { version: "1.1.0" });
+  writeFileSync(join(inst.dir, START_LOG), "error: Cannot find module 'x'\n");
+  beginAttempt(cfg, attempt(4_000_000));
+  expect(failedStart(cfg, readAttempt(inst.dir) as NonNullable<ReturnType<typeof readAttempt>>, "it exited while starting")).toBe("rolled-back");
+  expect(rolledBack(cfg)).toMatchObject({ why: "it exited while starting", log: join(inst.dir, FAILED_LOG) });
+  expect(readFileSync(join(inst.dir, FAILED_LOG), "utf8")).toBe("error: Cannot find module 'x'\n");
+  expect(existsSync(join(inst.dir, START_LOG))).toBe(false);
+});
+
+test("the watchdog doesn't start again a release that failed with nothing to go back to", async () => {
+  const inst = makeInstall({ version: "1.1.0" });
+  const logs: string[] = [];
+  const cfg = configFor(inst, { version: "1.1.0", sleep: async () => undefined, log: (m) => void logs.push(m) });
+  writeFileSync(join(inst.dir, START_LOG), "boom\n");
+  beginAttempt(cfg, attempt(4_000_000));
+  const started: string[][] = [];
+  expect(await watch(cfg, 4_000_000, { relaunch: (a) => void started.push(a), kill: () => undefined })).toBe(0);
+  expect(started).toEqual([]);
+  expect(logs[0]).toContain(`its errors are in ${join(inst.dir, FAILED_LOG)}`);
+});
+
+test("a start's stderr goes to start.log until it is confirmed, then back where it was", async () => {
+  const dir = tmp();
+  const code = `import { captureStart } from ${JSON.stringify(join(import.meta.dir, "..", "src", "startlog.ts"))};
+let ok = false;
+captureStart(${JSON.stringify(dir)}, () => ok);
+console.error("while starting");
+ok = true;
+await Bun.sleep(800);
+console.error("after the start");`;
+  const p = Bun.spawn([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" });
+  const [err, exit] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+  expect(exit).toBe(0);
+  expect(readFileSync(join(dir, START_LOG), "utf8")).toBe("while starting\n");
+  expect(err).toBe("after the start\n");
 });

@@ -126,7 +126,7 @@ export async function install(cfg: UpdateConfig, version: string): Promise<Insta
   }
 }
 
-export function rollback(cfg: UpdateConfig, why?: string): { restored: string; gaveUp: string } {
+export function rollback(cfg: UpdateConfig, why?: string, log?: string): { restored: string; gaveUp: string } {
   const dir = dirOf(cfg);
   const prev = join(dir, PREVIOUS);
   if (!hasPrevious(cfg)) throw new Error("no previous version kept");
@@ -148,7 +148,7 @@ export function rollback(cfg: UpdateConfig, why?: string): { restored: string; g
   if (restored !== "") writeAtomic(join(dir, "VERSION"), restored);
   if (isFile(join(prev, BUNDLE_FILE))) replace(join(prev, BUNDLE_FILE), join(dir, BUNDLE_FILE));
   remove(prev);
-  if (why !== undefined) writeAtomic(join(dir, "rolled-back.json"), JSON.stringify({ version: gaveUp, restored, why, at: Math.floor(cfg.now() / 1000) }));
+  if (why !== undefined) writeAtomic(join(dir, "rolled-back.json"), JSON.stringify({ version: gaveUp, restored, why, at: Math.floor(cfg.now() / 1000), ...(log === undefined ? {} : { log }) }));
   return { restored, gaveUp };
 }
 
@@ -157,13 +157,15 @@ export interface RolledBack {
   restored: string;
   why: string;
   at: number;
+  /** The failed start's stderr. */
+  log?: string;
 }
 
 export function rolledBack(cfg: UpdateConfig): RolledBack | null {
   if (cfg.dir === null) return null;
   try {
     const v = JSON.parse(read(join(cfg.dir, "rolled-back.json"))) as Partial<RolledBack>;
-    return typeof v.version === "string" && typeof v.why === "string" ? { version: v.version, restored: v.restored ?? "", why: v.why, at: v.at ?? 0 } : null;
+    return typeof v.version === "string" && typeof v.why === "string" ? { version: v.version, restored: v.restored ?? "", why: v.why, at: v.at ?? 0, ...(typeof v.log === "string" ? { log: v.log } : {}) } : null;
   } catch {
     return null;
   }

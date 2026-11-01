@@ -27,3 +27,10 @@ copied to `tmp-p0/rs/harbor-p0` so that another agent's `pkill harbor-ref` canno
   `HTS_OLD` earlier replies above it (0), `HTS_SECS` (30), `HTS_HZ` updates a second (20), `HTS_LIVE=0` sends the
   reply's blocks in its row instead of the live model.
 - `layoutbench.ts VARIANT [BLOCKS]`: which Slint layout construct keeps a growing column cheap.
+
+## The window from the built artifacts
+
+- `window.sh` (inside `unshare -Urnm`; `SWAY`, `RIG_TMP`): builds the single `harbor` and the runtime + `harbor-app.js`, starts
+  each one's window with no arguments on a private headless sway with throwaway data, offline, and wants sway to map it, its
+  pixels drawn, its poll Worker running and it up for `HOLD_S` (6) s; then `harbor --check-window`, and a start with no display
+  that must exit and leave its error in `failed-start.log`. `~/.cache/hts/check.sh` with no arguments runs it after the suite.

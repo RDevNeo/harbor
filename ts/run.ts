@@ -13,6 +13,7 @@ import {
   watchFiles,
   type Snapshot,
 } from "./packages/update/src/index.ts";
+import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
 import { wire } from "./wire.ts";
 
@@ -20,6 +21,7 @@ export interface RunOptions {
   window: boolean;
   argv: string[];
   version: string;
+  shown?: (window: slint.Window, quit: () => void) => void;
 }
 
 export async function runApp(o: RunOptions): Promise<number> {
@@ -152,7 +154,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
     };
-    await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; }, busyIn: (f) => run.setBusyIn(f) });
+    await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; }, busyIn: (f) => run.setBusyIn(f) });
     tray?.stop();
     if (!quitting && run.store.get("bg_keep") !== "0") {
       const note = ui.stillRunning(run.store, tray !== null);
@@ -163,4 +165,41 @@ export async function runApp(o: RunOptions): Promise<number> {
   }
   await stopAll();
   return 0;
+}
+
+/**
+ * `harbor --check-window [SECONDS]`, offline only: the real window must come up and stay up, then it closes.
+ * Its own data folders, socket and runtime folder are the caller's to give (install-one.sh's preflight).
+ */
+export async function checkWindow(args: string[], version: string): Promise<number> {
+  const secs = Number(args[0] ?? 5);
+  if (!(secs > 0)) return (console.error("usage: harbor --check-window [SECONDS]"), 2);
+  if (!isOffline()) return (console.error("harbor: --check-window runs only with HARBOR_OFFLINE=1 and its own data folders"), 2);
+  let verdict = "no window: the app ended before showing one";
+  const limit = setTimeout(() => {
+    console.error(`harbor: no window within ${30 + secs} s`);
+    process.exit(1);
+  }, (30 + secs) * 1000);
+  const code = await runApp({
+    window: true,
+    argv: [],
+    version,
+    shown: (w, quit) => {
+      verdict = `the window closed within ${secs} s of showing`;
+      const at = performance.now();
+      setTimeout(async () => {
+        const { loopState } = await import("./packages/ui/src/index.ts");
+        const size = w.physicalSize;
+        if (!w.visible) verdict = `the window was hidden ${secs} s after showing`;
+        else if (size.width < 1 || size.height < 1) verdict = `the window has no size (${size.width}x${size.height})`;
+        else if (loopState.kind === "woken" && loopState.wakes === 0) verdict = "the display never woke the window's loop (its poll Worker is not running)";
+        else verdict = `ok: a ${size.width}x${size.height} window, up ${Math.round((performance.now() - at) / 1000)} s, loop ${loopState.kind} (${loopState.wakes} wakes)`;
+        quit();
+      }, secs * 1000);
+    },
+  });
+  clearTimeout(limit);
+  const ok = verdict.startsWith("ok: ");
+  (ok ? console.log : console.error)(ok ? `window ${verdict}` : `harbor: ${verdict}`);
+  return ok && code === 0 ? 0 : 1;
 }
