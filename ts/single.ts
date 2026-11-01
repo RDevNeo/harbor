@@ -1,7 +1,8 @@
 import "./globals.ts";
-import * as slint from "slint-ui";
-import * as native from "slint-ui/rust-module.cjs";
 import { launch } from "./packages/update/src/launcher.ts";
 
-Object.assign(globalThis.__harbor ?? {}, { slint, native });
+Object.defineProperties(globalThis.__harbor ?? {}, {
+  slint: { enumerable: true, get: () => require("slint-ui") },
+  native: { enumerable: true, get: () => require("slint-ui/rust-module.cjs") },
+});
 process.exit(await launch(process.argv.slice(2), { embedded: await import("./app.ts") }));

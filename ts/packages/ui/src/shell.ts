@@ -1590,12 +1590,12 @@ export class Shell {
 
   /**
    * The Engine changed chat `id` (null: several). While a reply streams, the open transcript is redrawn at most
-   * every 50 ms, the rest of the window and the sidebar at most every 250 ms.
+   * every 80 ms, the rest of the window and the sidebar at most every 250 ms.
    */
   changed(id: number | null): void {
     if (id === null || (this.view === "chat" && id === this.chatId)) this.cardsDirty = true;
     this.sidebarDirty = true;
-    this.schedule(50);
+    this.schedule(80);
   }
 
   private schedule(ms: number): void {
@@ -1623,7 +1623,7 @@ export class Shell {
         this.viewDirty = false;
         this.sidebarDirty = false;
       }
-      if (this.viewDirty || this.sidebarDirty) this.schedule(Math.max(50, this.restAt + 250 - t));
+      if (this.viewDirty || this.sidebarDirty) this.schedule(Math.max(80, this.restAt + 250 - t));
     }, ms);
   }
 

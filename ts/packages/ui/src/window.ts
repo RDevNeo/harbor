@@ -1,5 +1,6 @@
 // The Slint window's properties and callbacks as TypeScript sees them (slint-ui turns `-` into
 // `_`), and loading it from `assets.ts`'s folder.
+import { dlopen, FFIType } from "bun:ffi";
 import { join } from "node:path";
 import * as slint from "slint-ui";
 import type { TermKey } from "./logic/terminal.ts";
@@ -558,7 +559,19 @@ function isCtor(v: unknown): v is new () => AppWindow {
   return typeof v === "function";
 }
 
+/**
+ * Skia then repaints only what changed (a cursor's blink, the reply that grows) when the GL surface keeps
+ * its buffer age. Slint reads the variable from the C environment, which Bun's process.env doesn't reach.
+ */
+function partialRendering(): void {
+  if (process.platform !== "linux" || process.env.SLINT_SKIA_PARTIAL_RENDERING !== undefined) return;
+  const libc = dlopen("libc.so.6", { setenv: { args: [FFIType.cstring, FFIType.cstring, FFIType.i32], returns: FFIType.i32 } });
+  libc.symbols.setenv(Buffer.from("SLINT_SKIA_PARTIAL_RENDERING\0"), Buffer.from("1\0"), 0);
+  libc.close();
+}
+
 export async function loadWindow(): Promise<AppWindow> {
+  partialRendering();
   const ui = slint.loadFile(join(await uiDir(), "app.slint"), { style: "fluent" });
   const ctor = Reflect.get(ui, "AppWindow");
   if (!isCtor(ctor)) throw new Error("app.slint has no AppWindow");

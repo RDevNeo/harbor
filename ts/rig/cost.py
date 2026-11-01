@@ -54,7 +54,11 @@ def sway_up():
                LD_LIBRARY_PATH=f"{SWAY}/lib", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
     for k in ("DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "HYPRLAND_INSTANCE_SIGNATURE"):
         env.pop(k, None)
-    subprocess.Popen([f"{SWAY}/bin/sway", "-c", conf], env=env, stdout=open(f"{TMP}/sway.log", "w"),
+    # Started through a link of our own: other rigs stop their sway by its path.
+    link = f"{TMP}/sway-bin"
+    if not os.path.islink(link):
+        os.symlink(f"{SWAY}/bin/sway", link)
+    subprocess.Popen([link, "-c", conf], env=env, stdout=open(f"{TMP}/sway.log", "w"),
                      stderr=subprocess.STDOUT, start_new_session=True)
     for _ in range(100):
         if glob.glob(f"{RT}/sway-ipc*.sock") and os.path.exists(f"{RT}/wayland-1"):
@@ -68,10 +72,18 @@ def swaymsg(args):
     return ["env", f"LD_LIBRARY_PATH={SWAY}/lib", f"SWAYSOCK={sock[0] if sock else ''}", f"{SWAY}/bin/swaymsg"] + args
 
 
+def bun_link():
+    """Bun through a link of our own, so other rigs' `pkill -f ".../bun harbor.ts"` passes this app by."""
+    link = f"{TMP}/bun"
+    if not os.path.islink(link):
+        os.symlink(os.path.expanduser("~/.bun/bin/bun"), link)
+    return link
+
+
 def start(extra):
     run_id = f"{os.getpid()}-{time.monotonic_ns()}"
     env = dict(os.environ, XDG_RUNTIME_DIR=RT, WAYLAND_DISPLAY="wayland-1", FAKE=f"{HERE}/fake",
-               BUNBIN=os.path.expanduser("~/.bun/bin/bun"), TSDIR=TS, HTS_STREAM_S=str(STREAM),
+               BUNBIN=bun_link(), TSDIR=TS, HTS_STREAM_S=str(STREAM),
                NODE=os.environ.get("HTS_NODE", os.path.expanduser("~/.local/share/mise/installs/node/26.7.0/bin/node")),
                HTS_RUNTIME=os.environ.get("HTS_RUNTIME", "bun"), **{MARK: run_id})
     env.update(extra)
@@ -83,6 +95,7 @@ def start(extra):
         flags += [f"--preload={HERE}/loopstats.ts"]
         env["HTS_LOOPSTATS_OUT"] = f"{TMP}/loopstats.jsonl"
         open(f"{TMP}/loopstats.jsonl", "w").close()
+    env["BUN"] = env["BUNBIN"]
     if flags:
         env["BUN"], env["HTS_BUNFLAGS"] = f"{HERE}/bunwrap.sh", " ".join(flags)
     for kv in os.environ.get("HTS_ENV", "").split():
@@ -259,6 +272,10 @@ def stage(name):
     try:
         t0 = time.monotonic()
         time.sleep(SETTLE if name != "stream" else 10)
+        if name == "stream":
+            fake = [x for x in marked(pid) if b"fake/claude" in open(f"/proc/{x}/cmdline", "rb").read()]
+            if not fake:
+                raise SystemExit("stream: the fake claude isn't running, the message wasn't sent")
         r = sample(pid, SECS if name != "stream" else STREAM - 15)
         r["mem_mb"] = mem(pid)
         r["threads"] = len(os.listdir(f"/proc/{pid}/task"))

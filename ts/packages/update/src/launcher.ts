@@ -124,7 +124,7 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
   }
   const own = useEmbedded(chosen, opts.embedded);
   const info: RuntimeInfo = { version: base.runtime, bundle: own ? base.exe : chosen.path, preview: chosen.kind === "preview", exe: base.exe };
-  globalThis.__harbor = { ...globalThis.__harbor, runtime: info };
+  globalThis.__harbor = Object.assign(globalThis.__harbor ?? {}, { runtime: info });
   const m = own ? opts.embedded : await load(chosen.path);
   if (!isBundle(m)) {
     err(`harbor: ${chosen.path} is not a Harbor bundle`);
