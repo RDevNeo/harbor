@@ -41,6 +41,12 @@ export function runStep(w: slint.Window, s: Step): void {
       w.dispatchEvent({ type: "pointer-released", position, button });
       break;
     }
+    case "down":
+      w.dispatchEvent({ type: "pointer-pressed", position, button: "left" });
+      break;
+    case "up":
+      w.dispatchEvent({ type: "pointer-released", position, button: "left" });
+      break;
     case "wheel":
     case "wheel-down":
       w.dispatchEvent({ type: "pointer-scrolled", position, deltaX: 0, deltaY: kind === "wheel" ? 120 : -120 });

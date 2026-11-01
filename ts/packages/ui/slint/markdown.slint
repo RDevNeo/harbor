@@ -21,6 +21,8 @@ export struct MdBlock {
     bar-top: length,
     bar-bottom: length,
     trim: length,
+    plain: string,
+    key: string,
 }
 
 component Inline inherits StyledText {
@@ -36,6 +38,44 @@ component Inline inherits StyledText {
 export global MdSizes {
     pure public function heading(level: int) -> length {
         return level <= 1 ? 23px : level == 2 ? 21.845px : level == 3 ? 20.676px : level == 4 ? 19.507px : level == 5 ? 18.338px : 17.169px;
+    }
+}
+
+// A read-only TextInput holds the drawn words invisibly, for selecting; StyledText's link-clicked
+// never fires, so a click without a drag reports its offset to the shell.
+component Selectable inherits Rectangle {
+    in property <styled-text> text;
+    in property <string> plain;
+    in property <string> key;
+    in property <length> size: 16px;
+    in property <color> ink: Theme.fg;
+    callback link(string);
+    min-height: shown.min-height;
+    preferred-height: shown.preferred-height;
+    shown := Inline {
+        width: parent.width;
+        text: root.text;
+        size: root.size;
+        ink: root.ink;
+    }
+    TextInput {
+        width: parent.width;
+        height: parent.height;
+        read-only: true;
+        text: root.plain;
+        font-size: root.size;
+        font-family: "Geist";
+        // Not fully transparent: Slint then skips drawing the selection too.
+        color: root.ink.with-alpha(0.01);
+        wrap: word-wrap;
+        // egui's selection colour, see-through: here it lies over the words.
+        selection-background-color: (Theme.dark ? #004287 : #90d1ff).with-alpha(0.6);
+        selection-foreground-color: transparent;
+        changed cursor-position-byte-offset => {
+            if root.key != "" && self.has-focus && self.anchor-position-byte-offset == self.cursor-position-byte-offset {
+                root.link("at:" + root.key + ":" + self.cursor-position-byte-offset);
+            }
+        }
     }
 }
 
@@ -63,19 +103,23 @@ export component MdBlockView {
         padding-right: 1px;
         padding-top: root.block.gap;
         padding-bottom: root.block.after;
-        if root.block.kind == "p": Inline {
+        if root.block.kind == "p": Selectable {
             text: root.block.text;
+            plain: root.block.plain;
+            key: root.block.key;
             size: root.size;
             ink: root.ink;
-            link-clicked(u) => {
+            link(u) => {
                 root.link(u);
             }
         }
-        if root.block.kind == "h": Inline {
+        if root.block.kind == "h": Selectable {
             text: root.block.text;
+            plain: root.block.plain;
+            key: root.block.key;
             size: MdSizes.heading(root.block.level);
             ink: root.ink;
-            link-clicked(u) => {
+            link(u) => {
                 root.link(u);
             }
         }
@@ -110,11 +154,13 @@ export component MdBlockView {
             }
             li-text := VerticalLayout {
                 padding-left: root.box + 21px;
-                Inline {
+                Selectable {
                     text: root.block.text;
+                    plain: root.block.plain;
+                    key: root.block.key;
                     size: root.size;
                     ink: root.ink;
-                    link-clicked(u) => {
+                    link(u) => {
                         root.link(u);
                     }
                 }

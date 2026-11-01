@@ -29,7 +29,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
   popovers, the /, @ and $ menus, chat and project right-click menus (egui's own), snooze, dialogs,
   team panel, transcript (replies block by block, user bubbles with files, tool runs and cards,
   thinking, errors, the status line, "Up next"), read-only chats, both themes. Known differences:
-  transcript text can't be selected; Slint draws an inline `code` span boxed where egui draws it
+  selected text is tinted where egui keeps it white (the highlight lies over the words), and a selection stays within one block; Slint draws an inline `code` span boxed where egui draws it
   plain; Slint's line height is 20.7px for a 16px reply against egui's 21 and 17 for 13px text
   against egui's 16 (long paragraphs drift a pixel every few lines); egui's spinner dashes turn at
   other angles.

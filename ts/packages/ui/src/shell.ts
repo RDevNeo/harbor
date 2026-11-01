@@ -22,6 +22,7 @@ import { control } from "@harbor/mcp";
 import { Data, mentionOf as fromStore } from "./data.ts";
 import { web } from "./logic/browser.ts";
 import { gridSize } from "./logic/terminal.ts";
+import { linkAt } from "./markdown.ts";
 import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
@@ -2118,6 +2119,11 @@ export class Shell {
 
 
   private openLink(url: string): void {
+    if (url.startsWith("at:")) {
+      const hit = linkAt(url);
+      if (hit !== null) this.openLink(hit);
+      return;
+    }
     const chat = /^harbor:chat\/(.+)$/.exec(url);
     if (chat?.[1]) {
       const c = this.data.chats.find((x) => x.gid === chat[1]);

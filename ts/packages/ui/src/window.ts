@@ -44,6 +44,8 @@ export interface MdBlockData {
   bar_top: number;
   bar_bottom: number;
   trim: number;
+  plain: string;
+  key: string;
 }
 
 export interface SurfaceTab {

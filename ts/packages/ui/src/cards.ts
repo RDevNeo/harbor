@@ -4,7 +4,7 @@ import { actions, type Card, groupLabel, groups, project } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { type Part, parts } from "./logic/usertext.ts";
-import { type Block, blocks, escape, type Placed, place } from "./markdown.ts";
+import { type Block, blocks, escape, type Placed, place, registerLinks } from "./markdown.ts";
 import type { CardData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
@@ -54,14 +54,16 @@ function blockData(b: Block, at: Placed): MdBlockData {
     bar_top: at.barTop,
     bar_bottom: at.barBottom,
     trim: 0,
+    plain: "",
+    key: "",
   };
   switch (b.kind) {
     case "p":
-      return { ...base, text: styled(b.text) };
+      return { ...base, text: styled(b.text), plain: b.plain, key: registerLinks(b.links) };
     case "h":
-      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level };
+      return { ...base, text: styled(b.level <= 1 ? `**${b.text}**` : b.text), level: b.level, plain: b.plain, key: registerLinks(b.links) };
     case "li":
-      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth };
+      return { ...base, text: styled(b.text), marker: b.marker, depth: b.depth, plain: b.plain, key: registerLinks(b.links) };
     case "code":
       return { ...base, code: b.text };
     case "hr":
@@ -149,7 +151,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "hidden":
       return null;
     case "user":
-      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0 }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
+      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
     case "text": {
       const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
       return { ...d, kind: "text", blocks: mdBlocks(md), text: c.text };

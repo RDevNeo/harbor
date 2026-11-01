@@ -3,10 +3,18 @@
 import { blocks as netBlocks, type Block as NetBlock, type Span } from "@harbor/net";
 
 /** `item`: inside a list item, after its first line (egui_commonmark starts no line for it). */
+/** A link in a block's plain text, by UTF-8 byte offsets (what Slint's TextInput reports). */
+export interface Link {
+  from: number;
+  to: number;
+  url: string;
+}
+
+/** `plain`: the text as drawn, for selecting it; `links` within it. */
 export type Block = (
-  | { kind: "p"; text: string }
-  | { kind: "h"; text: string; level: number }
-  | { kind: "li"; text: string; marker: string; depth: number }
+  | { kind: "p"; text: string; plain: string; links: Link[] }
+  | { kind: "h"; text: string; plain: string; links: Link[]; level: number }
+  | { kind: "li"; text: string; plain: string; links: Link[]; marker: string; depth: number }
   | { kind: "code"; text: string; lang: string }
   | { kind: "hr" }
   | { kind: "table"; rows: string[][] }
@@ -41,15 +49,26 @@ export function inline(spans: readonly Span[]): string {
   return spans.map(span).join("");
 }
 
+export function plainOf(spans: readonly Span[]): { plain: string; links: Link[] } {
+  let plain = "";
+  const links: Link[] = [];
+  for (const s of spans) {
+    const from = Buffer.byteLength(plain);
+    plain += s.text;
+    if (s.link !== undefined) links.push({ from, to: Buffer.byteLength(plain), url: s.link });
+  }
+  return { plain, links };
+}
+
 function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Block[], item: boolean): void {
   const at = item ? { quote, item: true as const } : { quote };
   for (const b of bs) {
     switch (b.type) {
       case "paragraph":
-        out.push({ kind: "p", text: inline(b.spans), ...at });
+        out.push({ kind: "p", text: inline(b.spans), ...plainOf(b.spans), ...at });
         break;
       case "heading":
-        out.push({ kind: "h", text: inline(b.spans), level: b.level, ...at });
+        out.push({ kind: "h", text: inline(b.spans), ...plainOf(b.spans), level: b.level, ...at });
         break;
       case "code":
         out.push({ kind: "code", text: b.text, lang: b.lang, ...at });
@@ -68,8 +87,8 @@ function flatten(bs: readonly NetBlock[], quote: number, depth: number, out: Blo
           // Nested bullets are hollow (egui_commonmark's `bullet_point_hollow`).
           const marker = b.ordered ? `${b.start + i}.` : depth > 0 ? "◦" : "•";
           const [first, ...rest] = it;
-          const text = first?.type === "paragraph" ? inline(first.spans) : "";
-          out.push({ kind: "li", text, marker, depth, quote });
+          const spans = first?.type === "paragraph" ? first.spans : [];
+          out.push({ kind: "li", text: inline(spans), ...plainOf(spans), marker, depth, quote });
           flatten(first?.type === "paragraph" ? rest : it, quote, depth + 1, out, true);
         });
         break;
@@ -151,4 +170,23 @@ export function place(bs: readonly Block[]): Placed[] {
     }
   });
   return out;
+}
+
+/** Blocks' links by the key their selectable text reports a click with ("at:KEY:OFFSET"). */
+const linkTable = new Map<string, Link[]>();
+let nextKey = 0;
+
+export function registerLinks(links: Link[]): string {
+  if (links.length === 0) return "";
+  const key = String(++nextKey);
+  linkTable.set(key, links);
+  return key;
+}
+
+/** The URL under a click reported as "at:KEY:OFFSET", or null (not one, or not on a link). */
+export function linkAt(report: string): string | null {
+  const m = /^at:(\d+):(\d+)$/.exec(report);
+  if (!m) return null;
+  const at = Number(m[2]);
+  return linkTable.get(m[1] ?? "")?.find((l) => at >= l.from && at < l.to)?.url ?? null;
 }
