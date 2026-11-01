@@ -131,8 +131,24 @@ export interface ComposerState {
   notice: string;
 }
 
+export interface DeviceRow {
+  key: string;
+  name: string;
+  phone: boolean;
+  online: boolean;
+  details: string;
+  can_send: boolean;
+}
+
+export interface TransferRow {
+  label: string;
+  state: "run" | "wait" | "done" | "error";
+  line: string;
+  frac: number;
+}
+
 export interface PopItem {
-  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "native";
+  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native";
   icon: string;
   label: string;
   desc: string;
@@ -327,6 +343,15 @@ export interface AppWindow extends slint.ComponentHandle {
   term_wheel: (d: string, lines: number) => void;
   term_resized: (d: string, w: number, h: number, cw: number, rh: number) => void;
   focus_pane: (d: string, terminal: boolean) => void;
+  devices: slint.Model<DeviceRow>;
+  devices_summary: string;
+  transfers: slint.Model<TransferRow>;
+  transfers_clearable: boolean;
+  device_send: (key: string, x: number, y: number) => void;
+  device_files: (d: string, key: string) => void;
+  device_terminal: (d: string, key: string) => void;
+  device_settings: () => void;
+  transfers_clear: () => void;
   open_media: (path: string) => void;
 
   draft: string;

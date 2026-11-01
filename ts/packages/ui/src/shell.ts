@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
+import { clearDeviceTransfers, deviceCanSend, deviceDetails, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
@@ -36,7 +37,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow } from "./window.ts";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -172,6 +173,10 @@ export class Shell {
   private readonly workspaces: () => Workspaces;
   private readonly hub: ShellHub;
   private shownProjects: number[] = [];
+  private readonly deviceRows = new slint.ArrayModel<DeviceRow>([]);
+  private readonly transferRows = new slint.ArrayModel<TransferRow>([]);
+  private transfers: DeviceTransfer[] = [];
+  private paired: PairedDevice[] = [];
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -280,6 +285,16 @@ export class Shell {
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
     w.reorder = (id, target, above) => this.reorder(id, target, above);
+    w.devices = this.deviceRows;
+    w.transfers = this.transferRows;
+    w.device_send = (key, x, y) => this.deviceMenu(key, x, y);
+    w.device_terminal = (d, key) => this.deviceTerminal(d === "right" ? "right" : "bottom", key);
+    w.device_files = () => this.toast("A PC's files aren't in the TypeScript app yet");
+    w.device_settings = () => this.pages.openSettings("devices");
+    w.transfers_clear = () => {
+      this.transfers = clearDeviceTransfers(this.transfers);
+      this.refreshDevices();
+    };
     w.settings = () => this.pages.openSettings();
     w.prs = () => this.pages.openPrs();
     w.issues = () => this.pages.openIssues();
@@ -1401,6 +1416,8 @@ export class Shell {
   private wasRunning = new Set<number>();
 
   tick(): void {
+    // devices.rs: phones' "last seen" and PCs' online state change by themselves.
+    if (this.devicesShown()) this.refreshDevices();
     this.voice?.poll();
     this.followTheme();
     for (const id of this.wasRunning) {
@@ -1573,6 +1590,7 @@ export class Shell {
 
   private refreshPanes(): void {
     const w = this.win;
+    if (this.devicesShown()) this.refreshDevices();
     for (const d of ["right", "bottom"] as const) {
       const p = this.surfaces.panes[d];
       sync(
@@ -1992,6 +2010,74 @@ export class Shell {
     this.refreshSidebar();
   }
 
+  private devicesShown(): boolean {
+    return (["right", "bottom"] as const).some((d) => this.surfaces.panes[d].open && this.surfaces.showing(d)?.kind === "devices");
+  }
+
+  private refreshDevices(): void {
+    const { list, served } = this.hub.devices();
+    this.paired = list;
+    const online = list.filter((d) => d.online).length;
+    const w = this.win;
+    w.devices_summary = `${online} of ${list.length} online`;
+    sync(
+      this.deviceRows,
+      list.map((d) => ({ key: d.key, name: d.name, phone: isPhoneDevice(d), online: d.online, details: deviceDetails(d, served), can_send: deviceCanSend(d) })),
+      sameJson,
+    );
+    sync(
+      this.transferRows,
+      [...this.transfers].reverse().map((x) => ({ label: x.label, state: x.error !== null ? "error" : x.done ? "done" : x.waiting ? "wait" : "run", line: transferStatus(x), frac: x.size > 0 ? x.sent / x.size : 0 })),
+      sameJson,
+    );
+    w.transfers_clearable = this.transfers.some((x) => x.done || x.error !== null);
+  }
+
+  /** devices.rs `send_menu_ui`: what goes to a device, and the text box for its clipboard. */
+  private deviceMenu(key: string, x: number, y: number): void {
+    const d = this.paired.find((p) => p.key === key);
+    if (!d) return;
+    const pick = (kind: DeviceSendKind, title: string, images: boolean, multiple: boolean) => () =>
+      void import("@harbor/media").then(async ({ picker }) => {
+        const files = await picker.pick({ title, multiple, ...(images ? { filter: ["Images", picker.IMAGES] as const } : {}) });
+        if (files.length > 0) this.sendToDevice(d, kind, null, files);
+      });
+    const note = sendMenuNote(d);
+    const items = [
+      { ...this.label(`Send to ${d.name}`), kind: "caption" as const },
+      this.item("Text to clipboard", () => this.deviceText(d, x, y), { icon: ICONS.CLIP }),
+      this.item("File", pick("file", "Send files", false, true), { icon: ICONS.FILE }),
+      this.item("Image", pick("image", "Send images", true, true), { icon: ICONS.IMAGE }),
+      this.item("Image to clipboard", pick("clip-image", "Image to clipboard", true, false), { icon: ICONS.FILE_IMAGE }),
+      ...(note === null ? [] : [{ ...this.label(note), kind: "caption" as const }]),
+    ];
+    this.popup("device-send", x, y, items, 240);
+  }
+
+  private deviceText(d: PairedDevice, x: number, y: number): void {
+    const w = this.win;
+    w.pop_input = "";
+    w.pop_input_accept = () => {
+      const text = w.pop_input;
+      if (text === "") return;
+      this.closePopup();
+      this.sendToDevice(d, "text", text, []);
+    };
+    this.popup("device-text", x, y, [{ ...this.label(`Text for ${d.name}'s clipboard`), kind: "caption" }, { kind: "textbox", icon: "", label: "Send", desc: "Type or paste text", checked: false, enabled: true, badge: "" }], 300);
+  }
+
+  private sendToDevice(d: PairedDevice, kind: DeviceSendKind, text: string | null, files: string[]): void {
+    void deviceSend(d, kind, text, files, this.transfers, { ...this.hub.deviceEnv, wake: () => this.refreshDevices() });
+    this.refreshDevices();
+  }
+
+  /** surface.rs: a terminal on a paired PC, ssh into it. */
+  private deviceTerminal(d: Dock, key: string): void {
+    const dev = this.paired.find((p) => p.key === key);
+    const host = dev ? this.hub.deviceHost(dev) : null;
+    if (dev && host) this.surfaces.openTerminal(dev.name, homedir(), host.shell, d);
+  }
+
   /** Shows the workspaces `ids` in the sidebar ("": all of them), on this device from now on. */
   private setWsFilter(ids: string): void {
     this.data.store.set("sidebar_workspace", ids);
@@ -2262,6 +2348,9 @@ interface Draft {
 export interface ShellHub extends PageHub {
   prs: chatpr.ChatPrs;
   workspaces: () => Workspaces;
+  devices: () => { list: PairedDevice[]; served: number };
+  deviceEnv: DeviceSendEnv;
+  deviceHost: (d: PairedDevice) => { shell: string[]; ssh: string[] } | null;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

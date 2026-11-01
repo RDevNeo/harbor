@@ -13,6 +13,7 @@ import addproject from "../slint/addproject.slint" with { type: "file" };
 import app from "../slint/app.slint" with { type: "file" };
 import chat from "../slint/chat.slint" with { type: "file" };
 import composer from "../slint/composer.slint" with { type: "file" };
+import devices from "../slint/devices.slint" with { type: "file" };
 import gallery from "../slint/gallery.slint" with { type: "file" };
 import icons from "../slint/icons.slint" with { type: "file" };
 import issuedetail from "../slint/issuedetail.slint" with { type: "file" };
@@ -71,6 +72,7 @@ export const FILES: Readonly<Record<string, string>> = {
   "settings.slint": settings,
   "sidebar.slint": sidebar,
   "surface.slint": surface,
+  "devices.slint": devices,
   "team.slint": team,
   "terminal.slint": terminal,
   "theme.slint": theme,

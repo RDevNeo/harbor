@@ -118,6 +118,9 @@ export async function runApp(o: RunOptions): Promise<number> {
       prs: run.prs,
       workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),
       gh: run.services.gh,
+      devices: run.devices,
+      deviceEnv: run.deviceEnv,
+      deviceHost: run.deviceHost,
       checkUpdates: async () => (await updater.check(), updater.info().status),
     };
     await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f) });

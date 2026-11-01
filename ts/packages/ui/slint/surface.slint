@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Btn, Glyph, KeyCap, TipArea } from "widgets.slint";
 import { TerminalView, TermLine, TermKey } from "terminal.slint";
+import { DevicesView, DeviceRow, TransferRow } from "devices.slint";
 
 export struct SurfaceTab {
     kind: string,
@@ -186,6 +187,15 @@ export component SurfacePane inherits Rectangle {
     callback term-paste();
     callback term-wheel(int);
     callback term-resized(length, length);
+    in property <[DeviceRow]> devices;
+    in property <string> devices-summary;
+    in property <[TransferRow]> transfers;
+    in property <bool> transfers-clearable;
+    callback device-send(string, length, length);
+    callback device-files(string);
+    callback device-terminal(string);
+    callback device-settings();
+    callback transfers-clear();
     public function focus-chooser() {
         chooser.grab();
     }
@@ -288,10 +298,33 @@ export component SurfacePane inherits Rectangle {
             root.term-resized(w, h);
         }
     }
-    if root.kind == "browser" || root.kind == "devices" || root.kind == "files": Text {
+    if root.kind == "devices": DevicesView {
+        y: root.top;
+        height: root.height - self.y;
+        devices: root.devices;
+        summary: root.devices-summary;
+        transfers: root.transfers;
+        clearable: root.transfers-clearable;
+        send(k, x, y) => {
+            root.device-send(k, x, y);
+        }
+        files(k) => {
+            root.device-files(k);
+        }
+        terminal(k) => {
+            root.device-terminal(k);
+        }
+        settings => {
+            root.device-settings();
+        }
+        clear => {
+            root.transfers-clear();
+        }
+    }
+    if root.kind == "browser" || root.kind == "files": Text {
         y: root.top + max(root.height * 0.4 - 90px, 16px);
         height: 20px;
-        text: root.kind == "browser" ? "The browser isn't in the TypeScript app yet" : "Devices aren't in the TypeScript app yet";
+        text: root.kind == "browser" ? "The browser isn't in the TypeScript app yet" : "Files aren't in the TypeScript app yet";
         font-size: 14px;
         color: Theme.subtle;
         horizontal-alignment: center;

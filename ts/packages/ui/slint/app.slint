@@ -6,6 +6,7 @@ import "fonts/lucide.ttf";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
+import { DeviceRow, TransferRow } from "devices.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
 import { TermKey } from "terminal.slint";
 import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
@@ -367,6 +368,15 @@ export component AppWindow inherits Window {
     callback ws-filter(length, length);
     callback ws-all();
     callback reorder(int, int, bool);
+    in property <[DeviceRow]> devices;
+    in property <string> devices-summary;
+    in property <[TransferRow]> transfers;
+    in property <bool> transfers-clearable;
+    callback device-send(string, length, length);
+    callback device-files(string, string);
+    callback device-terminal(string, string);
+    callback device-settings();
+    callback transfers-clear();
     callback settings();
     callback prs();
     callback issues();
@@ -1047,6 +1057,25 @@ export component AppWindow inherits Window {
         term-wheel(n) => {
             root.term-wheel("right", n);
         }
+        devices: root.devices;
+        devices-summary: root.devices-summary;
+        transfers: root.transfers;
+        transfers-clearable: root.transfers-clearable;
+        device-send(k, x, y) => {
+            root.device-send(k, x, y);
+        }
+        device-files(k) => {
+            root.device-files("right", k);
+        }
+        device-terminal(k) => {
+            root.device-terminal("right", k);
+        }
+        device-settings => {
+            root.device-settings();
+        }
+        transfers-clear => {
+            root.transfers-clear();
+        }
         term-resized(w, h) => {
             root.term-resized("right", w, h, self.cell-w, self.cell-h);
         }
@@ -1107,6 +1136,25 @@ export component AppWindow inherits Window {
         }
         term-wheel(n) => {
             root.term-wheel("bottom", n);
+        }
+        devices: root.devices;
+        devices-summary: root.devices-summary;
+        transfers: root.transfers;
+        transfers-clearable: root.transfers-clearable;
+        device-send(k, x, y) => {
+            root.device-send(k, x, y);
+        }
+        device-files(k) => {
+            root.device-files("bottom", k);
+        }
+        device-terminal(k) => {
+            root.device-terminal("bottom", k);
+        }
+        device-settings => {
+            root.device-settings();
+        }
+        transfers-clear => {
+            root.transfers-clear();
         }
         term-resized(w, h) => {
             root.term-resized("bottom", w, h, self.cell-w, self.cell-h);
@@ -1216,6 +1264,68 @@ export component AppWindow inherits Window {
                         if it.kind == "rule": Rectangle {
                             height: 1px;
                             background: Theme.border;
+                        }
+                        // devices.rs "Text to clipboard": four rows of text, Ctrl+Enter or Send.
+                        if it.kind == "textbox": VerticalLayout {
+                            spacing: 6px;
+                            Rectangle {
+                                height: 4 * 18px + 8px;
+                                background: Theme.bg100;
+                                border-width: 1px;
+                                border-color: box.has-focus ? Theme.gray-700 : Theme.border;
+                                border-radius: Theme.radius-md;
+                                box := TextInput {
+                                    x: 6px;
+                                    y: 4px;
+                                    width: parent.width - 12px;
+                                    height: parent.height - 8px;
+                                    text <=> root.pop-input;
+                                    font-size: 14px;
+                                    color: Theme.fg;
+                                    wrap: word-wrap;
+                                    single-line: false;
+                                    init => {
+                                        self.focus();
+                                    }
+                                    edited => {
+                                        root.pop-input-edited(self.text);
+                                    }
+                                    key-pressed(e) => {
+                                        if e.modifiers.control && e.text == "\n" && self.text != "" {
+                                            root.pop-input-accept();
+                                            return accept;
+                                        }
+                                        reject
+                                    }
+                                }
+                                if root.pop-input == "": Text {
+                                    x: 6px;
+                                    y: 4px;
+                                    text: it.desc;
+                                    font-size: 14px;
+                                    color: Theme.subtle;
+                                }
+                            }
+                            HorizontalLayout {
+                                Text {
+                                    text: "Ctrl+Enter";
+                                    font-size: 12px;
+                                    color: Theme.subtle;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                }
+                                Btn {
+                                    text: it.label;
+                                    size: xs;
+                                    variant: primary;
+                                    enabled: root.pop-input != "";
+                                    clicked => {
+                                        root.pop-input-accept();
+                                    }
+                                }
+                            }
                         }
                         if it.kind == "input": VerticalLayout {
                             spacing: 4px;

@@ -6,6 +6,13 @@ import { dictate, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
+  deviceSshArgs,
+  type DeviceSendEnv,
+  gatherVersions,
+  isPhoneDevice,
+  newHost,
+  type PairedDevice,
+  pairedDevices,
   aboutOwner,
   Api,
   catalogOf,
@@ -92,6 +99,11 @@ export interface RunningHub {
   engine: Engine;
   prs: chatpr.ChatPrs;
   account: AccountService;
+  /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
+  devices(): { list: PairedDevice[]; served: number };
+  deviceEnv: DeviceSendEnv;
+  /** A paired PC's terminal (ssh into it) and its ssh options for the file browser; null for phones. */
+  deviceHost(d: PairedDevice): { shell: string[]; ssh: string[] } | null;
   services: Services;
   stop(): Promise<void>;
 }
@@ -473,6 +485,21 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     engine: live,
     prs,
     account,
+    devices: () => {
+      const me = hub.mesh.me;
+      const peers = [...hub.mesh.peers.values()];
+      const served = apkInfo()?.code ?? 0;
+      const [pcs] = gatherVersions({ me, hostname: me.name, meshOn: hub.mesh.on, peers, version: o.version, update: null, paired: [], local: [], elsewhere: [], served });
+      return { list: pairedDevices(hub, pcs), served };
+    },
+    deviceEnv: { hub, peer: (key) => hub.mesh.peers.get(key) ?? null },
+    deviceHost: (d) => {
+      if (isPhoneDevice(d)) return null;
+      // surface.rs device_host: as Settings › Devices knows it, else the PC with the defaults.
+      const cfg = loadRemote(store);
+      const h = remotes.find(cfg, remotes.tailnetCached(), d.key) ?? newHost({ id: d.key, name: d.name, host: d.ip, bridge: true });
+      return { shell: remotes.shellArgv(cfg, h, null), ssh: deviceSshArgs(remotes, cfg, h) };
+    },
     services,
     stop: async () => {
       clearInterval(tick);
