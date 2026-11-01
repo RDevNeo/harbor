@@ -70,7 +70,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | accountui, secretsui, remoteui, phonesui | done as Settings tabs (Account, Secrets, Devices, Phones); mesh actions run on the hub, not in the window yet | 0 of 0 |
 | terminal | done: in the surface panes' tabs (`slint/terminal.slint`, `src/terminal.ts`, a Bun PTY parsed by @xterm/headless) | 1 of 1 |
 | tray, background | tray: started with the window (Open raises it, Quit closes it); Settings' Quit and "Start Harbor when I log in" work. Background (window closed, Harbor stays): not wired; Slint can't unmap a window on Wayland (`hide()` ends the loop but the window stays drawn until its handle is collected, and the Shell's closures keep it), and the Reloader can't restart a source run (`cfg.exe` is bun). Needs: a restart into `--background` on close and back on focus, for compiled and source runs (`src/tray.ts`, `src/background.ts`) | see `test/tray.test.ts`, `test/background.test.ts` |
-| browser | not started | 0 of 0 |
+| browser | done: the Browser tab of the surface panes runs the Servo engine (`src/browser.ts`, `slint/browser.slint`; see the surface row) | 0 of 0 |
 
 The "isn't in the TypeScript app yet" dialog is gone: nothing opens it any more. The window reaches the
 hub running beside it through `ShellHub` (`gh`: the Issues list merged with the mesh's PCs and Fix on
