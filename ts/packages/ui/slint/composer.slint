@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Btn, Glyph, Trigger, VSep, RoundButton, StopButton, FileChip, PopoverFrame, TipArea, AccountMark, Variant } from "widgets.slint";
+import { Btn, Glyph, Trigger, VSep, RoundButton, StopButton, FileChip, PopoverFrame, TipArea, AccountMark, Variant, Spinner } from "widgets.slint";
 
 export struct MenuEntry {
     icon: string,
@@ -332,6 +332,11 @@ export component Composer {
     in property <bool> compact;
     in property <bool> tiny;
     in property <string> open-popup;
+    in property <string> voice;
+    in property <float> voice-level;
+    in property <string> voice-time;
+    in property <string> voice-note;
+    in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
     out property <bool> focused: field.has-focus;
     out property <int> cursor: field.cursor-position-byte-offset;
     callback edited(string);
@@ -631,12 +636,62 @@ export component Composer {
                     }
                     HorizontalLayout {
                         spacing: 6px;
-                        Btn {
+                        alignment: end;
+                        // voice.rs `voice_button`: the mic; while recording the stop button, a level
+                        // meter and the time; while transcribing a spinner and what it waits for.
+                        if root.voice == "rec" && root.voice-note != "": Text {
+                            horizontal-stretch: 0;
+                            text: root.voice-note;
+                            font-size: 12.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if root.voice == "rec": Text {
+                            horizontal-stretch: 0;
+                            text: root.voice-time;
+                            font-family: "Geist Mono";
+                            font-size: 12.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if root.voice == "rec": Rectangle {
+                            width: 40px;
+                            for i in 5: Rectangle {
+                                property <float> shape: i == 2 ? 1.0 : i == 1 || i == 3 ? 0.8 : 0.55;
+                                property <float> v: min(root.voice-level * self.shape, 1.0);
+                                x: i * 40px / 5 + 40px / 9 / 2 - self.width / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: 40px / 9;
+                                height: max(20px * (0.18 + 0.82 * self.v), 3px);
+                                background: root.voice-level * self.shape > 0.06 ? Theme.red-900 : Theme.gray-500;
+                            }
+                        }
+                        if root.voice == "rec": StopButton {
+                            tip: root.mic-tip;
+                            clicked => {
+                                root.mic();
+                            }
+                        }
+                        if root.voice == "busy": Rectangle {
+                            width: 18px;
+                            Spinner {
+                                radius: 6px;
+                                color: Theme.subtle;
+                            }
+                        }
+                        if root.voice == "busy": Text {
+                            horizontal-stretch: 0;
+                            text: root.voice-note;
+                            font-size: 12.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if root.voice == "": Btn {
                             y: 1px;
                             icon: Icons.mic;
                             size: icon-sm;
                             variant: ghost-muted;
-                            tip: "Dictate (Ctrl+Shift+Space)";
+                            tip: root.mic-tip;
                             clicked => {
                                 root.mic();
                             }

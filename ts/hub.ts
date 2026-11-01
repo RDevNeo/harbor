@@ -58,7 +58,7 @@ export interface HubOptions {
   updater?: Updater;
   store?: Store;
   /** The window's Engine, made with the hub's host and notes (the phones' notifications). */
-  engine?: (host: HubHost, notes: Notes) => Engine;
+  engine?: (host: HubHost, notes: Notes, voice: dictate.Mesh) => Engine;
   /** The first port the webhook listener tries (false: none); a test hub keeps off the real one's. */
   hookPort?: number | false;
 }
@@ -285,7 +285,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     noteResumed: (id, account, text) => notifier.noteResumed(eng().chat(id) ?? null, account, eng().accountLabel(account), text, eng().limits.limitSettings().notify),
     notify: (kind, key, title, body) => notifier.post(kind, key, title, body, "", false),
   };
-  engine = o.engine ? o.engine(host, notes) : new Engine({ store, accounts: () => accounts, ...host, ...own });
+  const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
+    on: () => hub.mesh.on,
+    me: () => ({ name: hub.mesh.me.name }),
+    peers: () => [...hub.mesh.peers.values()].filter((p) => p.online && p.fp !== "").map((p) => ({ id: p.id, name: p.name, online: p.online, dest: dest(p) })),
+    http: (p, method, path, body, waitMs) => http(p.dest, method, path, body, waitMs),
+  };
+  engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, accounts: () => accounts, ...host, ...own });
   const live = engine;
   phone.d.engine = {
     running: (id) => live.running(id),
@@ -320,12 +326,6 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     engineTimer = setTimeout(engineTick, Math.min(Math.max(next ?? 1000, 50), 1000));
   };
   engineTick();
-  const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
-    on: () => hub.mesh.on,
-    me: () => ({ name: hub.mesh.me.name }),
-    peers: () => [...hub.mesh.peers.values()].filter((p) => p.online && p.fp !== "").map((p) => ({ id: p.id, name: p.name, online: p.online, dest: dest(p) })),
-    http: (p, method, path, body, waitMs) => http(p.dest, method, path, body, waitMs),
-  };
   const route = async (call: Call): Promise<Reply> => {
     const updated = o.updater ? await updateRoute(o.updater, call) : null;
     if (updated !== null) return updated;

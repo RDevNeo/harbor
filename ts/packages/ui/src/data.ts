@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { type Account, Engine, type EngineHost, providers } from "@harbor/agents";
 import { media } from "@harbor/media";
 import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
+import type { dictate } from "@harbor/media";
 import type { Chat, Item, Mention as StoreMention, Repo, Store, Timer } from "@harbor/store";
 import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
 import { expands, personalDir, slashPrompt } from "./logic/slash.ts";
@@ -25,8 +26,12 @@ export class Data {
   readonly notifier: Notifier;
 
   /** `hub`: the hooks of the hub this window belongs to, and its notes (what phones are told). */
-  constructor(store: Store, hub: Partial<EngineHost> = {}, notes = new Notes()) {
+  /** Other PCs that transcribe dictation (none without the hub). */
+  readonly voiceMesh: dictate.Mesh;
+
+  constructor(store: Store, hub: Partial<EngineHost> = {}, notes = new Notes(), voiceMesh: dictate.Mesh = alone) {
     this.store = store;
+    this.voiceMesh = voiceMesh;
     this.accounts = providers.discover();
     const desktop = new Desktop({ send: spawnNotifySend, prefs: loadPrefs(store), onOpen: () => this.onNotificationOpen(desktop.takeOpen()) });
     this.notifier = new Notifier({ notes, desktop });
@@ -167,3 +172,5 @@ export class Data {
 export function mentionOf(m: StoreMention): Mention {
   return { ...m, kind: m.kind === "chat" ? "chat" : "" };
 }
+
+const alone: dictate.Mesh = { on: () => false, me: () => ({ name: "" }), peers: () => [], http: async () => [0, null] };

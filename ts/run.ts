@@ -39,7 +39,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     version: o.version,
     updater,
     store,
-    ...(ui ? { engine: (host, notes) => (made.data = new ui.Data(store, host, notes)).engine } : {}),
+    ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
   });
   const engine = run.engine;
   const data = made.data;

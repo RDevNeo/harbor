@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
-import { type Account, git, type Kind, providers } from "@harbor/agents";
+import { type Account, git, type Kind, providers, recap } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
@@ -10,7 +10,7 @@ import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { isImage } from "./logic/images.ts";
-import { Keys } from "./logic/keys.ts";
+import { Keys, label as keyLabel } from "./logic/keys.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
@@ -106,9 +106,26 @@ export class Shell {
   /** Images in the transcript, once the media package is loaded. */
   useMedia(pkg: typeof import("@harbor/media")): void {
     this.media = pkg;
+    this.voice = new pkg.voiceCtl.VoiceCtl({
+      store: this.data.store,
+      mesh: this.data.voiceMesh,
+      insert: (key, text) => this.insertDictation(key, text),
+      toast: (m) => this.toast(m),
+      wake: () => this.refreshVoice(),
+      account: () => {
+        // As voice.rs: not while the account is blocked by a usage limit.
+        const a = this.data.accounts.find((x) => x.id === "claude" && x.bin !== null && x.loggedIn === true && this.engine.limits.blocked(x.id) === undefined);
+        return a ? (system, prompt, ms) => recap.askWithin(providers.binStr(a), providers.accountEnv(a), system, prompt, ms) : null;
+      },
+    });
+    this.voice.load();
+    this.refreshVoice();
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId));
   }
   private media: typeof import("@harbor/media") | null = null;
+  private voice: import("@harbor/media").voiceCtl.VoiceCtl | null = null;
+  private voiceTimer: ReturnType<typeof setInterval> | null = null;
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly surfaces = new Surfaces<Terminal>({
     spawn: (title, cwd, argv) => {
       try {
@@ -300,7 +317,7 @@ export class Shell {
     w.send = () => this.send();
     w.stop = () => this.stop(this.chatId);
     w.attach = () => void this.attach();
-    w.mic = () => this.unported("Dictation");
+    w.mic = () => this.mic();
     w.remove_file = (i) => {
       const list = this.attached.get(this.key()) ?? [];
       list.splice(i, 1);
@@ -984,6 +1001,10 @@ export class Shell {
     }
     const chat = this.view === "chat" ? this.chatId : null;
     if ((p.ctrl && !p.alt && !p.shift && p.key.toLowerCase() === "v") || (p.shift && p.key === "Insert")) void this.pasteImage();
+    if (this.keys.matches("voice", p) && this.win.pop_id === "") {
+      this.mic();
+      return true;
+    }
     if (this.keys.matches("send", p)) {
       this.send(this.engine.followDefault());
       return true;
@@ -1272,6 +1293,7 @@ export class Shell {
   private wasRunning = new Set<number>();
 
   tick(): void {
+    this.voice?.poll();
     this.followTheme();
     for (const id of this.wasRunning) {
       const repo = this.data.chat(id)?.repoId;
@@ -1287,6 +1309,77 @@ export class Shell {
   }
 
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
+  /** picker.rs `show_toast`: 8 seconds over the bottom edge. */
+  toast(message: string): void {
+    this.win.toast = message;
+    if (this.toastTimer !== null) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      this.win.toast = "";
+      this.toastTimer = null;
+    }, 8000);
+  }
+
+  /** The window's dictation, for the Voice settings tab; null until the media package has loaded. */
+  get dictation(): import("@harbor/media").voiceCtl.VoiceCtl | null {
+    return this.voice;
+  }
+
+  private mic(): void {
+    if (!this.voice) return this.toast("Dictation is still starting");
+    void this.voice.toggle(this.key()).then(() => this.refreshVoice());
+    this.refreshVoice();
+  }
+
+  private insertDictation(key: number, text: string): void {
+    const spaced = this.media?.voice.insertSpaced;
+    if (!spaced) return;
+    if (key === this.key()) {
+      const [t, c] = spaced(this.win.draft, charAt(this.win.draft, this.win.cursor), text);
+      this.win.draft = t;
+      this.drafts.set(key, t);
+      this.win.set_cursor(byteAt(t, c));
+      this.refreshComposer();
+    } else {
+      const d = this.drafts.get(key) ?? "";
+      this.drafts.set(key, spaced(d, [...d].length, text)[0]);
+    }
+  }
+
+  /** voice.rs `voice_button`'s states for this composer, redrawn every 100ms while it records or transcribes. */
+  private refreshVoice(): void {
+    const v = this.voice;
+    const w = this.win;
+    if (!v || !this.media) return;
+    const key = this.key();
+    const rec = v.recordingFor(key);
+    const busy = v.busyFor(key);
+    const shortcut = keyLabel(this.keys.get("voice"));
+    const progress = this.media.voice.modelProgress();
+    w.voice = rec ? "rec" : busy ? "busy" : "";
+    if (rec) {
+      const s = Math.floor(rec.elapsedMs / 1000);
+      w.voice_level = rec.level;
+      w.voice_time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      w.voice_note = progress ? `Speech model ${progress}` : "";
+      w.mic_tip = `Stop and transcribe (${shortcut})`;
+    } else if (busy) {
+      w.voice_note = progress && v.waitingForModel() ? `Getting the speech model… ${progress}` : "Transcribing…";
+    } else {
+      w.mic_tip = this.media.voice.cantRecord() ?? `Dictate (${shortcut})`;
+    }
+    const live = v.recording !== null || v.busy !== null;
+    if (live && this.voiceTimer === null) this.voiceTimer = setInterval(() => this.refreshVoice(), 100);
+    if (!live && this.voiceTimer !== null) {
+      clearInterval(this.voiceTimer);
+      this.voiceTimer = null;
+    }
+    // A dictation that ended with "press enter" / "enviar": as if Enter was pressed.
+    if (v.send === key && w.pop_id === "") {
+      v.takeSend();
+      this.send();
+    }
+  }
+
   private termOf(d: Dock): Terminal | null {
     const s = this.surfaces.showing(d);
     return s?.kind === "terminal" ? s.term : null;

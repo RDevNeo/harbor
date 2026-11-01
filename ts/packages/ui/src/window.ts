@@ -342,6 +342,12 @@ export interface AppWindow extends slint.ComponentHandle {
   pop_w: number;
   pop_above: boolean;
   pop_native: boolean;
+  voice: "" | "rec" | "busy";
+  voice_level: number;
+  voice_time: string;
+  voice_note: string;
+  mic_tip: string;
+  toast: string;
   pop_spacing: number;
   pop_pick: (id: string, i: number) => void;
   pop_close: () => void;

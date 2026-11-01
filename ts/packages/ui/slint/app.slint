@@ -444,6 +444,13 @@ export component AppWindow inherits Window {
     in property <bool> pop-above;
     // egui's own context menu (a chat row's right click): at the pointer, as wide as its rows.
     in property <bool> pop-native;
+    in property <string> voice;
+    in property <float> voice-level;
+    in property <string> voice-time;
+    in property <string> voice-note;
+    in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
+    // picker.rs `toast`: a message over the bottom edge for a few seconds.
+    in property <string> toast;
     // egui's item spacing in a popover: 8px, or 0 where the Rust menu sets it (the effort menu).
     in property <length> pop-spacing: 8px;
     callback pop-pick(string, int);
@@ -794,6 +801,11 @@ export component AppWindow inherits Window {
                             height: root.read-only ? 0px : self.preferred-height;
                             text <=> root.draft;
                             state: root.composer;
+                            voice: root.voice;
+                            voice-level: root.voice-level;
+                            voice-time: root.voice-time;
+                            voice-note: root.voice-note;
+                            mic-tip: root.mic-tip;
                             logo: root.model-logo;
                             files: root.files;
                             menu: root.menu;
@@ -1276,6 +1288,22 @@ export component AppWindow inherits Window {
                     color: close-x.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
                 }
             }
+        }
+    }
+
+    if root.toast != "": PopoverFrame {
+        x: (root.width - self.width) / 2;
+        y: root.height - 24px - self.height;
+        width: toast-text.width + 10px;
+        height: toast-text.preferred-height + 10px;
+        toast-text := Text {
+            x: 5px;
+            y: 5px;
+            width: min(self.preferred-width, 586px);
+            wrap: word-wrap;
+            text: root.toast;
+            font-size: 14px;
+            color: Theme.fg;
         }
     }
 
