@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { connect as tcpConnect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect as tlsConnect } from "node:tls";
+import { connect as tlsConnect, createSecureContext } from "node:tls";
 import { generateIdentity, MemKv } from "@harbor/net";
 import type { Hook } from "../src/control.ts";
 import { Account, b64u, type Challenge, challengeCert, clientHello, Hooks, obtain, type Options, sslipName } from "../src/hookcert.ts";
@@ -62,6 +62,13 @@ test("the account key is made once, owner-only, and read back", () => {
   const a = Account.loadOrCreate(dir);
   expect(statSync(join(dir, "acme-account.pem")).mode & 0o777).toBe(0o600);
   expect(Account.loadOrCreate(dir).jwk()).toBe(a.jwk());
+});
+
+test("every challenge certificate loads (a serial is minimal DER)", () => {
+  for (let i = 0; i < 600; i++) {
+    const c = challengeCert("hooks.example.org", `token.${i}`);
+    expect(() => createSecureContext({ key: c.key, cert: c.cert })).not.toThrow();
+  }
 });
 
 test("the challenge certificate names the host and carries the digest", () => {
