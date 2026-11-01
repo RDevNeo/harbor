@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, git, type Kind, providers } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
@@ -17,6 +17,9 @@ import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, team
 import { control } from "@harbor/mcp";
 import { Data, mentionOf as fromStore } from "./data.ts";
 import { web } from "./logic/browser.ts";
+import { gridSize } from "./logic/terminal.ts";
+import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
+import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
@@ -27,7 +30,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type PopItem, type SideRow, type StatusData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData } from "./window.ts";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -106,6 +109,22 @@ export class Shell {
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId));
   }
   private media: typeof import("@harbor/media") | null = null;
+  private readonly surfaces = new Surfaces<Terminal>({
+    spawn: (title, cwd, argv) => {
+      try {
+        return new Terminal(title, cwd, argv, { PATH: providers.childPath() }, () => this.termWake());
+      } catch (e) {
+        this.dialog("Couldn't open a terminal", e instanceof Error ? e.message : String(e), "OK", false, null, () => {});
+        return null;
+      }
+    },
+    changed: () => this.refreshPanes(),
+    focus: (d, terminal) => setTimeout(() => this.win.focus_pane(d, terminal), 30),
+  });
+  private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
+  /** Each pane's terminal grid, rows and columns, as its view last measured it. */
+  private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
+  private termQueued = false;
   private stripFold = new Map<number, boolean>();
   private popActions: (() => void)[] = [];
   private dialogAction: ((ok: boolean, input: string) => void) | null = null;
@@ -245,6 +264,31 @@ export class Shell {
     w.open_url = (url) => this.openExternal(url);
     w.card_act = (seq, a) => this.cardAction(seq, a);
     w.queue_menu = (qid, x, y) => this.queueMenu(qid, x, y);
+    w.right_tabs = this.paneTabs.right;
+    w.bottom_tabs = this.paneTabs.bottom;
+    const dock = (d: string): Dock => (d === "right" ? "right" : "bottom");
+    w.pane_toggle = (d) => this.surfaces.toggleDock(dock(d));
+    w.pane_add = (d) => this.surfaces.add(dock(d));
+    w.pane_open = (d, i) => this.surfaces.open(dock(d), i);
+    w.pane_close = (d, i) => this.surfaces.close(dock(d), i);
+    w.pane_max_toggle = (d) => this.surfaces.toggleMax(dock(d));
+    w.pane_hide = (d) => this.surfaces.hide(dock(d));
+    w.pane_pick = (d, k) => this.pickSurface(dock(d), k);
+    w.pane_recent = (d, x, y) => this.browserMenu(dock(d), x, y);
+    w.term_key = (d, k, text, ctrl, alt, shift) => this.termOf(dock(d))?.key(k === "none" ? { text } : k, { ctrl, alt, shift });
+    w.term_paste = (d) => {
+      const p = Bun.spawnSync(["wl-paste", "-n"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      if (p.exitCode === 0) this.termOf(dock(d))?.paste(p.stdout.toString());
+    };
+    w.term_wheel = (d, n) => {
+      this.termOf(dock(d))?.wheel(n);
+      this.termWake();
+    };
+    w.term_resized = (d, width, height, cw, rh) => {
+      if (cw <= 0 || rh <= 0) return;
+      this.gridOf[dock(d)] = gridSize(width, height, cw, rh);
+      this.fitTerm(dock(d));
+    };
     w.open_media = (path) => {
       Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     };
@@ -1006,6 +1050,14 @@ export class Shell {
       w.settings();
       return true;
     }
+    if (this.keys.matches("toggle_terminal", p)) {
+      this.surfaces.toggleTerminal(this.cwdHere());
+      return true;
+    }
+    if (this.keys.matches("toggle_browser", p)) {
+      this.surfaces.toggleBrowser(this.browserUrl());
+      return true;
+    }
     if (p.key === "Escape" && w.pop_id !== "") {
       this.closePopup();
       return true;
@@ -1235,7 +1287,103 @@ export class Shell {
   }
 
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
+  private termOf(d: Dock): Terminal | null {
+    const s = this.surfaces.showing(d);
+    return s?.kind === "terminal" ? s.term : null;
+  }
+
+  private fitTerm(d: Dock): void {
+    const g = this.gridOf[d];
+    if (g) this.termOf(d)?.resize(g[0], g[1]);
+    this.termWake();
+  }
+
+  /** A terminal's output redraws at most every 16ms. */
+  private termWake(): void {
+    if (this.termQueued) return;
+    this.termQueued = true;
+    setTimeout(() => {
+      this.termQueued = false;
+      for (const d of ["right", "bottom"] as const) {
+        const t = this.termOf(d);
+        if (!t) continue;
+        const f = t.frame(this.dark);
+        this.win[d === "right" ? "right_screen" : "bottom_screen"] = { lines: f.rows, cursor_row: f.cursor_row, cursor_col: f.cursor_col, cursor_text: f.cursor_text, scrolled: f.scrolled };
+      }
+    }, 16);
+  }
+
+  private refreshPanes(): void {
+    const w = this.win;
+    for (const d of ["right", "bottom"] as const) {
+      const p = this.surfaces.panes[d];
+      sync(
+        this.paneTabs[d],
+        p.surfaces.map((s) => ({ kind: s.kind, title: tabTitle(s) })),
+        sameJson,
+      );
+      if (d === "right") {
+        w.right_open = p.open;
+        w.right_active = p.active;
+      } else {
+        w.bottom_open = p.open;
+        w.bottom_active = p.active;
+      }
+      this.fitTerm(d);
+    }
+    w.pane_max = this.surfaces.max ?? "";
+  }
+
+  /** app.rs `cwd_here`: the open chat's folder, else the draft's project, else home. */
+  private cwdHere(): string {
+    const chat = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    if (chat) return this.data.cwd(chat);
+    const r = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
+    return r ? (r.local ?? r.path) : homedir();
+  }
+
+  private browserUrl(): string {
+    return this.data.store.get("browser_last") ?? "localhost:3000";
+  }
+
+  private pickSurface(d: Dock, key: string): void {
+    if (key === "B") this.surfaces.openBrowser(this.browserUrl(), d);
+    else if (key === "T") {
+      const cwd = this.cwdHere();
+      this.surfaces.openTerminal(basename(cwd) || "~", cwd, [], d);
+    } else if (key === "M") this.surfaces.openDevices(d);
+  }
+
+  /** surface.rs: the chooser's menu of dev servers and recent pages. */
+  private browserMenu(d: Dock, x: number, y: number): void {
+    const read = (f: string) => {
+      try {
+        return readFileSync(f, "utf8");
+      } catch {
+        return "";
+      }
+    };
+    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], control.HOOK_PORT);
+    let recent: string[] = [];
+    try {
+      const v: unknown = JSON.parse(this.data.store.get("browser_recent") ?? "[]");
+      if (Array.isArray(v)) recent = v.filter((u): u is string => typeof u === "string");
+    } catch {
+      // nothing recent yet
+    }
+    const open = (u: string) => () => this.surfaces.openBrowser(u, d);
+    const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Dev servers"), kind: "caption" }];
+    if (ports.length === 0) items.push({ ...this.label("Nothing listening on localhost"), kind: "caption" });
+    for (const p of ports) items.push(this.item(`localhost:${p}`, open(`localhost:${p}`), { icon: ICONS.GLOBE }));
+    if (recent.length > 0) {
+      items.push(this.separator(), { ...this.label("Recent"), kind: "caption" });
+      for (const u of recent) items.push(this.item([...u.replace(/^https?:\/\//, "")].slice(0, 40).join(""), open(u), { icon: ICONS.GLOBE }));
+    }
+    this.popup("browser-menu", x, y, items, 260);
+  }
+
   shutdown(): void {
+    this.surfaces.dispose();
     for (const [id, run] of this.engine.turns) {
       this.engine.persist(id);
       run.turn?.release();
@@ -1488,13 +1636,20 @@ export class Shell {
     setTimeout(() => this.popup("move", x, y, items, 280), 0);
   }
 
+  private projectTerminal(id: number): void {
+    const r = this.data.repo(id);
+    if (!r) return;
+    const dir = r.local ?? r.path;
+    this.surfaces.openTerminal(basename(dir), dir);
+  }
+
   /** sidebar.rs's project row menu, egui's own context menu. */
   private projectMenu(id: number, x: number, y: number): void {
     const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, extra), kind: "native" as const });
     const stored = this.data.repo(id)?.remote ?? "";
     const remote = this.gitStatus.get(id)?.remote ?? (stored === "" ? null : git.webUrl(stored));
     const github = remote !== null && /^https:\/\/github\.com\//.test(remote);
-    const items: (PopItem & { act?: () => void })[] = [native("Open terminal", () => this.unported("Terminal"), { icon: ICONS.TERMINAL })];
+    const items: (PopItem & { act?: () => void })[] = [native("Open terminal", () => this.projectTerminal(id), { icon: ICONS.TERMINAL })];
     if (github) items.push(native("Pull requests", () => this.unported("Pull requests"), { icon: ICONS.PULL }), native("Issues", () => this.unported("Issues"), { icon: ICONS.CIRCLE_DOT }));
     if (remote) items.push(native("Open remote", () => this.openExternal(remote), { icon: ICONS.EXTERNAL }));
     const main = this.data.mainChat(id);

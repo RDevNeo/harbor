@@ -2,6 +2,8 @@
 // `_`), and loading it from `assets.ts`'s folder.
 import { join } from "node:path";
 import * as slint from "slint-ui";
+import type { TermKey } from "./logic/terminal.ts";
+import type { TermFrame } from "./terminal.ts";
 import { uiDir } from "./assets.ts";
 import type { Pixels } from "./logos.ts";
 
@@ -41,6 +43,19 @@ export interface MdBlockData {
   after: number;
   bar_top: number;
   bar_bottom: number;
+}
+
+export interface SurfaceTab {
+  kind: "chooser" | "terminal" | "browser" | "devices";
+  title: string;
+}
+
+export interface TermScreen {
+  lines: TermFrame["rows"];
+  cursor_row: number;
+  cursor_col: number;
+  cursor_text: string;
+  scrolled: string;
 }
 
 export interface MediaRow {
@@ -261,6 +276,28 @@ export interface AppWindow extends slint.ComponentHandle {
   open_url: (url: string) => void;
   card_act: (seq: number, action: string) => void;
   queue_menu: (id: number, x: number, y: number) => void;
+  right_open: boolean;
+  bottom_open: boolean;
+  pane_max: "" | "right" | "bottom";
+  right_tabs: slint.Model<SurfaceTab>;
+  bottom_tabs: slint.Model<SurfaceTab>;
+  right_active: number;
+  bottom_active: number;
+  right_screen: TermScreen;
+  bottom_screen: TermScreen;
+  pane_toggle: (d: string) => void;
+  pane_add: (d: string) => void;
+  pane_open: (d: string, i: number) => void;
+  pane_close: (d: string, i: number) => void;
+  pane_max_toggle: (d: string) => void;
+  pane_hide: (d: string) => void;
+  pane_pick: (d: string, key: string) => void;
+  pane_recent: (d: string, x: number, y: number) => void;
+  term_key: (d: string, k: TermKey | "none", text: string, ctrl: boolean, alt: boolean, shift: boolean) => void;
+  term_paste: (d: string) => void;
+  term_wheel: (d: string, lines: number) => void;
+  term_resized: (d: string, w: number, h: number, cw: number, rh: number) => void;
+  focus_pane: (d: string, terminal: boolean) => void;
   open_media: (path: string) => void;
 
   draft: string;

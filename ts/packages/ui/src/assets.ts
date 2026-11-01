@@ -35,6 +35,7 @@ import settingsUsage from "../slint/settings-usage.slint" with { type: "file" };
 import settingsVoice from "../slint/settings-voice.slint" with { type: "file" };
 import settingsWebhooks from "../slint/settings-webhooks.slint" with { type: "file" };
 import sidebar from "../slint/sidebar.slint" with { type: "file" };
+import surface from "../slint/surface.slint" with { type: "file" };
 import team from "../slint/team.slint" with { type: "file" };
 import terminal from "../slint/terminal.slint" with { type: "file" };
 import theme from "../slint/theme.slint" with { type: "file" };
@@ -67,6 +68,7 @@ export const FILES: Readonly<Record<string, string>> = {
   "settings-webhooks.slint": settingsWebhooks,
   "settings.slint": settings,
   "sidebar.slint": sidebar,
+  "surface.slint": surface,
   "team.slint": team,
   "terminal.slint": terminal,
   "theme.slint": theme,

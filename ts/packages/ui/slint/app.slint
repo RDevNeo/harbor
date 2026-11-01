@@ -5,6 +5,8 @@ import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
+import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
+import { TermKey } from "terminal.slint";
 import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
@@ -87,9 +89,12 @@ component TopBar {
     in property <bool> sidebar-open;
     in property <bool> team-enabled;
     in property <bool> team-on;
+    in property <bool> right-on;
+    in property <bool> bottom-on;
     callback show-sidebar();
     callback close-window();
     callback team();
+    callback pane(string);
     callback project-clicked(length, length);
     callback parent-clicked();
     height: 46px;
@@ -217,16 +222,22 @@ component TopBar {
                 icon: Icons.panel-bottom;
                 size: icon-xs;
                 variant: ghost-muted;
-                enabled: false;
-                tip: "Bottom panel: not in the TypeScript app yet";
+                pressed: root.bottom-on;
+                tip: "Bottom panel";
+                clicked => {
+                    root.pane("bottom");
+                }
             }
             Btn {
                 y: 1px;
                 icon: Icons.panel-right;
                 size: icon-xs;
                 variant: ghost-muted;
-                enabled: false;
-                tip: "Right panel: not in the TypeScript app yet";
+                pressed: root.right-on;
+                tip: "Right panel";
+                clicked => {
+                    root.pane("right");
+                }
             }
             Btn {
                 y: 1px;
@@ -488,7 +499,45 @@ export component AppWindow inherits Window {
     out property <bool> at-end: transcript.at-end;
 
     property <length> content-w: 760px;
-    property <bool> docked: root.sidebar-open && !root.narrow;
+    // app.rs `sidebar_narrow`: a right pane at its minimum leaves the chat its 440px, or the sidebar becomes a drawer.
+    property <bool> docked: root.sidebar-open && !root.narrow && !(root.right-open && root.pane-max == "" && root.width < 256px + 320px + 440px);
+    in property <bool> right-open;
+    in property <bool> bottom-open;
+    in property <string> pane-max;
+    in-out property <length> right-w: 620px;
+    in-out property <length> bottom-h: 300px;
+    in property <[SurfaceTab]> right-tabs;
+    in property <[SurfaceTab]> bottom-tabs;
+    in property <int> right-active;
+    in property <int> bottom-active;
+    in property <TermScreen> right-screen;
+    in property <TermScreen> bottom-screen;
+    callback pane-toggle(string);
+    callback pane-add(string);
+    callback pane-open(string, int);
+    callback pane-close(string, int);
+    callback pane-max-toggle(string);
+    callback pane-hide(string);
+    callback pane-pick(string, string);
+    callback pane-recent(string, length, length);
+    callback term-key(string, TermKey, string, bool, bool, bool);
+    callback term-paste(string);
+    callback term-wheel(string, int);
+    callback term-resized(string, length, length, length, length);
+    public function focus-pane(dock: string, terminal: bool) {
+        if dock == "right" && terminal {
+            right-pane.focus-terminal();
+        } else if dock == "right" {
+            right-pane.focus-chooser();
+        } else if terminal {
+            bottom-pane.focus-terminal();
+        } else {
+            bottom-pane.focus-chooser();
+        }
+    }
+    property <length> left-edge: root.docked ? 256px : 0px;
+    property <length> right-shown: root.right-open && root.pane-max == "" ? max(320px, min(root.right-w, root.width - root.left-edge - 440px)) : 0px;
+    property <length> bottom-shown: root.bottom-open && root.pane-max == "" ? max(140px, min(root.bottom-h, root.height - 120px)) : 0px;
 
     keys := FocusScope {
         key-pressed(e) => {
@@ -567,15 +616,20 @@ export component AppWindow inherits Window {
                 }
             }
             main := VerticalLayout {
-                x: root.docked ? 256px : 0px;
+                x: root.left-edge;
                 y: 0;
-                width: root.width - self.x;
-                height: root.height;
+                width: root.width - self.x - root.right-shown;
+                height: root.height - root.bottom-shown;
                 if root.view == "draft" || root.view == "chat": TopBar {
                     crumbs: root.crumbs;
                     sidebar-open: root.docked;
                     team-enabled: root.team-enabled;
                     team-on: root.team-on;
+                    right-on: root.right-open;
+                    bottom-on: root.bottom-open;
+                    pane(d) => {
+                        root.pane-toggle(d);
+                    }
                     show-sidebar => {
                         root.sidebar-open = true;
                     }
@@ -601,8 +655,8 @@ export component AppWindow inherits Window {
                     property <length> side: max((room - root.content-w) / 2, room < 520px ? 12px : 24px);
                     property <length> column: max(0px, room - 2 * side);
                     property <bool> centred: root.view == "draft" || root.hero;
-                    // chat.rs: (h/2 - 170 - growth) with the text area's 220px of room to grow.
-                    property <length> hero-top: max(self.height * 0.5 - 390px, 24px) + 22px;
+                    // chat.rs: (h/2 - 170 - growth), clamped at 24px; fitted to the Rust app at 853 and 553px.
+                    property <length> hero-top: max(self.height * 0.5 - 375px, 24px) + 7px;
                     if body.team-docked: TeamPanel {
                         x: body.room;
                         y: 9px;
@@ -815,6 +869,129 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    if root.right-open && root.pane-max == "": Rectangle {
+        x: root.width - root.right-shown;
+        y: 0;
+        width: 1px;
+        height: root.height;
+        background: Theme.border;
+    }
+    if root.right-open && root.pane-max == "": TouchArea {
+        x: root.width - root.right-shown - 3px;
+        y: 0;
+        width: 6px;
+        height: root.height;
+        mouse-cursor: ew-resize;
+        moved => {
+            root.right-w = max(320px, root.width - (self.absolute-position.x + self.mouse-x));
+        }
+    }
+    right-pane := SurfacePane {
+        x: root.pane-max == "right" ? root.left-edge : root.width - root.right-shown + 1px;
+        y: 0;
+        width: root.pane-max == "right" ? root.width - root.left-edge : root.right-shown - 1px;
+        height: root.height;
+        visible: root.right-open && (root.pane-max == "" || root.pane-max == "right");
+        tabs: root.right-tabs;
+        active: root.right-active;
+        maximized: root.pane-max == "right";
+        screen: root.right-screen;
+        add => {
+            root.pane-add("right");
+        }
+        open(i) => {
+            root.pane-open("right", i);
+        }
+        close(i) => {
+            root.pane-close("right", i);
+        }
+        maximize => {
+            root.pane-max-toggle("right");
+        }
+        hide => {
+            root.pane-hide("right");
+        }
+        pick(k) => {
+            root.pane-pick("right", k);
+        }
+        recent(x, y) => {
+            root.pane-recent("right", x, y);
+        }
+        term-key(k, t, c, a, sh) => {
+            root.term-key("right", k, t, c, a, sh);
+        }
+        term-paste => {
+            root.term-paste("right");
+        }
+        term-wheel(n) => {
+            root.term-wheel("right", n);
+        }
+        term-resized(w, h) => {
+            root.term-resized("right", w, h, self.cell-w, self.cell-h);
+        }
+    }
+    if root.bottom-open && root.pane-max == "": Rectangle {
+        x: root.left-edge;
+        y: root.height - root.bottom-shown;
+        width: root.width - root.left-edge - root.right-shown;
+        height: 1px;
+        background: Theme.border;
+    }
+    if root.bottom-open && root.pane-max == "": TouchArea {
+        x: root.left-edge;
+        y: root.height - root.bottom-shown - 3px;
+        width: root.width - root.left-edge - root.right-shown;
+        height: 6px;
+        mouse-cursor: ns-resize;
+        moved => {
+            root.bottom-h = max(140px, root.height - (self.absolute-position.y + self.mouse-y));
+        }
+    }
+    bottom-pane := SurfacePane {
+        x: root.left-edge;
+        y: root.pane-max == "bottom" ? 0px : root.height - root.bottom-shown + 1px;
+        width: root.width - root.left-edge - (root.pane-max == "bottom" ? 0px : root.right-shown);
+        height: root.pane-max == "bottom" ? root.height : root.bottom-shown - 1px;
+        visible: root.bottom-open && (root.pane-max == "" || root.pane-max == "bottom");
+        tabs: root.bottom-tabs;
+        active: root.bottom-active;
+        maximized: root.pane-max == "bottom";
+        screen: root.bottom-screen;
+        add => {
+            root.pane-add("bottom");
+        }
+        open(i) => {
+            root.pane-open("bottom", i);
+        }
+        close(i) => {
+            root.pane-close("bottom", i);
+        }
+        maximize => {
+            root.pane-max-toggle("bottom");
+        }
+        hide => {
+            root.pane-hide("bottom");
+        }
+        pick(k) => {
+            root.pane-pick("bottom", k);
+        }
+        recent(x, y) => {
+            root.pane-recent("bottom", x, y);
+        }
+        term-key(k, t, c, a, sh) => {
+            root.term-key("bottom", k, t, c, a, sh);
+        }
+        term-paste => {
+            root.term-paste("bottom");
+        }
+        term-wheel(n) => {
+            root.term-wheel("bottom", n);
+        }
+        term-resized(w, h) => {
+            root.term-resized("bottom", w, h, self.cell-w, self.cell-h);
         }
     }
 
