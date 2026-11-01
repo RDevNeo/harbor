@@ -9,28 +9,36 @@ import geistRegular from "../../../../assets/fonts/Geist-Regular.ttf" with { typ
 import geistSemibold from "../../../../assets/fonts/Geist-SemiBold.ttf" with { type: "file" };
 import geistMono from "../../../../assets/fonts/GeistMono-Regular.ttf" with { type: "file" };
 import lucide from "../../../../assets/fonts/lucide.ttf" with { type: "file" };
+import addproject from "../slint/addproject.slint" with { type: "file" };
 import app from "../slint/app.slint" with { type: "file" };
 import chat from "../slint/chat.slint" with { type: "file" };
 import composer from "../slint/composer.slint" with { type: "file" };
 import gallery from "../slint/gallery.slint" with { type: "file" };
 import icons from "../slint/icons.slint" with { type: "file" };
+import listdetail from "../slint/listdetail.slint" with { type: "file" };
 import markdown from "../slint/markdown.slint" with { type: "file" };
+import palette from "../slint/palette.slint" with { type: "file" };
 import picker from "../slint/picker.slint" with { type: "file" };
 import sidebar from "../slint/sidebar.slint" with { type: "file" };
 import team from "../slint/team.slint" with { type: "file" };
+import terminal from "../slint/terminal.slint" with { type: "file" };
 import theme from "../slint/theme.slint" with { type: "file" };
 import widgets from "../slint/widgets.slint" with { type: "file" };
 
 export const FILES: Readonly<Record<string, string>> = {
+  "addproject.slint": addproject,
   "app.slint": app,
   "chat.slint": chat,
   "composer.slint": composer,
   "gallery.slint": gallery,
   "icons.slint": icons,
+  "listdetail.slint": listdetail,
   "markdown.slint": markdown,
+  "palette.slint": palette,
   "picker.slint": picker,
   "sidebar.slint": sidebar,
   "team.slint": team,
+  "terminal.slint": terminal,
   "theme.slint": theme,
   "widgets.slint": widgets,
   "fonts/Geist-Regular.ttf": geistRegular,

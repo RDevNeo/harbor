@@ -11,6 +11,7 @@
     "@harbor/media": "workspace:*",
     "@harbor/net": "workspace:*",
     "@harbor/store": "workspace:*",
+    "@xterm/headless": "6.0.0",
     "slint-ui": "1.18.1"
   }
 }

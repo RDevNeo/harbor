@@ -909,8 +909,10 @@ export component SettingRow {
         padding-top: Theme.compact ? 8px : 12px;
         padding-bottom: Theme.compact ? 8px : 12px;
         spacing: 12px;
+        // widgets.rs `setting_row`: the text takes 60% or all but 260px, whichever is more, and leaves 60px.
+        property <length> inner: root.width - 32px;
         VerticalLayout {
-            horizontal-stretch: 3;
+            width: min(max(parent.inner * 0.6, parent.inner - 260px), parent.inner - 60px);
             spacing: 2px;
             Text {
                 text: root.title;
@@ -927,7 +929,7 @@ export component SettingRow {
             }
         }
         HorizontalLayout {
-            horizontal-stretch: 2;
+            horizontal-stretch: 1;
             alignment: end;
             VerticalLayout {
                 alignment: start;

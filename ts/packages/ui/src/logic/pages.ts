@@ -76,14 +76,10 @@ export function tabFromSlug(s: string): Tab | null {
   return TAB_ORDER.find((t) => t === s) ?? null;
 }
 
-/** The tabs a settings search keeps: by name or keyword, case aside. */
+/** The tabs a settings search keeps: the query in the name or the keywords, case aside (sidebar.rs `settings_nav`). */
 export function searchTabs(q: string): Tab[] {
-  const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
-  if (words.length === 0) return [...TAB_ORDER];
-  return TAB_ORDER.filter((t) => {
-    const hay = `${TABS[t].label} ${TABS[t].keywords}`.toLowerCase();
-    return words.every((w) => hay.includes(w));
-  });
+  const w = q.trim().toLowerCase();
+  return TAB_ORDER.filter((t) => TABS[t].label.toLowerCase().includes(w) || TABS[t].keywords.includes(w));
 }
 
 export interface Totals {

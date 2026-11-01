@@ -2,6 +2,7 @@
 // `colorize`, or full-colour RGBA (.rgba).
 import claudeColor from "../../../../assets/logos/p-claude-color.rgba" with { type: "file" };
 import cursor from "../../../../assets/logos/p-cursor.a8" with { type: "file" };
+import github from "../../../../assets/logos/github.a8" with { type: "file" };
 import geminiColor from "../../../../assets/logos/p-gemini-color.rgba" with { type: "file" };
 import grok from "../../../../assets/logos/p-grok.a8" with { type: "file" };
 import metaColor from "../../../../assets/logos/p-meta-color.rgba" with { type: "file" };
@@ -70,4 +71,20 @@ export function kindOfAccount(id: string): ProviderKind {
   if (s.startsWith("meta")) return "Meta";
   if (s.startsWith("opencode")) return "OpenCode";
   return "Claude";
+}
+
+const MARKS = { github: [github, "#181717"] } as const;
+export type MarkName = keyof typeof MARKS;
+
+/** An app's mark in its brand colour; a dark one is drawn in `fg` on the dark theme (logos.rs `tint`). */
+export async function appMark(name: MarkName, fg: string, dark: boolean): Promise<Pixels> {
+  const [path, brand] = MARKS[name];
+  const c = hex(brand);
+  const tint = dark && 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] < 70 ? hex(fg) : c;
+  const key = `${name}:${tint.join(",")}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const p = pixels(await Bun.file(path).bytes(), tint);
+  cache.set(key, p);
+  return p;
 }
