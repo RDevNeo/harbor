@@ -183,7 +183,7 @@ export class Shared {
   seen = new Map<string, Seen>();
   hints = new Map<string, string[]>();
   down = new Map<string, Down>();
-  about: { owner?: string; github?: string; owner_suggested?: boolean } = {};
+  about: () => { owner?: string; github?: string; owner_suggested?: boolean } = () => ({});
   /** The workspace's PCs from the account directory (account.rs `mesh_peers`). */
   workspacePeers: () => Allowed[] = () => [];
 

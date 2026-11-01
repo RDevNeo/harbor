@@ -61,9 +61,12 @@ describe("the phone API's chats (api.rs App side)", () => {
     const hub = new Hub([], 0);
     const bare = new StoreReplica({ store, hub, version: "t" }).chats(0, true).chats[0] as Record<string, Json>;
     expect([bare.pr, bare.worktree]).toEqual([null, null]);
-    const replica = new StoreReplica({ store, hub, version: "t", pr: (x) => (x.id === c.id ? pr : null), worktree: () => "fix-login" });
+    const status = { queue: [], working: { since_ms: 1, subagents: 2, text: "Working…  ·  2 sub-agents running" }, waiting: null, limit: null, agents: null, folder: null, can_steer: true, held: false, follow_up: "steer" };
+    const replica = new StoreReplica({ store, hub, version: "t", pr: (x) => (x.id === c.id ? pr : null), worktree: () => "fix-login", forks: () => [[3, 9]], queued: () => 2, status: () => status, about: () => ({ owner: "Ana Souza", github: "anasouza", owner_suggested: true }) });
     const out = replica.chats(0, true).chats[0] as Record<string, Json>;
-    expect([out.pr, out.worktree]).toEqual([pr, "fix-login"]);
+    expect([out.pr, out.worktree, out.forks, out.queued, out.status]).toEqual([pr, "fix-login", [[3, 9]], 2, status]);
+    expect(replica.helloExtra()).toMatchObject({ owner: "Ana Souza", github: "anasouza", owner_suggested: true });
+    expect([bare.forks, bare.queued]).toEqual([[], 0]);
   });
 
   test("user_text_is_sent_in_parts_when_it_has_links_tags_or_commands", () => {

@@ -44,6 +44,12 @@ export interface StoreReplicaOptions {
   followUp?: () => "steer" | "queue";
   /** Its branch's pull request as chat JSON `pr` says it (null: none). */
   pr?: (chat: Chat) => Json;
+  /** The bars under a chat's transcript as its phone API says them. */
+  status?: (chat: number) => Json;
+  /** The forks made from a chat: [item they branch after, the fork chat]. */
+  forks?: (chat: number) => [number, number][];
+  /** Messages held for a chat (the queue's and those waiting for its turn to end). */
+  queued?: (chat: number) => number;
   /** The name of the worktree folder a chat runs in. */
   worktree?: (chat: Chat) => string | null;
 }
@@ -158,9 +164,9 @@ export class StoreReplica implements MeshApp {
       digest: full ? digest(items).toString(16).padStart(16, "0") : null,
       running: live?.running ?? false,
       since_ms: live?.sinceMs ?? null,
-      queued: live?.queued ?? 0,
-      status: live?.status ?? this.idleStatus(),
-      forks: [],
+      queued: this.o.queued?.(c.id) ?? live?.queued ?? 0,
+      status: this.o.status?.(c.id) ?? live?.status ?? this.idleStatus(),
+      forks: this.o.forks?.(c.id) ?? [],
       typing,
       draft: draft ? draftJson(draft) : null,
       viewing: hub.viewing(c.id).map((t) => ({ device: t.device, kind: t.kind, label: t.label })),

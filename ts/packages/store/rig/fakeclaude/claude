@@ -8,7 +8,7 @@ sid=str(uuid.uuid4())
 out=lambda o:(sys.stdout.write(json.dumps(o)+'\n'),sys.stdout.flush())
 out({"type":"system","subtype":"init","session_id":sid,"mcp_servers":[]})
 if 'boom' in stdin: sys.exit(1)
-secs=4.0 if 'hold' in stdin else 0.3
+secs=6.0 if 'hold' in stdin else 0.3
 text=''; t0=time.time(); i=0
 while time.time()-t0<secs:
     d='word '

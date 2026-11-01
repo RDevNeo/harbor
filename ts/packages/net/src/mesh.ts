@@ -340,7 +340,7 @@ export class Mesh {
         .localPhones()
         .filter((p) => p.seen > 0 || p.alive > 0)
         .map((p: PairedPhone) => ({ group: p.group, name: p.name, seen: p.seen, app: p.app, alive: p.alive, platform: p.platform }));
-      const a = shared.about;
+      const a = shared.about();
       return ok({ phones, apk: this.d.apkCode?.() ?? 0, owner: a.owner ?? null, github: a.github ?? null, owner_suggested: a.owner_suggested ?? null });
     }
     if (is("POST", "mesh", "v1", "upload")) {

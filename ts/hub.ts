@@ -1,11 +1,15 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import { statusBars } from "./statusbars.ts";
 import { chatpr, commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
 import { dictate, media, parakeet, voice } from "./packages/media/src/index.ts";
+import { mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
+  aboutOwner,
   Api,
   catalogOf,
+  CloneState,
   dest,
   discoverStart,
   err,
@@ -16,6 +20,14 @@ import {
   relocateBlocker,
   relocateWhy,
   deviceWhy,
+  githubOf,
+  ownerConfirmed,
+  ownerOf,
+  type OwnerSources,
+  profileCheck,
+  profileCheckJson,
+  profileFullName,
+  profileNodeEnv,
   type RemoteHost,
   Remotes,
   systemRunner,
@@ -47,7 +59,7 @@ import {
   type Reply,
 } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
-import { notices, type Updater } from "./packages/update/src/index.ts";
+import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
 export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline">;
@@ -180,8 +192,17 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const p = c.home !== "" ? chatpr.prFrom(replica.remote.get(c.id)?.pr) : prs.of(c);
     return p ? asJson(chatpr.prJson(p)) : null;
   };
+  const clones = new CloneState();
+  const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
+  const owners: OwnerSources = { accountOwnerName: () => account.ownerName(), signedIn: () => account.signedIn(), fullName: () => profileFullName(profileEnv), githubUser: () => mcp.githubUser() ?? null };
+  const apkInfo = () => o.updater?.apk() ?? updateApk(dataDir(env));
+  const homeName = (c: Chat): string => (c.home !== "" ? hub.mesh.nameOf(c.home) : hub.mesh.me.name);
   const replica = new StoreReplica({
+    about: () => aboutOwner(store, owners),
+    forks: (chat) => engine?.forksOf(chat) ?? [],
+    queued: (chat) => engine?.queuedCount(chat) ?? 0,
     pr: prOf,
+    status: (chat) => phone.status(chat),
     worktree: (c) => {
       const w = engine?.worktreeOf(c) ?? null;
       return w === null ? null : basename(w);
@@ -217,11 +238,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     workspacePeers: () => account.meshPeers(),
     myAddrs: meshAddrs,
     uploadsDir,
+    apkCode: () => apkInfo()?.code ?? 0,
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "Harbor is starting")),
     notes: { last: () => notes.last(), ownSince: (s) => { const [n, l] = notes.ownSince(s); return [n.map(noteJson), l]; } },
     env,
   });
   mesh.reread();
+  hub.mesh.about = () => aboutOwner(store, owners);
   const remotes = new Remotes({
     home: home(),
     dataDir: dataDir(env),
@@ -255,6 +278,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
     pr: prOf,
+    app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
+    profileCheck: () => {
+      const confirmed = ownerConfirmed(store, owners);
+      return profileCheckJson(profileCheck(store, { confirmed, owner: ownerOf(store, owners), github: githubOf(store, owners) }));
+    },
+    bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),
     engine: null,
     uploadsDir,
     updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: providerUpdates() }),
@@ -347,6 +376,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     queuedCount: (id) => live.queuedCount(id),
   };
   live.reattachTurns();
+  live.limits.load();
   let engineTimer: ReturnType<typeof setTimeout> | null = null;
   const engineTick = () => {
     const next = live.tick();
@@ -361,19 +391,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     return (await services?.routePhone(call)) ?? phone.route(call);
   };
   phoneRoute = route;
-  const apk = () => {
-    const kept = o.updater?.apk()?.path;
-    if (kept !== undefined) return kept;
-    const p = join(dataDir(env), "harbor-android.apk");
-    return existsSync(p) ? p : null;
-  };
+  const apk = () => apkInfo()?.path ?? null;
   api = new Api({
     hub,
     id: () => id,
     uploadsDir,
     route,
     account: account.phoneAuth(),
-    appInfo: () => ({ version_code: o.updater?.apk()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
+    appInfo: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
     apk,
     mesh: (p, q, r) => mesh.serve(p, q, r),
     meshAdmitted: (p, q) => mesh.admitted(p, q),

@@ -115,6 +115,10 @@ export interface PhoneDeps {
   devices?: () => [RemoteHost, boolean | null][];
   /** The pull request of the branch a chat works on, as chat JSON `pr` says it (null: none); a copy's as its home PC says it. */
   pr?: (chat: Chat) => Json;
+  /** The status bars of a chat of this PC: working, waiting, limit, agents and folder (api.rs `api_status`). */
+  bars?: (chat: number, nowMs: number) => Record<string, Json>;
+  /** "Is this you?": this PC's detected owner, until confirmed (null: nothing to ask). */
+  profileCheck?: () => Json;
 }
 
 export interface RunSettings {
@@ -352,6 +356,7 @@ export class PhoneRoutes {
     if (r) return r.status;
     const e = this.d.engine;
     const since = e?.runningSince(c.id) ?? null;
+    const bars = this.d.bars?.(c.id, Date.now());
     const out: Record<string, Json> = {
       queue: (e?.queueJson(c.id) ?? []) as Json[],
       working: since === null ? null : { since_ms: since, subagents: 0, text: "Working…" },
@@ -359,6 +364,7 @@ export class PhoneRoutes {
       limit: null,
       agents: null,
       folder: null,
+      ...bars,
       can_steer: e !== null && e.steering(c.id) !== "no",
       held: e?.held(c.id) ?? false,
       follow_up: e?.followDefault() ?? "steer",
@@ -537,7 +543,7 @@ export class PhoneRoutes {
       hub_port: hub.port,
       mesh: hub.mesh.on,
       hubs: [{ id: me.id, name: me.name, online: true }, ...peers.map((x) => ({ id: x.id, name: x.name, online: x.online }))],
-      hub_name: me.name,
+      hub_name: me.name === "" ? hostname() : me.name,
       you,
       rev: hub.rev(),
       projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path })),
@@ -554,7 +560,7 @@ export class PhoneRoutes {
       app: this.d.app?.() ?? { version_code: 0, url: "/app.apk" },
       hub_update: updates.hub_update,
       provider_updates: updates.provider_updates,
-      profile_check: null,
+      profile_check: this.d.profileCheck?.() ?? null,
       voice: this.d.voice?.() ?? { transcribe: false, why: "voice isn't in this build yet", lang: "auto" },
     };
   }
