@@ -6,6 +6,7 @@ import "fonts/lucide.ttf";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { SurfacePane, SurfaceTab, TermScreen } from "surface.slint";
+import { Lightbox, LightboxData } from "lightbox.slint";
 import { TermKey } from "terminal.slint";
 import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
@@ -459,6 +460,12 @@ export component AppWindow inherits Window {
     in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
     // picker.rs `toast`: a message over the bottom edge for a few seconds.
     in property <string> toast;
+    in property <bool> lb-open;
+    in property <LightboxData> lb-data;
+    callback lb-close();
+    callback lb-go(int);
+    callback lb-copy-image();
+    callback lb-copy-path();
     // egui's item spacing in a popover: 8px, or 0 where the Rust menu sets it (the effort menu).
     in property <length> pop-spacing: 8px;
     callback pop-pick(string, int);
@@ -1364,6 +1371,24 @@ export component AppWindow inherits Window {
                     color: close-x.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
                 }
             }
+        }
+    }
+
+    if root.lb-open: Lightbox {
+        width: root.width;
+        height: root.height;
+        data: root.lb-data;
+        close => {
+            root.lb-close();
+        }
+        go(i) => {
+            root.lb-go(i);
+        }
+        copy-image => {
+            root.lb-copy-image();
+        }
+        copy-path => {
+            root.lb-copy-path();
         }
     }
 

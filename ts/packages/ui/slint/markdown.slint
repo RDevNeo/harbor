@@ -20,6 +20,7 @@ export struct MdBlock {
     after: length,
     bar-top: length,
     bar-bottom: length,
+    trim: length,
 }
 
 component Inline inherits StyledText {
@@ -46,8 +47,9 @@ export component MdBlockView {
     property <length> indent: block.quote * 10px;
     property <color> ink: block.quote > 0 ? Theme.subtle : Theme.fg;
     property <length> box: block.depth * 16px;
-    min-height: inner.min-height;
-    preferred-height: inner.preferred-height;
+    // A reply's last line: egui's row ends at the text, Slint's line box a few pixels below it.
+    min-height: inner.min-height - root.block.trim;
+    preferred-height: inner.preferred-height - root.block.trim;
     for q in root.block.quote: Rectangle {
         x: q * 10px - 1px;
         y: root.block.bar-top;

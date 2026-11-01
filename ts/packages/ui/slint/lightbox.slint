@@ -1,0 +1,148 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Spinner } from "widgets.slint";
+
+export struct LightboxData {
+    image: image,
+    // The picture's own size; 0 while nothing is decoded.
+    width: length,
+    height: length,
+    caption: string,
+    loading: bool,
+    error: string,
+    index: int,
+    count: int,
+    path: bool,
+}
+
+// images.rs `lightbox`, without video.
+export component Lightbox inherits Rectangle {
+    in property <LightboxData> data;
+    callback close();
+    callback go(int);
+    callback copy-image();
+    callback copy-path();
+    background: black.with-alpha(220 / 255);
+    TouchArea {
+        clicked => {
+            root.close();
+        }
+    }
+    property <length> room-x: 48px;
+    property <length> room-y: 56px;
+    property <length> room-w: root.width - 96px;
+    property <length> room-h: root.height - 120px;
+    property <float> scale: min(root.room-w / max(root.data.width, 1px), root.room-h / max(root.data.height, 1px), 1);
+    if root.data.width > 0px: Rectangle {
+        width: root.data.width * root.scale;
+        height: root.data.height * root.scale;
+        x: root.room-x + (root.room-w - self.width) / 2;
+        y: root.room-y + (root.room-h - self.height) / 2;
+        border-radius: Theme.radius-md;
+        clip: true;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.data.image;
+            image-fit: fill;
+        }
+        // Clicks on the image itself don't close.
+        TouchArea { }
+    }
+    if root.data.loading || (root.data.width == 0px && root.data.error == ""): Spinner {
+        x: root.width / 2 - self.width / 2;
+        y: root.room-y + root.room-h / 2 - self.height / 2;
+        radius: 12px;
+        color: white;
+    }
+    if root.data.error != "": Text {
+        x: 0;
+        y: root.room-y + root.room-h / 2 - 10px;
+        width: root.width;
+        text: "Can't show this image: " + root.data.error;
+        font-size: 14px;
+        color: #dcdcdc;
+        horizontal-alignment: center;
+    }
+    Text {
+        x: (root.width - self.width) / 2;
+        y: root.height - 40px;
+        text: root.data.caption;
+        font-size: 13px;
+        color: #d2d2d2;
+    }
+    HorizontalLayout {
+        x: root.width - 12px - self.width;
+        y: 12px;
+        width: self.preferred-width;
+        height: 32px;
+        spacing: 6px;
+        Btn {
+            y: 2px;
+            icon: Icons.image;
+            text: "Copy image";
+            size: xs;
+            variant: secondary;
+            clicked => {
+                root.copy-image();
+            }
+        }
+        if root.data.path: Btn {
+            y: 2px;
+            icon: Icons.copy;
+            text: "Copy path";
+            size: xs;
+            variant: secondary;
+            clicked => {
+                root.copy-path();
+            }
+        }
+        Btn {
+            y: 2px;
+            icon: Icons.x;
+            size: icon-xs;
+            variant: secondary;
+            tip: "Close (Esc)";
+            clicked => {
+                root.close();
+            }
+        }
+    }
+    if root.data.count > 1: Rectangle {
+        x: 12px;
+        y: 14px;
+        width: counter.preferred-width + 20px;
+        height: 28px;
+        background: Theme.gray-100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md;
+        counter := Text {
+            text: (root.data.index + 1) + " / " + root.data.count;
+            font-size: 13px;
+            color: Theme.fg;
+        }
+    }
+    if root.data.count > 1 && root.data.index > 0: Btn {
+        x: 16px;
+        y: root.room-y + root.room-h / 2 - 16px;
+        icon: Icons.left;
+        size: icon-sm;
+        variant: secondary;
+        tip: "Previous (←)";
+        clicked => {
+            root.go(root.data.index - 1);
+        }
+    }
+    if root.data.count > 1 && root.data.index < root.data.count - 1: Btn {
+        x: root.width - 48px;
+        y: root.room-y + root.room-h / 2 - 16px;
+        icon: Icons.right;
+        size: icon-sm;
+        variant: secondary;
+        tip: "Next (→)";
+        clicked => {
+            root.go(root.data.index + 1);
+        }
+    }
+}

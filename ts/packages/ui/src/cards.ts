@@ -53,6 +53,7 @@ function blockData(b: Block, at: Placed): MdBlockData {
     after: at.after,
     bar_top: at.barTop,
     bar_bottom: at.barBottom,
+    trim: 0,
   };
   switch (b.kind) {
     case "p":
@@ -76,7 +77,10 @@ function blockData(b: Block, at: Placed): MdBlockData {
 export function mdBlocks(md: string): MdBlockData[] {
   const bs = blocks(md);
   const at = place(bs);
-  return bs.map((b, i) => blockData(b, at[i] as Placed));
+  const out = bs.map((b, i) => blockData(b, at[i] as Placed));
+  const last = out.at(-1);
+  if (last && (last.kind === "p" || last.kind === "li" || last.kind === "h") && last.after === 0) last.trim = 3;
+  return out;
 }
 
 export function userText(ps: readonly Part[]): slint.StyledText {
@@ -145,7 +149,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "hidden":
       return null;
     case "user":
-      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0 }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
+      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0 }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
     case "text": {
       const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
       return { ...d, kind: "text", blocks: mdBlocks(md), text: c.text };

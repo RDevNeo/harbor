@@ -115,6 +115,8 @@ export class Shell {
   /** Images in the transcript, once the media package is loaded. */
   useMedia(pkg: typeof import("@harbor/media")): void {
     this.media = pkg;
+    this.images = new pkg.images.Images();
+    this.images.onChange(() => this.refreshLightbox());
     this.voice = new pkg.voiceCtl.VoiceCtl({
       store: this.data.store,
       mesh: this.data.voiceMesh,
@@ -133,6 +135,7 @@ export class Shell {
   }
   private media: typeof import("@harbor/media") | null = null;
   private voice: import("@harbor/media").voiceCtl.VoiceCtl | null = null;
+  private images: import("@harbor/media").images.Images | null = null;
   private voiceTimer: ReturnType<typeof setInterval> | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly surfaces = new Surfaces<Terminal>({
@@ -342,8 +345,13 @@ export class Shell {
       this.gridOf[dock(d)] = gridSize(width, height, cw, rh);
       this.fitTerm(dock(d));
     };
-    w.open_media = (path) => {
-      Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    w.open_media = (path) => this.openImage(path);
+    w.lb_close = () => this.images?.close();
+    w.lb_go = (i) => this.images?.goTo(i);
+    w.lb_copy_image = () => void this.copyShownImage();
+    w.lb_copy_path = () => {
+      const key = this.images?.openKey();
+      if (key) void this.media?.clipboard.copyTextNoticed(key);
     };
     w.edited = (t) => {
       this.drafts.set(this.key(), t);
@@ -1024,6 +1032,7 @@ export class Shell {
   }
 
   private composerKey(e: KeyEvent): boolean {
+    if (this.win.lb_open) return this.globalKey(e);
     const m = e.modifiers;
     const p = pressOf(e.text, m);
     if (this.menu.length > 0) {
@@ -1089,6 +1098,18 @@ export class Shell {
   private globalKey(e: KeyEvent): boolean {
     const p = pressOf(e.text, e.modifiers);
     const w = this.win;
+    if (w.lb_open && this.images) {
+      const k = p.key === "ArrowLeft" ? "prev" : p.key === "ArrowRight" ? "next" : p.key === "Escape" ? "close" : null;
+      if (k) {
+        this.images.pressKey(k);
+        this.images.applyKeys();
+        return true;
+      }
+      if (p.ctrl && p.key.toLowerCase() === "c") {
+        void this.copyShownImage();
+        return true;
+      }
+    }
     if (this.keys.matches("toggle_sidebar", p)) {
       if (this.page === "settings") {
         const nav = busOf<SettingsView>(w, "SettingsBus");
@@ -1351,6 +1372,57 @@ export class Shell {
   }
 
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
+  /** images.rs: the clicked image in the lightbox, browsing the images of its message. */
+  private openImage(path: string): void {
+    const img = this.images;
+    const media = this.media;
+    if (!img || !media) return;
+    if (!media.images.isImage(path)) {
+      Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+      return;
+    }
+    let group: string[] = [path];
+    for (let i = 0; i < this.cards.length; i++) {
+      const c = this.cards.rowData(i);
+      if (c?.media.some((m) => m.path === path)) group = c.media.map((m) => m.path).filter((p) => media.images.isImage(p));
+    }
+    img.openClicked(path, group);
+  }
+
+  private refreshLightbox(): void {
+    const w = this.win;
+    const v = this.images?.view();
+    if (!v || v.video) {
+      w.lb_open = false;
+      return;
+    }
+    const full = v.full?.state === "ready" ? v.full : null;
+    const small = v.small?.state === "ready" ? v.small : null;
+    const shown = full ?? small;
+    const failed = v.full?.state === "failed" ? v.full.error : v.small?.state === "failed" ? v.small.error : "";
+    const name = v.key.split("/").at(-1) ?? v.key;
+    w.lb_data = {
+      image: shown ? shown.image : noPixels,
+      width: shown ? shown.dims[0] : 0,
+      height: shown ? shown.dims[1] : 0,
+      caption: shown ? `${name}  ·  ${shown.dims[0]} × ${shown.dims[1]}` : name,
+      loading: shown !== null && full === null,
+      error: shown ? "" : failed,
+      index: v.index,
+      count: v.gallery.length,
+      path: v.key.startsWith("/"),
+    };
+    w.lb_open = true;
+  }
+
+  /** Copy image (or Ctrl+C in the lightbox): the file's bytes go to the clipboard. */
+  private async copyShownImage(): Promise<void> {
+    const key = this.images?.openKey();
+    if (!key || !this.media) return;
+    const bytes = this.images?.bytesOf(key) ?? (await Bun.file(key).bytes().catch(() => null));
+    if (bytes) await this.media.clipboard.copyImageNoticed(bytes);
+  }
+
   /** picker.rs `show_toast`: 8 seconds over the bottom edge. */
   toast(message: string): void {
     this.win.toast = message;

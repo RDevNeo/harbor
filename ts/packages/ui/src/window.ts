@@ -43,6 +43,7 @@ export interface MdBlockData {
   after: number;
   bar_top: number;
   bar_bottom: number;
+  trim: number;
 }
 
 export interface SurfaceTab {
@@ -56,6 +57,18 @@ export interface TermScreen {
   cursor_col: number;
   cursor_text: string;
   scrolled: string;
+}
+
+export interface LightboxData {
+  image: Pixels;
+  width: number;
+  height: number;
+  caption: string;
+  loading: boolean;
+  error: string;
+  index: number;
+  count: number;
+  path: boolean;
 }
 
 export interface MediaRow {
@@ -351,6 +364,12 @@ export interface AppWindow extends slint.ComponentHandle {
   voice_note: string;
   mic_tip: string;
   toast: string;
+  lb_open: boolean;
+  lb_data: LightboxData;
+  lb_close: () => void;
+  lb_go: (i: number) => void;
+  lb_copy_image: () => void;
+  lb_copy_path: () => void;
   pop_spacing: number;
   pop_pick: (id: string, i: number) => void;
   pop_close: () => void;
