@@ -1,3 +1,5 @@
+import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
+import type { providers } from "@harbor/agents";
 import { blankChat, itemHash, mention, parseAccess, type Chat, type Item, type Mention, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
@@ -91,6 +93,24 @@ export interface PhoneDeps {
   refs?: MediaRefs;
   /** The commits a reply of `chat` names; their pills come once git has answered (then `chat` is touched). */
   commits?: (chat: Chat) => CommitLookup | null;
+  /** What a PATCH of a chat's account, model, effort, access, device or fast mode is checked against. */
+  runSettings?: RunSettings;
+}
+
+export interface RunSettings {
+  accounts(): providers.Account[];
+  modelsFor(k: providers.Kind): providers.Model[];
+  /** The ids of the devices there are. */
+  devices(): string[];
+  setFast(on: boolean): void;
+}
+
+/** What tells an item's versions apart without serializing it: a tool's input and result are set once, so their lengths stand in for them; replies and thinking grow while they stream; the rest are small. */
+export function fingerprint(it: Item): bigint {
+  if (it.kind === "tool") return hashStr(JSON.stringify(["tool", it.id, it.name, it.summary, it.input.length, it.result === null ? null : it.result.length, it.is_error]));
+  if (it.kind === "text") return hashStr(JSON.stringify([1, it.text, it.at]));
+  if (it.kind === "thinking") return hashStr(JSON.stringify([2, it.text]));
+  return itemHash(it);
 }
 
 export function clock(at: number): string {
@@ -465,7 +485,7 @@ export class PhoneRoutes {
       const it = items[i];
       const shas = look && s.card.kind === "text" ? [...look.ofText(s.card.text).keys()].sort().join(",") : "";
       const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
-      return (it ? itemHash(it) : 0n) ^ hashStr(extra);
+      return (it ? fingerprint(it) : 0n) ^ hashStr(extra);
     });
     revs.length = Math.min(revs.length, hashes.length);
     if (hashes.some((h, i) => revs[i]?.[0] !== h)) {
@@ -516,10 +536,26 @@ export class PhoneRoutes {
     }
     if (p[3] === "queue" || (m === "POST" && p.length === 4 && p[3] === "resume")) return this.queue(c, m, p, body, call.device);
     if (m === "PATCH" && p.length === 3) {
-      if (typeof body.title === "string" && body.title.trim() !== "") {
-        this.d.store.saveChat({ ...c, title: body.title.trim() });
+      let n: Chat = c;
+      let fast: boolean | null = null;
+      const rs = this.d.runSettings;
+      if (rs) {
+        const accounts = rs.accounts();
+        try {
+          const r = checkRun(c, body, accounts, allowedAccounts(c, accounts), (k) => rs.modelsFor(k), rs.devices());
+          if (r) [n, fast] = [r.chat, r.fast];
+        } catch (e) {
+          if (isRunError(e)) return err(e.status, e.error);
+          throw e;
+        }
+      } else if (["account", "model", "effort", "access", "device", "fast"].some((k) => body[k] !== undefined && body[k] !== null)) return err(503, "run settings can't change in this build");
+      if (typeof body.title === "string" && body.title.trim() !== "") n = { ...n, title: body.title.trim() };
+      if (n !== c) {
+        this.d.store.saveChat(n);
+        this.d.engine?.reload();
         this.d.replica.touch(c.id);
       }
+      if (fast !== null) rs?.setFast(fast);
       return ok({ ok: true });
     }
     if (m === "DELETE" && p.length === 3) {
