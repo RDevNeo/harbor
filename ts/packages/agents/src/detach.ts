@@ -390,8 +390,11 @@ export function leftovers(rootDir: string = root()): [string, Meta][] {
   return v;
 }
 
+/** An environment change: a value, or null/undefined to remove the variable. */
+export type EnvPairs = readonly (readonly [string, string | null | undefined])[];
+
 /** Harbor's app credentials for an agent (mcp.rs's `agent_env_as`), set by the mcp package. */
-export type AgentEnv = (signedIn: boolean) => [string, string | null][];
+export type AgentEnv = (signedIn: boolean) => EnvPairs | Promise<EnvPairs>;
 
 let agentEnvAs: AgentEnv = signedOutEnv;
 
@@ -400,7 +403,7 @@ export function setAgentEnv(f: AgentEnv): void {
 }
 
 /** The environment changes an agent (or a process it starts) gets. */
-export function agentEnv(signedIn: boolean): [string, string | null][] {
+export async function agentEnv(signedIn: boolean): Promise<EnvPairs> {
   return agentEnvAs(signedIn);
 }
 
@@ -520,8 +523,8 @@ export async function run(args: readonly string[]): Promise<void> {
     }
   }
   if (at(spec, "agent_env") === true) {
-    for (const [k, v] of agentEnvAs(signedIn)) {
-      if (v === null) delete env[k];
+    for (const [k, v] of await agentEnvAs(signedIn)) {
+      if (v === null || v === undefined) delete env[k];
       else env[k] = v;
     }
   }

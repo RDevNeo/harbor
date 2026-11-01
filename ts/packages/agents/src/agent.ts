@@ -53,10 +53,10 @@ export interface Grant {
 
 /** The bridge (mcp package): serves grants on a local port. */
 export interface Bridge {
-  grant(g: Grant): number | null;
+  grant(g: Grant): number | null | Promise<number | null>;
   revoke(token: string): void;
   /** A turn followed again: its saved grant is served again. */
-  resume(dir: string): void;
+  resume(dir: string): void | Promise<void>;
   remoteConfig(g: Grant, remotePort: number): unknown;
   origin: string;
 }
@@ -79,9 +79,9 @@ export interface Workspace {
 /** mcp.rs: the servers a turn gets. */
 export interface Servers {
   /** Claude Code's `--mcp-config` file for a turn; returns its path. */
-  claudeConfig(chatId: number, extra: [string, unknown][], apps: boolean): string;
-  claudeServers(extra: [string, unknown] | null): Record<string, unknown>;
-  codexArgs(): string[];
+  claudeConfig(chatId: number, extra: [string, unknown][], apps: boolean): string | Promise<string>;
+  claudeServers(extra: [string, unknown] | null): Record<string, unknown> | Promise<Record<string, unknown>>;
+  codexArgs(): string[] | Promise<string[]>;
   machinesName: string;
 }
 
@@ -290,7 +290,7 @@ function isDir(p: string): boolean {
 }
 
 /** Builds the command line and the bytes to write to stdin, per provider, and the bridge grant of a remote turn. */
-export function build(given: TurnSpec): { cmd: detach.Cmd; stdin: string | null; grant: Grant | null } {
+export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: string | null; grant: Grant | null }> {
   if (given.remote && given.account.kind !== "Claude") throw new Error(`only Claude Code runs on other devices so far, not ${given.account.kind}`);
   // CLIs without a system-prompt flag get the team instructions in the first message.
   const spec: TurnSpec =
@@ -356,16 +356,16 @@ export function build(given: TurnSpec): { cmd: detach.Cmd; stdin: string | null;
           const br = integrations.bridge;
           if (!isNull(spec.context.machines) && br) {
             const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: spec.context.machines };
-            const port = br.grant(g);
+            const port = await br.grant(g);
             if (port !== null) {
               extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${port}/${g.token}/${sv.machinesName}` }]);
               grant = g;
             }
           }
-          args.push("--strict-mcp-config", "--mcp-config", sv.claudeConfig(spec.chatId, extra, apps));
+          args.push("--strict-mcp-config", "--mcp-config", await sv.claudeConfig(spec.chatId, extra, apps));
         } else {
           const r = spec.remote;
-          const servers: Record<string, unknown> = r.bridge ? sv.claudeServers(harbor) : harbor ? { [harbor[0]]: harbor[1] } : {};
+          const servers: Record<string, unknown> = r.bridge ? await sv.claudeServers(harbor) : harbor ? { [harbor[0]]: harbor[1] } : {};
           const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers, commands: r.commands && spec.access !== "plan", workspace: ws, machines: spec.context.machines };
           // The config holds the grant's token: it goes on stdin, not on a command line.
           args.push("--strict-mcp-config", "--mcp-config", MCP_CONFIG_ARG);
@@ -400,7 +400,7 @@ export function build(given: TurnSpec): { cmd: detach.Cmd; stdin: string | null;
       if (model !== null) args.push("-m", model);
       if (effort !== null) args.push("-c", `model_reasoning_effort="${effort}"`);
       if (spec.fast) args.push("-c", 'service_tier="priority"');
-      args.push(...sv.codexArgs());
+      args.push(...(await sv.codexArgs()));
       if (spec.team) {
         const [exe, targs] = teamServer(spec.team, spec.chatId);
         args.push("-c", `mcp_servers.harbor.command=${rustDebug(exe)}`);
@@ -449,7 +449,7 @@ export function build(given: TurnSpec): { cmd: detach.Cmd; stdin: string | null;
   if (spec.remote && grant) {
     const r = spec.remote;
     const br = bridgeOrThrow();
-    const port = br.grant(grant);
+    const port = await br.grant(grant);
     if (port === null) throw new Error("Harbor's MCP bridge couldn't open a port on 127.0.0.1");
     const remote = integrations.remote;
     if (!remote) throw new Error("turns on other devices need the net package's remote module, which this Harbor doesn't have yet");
@@ -536,7 +536,7 @@ export type Sink = (chatId: number, ev: Event) => void;
 
 /** Spawns the turn; events go to `sink` tagged with the chat id, `wake` repaints the UI (`true` once the turn has ended). */
 export async function start(spec: TurnSpec, sink: Sink, wake: (ended: boolean) => void = () => {}, rootDir?: string): Promise<Turn> {
-  const { cmd, stdin, grant } = build(spec);
+  const { cmd, stdin, grant } = await build(spec);
   const meta: detach.Meta = { chat_id: spec.chatId, kind: spec.account.kind, started: now(), base: spec.base, pid: 0, pid_start: 0 };
   // Claude's input stays open for messages sent mid-turn (closed after its result).
   let dir: string;
@@ -580,7 +580,7 @@ function followTurn(dir: string, meta: detach.Meta, sink: Sink, wake: (ended: bo
   const id = meta.chat_id;
   const kind = kindOf(meta.kind) ?? "Claude";
   // A remote turn picked up after a reload: its MCP servers are served again.
-  if (existsSync(join(dir, "bridge.json"))) integrations.bridge?.resume(dir);
+  if (existsSync(join(dir, "bridge.json"))) void integrations.bridge?.resume(dir);
   return new Turn(dir, meta, async (turn) => {
     const parse_ = parser(kind);
     // Claude reports the process's total cost; one process can run several turns.

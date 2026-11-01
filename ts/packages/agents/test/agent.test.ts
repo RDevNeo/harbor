@@ -78,19 +78,19 @@ test("a device's exit line is no event", () => {
 });
 
 // A lead's access binds it: Read only and Auto-edit leads get no shell and no bypass; an untrusted project's own settings stay off.
-test("lead follows the chat's access", () => {
-  const args = (access: string, trusted: boolean): string[] => agent.build(spec({ access, trusted, team: { role: "lead", system: "lead" } })).cmd.args;
+test("lead follows the chat's access", async () => {
+  const args = async (access: string, trusted: boolean): Promise<string[]> => (await agent.build(spec({ access, trusted, team: { role: "lead", system: "lead" } }))).cmd.args;
   for (const [access, mode] of [
     ["plan", "plan"],
     ["edits", "acceptEdits"],
   ] as const) {
-    const v = args(access, true);
+    const v = await args(access, true);
     expect(after(v, "--permission-mode")).toBe(mode);
     expect(after(v, "--tools")).not.toContain("Bash");
     expect(v).toContain("--allowedTools=mcp__harbor");
     expect(v).not.toContain("--setting-sources");
   }
-  const v = args("full", false);
+  const v = await args("full", false);
   expect(after(v, "--permission-mode")).toBe("bypassPermissions");
   expect(after(v, "--tools")).toContain("Bash");
   expect(after(v, "--setting-sources")).toBe("user");
@@ -112,7 +112,7 @@ const fakeBridge: agent.Bridge = {
 };
 
 // A remote turn carries the account's login: first on stdin, before the profile and the session lines; never in ssh's arguments.
-test("remote turn sends the login on stdin", () => {
+test("remote turn sends the login on stdin", async () => {
   const was = { ...agent.integrations };
   agent.integrate({ remote: fakeRemote, bridge: fakeBridge });
   try {
@@ -130,7 +130,7 @@ test("remote turn sends the login on stdin", () => {
       note: "",
     });
     const s = (token: string | null): agent.TurnSpec => spec({ chatId: 999_996, resume: true, account: claude({ id: "claude2", configDir: "/x/.claude2" }), remote: remote(token) });
-    let { cmd, stdin, grant } = agent.build(s("sk-ant-oat01-secret"));
+    let { cmd, stdin, grant } = await agent.build(s("sk-ant-oat01-secret"));
     expect(grant).not.toBeNull();
     const input = stdin ?? "";
     const nl = input.indexOf("\n");
@@ -151,7 +151,7 @@ test("remote turn sends the login on stdin", () => {
     expect(login < profile && profile < session && session < cli).toBe(true);
     expect(cmd.env.get("HARBOR_DEVICE")).toBe("box");
     // Not signed in here: no line reads stdin, the message comes first.
-    ({ cmd, stdin } = agent.build(s(null)));
+    ({ cmd, stdin } = await agent.build(s(null)));
     expect(stdin?.startsWith("{")).toBe(true);
     expect(cmd.args.some((a) => a.includes("CLAUDE_CODE_OAUTH_TOKEN"))).toBe(false);
   } finally {
@@ -159,15 +159,15 @@ test("remote turn sends the login on stdin", () => {
   }
 });
 
-test("a remote turn without the net package says so instead of running", () => {
+test("a remote turn without the net package says so instead of running", async () => {
   const remote: agent.RemoteSpec = { ssh: [], host: "box", name: "box", family: "posix", dir: "~", setup: [], bridge: false, commands: false, workspace: false, token: null, note: "" };
-  expect(() => agent.build(spec({ remote }))).toThrow(/doesn't have yet/);
-  expect(() => agent.build(spec({ remote, account: { ...claude(), kind: "Codex", id: "codex" } }))).toThrow("only Claude Code runs on other devices so far, not Codex");
+  await expect(agent.build(spec({ remote }))).rejects.toThrow(/doesn't have yet/);
+  await expect(agent.build(spec({ remote, account: { ...claude(), kind: "Codex", id: "codex" } }))).rejects.toThrow("only Claude Code runs on other devices so far, not Codex");
 });
 
 describe("command lines per provider", () => {
-  test("Claude: stream-json both ways, Harbor's servers only, Medium by default", () => {
-    const { cmd, stdin } = agent.build(spec({ model: "claude-haiku-5-5" }));
+  test("Claude: stream-json both ways, Harbor's servers only, Medium by default", async () => {
+    const { cmd, stdin } = await agent.build(spec({ model: "claude-haiku-5-5" }));
     const v = cmd.args;
     expect(v.slice(0, 8)).toEqual(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages"]);
     expect(after(v, "--effort")).toBe("medium");
@@ -180,27 +180,27 @@ describe("command lines per provider", () => {
     expect(stdin).toBe(agent.claudeMessage("hi", []));
   });
 
-  test("Claude keywords and fast mode", () => {
-    let v = agent.build(spec({ effort: "ultracode", fast: true, resume: true })).cmd.args;
+  test("Claude keywords and fast mode", async () => {
+    let v = (await agent.build(spec({ effort: "ultracode", fast: true, resume: true }))).cmd.args;
     expect(after(v, "--effort")).toBe("xhigh");
     expect(after(v, "--settings")).toBe('{"fastMode":true}');
     expect(after(v, "--resume")).toBe("abc");
-    const r = agent.build(spec({ effort: "ultrathink" }));
+    const r = await agent.build(spec({ effort: "ultrathink" }));
     v = r.cmd.args;
     expect(v).not.toContain("--effort");
     expect(r.stdin).toContain("hi\\n\\nultrathink");
   });
 
-  test("a guest turn runs in its overlay with the account's login named for the runner", () => {
-    const { cmd } = agent.build(spec({ account: claude({ configDir: "/x/.claude2" }), context: { overlay: "/g/pc-b", signedIn: false, note: "who is who", machines: null } }));
+  test("a guest turn runs in its overlay with the account's login named for the runner", async () => {
+    const { cmd } = await agent.build(spec({ account: claude({ configDir: "/x/.claude2" }), context: { overlay: "/g/pc-b", signedIn: false, note: "who is who", machines: null } }));
     expect(cmd.env.get("CLAUDE_CONFIG_DIR")).toBe("/g/pc-b");
     expect(cmd.env.get("HARBOR_GUEST_LOGIN")).toBe("/x/.claude2");
     expect(cmd.env.get("HARBOR_GUEST_APPS")).toBe("0");
     expect(after(cmd.args, "--append-system-prompt")).toBe("who is who");
   });
 
-  test("Codex", () => {
-    const v = agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), access: "edits", effort: "high", fast: true, resume: true, files: ["/a.png", "/b.txt"], team: { role: "sub", system: "sys" } })).cmd.args;
+  test("Codex", async () => {
+    const v = (await agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), access: "edits", effort: "high", fast: true, resume: true, files: ["/a.png", "/b.txt"], team: { role: "sub", system: "sys" } }))).cmd.args;
     expect(v.slice(0, 4)).toEqual(["exec", "resume", "--json", "--skip-git-repo-check"]);
     expect(v).toContain('sandbox_mode="workspace-write"');
     expect(v).toContain('model_reasoning_effort="high"');
@@ -211,19 +211,19 @@ describe("command lines per provider", () => {
     expect(v.slice(-2)).toEqual(["abc", "hi\n\nAttached files:\n- /b.txt"]);
   });
 
-  test("Codex's first message carries the team's instructions", () => {
-    const v = agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), team: { role: "sub", system: "sys" } })).cmd.args;
+  test("Codex's first message carries the team's instructions", async () => {
+    const v = (await agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), team: { role: "sub", system: "sys" } }))).cmd.args;
     expect(v[v.length - 1]).toBe("sys\n\n---\n\nhi");
     expect(v).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
-  test("Cursor, Gemini, Meta, OpenCode, Grok", () => {
-    const k = (kind: Account["kind"], over: Partial<agent.TurnSpec> = {}): string[] => agent.build(spec({ account: claude({ kind, id: kind.toLowerCase() }), ...over })).cmd.args;
-    expect(k("Cursor")).toEqual(["-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force", "--model", "auto", "hi"]);
-    expect(k("Gemini", { access: "plan", resume: true })).toEqual(["-o", "stream-json", "--approval-mode", "plan", "--resume", "abc", "-p", "hi"]);
-    expect(k("Meta", { effort: "low", files: ["/i.webp"] })).toEqual(["exec", "--json", "--session-id", "abc", "--disable-approval", "--reasoning-effort", "low", "--image", "/i.webp", "hi"]);
-    expect(k("OpenCode", { model: "m", resume: true })).toEqual(["run", "--format", "json", "--model", "m", "--session", "abc", "hi"]);
-    expect(k("Grok", { access: "edits" })).toEqual(["--output-format", "streaming-messages-json", "--include-partial-messages", "--permission-mode", "acceptEdits", "-p", "hi", "--session-id", "abc"]);
+  test("Cursor, Gemini, Meta, OpenCode, Grok", async () => {
+    const k = async (kind: Account["kind"], over: Partial<agent.TurnSpec> = {}): Promise<string[]> => (await agent.build(spec({ account: claude({ kind, id: kind.toLowerCase() }), ...over }))).cmd.args;
+    expect(await k("Cursor")).toEqual(["-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force", "--model", "auto", "hi"]);
+    expect(await k("Gemini", { access: "plan", resume: true })).toEqual(["-o", "stream-json", "--approval-mode", "plan", "--resume", "abc", "-p", "hi"]);
+    expect(await k("Meta", { effort: "low", files: ["/i.webp"] })).toEqual(["exec", "--json", "--session-id", "abc", "--disable-approval", "--reasoning-effort", "low", "--image", "/i.webp", "hi"]);
+    expect(await k("OpenCode", { model: "m", resume: true })).toEqual(["run", "--format", "json", "--model", "m", "--session", "abc", "hi"]);
+    expect(await k("Grok", { access: "edits" })).toEqual(["--output-format", "streaming-messages-json", "--include-partial-messages", "--permission-mode", "acceptEdits", "-p", "hi", "--session-id", "abc"]);
   });
 });
 
