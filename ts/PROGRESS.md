@@ -5,10 +5,10 @@ phases are running. The go/no-go item below stays unchecked: the owner has not r
 
 ## Phase 0
 
-- [ ] `slint-ui` opens a window under Bun on x86_64 and aarch64 (x86_64 done, aarch64 not yet run)
+- [x] `slint-ui` opens a window under Bun on x86_64 and aarch64 (aarch64: real arm64 CPU, virtual display, software GL)
 - [x] Mutual TLS with a pinned client certificate works in Bun, TLS 1.3 and 1.2
 - [x] `Bun.spawn` with `terminal` drives a shell; `@xterm/headless` parses its output
-- [ ] `sherpa-onnx-node` transcribes a sample on both architectures (x86_64 done, aarch64 not yet run)
+- [x] `sherpa-onnx-node` transcribes a sample on both architectures
 - [x] Video: a written finding on how libmpv frames reach a Slint window (below)
 - [x] A table comparing the prototype with Rust Harbor on the same PC (below)
 - [ ] The owner reads the table and decides go or no-go
@@ -119,8 +119,8 @@ Bun's release zip, not run on arm here) on every ELF the runtime needs.
 
 The 2.35 in Slint's addon comes from `hypot` and `hypotf` (new versions in 2.35); the rest of its symbols are
 2.34 (`dlopen`, `pthread_create`, ...) and 2.33 (`stat64`). So the rule holds with zero margin: Ubuntu 22.04,
-Debian 12 and Arch are fine, anything older is not. The aarch64 files are read from their ELF headers only;
-whether they load is in the aarch64 section.
+Debian 12 and Arch are fine, anything older is not. The aarch64 files were read from their ELF headers and then
+run on a real Ubuntu 22.04 (glibc 2.35.0ubuntu3.15): they load (next section).
 
 ## Video: how libmpv frames reach a Slint window
 
@@ -205,10 +205,35 @@ Options, in order of cost:
   from JavaScript (above), and the shipped library is slower than the system one in software.
 - CPU while a reply streams is 19x Rust's, not on the plan's list; it will grow once markdown is rendered.
 
+## aarch64
+
+Real arm64 CPU (the owner's Apple M5 laptop), Ubuntu 22.04.5 arm64 in a Lima 2.2.1 VM (`harbor-arm`, vz, 4 CPUs,
+4 GB, 20 GB disk; glibc 2.35), a virtual display (Xvfb) with Mesa's software GL (llvmpipe, 4.5), no GPU. Bun 1.4.3
+aarch64, `slint-ui` 1.18.1 and `sherpa-onnx-linux-arm64` 2.0.1 from `bun install` of this branch's lockfile. Do not
+compare these numbers with the x86_64 table: different CPU, virtual display, a VM.
+
+- Slint window: `proto/idle-window.ts` and the real prototype `proto/main.ts` (a scrambled harbor.db copy,
+  sidebar and chat drawn) open at 1400x900 and draw correctly. The libraries the addon hard-links had to be
+  installed first: libxkbcommon0, libudev1, libinput10, libgbm1, libfontconfig1, libfreetype6 (and the X11
+  client libraries for the virtual display). No Claude turn was run there (no Claude Code in the VM).
+- Idle, `idle-window.ts`, window shown, 20 s: the default renderer (femtovg on llvmpipe) uses 14.7 % of one core,
+  170 wakeups/s, 183 MB RSS. With `SLINT_BACKEND=winit-skia-software` it uses 1.7 %, 90 wakeups/s, 83 MB RSS.
+  `SLINT_BACKEND=winit-software` behaves like the default (14.6 %): the addon is built without the software
+  renderer, only femtovg and skia. On a PC with no GPU the Skia software renderer is the one to pick.
+- sherpa: Harbor's model (Parakeet TDT 0.6B v3 int8, the three files checked against the hashes in `parakeet.rs`):
+  loads in 1.06 s at 842 MB RSS; the English, German and Spanish samples each take 0.14 to 0.19 s and come out
+  right, the same sentences as on x86_64.
+- Trap: in the VM `bun install` with the default 48 concurrent requests hung with most connections in SYN-SENT;
+  `--network-concurrency=6` finished in 2 s. Curl to the same registry worked.
+- Not run on arm64: the compiled runtime (`bun build --compile` for aarch64), mutual TLS, the terminal, video.
+  They use no architecture-specific code, but they were not run there.
+- Left on the laptop: Lima (brew, 79 MB), the VM stopped (3.5 GB on disk, a 20 GiB sparse file) and Lima's
+  download cache (2.4 GB). `limactl delete harbor-arm` and `brew uninstall lima` remove them.
+
 ## Next
 
-aarch64 (Lima VM on the owner's arm64 laptop: Slint window and sherpa), then Phase 1 onwards.
+Phase 1 onwards. Open for Phase 0: the owner reads the table.
 
 ## Blockers
 
-None for Phase 0 itself. aarch64: see its section once run.
+None for Phase 0.
