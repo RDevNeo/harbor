@@ -33,6 +33,12 @@ const commands: Record<string, Command> = {
     console.log(`harbor ${VERSION === DEV_VERSION ? `${pkg.version} (ts)` : versionLabel()}`);
     return 0;
   },
+  "--check-video": async (args) => {
+    const { video } = await import("./packages/media/src/index.ts");
+    const r = video.checkVideo(args);
+    for (const line of r.lines) console.log(line);
+    return r.code;
+  },
   "--speech-worker": async () => (await import("./packages/media/src/speech-worker.ts")).runSpeechWorker(),
   "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
   turn: async (args) => {

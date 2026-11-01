@@ -320,20 +320,22 @@ export function accept(s: Socket, o: AcceptOptions): Promise<Conn | null> {
       s.destroy();
       resolve(null);
     }, o.head ?? 10_000);
-    s.once("error", () => {
+    const onError = (): void => {
       clearTimeout(timer);
       resolve(null);
-    });
-    s.once("close", () => {
+    };
+    const onClose = (): void => {
       clearTimeout(timer);
       resolve(null);
-    });
+    };
+    s.once("error", onError);
+    s.once("close", onClose);
     s.once("data", (first: Buffer) => {
       s.pause();
       if (first[0] !== 0x16) {
         clearTimeout(timer);
-        s.removeAllListeners("close");
-        s.removeAllListeners("error");
+        s.off("close", onClose);
+        s.off("error", onError);
         s.on("error", () => {});
         s.unshift(first);
         resolve({ tls: false, sock: s, peer: null, remote, local });

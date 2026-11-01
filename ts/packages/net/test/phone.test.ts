@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
-import { blankChat, Store, type Chat } from "@harbor/store";
+import { blankChat, mention, Store, type Chat } from "@harbor/store";
 import { accountDecide, isHarborToken, verifyHarborToken, type AccountKey } from "../src/account.ts";
 import { Api } from "../src/api.ts";
 import { readAnswerHead } from "../src/client.ts";
@@ -54,6 +54,32 @@ async function request(sock: TLSSocket, method: string, path: string, auth: stri
 }
 
 describe("the phone API's chats (api.rs App side)", () => {
+  test("a_mention_on_the_wire_is_its_first_line_or_its_chat_row", () => {
+    const m = (over: Partial<Parameters<typeof mention>[0]>) => mention({ from: "me", ...over });
+    const cards = project(
+      [{ kind: "user", text: "see", files: [], at: 0, mentions: [m({ text: "\n  first line  \nsecond\n\nthird" }), m({ kind: "chat", chat: "g", title: "T", from: "Row line", text: "ignored" })], sender: "", intent: "" }],
+      false,
+      [],
+    );
+    const v = cardJson(cards[0] as (typeof cards)[number], 1, () => [], "1");
+    expect(v.mentions).toEqual([
+      { from: "me", text: "first line", excerpt: false, note: "" },
+      { from: "Row line", text: "Row line", excerpt: false, note: "", kind: "chat", chat: "g", title: "T" },
+    ]);
+  });
+
+  test("a_long_tool_result_is_cut_the_way_the_rust_hub_cuts_it", () => {
+    const long = `${"é".repeat(9000)}tail`;
+    const cards = project([{ kind: "tool", id: "t", name: "Bash", summary: "", input: "x".repeat(40000), result: long, is_error: false }], false, []);
+    const v = cardJson(cards[0] as (typeof cards)[number], 1, () => [], "1");
+    const result = String(v.result);
+    expect(result).toMatch(/^(é)+\n… \(\d+ more bytes\)$/);
+    const kept = Buffer.byteLength(result.split("\n… (")[0] ?? "");
+    expect(kept).toBe(16384);
+    expect(result.endsWith(`(${Buffer.byteLength(long) - kept} more bytes)`)).toBe(true);
+    expect(String(v.input).length).toBeLessThan(16384 + 100);
+  });
+
   test("card_images_name_their_chat", () => {
     const cards = project([{ kind: "user", text: "", files: ["/x/a.png"], at: 0, mentions: [], sender: "", intent: "" }], false, []);
     const v = cardJson(cards[0] as (typeof cards)[number], 1, () => [], "g 1");
@@ -120,6 +146,18 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect(v.images).toEqual([{ name: "photo.jpg", url: "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512&chat=1" }]);
     expect([v.actions, typeof v.time]).toEqual([["copy", "quote", "mention"], "string"]);
     expect(v.parts).toBeUndefined();
+  });
+
+  test("a_retired_agent_is_not_writable_on_the_phone", () => {
+    const store = Store.openAt(join(tmp, "retired.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog: catalogOf(providers, () => [], store) });
+    const live = store.createChat(blankChat({ title: "live", role: "sub", parent: 1 }));
+    const gone = store.createChat(blankChat({ title: "gone", role: "sub", parent: 1, retired: true }));
+    const s = routes.state("tok:0", false) as { chats: { id: number; writable: boolean }[] };
+    expect(s.chats.find((c) => c.id === live.id)?.writable).toBe(true);
+    expect(s.chats.find((c) => c.id === gone.id)?.writable).toBe(false);
   });
 
   test("run settings follow the providers: a lead stays on Claude, a started chat on its provider", () => {

@@ -165,6 +165,24 @@ describe("connections (tls.rs)", () => {
     expect(seen[1]?.tls).toBe(true);
   });
 
+  test("a plain connection keeps the close listener its acceptor set, so its slot is given back", async () => {
+    const { createServer } = await import("node:net");
+    let closes = 0;
+    const server = createServer({ pauseOnConnect: true }, (sock) => {
+      sock.once("close", () => closes++);
+      void accept(sock, { id: () => null }).then((c) => c?.sock.destroy());
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    for (let i = 0; i < 5; i++) {
+      const c = tcpConnect(port, "127.0.0.1", () => c.write("GET / HTTP/1.1\r\n\r\n"));
+      await readAll(c);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    server.close();
+    expect(closes).toBe(5);
+  });
+
   test("strangers_get_no_session_from_the_internet", async () => {
     const seen: Conn[] = [];
     const port = await fpServer(seen, (fp) => fp === cli.fp);

@@ -15,7 +15,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 | Fake success | none found; places that answer honestly "not in this build" are listed under Unwired |
 | Whole suite, no network, empty HOME | 1,193 tests, 0 failures after the two fixes below; `tsc` clean |
 | Reaches a real service, the real mesh, `harbor.db`, `identity.pem` or an install | no: nothing needed the network, and no test file wrote under `HOME` except the two below (both fixed or harmless) |
-| Compiled `harbor` | builds; `--version`, `turn <folder>`, `--speech-worker`, `mesh status` run; images could not load in it (fixed so only images fail, see below) |
+| Compiled `harbor` | builds (runtime + bundle); `--version`, `turn <folder>`, `--speech-worker`, `--check-native` (sharp and sherpa load from inside it), `mesh status` run |
 
 ## Fixed in this pass
 
@@ -35,6 +35,11 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
   `agents` "a remote turn without the net package says so" in a full run. It restores them in `afterAll`.
 - `packages/agents/test/engine.test.ts:353`: "snooze sets a wake-up" failed one run in about ten under load: the reply says "in <1m" when a few ms of the minute have passed. The pattern accepts both now.
 - Temp folders: `Store.openTemp()` and about 20 test files left folders in `/tmp` (RAM-backed here): 400 were there. `bunfig.toml` now preloads `test/preload.ts`, which points `TMPDIR` at one `hbt-<pid>-*` folder per run and removes it when the run ends. A run that is killed leaves its folder, and the next run removes folders whose pid is gone. `Store.openTemp()` also removes its folders at exit. Tests that hard-code `/tmp` paths are not covered; none were found.
+- Found by `packages/store/rig/dbswap.sh` (the scrambled-copy round trip, see `HARD-RULES.md`) and fixed:
+  - `packages/net/src/tls.ts`: `accept()` removed every `close` listener of a plain connection, including the one that gives its slot back, so the hub refused all plain connections after 12 (loopback, legacy tailnet phones). Test `a plain connection keeps the close listener…`.
+  - `packages/net/src/phone.ts`: a tool result longer than 16 KiB was cut with `…`; Rust cuts at a character boundary and appends `\n… (N more bytes)`. A mention's `text` on the wire is its first non-empty line (or the chat row's line for a chat mention), not the whole text. A retired agent is not `writable`.
+  - `hub.ts`: the phone routes got no `find`/`refs`, so a reply with images came out with different `blocks` and no `media`. Now wired to `@harbor/media` (the chat's project folder, else home).
+  - `app.ts`: `harbor --check-video` was ported in media but not in the command table.
 - `test/harbor.test.ts`: `harbor` with no command now opens the window (ui), which cannot run headless; the test keeps the unknown
   command half.
 
@@ -46,15 +51,13 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 
 ## Packaging (compiled build)
 
-1. `sharp`: the `.node` and `libvips` are found through a path built at run time, so `bun build --compile` does not embed them and
-   `$ORIGIN` rpaths break if they are extracted. Images, SVG, clipboard conversion and favicons fail in a compiled `harbor` until the
-   runtime ships `@img/sharp-linux-*` beside the binary and loads it by path. Owner: update (runtime), media.
-2. `sherpa-onnx-node`: needs `libonnxruntime.so` and `libsherpa-onnx-c-api.so` on `LD_LIBRARY_PATH` for the worker process
-   (already in `ts/PROGRESS.md`); `parakeet` passes the parent's environment, so the launcher must set it. Owner: update.
-3. `libmpv`: loaded by name at run time; a compiled build needs the system library or Harbor's `libmpv-harbor.so` (not on this PC,
-   never loaded). Owner: media/update.
+1. `sharp` and `sherpa-onnx`: fixed by commit 05be7fe (the runtime carries their native files and loads them by path); `harbor --check-native` on a runtime built from this branch prints "sharp: ok" and "sherpa: ok".
+2. `libmpv`: loaded by name at run time; a compiled build needs the system library or Harbor's `libmpv-harbor.so` (not on this PC, never loaded). Owner: media/update.
 
 ## Unwired (honest, but not done)
+
+- Phone API against Rust, on a real-content copy and the scrambled one (`HARD-RULES.md`): `parts` (user text with tags, commands and chat links) is not sent; `/v1/state.devices` lacks the tailnet devices (and with them `switchable.device`/`switch_reason.device` on a real-content copy); the chat list is ordered by update time only after a restart (Rust appends a new chat at the end of its live list); a commit pill can be found in an ancestor repository of an empty project folder, which the Rust hub does not do. Owner: net.
+- Fresh-install mesh id is `pc:<host>` where Rust writes `ts:<host>` (an existing `mesh_id` is kept). Owner: net.
 
 - Dictation: `dictate.Mesh` is wired in `hub.ts`; `Ask` reaches only `claude`, and not while a usage limit blocks it (the Engine holds store's `Limits` now).
 - `packages/media`: Whisper (built-in) never ran against a real model; `voice::builtin_downloads_and_transcribes` is ported up to the

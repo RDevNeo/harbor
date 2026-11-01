@@ -29,6 +29,13 @@ describe("harbor (main.rs)", () => {
     expect(err).toContain("mesh");
   });
 
+  test("--check-video names the player it would use, or says it has none", async () => {
+    const [code, out, err] = await harbor(["--check-video"]);
+    const text = out + err;
+    expect(text).toMatch(/^(player: |no video player: )/);
+    expect(code).toBe(text.startsWith("player: ") ? 0 : 1);
+  });
+
   test("mesh on, allow and remove write the kv a running Harbor re-reads", async () => {
     expect(await harbor(["mesh", "on"])).toEqual([0, "sharing chats with your other PCs: on\n", ""]);
     const fp = "ab".repeat(32);

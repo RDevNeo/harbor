@@ -121,15 +121,11 @@ export function clock(at: number): string {
 }
 
 function clipped(s: string): string {
-  if (Buffer.byteLength(s) <= CLIP) return s;
-  let out = "";
-  let n = 0;
-  for (const ch of s) {
-    n += Buffer.byteLength(ch);
-    if (n > CLIP) break;
-    out += ch;
-  }
-  return `${out}…`;
+  const b = Buffer.from(s);
+  if (b.length <= CLIP) return s;
+  let end = CLIP;
+  while (end > 0 && ((b[end] ?? 0) & 0xc0) === 0x80) end--;
+  return `${b.subarray(0, end).toString("utf8")}\n… (${b.length - end} more bytes)`;
 }
 
 export function fileName(p: string): string {
@@ -155,7 +151,8 @@ function mediaJson(m: Media): Record<string, Json> {
 }
 
 function mentionJson(m: { from: string; text: string; excerpt: boolean; note: string; kind: string; chat: string; title: string }): Json {
-  const v: Record<string, Json> = { from: m.from, text: m.text, excerpt: m.excerpt, note: m.note.trim() };
+  const text = m.kind === "chat" ? m.from : (m.text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "");
+  const v: Record<string, Json> = { from: m.from, text, excerpt: m.excerpt, note: m.note.trim() };
   if (m.kind === "chat") {
     v.kind = "chat";
     v.chat = m.chat;
@@ -275,7 +272,7 @@ export class PhoneRoutes {
   }
 
   private writable(c: Chat): boolean {
-    return c.home === "" || this.d.hub.mesh.online(c.home);
+    return !c.retired && (c.home === "" || this.d.hub.mesh.online(c.home));
   }
 
   private running(c: Chat): boolean {
