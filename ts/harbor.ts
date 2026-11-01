@@ -35,6 +35,8 @@ const commands: Record<string, Command> = {
     return 0;
   },
   turn: async (args) => {
+    // Harbor's own app sign-ins, added by the runner so they never land in the turn's folder.
+    (await import("./wire.ts")).wire();
     await runTurn(args);
     return 0;
   },
