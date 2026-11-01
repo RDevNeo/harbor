@@ -1,12 +1,15 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, git, type Kind, providers } from "@harbor/agents";
-import { type Chat, type Item, now, parseAccess } from "@harbor/store";
+import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
 import { newOpened, type Opened, toggle as toggleCard, transcriptCards } from "./cards.ts";
-import { ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
+import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
+import { isImage } from "./logic/images.ts";
 import { Keys } from "./logic/keys.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { localHm, until } from "./logic/team.ts";
@@ -16,7 +19,7 @@ import { Data } from "./data.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { tilde } from "./logic/app.ts";
 import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
-import { defuse } from "./logic/usertext.ts";
+import { defuse, imageCount, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
@@ -73,7 +76,7 @@ export class Shell {
   private rows = new slint.ArrayModel<SideRow>([]);
   private settledRows = new slint.ArrayModel<SideRow>([]);
   private cards = new slint.ArrayModel<CardData>([]);
-  private files = new slint.ArrayModel<string>([]);
+  private files = new slint.ArrayModel<{ name: string; image: boolean }>([]);
   private menu = new slint.ArrayModel<{ icon: string; label: string; desc: string; section: string }>([]);
   private popItems = new slint.ArrayModel<PopItem>([]);
   private teamAgentRows = new slint.ArrayModel<AgentRow>([]);
@@ -384,10 +387,11 @@ export class Shell {
   refreshAll(): void {
     this.refreshSidebar();
     this.refreshView();
-    sync(
-      this.files,
-      (this.attached.get(this.key()) ?? []).map((p) => p.slice(p.lastIndexOf("/") + 1)),
-    );
+    sync(this.files, this.fileItems(), sameJson);
+  }
+
+  private fileItems(): { name: string; image: boolean }[] {
+    return (this.attached.get(this.key()) ?? []).map((p) => ({ name: p.slice(p.lastIndexOf("/") + 1), image: isImage(p) }));
   }
 
   private refreshView(): void {
@@ -831,6 +835,7 @@ export class Shell {
       }
     }
     const chat = this.view === "chat" ? this.chatId : null;
+    if ((p.ctrl && !p.alt && !p.shift && p.key.toLowerCase() === "v") || (p.shift && p.key === "Insert")) void this.pasteImage();
     if (this.keys.matches("send", p)) {
       this.send(this.engine.followDefault());
       return true;
@@ -895,6 +900,27 @@ export class Shell {
     return false;
   }
 
+  /** An image on the clipboard joins the message (app.rs `save_pasted_image`); text pastes as usual. */
+  private async pasteImage(): Promise<void> {
+    const key = this.key();
+    const { clipboard } = await import("@harbor/media");
+    const clip = await clipboard.read();
+    if (clip?.type !== "image") return;
+    const dir = join(dataDir(), "pastes");
+    mkdirSync(dir, { recursive: true });
+    const png = clip.bytes[0] === 0x89 && clip.bytes[1] === 0x50;
+    const path = join(dir, `pasted-${Date.now()}.${png ? "png" : "jpg"}`);
+    writeFileSync(path, clip.bytes);
+    const list = this.attached.get(key) ?? [];
+    list.push(path);
+    this.attached.set(key, list);
+    const [text, cursor] = writeImage(this.win.draft, charAt(this.win.draft, this.win.cursor), imageCount(list));
+    this.win.draft = text;
+    this.drafts.set(key, text);
+    this.win.set_cursor(byteAt(text, cursor));
+    this.refreshFiles();
+  }
+
   private async attach(): Promise<void> {
     const key = this.key();
     const { picker } = await import("@harbor/media");
@@ -907,10 +933,7 @@ export class Shell {
   }
 
   private refreshFiles(): void {
-    sync(
-      this.files,
-      (this.attached.get(this.key()) ?? []).map((p) => p.slice(p.lastIndexOf("/") + 1)),
-    );
+    sync(this.files, this.fileItems(), sameJson);
     this.refreshComposer();
   }
 

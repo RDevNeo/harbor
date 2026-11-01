@@ -8,7 +8,7 @@ import { Icons } from "icons.slint";
 import { Ui, Btn, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
-import { Composer, ComposerState, MenuEntry, StripRow } from "composer.slint";
+import { Composer, ComposerState, MenuEntry, StripRow, FileItem } from "composer.slint";
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
@@ -390,7 +390,7 @@ export component AppWindow inherits Window {
     in-out property <string> draft;
     in property <ComposerState> composer;
     in property <image> model-logo;
-    in property <[string]> files;
+    in property <[FileItem]> files;
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
     out property <int> cursor: composer-el.cursor;

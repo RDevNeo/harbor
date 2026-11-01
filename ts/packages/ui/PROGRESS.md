@@ -35,7 +35,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | logos | partial: provider marks (`src/logos.ts`); app logos (`mark_for`, `tile`) not yet | 0 of 0 |
 | surface | not started (browser / terminal / devices panes) | 0 of 0 |
 | sidebar | partial: tree, list, search, statuses, Settled, snooze presets, row menus (Rename, Settle, Delete, Remove project), empty states; not yet: workspace filter, drag to reorder, project avatars, worktree / PR marks, "Order and view" beyond Settled | 19 of 19 |
-| chat | partial: draft, top bar (breadcrumb, sub-agent parent), transcript cards (user, reply, thinking, tool, tool runs, notices, messages, errors, fork and chat-link dividers), hover bar (Copy, Quote, Mention; Fork says it isn't ported), composer with attachments (the media package's picker); the model picker (rail, favourites, search, More models, Ctrl+1–9) and the effort menu (Default badge, Fast mode) as in the Rust app; images in the transcript (a reply's images inline with their caption, attachments and named files as thumbnails, decoded by the media package; a click opens the file with the desktop's viewer, not Harbor's lightbox); top bar branch and "N changed" from git; the trust bar over a cloned project's composer; not yet: video, mesh composer, dictation | 0 of 0 |
+| chat | partial: draft, top bar (breadcrumb, sub-agent parent), transcript cards (user, reply, thinking, tool, tool runs, notices, messages, errors, fork and chat-link dividers), hover bar (Copy, Quote, Mention; Fork says it isn't ported), composer with attachments (the media package's picker); the model picker (rail, favourites, search, More models, Ctrl+1–9) and the effort menu (Default badge, Fast mode) as in the Rust app; images in the transcript (a reply's images inline with their caption, attachments and named files as thumbnails, decoded by the media package; a click opens the file with the desktop's viewer, not Harbor's lightbox); top bar branch and "N changed" from git; the trust bar over a cloned project's composer; an image pasted into the composer is attached with its `[Image #N]` token; not yet: video, mesh composer, dictation | 0 of 0 |
 | view | done: the projection is `@harbor/net`'s (one port shared with the phone API), drawn by `src/cards.ts` | 9 of 9, in `@harbor/net` |
 | usertext | done as logic; the window shows chat mentions as links, tags and commands blue; erase-whole keys not wired | 15 of 15 |
 | slash | done as logic; the menu shows and inserts; Harbor commands model, effort, plan, default, new, settle, clear-queue run; fork isn't | 12 of 12 |
@@ -61,7 +61,9 @@ compile, cards, cursors, scripted input).
   renders bold, italic, code, links and strikethrough only. Tags and commands in a user message are drawn as links (Slint's StyledText can
   colour only links), so they are blue but underlined.
 - The transcript is a Flickable with a VerticalLayout, not a ListView: ListView mis-measured rows whose
-  height depends on wrapped text and drew them over each other. Long chats lay out every card.
+  height depends on wrapped text and drew them over each other. So that long chats still open at
+  once, it builds the latest 80 cards and offers "Show earlier messages" (the Rust app culls what's
+  off screen instead and scrolls through the whole chat).
 - `slint.runEventLoop()` still crashes under Bun; `src/loop.ts` (from Phase 0) pumps `processEvents`.
 - Slint has no line-height, no selectable Text and no rich text colouring beyond links: line heights
   come from the font; transcript text can't be selected yet.

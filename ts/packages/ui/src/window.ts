@@ -260,7 +260,7 @@ export interface AppWindow extends slint.ComponentHandle {
   draft: string;
   composer: ComposerState;
   model_logo: Pixels;
-  files: slint.Model<string>;
+  files: slint.Model<{ name: string; image: boolean }>;
   menu: slint.Model<MenuEntry>;
   menu_selected: number;
   readonly cursor: number;

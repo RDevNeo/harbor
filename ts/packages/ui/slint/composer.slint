@@ -200,6 +200,11 @@ component AgentStrip inherits Rectangle {
     }
 }
 
+export struct FileItem {
+    name: string,
+    image: bool,
+}
+
 export struct ComposerState {
     model: string,
     model-tip: string,
@@ -281,7 +286,7 @@ export component Composer {
     in property <ComposerState> state;
     in property <image> logo;
     in property <length> max-h: 280px;
-    in property <[string]> files;
+    in property <[FileItem]> files;
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
     in property <bool> compact;
@@ -431,7 +436,8 @@ export component Composer {
                     spacing: 8px;
                     alignment: start;
                     for f[i] in root.files: FileChip {
-                        name: f;
+                        name: f.name;
+                        image: f.image;
                         remove => {
                             root.remove-file(i);
                         }
