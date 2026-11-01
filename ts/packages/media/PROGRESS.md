@@ -81,7 +81,7 @@ Exported from `index.ts` as `voice`, `parakeet`, `dictate`, `dictwords`, `voiceC
 
 | Rust module | State | Rust tests ported |
 | --- | --- | --- |
-| video.rs | done except the egui drawing (controls bar, spinner, error text, the "Open in your video player" button, the full-window texture): `libmpv.ts` binds libmpv over `bun:ffi` and `video.ts` holds every state, command, key and file rule; the `ui` package draws `Viewer.snapshot()` and puts `Host.frame()` pictures into a Slint image | 7 of 7, plus 16 more that run the real libmpv 0.41 on this PC |
+| video.rs | done; `ui` draws it (`slint/video.slint`, `src/videopane.ts`: controls bar, spinner, error text, the "Open in your video player" button, the full-window picture): `libmpv.ts` binds libmpv over `bun:ffi` and `video.ts` holds every state, command, key and file rule; the `ui` package draws `Viewer.snapshot()` and puts `Host.frame()` pictures into a Slint image | 7 of 7, plus 16 more that run the real libmpv 0.41 on this PC |
 
 What `ui` calls: `new Viewer({ host, source? })` implements `images.VideoHooks` (`open`, `close`), plus `resize(w, h)` (size of the picture area in pixels), `snapshot()` (stage, position, duration, paused, ended, muted, volume, drag, picture), `seen()` each time the controls are drawn, `pointerMoved()`, `controlsVisible(overBar)`, `toggle()`, `toggleMute()`, `holdVolume(percent)`, `holdSeek(seconds)` / `releaseSeek()`, `clickPicture(double)`, `takeKeys(keys)` (returns what is left for the lightbox: previous, next, close), `restoreVolume(store)` / `persistVolume(store)` for the kv `video_volume`, `shutdown()`. `Host` is what the viewer calls back: `frame()` (RGBA, straight alpha, valid until the next frame), `repaint()`, `fullscreen()`/`setFullscreen()`, `openExternally()` and `toast()` when there is no libmpv, `shut()`. `checkVideo(files)` is `harbor --check-video` (lines and exit code). `clock()` formats the times.
 
@@ -98,7 +98,7 @@ Decisions
 
 Not done / not tested
 - Harbor's own `libmpv-harbor.so` (video/build.sh builds it with a container) is not on this PC: the optional-library probing (`optional`, `audioOutputs`, PipeWire version) is written and its pure parts are tested, but loading that library was never run.
-- Hardware decoding, audio output devices (tests use video-only clips, so no sound plays), fullscreen on a real compositor and the controls are for the `ui` package to wire and look at.
+- Hardware decoding, audio output devices (no sound device in the rigs), fullscreen on a real compositor (headless sway only flips the state) are untested. A hidden or minimized window stops calling `seen()`, so the video pauses as in Rust; a window merely covered by another one still counts as seen (Wayland does not say). In the window, 720p at 30 fps into a 1400x900 picture takes 54 to 62 % of one core over 10 s (4 runs, either loop; Rust 0.109.0 on its GPU path: 4 %), measured on headless sway with software GL.
 
 Video finding (Phase 0 left it open)
 - It works: libmpv 0.41 under Bun, `bun:ffi`, software render into an RGBA buffer, copied into a Slint image (`win.frame = { width, height, data }`), shown in a Slint window on a private sway. 1080p source, 3.5 s: 30.1 fps delivered, no dropped frame seen; the window was mapped.

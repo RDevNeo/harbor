@@ -206,7 +206,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
 // Streaming changes one item at a time: the others keep their card, so their markdown isn't parsed again.
 const memo = new WeakMap<Item, { sig: string; data: CardData | null }>();
 
-function signature(it: Item, open: Opened, seq: number, media: number): string {
+function signature(it: Item, open: Opened, seq: number, media: string): string {
   const body = it.kind === "tool" ? `${it.input.length}:${it.result?.length ?? -1}:${it.is_error}` : "text" in it ? String(it.text.length) : "";
   return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
 }
@@ -232,7 +232,7 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     }
     const item = items[s.seq];
     const media = mediaOf(s.card);
-    const sig = item ? signature(item, open, s.seq, media.length) : "";
+    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) : "";
     const hit = item ? memo.get(item) : undefined;
     const c = hit && hit.sig === sig ? hit.data : cardData(s.card, s.seq, open, off, () => media);
     if (item) memo.set(item, { sig, data: c });

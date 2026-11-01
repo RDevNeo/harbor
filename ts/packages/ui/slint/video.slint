@@ -1,0 +1,348 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, Spinner, TipArea } from "widgets.slint";
+
+export struct VideoData {
+    has-frame: bool,
+    poster: image,
+    poster-w: length,
+    poster-h: length,
+    stage: string,
+    why: string,
+    can-open: bool,
+    started: bool,
+    paused: bool,
+    ended: bool,
+    silent: bool,
+    volume: float,
+    at: float,
+    has-dur: bool,
+    clock: string,
+    show: bool,
+    full: bool,
+    path: bool,
+    name: string,
+    index: int,
+    count: int,
+}
+
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> tip;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: area.has-hover ? white.with-alpha(28 / 255) : transparent;
+    Glyph {
+        icon: root.icon;
+        size: 16px;
+        color: white;
+    }
+    area := TipArea {
+        tip: root.tip;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Slider inherits Rectangle {
+    in property <float> at;
+    callback hold(float);
+    callback release();
+    property <length> thick: area.has-hover || area.pressed ? 5px : 3px;
+    Rectangle {
+        y: (root.height - root.thick) / 2;
+        height: root.thick;
+        border-radius: 2px;
+        background: white.with-alpha(70 / 255);
+    }
+    Rectangle {
+        x: 0;
+        y: (root.height - root.thick) / 2;
+        width: root.width * clamp(root.at, 0, 1);
+        height: root.thick;
+        border-radius: 2px;
+        background: white;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                root.hold(clamp(self.mouse-x / root.width, 0, 1));
+            }
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                root.release();
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.hold(clamp(self.mouse-x / root.width, 0, 1));
+            }
+        }
+    }
+}
+
+// video.rs `controls` and the video side of images.rs `lightbox`.
+export component VideoView inherits Rectangle {
+    in property <VideoData> data;
+    in property <image> frame;
+    callback toggle();
+    callback fullscreen();
+    callback mute();
+    callback volume(float);
+    callback seek(float);
+    callback release-seek();
+    callback moved();
+    callback over-bar(bool);
+    callback close();
+    callback copy-path();
+    callback open-external();
+    callback go(int);
+    background: black;
+    property <bool> playable: root.data.stage == "starting" || root.data.stage == "playing";
+    property <float> alpha: !root.playable || root.data.show ? 1 : 0;
+    animate alpha { duration: 180ms; }
+    property <bool> in-bar: area.has-hover && area.mouse-y >= root.height - 52px && area.mouse-y <= root.height - 12px && area.mouse-x >= 12px && area.mouse-x <= root.width - 12px;
+    changed in-bar => {
+        root.over-bar(root.in-bar);
+    }
+    area := TouchArea {
+        mouse-cursor: root.playable && root.alpha <= 0 ? MouseCursor.none : MouseCursor.default;
+        clicked => {
+            if root.playable {
+                root.toggle();
+            }
+        }
+        double-clicked => {
+            if root.playable {
+                root.toggle();
+                root.fullscreen();
+            }
+        }
+        changed mouse-x => {
+            root.moved();
+        }
+        changed mouse-y => {
+            root.moved();
+        }
+        changed pressed => {
+            root.moved();
+        }
+        if root.data.has-frame: Image {
+            width: root.width;
+            height: root.height;
+            source: root.frame;
+            image-fit: fill;
+        }
+        if !root.data.has-frame && root.data.poster-w > 0px: Image {
+            property <float> k: min(root.width / root.data.poster-w, root.height / root.data.poster-h);
+            width: root.data.poster-w * self.k;
+            height: root.data.poster-h * self.k;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            source: root.data.poster;
+            image-fit: fill;
+        }
+        if root.data.stage == "failed": Text {
+            x: 0;
+            y: root.height / 2 - 10px;
+            width: root.width;
+            text: "Can't play this video: " + root.data.why;
+            font-size: 14px;
+            color: #dcdcdc;
+            horizontal-alignment: center;
+        }
+        if root.data.stage == "failed" && root.data.can-open: Btn {
+            x: (root.width - self.width) / 2;
+            y: root.height / 2 + 22px;
+            icon: Icons.external;
+            text: "Open in your video player";
+            size: xs;
+            variant: secondary;
+            clicked => {
+                root.open-external();
+            }
+        }
+        if root.data.stage == "preparing": Rectangle {
+            x: (root.width - 220px) / 2;
+            y: (root.height - 84px) / 2;
+            width: 220px;
+            height: 84px;
+            border-radius: Theme.radius-md;
+            background: black.with-alpha(170 / 255);
+            Spinner {
+                x: parent.width / 2 - self.width / 2;
+                y: 28px - self.height / 2;
+                radius: 12px;
+                color: white;
+            }
+            Text {
+                y: 60px - self.height / 2;
+                width: parent.width;
+                text: "Getting the player ready…";
+                font-size: 14px;
+                color: #e6e6e6;
+                horizontal-alignment: center;
+            }
+        }
+        if root.playable && !root.data.started: Spinner {
+            x: root.width / 2 - self.width / 2;
+            y: root.height / 2 - self.height / 2;
+            radius: 12px;
+            color: white;
+        }
+        if root.playable && root.alpha > 0: Rectangle {
+            x: 12px;
+            y: root.height - 52px;
+            width: root.width - 24px;
+            height: 40px;
+            opacity: root.alpha;
+            border-radius: Theme.radius-md;
+            background: black.with-alpha(170 / 255);
+            bar := TouchArea {
+                changed has-hover => {
+                    root.over-bar(self.has-hover || root.in-bar);
+                }
+                play := IconButton {
+                    x: 6px;
+                    y: 6px;
+                    icon: root.data.paused || root.data.ended ? Icons.play : Icons.pause;
+                    tip: root.data.ended ? "Play again (Space)" : root.data.paused ? "Play (Space)" : "Pause (Space)";
+                    clicked => {
+                        root.toggle();
+                    }
+                }
+                time := Text {
+                    x: play.x + play.width + 8px;
+                    y: (parent.height - self.height) / 2;
+                    text: root.data.clock;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: #e6e6e6;
+                }
+                full := IconButton {
+                    x: parent.width - 6px - self.width;
+                    y: 6px;
+                    icon: root.data.full ? Icons.minimize : Icons.maximize;
+                    tip: "Full screen (F)";
+                    clicked => {
+                        root.fullscreen();
+                    }
+                }
+                level := Slider {
+                    x: full.x - 8px - self.width;
+                    y: 6px;
+                    width: 64px;
+                    height: 28px;
+                    at: root.data.volume;
+                    hold(v) => {
+                        root.volume(v);
+                    }
+                }
+                mute := IconButton {
+                    x: level.x - 4px - self.width;
+                    y: 6px;
+                    icon: root.data.silent ? Icons.volume-x : Icons.volume;
+                    tip: "Mute (M)";
+                    clicked => {
+                        root.mute();
+                    }
+                }
+                if root.data.has-dur && mute.x - 12px - (time.x + time.width + 12px) > 16px: Slider {
+                    x: time.x + time.width + 12px;
+                    y: 0;
+                    width: mute.x - 12px - self.x;
+                    height: parent.height;
+                    at: root.data.at;
+                    hold(v) => {
+                        root.seek(v);
+                    }
+                    release => {
+                        root.release-seek();
+                    }
+                }
+            }
+        }
+        if root.alpha > 0: Rectangle {
+            opacity: root.alpha;
+            counter := Rectangle {
+                x: 12px;
+                y: 14px;
+                width: root.data.count > 1 ? count-text.preferred-width + 20px : 0px;
+                height: 28px;
+                visible: root.data.count > 1;
+                background: Theme.gray-100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-md;
+                count-text := Text {
+                    text: (root.data.index + 1) + " / " + root.data.count;
+                    font-size: 13px;
+                    color: Theme.fg;
+                }
+            }
+            Text {
+                x: root.data.count > 1 ? counter.x + counter.width + 10px : 12px;
+                y: 28px - self.height / 2;
+                text: root.data.name;
+                font-size: 13px;
+                color: #e6e6e6;
+            }
+            if root.data.count > 1 && root.data.index > 0: Btn {
+                x: 16px;
+                y: root.height / 2 - 16px;
+                icon: Icons.left;
+                size: icon-sm;
+                variant: secondary;
+                tip: "Previous (PgUp)";
+                clicked => {
+                    root.go(root.data.index - 1);
+                }
+            }
+            if root.data.count > 1 && root.data.index < root.data.count - 1: Btn {
+                x: root.width - 48px;
+                y: root.height / 2 - 16px;
+                icon: Icons.right;
+                size: icon-sm;
+                variant: secondary;
+                tip: "Next (PgDn)";
+                clicked => {
+                    root.go(root.data.index + 1);
+                }
+            }
+        }
+        if root.alpha > 0: Rectangle {
+            x: root.width - 12px - self.width;
+            y: 12px;
+            width: buttons.preferred-width;
+            height: 32px;
+            opacity: root.alpha;
+            buttons := HorizontalLayout {
+                spacing: 6px;
+                if root.data.path: Btn {
+                    y: 2px;
+                    icon: Icons.copy;
+                    text: "Copy path";
+                    size: xs;
+                    variant: secondary;
+                    clicked => {
+                        root.copy-path();
+                    }
+                }
+                Btn {
+                    y: 2px;
+                    icon: Icons.x;
+                    size: icon-xs;
+                    variant: secondary;
+                    tip: "Close (Esc)";
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+        }
+    }
+}

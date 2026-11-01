@@ -149,6 +149,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       moveTargets: (chatId: number) => run.move.targetsNow(chatId),
       movePc: (chatId: number, peerId: string) => run.move.movePc(chatId, peerId),
       checkUpdates: async () => (await updater.check(), updater.info().status),
+      player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
     };
     await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; }, busyIn: (f) => run.setBusyIn(f) });
     tray?.stop();

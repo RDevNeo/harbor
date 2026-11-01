@@ -76,6 +76,30 @@ export interface LightboxData {
   path: boolean;
 }
 
+export interface VideoData {
+  has_frame: boolean;
+  poster: Pixels;
+  poster_w: number;
+  poster_h: number;
+  stage: string;
+  why: string;
+  can_open: boolean;
+  started: boolean;
+  paused: boolean;
+  ended: boolean;
+  silent: boolean;
+  volume: number;
+  at: number;
+  has_dur: boolean;
+  clock: string;
+  show: boolean;
+  full: boolean;
+  path: boolean;
+  name: string;
+  index: number;
+  count: number;
+}
+
 export interface MediaRow {
   image: Pixels;
   caption: string;
@@ -83,6 +107,8 @@ export interface MediaRow {
   w: number;
   h: number;
   path: string;
+  video: boolean;
+  name: string;
 }
 
 export interface CardData {
@@ -469,6 +495,18 @@ export interface AppWindow extends slint.ComponentHandle {
   lb_go: (i: number) => void;
   lb_copy_image: () => void;
   lb_copy_path: () => void;
+  vid_open: boolean;
+  vid_data: VideoData;
+  vid_frame: Pixels;
+  vid_toggle: () => void;
+  vid_fullscreen: () => void;
+  vid_mute: () => void;
+  vid_volume: (v: number) => void;
+  vid_seek: (v: number) => void;
+  vid_release_seek: () => void;
+  vid_moved: () => void;
+  vid_over_bar: (over: boolean) => void;
+  vid_open_external: () => void;
   pop_spacing: number;
   pop_pick: (id: string, i: number) => void;
   pop_close: () => void;

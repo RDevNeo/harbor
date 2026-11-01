@@ -10,6 +10,7 @@ import { DeviceRow, TransferRow } from "devices.slint";
 import { FilesData, FileRow } from "files.slint";
 import { BrowserData } from "browser.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
+import { VideoView, VideoData } from "video.slint";
 import { TermKey } from "terminal.slint";
 import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
@@ -514,6 +515,18 @@ export component AppWindow inherits Window {
     callback lb-go(int);
     callback lb-copy-image();
     callback lb-copy-path();
+    in property <bool> vid-open;
+    in property <VideoData> vid-data;
+    in property <image> vid-frame;
+    callback vid-toggle();
+    callback vid-fullscreen();
+    callback vid-mute();
+    callback vid-volume(float);
+    callback vid-seek(float);
+    callback vid-release-seek();
+    callback vid-moved();
+    callback vid-over-bar(bool);
+    callback vid-open-external();
     // egui's item spacing in a popover: 8px, or 0 where the Rust menu sets it (the effort menu).
     in property <length> pop-spacing: 8px;
     callback pop-pick(string, int);
@@ -1637,6 +1650,49 @@ export component AppWindow inherits Window {
         }
         copy-path => {
             root.lb-copy-path();
+        }
+    }
+
+    if root.vid-open: VideoView {
+        width: root.width;
+        height: root.height;
+        data: root.vid-data;
+        frame: root.vid-frame;
+        toggle => {
+            root.vid-toggle();
+        }
+        fullscreen => {
+            root.vid-fullscreen();
+        }
+        mute => {
+            root.vid-mute();
+        }
+        volume(v) => {
+            root.vid-volume(v);
+        }
+        seek(v) => {
+            root.vid-seek(v);
+        }
+        release-seek => {
+            root.vid-release-seek();
+        }
+        moved => {
+            root.vid-moved();
+        }
+        over-bar(o) => {
+            root.vid-over-bar(o);
+        }
+        close => {
+            root.lb-close();
+        }
+        copy-path => {
+            root.lb-copy-path();
+        }
+        open-external => {
+            root.vid-open-external();
+        }
+        go(i) => {
+            root.lb-go(i);
         }
     }
 

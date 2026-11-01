@@ -34,6 +34,7 @@ import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, pr
 import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
+import { VideoPane } from "./videopane.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
@@ -132,6 +133,7 @@ export class Shell {
   private stripRows = new slint.ArrayModel<StripRow>([]);
   private avatars = new Map<number, Pixels | null>();
   private mediaRows: MediaRows | null = null;
+  private videoPane: VideoPane | null = null;
   private gitStatus = new Map<number, git.Status | null>();
   private gitRunning = new Set<number>();
 
@@ -140,6 +142,15 @@ export class Shell {
     this.media = pkg;
     this.images = new pkg.images.Images();
     this.images.onChange(() => this.refreshLightbox());
+    this.videoPane = new VideoPane({
+      win: this.win,
+      pkg,
+      images: this.images,
+      store: this.data.store,
+      toast: (m) => this.toast(m),
+      open: (file) => void Bun.spawn(["xdg-open", file], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+      ...(this.hub.player ? { source: this.hub.player } : {}),
+    });
     this.voice = new pkg.voiceCtl.VoiceCtl({
       store: this.data.store,
       mesh: this.data.voiceMesh,
@@ -1176,7 +1187,7 @@ export class Shell {
   }
 
   private composerKey(e: KeyEvent): boolean {
-    if (this.win.lb_open || this.escOfViewer(e)) return this.globalKey(e);
+    if (this.win.lb_open || this.win.vid_open || this.escOfViewer(e)) return this.globalKey(e);
     const m = e.modifiers;
     const p = pressOf(e.text, m);
     if (this.menu.length > 0) {
@@ -1249,6 +1260,16 @@ export class Shell {
     if (this.escOfViewer(e)) return true;
     const p = pressOf(e.text, e.modifiers);
     const w = this.win;
+    if (w.vid_open && this.videoPane && this.images && !p.ctrl && !p.alt) {
+      const r = this.videoPane.key(p.key);
+      if (r.taken) {
+        if (r.previous) this.images.pressKey("prev");
+        if (r.next) this.images.pressKey("next");
+        if (r.close) this.images.pressKey("close");
+        this.images.applyKeys();
+        return true;
+      }
+    }
     if (w.lb_open && this.images) {
       const k = p.key === "ArrowLeft" ? "prev" : p.key === "ArrowRight" ? "next" : p.key === "Escape" ? "close" : null;
       if (k) {
@@ -1297,7 +1318,7 @@ export class Shell {
       return true;
     }
     const scroll = transcriptKey(e.text, e.modifiers);
-    if (scroll !== null && this.page === null && this.view === "chat" && !w.lb_open && w.pop_id === "") {
+    if (scroll !== null && this.page === null && this.view === "chat" && !w.lb_open && !w.vid_open && w.pop_id === "") {
       w.transcript_key(scroll);
       return true;
     }
@@ -1565,14 +1586,15 @@ export class Shell {
     const img = this.images;
     const media = this.media;
     if (!img || !media) return;
-    if (!media.images.isImage(path)) {
+    const shows = (p: string): boolean => media.images.isImage(p) || media.media.isVideo(p);
+    if (!shows(path)) {
       Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
       return;
     }
     let group: string[] = [path];
     for (let i = 0; i < this.cards.length; i++) {
       const c = this.cards.rowData(i);
-      if (c?.media.some((m) => m.path === path)) group = c.media.map((m) => m.path).filter((p) => media.images.isImage(p));
+      if (c?.media.some((m) => m.path === path)) group = c.media.map((m) => m.path).filter(shows);
     }
     img.openClicked(path, group);
   }
@@ -1580,6 +1602,7 @@ export class Shell {
   private refreshLightbox(): void {
     const w = this.win;
     const v = this.images?.view();
+    this.videoPane?.show(v?.video === true);
     if (!v || v.video) {
       w.lb_open = false;
       return;
@@ -1791,6 +1814,7 @@ export class Shell {
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
   shutdown(): void {
     this.surfaces.dispose();
+    this.videoPane?.shutdown();
     for (const [id, run] of this.engine.turns) {
       this.engine.persist(id);
       run.turn?.release();
@@ -2683,7 +2707,7 @@ export class Shell {
     }
     const scroll = /^scroll:(up|down|home|end)$/.exec(url)?.[1];
     if (scroll === "up" || scroll === "down" || scroll === "home" || scroll === "end") {
-      if (!this.win.lb_open) this.win.transcript_key(scroll);
+      if (!this.win.lb_open && !this.win.vid_open) this.win.transcript_key(scroll);
       return;
     }
     if (url.startsWith("at:")) {
@@ -2771,6 +2795,8 @@ export interface ShellHub extends PageHub {
   deviceHost: (d: PairedDevice) => { shell: string[]; ssh: string[] } | null;
   moveTargets: (chatId: number) => { why: string | null; targets: { id: string; name: string; why: string | null }[] };
   movePc: (chatId: number, peerId: string) => Promise<string>;
+  /** Harbor's own video player (update.rs `video_lib`, `video_auto`); without it the system's libmpv. */
+  player?: import("@harbor/media").video.PlayerSource;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

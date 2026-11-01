@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
-import { apk, browserUnsupported, engineStale, fetchApk, NO_BROWSER, pendingExtras, retryAfter, type ExtraWork } from "./extras.ts";
-import { exists, fresh, read, readJson, remove } from "./files.ts";
+import { apk, browserUnsupported, engineStale, fetchApk, NO_BROWSER, pendingExtras, retryAfter, VIDEO_LIB, type ExtraWork } from "./extras.ts";
+import { exists, fresh, isFile, read, readJson, remove } from "./files.ts";
 import { current, hasPrevious, install, NoBuild, onDisk, rollback, rolledBack, skipped, type RolledBack } from "./install.ts";
 import { parseManifest, type Manifest } from "./manifest.ts";
 import { previewInfo } from "./preview.ts";
@@ -362,6 +362,15 @@ export class Updater {
 
   hasPrevious(): boolean {
     return hasPrevious(this.cfg);
+  }
+
+  videoLib(): string | null {
+    const dir = this.cfg.dir;
+    return dir !== null && isFile(join(dir, VIDEO_LIB)) ? join(dir, VIDEO_LIB) : null;
+  }
+
+  videoInstalling(): boolean {
+    return this.extraRunning.has("video");
   }
 
   browserInstalling(): boolean {
