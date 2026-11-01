@@ -68,10 +68,14 @@ const commands: Record<string, Command> = {
 commands["-V"] = commands["--version"] as Command;
 
 const [name, ...rest] = process.argv.slice(2);
-const cmd = name === undefined ? undefined : commands[name];
+if (name === undefined) {
+  (await import("./wire.ts")).wire();
+  const { openWindow } = await import("./packages/ui/src/index.ts");
+  process.exit(await openWindow());
+}
+const cmd = commands[name];
 if (cmd === undefined) {
-  const what = name === undefined ? "the window isn't in this build yet" : `unknown command ${name}`;
-  console.error(`harbor: ${what} (this build has: ${Object.keys(commands).join(", ")})`);
+  console.error(`harbor: unknown command ${name} (this build has: ${Object.keys(commands).join(", ")})`);
   process.exit(2);
 }
 process.exit(await cmd(rest));
