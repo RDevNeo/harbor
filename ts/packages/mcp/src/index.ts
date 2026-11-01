@@ -8,3 +8,8 @@ export * as bridge from "./bridge.ts";
 export * as machines from "./machines.ts";
 export * as workspace from "./workspace.ts";
 export * as hookcert from "./hookcert.ts";
+export * as discord from "./discord.ts";
+export * as discordfreeze from "./discordfreeze.ts";
+export * as discordhost from "./discordhost.ts";
+export * as discordrepair from "./discordrepair.ts";
+export * as discordsetup from "./discordsetup.ts";
