@@ -99,7 +99,7 @@ test("lead_follows_the_chats_access", async () => {
 /** remote.rs's script, as far as this test reads it: one line per setup step, then the agent. */
 const fakeRemote: agent.Remote = {
   launch(_family, _dir, setup, argv) {
-    const lines = setup.map((s) => (s.kind === "token" ? "read -r CLAUDE_CODE_OAUTH_TOKEN" : s.kind === "mcp" ? "read -r HARBOR_MCP" : s.kind === "session" ? `mkdir -p "$CLAUDE_CONFIG_DIR/projects" # ${s.id}` : "export CLAUDE_CONFIG_DIR=x"));
+    const lines = setup.map((s) => (s.kind === "token" ? "read -r CLAUDE_CODE_OAUTH_TOKEN" : s.kind === "mcp" ? "read -r HARBOR_MCP" : s.kind === "session" ? `mkdir -p "$CLAUDE_CONFIG_DIR/projects" # ${s.id}` : s.kind === "profile" ? `export CLAUDE_CONFIG_DIR=~/${s.rel}` : ""));
     return { command: [...lines, argv.join(" ")].join("; "), input: "" };
   },
 };
@@ -122,7 +122,7 @@ test("remote_turn_sends_the_login_on_stdin", async () => {
       name: "box",
       family: "posix",
       dir: "~",
-      setup: [{ kind: "other", value: "profile" }],
+      setup: [{ kind: "profile", rel: ".claude2" }],
       bridge: false,
       commands: false,
       workspace: false,

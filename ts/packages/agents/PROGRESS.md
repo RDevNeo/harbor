@@ -1,14 +1,14 @@
 # @harbor/agents: progress
 
-Phase 1. Rust modules of this package and where they stand. Rust tests: 71 of 78 ported under
-their Rust names (PARITY.md counts them); the 7 left are four `#[ignore]` or remote-device tests,
-the phone block model's and the exec reload's, which need code this package doesn't have. 122
-TypeScript tests in all.
+Phase 1. Rust modules of this package and where they stand. Rust tests: 72 of 78 ported under
+their Rust names (PARITY.md counts them); the 6 left are four `#[ignore]` real-ssh tests (three
+agent, one detach), the phone block model's (net's spans) and the exec reload's. 124 TypeScript
+tests in all.
 
 | Module | State | Rust tests ported |
 | --- | --- | --- |
 | detach | done | 10 of 11; `remote_turn_ends_over_ssh` is `#[ignore]` (real ssh + mcp's bridge) |
-| agent | done for local turns; remote turns need `integrate({ bridge, remote, workspace })` from mcp/net | 5 of 9; `resumed_sessions_follow_the_folder` tests net's remote.rs; 3 are `#[ignore]` real-ssh tests; the login-on-stdin test runs against a test double of remote.rs |
+| agent | done; remote turns build through net's `remoteLaunch` and mcp's bridge once `ts/wire.ts` runs (not yet run against a real device) | 6 of 9; the two remote ones run in `ts/test/wire.test.ts` against net's and mcp's real code; the 3 left are `#[ignore]` real-ssh tests |
 | providers | done | 1 of 1 |
 | oauth | done | 6 of 6 |
 | provupdate | done (status as data + `onChange`) | 2 of 2 |
@@ -56,10 +56,9 @@ TypeScript tests in all.
 - From source, Harbor starts itself as `bun ts/harbor.ts …`; `runnerChat` also accepts that
   form. Only the compiled form is seen by a Rust Harbor, which is the shipped form.
 - What other packages own is plugged in, not copied: `setAgentEnv` (mcp.rs `agent_env_as`),
-  `integrate({ servers, bridge, remote, workspace })`, `EngineHost`. `ts/wire.ts` plugs mcp in
-  (`harbor turn` calls it; the app must too). Without it the runner hides every sign-in and a
-  turn's MCP config holds only Harbor's own servers. Remote turns throw a plain error until net
-  registers `remote`.
+  `integrate({ servers, bridge, remote, workspace })`, `EngineHost`. `ts/wire.ts` plugs mcp and
+  net in (`harbor turn` calls it; the app must too). Without it the runner hides every sign-in, a
+  turn's MCP config holds only Harbor's own servers and remote turns throw a plain error.
 - autowork reads mcp's GitHub data through its own structural types, so agents never imports
   mcp (mcp's control socket will call into `Engine`).
 - `Engine.send` defaults to Queue when no mode is given, as Rust's `send_to` does; the composer
@@ -80,7 +79,7 @@ TypeScript tests in all.
 
 ## Missing
 
-- Remote turns (ssh devices): needs net's remote.rs registered as `integrate({ remote })`.
+- Remote turns: wired, but never run against a real device (needs a key-based ssh rig).
 - `Engine` doesn't schedule itself: the app calls `Engine.tick()` (queue, wake-ups, recaps) and
   `ChatPrs.sweep` on its tick. Webhook requests (`handle_hook`), usage-limit holds (store's limits through
   `limitGuard`/`limitEvent`) and notifications are host hooks not wired yet.

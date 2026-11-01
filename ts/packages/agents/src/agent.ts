@@ -61,8 +61,14 @@ export interface Bridge {
   origin: string;
 }
 
-/** What runs before the agent on a device (remote.rs). */
-export type Setup = { kind: "token" } | { kind: "mcp" } | { kind: "session"; id: string } | { kind: "other"; value: unknown };
+/** What runs before the agent on a device: net's `RemoteSetup`, kind for kind. */
+export type Setup =
+  | { kind: "token" }
+  | { kind: "mcp" }
+  | { kind: "profile"; rel: string }
+  | { kind: "guest"; rel: string }
+  | { kind: "session"; id: string }
+  | { kind: "sh"; line: string };
 
 /** remote.rs (net package): how a device's shell starts the agent. */
 export interface Remote {

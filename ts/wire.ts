@@ -1,6 +1,7 @@
-// What the agents package gets from mcp: kept out of both packages, so neither imports the other.
+// What the agents package gets from mcp and net: kept out of the packages, so none imports another.
 import { agent, setAgentEnv } from "./packages/agents/src/index.ts";
 import { bridge, machines, mcp, workspace } from "./packages/mcp/src/index.ts";
+import { remoteLaunch } from "./packages/net/src/index.ts";
 
 /** Both mirror bridge.rs's Grant field for field; agents only passes it through. */
 const asGrant = (g: agent.Grant): bridge.Grant => g as unknown as bridge.Grant;
@@ -23,5 +24,6 @@ export function wire(): void {
       origin: bridge.ORIGIN,
     },
     workspace: { forAccess: workspace.forAccess, replaced: workspace.REPLACED, note: workspace.note },
+    remote: { launch: (family, dir, setup, argv) => remoteLaunch(family === "windows" ? "windows" : "posix", dir, setup, argv) },
   });
 }
