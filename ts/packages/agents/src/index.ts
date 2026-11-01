@@ -10,3 +10,5 @@ export * as procs from "./procs.ts";
 export * as provupdate from "./provupdate.ts";
 export * as worktree from "./worktree.ts";
 export * as recap from "./recap.ts";
+export * as chatpr from "./chatpr.ts";
+export * as commits from "./commits.ts";
