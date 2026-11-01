@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["proto", "test"]
+  "include": ["proto", "test", "packages/*/src", "packages/*/test"]
 }

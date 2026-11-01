@@ -14,8 +14,50 @@
         "typescript": "7.0.2",
       },
     },
+    "packages/agents": {
+      "name": "@harbor/agents",
+      "version": "0.0.0",
+    },
+    "packages/mcp": {
+      "name": "@harbor/mcp",
+      "version": "0.0.0",
+    },
+    "packages/media": {
+      "name": "@harbor/media",
+      "version": "0.0.0",
+    },
+    "packages/net": {
+      "name": "@harbor/net",
+      "version": "0.0.0",
+    },
+    "packages/store": {
+      "name": "@harbor/store",
+      "version": "0.0.0",
+    },
+    "packages/ui": {
+      "name": "@harbor/ui",
+      "version": "0.0.0",
+    },
+    "packages/update": {
+      "name": "@harbor/update",
+      "version": "0.0.0",
+    },
   },
   "packages": {
+    "@harbor/agents": ["@harbor/agents@workspace:packages/agents"],
+
+    "@harbor/mcp": ["@harbor/mcp@workspace:packages/mcp"],
+
+    "@harbor/media": ["@harbor/media@workspace:packages/media"],
+
+    "@harbor/net": ["@harbor/net@workspace:packages/net"],
+
+    "@harbor/store": ["@harbor/store@workspace:packages/store"],
+
+    "@harbor/ui": ["@harbor/ui@workspace:packages/ui"],
+
+    "@harbor/update": ["@harbor/update@workspace:packages/update"],
+
     "@slint-ui/slint-ui-binary-darwin-arm64": ["@slint-ui/slint-ui-binary-darwin-arm64@1.18.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-aEg0pStMoNN369TqmfBCAM2Ocqlj88PpnLkaETpdk+A1A8OvD+mCMfAlXJFTUGhmQYAtAxQdEWGE1pahe/c6Lw=="],
 
     "@slint-ui/slint-ui-binary-linux-arm64-gnu": ["@slint-ui/slint-ui-binary-linux-arm64-gnu@1.18.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-Ce/sixc1VgxblSgmJ4vOVCyXsWQB536A1q3YUrfBkSuMBJQPaJKvJyiF9ZLVaMfRmLmPmo3UpisadU0cy5nPzg=="],
