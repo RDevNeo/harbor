@@ -1,16 +1,18 @@
 // Bun exports uv_backend_fd as a stub that panics, so slint.runEventLoop() kills the process
 // before its own 16 ms fallback starts: under Bun the loop lives here.
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
-import { createRequire } from "node:module";
 import * as slint from "slint-ui";
-import { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed } from "slint-ui/rust-module.cjs";
+// Its source, not its path: a compiled executable or a bundle has no fdwait.ts beside it.
+import * as fdwaitText from "./fdwait.ts" with { type: "text" };
+import native, { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed } from "slint-ui/rust-module.cjs";
 
 type Method = (...a: unknown[]) => unknown;
 interface Binding extends Record<string, unknown> {
   ComponentInstance: { prototype: Record<"setProperty" | "setGlobalProperty" | "invoke" | "invokeGlobal", Method> };
 }
-// The object slint-ui's own code calls through, not an import's frozen copy of it.
-const napi = createRequire(import.meta.url)("slint-ui/rust-module.cjs") as Binding;
+// The object slint-ui's own code calls through, not an import's frozen copy of it. A bundle resolves it with the
+// other imports; a require() made at run time finds nothing inside a compiled executable.
+const napi = native as unknown as Binding;
 
 /** The period of Slint's own fallback in slint-ui's EventLoop.start(). */
 export const TICK_MS = 16;
@@ -104,7 +106,7 @@ function fixed(tickMs: number): Promise<void> {
  */
 function woken(fd: number, tickMs: number): Promise<void> {
   return new Promise((resolve) => {
-    const waiter = new Worker(new URL("./fdwait.ts", import.meta.url).href);
+    const waiter = new Worker(URL.createObjectURL(new Blob([(fdwaitText as unknown as { default: string }).default], { type: "application/typescript" })));
     waiter.unref();
     let waiting = false;
     let armedAt = 0;
