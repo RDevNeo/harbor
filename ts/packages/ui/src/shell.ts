@@ -851,6 +851,9 @@ export class Shell {
   }
 
   private refreshCards(): void {
+    const shown = this.view === "chat" ? this.chatId : null;
+    if (this.cardsOf !== null && this.cardsOf !== shown) this.engine.release(this.cardsOf);
+    this.cardsOf = shown;
     if (this.view !== "chat") {
       sync(this.cards, []);
       sync(this.liveBlocks, []);
@@ -1632,6 +1635,7 @@ export class Shell {
   private viewDirty = false;
   private restAt = 0;
   private flush: ReturnType<typeof setTimeout> | null = null;
+  private cardsOf: number | null = null;
 
   /** Light or dark follows Omarchy's theme while the mode is System (theme.rs `refresh`). */
   private followTheme(): void {

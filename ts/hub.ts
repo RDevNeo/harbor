@@ -346,7 +346,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const w = engine?.worktreeOf(c) ?? null;
       return w === null ? null : basename(w);
     },
-    items: (chat) => (engine ? engine.transcript(chat).items : store.items(chat)),
+    items: (chat) => (engine ? engine.itemsOf(chat) : store.items(chat)),
     live: (chat) => {
       if (!engine) return null;
       const since = engine.runningSince(chat);

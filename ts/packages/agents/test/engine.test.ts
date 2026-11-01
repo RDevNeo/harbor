@@ -203,6 +203,26 @@ describe("a chat's turn", () => {
   });
 });
 
+describe("transcripts in memory", () => {
+  test("a chat read for another PC isn't kept, and an idle chat's transcript goes once released", async () => {
+    const { e, store } = setup();
+    const c = newChat(store);
+    store.saveItems(c.id, [{ kind: "user", text: "old", files: [], at: 0, mentions: [], sender: "", intent: "" }]);
+    e.reload();
+    expect(texts(e.itemsOf(c.id))).toEqual(["user: old"]);
+    expect(e.transcripts.has(c.id)).toBe(false);
+    e.send(c.id, "slow");
+    e.release(c.id);
+    expect(e.transcripts.has(c.id)).toBe(true);
+    expect(texts(e.itemsOf(c.id))).toEqual(["user: old", "user: slow"]);
+    await until("the turn's end", () => !e.running(c.id));
+    e.release(c.id);
+    expect(e.transcripts.has(c.id)).toBe(false);
+    expect(texts(e.transcript(c.id).items)).toEqual(["user: old", "user: slow", "echo: slow"]);
+    store.close();
+  });
+});
+
 describe("undo and fork", () => {
   test("Esc right after sending takes the message back into the composer", async () => {
     const { e, store } = setup();

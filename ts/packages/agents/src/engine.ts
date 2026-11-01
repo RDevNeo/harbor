@@ -287,6 +287,14 @@ export class Engine {
     return t;
   }
 
+  itemsOf(id: number): Item[] {
+    return this.transcripts.get(id)?.items ?? this.store.items(id);
+  }
+
+  release(id: number): void {
+    if (!this.turns.has(id) && !this.pending.has(id)) this.transcripts.delete(id);
+  }
+
   persist(id: number): void {
     const c = this.chat(id);
     if (c) this.store.saveChat(c);
