@@ -1,17 +1,16 @@
 import { join } from "node:path";
 import * as slint from "slint-ui";
 import { git } from "@harbor/agents";
-import { ghdetails, issues as ghissues } from "@harbor/mcp";
 import { dataDir, repoDir, Store } from "@harbor/store";
 import { uiDir } from "./assets.ts";
-import { attachIssues, type IssuesView } from "./issues.ts";
-import type { IssuesHost } from "./logic/issues.ts";
 import { Keys } from "./logic/keys.ts";
 import { appMark } from "./logos.ts";
 import { runLoop } from "./loop.ts";
+import { busOf } from "./pages/bus.ts";
+import { type IssuesView, mountIssues } from "./pages/issues.ts";
 import { token } from "./theme.ts";
 
-interface IssuesWindow extends slint.ComponentHandle, IssuesView {
+interface IssuesWindow extends slint.ComponentHandle {
   dark: boolean;
 }
 
@@ -20,6 +19,7 @@ const ui = slint.loadFile(join(await uiDir(), "issues.slint"), { style: "fluent"
 const ctor = Reflect.get(ui, "IssuesWindow");
 if (typeof ctor !== "function") throw new Error("issues.slint has no IssuesWindow");
 const win: IssuesWindow = new ctor();
+const bus = busOf<IssuesView>(win, "IssuesBus");
 win.dark = process.env.HTS_LIGHT === undefined;
 
 async function remote(dir: string): Promise<string | undefined> {
@@ -40,12 +40,9 @@ function githubOf(url: string): string | undefined {
   return m === null ? undefined : `${m[1]}/${m[2]}`;
 }
 
-const details = ghdetails.detailsPort({ http: () => Promise.reject(new Error("no mesh in the runner")) });
-const host: IssuesHost = {
-  fetch: (state) => ghissues.fetchIssues(state, projects.map((p) => p.repo)),
+const github = await appMark("github", token("fg", win.dark), win.dark);
+const page = mountIssues(bus, {
   projects: () => projects,
-  peer: () => undefined,
-  details,
   agentLabel: () => "Claude",
   agents: () => [{ id: "claude", label: "Claude", current: true }],
   pickAgent: () => {},
@@ -57,12 +54,10 @@ const host: IssuesHost = {
     p.stdin.write(text);
     void p.stdin.end();
   },
-  avatar: () => Promise.resolve(null),
-  now: () => Math.floor(Date.now() / 1000),
-};
-
-const github = await appMark("github", token("fg", win.dark), win.dark);
-const page = attachIssues(win, host, { close: () => process.exit(0), keys: Keys.load(store), github });
+  close: () => process.exit(0),
+  keys: Keys.load(store),
+  github,
+});
 
 // argv[2]: steps like `open=142,menu=filters,sub=state,search=bug,state=closed`, run once the list is there.
 const steps = (process.argv[2] ?? "").split(",").filter(Boolean);
@@ -84,7 +79,7 @@ const timer = setInterval(() => {
       page.changed();
     } else if (k === "search") {
       page.search = v;
-      win.search = v;
+      bus.search = v;
       page.changed();
     } else if (k === "state") {
       page.filters.state = pick(v, ["all", "open", "closed"] as const) ?? page.filters.state;

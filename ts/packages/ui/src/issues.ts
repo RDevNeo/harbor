@@ -65,7 +65,8 @@ export interface IssuesView {
   esc_page: (typing: boolean) => void;
   link: (u: string) => void;
   copy_text: (t: string) => void;
-  focus_search: () => void;
+  /** Counts up to ask the page to focus its search field. */
+  focus_tick: number;
 }
 
 const emptyDetail = (): DetailData => ({
@@ -248,7 +249,7 @@ export function attachIssues(view: IssuesView, host: IssuesHost, hooks: { close(
     } else if (hooks.keys.matches("list_toggle_panel", p)) {
       page.split.apply({ kind: "toggle" });
     } else if (hooks.keys.matches("list_search", p)) {
-      view.focus_search();
+      view.focus_tick += 1;
     } else return false;
     page.changed();
     return true;

@@ -383,7 +383,7 @@ component Busy {
         VerticalLayout {
             alignment: center;
             Spinner {
-                size: 30px;
+                radius: 12.5px;
             }
         }
         Text {
@@ -711,7 +711,7 @@ export component PrDetailPanel inherits Rectangle {
                     alignment: end;
                     if root.head.loading: Spinner {
                         y: 11px;
-                        size: 12px;
+                        radius: 5px;
                     }
                     if !root.head.loading && root.head.has-full: Glyph {
                         width: 14px;

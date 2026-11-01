@@ -14,8 +14,13 @@ import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip } f
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
+import { SettingsBus, SettingsPage } from "settings.slint";
+import { PrsBus, PrsPage } from "prs.slint";
+import { IssuesBus, IssuesPage } from "issues.slint";
+import { PaletteBus, PaletteOverlay } from "palette.slint";
+import { AddProjectBus, AddProjectOverlay } from "addproject.slint";
 
-export { Theme, Icons, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem, EarlierChat }
+export { Theme, Icons, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem, EarlierChat, SettingsBus, PrsBus, IssuesBus, PaletteBus, AddProjectBus }
 
 export struct PopItem {
     kind: string,
@@ -329,6 +334,8 @@ export component AppWindow inherits Window {
     in-out property <bool> dark <=> Theme.dark;
     in-out property <bool> compact <=> Theme.compact;
     in property <string> view: "draft";
+    in property <bool> palette-open;
+    in property <bool> add-project-open;
     in-out property <bool> sidebar-open: true;
     out property <bool> narrow: root.width < 768px;
 
@@ -354,6 +361,7 @@ export component AppWindow inherits Window {
     callback settings();
     callback prs();
     callback issues();
+    callback leave-page();
     callback refresh();
 
     in property <Crumbs> crumbs;
@@ -542,6 +550,10 @@ export component AppWindow inherits Window {
             bottom-pane.focus-chooser();
         }
     }
+    changed docked => {
+        PrsBus.docked = root.docked;
+        IssuesBus.docked = root.docked;
+    }
     property <length> left-edge: root.docked ? 256px : 0px;
     property <length> right-shown: root.right-open && root.pane-max == "" ? max(320px, min(root.right-w, root.width - root.left-edge - 440px)) : 0px;
     property <length> bottom-shown: root.bottom-open && root.pane-max == "" ? max(140px, min(root.bottom-h, root.height - 120px)) : 0px;
@@ -616,7 +628,7 @@ export component AppWindow inherits Window {
                     root.issues();
                 }
                 back => {
-                    root.new-thread();
+                    root.leave-page();
                 }
                 refresh => {
                     root.refresh();
@@ -878,6 +890,70 @@ export component AppWindow inherits Window {
                                 root.strip-stop-all();
                             }
                         }
+                    }
+                }
+            }
+            if root.view == "settings": Rectangle {
+                x: 0;
+                y: 0;
+                width: root.width;
+                height: root.height;
+                background: Theme.bg100;
+                init => {
+                    keys.focus();
+                }
+                TouchArea { }
+                SettingsPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+            if root.view == "prs": Rectangle {
+                x: root.docked ? 256px : 0px;
+                y: 0;
+                width: root.width - self.x;
+                height: root.height;
+                background: Theme.bg100;
+                init => {
+                    keys.focus();
+                }
+                TouchArea { }
+                PrsPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+                if !root.docked: Btn {
+                    x: 10px;
+                    y: 10px;
+                    icon: Icons.panel-left;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Show sidebar (Ctrl+B)";
+                    clicked => {
+                        root.sidebar-open = true;
+                    }
+                }
+            }
+            if root.view == "issues": Rectangle {
+                x: root.docked ? 256px : 0px;
+                y: 0;
+                width: root.width - self.x;
+                height: root.height;
+                background: Theme.bg100;
+                TouchArea { }
+                IssuesPage {
+                    width: parent.width;
+                    height: parent.height;
+                }
+                if !root.docked: Btn {
+                    x: 10px;
+                    y: 10px;
+                    icon: Icons.panel-left;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Show sidebar (Ctrl+B)";
+                    clicked => {
+                        root.sidebar-open = true;
                     }
                 }
             }
@@ -1304,6 +1380,26 @@ export component AppWindow inherits Window {
             text: root.toast;
             font-size: 14px;
             color: Theme.fg;
+        }
+    }
+
+    if root.palette-open: PaletteOverlay {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        init => {
+            self.focus-field();
+        }
+    }
+
+    if root.add-project-open: AddProjectOverlay {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        init => {
+            self.focus-field();
         }
     }
 

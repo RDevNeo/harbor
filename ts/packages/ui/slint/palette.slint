@@ -20,14 +20,24 @@ export struct PaletteSection {
 }
 
 // palette.rs `palette_ui`: the box pinned near the top over a dimmed window; Esc or a click outside closes it.
-export component PaletteOverlay inherits Rectangle {
+export global PaletteBus {
     in property <[PaletteSection]> sections;
     in property <int> selected;
-    in-out property <string> query <=> field.text;
+    in-out property <string> query;
     callback edited(string);
     callback move(int);
     callback pick(int);
     callback close();
+}
+
+export component PaletteOverlay inherits Rectangle {
+    in property <[PaletteSection]> sections <=> PaletteBus.sections;
+    in property <int> selected <=> PaletteBus.selected;
+    in-out property <string> query <=> PaletteBus.query;
+    callback edited <=> PaletteBus.edited;
+    callback move <=> PaletteBus.move;
+    callback pick <=> PaletteBus.pick;
+    callback close <=> PaletteBus.close;
     public function focus-field() {
         field.focus-field();
     }
@@ -52,6 +62,7 @@ export component PaletteOverlay inherits Rectangle {
         col := VerticalLayout {
             padding: 8px;
             field := SearchField {
+                text <=> PaletteBus.query;
                 hint: "Search projects, chats, agents, pages and actions";
                 edited(t) => {
                     root.edited(t);
@@ -185,12 +196,6 @@ export component PaletteOverlay inherits Rectangle {
 
 export component PaletteWindow inherits Window {
     in-out property <bool> dark <=> Theme.dark;
-    in property <[PaletteSection]> sections;
-    in property <int> selected;
-    callback edited(string);
-    callback move(int);
-    callback pick(int);
-    callback close();
     width: 1400px;
     height: 900px;
     background: Theme.bg100;
@@ -198,20 +203,6 @@ export component PaletteWindow inherits Window {
     overlay := PaletteOverlay {
         width: root.width;
         height: root.height;
-        sections: root.sections;
-        selected: root.selected;
-        edited(t) => {
-            root.edited(t);
-        }
-        move(d) => {
-            root.move(d);
-        }
-        pick(i) => {
-            root.pick(i);
-        }
-        close => {
-            root.close();
-        }
     }
     init => {
         overlay.focus-field();

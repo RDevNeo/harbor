@@ -44,7 +44,7 @@ component Chip {
 }
 
 // addproject.rs `add_project_ui`: a 560 px box centred over a dimmed window; pointing only moves the highlight, the keys act.
-export component AddProjectOverlay inherits Rectangle {
+export global AddProjectBus {
     in property <[AddRow]> rows;
     in property <[AddStatus]> statuses;
     in property <int> selected;
@@ -53,13 +53,31 @@ export component AddProjectOverlay inherits Rectangle {
     in property <bool> local;
     in property <bool> can-back;
     in property <image> github;
-    in-out property <string> query <=> field.text;
+    in-out property <string> query;
     callback edited(string);
     callback key(AddKey);
     callback hover(int);
     callback back();
     callback add();
     callback open-files();
+}
+
+export component AddProjectOverlay inherits Rectangle {
+    in property <[AddRow]> rows <=> AddProjectBus.rows;
+    in property <[AddStatus]> statuses <=> AddProjectBus.statuses;
+    in property <int> selected <=> AddProjectBus.selected;
+    in property <string> label <=> AddProjectBus.label;
+    in property <string> hint <=> AddProjectBus.hint;
+    in property <bool> local <=> AddProjectBus.local;
+    in property <bool> can-back <=> AddProjectBus.can-back;
+    in property <image> github <=> AddProjectBus.github;
+    in-out property <string> query <=> AddProjectBus.query;
+    callback edited <=> AddProjectBus.edited;
+    callback key <=> AddProjectBus.key;
+    callback hover <=> AddProjectBus.hover;
+    callback back <=> AddProjectBus.back;
+    callback add <=> AddProjectBus.add;
+    callback open-files <=> AddProjectBus.open-files;
     public function focus-field() {
         field.focus();
     }
@@ -110,6 +128,7 @@ export component AddProjectOverlay inherits Rectangle {
                         overflow: elide;
                     }
                     field := TextInput {
+                        text <=> AddProjectBus.query;
                         x: 4px;
                         width: parent.width - 8px;
                         font-size: 14px;
@@ -327,21 +346,6 @@ export component AddProjectOverlay inherits Rectangle {
 
 export component AddProjectWindow inherits Window {
     in-out property <bool> dark <=> Theme.dark;
-    in property <[AddRow]> rows;
-    in property <[AddStatus]> statuses;
-    in property <int> selected;
-    in property <string> label;
-    in property <string> hint;
-    in property <bool> local;
-    in property <bool> can-back;
-    in property <image> github;
-    in-out property <string> query <=> overlay.query;
-    callback edited(string);
-    callback key(AddKey);
-    callback hover(int);
-    callback back();
-    callback add();
-    callback open-files();
     width: 1400px;
     height: 900px;
     background: Theme.bg100;
@@ -349,32 +353,6 @@ export component AddProjectWindow inherits Window {
     overlay := AddProjectOverlay {
         width: root.width;
         height: root.height;
-        rows: root.rows;
-        statuses: root.statuses;
-        selected: root.selected;
-        label: root.label;
-        hint: root.hint;
-        local: root.local;
-        can-back: root.can-back;
-        github: root.github;
-        edited(t) => {
-            root.edited(t);
-        }
-        key(k) => {
-            root.key(k);
-        }
-        hover(i) => {
-            root.hover(i);
-        }
-        back => {
-            root.back();
-        }
-        add => {
-            root.add();
-        }
-        open-files => {
-            root.open-files();
-        }
     }
     init => {
         overlay.focus-field();

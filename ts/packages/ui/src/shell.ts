@@ -2,13 +2,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
-import { type Account, git, type Kind, providers, recap } from "@harbor/agents";
+import { type Account, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
+import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
+import { busOf } from "./pages/bus.ts";
+import { type Page, PageHost } from "./pages/host.ts";
+import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
 import { Keys, label as keyLabel } from "./logic/keys.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
@@ -69,6 +73,11 @@ export class Shell {
   private mode: Mode = "system";
   private stamp = 0;
   private view: "draft" | "chat" = "draft";
+  /** The page over the draft or chat: it leaves back to the chat it was opened from, or the draft. */
+  private page: Page | null = null;
+  private pageBack: number | null = null;
+  private workOf: Work | null = null;
+  private readonly pages: PageHost;
   private chatId = 0;
   private draftRepo: number | null = null;
   /** The draft is the project's page: its first message starts the project's main chat. */
@@ -182,6 +191,32 @@ export class Shell {
     win.picker_rows = this.modelRows;
     this.favorites = new Favorites(data.store);
     this.keys = Keys.load(data.store);
+    this.pages = new PageHost({
+      win,
+      data,
+      keys: this.keys,
+      show: (p) => this.openPage(p),
+      leave: () => this.leavePage(),
+      dark: () => this.dark,
+      theme: (dark, compact) => this.applyTheme(dark, compact),
+      unported: (what) => this.unported(what),
+      openExternal: (url) => this.openExternal(url),
+      openChat: (id) => this.openChat(id),
+      draftWith: (project, text) => {
+        this.newDraft(project);
+        this.win.draft = text;
+        this.drafts.set(DRAFT, text);
+      },
+      composer: () => ({ account: this.sel.account, model: this.sel.model, effort: this.sel.effort }),
+      ask: (title, text, ok, act) => this.dialog(title, text, ok, false, "", (yes, input) => yes && act(input)),
+      remote: (repo) => this.gitStatus.get(repo)?.remote ?? null,
+      work: () => (this.workOf ??= new Work(this.engine)),
+      terminal: (title, cwd, argv) => this.surfaces.openTerminal(title, cwd, argv),
+      projectDir: (id) => {
+        const r = this.data.repos.find((x) => x.id === id);
+        return r ? (r.local ?? r.path) : null;
+      },
+    });
     win.team_agents = this.teamAgentRows;
     win.team_settled = this.teamSettledRows;
     win.team_wakeups = this.wakeRows;
@@ -200,7 +235,7 @@ export class Shell {
     w.open_project = (id) => this.openProject(id);
     w.new_chat = (repo) => this.newDraft(repo);
     w.new_thread = () => this.newDraft(null);
-    w.add_project = () => this.addProjectDialog();
+    w.add_project = () => this.addProject();
     w.settle = (id, on) => this.setSettled(id, on);
     w.snooze = (key, x, y) => this.snoozeMenu(key, x, y);
     w.chat_menu = (id, x, y) => this.chatMenu(id, x, y);
@@ -209,11 +244,12 @@ export class Shell {
       this.query = q;
       this.refreshSidebar();
     };
-    w.palette = () => this.unported("Search everything");
+    w.palette = () => this.openPalette();
     w.filter = (x, y) => this.filterMenu(x, y);
-    w.settings = () => this.unported("Settings");
-    w.prs = () => this.unported("Pull requests");
-    w.issues = () => this.unported("Issues");
+    w.settings = () => this.pages.openSettings();
+    w.prs = () => this.pages.openPrs();
+    w.issues = () => this.pages.openIssues();
+    w.leave_page = () => this.leavePage();
     w.refresh = () => {
       this.data.reload();
       for (const r of this.data.repos) this.gitOf(r.id, true);
@@ -461,6 +497,7 @@ export class Shell {
   openChat(id: number): void {
     if (!this.data.chat(id)) return;
     this.drafts.set(this.key(), this.win.draft);
+    this.page = null;
     this.view = "chat";
     this.chatId = id;
     this.engine.unread.delete(id);
@@ -481,6 +518,7 @@ export class Shell {
 
   newDraft(repo: number | null, main = false): void {
     this.drafts.set(this.key(), this.win.draft);
+    this.page = null;
     this.view = "draft";
     this.draftRepo = repo;
     this.draftMain = main && repo !== null;
@@ -503,7 +541,7 @@ export class Shell {
   private refreshView(): void {
     const w = this.win;
     const chat = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
-    w.view = this.view;
+    w.view = this.page ?? this.view;
     const repo = chat ? (chat.repoId === null ? undefined : this.data.repo(chat.repoId)) : this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
     const parent = chat?.role === "sub" && chat.parent !== null ? this.data.chat(chat.parent) : undefined;
     const st = repo ? this.gitOf(repo.id) : null;
@@ -1052,7 +1090,10 @@ export class Shell {
     const p = pressOf(e.text, e.modifiers);
     const w = this.win;
     if (this.keys.matches("toggle_sidebar", p)) {
-      w.sidebar_open = !w.sidebar_open;
+      if (this.page === "settings") {
+        const nav = busOf<SettingsView>(w, "SettingsBus");
+        nav.nav_open = !nav.nav_open;
+      } else w.sidebar_open = !w.sidebar_open;
       return true;
     }
     if (this.keys.matches("new_thread", p)) {
@@ -1083,6 +1124,7 @@ export class Shell {
       this.closePopup();
       return true;
     }
+    if (this.page !== null && w.dialog_id === "" && (p.key === "Escape" ? this.pages.esc(this.page) : this.page === "prs" && this.pages.shortcut(p))) return true;
     if (this.keys.matches("stop_turn", p) && this.view === "chat" && this.engine.running(this.chatId)) {
       this.engine.esc(this.chatId);
       return true;
@@ -1671,7 +1713,7 @@ export class Shell {
       this.item("No project", () => this.newDraft(null), { icon: ICONS.FOLDER, desc: "Runs in your home folder", checked: this.draftRepo === null }),
     ];
     for (const r of this.data.repos) items.push(this.item(r.name, () => this.newDraft(r.id), { icon: ICONS.FOLDER, desc: tilde(r.local ?? r.path, homedir()), checked: this.draftRepo === r.id }));
-    items.push(this.separator(), this.item("Add project…", () => this.addProjectDialog(), { icon: ICONS.FOLDER_PLUS }));
+    items.push(this.separator(), this.item("Add project…", () => this.addProject(), { icon: ICONS.FOLDER_PLUS }));
     this.popup("project", x, y, items, 300);
   }
 
@@ -1743,7 +1785,7 @@ export class Shell {
     const remote = this.gitStatus.get(id)?.remote ?? (stored === "" ? null : git.webUrl(stored));
     const github = remote !== null && /^https:\/\/github\.com\//.test(remote);
     const items: (PopItem & { act?: () => void })[] = [native("Open terminal", () => this.projectTerminal(id), { icon: ICONS.TERMINAL })];
-    if (github) items.push(native("Pull requests", () => this.unported("Pull requests"), { icon: ICONS.PULL }), native("Issues", () => this.unported("Issues"), { icon: ICONS.CIRCLE_DOT }));
+    if (github) items.push(native("Pull requests", () => this.pages.openPrs(id), { icon: ICONS.PULL }), native("Issues", () => this.pages.openIssues(id), { icon: ICONS.CIRCLE_DOT }));
     if (remote) items.push(native("Open remote", () => this.openExternal(remote), { icon: ICONS.EXTERNAL }));
     const main = this.data.mainChat(id);
     if (main !== null) {
@@ -1851,17 +1893,106 @@ export class Shell {
     });
   }
 
-  private addProjectDialog(): void {
-    this.dialog("Add project", "The folder of a project on this PC.", "Add", false, "", (ok, path) => {
-      if (!ok || path.trim() === "") return;
-      const p = path.trim().replace(/^~(?=\/|$)/, homedir());
-      const id = this.data.addRepo(p);
-      if (id === null) {
-        this.dialog("Add project", `${p} isn't a folder on this PC.`, "OK", false, null, () => {});
-        return;
-      }
+  private addProject(): void {
+    this.pages.openAddProject((id) => {
+      this.data.reload();
       this.newDraft(id);
     });
+  }
+
+  private openPage(p: Page): void {
+    if (this.page === null) this.pageBack = this.view === "chat" ? this.chatId : null;
+    this.page = p;
+    this.win.palette_open = false;
+    this.closePopup();
+    this.win.view = p;
+  }
+
+  /** Esc or a page's own close: the chat it was opened from, else the draft (app.rs `leave_settings`, `close_prs`). */
+  private leavePage(): void {
+    const back = this.pageBack;
+    this.pageBack = null;
+    if (back !== null && this.data.chat(back)) this.openChat(back);
+    else this.newDraft(this.draftRepo);
+  }
+
+  private applyTheme(dark: boolean, compact: boolean): void {
+    this.mode = parseMode(this.data.store.get("theme") ?? "");
+    this.win.compact = compact;
+    if (dark === this.dark) return;
+    this.dark = dark;
+    this.win.dark = dark;
+    this.refreshAll();
+  }
+
+  private openPalette(): void {
+    if (this.win.palette_open) {
+      this.pages.closePalette();
+      return;
+    }
+    this.closePopup();
+    const chat = this.view === "chat" && this.page === null ? this.data.chat(this.chatId) : undefined;
+    this.pages.openPalette(
+      () =>
+        paletteItems({
+          repos: this.data.repos.map((r) => ({ id: r.id, name: r.name, dir: tilde(r.local ?? r.path, homedir()) })),
+          chats: this.data.chats.map((c) => ({ id: c.id, title: c.title, role: c.role, parent: c.parent, name: c.name, repoId: c.repoId, settled: c.settled, updated: c.updated })),
+          devices: [],
+          current: chat?.id ?? null,
+          draftRepo: this.draftRepo,
+          fast: this.data.store.get("fast_mode") === "1",
+          forkable: chat ? forkable(this.items(chat.id)).some((x) => x !== null) : false,
+        }),
+      (it) => this.paletteRun(it),
+    );
+  }
+
+  /** palette.rs `palette_run`. */
+  private paletteRun(it: PaletteItem): void {
+    const a = it.act;
+    switch (a.kind) {
+      case "project":
+        this.openProject(a.id);
+        break;
+      case "chat":
+        this.openChat(a.id);
+        break;
+      case "new_chat":
+        this.newDraft(a.repo);
+        break;
+      case "prs":
+        this.pages.openPrs();
+        break;
+      case "issues":
+        this.pages.openIssues();
+        break;
+      case "settings":
+        this.pages.openSettings(a.tab);
+        break;
+      case "settle":
+        this.setSettled(a.id, a.on);
+        break;
+      case "fork": {
+        const at = forkable(this.items(a.id)).findLastIndex((x) => x !== null);
+        if (at >= 0) this.fork(a.id, at);
+        break;
+      }
+      case "fast":
+        this.data.store.set("fast_mode", a.on ? "1" : "0");
+        break;
+      case "toggle_sidebar":
+        this.win.sidebar_open = !this.win.sidebar_open;
+        break;
+      case "check_updates":
+        this.unported("Checking for updates");
+        break;
+      case "toggle_terminal":
+        this.surfaces.toggleTerminal(this.cwdHere());
+        break;
+      case "toggle_browser":
+        this.surfaces.toggleBrowser(this.browserUrl());
+        break;
+    }
   }
 
   private unported(what: string): void {

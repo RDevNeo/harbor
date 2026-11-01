@@ -430,7 +430,7 @@ component ToolBtn {
     if root.busy: Spinner {
         x: 18px - 6.5px;
         y: 18px - 6.5px;
-        size: 13px;
+        radius: 5.4px;
     }
     if root.label != "": Glyph {
         x: 12px;
@@ -872,7 +872,6 @@ export component IssuesList inherits Rectangle {
                 Spinner {
                     width: 16px;
                     height: 16px;
-                    size: 16px;
                 }
                 Text {
                     text: "Loading issues…";
@@ -921,8 +920,8 @@ export component IssuesList inherits Rectangle {
     }
 }
 
-export component IssuesPage inherits Rectangle {
-    in property <bool> docked: true;
+export global IssuesBus {
+    in-out property <bool> docked: true;
     in property <[IssueItem]> items;
     in property <string> notes;
     in property <string> body-kind;
@@ -958,6 +957,47 @@ export component IssuesPage inherits Rectangle {
     callback esc-page(bool);
     callback link(string);
     callback copy-text(string);
+    in-out property <int> focus-tick;
+}
+
+export component IssuesPage inherits Rectangle {
+    in-out property <bool> docked <=> IssuesBus.docked;
+    in property <[IssueItem]> items <=> IssuesBus.items;
+    in property <string> notes <=> IssuesBus.notes;
+    in property <string> body-kind <=> IssuesBus.body-kind;
+    in property <string> body-title <=> IssuesBus.body-title;
+    in property <string> body-desc <=> IssuesBus.body-desc;
+    in property <string> body-icon <=> IssuesBus.body-icon;
+    in property <int> active <=> IssuesBus.active;
+    in property <bool> loading <=> IssuesBus.loading;
+    in property <image> github <=> IssuesBus.github;
+    in property <string> fix-label <=> IssuesBus.fix-label;
+    in property <IssueMenu> menu <=> IssuesBus.menu;
+    in property <[DetailTab]> tabs <=> IssuesBus.tabs;
+    in property <int> tab <=> IssuesBus.tab;
+    in property <bool> showing <=> IssuesBus.showing;
+    in property <bool> maxed <=> IssuesBus.maxed;
+    in property <float> frac <=> IssuesBus.frac;
+    in property <IssueDetailData> detail <=> IssuesBus.detail;
+    in property <[IssueAgent]> agents <=> IssuesBus.agents;
+    in-out property <string> search <=> IssuesBus.search;
+    callback search-edited <=> IssuesBus.search-edited;
+    callback tool <=> IssuesBus.tool;
+    callback open <=> IssuesBus.open;
+    callback row-act <=> IssuesBus.row-act;
+    callback close-page <=> IssuesBus.close-page;
+    callback tab-act <=> IssuesBus.tab-act;
+    callback divider <=> IssuesBus.divider;
+    callback detail-act <=> IssuesBus.detail-act;
+    callback menu-pick <=> IssuesBus.menu-pick;
+    callback menu-hover <=> IssuesBus.menu-hover;
+    callback menu-close <=> IssuesBus.menu-close;
+    callback menu-key <=> IssuesBus.menu-key;
+    callback shortcut <=> IssuesBus.shortcut;
+    callback esc-page <=> IssuesBus.esc-page;
+    callback link <=> IssuesBus.link;
+    callback copy-text <=> IssuesBus.copy-text;
+    in-out property <int> focus-tick <=> IssuesBus.focus-tick;
     property <length> panel-w: min(max(root.width * root.frac, 340px), root.width - 340px);
     property <bool> both: root.showing && !root.maxed && root.width >= 680px;
     property <length> list-w: root.showing ? (root.both ? root.width - panel-w : 0px) : root.width;
@@ -969,6 +1009,9 @@ export component IssuesPage inherits Rectangle {
     property <bool> sub-left: root.main-right + 10px + root.sub-w + 4px > root.width;
     property <length> sub-x: root.sub-left ? root.menu-x + 5px - 10px - root.sub-w - 4px : root.main-right + 10px;
     public function focus-search() {
+        list.focus-search();
+    }
+    changed focus-tick => {
         list.focus-search();
     }
     focus := FocusScope {
@@ -1136,45 +1179,7 @@ export component IssuesPage inherits Rectangle {
 }
 
 export component IssuesWindow inherits Window {
-    public function focus-search() {
-        page.focus-search();
-    }
     in-out property <bool> dark <=> Theme.dark;
-    in property <[IssueItem]> items;
-    in property <string> notes;
-    in property <string> body-kind;
-    in property <string> body-title;
-    in property <string> body-desc;
-    in property <string> body-icon;
-    in property <int> active;
-    in property <bool> loading;
-    in property <image> github;
-    in property <string> fix-label;
-    in property <IssueMenu> menu;
-    in property <[DetailTab]> tabs;
-    in property <int> tab;
-    in property <bool> showing;
-    in property <bool> maxed;
-    in property <float> frac: 0.5;
-    in property <IssueDetailData> detail;
-    in property <[IssueAgent]> agents;
-    in-out property <string> search <=> page.search;
-    callback search-edited(string);
-    callback tool(string);
-    callback open(string);
-    callback row-act(string, string);
-    callback close-page();
-    callback tab-act(TabActKind, int);
-    callback divider(length, length);
-    callback detail-act(string);
-    callback menu-pick(bool, int);
-    callback menu-hover(int);
-    callback menu-close();
-    callback menu-key(string) -> bool;
-    callback shortcut(string, bool, bool, bool) -> bool;
-    callback esc-page(bool);
-    callback link(string);
-    callback copy-text(string);
     width: 1400px;
     height: 900px;
     background: Theme.bg100;
@@ -1195,72 +1200,6 @@ export component IssuesWindow inherits Window {
         x: 256px;
         width: root.width - 256px;
         height: root.height;
-        items: root.items;
-        notes: root.notes;
-        body-kind: root.body-kind;
-        body-title: root.body-title;
-        body-desc: root.body-desc;
-        body-icon: root.body-icon;
-        active: root.active;
-        loading: root.loading;
-        github: root.github;
-        fix-label: root.fix-label;
-        menu: root.menu;
-        tabs: root.tabs;
-        tab: root.tab;
-        showing: root.showing;
-        maxed: root.maxed;
-        frac: root.frac;
-        detail: root.detail;
-        agents: root.agents;
-        search-edited(t) => {
-            root.search-edited(t);
-        }
-        tool(k) => {
-            root.tool(k);
-        }
-        open(u) => {
-            root.open(u);
-        }
-        row-act(u, a) => {
-            root.row-act(u, a);
-        }
-        close-page => {
-            root.close-page();
-        }
-        tab-act(k, i) => {
-            root.tab-act(k, i);
-        }
-        divider(x, w) => {
-            root.divider(x, w);
-        }
-        detail-act(a) => {
-            root.detail-act(a);
-        }
-        menu-pick(s, i) => {
-            root.menu-pick(s, i);
-        }
-        menu-hover(i) => {
-            root.menu-hover(i);
-        }
-        menu-close => {
-            root.menu-close();
-        }
-        menu-key(k) => {
-            return root.menu-key(k);
-        }
-        shortcut(t, c, s, a) => {
-            return root.shortcut(t, c, s, a);
-        }
-        esc-page(typing) => {
-            root.esc-page(typing);
-        }
-        link(u) => {
-            root.link(u);
-        }
-        copy-text(t) => {
-            root.copy-text(t);
-        }
     }
     TipLayer {
         window-width: root.width;

@@ -1,15 +1,16 @@
 import { join } from "node:path";
 import * as slint from "slint-ui";
 import { git } from "@harbor/agents";
-import { ghapi, ghdetails, prs } from "@harbor/mcp";
+import { ghapi, prs } from "@harbor/mcp";
 import { dataDir, repoDir, Store } from "@harbor/store";
 import { uiDir } from "./assets.ts";
 import { appMark } from "./logos.ts";
 import { runLoop } from "./loop.ts";
-import { attachPrs, type PrsView } from "./prs.ts";
+import { busOf } from "./pages/bus.ts";
+import { mountPrs, type PrsView } from "./pages/prs.ts";
 import { token } from "./theme.ts";
 
-interface PrsWindow extends slint.ComponentHandle, PrsView {
+interface PrsWindow extends slint.ComponentHandle {
   dark: boolean;
 }
 
@@ -18,8 +19,9 @@ const ui = slint.loadFile(join(await uiDir(), "prs.slint"), { style: "fluent" })
 const ctor = Reflect.get(ui, "PrsWindow");
 if (typeof ctor !== "function") throw new Error("prs.slint has no PrsWindow");
 const win: PrsWindow = new ctor();
+const bus = busOf<PrsView>(win, "PrsBus");
 win.dark = process.env.HTS_LIGHT === undefined;
-win.github = await appMark("github", token("fg", win.dark), win.dark);
+bus.github = await appMark("github", token("fg", win.dark), win.dark);
 
 const projects: { id: number; name: string; repo: string }[] = [];
 for (const r of store.repos()) {
@@ -28,26 +30,22 @@ for (const r of store.repos()) {
   if (repo !== undefined) projects.push({ id: r.id, name: r.name, repo });
 }
 
-const handle = attachPrs(
-  win,
-  { prs: prs.prsPort, details: ghdetails.detailsPort({ http: () => Promise.reject(new Error("no mesh in the PR runner")) }) },
-  {
-    projects: () => projects,
-    repos: async () => projects.map((p) => p.repo).sort(),
-    agentLabel: () => "Claude",
-    accounts: () => [{ id: "claude", label: "Claude", current: true }, { id: "codex", label: "Codex", current: false }],
-    pickAccount: () => {},
-    openUrl: git.openUrl,
-    openBrowser: () => {},
-    copy: () => {},
-    checkout: () => {},
-    review: () => {},
-    merge: () => {},
-    close: () => process.exit(0),
-    now: () => Math.floor(Date.now() / 1000),
-    notProject: ghapi.NOT_PROJECT,
-  },
-);
+const handle = mountPrs(bus, {
+  projects: () => projects,
+  repos: async () => projects.map((p) => p.repo).sort(),
+  agentLabel: () => "Claude",
+  accounts: () => [{ id: "claude", label: "Claude", current: true }, { id: "codex", label: "Codex", current: false }],
+  pickAccount: () => {},
+  openUrl: git.openUrl,
+  openBrowser: () => {},
+  copy: () => {},
+  checkout: () => {},
+  review: () => {},
+  merge: () => {},
+  close: () => process.exit(0),
+  now: () => Math.floor(Date.now() / 1000),
+  notProject: ghapi.NOT_PROJECT,
+});
 
 handle.resize(1400 - 256);
 const steps = (process.argv[2] ?? "").split(",").filter(Boolean);
@@ -55,11 +53,11 @@ if (steps.length > 0) await handle.idle();
 for (const step of steps) {
   const [k, v = ""] = step.split("=");
   if (k === "open") {
-    const row = [...win.rows].find((r) => r.kind === "row" && r.url.endsWith(`/${v}`));
+    const row = [...bus.rows].find((r) => r.kind === "row" && r.url.endsWith(`/${v}`));
     if (row !== undefined) handle.open(row.url);
-  } else if (k === "tab") win.pick_tab(v);
-  else if (k === "toggle") win.detail_toggle(v);
-  else if (k === "search") win.edited(v);
+  } else if (k === "tab") bus.pick_tab(v);
+  else if (k === "toggle") bus.detail_toggle(v);
+  else if (k === "search") bus.edited(v);
   await handle.idle();
 }
 

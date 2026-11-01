@@ -161,7 +161,7 @@ component SettingCard inherits Card {
     }
 }
 
-export component SettingsPage inherits Rectangle {
+export global SettingsBus {
     in property <[SettingsTab]> tabs;
     in property <string> tab;
     in property <string> tab-label;
@@ -200,6 +200,47 @@ export component SettingsPage inherits Rectangle {
     callback toggled(string, bool);
     callback chose(string, int);
     callback pressed(string);
+}
+
+export component SettingsPage inherits Rectangle {
+    in property <[SettingsTab]> tabs <=> SettingsBus.tabs;
+    in property <string> tab <=> SettingsBus.tab;
+    in property <string> tab-label <=> SettingsBus.tab-label;
+    in property <string> desc <=> SettingsBus.desc;
+    in property <[SettingSection]> sections <=> SettingsBus.sections;
+    in property <bool> nav-open <=> SettingsBus.nav-open;
+    in property <[Block]> blocks <=> SettingsBus.blocks;
+    callback blocks-pressed <=> SettingsBus.blocks-pressed;
+    callback blocks-toggled <=> SettingsBus.blocks-toggled;
+    callback blocks-edited <=> SettingsBus.blocks-edited;
+    callback blocks-submitted <=> SettingsBus.blocks-submitted;
+    in-out property <string> search <=> SettingsBus.search;
+    in property <AppearanceView> appearance <=> SettingsBus.appearance;
+    in property <ProvidersData> providers <=> SettingsBus.providers;
+    in property <[NotifySection]> notifications <=> SettingsBus.notifications;
+    in property <KeysView> keybindings <=> SettingsBus.keybindings;
+    in property <VoiceView> voice <=> SettingsBus.voice;
+    callback providers-act <=> SettingsBus.providers-act;
+    in property <UsageData> usage <=> SettingsBus.usage;
+    callback usage-act <=> SettingsBus.usage-act;
+    callback usage-settled <=> SettingsBus.usage-settled;
+    in property <IntData> integrations <=> SettingsBus.integrations;
+    callback integrations-act <=> SettingsBus.integrations-act;
+    in property <WhData> webhooks <=> SettingsBus.webhooks;
+    callback webhooks-act <=> SettingsBus.webhooks-act;
+    pure callback integrations-valid <=> SettingsBus.integrations-valid;
+    callback notify-edited <=> SettingsBus.notify-edited;
+    callback keys-act <=> SettingsBus.keys-act;
+    callback keys-key <=> SettingsBus.keys-key;
+    callback voice-edited <=> SettingsBus.voice-edited;
+    callback pick <=> SettingsBus.pick;
+    callback searched <=> SettingsBus.searched;
+    callback back <=> SettingsBus.back;
+    callback hide-nav <=> SettingsBus.hide-nav;
+    callback show-nav <=> SettingsBus.show-nav;
+    callback toggled <=> SettingsBus.toggled;
+    callback chose <=> SettingsBus.chose;
+    callback pressed <=> SettingsBus.pressed;
     background: Theme.bg100;
     if root.nav-open: SettingsNav {
         x: 0;
@@ -355,40 +396,7 @@ export component SettingsPage inherits Rectangle {
 
 export component SettingsWindow inherits Window {
     in-out property <bool> dark <=> Theme.dark;
-    in property <[SettingsTab]> tabs;
-    in property <string> tab;
-    in property <string> tab-label;
-    in property <string> desc;
-    in property <[SettingSection]> sections;
     in-out property <bool> compact <=> Theme.compact;
-    in property <AppearanceView> appearance;
-    in property <ProvidersData> providers;
-    in property <[NotifySection]> notifications;
-    in property <KeysView> keybindings;
-    in property <VoiceView> voice;
-    callback providers-act(string, string);
-    in property <UsageData> usage;
-    callback usage-act(string, string, int);
-    callback usage-settled();
-    in property <IntData> integrations;
-    callback integrations-act(string, string, string, string);
-    in property <WhData> webhooks;
-    callback webhooks-act(string, string);
-    pure callback integrations-valid(string, string) -> bool;
-    callback notify-edited(string, string);
-    callback keys-act(string, string);
-    callback keys-key(string, bool, bool, bool);
-    callback voice-edited(string, string);
-    in property <[Block]> blocks;
-    callback blocks-pressed(string);
-    callback blocks-toggled(string, bool);
-    callback blocks-edited(string, string);
-    callback blocks-submitted(string, string, string, string) -> string;
-    callback pick(string);
-    callback searched(string);
-    callback toggled(string, bool);
-    callback chose(string, int);
-    callback pressed(string);
     width: 1400px;
     height: 900px;
     background: Theme.bg100;
@@ -396,76 +404,5 @@ export component SettingsWindow inherits Window {
     SettingsPage {
         width: root.width;
         height: root.height;
-        tabs: root.tabs;
-        tab: root.tab;
-        tab-label: root.tab-label;
-        desc: root.desc;
-        sections: root.sections;
-        blocks: root.blocks;
-        blocks-pressed(k) => {
-            root.blocks-pressed(k);
-        }
-        blocks-toggled(k, v) => {
-            root.blocks-toggled(k, v);
-        }
-        blocks-edited(k, t) => {
-            root.blocks-edited(k, t);
-        }
-        blocks-submitted(k, a, b, c) => {
-            return root.blocks-submitted(k, a, b, c);
-        }
-        appearance: root.appearance;
-        providers: root.providers;
-        usage: root.usage;
-        integrations: root.integrations;
-        webhooks: root.webhooks;
-        notifications: root.notifications;
-        notify-edited(k, t) => {
-            root.notify-edited(k, t);
-        }
-        keybindings: root.keybindings;
-        keys-act(w, a) => {
-            root.keys-act(w, a);
-        }
-        keys-key(k, c, s, a) => {
-            root.keys-key(k, c, s, a);
-        }
-        voice: root.voice;
-        voice-edited(k, t) => {
-            root.voice-edited(k, t);
-        }
-        providers-act(i, w) => {
-            root.providers-act(i, w);
-        }
-        usage-act(w, a, n) => {
-            root.usage-act(w, a, n);
-        }
-        usage-settled => {
-            root.usage-settled();
-        }
-        integrations-act(w, i, a, b) => {
-            root.integrations-act(w, i, a, b);
-        }
-        webhooks-act(w, a) => {
-            root.webhooks-act(w, a);
-        }
-        integrations-valid(c, k) => {
-            return root.integrations-valid(c, k);
-        }
-        pick(s) => {
-            root.pick(s);
-        }
-        searched(t) => {
-            root.searched(t);
-        }
-        toggled(k, v) => {
-            root.toggled(k, v);
-        }
-        chose(k, n) => {
-            root.chose(k, n);
-        }
-        pressed(k) => {
-            root.pressed(k);
-        }
     }
 }

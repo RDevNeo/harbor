@@ -175,6 +175,8 @@ export interface PrsHandle {
   open(url: string): void;
   /** The page's width, until the view reports it itself. */
   resize(w: number): void;
+  /** Narrows the list to one project (a project menu's Pull requests). */
+  select(project: number): void;
 }
 
 /** Wires the Pull requests page (prs.rs `Prs`) to its Slint view. */
@@ -793,5 +795,9 @@ export function attachPrs(view: PrsView, ports: PrsPorts, host: PrsHost, opts: {
     },
     open,
     resize: view.resized,
+    select(id) {
+      project = id;
+      renderAll();
+    },
   };
 }

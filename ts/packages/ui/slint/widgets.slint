@@ -485,17 +485,24 @@ export component SearchField {
         color: Theme.subtle;
         vertical-alignment: center;
     }
-    field := TextInput {
-        x: 26px;
-        width: parent.width - 30px;
-        font-size: 14px;
-        color: Theme.fg;
-        vertical-alignment: center;
-        single-line: true;
-        selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
-        selection-foreground-color: Theme.fg;
-        edited => {
-            root.edited(self.text);
+    FocusScope {
+        x: 0;
+        width: parent.width;
+        capture-key-pressed(e) => {
+            return root.key(e);
+        }
+        field := TextInput {
+            x: 26px;
+            width: parent.width - 30px;
+            font-size: 14px;
+            color: Theme.fg;
+            vertical-alignment: center;
+            single-line: true;
+            selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+            selection-foreground-color: Theme.fg;
+            edited => {
+                root.edited(self.text);
+            }
         }
     }
 }

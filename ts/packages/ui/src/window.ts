@@ -207,6 +207,8 @@ export interface AppWindow extends slint.ComponentHandle {
   dark: boolean;
   compact: boolean;
   view: string;
+  palette_open: boolean;
+  add_project_open: boolean;
   sidebar_open: boolean;
   readonly narrow: boolean;
 
@@ -232,6 +234,7 @@ export interface AppWindow extends slint.ComponentHandle {
   settings: () => void;
   prs: () => void;
   issues: () => void;
+  leave_page: () => void;
   refresh: () => void;
 
   crumbs: Crumbs;

@@ -129,7 +129,7 @@ component ToolButton {
         color: Theme.fg;
     }
     if root.spin: Spinner {
-        size: 13px;
+        radius: 5.4px;
     }
     area := TipArea {
         tip: root.tip;
@@ -610,9 +610,9 @@ component Popup {
     }
 }
 
-export component PrsPage inherits Rectangle {
-    in property <string> title: "Pull Requests";
-    in property <bool> docked: true;
+export global PrsBus {
+    in property <string> page-title: "Pull Requests";
+    in-out property <bool> docked: true;
     in property <length> list-w;
     in property <length> panel-w;
     in property <bool> wrap;
@@ -679,6 +679,77 @@ export component PrsPage inherits Rectangle {
     callback link(string);
     callback copy(string);
     callback open-check(string);
+}
+
+export component PrsPage inherits Rectangle {
+    in property <string> title <=> PrsBus.page-title;
+    in-out property <bool> docked <=> PrsBus.docked;
+    in property <length> list-w <=> PrsBus.list-w;
+    in property <length> panel-w <=> PrsBus.panel-w;
+    in property <bool> wrap <=> PrsBus.wrap;
+    in property <length> search-w <=> PrsBus.search-w;
+    in-out property <string> search <=> PrsBus.search;
+    in property <string> hint <=> PrsBus.hint;
+    in property <int> active-filters <=> PrsBus.active-filters;
+    in property <bool> loading <=> PrsBus.loading;
+    in property <image> github <=> PrsBus.github;
+    in property <string> list-state <=> PrsBus.list-state;
+    in property <[PrRow]> rows <=> PrsBus.rows;
+    in property <string> empty-icon <=> PrsBus.empty-icon;
+    in property <string> empty-title <=> PrsBus.empty-title;
+    in property <string> empty-desc <=> PrsBus.empty-desc;
+    in property <bool> has-tabs <=> PrsBus.has-tabs;
+    in property <string> menu <=> PrsBus.menu;
+    in property <[PrMenuRow]> menu-rows <=> PrsBus.menu-rows;
+    in property <length> menu-w <=> PrsBus.menu-w;
+    in property <length> menu-h <=> PrsBus.menu-h;
+    in property <int> menu-hl <=> PrsBus.menu-hl;
+    in property <string> sub <=> PrsBus.sub;
+    in property <[PrMenuRow]> sub-rows <=> PrsBus.sub-rows;
+    in property <length> sub-w <=> PrsBus.sub-w;
+    in property <length> sub-h <=> PrsBus.sub-h;
+    in property <length> sub-row-y <=> PrsBus.sub-row-y;
+    in property <int> sub-scroll-from <=> PrsBus.sub-scroll-from;
+    in property <length> sub-scroll-h <=> PrsBus.sub-scroll-h;
+    in property <int> sub-hl <=> PrsBus.sub-hl;
+    in property <[PrAction]> popup-items <=> PrsBus.popup-items;
+    in property <length> popup-w <=> PrsBus.popup-w;
+    in property <length> popup-h <=> PrsBus.popup-h;
+    in-out property <string> popup-kind <=> PrsBus.popup-kind;
+    in property <[DetailTab]> tabs <=> PrsBus.tabs;
+    in property <int> active-tab <=> PrsBus.active-tab;
+    in property <bool> maxed <=> PrsBus.maxed;
+    in property <PrHeader> head <=> PrsBus.head;
+    in property <string> tab <=> PrsBus.tab;
+    in property <PrSummary> summary <=> PrsBus.summary;
+    in property <[PrEvent]> events <=> PrsBus.events;
+    in property <string> code-state <=> PrsBus.code-state;
+    in property <string> code-error <=> PrsBus.code-error;
+    in property <[PrLine]> lines <=> PrsBus.lines;
+    in property <string> agent <=> PrsBus.agent;
+    callback resized <=> PrsBus.resized;
+    callback edited <=> PrsBus.edited;
+    callback tool <=> PrsBus.tool;
+    callback row-open <=> PrsBus.row-open;
+    callback row-menu <=> PrsBus.row-menu;
+    callback close-page <=> PrsBus.close-page;
+    callback tab-act <=> PrsBus.tab-act;
+    callback toggle-panel <=> PrsBus.toggle-panel;
+    callback drag <=> PrsBus.drag;
+    callback menu-key <=> PrsBus.menu-key;
+    callback menu-hover <=> PrsBus.menu-hover;
+    callback menu-pick <=> PrsBus.menu-pick;
+    callback sub-hover <=> PrsBus.sub-hover;
+    callback sub-pick <=> PrsBus.sub-pick;
+    callback menu-close <=> PrsBus.menu-close;
+    callback popup-open <=> PrsBus.popup-open;
+    callback popup-pick <=> PrsBus.popup-pick;
+    callback detail-act <=> PrsBus.detail-act;
+    callback pick-tab <=> PrsBus.pick-tab;
+    callback detail-toggle <=> PrsBus.detail-toggle;
+    callback link <=> PrsBus.link;
+    callback copy <=> PrsBus.copy;
+    callback open-check <=> PrsBus.open-check;
     property <length> anchor-x;
     property <length> anchor-y;
     property <length> popup-x;
@@ -757,7 +828,7 @@ export component PrsPage inherits Rectangle {
                         VerticalLayout {
                             alignment: center;
                             Spinner {
-                                size: 30px;
+                                radius: 12.5px;
                             }
                         }
                         Text {
@@ -1042,77 +1113,8 @@ export component PrsPage inherits Rectangle {
     }
 }
 
-// A stand-in for the app shell: the sidebar's width and a window to draw the page in.
 export component PrsWindow inherits Window {
     in-out property <bool> dark <=> Theme.dark;
-    in property <string> page-title <=> page.title;
-    in property <bool> docked <=> page.docked;
-    in property <length> list-w <=> page.list-w;
-    in property <length> panel-w <=> page.panel-w;
-    in property <bool> wrap <=> page.wrap;
-    in property <length> search-w <=> page.search-w;
-    in-out property <string> search <=> page.search;
-    in property <string> hint <=> page.hint;
-    in property <int> active-filters <=> page.active-filters;
-    in property <bool> loading <=> page.loading;
-    in property <image> github <=> page.github;
-    in property <string> list-state <=> page.list-state;
-    in property <[PrRow]> rows <=> page.rows;
-    in property <string> empty-icon <=> page.empty-icon;
-    in property <string> empty-title <=> page.empty-title;
-    in property <string> empty-desc <=> page.empty-desc;
-    in property <bool> has-tabs <=> page.has-tabs;
-    in property <string> menu <=> page.menu;
-    in property <[PrMenuRow]> menu-rows <=> page.menu-rows;
-    in property <length> menu-w <=> page.menu-w;
-    in property <length> menu-h <=> page.menu-h;
-    in property <int> menu-hl <=> page.menu-hl;
-    in property <string> sub <=> page.sub;
-    in property <[PrMenuRow]> sub-rows <=> page.sub-rows;
-    in property <length> sub-w <=> page.sub-w;
-    in property <length> sub-h <=> page.sub-h;
-    in property <length> sub-row-y <=> page.sub-row-y;
-    in property <int> sub-scroll-from <=> page.sub-scroll-from;
-    in property <length> sub-scroll-h <=> page.sub-scroll-h;
-    in property <int> sub-hl <=> page.sub-hl;
-    in property <[PrAction]> popup-items <=> page.popup-items;
-    in property <length> popup-w <=> page.popup-w;
-    in property <length> popup-h <=> page.popup-h;
-    in-out property <string> popup-kind <=> page.popup-kind;
-    in property <[DetailTab]> tabs <=> page.tabs;
-    in property <int> active-tab <=> page.active-tab;
-    in property <bool> maxed <=> page.maxed;
-    in property <PrHeader> head <=> page.head;
-    in property <string> tab <=> page.tab;
-    in property <PrSummary> summary <=> page.summary;
-    in property <[PrEvent]> events <=> page.events;
-    in property <string> code-state <=> page.code-state;
-    in property <string> code-error <=> page.code-error;
-    in property <[PrLine]> lines <=> page.lines;
-    in property <string> agent <=> page.agent;
-    callback resized <=> page.resized;
-    callback edited <=> page.edited;
-    callback tool <=> page.tool;
-    callback row-open <=> page.row-open;
-    callback row-menu <=> page.row-menu;
-    callback close-page <=> page.close-page;
-    callback tab-act <=> page.tab-act;
-    callback toggle-panel <=> page.toggle-panel;
-    callback drag <=> page.drag;
-    callback menu-key <=> page.menu-key;
-    callback menu-hover <=> page.menu-hover;
-    callback menu-pick <=> page.menu-pick;
-    callback sub-hover <=> page.sub-hover;
-    callback sub-pick <=> page.sub-pick;
-    callback menu-close <=> page.menu-close;
-    callback popup-open <=> page.popup-open;
-    callback popup-pick <=> page.popup-pick;
-    callback detail-act <=> page.detail-act;
-    callback pick-tab <=> page.pick-tab;
-    callback detail-toggle <=> page.detail-toggle;
-    callback link <=> page.link;
-    callback copy <=> page.copy;
-    callback open-check <=> page.open-check;
     width: 1400px;
     height: 900px;
     background: Theme.bg100;
@@ -1125,7 +1127,7 @@ export component PrsWindow inherits Window {
         border-width: 1px;
         border-color: Theme.border;
     }
-    page := PrsPage {
+    PrsPage {
         x: 256px;
         width: root.width - 256px;
         height: root.height;

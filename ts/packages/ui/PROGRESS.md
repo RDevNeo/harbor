@@ -61,7 +61,22 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | teamui | done: the team panel beside a lead chat (agents with Settle / Stop, processes with their URL, Stop and output, wake-ups with Wake now / Cancel, webhooks with Copy / Delete, Settled, Earlier chats); a process's URL opens in the desktop's browser, not Harbor's | 0 of 0 |
 | app | partial: window, views, turns through the Engine, theme (following Omarchy), density, last chat, desktop notifications when a chat off screen finishes or needs you (`@harbor/net`'s notifier; a click opens the chat); `ago`, `tilde`, `clipMiddle` and the rest of its pure functions in `logic/app.ts` | 2 of 2 |
 | main | partial: `harbor` with no command opens the window (ts/harbor.ts calls `openWindow()` after `wire()`); the phone hub isn't started with it yet (`harbor --background` runs it alone) | 0 of 0 |
-| pages, palette, addproject, terminal, browser, tray, background, remoteui, accountui, phonesui, secretsui, listdetail, prs, issues, prdetail, issuedetail | not started (the queue's "ui pages" item); their buttons say so in a dialog | 0 of 0 |
+| pages (Settings) | done: all 14 tabs in the window (footer gear, palette "Settings" items), saved through the store the window's `Data` holds; Back/Esc return to the chat it was opened from (`slint/settings*.slint`, `src/logic/settings*.ts`, `src/pages/settings.ts`) | 2 of 2 |
+| palette | done: Ctrl+K and the sidebar's magnifier open it over the window; picks run through the Shell (`slint/palette.slint`, `src/logic/palette.ts`, `src/pages/palette.ts`) | 5 of 5 |
+| addproject | done: the sidebar's folder-plus and the composer's "Add project…" open it; new, local, Git URL and GitHub sources (`src/addproject.ts`) | 0 of 0 |
+| prs, prdetail | done: footer button and a GitHub project's menu open the page; list, filters, panel with Summary/Timeline/Code (`src/prs.ts`, `src/pages/prs.ts`) | in mcp |
+| issues, issuedetail | done: footer button and a GitHub project's menu open the page (`src/issues.ts`, `src/pages/issues.ts`) | in mcp |
+| listdetail | done: the split, tabs, divider and menu keys of the PR and Issues pages (`src/logic/listdetail.ts`, `slint/listdetail.slint`) | 4 of 4 |
+| accountui, secretsui, remoteui, phonesui | done as Settings tabs (Account, Secrets, Devices, Phones); mesh actions run on the hub, not in the window yet | 0 of 0 |
+| terminal | done: in the surface panes' tabs (`slint/terminal.slint`, `src/terminal.ts`, a Bun PTY parsed by @xterm/headless) | 1 of 1 |
+| tray, background | modules done (`src/tray.ts` StatusNotifierItem over D-Bus, `src/background.ts`); not started by the window yet | see `test/tray.test.ts`, `test/background.test.ts` |
+| browser | not started | 0 of 0 |
+
+Entries that still open the "isn't in the TypeScript app yet" dialog (checked from `ts/run.sh` with
+`HARBOR_POINTER` in the private rig): Providers' Update (the agent CLI updater), Webhooks' Funnel Check
+and Disable, Integrations' Discord sign-in window, Fix on another PC, and the palette's "Check for
+updates". Terminal entries (project menu, palette, Providers' Sign in / Install / Add Claude account,
+Webhooks' Funnel steps, a PR's Check out) open a terminal tab in the bottom pane.
 
 Rust tests of the shell's modules: 80 of 80 ported, all passing (71 here, view.rs's 9 in `@harbor/net`).
 Package total: 88 tests (17 new: markdown, the safe db copy, theme and icon generation, `.slint`
@@ -98,13 +113,14 @@ compile, cards, cursors, scripted input).
 1. Markup: `slint/<page>.slint`, one exported component using `widgets.slint` (Btn, MenuRow, Card,
    Input, Tabs, Empty, SettingRow, PopoverFrame…), `Theme` and `Icons`. Add it to `FILES` in
    `src/assets.ts` (one import line) so it ships inside the compiled runtime.
-2. In `slint/app.slint`: import it, add its data as `in property` and its actions as `callback` on
-   `AppWindow`, and one line in `body`: `if root.view == "<page>": <Page> { … }`. Pages that replace
-   the sidebar (Settings) put theirs next to `Sidebar` the same way.
-3. In `src/window.ts`: the same properties and callbacks in `AppWindow` (dashes become underscores).
-4. A controller `src/<page>.ts` that reads through `Data` (`src/data.ts`, the only place that touches
-   `@harbor/store`) and sets the properties; `Shell` opens it by setting `win.view` (see `unported()`
-   for where the sidebar's Settings / PRs / Issues buttons land today).
+2. In the page's .slint file: an exported global `<Page>Bus` with every property and callback; the
+   page component aliases them (`in-out property <T> x <=> <Page>Bus.x;`), so any host just writes
+   `<Page> { }`. `slint/app.slint` re-exports the bus and places the page: `if root.view == "<page>":
+   <Page> { }`.
+3. A controller `src/pages/<page>.ts` (`mount(bus, deps)`) fills the bus and answers its callbacks;
+   `src/pages/host.ts` builds the deps from the Shell, and the standalone runner (`src/<page>run.ts`)
+   uses the same controller.
+4. `Shell` opens it with `openPage("<page>")`; Esc and the page's close return through `leavePage()`.
 5. Screens are compared with the Rust app in the rig: `HARBOR_VIEW` and `HARBOR_POINTER` work in both.
 
 ## Blockers
