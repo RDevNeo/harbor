@@ -6,6 +6,7 @@
       "name": "harbor-ts",
       "dependencies": {
         "@xterm/headless": "6.0.0",
+        "sharp": "0.35.5",
         "sherpa-onnx-node": "2.0.1",
         "slint-ui": "1.18.1",
       },

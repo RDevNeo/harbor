@@ -119,3 +119,37 @@ Until step 1 is in a shipped Rust release, a Rust PC cannot reach the runtime by
 
 - `update::schedule`: the 5-minute scheduler is replaced by the long-poll; its backoff is tested instead (`delivery.test.ts`).
 - `reload::swaps_only_when_nobody_sees_it`: the plan removes the idle wait, so `quiet`/`Moment`/`Swap` don't exist.
+
+## One entry for every command (bundle item)
+
+`ts/app.ts` is the bundle's entry (`harbor.ts` is a two-line launcher of it for `bun harbor.ts`): `--version`, `turn`, `mcp`, `app`,
+`net`, `nc`, `mesh`, `account`, `preview`, `--speech-worker`, `--background` and, with no argument, the window. Each command loads only its
+own modules (a bundle that imported everything at start died on `sharp`'s native addon in `--version`). `run.ts` is the app itself:
+instance lock, `ui`'s `Data` (its `Engine`) and `startHub` sharing that Engine and the store, the control socket (tool calls go to
+`Engine.tool`; `harbor preview push/back`), the `Updater` and `Reloader`, `confirmStart`, and `ui`'s shell (`runShell`) or, with
+`--background`, nothing. `hub.ts` takes an `Updater`, a `store` and an `engine`: update info goes in the mesh hello/chat polls and `/v1/app`,
+`hub_update` in the state, `/v1/hub/update|check|auto` are answered, the phone app comes from the install folder, peers' update info goes
+to `peerNews`. `ui`'s `Shell` got `snapshot()`/`restore()` and `run(data, hooks)` so a swap brings back the open chat and every draft.
+
+Built artifacts (`scripts/build.ts app|runtime`, a temp folder, `rig/bundle.sh`; no network except the turn):
+- `--version`: `harbor 0.109.0 (abcdef0)`; an unknown command exits 2 with the list.
+- `--background`: takes the lock, opens `h.sock`, stops on SIGTERM; `harbor mcp --chat 1` initializes and a `tools/call` is answered by
+  the `Engine` over the socket (`unknown agent` for a chat that doesn't exist: a real answer).
+- `harbor turn <dir>` with a real Haiku call in a scratch folder: `"result":"bundle ok"`, exit 0, 2.5 s.
+- The window on a private headless sway: `ui`'s shell at 1400x900 with a scrambled copy of a real db: sidebar, a clicked chat's transcript
+  (markdown, code, tool cards), team panel, composer with the model picker and the provider logo.
+- A swap on the compositor (`rig/bundle.sh swap`): a half-typed message in a chat, `harbor-app.js` replaced by a new file, the old process
+  exits, the new one (same runtime, new pid) takes the lock and shows the same chat with the draft back in the composer.
+- `bun test` (`real-runtime.test.ts`) builds the same artifacts and checks version, unknown command, `turn` with a fake program and `mcp`
+  against a socket server of its own.
+
+What does not work yet:
+- Not exercised on screen: sending from the composer (typing works), the model picker's choices, settings pages, search, terminal, panes, tray.
+- In window mode the `Engine`'s host is `ui`'s `Data` (it has no `isForeign`/`chatLink`/`hostname` of the hub's host), so mixed-mesh chats
+  are not told apart from this PC's own in the engine; `--background` keeps the hub's host.
+- Webhooks and the hook listener are not started; `provider_updates` is null; a preview is not announced to other PCs.
+- The runtime grew from 127 MB to 166 MB: `sharp` and its libvips are in it now (the bundle has no `node_modules`). `sharp` and
+  `sherpa-onnx-node` load only when first used; whether `sharp`'s libvips sidecar loads from inside the executable was not tried, so
+  image decoding in the bundle is unverified (sherpa needs its libs on `LD_LIBRARY_PATH`).
+- Assets (`.slint`, fonts, logos) are in the bundle and written once to `$XDG_RUNTIME_DIR/harbor-embedded-<hash>/` at start.
+- `ui`'s `blankStatus()` has an 8-digit colour (`#00000000`) that Slint's JS binding refuses for a brush.

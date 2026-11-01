@@ -1,16 +1,82 @@
-import { RUNTIME_VERSION, VERSION, updateCommands } from "./packages/update/src/index.ts";
+import pkg from "./package.json";
+import { DEV_VERSION, RUNTIME_VERSION, VERSION, updateCommands, versionLabel } from "./packages/update/src/index.ts";
 
 declare const HARBOR_MIN_RUNTIME: string | undefined;
 
-export const meta = { version: VERSION, minRuntime: typeof HARBOR_MIN_RUNTIME === "string" ? HARBOR_MIN_RUNTIME : RUNTIME_VERSION };
+const version = VERSION === DEV_VERSION ? pkg.version : VERSION;
 
-const commands = { ...updateCommands };
+export const meta = { version, minRuntime: typeof HARBOR_MIN_RUNTIME === "string" ? HARBOR_MIN_RUNTIME : RUNTIME_VERSION };
+
+type Command = (args: string[]) => Promise<number> | number;
+
+const io = { out: (l: string) => console.log(l), err: (l: string) => console.error(l) };
+
+async function store() {
+  const { dataDir, Store } = await import("./packages/store/src/index.ts");
+  return Store.open(dataDir());
+}
+
+// Each command loads only what it needs: `--version` or `harbor mcp` must not start the window's or the mesh's code.
+const commands: Record<string, Command> = {
+  ...updateCommands,
+  "--version": () => {
+    console.log(`harbor ${VERSION === DEV_VERSION ? `${pkg.version} (ts)` : versionLabel()}`);
+    return 0;
+  },
+  "--speech-worker": async () => (await import("./packages/media/src/speech-worker.ts")).runSpeechWorker(),
+  "--background": async (args) => (await import("./run.ts")).runApp({ window: false, argv: ["--background", ...args], version }),
+  turn: async (args) => {
+    const { runTurn } = await import("./packages/agents/src/index.ts");
+    // Harbor's own app sign-ins, added by the runner so they never land in the turn's folder.
+    (await import("./wire.ts")).wire();
+    await runTurn(args);
+    return 0;
+  },
+  mcp: async (args) => {
+    const { mcpshim } = await import("./packages/mcp/src/index.ts");
+    await mcpshim.run(args, { version });
+    return 0;
+  },
+  app: async (args) => (await import("./packages/mcp/src/index.ts")).serve.serve(args),
+  net: async (args) => {
+    const { lanPortmapNet, Portmap } = await import("./packages/net/src/index.ts");
+    return new Portmap({ kv: await store(), net: lanPortmapNet() }).cli(args, { log: io.out, err: io.err });
+  },
+  nc: async (args) => {
+    const { loadOrCreate, ncCli } = await import("./packages/net/src/index.ts");
+    const { stateDir } = await import("./packages/store/src/index.ts");
+    return ncCli(args, { kv: await store(), id: loadOrCreate(stateDir()), io, stdin: process.stdin, stdout: process.stdout });
+  },
+  mesh: async (args) => {
+    const { discoverAsk, loadOrCreate, meshCli } = await import("./packages/net/src/index.ts");
+    const { stateDir } = await import("./packages/store/src/index.ts");
+    return meshCli(args, { kv: await store(), id: loadOrCreate(stateDir()), io, ask: () => discoverAsk({ waitMs: 1500, myFp: loadOrCreate(stateDir()).fp }) });
+  },
+  account: async (args) => {
+    const { AccountService, hostPort, lanAddrs, loadOrCreate, readMe } = await import("./packages/net/src/index.ts");
+    const { stateDir } = await import("./packages/store/src/index.ts");
+    const s = await store();
+    const portText = s.get("api_port") ?? "";
+    const port = /^\d+$/.test(portText) ? Number(portText) : 47930;
+    const svc = new AccountService({
+      kv: s,
+      stateDir: stateDir(),
+      identity: () => loadOrCreate(stateDir()),
+      me: () => readMe(s),
+      addrs: () => lanAddrs().map((a) => hostPort(a, port)),
+      version,
+    });
+    return svc.cli(args, io);
+  },
+};
+commands["-V"] = commands["--version"] as Command;
 
 export async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
-  const cmd = name === undefined ? undefined : commands[name];
+  if (name === undefined) return (await import("./run.ts")).runApp({ window: true, argv: [], version });
+  const cmd = commands[name];
   if (cmd === undefined) {
-    console.error(`harbor: ${name === undefined ? "no command given" : `unknown command ${name}`} (this build has: ${Object.keys(commands).join(", ")})`);
+    console.error(`harbor: unknown command ${name} (this build has: ${Object.keys(commands).join(", ")})`);
     return 2;
   }
   return await cmd(rest);

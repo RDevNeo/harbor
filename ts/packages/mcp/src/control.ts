@@ -39,7 +39,7 @@ export const socketPath = single.socketPath;
 export interface SocketOptions<A, M, O> {
   send(i: Incoming<A, M, O>): void;
   /** Checks a `harbor preview push` message; an error text refuses it. */
-  previewReceived?(v: Json): { here: boolean; offer: O } | string;
+  previewReceived?(v: Json): { here: boolean; offer: O } | string | Promise<{ here: boolean; offer: O } | string>;
   raise?(): boolean;
   path?: string;
 }
@@ -66,11 +66,15 @@ export function startSocket<A = never, M = never, O = never>(opts: SocketOptions
       return reply(socket, { ok: true });
     }
     if (v.preview !== undefined) {
+      const answer = (got: { here: boolean; offer: O } | string): void => {
+        if (typeof got === "string") return reply(socket, { ok: false, text: got });
+        opts.send({ kind: "preview", offer: got.offer, here: got.here });
+        const text = got.here ? "" : "Previews are off on this PC (harbor preview on): only offered to the other PCs.";
+        reply(socket, { ok: true, restarting: got.here, text });
+      };
       const got = opts.previewReceived ? opts.previewReceived(v.preview) : "Previews are not available here.";
-      if (typeof got === "string") return reply(socket, { ok: false, text: got });
-      opts.send({ kind: "preview", offer: got.offer, here: got.here });
-      const text = got.here ? "" : "Previews are off on this PC (harbor preview on): only offered to the other PCs.";
-      return reply(socket, { ok: true, restarting: got.here, text });
+      if (typeof got === "string" || !("then" in got)) return answer(got);
+      return void got.then(answer, (e: unknown) => reply(socket, { ok: false, text: e instanceof Error ? e.message : String(e) }));
     }
     if (v.preview_back !== undefined) {
       opts.send({ kind: "previewBack", off: v.off === true });

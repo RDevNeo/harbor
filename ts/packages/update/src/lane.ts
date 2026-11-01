@@ -25,7 +25,7 @@ export const RUNTIME_SOURCES: readonly string[] = [
 
 export const RUNTIME_FOLDERS: readonly string[] = ["video/", "packaging/"];
 
-const RUNTIME_DEPENDENCIES = ["slint-ui", "sherpa-onnx-node"] as const;
+const RUNTIME_DEPENDENCIES = ["slint-ui", "sherpa-onnx-node", "sharp"] as const;
 
 type Json = Record<string, unknown>;
 

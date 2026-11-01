@@ -52,7 +52,7 @@ export interface ReloaderOptions {
   snapshot: () => Snapshot;
   args: () => string[];
   hidden: () => boolean;
-  beforeExit?: () => void;
+  beforeExit?: () => void | Promise<void>;
   release?: () => void;
   spawn?: (cmd: string[], env: Record<string, string | undefined>) => void;
   exit?: (code: number) => void;
@@ -82,7 +82,7 @@ export class Reloader {
     const env: Record<string, string | undefined> = { ...process.env, [RELOADED_PID]: String(process.pid) };
     for (const k of DEV_HOOKS) delete env[k];
     try {
-      this.o.beforeExit?.();
+      await this.o.beforeExit?.();
       (this.o.spawn ?? spawnDetached)([cfg.exe, ...args], env);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);

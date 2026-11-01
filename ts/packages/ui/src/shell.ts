@@ -363,6 +363,26 @@ export class Shell {
     return this.data.engine;
   }
 
+  snapshot(): Record<string, unknown> {
+    this.drafts.set(this.key(), this.win.draft);
+    const drafts: Record<string, string> = {};
+    for (const [k, t] of this.drafts) if (t.trim() !== "") drafts[String(k)] = t;
+    return { view: this.view === "chat" ? { t: "chat", id: this.chatId } : { t: "draft" }, draft_repo: this.draftRepo, draft_main: this.draftMain, drafts };
+  }
+
+  restore(s: Record<string, unknown>): void {
+    const drafts = s.drafts;
+    if (typeof drafts === "object" && drafts !== null) {
+      for (const [k, t] of Object.entries(drafts)) if (Number.isInteger(Number(k)) && typeof t === "string") this.drafts.set(Number(k), t);
+    }
+    const view = s.view as { t?: unknown; id?: unknown } | null | undefined;
+    if (view?.t === "chat" && typeof view.id === "number" && this.data.chat(view.id)) this.openChat(view.id);
+    else {
+      const repo = typeof s.draft_repo === "number" && this.data.repo(s.draft_repo) ? s.draft_repo : null;
+      this.newDraft(repo, s.draft_main === true);
+    }
+  }
+
   openChat(id: number): void {
     if (!this.data.chat(id)) return;
     this.drafts.set(this.key(), this.win.draft);
@@ -1506,7 +1526,16 @@ export function utcOffset(): number {
 }
 
 
-export async function run(data: Data): Promise<void> {
+export interface ShellHooks {
+  /** The screen to come back to after a restart (a snapshot the previous process left), or null. */
+  restore?: Record<string, unknown> | null;
+  /** Gets a function that reads the screen's state, for the next restart. */
+  snapshotWith?: (read: () => Record<string, unknown>) => void;
+  /** The first frame is on screen. */
+  shown?: () => void;
+}
+
+export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
   const win = await loadWindow();
   const shell = new Shell(win, data);
   data.onChange = (id) => shell.changed(id);
@@ -1523,8 +1552,11 @@ export async function run(data: Data): Promise<void> {
   const last = Number(data.store.get("last_chat") ?? 0);
   shell.newDraft(null);
   if (process.env.HARBOR_VIEW === "chat" && data.chat(last)) shell.openChat(last);
+  if (hooks.restore) shell.restore(hooks.restore);
+  hooks.snapshotWith?.(() => shell.snapshot());
   win.show();
   scripted(win.window, process.env.HARBOR_POINTER);
+  hooks.shown?.();
   const tick = setInterval(() => shell.tick(), 1000);
   await runLoop();
   clearInterval(tick);

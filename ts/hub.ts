@@ -33,16 +33,23 @@ import {
   type CatalogAccount,
   type Call,
   type Dest,
+  type Json,
   type MeshApp,
   type Reply,
 } from "./packages/net/src/index.ts";
 import { dataDir, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
+import { notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
 export interface HubOptions {
   version: string;
   env?: Record<string, string | undefined>;
+  updater?: Updater;
+  store?: Store;
+  engine?: Engine;
 }
+
+const asJson = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
 
 export interface RunningHub {
   store: Store;
@@ -68,10 +75,27 @@ export function phoneAddrs(port: number, all: string[], pub: string | null): str
   return v;
 }
 
+/** The phone's and another PC's Update, Check and Automatically (api.rs `/v1/hub/*`); null: not an update route. */
+async function updateRoute(u: Updater, call: Call): Promise<Reply | null> {
+  const [v, hubSeg, what] = call.path;
+  if (call.method !== "POST" || v !== "v1" || hubSeg !== "hub" || call.path.length !== 3) return null;
+  if (what === "auto") return ok({ ok: true, auto: true });
+  if (what !== "update" && what !== "check") return null;
+  if (!u.managed()) return err(409, "this Harbor was built from source, so it doesn't update itself");
+  if (what === "check") {
+    void u.check();
+    return { status: 202, body: { ok: true, checking: true } };
+  }
+  const s = u.state();
+  if (s.t === "available") void u.installNow();
+  else void u.checkAndInstall();
+  return s.t === "available" ? ok({ ok: true }) : { status: 202, body: { ok: true, checking: true } };
+}
+
 /** Harbor without its window (Rust's `--background`): the phone API, the mesh, discovery, port mapping and the account loop. */
 export async function startHub(o: HubOptions): Promise<RunningHub> {
   const env = o.env ?? process.env;
-  const store = Store.open(dataDir(env));
+  const store = o.store ?? Store.open(dataDir(env));
   const state = stateDir(env);
   const id = loadOrCreate(state);
   const me = readMe(store, env);
@@ -117,6 +141,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     hub,
     route: (call) => phoneRoute(call),
     version: o.version,
+    update: () => (o.updater ? asJson(o.updater.info()) : null),
     accounts: () => accounts.filter((a) => a.bin !== null).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
   });
   const uploadsDir = join(dataDir(env), "uploads");
@@ -151,6 +176,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     myFp: () => id.fp,
     engine: null,
     uploadsDir,
+    updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: null }),
     catalog,
     voice: () => ({ transcribe: true, why: null, lang: voice.config()[0] }),
     commits: (c) => {
@@ -160,7 +186,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
     },
   });
-  engine = new Engine({
+  engine = o.engine ?? new Engine({
     store,
     accounts: () => accounts,
     changed: (chat) => {
@@ -207,11 +233,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     http: (p, method, path, body, waitMs) => http(p.dest, method, path, body, waitMs),
   };
   const route = async (call: Call): Promise<Reply> => {
+    const updated = o.updater ? await updateRoute(o.updater, call) : null;
+    if (updated !== null) return updated;
     if (call.method === "GET" && call.path.join("/") === "v1/voice") return ok(JSON.parse(JSON.stringify(dictate.status(hub.mesh.me.name))));
     return (await services?.routePhone(call)) ?? phone.route(call);
   };
   phoneRoute = route;
   const apk = () => {
+    const kept = o.updater?.apk()?.path;
+    if (kept !== undefined) return kept;
     const p = join(dataDir(env), "harbor-android.apk");
     return existsSync(p) ? p : null;
   };
@@ -221,7 +251,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     uploadsDir,
     route,
     account: account.phoneAuth(),
-    appInfo: () => ({ version_code: 0, url: "/app.apk", hub: null }),
+    appInfo: () => ({ version_code: o.updater?.apk()?.code ?? 0, url: "/app.apk", hub: o.updater ? asJson(o.updater.info()) : null }),
     apk,
     mesh: (p, q, r) => mesh.serve(p, q, r),
     meshAdmitted: (p, q) => mesh.admitted(p, q),
@@ -267,6 +297,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     }
     hub.rememberPhones(store);
     replica.reload();
+    if (o.updater) for (const p of hub.mesh.peers.values()) o.updater.peerNews(p.update);
   }, 10_000);
   const refresh = setInterval(() => {
     accounts = providers.discover();

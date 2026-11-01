@@ -1,4 +1,5 @@
 export * as mcp from "./mcp.ts";
+export { harborVersion, setHarborVersion } from "./version.ts";
 export * as control from "./control.ts";
 export * as mcpshim from "./mcpshim.ts";
 export * as gmail from "./gmail.ts";
