@@ -18,7 +18,7 @@ test("a version without a patch number reads as .0, and junk does not read", () 
   expect(parse(" v3.4.5-rc.1 ")).toEqual([3, 4, 5, false]);
 });
 
-test("the Android versionCode follows the version", () => {
+test("apk_version_codes: the Android versionCode follows the version", () => {
   expect(versionCode("0.7.0")).toBe(7000);
   expect(versionCode("v1.2.3")).toBe(1_002_003);
   expect(versionCode("0.10.12")).toBe(10_012);
@@ -27,7 +27,7 @@ test("the Android versionCode follows the version", () => {
   expect(versionCode("junk")).toBe(0);
 });
 
-test("the release address gives the tag", () => {
+test("release_address: the release address gives the tag", () => {
   expect(tagged("https://github.com/o/r/releases/tag/v1.2.3\n")).toBe("1.2.3");
   expect(() => tagged("")).toThrow("no release published yet");
   expect(() => tagged("https://github.com/o/r/releases")).toThrow("no release published yet");

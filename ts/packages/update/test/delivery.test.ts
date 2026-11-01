@@ -26,7 +26,7 @@ async function rig(opts: { worker?: boolean } = {}) {
   return { key, host, inst, cfg, updater, sleeps, swapped };
 }
 
-test("news from other PCs: only a newer version than this one and than what was heard", () => {
+test("news_from_other_pcs: news from other PCs: only a newer version than this one and than what was heard", () => {
   const ahead = "99.0.0";
   const more = "99.0.1";
   const cur = "1.0.0";
@@ -43,7 +43,7 @@ test("news from other PCs: only a newer version than this one and than what was 
   expect(news({ version: "garbage", latest: 7 }, cur, null)).toBeNull();
 });
 
-test("a failed install waits before it is tried again, and another release may work", () => {
+test("failed_install_waits: a failed install waits before it is tried again, and another release may work", () => {
   expect(installDue(null, "1.0.0", 0)).toBe(true);
   const failed = { version: "1.0.0", at: 1000 + retryAfter(1) };
   expect(installDue(failed, "1.0.0", 1000)).toBe(false);
@@ -61,7 +61,7 @@ test("the long-poll backs off 5 s, 10 s, 20 s… up to 5 min, spread by chance",
   expect(backoffMs(1, () => 1)).toBe(6000);
 });
 
-test("a source build has nothing to offer or install", () => {
+test("info_of_a_source_build: a source build has nothing to offer or install", () => {
   const u = new Updater(configFor(null));
   const i = u.info();
   expect(i.version).toBe("1.0.0");

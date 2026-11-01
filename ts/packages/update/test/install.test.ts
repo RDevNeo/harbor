@@ -204,7 +204,7 @@ test("a source build has nothing to install into", async () => {
   expect(onDisk(cfg)).toBeNull();
 });
 
-test("the version on disk is the installed one when it isn't the one running", () => {
+test("version_on_disk: the version on disk is the installed one when it isn't the one running", () => {
   const inst = makeInstall();
   const cfg = configFor(inst);
   expect(onDisk(cfg)).toBeNull();

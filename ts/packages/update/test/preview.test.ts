@@ -37,21 +37,21 @@ function build(version = "1.5.0"): string {
   return f;
 }
 
-test("the version line says which Harbor it is", () => {
+test("reads_the_version_line: the version line says which Harbor it is", () => {
   expect(versionIn("harbor 0.101.0 (abcdef0)\n")).toBe("0.101.0");
   expect(versionIn("harbor 0.101.0\n")).toBe("0.101.0");
   expect(versionIn("something else 1.0")).toBeNull();
   expect(versionIn("")).toBeNull();
 });
 
-test("a newer release wins over a preview build", () => {
+test("a_newer_release_wins: a newer release wins over a preview build", () => {
   expect(superseded("0.101.0", "0.102.0")).toBe(true);
   expect(superseded("0.102.0", "0.102.0")).toBe(false);
   expect(superseded("0.103.0", "0.102.0")).toBe(false);
   expect(superseded("0.103.0", null)).toBe(false);
 });
 
-test("only a trusted PC with previews on may send one, and only a bundle", () => {
+test("only_a_trusted_pc_with_previews_on: only a trusted PC with previews on may send one, and only a bundle", () => {
   const off = configFor(makeInstall());
   expect(refuses(off, true)).not.toBeNull();
   expect(refuses(off, false)).not.toBeNull();
@@ -64,7 +64,7 @@ test("only a trusted PC with previews on may send one, and only a bundle", () =>
   expect(refuses(on, true)).toBeNull();
 });
 
-test("a PC says what it runs and whether it takes previews", () => {
+test("says_what_runs: a PC says what it runs and whether it takes previews", () => {
   const cfg = configFor(makeInstall());
   expect(previewInfo(cfg)).toEqual({ preview_on: false, preview_kind: "bundle", preview: null });
   expect(takes({ preview_on: true, preview_kind: "bundle" })).toBe(true);
@@ -88,7 +88,7 @@ test("a running preview is named in the version and the info", () => {
   expect(label(configFor(inst))).toBeNull();
 });
 
-test("the preview's file keeps what was written, and a failure marks only that build", () => {
+test("meta_keeps_across_a_write: the preview's file keeps what was written, and a failure marks only that build", () => {
   const inst = makeInstall();
   const m = meta({ id: "abc", sha256: "00", version: "1.2.3", at: 5 });
   writeMeta(inst.dir, m);
@@ -110,13 +110,13 @@ test("a preview file written by the Rust app reads here", () => {
   expect(readMeta(inst.dir)).toBeNull();
 });
 
-test("a file hashes to its SHA-256", async () => {
+test("hashes_a_file: a file hashes to its SHA-256", async () => {
   const f = join(tmp(), "f");
   writeFileSync(f, "abc");
   expect(await sha256(f)).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 });
 
-test("a dead process is not alive", () => {
+test("a_dead_process_is_not_alive: a dead process is not alive", () => {
   expect(alive(process.pid)).toBe(true);
   expect(alive(4_294_967_295)).toBe(false);
 });

@@ -8,7 +8,7 @@ import { FakeHost, cleanup, configFor, makeInstall, makeKey, tmp } from "./suppo
 
 afterEach(cleanup);
 
-test("the video player comes only when it changed", () => {
+test("the_video_player_comes_only_when_it_changed: the video player comes only when it changed", () => {
   const d = tmp();
   expect(videoStale(d, "")).toBe(true);
   expect(videoStale(d, "abc")).toBe(true);
@@ -19,7 +19,7 @@ test("the video player comes only when it changed", () => {
   expect(videoStale(d, "")).toBe(false);
 });
 
-test("the browser engine rules: missing, refreshed, kept after a restore, turned off, unsupported", () => {
+test("browser_engine_rules: the browser engine rules: missing, refreshed, kept after a restore, turned off, unsupported", () => {
   const cfg = configFor(null);
   expect(retryAfter(1)).toBe(300_000);
   expect(retryAfter(2)).toBe(600_000);

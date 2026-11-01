@@ -26,7 +26,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
   (`harbor.ts` has the command; `speech-worker.ts` exports `runSpeechWorker`). `hub.ts` calls it at start.
 - `hub.ts`: `dictate.setAccount` is wired to this PC's `claude` account (installed, signed in), through `recap.askWithin`, and is
   refreshed with the account list every minute, as `voice.rs` does each tick. The Rust code also checks the account is not
-  blocked by a usage limit; the hub has no limits state yet, so that check is missing.
+  blocked by a usage limit; the Engine now holds the limits state and `hub.ts` checks it.
 - `packages/store/test/real.test.ts`: no longer skipped when the real-db copy is absent; it builds a synthetic database instead.
 - `packages/store/src/store.ts`: a failed transcript save is logged to stderr; it was silent.
 - `test/pty.test.ts`: the bash it starts wrote the owner's `~/.bash_history`; it now runs with `HISTFILE=/dev/null`.
@@ -56,7 +56,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 
 ## Unwired (honest, but not done)
 
-- Dictation: `dictate.Mesh` is wired in `hub.ts`, but `Ask` only reaches `claude`; a usage-limit block is not checked (above). The hub's Engine does not hold a `Limits` state yet (`store.limits.Limits` needs an `EngineHost`).
+- Dictation: `dictate.Mesh` is wired in `hub.ts`; `Ask` reaches only `claude`, and not while a usage limit blocks it (the Engine holds store's `Limits` now).
 - `packages/media`: Whisper (built-in) never ran against a real model; `voice::builtin_downloads_and_transcribes` is ported up to the
   download. Owner: media.
 
@@ -65,7 +65,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 114 in `src/`. All of media, mcp, net, store and ui carry a reason comment and mirror Rust's `let _ = …` best-effort calls (kill a
 group, chmod, remove a temp file, parse an optional file). Without a reason comment (review each; most are the same kind):
 
-- agents (44): `agents/src/agent.ts:171`, `agents/src/detach.ts:184`, `agents/src/detach.ts:209`, `agents/src/detach.ts:277`, `agents/src/detach.ts:342`, `agents/src/detach.ts:372`, `agents/src/detach.ts:386`, `agents/src/detach.ts:419`, `agents/src/detach.ts:456`, `agents/src/detach.ts:476`, `agents/src/detach.ts:517`, `agents/src/detach.ts:636`, `agents/src/detach.ts:647`, `agents/src/detach.ts:726`, `agents/src/detach.ts:743`, `agents/src/detach.ts:771`, `agents/src/detach.ts:787`, `agents/src/detach.ts:793`, `agents/src/engine.ts:334`, `agents/src/engine.ts:683`, `agents/src/engine.ts:778`, `agents/src/engine.ts:785`, `agents/src/engine.ts:853`, `agents/src/engine.ts:860`, `agents/src/engine.ts:914`, `agents/src/flock.ts:16`, `agents/src/fork.ts:89`, `agents/src/git.ts:125`, `agents/src/movechat.ts:12`, `agents/src/movechat.ts:57`, `agents/src/movechat.ts:83`, `agents/src/oauth.ts:52`, `agents/src/oauth.ts:113`, `agents/src/oauth.ts:136`, `agents/src/procfs.ts:119`, `agents/src/procs.ts:58`, `agents/src/procs.ts:116`, `agents/src/providers.ts:204`, `agents/src/providers.ts:282`, `agents/src/providers.ts:355`, `agents/src/recap.ts:259`, `agents/src/work.ts:22`, `agents/src/worktree.ts:245`, `agents/src/worktree.ts:548`
+- agents: none left; each of the 44 now says why its failure can be ignored.
 - update (1): `update/src/extras.ts:61`
 
 ## Personal data the hook misses
