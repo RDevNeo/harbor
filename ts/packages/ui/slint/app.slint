@@ -1017,11 +1017,13 @@ export component AppWindow inherits Window {
         }
     }
 
+    // pages.rs `dialogs`: egui's Modal, 512px of content for forms and 448 for confirms, 24px margins,
+    // a 20px title, the close button in its corner; egui's 8px item spacing comes on top of each gap.
     if root.dialog-id != "": Rectangle {
         background: black.with-alpha(0.5);
         TouchArea { }
         Rectangle {
-            width: min(440px, root.width - 32px);
+            width: min((root.dialog-has-input ? 512px : 448px) + 50px, root.width - 32px);
             height: dialog-body.preferred-height;
             background: Theme.bg100;
             border-width: 1px;
@@ -1031,14 +1033,16 @@ export component AppWindow inherits Window {
             drop-shadow-blur: 28px;
             drop-shadow-color: black.with-alpha(Theme.dark ? 56 / 255 : 20 / 255);
             dialog-body := VerticalLayout {
-                padding: 24px;
-                spacing: 12px;
+                padding: 25px;
                 Text {
                     text: root.dialog-title;
-                    font-size: 16px;
+                    font-size: 20px;
                     font-weight: 600;
-                    letter-spacing: -0.32px;
+                    letter-spacing: -0.4px;
                     color: Theme.fg;
+                }
+                if root.dialog-text != "" || root.dialog-has-input: Rectangle {
+                    height: root.dialog-has-input ? 20px : 12px;
                 }
                 if root.dialog-text != "": Text {
                     text: root.dialog-text;
@@ -1054,6 +1058,9 @@ export component AppWindow inherits Window {
                     init => {
                         self.focus-field();
                     }
+                }
+                Rectangle {
+                    height: 24px;
                 }
                 HorizontalLayout {
                     alignment: end;
@@ -1071,6 +1078,21 @@ export component AppWindow inherits Window {
                             root.dialog-done(root.dialog-id, true);
                         }
                     }
+                }
+            }
+            close-x := TouchArea {
+                x: parent.width - 37px;
+                y: 17px;
+                width: 28px;
+                height: 28px;
+                mouse-cursor: pointer;
+                clicked => {
+                    root.dialog-done(root.dialog-id, false);
+                }
+                Glyph {
+                    icon: Icons.x;
+                    size: 16px;
+                    color: close-x.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
                 }
             }
         }

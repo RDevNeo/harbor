@@ -1563,7 +1563,7 @@ export class Shell {
   private renameDialog(id: number): void {
     const c = this.data.chat(id);
     if (!c) return;
-    this.dialog("Rename chat", "", "Rename", false, c.title, (ok, title) => {
+    this.dialog("Rename chat", "", "Salvar Alterações", false, c.title, (ok, title) => {
       if (!ok || title.trim() === "") return;
       c.title = title.trim();
       this.data.saveChat(c);
@@ -1574,7 +1574,7 @@ export class Shell {
   private deleteDialog(id: number): void {
     const c = this.data.chat(id);
     if (!c) return;
-    this.dialog("Delete chat?", `"${c.title}" and its transcript are deleted from this PC.`, "Delete", true, null, (ok) => {
+    this.dialog("Delete chat?", "The transcript is removed from Harbor. The provider's session stays on disk.", "Delete", true, null, (ok) => {
       if (!ok) return;
       this.data.deleteChat(id);
       if (this.view === "chat" && this.chatId === id) this.newDraft(c.repoId);
@@ -1585,7 +1585,7 @@ export class Shell {
   private removeRepoDialog(id: number): void {
     const r = this.data.repo(id);
     if (!r) return;
-    this.dialog("Remove project?", `${r.name} leaves Harbor with its chats. Its folder stays on disk.`, "Remove", true, null, (ok) => {
+    this.dialog("Remove project?", "Its chats are removed from Harbor. Nothing on disk is touched.", "Remove", true, null, (ok) => {
       if (!ok) return;
       this.data.removeRepo(id);
       if (this.draftRepo === id) this.draftRepo = null;
