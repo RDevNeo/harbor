@@ -1,7 +1,9 @@
 #!/bin/bash
-# Run inside `unshare -Urn` only: one synthetic harbor.db and identity served by the Rust hub, then by
+# Run inside `unshare -Urnm` only: one synthetic harbor.db and identity served by the Rust hub, then by
 # `harbor --background`, and their phone API answers compared (loopback, a pairing token from before accounts).
 set -u
+mount -t sysfs sysfs /sys 2>/dev/null
+[ "$(ls /sys/class/net)" = lo ] || { echo "refused: run inside unshare -Urnm (a network namespace with only lo)" >&2; exit 3; }
 ip link set lo up
 T=${RIG_TMP:?a scratch folder}; rm -rf $T; mkdir -p $T/a/{home,data,state,cfg,cache,run}; chmod 700 $T/a/run
 B=${HARBOR_REF:?a Rust harbor binary}; BUN=${BUN:-$(command -v bun)}; TS=$(cd "$(dirname "$0")/../../.." && pwd)

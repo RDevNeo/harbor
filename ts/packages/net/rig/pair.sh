@@ -1,6 +1,8 @@
 #!/bin/bash
-# Run inside `unshare -Urn` only: pairing by code between the Rust app and the TypeScript CLI, both ways.
+# Run inside `unshare -Urnm` only: pairing by code between the Rust app and the TypeScript CLI, both ways.
 set -u
+mount -t sysfs sysfs /sys 2>/dev/null
+[ "$(ls /sys/class/net)" = lo ] || { echo "refused: run inside unshare -Urnm (a network namespace with only lo)" >&2; exit 3; }
 ip link set lo up
 T=${RIG_TMP:?a scratch folder}; rm -rf $T; mkdir -p $T
 B=${HARBOR_REF:?a Rust harbor binary}; BUN=${BUN:-$(command -v bun)}; TS=$(cd "$(dirname "$0")/../../.." && pwd)

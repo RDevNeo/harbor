@@ -1,7 +1,7 @@
 # @harbor/net: progress
 
 Phase 2 (network). Every test runs on loopback with throwaway keys; Rust interop runs only inside
-`unshare -Urn` (`rig/mesh.sh`, `rig/phone.sh`) with a temp XDG tree, a synthetic db and a throwaway
+`unshare -Urnm` (`rig/mesh.sh`, `rig/phone.sh`) with a temp XDG tree, a synthetic db and a throwaway
 identity. Nothing here has talked to the real mesh, relay, account service or Clerk.
 
 ## Phase 2 checkboxes
