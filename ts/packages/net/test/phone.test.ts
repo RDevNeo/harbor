@@ -60,6 +60,38 @@ describe("the phone API's chats (api.rs App side)", () => {
     );
   });
 
+  test("media_on_the_wire", () => {
+    const m = (path: string, caption: string, video: boolean, shown: boolean) => ({ path, caption, video, shown, url: null });
+    const refs = {
+      strip: (md: string) => md.replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim(),
+      parts: (md: string) => md.split(/\n\n/).map((t) => (/^!\[[^\]]*\]\([^)]*\)$/.test(t.trim()) ? { type: "media" as const, text: t } : { type: "text" as const, text: t })),
+    };
+    const text = "See the chart\n\n![Chart](out/c.png)\n\nand the run\n\n![](/v/run.mp4)\n\nAlso /tmp/x.png";
+    const cards = project([{ kind: "text", text, at: 1 }], false, []);
+    const find = (t: string) =>
+      t.includes("c.png") && !t.includes("run.mp4") ? [m("/p/out/c.png", "Chart", false, true)] : t.includes("run.mp4") && !t.includes("c.png") ? [m("/v/run.mp4", "", true, true)] : [m("/p/out/c.png", "Chart", false, true), m("/v/run.mp4", "", true, true), m("/tmp/x.png", "", false, false)];
+    const v = cardJson(cards[0] as (typeof cards)[number], 3, find, "g1", clock, refs);
+    expect(v.media).toEqual([
+      { name: "c.png", caption: "Chart", kind: "image", url: "/v1/image?path=%2Fp%2Fout%2Fc.png&max=512&chat=g1", after: 1 },
+      { name: "run.mp4", caption: "", kind: "video", url: "/v1/media?path=%2Fv%2Frun.mp4&chat=g1", poster: "/v1/image?path=%2Fv%2Frun.mp4&max=512&chat=g1", after: 2 },
+    ]);
+    expect(v.images).toHaveLength(2);
+    expect(JSON.stringify(v.blocks)).not.toContain("c.png");
+    expect(v.markdown).toContain("![Chart](out/c.png)");
+    const plain = project([{ kind: "text", text: "hi", at: 1 }], false, []);
+    expect(cardJson(plain[0] as (typeof plain)[number], 1, () => [], "1").media).toBeUndefined();
+  });
+
+  test("items_on_the_wire (without usertext parts)", () => {
+    const cards = project([{ kind: "user", text: "hi", files: ["/a/b/photo.jpg", "/a/notes.txt"], at: 5, mentions: [], sender: "", intent: "" }], false, []);
+    const v = cardJson(cards[0] as (typeof cards)[number], 9, () => [], "1");
+    expect([v.kind, v.seq, v.rev]).toEqual(["user", 0, 9]);
+    expect(v.files).toEqual(["notes.txt"]);
+    expect(v.images).toEqual([{ name: "photo.jpg", url: "/v1/image?path=%2Fa%2Fb%2Fphoto.jpg&max=512&chat=1" }]);
+    expect([v.actions, typeof v.time]).toEqual([["copy", "quote", "mention"], "string"]);
+    expect(v.parts).toBeUndefined();
+  });
+
   test("a signed-in phone over pinned TLS starts a chat, reads it, sends, and hears of the reply", async () => {
     const hubId = generateIdentity();
     const phoneId = generateIdentity();

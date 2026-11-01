@@ -46,6 +46,7 @@ export interface PhoneDeps {
   app?: () => { version_code: number; url: string };
   /** The user-facing local time of a unix second, "11:40 AM" (team.rs `clock`). */
   clock?: (at: number) => string;
+  refs?: MediaRefs;
 }
 
 export function clock(at: number): string {
@@ -80,7 +81,7 @@ export function mediaUrl(path: string): string {
 }
 
 function mediaName(m: Media): string {
-  return m.caption !== "" ? m.caption : fileName(m.url ?? m.path);
+  return fileName((m.url ?? m.path).split(/[?#]/)[0] ?? m.path);
 }
 
 function mediaJson(m: Media): Record<string, Json> {
@@ -99,11 +100,19 @@ function mentionJson(m: { from: string; text: string; excerpt: boolean; note: st
   return v;
 }
 
+/** How a reply's markdown images are told apart (media.rs `strip_refs`, `parts`). */
+export interface MediaRefs {
+  strip(md: string): string;
+  parts(md: string): { type: "text" | "media"; text: string }[];
+}
+
 /** One card for the phone (api.rs `card_json`), its image addresses naming `chat`. */
-export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock): Record<string, Json> {
+export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null): Record<string, Json> {
   const all = cardMedia(s.card, find);
   const images: Json[] = all.filter((m) => !m.video).map((m) => ({ name: m.url !== null ? mediaName(m) : fileName(m.path), url: imageUrl(m.path) }));
-  const media = all.filter((m) => m.shown || m.video).map(mediaJson);
+  const large = all.filter((m) => m.shown || m.video);
+  const media = large.map(mediaJson);
+  const placed: [string, number][] = [];
   const c = s.card;
   let v: Record<string, Json>;
   switch (c.kind) {
@@ -114,9 +123,19 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       v = { text: c.text, files: c.files.map(fileName), images, mentions: c.mentions.map(mentionJson), at: c.at, sender: c.sender };
       if (c.intent !== "") v.intent = c.intent;
       break;
-    case "text":
-      v = { markdown: c.text, blocks: blocks(c.text) as Json, images, at: c.at, forkable: c.forkable };
+    case "text": {
+      const label = (md: string) => (refs ? refs.strip(md) : md);
+      const ps = refs ? refs.parts(c.text) : [];
+      if (ps.length > 1) {
+        let n = 0;
+        for (const p of ps) {
+          if (p.type === "text") n += blocks(label(p.text)).length;
+          else for (const m of find(p.text)) if (m.shown) placed.push([m.path, n]);
+        }
+      }
+      v = { markdown: c.text, blocks: blocks(label(c.text)) as Json, images, at: c.at, forkable: c.forkable };
       break;
+    }
     case "thinking":
       v = { text: c.text };
       break;
@@ -147,6 +166,11 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       for (const k of ["url", "poster"]) if (typeof o[k] === "string") o[k] = `${o[k]}&chat=${urlEncode(chat)}`;
     }
   }
+  large.forEach((m, i) => {
+    const at = placed.find(([p]) => p === m.path);
+    const j = media[i];
+    if (at && j) j.after = at[1];
+  });
   if (media.length > 0) v.media = media;
   v.kind = c.kind;
   const acts = actions(c);
@@ -326,7 +350,7 @@ export class PhoneRoutes {
     const out = cards
       .filter((s) => (revs[s.seq]?.[1] ?? 0) > since)
       .map((s) => {
-        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock);
+        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null);
         if (v.kind === "chat_link") v.chat = this.chats().find((x) => x.gid === v.gid)?.id ?? null;
         return v;
       });

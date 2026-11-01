@@ -27,16 +27,18 @@ identity. Nothing here has talked to the real mesh, relay, account service or Cl
 | --- | --- | --- | --- |
 | tls | done | 10/10 | node:tls; a stranger from the internet is cut right after the handshake (node can't fail it inside) |
 | api (network side) | done | 22/35 | listener, refusals, limits, auth, long-poll, typing/drafts, inbox, uploads, files by range |
-| api (app side) | partial | 4 of the 13 left (blocks) | phone.ts: state, items, send, create, rename, delete, stop; card `parts` (usertext), commits, media placement, check_run not ported |
-| mesh | done but legacy | 12/13 | pairing, hello, events, chats, items, call, lease, phones, revoke, upload, workers, relays, hubs; the pre-0.13 Tailscale `enroll` path is not ported (`upgrade_from_tailscale`) |
+| api (app side) | partial | 6 of the 13 left (blocks, media and items on the wire) | phone.ts: state, items, send, create, rename, delete, stop; card `parts` (usertext), commit pills and check_run not ported |
+| mesh | done but legacy | 11/12 | pairing, hello, events, chats, items, call, lease, phones, revoke, upload, workers, relays, hubs; the pre-0.13 Tailscale `enroll` path is not ported (`upgrade_from_tailscale`) |
 | relay | done | 1/1 | `harbor nc` CLI itself belongs to the cli item |
 | discover | done | 1/1 | |
 | portmap | done | 6/6 | |
 | account | done | 4/4 | |
-| chatlink, versions, notify, profile | done | 2/2, 2/2, 5/5, 4/4 | helpers' work, reviewed by test names only |
-| remote | done | 20/20 | helper's work |
-| meshctx, movepc, relocate, clone, devices | see the helper report in the lead's summary | | |
+| chatlink, versions, notify, profile | done | 2/2, 2/2, 5/5, 4/4 | |
+| remote | done | 20/20 | |
+| meshctx, movepc, relocate, clone, devices | done | 4/4, 6/6, 4/4, 5/5, 5/5 | ssh, git, tar behind an injected runner; Devices' egui page not ported; JPEG to the clipboard needs a converter passed in |
 | view (ui module, ported here) | done | 9/9 | phones and the desktop share it |
+
+Totals: 118 of 126 (api.rs 28 of 35) Rust tests of the package's modules ported (plus view.rs's 9); 276 bun tests pass.
 
 ## Decisions
 

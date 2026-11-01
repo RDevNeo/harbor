@@ -23,6 +23,8 @@ export type Card =
   | { kind: "message"; from: string; to: string; text: string }
   | { kind: "error"; text: string };
 
+export type CardKind = Card["kind"];
+
 export type Action = "copy" | "quote" | "fork" | "mention";
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -31,6 +33,10 @@ export const ACTION_LABELS: Record<Action, string> = {
   fork: "Fork from this response",
   mention: "Mention in your next message",
 };
+
+export function actionLabel(a: Action): string {
+  return ACTION_LABELS[a];
+}
 
 /** A card's actions in the hover bar's order. */
 export function actions(c: Card): Action[] {
