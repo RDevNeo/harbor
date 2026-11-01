@@ -1,7 +1,7 @@
-import { blankChat, itemHash, type Chat, type Item, type Store } from "@harbor/store";
+import { blankChat, itemHash, mention, parseAccess, type Chat, type Item, type Mention, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
-import { deviceId, draftJson, type Hub } from "./hub.ts";
+import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { forHome, type Mesh } from "./mesh.ts";
 import type { StoreReplica } from "./meshstore.ts";
@@ -11,12 +11,21 @@ import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 
 const CLIP = 16 << 10;
 
-/** What the agents do for the phone routes (the agents package). */
-export interface PhoneAgents {
-  running(chat: number): boolean;
-  /** A message to one of this PC's chats: starts a turn, or steers/queues behind a running one. */
-  send(chat: Chat, text: string, files: string[], mode: "steer" | "queue" | null, sender: string): Promise<{ queued: boolean; steering: boolean }>;
-  stop(chat: Chat): Promise<void>;
+/** `@harbor/agents`' Engine as far as the phone routes use it. */
+export interface PhoneEngine {
+  running(id: number): boolean;
+  runningSince(id: number): number | null;
+  transcript(id: number): { items: Item[] };
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string }): void;
+  stop(id: number): void;
+  queued(id: number): readonly { intent: string; text: string; files: string[] }[];
+  takeQueue(id: number): { text: string; files: string[] }[];
+  queueJson(id: number): unknown[];
+  steering(id: number): string;
+  followDefault(): string;
+  held(id: number): boolean;
+  newThread(repo: number | null, first: string, sel: { account: string; model: string; effort: string; access: string; device: string }): Chat;
+  reload(): void;
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -58,7 +67,8 @@ export interface PhoneDeps {
   mesh: Mesh | null;
   version: string;
   myFp: () => string;
-  agents: PhoneAgents | null;
+  engine: PhoneEngine | null;
+  uploadsDir?: string;
   catalog?: Catalog;
   /** `voice` in `/v1/state`: whether this PC transcribes a phone's recording, and in which language. */
   voice?: () => { transcribe: boolean; why: string | null; lang: string };
@@ -241,7 +251,7 @@ export class PhoneRoutes {
 
   private running(c: Chat): boolean {
     if (c.home !== "") return this.d.replica.remote.get(c.id)?.running ?? false;
-    return this.d.agents?.running(c.id) ?? false;
+    return this.d.engine?.running(c.id) ?? false;
   }
 
   private typing(chat: number): Json[] {
@@ -260,11 +270,24 @@ export class PhoneRoutes {
     return dr ? draftJson(dr) : null;
   }
 
-  private status(c: Chat): Json {
+  /** api.rs `api_status`: the bars under the transcript; a copy's as its home PC says them. */
+  status(id: number): Json {
+    const c = { id };
     const r = this.d.replica.remote.get(c.id);
     if (r) return r.status;
-    const live = this.d.agents?.running(c.id) ?? false;
-    return { queue: [], working: live ? { since_ms: Date.now(), subagents: 0, text: "Working…" } : null, waiting: null, limit: null, agents: null, folder: null, can_steer: false, held: false, follow_up: "steer" };
+    const e = this.d.engine;
+    const since = e?.runningSince(c.id) ?? null;
+    return {
+      queue: (e?.queueJson(c.id) ?? []) as Json[],
+      working: since === null ? null : { since_ms: since, subagents: 0, text: "Working…" },
+      waiting: null,
+      limit: null,
+      agents: null,
+      folder: null,
+      can_steer: e !== null && e.steering(c.id) !== "no",
+      held: e?.held(c.id) ?? false,
+      follow_up: e?.followDefault() ?? "steer",
+    };
   }
 
   private idOf(c: Chat, global: boolean): Json {
@@ -419,7 +442,7 @@ export class PhoneRoutes {
 
   items(c: Chat, since: number): Json {
     const hub = this.d.hub;
-    const items: Item[] = this.d.store.items(c.id);
+    const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
     const forks = this.d.replica.remote.get(c.id)?.forks ?? [];
     const cards = project(items, c.role === "lead", forks);
     const revs = this.revs.get(c.id) ?? [];
@@ -448,7 +471,7 @@ export class PhoneRoutes {
         if (v.kind === "chat_link") v.chat = this.chats().find((x) => x.gid === v.gid)?.id ?? null;
         return v;
       });
-    return { rev: hub.rev(), count: items.length, running: this.running(c), queued: 0, typing: this.typing(c.id), draft: this.draft(c.id), status: this.status(c), items: out };
+    return { rev: hub.rev(), count: items.length, running: this.running(c), queued: 0, typing: this.typing(c.id), draft: this.draft(c.id), status: this.status(c.id), items: out };
   }
 
   /** api.rs `api_route` for the calls this build answers. */
@@ -469,10 +492,13 @@ export class PhoneRoutes {
     }
     if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender);
     if (m === "POST" && p.length === 4 && p[3] === "stop") {
-      if (!this.d.agents) return err(503, "agents aren't available in this build");
-      await this.d.agents.stop(c);
+      const e = this.d.engine;
+      if (!e) return err(503, "agents aren't available in this build");
+      const hold = body.hold === true;
+      e.stop(c.id);
+      const returned = hold ? [] : e.takeQueue(c.id).map((q) => ({ text: q.text, files: q.files.map((f) => this.uploadId(f)).filter((x): x is string => x !== null) }));
       this.d.hub.touch(c.id, true);
-      return ok({ ok: true, returned: [], held: body.hold === true });
+      return ok({ ok: true, returned, held: hold });
     }
     if (m === "PATCH" && p.length === 3) {
       if (typeof body.title === "string" && body.title.trim() !== "") {
@@ -482,27 +508,46 @@ export class PhoneRoutes {
       return ok({ ok: true });
     }
     if (m === "DELETE" && p.length === 3) {
-      if (this.d.agents?.running(c.id)) return err(409, "the chat is running: stop it first");
+      if (this.d.engine?.running(c.id)) return err(409, "the chat is running: stop it first");
       this.d.store.deleteChat(c.id);
       const rev = this.d.hub.touch(null, true);
       this.d.hub.mesh.gone.push([rev, c.id]);
       this.d.replica.reload();
+      this.d.engine?.reload();
       return ok({ ok: true });
     }
     return err(404, "no such call");
   }
 
-  private async send(c: Chat, body: Record<string, unknown>, sender: string): Promise<Reply> {
-    const text = typeof body.text === "string" ? body.text : "";
-    const files = Array.isArray(body.files) ? body.files.filter((f): f is string => typeof f === "string") : [];
-    if (text.trim() === "" && files.length === 0) return err(400, "an empty message");
-    if (c.retired) return err(409, "this agent was retired: its chat is read-only");
-    if (!this.d.agents) return err(503, "agents aren't available in this build");
-    const mode = body.mode === "steer" || body.mode === "queue" ? body.mode : null;
-    const r = await this.d.agents.send(c, text, files, mode, sender);
+  private uploadId(path: string): string | null {
+    const dir = this.d.uploadsDir;
+    if (!dir || !path.startsWith(`${dir}/`)) return null;
+    const rel = path.slice(dir.length + 1);
+    return resolveUpload(dir, rel) === null ? null : rel;
+  }
+
+  private async send(c: Chat, body: Record<string, unknown>, sender: string, device = ""): Promise<Reply> {
+    const text = typeof body.text === "string" ? body.text.trim() : "";
+    const files: string[] = [];
+    for (const f of Array.isArray(body.files) ? body.files : []) {
+      const id = typeof f === "string" ? f : "";
+      const path = this.d.uploadsDir ? resolveUpload(this.d.uploadsDir, id) : null;
+      if (path === null) return err(400, `unknown upload ${id}`);
+      files.push(path);
+    }
+    if (text === "" && files.length === 0) return err(400, "nothing to send");
+    if (c.retired) return err(409, "this agent was retired");
+    const e = this.d.engine;
+    if (!e) return err(503, "agents aren't available in this build");
+    const before = e.queued(c.id).filter((q) => q.intent === "").length;
+    const running = e.running(c.id);
+    const mode = body.mode === "steer" ? "steer" : "queue";
+    const mentions = (Array.isArray(body.mentions) ? body.mentions : []).map((m) => mention(typeof m === "object" && m !== null ? (m as Partial<Mention>) : {}));
     this.d.hub.clearDraft(c.id);
+    e.send(c.id, text, { files, mentions, mode, sender, device });
+    const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;
     this.d.replica.touch(c.id);
-    return ok({ ok: true, queued: r.queued, steering: r.steering });
+    return ok({ ok: true, queued, steering: running && !queued && c.home === "" });
   }
 
   private async create(body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
@@ -514,9 +559,13 @@ export class PhoneRoutes {
     const s = (k: string, d: string) => (typeof body[k] === "string" ? (body[k] as string) : d);
     const text = s("text", "");
     const title = s("title", "") || text.split("\n")[0]?.trim().slice(0, 80) || "New chat";
-    const c = this.d.store.createChat(
-      blankChat({ repoId: repo?.id ?? null, title, account: s("account", p?.account ?? "claude"), model: s("model", p?.model ?? ""), effort: s("effort", p?.effort ?? ""), role: "lead", name: "lead" }),
-    );
+    const sel = { account: s("account", p?.account ?? "claude"), model: s("model", p?.model ?? ""), effort: s("effort", p?.effort ?? ""), access: s("access", p?.access ?? "full"), device: s("device", p?.device ?? "") };
+    const e = this.d.engine;
+    const c = e ? e.newThread(repo?.id ?? null, text, sel) : this.d.store.createChat(blankChat({ repoId: repo?.id ?? null, title, ...sel, access: parseAccess(sel.access), role: "lead", name: "lead" }));
+    if (typeof body.title === "string" && body.title.trim() !== "" && c.title !== body.title.trim()) {
+      this.d.store.saveChat({ ...c, title: body.title.trim() });
+      e?.reload();
+    }
     this.d.replica.touch(c.id);
     if (text.trim() !== "") {
       const sent = await this.send(c, { text, files: body.files ?? [] }, sender);

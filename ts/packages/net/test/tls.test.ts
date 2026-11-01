@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect as tcpConnect, type AddressInfo, type Server } from "node:net";
-import { connect as rawTls, type TLSSocket } from "node:tls";
+import { createSecureContext, connect as rawTls, type TLSSocket } from "node:tls";
 import {
   accept,
   certFp,
@@ -105,6 +105,13 @@ describe("identity (tls.rs)", () => {
     expect(new Date(x.validFrom).getUTCFullYear()).toBe(2025);
     expect(new Date(x.validTo).getUTCFullYear()).toBe(2125);
     expect(x.verify(x.publicKey)).toBe(true);
+  });
+
+  test("every new certificate loads (a serial is minimal DER)", () => {
+    for (let i = 0; i < 600; i++) {
+      const id = generateIdentity();
+      expect(() => createSecureContext({ key: id.key, cert: id.cert })).not.toThrow();
+    }
   });
 
   test("identity_file_is_private_and_kept", () => {

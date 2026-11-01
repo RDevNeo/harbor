@@ -136,7 +136,8 @@ export function generateIdentity(): Identity {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const name = seq(der(0x31, seq(COMMON_NAME, der(0x0c, ascii("Harbor")))));
   const serial = randomBytes(16);
-  serial[0] = (serial[0] ?? 0) & 0x7f;
+  // DER wants a positive serial without a leading zero byte: BoringSSL refuses a padded one.
+  serial[0] = ((serial[0] ?? 0) & 0x7f) | 0x01;
   const tbs = seq(
     der(0xa0, der(0x02, Uint8Array.of(2))),
     der(0x02, serial),

@@ -36,7 +36,7 @@ for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:47930/ && break; sl
 for c in 1 2; do get 47930 "/v1/chats/$c/items?since=0" $T/rust-$c.json; done
 get 47930 /v1/state $T/rust-state.json
 kill $PA; wait $PA 2>/dev/null
-(cd $TS && env $A $BUN harbor.ts --background > $T/t.log 2>&1) & PT=$!
+(cd $TS && exec env $A $BUN harbor.ts --background > $T/t.log 2>&1) & PT=$!
 for i in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:47930/ && break; sleep 0.2; done
 for c in 1 2; do get 47930 "/v1/chats/$c/items?since=0" $T/ts-$c.json; done
 get 47930 /v1/state $T/ts-state.json

@@ -36,6 +36,8 @@ export interface StoreReplicaOptions {
   /** The app's phone-API routes, for `POST /mesh/v1/call`. */
   route?: (call: Call) => Promise<Reply>;
   live?: (chat: number) => LiveChat | null;
+  /** A chat's items as they are now (the Engine's transcript while it streams); else the store's. */
+  items?: (chat: number) => Item[];
   accounts?: () => Json[];
   update?: () => Json;
   about?: () => { owner: string; github: string; owner_suggested: boolean };
@@ -96,6 +98,10 @@ export class StoreReplica implements MeshApp {
     }
   }
 
+  private itemsOf(chat: number): Item[] {
+    return this.o.items?.(chat) ?? this.o.store.items(chat);
+  }
+
   /** One of this PC's chats changed (its items or settings): peers and phones hear of it. */
   touch(chat: number): void {
     this.reload();
@@ -119,7 +125,7 @@ export class StoreReplica implements MeshApp {
   private chatJson(c: Chat, full: boolean): Json {
     const hub = this.o.hub;
     const r = c.repoId === null ? null : (this.repos.find((x) => x.id === c.repoId) ?? null);
-    const items = this.o.store.items(c.id);
+    const items = this.itemsOf(c.id);
     const live = this.o.live?.(c.id) ?? null;
     const typing = hub.typing(c.id).map((t) => {
       const v: Record<string, Json> = { device: t.device, kind: t.kind, label: t.label };
@@ -173,7 +179,7 @@ export class StoreReplica implements MeshApp {
     const c = this.list.find((x) => x.id === chat) ?? this.o.store.chats().find((x) => x.id === chat);
     if (!c || c.home !== "") return null;
     const hub = this.o.hub;
-    const items = this.o.store.items(chat);
+    const items = this.itemsOf(chat);
     const at = hub.chatRev(chat);
     const revs = this.revs.get(chat) ?? [];
     const fresh = this.looked.get(chat) === at && revs.length === items.length && at !== 0;

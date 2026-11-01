@@ -13,8 +13,10 @@ identity. Nothing here has talked to the real mesh, relay, account service or Cl
   pinned TLS 1.2 refused for another device/workspace, then state → new chat → items → send → long-poll
   → rename → delete (`test/phone.test.ts`); and `rig/phone.sh`: one synthetic db and identity served
   by the Rust hub, then by `harbor --background` (ts/hub.ts), give byte-identical `GET /v1/state` and
-  `GET /v1/chats/{id}/items` (revisions aside; no provider CLI installed in the namespace). Send and
-  stop still answer 503 until the agents Engine is wired; update banners wait on @harbor/update.
+  `GET /v1/chats/{id}/items` (revisions aside; no provider CLI installed in the namespace). Send, stop
+  and new chats go through @harbor/agents' Engine: `rig/turn.sh` starts a chat over the phone API on
+  `harbor --background` and a real Claude turn (Haiku, plan access, scratch project) answers in its
+  items. Update banners wait on @harbor/update.
 - [x] A Rust PC and a TypeScript PC see each other's chats, directly and through a relay (`rig/mesh.sh`,
   `RELAY=rust` and `RELAY=ts`): each holds the other's chat with its items, byte for byte.
 - [ ] Discovery, port mapping and account sign-in work. Ported and tested against fakes on loopback
@@ -50,8 +52,9 @@ Totals: 118 of 126 (api.rs 28 of 35) Rust tests of the package's modules ported 
 - Markdown blocks use markdown-it 15.0.3 (pinned); bare URLs are linked on spans, not by rewriting
   the markdown.
 - A request can carry the key it shows (`Dest.as`), so several PCs can run in one test process.
-- `PhoneRoutes` answers 503 "agents aren't available in this build" for send/stop without an agents
-  backend; `/v1/state` sends empty provider lists without a providers backend.
+- `PhoneRoutes` takes the Engine and the providers as interfaces (`PhoneEngine`, `Catalog`), so the
+  net package doesn't depend on @harbor/agents; `ts/hub.ts` passes them in.
+- A new certificate's serial is kept minimal DER: BoringSSL refused about one in 256 of the earlier ones.
 
 ## Blockers
 

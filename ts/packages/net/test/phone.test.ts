@@ -13,7 +13,7 @@ import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
 import { StoreReplica } from "../src/meshstore.ts";
-import { cardJson, catalogOf, clock, PhoneRoutes, type CatalogAccount } from "../src/phone.ts";
+import { cardJson, catalogOf, clock, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
 import { actions, project } from "../src/view.ts";
@@ -130,7 +130,7 @@ describe("the phone API's chats (api.rs App side)", () => {
     const accounts = [acct("claude", "Claude", "/bin/true"), acct("claude2", "Claude", "/bin/true"), acct("codex", "Codex", "/bin/true"), acct("gemini", "Gemini", null)];
     store.set("default_effort", "high");
     const catalog = catalogOf(providers, () => accounts, store);
-    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", agents: null, catalog });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog });
     expect(store.get("default_effort")).toBe(providers.defaultEffort("Claude"));
     const lead = store.createChat(blankChat({ title: "l", role: "lead", account: "claude", started: true }));
     const sub = store.createChat(blankChat({ title: "s", role: "sub", account: "codex", started: true }));
@@ -164,18 +164,26 @@ describe("the phone API's chats (api.rs App side)", () => {
     hub.mesh.me = { id: "pc:desk", name: "desk" };
     const replica = new StoreReplica({ store, hub, version: "0.0.0-test" });
     const sent: string[] = [];
-    const agents = {
+    const engine: PhoneEngine = {
       running: () => false,
-      send: async (c: Chat, text: string, _files: string[], _mode: "steer" | "queue" | null, sender: string) => {
-        sent.push(`${sender}: ${text}`);
-        const items = store.items(c.id);
-        store.saveItems(c.id, [...items, { kind: "user", text, files: [], at: 1761200000, mentions: [], sender, intent: "" }, { kind: "text", text: `**echo** ${text}`, at: 1761200001 }]);
-        return { queued: false, steering: false };
+      runningSince: () => null,
+      transcript: (id) => ({ items: store.items(id) }),
+      send: (id, text, o) => {
+        sent.push(`${o.sender ?? ""}: ${text}`);
+        store.saveItems(id, [...store.items(id), { kind: "user", text, files: [], at: 1761200000, mentions: [], sender: o.sender ?? "", intent: "" }, { kind: "text", text: `**echo** ${text}`, at: 1761200001 }]);
       },
-      stop: async () => {},
+      stop: () => {},
+      queued: () => [],
+      takeQueue: () => [],
+      queueJson: () => [],
+      steering: () => "no",
+      followDefault: () => "steer",
+      held: () => false,
+      newThread: (repo, first, sel) => store.createChat(blankChat({ repoId: repo, title: first.split("\n")[0] ?? "", account: sel.account, model: sel.model, role: "lead", name: "lead" })),
+      reload: () => {},
     };
     const mesh = new Mesh({ hub, kv: new MemKv(), id: () => hubId, app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
-    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-test", myFp: () => hubId.fp, agents });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-test", myFp: () => hubId.fp, engine, uploadsDir: tmp });
     const account = {
       isToken: isHarborToken,
       admit: (t: string, fp: string) => {

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { commits, providers } from "./packages/agents/src/index.ts";
+import { commits, Engine, providers } from "./packages/agents/src/index.ts";
 import { dictate, voice } from "./packages/media/src/index.ts";
 import {
   AccountService,
@@ -93,7 +93,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const meshAddrs = () => addrs().map((a) => (parseIp(a) ? hostPort(a, port) : a));
   const account = new AccountService({ kv: store, stateDir: state, identity: () => id, me: () => hub.mesh.me, addrs: meshAddrs, version: o.version, env });
   account.load();
+  let engine: Engine | null = null;
   const replica = new StoreReplica({
+    items: (chat) => (engine ? engine.transcript(chat).items : store.items(chat)),
+    live: (chat) => {
+      if (!engine) return null;
+      const since = engine.runningSince(chat);
+      return since === null ? null : { running: true, sinceMs: since, queued: engine.queued(chat).length, status: phone.status(chat) };
+    },
     store,
     hub,
     version: o.version,
@@ -121,7 +128,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mesh,
     version: o.version,
     myFp: () => id.fp,
-    agents: null,
+    engine: null,
+    uploadsDir,
     catalog,
     voice: () => ({ transcribe: true, why: null, lang: voice.config()[0] }),
     commits: (c) => {
@@ -131,6 +139,39 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
     },
   });
+  engine = new Engine({
+    store,
+    accounts: () => accounts,
+    changed: (chat) => {
+      hub.touch(chat, true);
+    },
+    isForeign: (chat) => hub.mesh.foreign.has(chat),
+    hostname: () => hub.mesh.me.name,
+    chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
+  });
+  const live = engine;
+  phone.d.engine = {
+    running: (id) => live.running(id),
+    runningSince: (id) => live.runningSince(id),
+    transcript: (id) => live.transcript(id),
+    send: (id, text, opts) => live.send(id, text, opts),
+    stop: (id) => live.stop(id),
+    queued: (id) => live.queued(id),
+    takeQueue: (id) => live.takeQueue(id),
+    queueJson: (id) => live.queueJson(id),
+    steering: (id) => live.steering(id),
+    followDefault: () => live.followDefault(),
+    held: (id) => live.queue.held.has(id),
+    newThread: (repo, first, sel) => live.newThread(repo, first, sel),
+    reload: () => live.reload(),
+  };
+  live.reattachTurns();
+  let engineTimer: ReturnType<typeof setTimeout> | null = null;
+  const engineTick = () => {
+    const next = live.tick();
+    engineTimer = setTimeout(engineTick, Math.min(Math.max(next ?? 1000, 50), 1000));
+  };
+  engineTick();
   const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
     on: () => hub.mesh.on,
     me: () => ({ name: hub.mesh.me.name }),
@@ -208,6 +249,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phone,
     stop: async () => {
       clearInterval(tick);
+      if (engineTimer) clearTimeout(engineTimer);
       clearInterval(refresh);
       mesh.stop();
       disc?.stop();
