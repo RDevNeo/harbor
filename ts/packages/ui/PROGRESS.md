@@ -82,11 +82,13 @@ need a second PC and the Discord host, so they are covered by tests and not show
 entries (project menu, palette, Providers' Sign in / Install / Add Claude account, Webhooks' Funnel
 steps, a PR's Check out) open a terminal tab in the bottom pane.
 
-Still missing (shown disabled, saying so):
-- The composer's device picker ("Run on"): it lists only This PC ("Devices aren't in the TypeScript app
-  yet"). net has the pieces (`remote.ts` remoteLaunch, `relocate.ts`, devices in the hub); the picker and
-  moving a started chat to or from an SSH device (relocate.rs) aren't wired. "Move to PC…" of a chat
-  that runs on such a device refuses with "bring it to this PC first".
+The composer's "Runs on" menu (remoteui.rs `device_menu`) lists this PC, the devices of Settings ›
+Devices and the PCs running Harbor, each greyed out with why it can't be picked; a draft keeps its pick
+(kv `default_device`), and a started chat moves there with its sessions (relocate.rs, `ts/runon.ts`;
+the phone's `PATCH /v1/chats/{id}` with `device` does the same). A turn of a chat on a device runs there
+over ssh (`remoteSpec` in `ts/hub.ts`). Checked in `packages/net/rig/runon.sh`: a started chat moves to
+an SSH device, a turn runs there, and it comes back with its session. The composer's chip keeps the house
+icon for every place (Rust draws the device's glyph and online dot).
 
 Rust tests of the shell's modules: 80 of 80 ported, all passing (71 here, view.rs's 9 in `@harbor/net`).
 Package total: 88 tests (17 new: markdown, the safe db copy, theme and icon generation, `.slint`

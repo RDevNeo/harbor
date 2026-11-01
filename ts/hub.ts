@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
+import { RunOn } from "./runon.ts";
 import { ProjectClones } from "./projectclones.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
-import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
+import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
@@ -26,6 +27,13 @@ import {
   err,
   hostPort,
   hostname,
+  hostLabel,
+  osLabel,
+  remoteDir,
+  shellFamily,
+  deviceNote,
+  deviceProfile,
+  profileSetup,
   http,
   Hub,
   placeOf,
@@ -86,7 +94,7 @@ import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/s
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec">;
 
 export interface HubOptions {
   version: string;
@@ -126,6 +134,7 @@ export interface RunningHub {
   phone: PhoneRoutes;
   engine: Engine;
   move: MovePc;
+  runOn: RunOn;
   funnel: Funnel;
   prs: chatpr.ChatPrs;
   account: AccountService;
@@ -411,6 +420,39 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   await remotes.refresh();
   const deviceList = (): [RemoteHost, boolean | null][] => remotes.devices(loadRemote(store), remotes.tailnetCached());
+  // remoteui.rs `remote_spec`: how a chat's turn reaches its device; null for this PC.
+  const remoteSpec = (chat: Chat, account: Account): agent.RemoteSpec | null => {
+    if (chat.device === "") return null;
+    const cfg = loadRemote(store);
+    const h = remotes.find(cfg, remotes.tailnetCached(), chat.device);
+    if (h === null) throw new Error("This chat's device isn't in Settings › Devices anymore. Add it again, or start a new chat on this PC.");
+    if (account.kind !== "Claude") throw new Error(`Only Claude Code runs on other devices so far; this chat uses ${account.kind}.`);
+    const repo = chat.repoId === null ? undefined : store.repos().find((r) => r.id === chat.repoId);
+    const project = repo ? repoDir(repo) : null;
+    const dir = remoteDir(home(), h, project);
+    if (h.os === "") void remotes.testOnce(cfg, h);
+    const os = h.os === "" ? "" : `It runs ${osLabel(h.os)}. `;
+    const commands = h.commands && chat.access !== "plan";
+    const bridgeText = !h.bridge ? "" : commands && h.device_files ? "Your MCP servers are the Harbor PC's, through a bridge; the `origin` server's run_command runs shell commands on the Harbor PC." : "Your MCP servers are the Harbor PC's, through a bridge.";
+    const base = `You run on the device '${hostLabel(h)}', started over SSH by Harbor on '${hostname()}', in ${dir}. ${os}The user talks to you through Harbor, usually at that PC; a message written on a phone or another PC says where it came from. ${h.device_files ? "Files, shell, git and builds are that device's. " : ""}Harbor's own tools (processes, agents, webhooks) act on the Harbor PC. ${bridgeText}`;
+    const token = oauth.token(account.configDir);
+    // With this PC's login the device's own profile is swapped for an empty one, and this PC's person's go in the note (meshctx.rs).
+    const guest = token !== null;
+    const note = guest ? `${base.trimEnd()}\n\n${deviceNote({ home: home(), hostname: hostname() }, project, !h.device_files)}` : base;
+    return {
+      ssh: remotes.sshOpts(cfg, h),
+      host: h.host,
+      name: hostLabel(h),
+      family: shellFamily(h.os),
+      dir,
+      setup: guest ? [{ kind: "guest", rel: deviceProfile(hub.mesh.me.id) }] : profileSetup(home(), account.configDir),
+      bridge: h.bridge,
+      commands,
+      workspace: !h.device_files,
+      token,
+      note: note.trim(),
+    };
+  };
   const blockerOf = (c: Chat): string | null => {
     const subs = store.chats().filter((x) => x.parent === c.id);
     const chats = [c, ...subs].map((x) => ({ id: x.id, name: x.name, device: x.device, claude: accounts.find((y) => y.id === x.account)?.kind === "Claude", running: engine?.running(x.id) ?? false }));
@@ -487,6 +529,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     isForeign: (chat) => hub.mesh.foreign.has(chat),
     hostname: () => hub.mesh.me.name,
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
+    remoteSpec,
     hookBase: () => hookcert.publicBase() ?? funnel.base,
     offline,
     turnEnded: (id) => prs.want(id, null),
@@ -543,6 +586,22 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   mover.load();
   move = mover;
+  const runOn = new RunOn({
+    store,
+    engine: live,
+    mover,
+    remotes,
+    meshOn: () => hub.mesh.on,
+    hosts: () => [...hub.mesh.peers.values()],
+    me: () => ({ name: hub.mesh.me.name, hostname: hostname() }),
+    accounts: () => accounts,
+    remoteSpec,
+    dataDir: dataDir(env),
+    home: home(),
+    overlays: () => overlays({ dataDir: dataDir(env) }),
+  });
+  mover.relocate = (chat, pc) => runOn.relocate(chat, pc);
+  phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc) => mover.movePc(chat, pc) };
   phone.d.engine = {
     running: (id) => live.running(id),
@@ -697,6 +756,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phone,
     engine: live,
     move: mover,
+    runOn,
     setBusyIn: (f) => {
       busyIn = f;
     },

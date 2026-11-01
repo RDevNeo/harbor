@@ -139,6 +139,8 @@ export async function runApp(o: RunOptions): Promise<number> {
       workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),
       gh: run.services.gh,
       funnel: run.funnel,
+      runOnRows: (chatId: number | null, current: string, kind: string) => run.runOn.rows(chatId, current, kind),
+      relocate: (chatId: number, to: string) => run.runOn.relocate(chatId, to),
       hookPort: () => run.engine.hookPort,
       devices: run.devices,
       deviceEnv: run.deviceEnv,
@@ -147,7 +149,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       movePc: (chatId: number, peerId: string) => run.move.movePc(chatId, peerId),
       checkUpdates: async () => (await updater.check(), updater.info().status),
     };
-    await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => (run.move.onToast = t), busyIn: (f) => run.setBusyIn(f) });
+    await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; }, busyIn: (f) => run.setBusyIn(f) });
     tray?.stop();
     if (!quitting && run.store.get("bg_keep") !== "0") {
       const note = ui.stillRunning(run.store, tray !== null);

@@ -48,6 +48,7 @@ interface Sel {
   model: string;
   effort: string;
   access: string;
+  device: string;
 }
 
 /** Keeps a model's rows equal to `next`, touching only the rows that changed. */
@@ -215,6 +216,7 @@ export class Shell {
       model: model === "opus" || model === "" ? "claude-opus-5-5" : model === "sonnet" ? "claude-sonnet-5-5" : model === "haiku" ? "claude-haiku-5-5" : model,
       effort: get("default_effort", providers.defaultEffort("Claude")),
       access: get("default_access", "full"),
+      device: get("default_device", ""),
     };
     this.mode = parseMode(get("theme", ""));
     this.stamp = omarchyStamp(homedir());
@@ -976,7 +978,7 @@ export class Shell {
 
   private chatSel(): Sel {
     const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
-    return c ? { account: c.account, model: c.model, effort: c.effort, access: c.access } : this.sel;
+    return c ? { account: c.account, model: c.model, effort: c.effort, access: c.access, device: c.device } : this.sel;
   }
 
   private kind(sel: Sel): Kind {
@@ -1025,7 +1027,7 @@ export class Shell {
       effort: providers.effortLabel(kind, sel.effort) + (providers.hasFast(kind) && this.data.store.get("fast_mode") === "1" ? " · Fast" : ""),
       access: providers.accessLabel(kind, sel.access),
       access_icon: sel.access === "full" ? ICONS.LOCK_OPEN : sel.access === "plan" ? ICONS.EYE : ICONS.LOCK,
-      device: "This PC",
+      device: this.deviceLabel(kind),
       action: editing ? "update" : running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : resume ? "resume" : "send",
       action_tip: editing
         ? "Update queued message (Enter)"
@@ -1314,7 +1316,7 @@ export class Shell {
     let id = this.view === "chat" ? this.chatId : DRAFT;
     if (id === DRAFT) {
       const joins = this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
-      id = joins ?? this.engine.newThread(this.draftRepo, text, { ...this.sel, device: "" }).id;
+      id = joins ?? this.engine.newThread(this.draftRepo, text, this.sel).id;
       if (this.draftMain && this.draftRepo !== null && joins === null) this.data.store.setMainChat(this.draftRepo, id);
       this.view = "chat";
       this.chatId = id;
@@ -1793,7 +1795,7 @@ export class Shell {
         true,
       );
     } else if (id === "device") {
-      this.popup(id, x, y, [this.item("This PC", () => {}, { icon: ICONS.HOUSE, checked: true, desc: "Devices aren't in the TypeScript app yet" })], 280, true);
+      this.runOnMenu(kind, x, y);
     }
   }
 
@@ -1881,6 +1883,38 @@ export class Shell {
     return false;
   }
 
+  /** The chat (null: the draft) the composer's device menu is for, and the device it's on. */
+  private deviceOf(): [number | null, string] {
+    const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    return c ? [c.id, c.device] : [null, this.sel.device];
+  }
+
+  private deviceLabel(kind: string): string {
+    const [chat, current] = this.deviceOf();
+    if (current === "") return "This PC";
+    return this.hub.runOnRows(chat, current, kind).find((r) => r.id === current)?.name ?? "Missing device";
+  }
+
+  /** remoteui.rs `device_menu`: where the chat runs; a started chat moves where it's picked, its sessions with it. */
+  private runOnMenu(kind: string, x: number, y: number): void {
+    const [chat, current] = this.deviceOf();
+    const started = chat !== null && this.data.chat(chat)?.started === true;
+    const pick = (id: string) => () => {
+      if (id === current) return;
+      if (started && chat !== null) {
+        void this.hub.relocate(chat, id).then(
+          (name) => this.toast(`Moving to ${name}…`),
+          (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
+        );
+      } else this.setSel({ device: id });
+    };
+    const rows = this.hub.runOnRows(chat, current, kind).map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));
+    const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Runs on"), kind: "caption" }, ...rows];
+    if (rows.length === 1) items.push(this.label("No other PCs yet: pair one in Settings › Devices, or add one by SSH."));
+    items.push(this.separator(), this.item("Manage devices…", () => this.pages.openSettings("devices"), { icon: ICONS.SETTINGS }));
+    this.popup("device", x, y, items, 300, true);
+  }
+
   private setSel(patch: Partial<Sel>): void {
     if (this.view === "chat") {
       const c = this.data.chat(this.chatId);
@@ -1889,6 +1923,7 @@ export class Shell {
       if (patch.model !== undefined) c.model = patch.model;
       if (patch.effort !== undefined) c.effort = patch.effort;
       if (patch.access !== undefined) c.access = parseAccess(patch.access);
+      if (patch.device !== undefined) c.device = patch.device;
       this.data.saveChat(c);
     } else {
       this.sel = { ...this.sel, ...patch };
@@ -1898,6 +1933,7 @@ export class Shell {
         ["default_model", s.model],
         ["default_effort", s.effort],
         ["default_access", s.access],
+        ["default_device", s.device],
       ] as const)
         this.data.store.set(k, v);
     }
@@ -2632,6 +2668,9 @@ function transferRow(x: DeviceTransfer): TransferRow {
 
 /** What the window takes from the running hub. */
 export interface ShellHub extends PageHub {
+  /** The composer's "Runs on" menu for a chat (null: the draft) whose device is `current`. */
+  runOnRows: (chatId: number | null, current: string, kind: string) => { id: string; name: string; glyph: string; desc: string; online: boolean | null; current: boolean; enabled: boolean }[];
+  relocate: (chatId: number, to: string) => Promise<string>;
   prs: chatpr.ChatPrs;
   workspaces: () => Workspaces;
   devices: () => { list: PairedDevice[]; served: number };

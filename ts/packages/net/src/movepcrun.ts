@@ -121,6 +121,8 @@ export class MovePc {
   readonly local = new MovepcLocal();
   /** Where the outcome of a handoff is said besides the chat's notice (the window's toast). */
   onToast: (text: string) => void = () => {};
+  /** A chat on an SSH device: its sessions come here first, then on (relocate.rs, set by the hub). */
+  relocate: ((chatId: number, pc: string) => Promise<string>) | null = null;
   readonly target: MoveTargetApp;
   private readonly asked = new Map<number, { at: number; result: MoveTargets | null }>();
   private readonly codes = new Map<number, { at: number; error: string | null }>();
@@ -272,7 +274,10 @@ export class MovePc {
     const peer = this.d.mesh.peer(pc);
     if (!peer) throw new Error("that PC isn't one of this PC's");
     if (!c) throw new Error("no such chat");
-    if (c.device !== "") throw new Error(`it runs on the device ${c.device}: bring it to this PC first, then move it`);
+    if (c.device !== "") {
+      if (this.relocate === null) throw new Error(`it runs on the device ${c.device}: bring it to this PC first, then move it`);
+      return this.relocate(chatId, pc);
+    }
     const engine = this.d.engine;
     const worktree = engine.worktreeOf(c);
     const code = c.repoId !== null ? await codeState({ home: this.d.home, ...(this.d.run ? { run: this.d.run } : {}) }, engine.chatCwd(c), worktree !== null) : { ...NO_MOVE_CODE };

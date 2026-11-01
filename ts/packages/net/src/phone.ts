@@ -134,6 +134,8 @@ export interface PhoneDeps {
   openedFrom?: (chat: number, gid: string, title: string) => void;
   /** "Move to PC…"; without it the two calls answer 404. */
   move?: PhoneMove;
+  /** A started chat moved between this PC, its devices and other PCs (relocate.rs). */
+  relocate?: { why(chatId: number, to: string): string | null; relocate(chatId: number, to: string): Promise<string> };
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
   worktrees?: {
     make(repo: number | null, base: string, about: string): Promise<unknown>;
@@ -658,6 +660,12 @@ export class PhoneRoutes {
       if (title === "") return err(400, "empty title");
       let n: Chat = c;
       let fast: boolean | null = null;
+      const moving = c.started && typeof body.device === "string" && body.device !== c.device ? body.device : null;
+      if (moving !== null) {
+        const w = this.d.relocate ? this.d.relocate.why(c.id, moving) : "this Harbor can't move a started chat";
+        if (w !== null) return err(409, `can't move it there: ${w}`);
+        delete body.device;
+      }
       const rs = this.d.runSettings;
       if (rs) {
         const accounts = rs.accounts();
@@ -680,6 +688,13 @@ export class PhoneRoutes {
         this.d.replica.touch(c.id);
       }
       if (fast !== null) rs?.setFast(fast);
+      if (moving !== null) {
+        try {
+          await this.d.relocate?.relocate(c.id, moving);
+        } catch (e) {
+          return err(409, e instanceof Error ? e.message : String(e));
+        }
+      }
       return ok({ ok: true, chat: this.chatJson(this.chats().find((x) => x.id === c.id) ?? n, call.global) });
     }
     if (m === "DELETE" && p.length === 3) {
