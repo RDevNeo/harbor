@@ -281,7 +281,8 @@ export class Store {
 
   static openAt(path: string): Store {
     const db = new Database(path, { create: true });
-    db.exec(`PRAGMA journal_mode=WAL;
+    db.exec(`PRAGMA busy_timeout=5000;
+      PRAGMA journal_mode=WAL;
       PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS repos(
         id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, name TEXT NOT NULL);

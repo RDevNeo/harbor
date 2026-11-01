@@ -240,3 +240,15 @@ test("a database from the first schema migrates to the current one", () => {
   expect(again.chats().length).toBe(3);
   expect(again.webhooks().length).toBe(1);
 });
+
+test("a store opens while another process holds the write lock for a moment, as rusqlite's busy wait does", async () => {
+  const path = join(tmp(), "harbor.db");
+  const holder = Bun.spawn([process.execPath, "-e", `const { Database } = require("bun:sqlite"); const db = new Database(${JSON.stringify(path)}); db.exec("PRAGMA journal_mode=WAL"); db.exec("BEGIN IMMEDIATE"); console.log("held"); setTimeout(() => { db.exec("COMMIT"); db.close(); }, 600);`], { stdout: "pipe" });
+  const reader = holder.stdout.getReader();
+  await reader.read();
+  const t0 = Date.now();
+  const s = open(path);
+  expect(Date.now() - t0).toBeGreaterThanOrEqual(300);
+  expect(s.repos()).toEqual([]);
+  expect(await holder.exited).toBe(0);
+});

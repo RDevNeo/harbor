@@ -120,7 +120,8 @@ check "trigger exits 0" test $rc = 0
 for _ in $(seq 60); do [ "$(stat -L -c %i "/proc/$P1/exe" 2>/dev/null)" = "$(stat -c %i "$L/harbor")" ] && break; sleep 0.5; done
 check "same pid $P1, now running the TypeScript binary" test "$(stat -L -c %i "/proc/$P1/exe" 2>/dev/null)" = "$(stat -c %i "$L/harbor")"
 check "the TypeScript hub answers" up a
-check "it says 0.109.0.ts to phones" test "$(get a /v1/app | field hub.version)" = 0.109.0.ts
+V3=$(get a /v1/app | field hub.version)
+check "it says 0.109.0.ts to phones ($V3)" test "$V3" = 0.109.0.ts
 check "the runner $RUNNER outlived the switch" test -d "/proc/$RUNNER"
 for _ in $(seq 120); do [ "$(get a /v1/state | python3 -I -c "import json,sys; s=json.load(sys.stdin); print([c for c in s['chats'] if c['id']==$C][0].get('running'))")" = False ] && break; sleep 1; done
 check "the turn finished and its reply is in harbor.db" test "$(sqlite3 "$(db a)" "select count(*) from items where chat_id=$C and body like '%DONE%'")" -ge 1
