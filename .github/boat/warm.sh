@@ -11,10 +11,18 @@
 rootfs_save harbor-builder .github/boat/Dockerfile
 rootfs_save harbor-android .github/boat/Dockerfile.android
 core=$(image harbor-builder .github/boat/Dockerfile)
-key=$( (sha256sum < Cargo.lock; run_in "$core" "${rust[@]}" -- rustc -V) | sha256sum | cut -c1-32)
+rustc=$(run_in "$core" "${rust[@]}" -- rustc -V)
+key=$( (sha256sum < Cargo.lock; echo "$rustc") | sha256sum | cut -c1-32)
 if [ "$(cat "$cache/test-deps" 2>/dev/null)" != "$key" ]; then
   run_in "$core" "${rust[@]}" -e CARGO_TARGET_DIR=/c/target -- cargo test --locked --no-run
   echo "$key" > "$cache/test-deps"
+fi
+# aarch64 compiles on a sandbox nobody saves (release.yml), so its dependencies are only warm if
+# this one compiles them when they change. Harbor's own version doesn't count.
+key=$( (sed '/^name = "harbor[^"]*"$/{n;d}' Cargo.lock; echo "$rustc") | sha256sum | cut -c1-32)
+if [ "$(cat "$cache/aarch64-deps" 2>/dev/null)" != "$key" ]; then
+  run_in "$core" "${rust[@]}" "${cross[@]}" -- cargo build --release --locked
+  echo "$key" > "$cache/aarch64-deps"
 fi
 rm -rf "${cache:?}/target-aarch64/debug" "${cache:?}/target-aarch64/aarch64-unknown-linux-gnu/debug"
 for d in "$cache"/target/{debug,release}/deps "$cache"/target-aarch64/aarch64-unknown-linux-gnu/release/deps; do

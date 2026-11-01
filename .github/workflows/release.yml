@@ -17,8 +17,8 @@
 # one-time code a phone gets from Android's account sheet for Gmail.
 name: release
 
-# A release is a v* tag: one run, one sandbox, which also saves the boat snapshot `harbor-build` for
-# the next one. A push to main builds nothing (scripts/boat/check tests a change before it lands).
+# A release is a v* tag: one run, one sandbox per target, of which x86_64's also saves the boat
+# snapshot `harbor-build` for the next one. A push to main builds nothing (scripts/boat/check tests a change before it lands).
 # Run by hand on main it builds everything except Servo (see browser.yml), signs and releases
 # nothing and saves the snapshot: a dry run of the pipeline.
 on:
@@ -72,7 +72,7 @@ jobs:
           HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences android
       - name: Fetch the results
         run: |
           set -eu
@@ -87,16 +87,47 @@ jobs:
           path: out/harbor-x86_64/harbor
       - uses: actions/upload-artifact@v7
         with:
-          name: harbor-aarch64
-          path: out/harbor-aarch64/harbor
-      - uses: actions/upload-artifact@v7
-        with:
           name: harbor-android-unsigned
           path: out/harbor-android/harbor-android-unsigned.apk
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-extra
           path: out/extra/
+
+  # aarch64 on a sandbox of its own, from the same snapshot, which it doesn't save: the two targets
+  # compile in about half the time when they don't share 8 vCPUs. warm.sh keeps its dependencies warm.
+  build-aarch64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/boat
+        id: boat
+        with:
+          key: ${{ secrets.BOAT_API_KEY }}
+          from: harbor-build
+      - name: Build (on boat)
+        env:
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh aarch64
+      - name: Fetch the results
+        run: |
+          set -eu
+          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
+          boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
+          mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-aarch64
+          path: out/harbor-aarch64/harbor
+      - name: Delete the sandbox
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/boat/cleanup.sh
 
   # Saves the snapshot and deletes the build's sandbox, beside the packaging: a release doesn't wait
   # for it, and it never fails one. Runs also when the build failed: then it only deletes.
@@ -142,7 +173,7 @@ jobs:
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
   # archives and their checksum lists, and the attestations.
   package:
-    needs: [build, browser, video]
+    needs: [build, build-aarch64, browser, video]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7

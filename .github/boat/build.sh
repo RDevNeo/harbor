@@ -1,6 +1,7 @@
 #!/bin/bash
-# Run by release.yml (job build) on a boat.dev sandbox, from the extracted source: Harbor for
-# x86_64 and aarch64, the licence reports and the unsigned APK, side by side.
+# Run by release.yml (jobs build and build-aarch64) on a boat.dev sandbox, from the extracted source:
+# the parts it names, side by side, of x86_64, aarch64, licences (the reports) and android (the
+# unsigned APK). Without any, all four.
 . "$(dirname "$0")/lib.sh"
 core=$(image harbor-builder .github/boat/Dockerfile)
 apk=$(image harbor-android .github/boat/Dockerfile.android)
@@ -28,13 +29,7 @@ x86_64() {
     mkdir -p /out/harbor-x86_64 && cp /c/target/release/harbor /out/harbor-x86_64/'
 }
 aarch64() {
-  local t=aarch64-unknown-linux-gnu T=AARCH64_UNKNOWN_LINUX_GNU
-  run_in "$core" "${rust[@]}" "${google[@]}" -e CARGO_TARGET_DIR=/c/target-aarch64 -e HARBOR_GIT_SHA -e AGAIN="$again" \
-    -e CARGO_BUILD_TARGET=$t -e CARGO_TARGET_${T}_LINKER=aarch64-linux-gnu-gcc \
-    -e CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc -e CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
-    -e AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar -e PKG_CONFIG_ALLOW_CROSS=1 \
-    -e PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
-    -- bash -euo pipefail -c '
+  run_in "$core" "${rust[@]}" "${cross[@]}" "${google[@]}" -e HARBOR_GIT_SHA -e AGAIN="$again" -- bash -euo pipefail -c '
     eval "$AGAIN"
     again release cargo build --release --locked
     b=/c/target-aarch64/aarch64-unknown-linux-gnu/release/harbor
@@ -71,7 +66,9 @@ cpu_mark
 # When the sandbox's lazy disk stops loading: ~ moves from FUSE to its real disk.
 ( while [ "$(findmnt -no FSTYPE -T "$cache")" = fuse ]; do sleep 2; done; echo "disk loaded at $SECONDS s" ) > "$HOME/out/disk.log" &
 disk=$!
-pids=() names=(x86_64 aarch64 licences android)
+names=("$@")
+[ $# != 0 ] || names=(x86_64 aarch64 licences android)
+pids=()
 for n in "${names[@]}"; do
   ( s=$(date +%s); "$n"; echo "$n: $(( $(date +%s) - s ))s" ) > "$HOME/out/$n.log" 2>&1 &
   pids+=($!)
@@ -85,6 +82,7 @@ if kill "$disk" 2>/dev/null; then echo "disk still loading at $SECONDS s"; else 
 # A warm build compiles Harbor and nothing else: anything more is worth a look, or a change of
 # dependencies.
 for n in x86_64 aarch64; do
+  [ -f "$HOME/out/$n.log" ] || continue
   c=$(grep -c 'Compiling' "$HOME/out/$n.log" || true)
   echo "$n: compiled $c crates"
   [ "$c" -le 3 ] || echo "::warning::$n compiled $c crates: the snapshot was not warm, unless the dependencies changed"
