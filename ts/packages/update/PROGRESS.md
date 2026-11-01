@@ -10,7 +10,7 @@ Phase 6. Rewritten for the plan's Architecture (runtime + app bundle), not porte
 | notices.rs | done as a UI-free model (`notices.ts`): toast texts, dismissals, the phone banner; the drawing belongs to `ui` | 0 of 0 (12 new) |
 | (new) | `launcher.ts` (the runtime's program), `startup.ts` (clean start, watchdog), `lane.ts` + `release-cli.ts` (lane choice, manifest), `worker/src/release.js`, `.github/workflows/ts-release.yml`, `ts/scripts/build.ts`, `ts/runtime.ts`, `ts/app.ts` | n/a |
 
-Tests: 146 in 13 files (`bun test packages/update`), all passing; Rust `#[test]`s of these modules: 19, ported 17, 2 no longer apply (last section).
+Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`s of these modules: 19, ported 17, 2 no longer apply (last section).
 
 ## What runs
 
