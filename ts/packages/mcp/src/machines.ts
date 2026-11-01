@@ -58,6 +58,11 @@ export function allows(l: Level, tool: string): boolean {
 
 export type Project = [name: string, path: string];
 
+/** This PC's projects among `repos` (name, folder here): a peer's project with no folder on this PC isn't one. */
+export function ownProjects(repos: readonly { name: string; dir: string }[]): Project[] {
+  return repos.filter((r) => isDir(r.dir)).map((r) => [r.name, r.dir]);
+}
+
 interface Share {
   levels: Map<string, Level>;
   github: boolean;

@@ -5,7 +5,7 @@ import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
-import { forHome, type Mesh } from "./mesh.ts";
+import { forHome, startsTurn, type Mesh } from "./mesh.ts";
 import { sameRemote } from "./meshstore.ts";
 import type { StoreReplica } from "./meshstore.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -134,6 +134,8 @@ export interface PhoneDeps {
   openedFrom?: (chat: number, gid: string, title: string) => void;
   /** "Move to PC…"; without it the two calls answer 404. */
   move?: PhoneMove;
+  /** This PC's instructions and memory for a call that may start a turn on another PC, with `repo`'s memory (meshctx.ts `outgoingCtx`). */
+  ctx?: (repo: number | null) => Json;
   /** A started chat moved between this PC, its devices and other PCs (relocate.rs). */
   relocate?: { why(chatId: number, to: string): string | null; relocate(chatId: number, to: string): Promise<string> };
   /** A new chat asked to start in a new worktree (worktree.rs): `make` is null for a project without Git; `made` is what `make` answered. */
@@ -643,7 +645,7 @@ export class PhoneRoutes {
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by);
     const c = this.chatOf(p[2] ?? "");
     if (!c) return err(404, "no such chat");
-    if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender);
+    if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global);
     if (m === "GET" && p.length === 4 && p[3] === "items") {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");
       return ok(this.items(c, Number.isFinite(since) ? since : 0));
@@ -812,13 +814,19 @@ export class PhoneRoutes {
     const repos = this.d.store.repos();
     const repo = typeof pref === "string" ? repos.find((r) => r.path === pref) : typeof pref === "number" ? repos.find((r) => r.id === pref) : undefined;
     const { project_id: _p, files: ids, ...rest } = body;
+    const ctx = this.d.ctx?.(repo?.id ?? null) ?? null;
+    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, ""], ctx);
+    return this.mapNew(peer.id, r, global);
+  }
+
+  /** mesh.rs `files_of`: a phone's upload ids, as the files here. */
+  private uploads(ids: unknown): { name: string; data: Uint8Array }[] {
     const files: { name: string; data: Uint8Array }[] = [];
     for (const f of Array.isArray(ids) ? ids : []) {
       const path = this.d.uploadsDir && typeof f === "string" ? resolveUpload(this.d.uploadsDir, f) : null;
       if (path !== null) files.push({ name: basename(path), data: readFileSync(path) });
     }
-    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, files, [sender, ""], null);
-    return this.mapNew(peer.id, r, global);
+    return files;
   }
 
   /** mesh.rs `map_new`: a chat made on another PC, answered with its copy's id here (waited for a few seconds). */
@@ -921,14 +929,31 @@ export class PhoneRoutes {
     }
   }
 
-  private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string): Promise<Reply> {
+  /** mesh.rs `mesh_proxy`: a call about a copy, made at its home PC and answered with this PC's ids. */
+  private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
     const peer = this.d.hub.mesh.peer(c.home);
     if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off: the chat is read-only until it's back`);
     // Moving is its home's to do; a home before it would only say "unknown call".
     if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Harbor that can't move chats: update it first`);
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
-    const { files: _files, ...rest } = body;
-    return this.d.mesh.forward(dest(peer), peer.name, method, path, rest, [], [sender, ""], null);
+    const { files: ids, ...rest } = body;
+    const ctx = startsTurn(method, p.slice(3)) ? (this.d.ctx?.(c.repoId) ?? null) : null;
+    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, ""], ctx);
+    if (p[3] === "fork") r = await this.mapNew(c.home, r, global);
+    const rb = obj(r.body);
+    const ch = typeof rb.chat === "object" && rb.chat !== null && !Array.isArray(rb.chat) ? (rb.chat as Record<string, Json>) : null;
+    if (ch === null && !Array.isArray(rb.returned)) return r;
+    const out: Record<string, Json> = { ...(rb as Record<string, Json>) };
+    if (ch !== null) {
+      const repo = c.repoId === null ? null : (this.d.store.repos().find((x) => x.id === c.repoId) ?? null);
+      const parent = c.parent === null ? null : (this.d.store.chats().find((x) => x.id === c.parent) ?? null);
+      out.chat = global
+        ? { ...ch, id: c.gid, project_id: repo ? repo.path : null, parent: parent ? parent.gid : null, gid: c.gid }
+        : { ...ch, id: c.id, project_id: c.repoId, parent: c.parent, gid: c.gid };
+    }
+    // Messages handed back: their files are the home PC's uploads, not this one's.
+    if (Array.isArray(rb.returned)) out.returned = rb.returned.map((q) => (typeof q === "object" && q !== null && !Array.isArray(q) ? { ...(q as Record<string, Json>), files: [] } : (q as Json)));
+    return { status: r.status, body: out };
   }
 }
 

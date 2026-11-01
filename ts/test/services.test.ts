@@ -89,6 +89,23 @@ test("the phone's GitHub pages are answered through gh and other calls pass by",
   expect((r?.body as { viewer: string }).viewer).toBe("ann");
 });
 
+test("with global ids a cloned peer's project goes by its home folder, as in the phone's state", async () => {
+  const clone = join(root, "clone");
+  mkdirSync(clone);
+  const id = store.addRepo("/home/owner/code/shared");
+  store.setRepoRemote(id, "https://github.com/o/shared.git");
+  store.setRepoLocal(id, clone);
+  engine.reload();
+  try {
+    const r = await svc.routePhone({ ...call("GET", ["v1", "prs"]), global: true });
+    const ids = (r?.body as { projects: { id: unknown; name: string }[] }).projects.filter((p) => p.name === "shared").map((p) => p.id);
+    expect(ids).toEqual(["/home/owner/code/shared"]);
+  } finally {
+    store.removeRepo(id);
+    engine.reload();
+  }
+});
+
 test("Merge with… starts a thread in the project that has the pull request's repository", async () => {
   const before = engine.chats.length;
   const r = await svc.routePhone(call("POST", ["v1", "prs", "merge"], [], { url: "https://github.com/o/r/pull/5" }));
@@ -109,10 +126,34 @@ test("another PC's share, tool and issue calls are answered, other mesh calls pa
   expect(share?.status).toBe(200);
   const body = share?.body as { level: string; projects: { name: string }[] };
   expect(body.level).toBe("full");
-  expect(body.projects.map((p) => p.name)).toEqual(["not-on-this-pc"]);
+  expect(body.projects.map((p) => p.name)).toEqual([]);
   const tool = await svc.routeMesh(call("POST", ["mesh", "v1", "tool"], [], { tool: "nope", args: {} }, "peer-1"));
   expect(tool?.body).toEqual({ error: "no such tool" });
   expect(machines.serveShare("peer-1").status).toBe(200);
+});
+
+test("a peer's project with no folder here is not shared, and a call in its name starts in home", async () => {
+  const own = join(root, "own");
+  mkdirSync(own);
+  const ownId = store.addRepo(own);
+  engine.reload();
+  svc.publish();
+  try {
+    const share = await svc.routeMesh(call("GET", ["mesh", "v1", "share"], [], null, "peer-1"));
+    expect((share?.body as { projects: { name: string; path: string }[] }).projects).toEqual([{ name: "own", path: own }]);
+    const pwd = async (project: string): Promise<string> => {
+      const r = await svc.routeMesh(call("POST", ["mesh", "v1", "tool"], [], { tool: "bash", args: { command: "pwd" }, project, chat: `chat-${project}` }, "peer-1"));
+      const body = r?.body as { ok: boolean; content: { text: string }[] };
+      expect(body.ok).toBe(true);
+      return body.content.map((c) => c.text).join("").trim();
+    };
+    expect(await pwd("not-on-this-pc")).toBe(process.env.HOME ?? "");
+    expect(await pwd("own")).toBe(own);
+  } finally {
+    store.removeRepo(ownId);
+    engine.reload();
+    svc.publish();
+  }
 });
 
 test("a webhook token of the engine is accepted by the hook listener", () => {

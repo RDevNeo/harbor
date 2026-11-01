@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
@@ -531,6 +531,38 @@ describe("phone: Move to PC…", () => {
     const withMesh = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, move });
     const old = await withMesh.route({ method: "POST", path: ["v1", "chats", String(copy.id), "move_pc"], query: [], body: { pc: "pc:b" }, token: "", device: "", global: false });
     expect([old.status, old.body]).toEqual([409, { error: "old runs an older Harbor that can't move chats: update it first" }]);
+    store.close();
+  });
+});
+
+describe("phone: a copy's calls at its home PC (mesh.rs mesh_proxy)", () => {
+  test("a message on a copy goes home with this PC's context and the phone's files, and the answer has this PC's ids", async () => {
+    const store = Store.openAt(join(tmp, "proxy.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.peers.set("pc:home", newPeer({ id: "pc:home", name: "home", online: true, addr: "127.0.0.1:1" }));
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const repo = store.addRepo("/home/owner/code/app");
+    const copy = store.createChat(blankChat({ title: "theirs", repoId: repo, gid: "g-copy", home: "pc:home", homeId: 7 }));
+    const uploads = join(tmp, "proxy-uploads");
+    mkdirSync(join(uploads, "u1"), { recursive: true });
+    writeFileSync(join(uploads, "u1", "shot.png"), "png");
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const sent: { path: string[]; files: string[]; ctx: Json }[] = [];
+    mesh.forward = async (_d, _name, _method, path, _body, files, _sender, ctx) => {
+      sent.push({ path, files: files.map((f) => f.name), ctx });
+      return { status: 200, body: { ok: true, chat: { id: 7, project_id: 3, parent: null, gid: "g-copy", title: "theirs" }, returned: [{ text: "held", files: ["x/y.png"] }] } };
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, uploadsDir: uploads, ctx: (r) => ({ owner: "Ann", memory_id: `m-${r}` }) });
+    const send = (global: boolean, tail: string, body: Record<string, unknown>) =>
+      routes.route({ method: "POST", path: ["v1", "chats", String(copy.id), tail], query: [], body, token: "", device: "Pixel", global });
+    const r = await send(false, "send", { text: "hi", files: ["u1/shot.png"] });
+    expect(sent[0]).toEqual({ path: ["v1", "chats", "7", "send"], files: ["shot.png"], ctx: { owner: "Ann", memory_id: `m-${repo}` } });
+    expect(r.body).toEqual({ ok: true, chat: { id: copy.id, project_id: repo, parent: null, gid: "g-copy", title: "theirs" }, returned: [{ text: "held", files: [] }] });
+    const g = await send(true, "send", { text: "again" });
+    expect((g.body as { chat: Json }).chat).toEqual({ id: "g-copy", project_id: "/home/owner/code/app", parent: null, gid: "g-copy", title: "theirs" });
+    await send(false, "title", { title: "renamed" });
+    expect(sent[2]?.ctx).toBeNull();
     store.close();
   });
 });

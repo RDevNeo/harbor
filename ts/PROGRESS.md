@@ -335,6 +335,14 @@ Options, in order of cost:
   including a measuring run's. The Phase 0 rig now runs a renamed copy (`harbor-p0`) in its own compositor
   and stops only what it started, found by its data folder.
 
+- Mesh, a peer's folder used as this PC's (0.109.3-ts): every PC's db holds entries for peers' projects that came with
+  adopted chats (their home folder in `path`, by Rust's design). Rust shares only projects whose folder is here; the
+  port shared them all, so `list` showed other PCs' folders and a `machines` call in a project with the same name ran in
+  a folder missing here instead of home. Fixed with the same class elsewhere: a copy's project learns its home's
+  remote, a chat's published `cwd` is its worktree, global project ids in Issues and PRs are the home path, commit pills
+  skip device chats and use the worktree, and a phone's call on a copy goes home with this PC's context and the
+  phone's files and comes back with this PC's ids. `rig/machines.sh` tests it TS to TS and TS to Rust.
+
 ### Where the plan's claims were wrong or need a number
 
 - "A download 40-90 MB larger": measured +32 MB (runtime) to +43 MB (with the bundle and sherpa's libraries)

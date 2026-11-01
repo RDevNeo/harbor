@@ -102,7 +102,7 @@ function hostPort(o: ServicesOptions, work: Work, slugs: Slugs, src: OwnerSource
   const env = o.env ?? process.env;
   return {
     repos: async () => [...new Set((await slugs.refresh()).map(([, s]) => s))].sort(),
-    projects: async (global) => (await slugs.refresh()).map(([r, repo]) => ({ id: global ? repoDir(r) : r.id, name: r.name, repo })),
+    projects: async (global) => (await slugs.refresh()).map(([r, repo]) => ({ id: global ? r.path : r.id, name: r.name, repo })),
     projectOf: (repo) => slugs.known().find(([, s]) => s.toLowerCase() === repo.toLowerCase())?.[0].id,
     agentLabel: () => {
       const a = work.account(o.composer().account);
@@ -133,7 +133,7 @@ export async function startServices(o: ServicesOptions): Promise<Services> {
     versions: () => versionsText(versionsInput(o.hub, { hostname: hostname(), version: o.version, update: null, served: 0, ...o.versionsOwn?.() })),
   });
   const publish = (): void => {
-    machines.publish(o.store, o.engine.repos.map((r): machines.Project => [r.name, repoDir(r)]), issuedIds(o.store));
+    machines.publish(o.store, machines.ownProjects(o.engine.repos.map((r) => ({ name: r.name, dir: repoDir(r) }))), issuedIds(o.store));
   };
   publish();
   void slugs.refresh();

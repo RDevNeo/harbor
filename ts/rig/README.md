@@ -34,3 +34,10 @@ copied to `tmp-p0/rs/harbor-p0` so that another agent's `pkill harbor-ref` canno
   each one's window with no arguments on a private headless sway with throwaway data, offline, and wants sway to map it, its
   pixels drawn, its poll Worker running and it up for `HOLD_S` (6) s; then `harbor --check-window`, and a start with no display
   that must exit and leave its error in `failed-start.log`. `~/.cache/hts/check.sh` with no arguments runs it after the suite.
+
+## Shared files between PCs
+
+- `machines.sh` (inside `unshare -Urnm`; `HARBOR_REF` a Rust harbor, `RIG_TMP`, `BUN`): PC A (TypeScript, `machines.ts drive`)
+  with a chat in a project, B (TypeScript) and R (Rust) each in its own network namespace with an entry for A's folder in
+  their dbs, as adopted chats leave it, and an empty tmpfs over A's folders. A's chat calls `bash`, `read`, `glob` and
+  `grep` on B and R and `list`: each must start in that PC's home, and `list` must show only each PC's own projects.

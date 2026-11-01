@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { blankChat, digest, itemHash, itemJson, parseAccess, parseItem, parseRole, repoDir, type Chat, type Item, type Repo, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
@@ -54,6 +55,8 @@ export interface StoreReplicaOptions {
   worktree?: (chat: Chat) => string | null;
   /** Copies were written: a copy's items (its id), or the list and settings (null). */
   copied?: (chat: number | null) => void;
+  /** Where a chat's agent works (its worktree, else its project); null: the project's folder. */
+  cwd?: (chat: Chat) => string | null;
 }
 
 /** A git remote as projects are matched by it: host and path, lowercase, no ".git". */
@@ -130,6 +133,8 @@ export class StoreReplica implements MeshApp {
   }
 
   private cwd(c: Chat): string {
+    const at = this.o.cwd?.(c) ?? null;
+    if (at !== null) return at;
     const r = c.repoId === null ? null : this.repos.find((x) => x.id === c.repoId);
     return r ? repoDir(r) : homedir();
   }
@@ -224,7 +229,13 @@ export class StoreReplica implements MeshApp {
     const remote = s(p, "remote");
     const found =
       this.repos.find((r) => r.path === path) ?? this.repos.find((r) => sameRemote(r.remote, remote)) ?? this.repos.find((r) => name !== "" && r.name === name);
-    if (found) return found.id;
+    if (found) {
+      if (!existsSync(repoDir(found)) && remote !== "" && found.remote !== remote) {
+        this.o.store.setRepoRemote(found.id, remote);
+        this.repos = this.o.store.repos();
+      }
+      return found.id;
+    }
     const id = this.o.store.addRepo(path);
     if (remote !== "") this.o.store.setRepoRemote(id, remote);
     this.repos = this.o.store.repos();

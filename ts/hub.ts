@@ -359,6 +359,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     update: () => (o.updater ? asJson(o.updater.info()) : null),
     accounts: () => accounts.filter((a) => a.bin !== null).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
     copied: (chat) => engine?.storeChanged(chat),
+    cwd: (c) => engine?.chatCwd(c) ?? null,
   });
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;
@@ -490,7 +491,15 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const ids = ["", ...devs.filter(([h]) => !h.hidden).map(([h]) => h.id), ...hosts.map((p) => p.id)];
     return deviceWhy(c.started, c.home !== "", ids, (id) => relocateWhy({ started: c.started, device: c.device, to: id, blocker: () => blockerOf(c), place: placeOf(id, hosts, devs), meshOn: hub.mesh.on }));
   };
+  const ctxFor = (repo: number | null): Json => {
+    const r = repo === null ? undefined : store.repos().find((x) => x.id === repo);
+    const ctx = outgoingCtx(store, { home: home(), dataDir: dataDir(env), hostname: hostname() }, owners, r ? repoDir(r) : null);
+    // Its memory id may be new: the share listener knows it at once.
+    services?.publish();
+    return ctx;
+  };
   const phone = new PhoneRoutes({
+    ctx: ctxFor,
     store,
     hub,
     replica,
@@ -534,8 +543,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       },
     },
     commits: (c) => {
-      const r = c.repoId === null ? null : store.repos().find((x) => x.id === c.repoId);
-      const dir = r ? repoDir(r) : null;
+      const r = c.device !== "" || c.repoId === null ? null : store.repos().find((x) => x.id === c.repoId);
+      const wt = r && c.home === "" ? (engine?.worktreeOf(c) ?? null) : null;
+      const dir = wt !== null && existsSync(wt) ? wt : r ? repoDir(r) : null;
       if (dir === null || !existsSync(dir)) return null;
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
     },
@@ -548,10 +558,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     env,
     chat: (id) => (engine ? engine.chat(id) : store.chats().find((c) => c.id === id)),
     ownerName: () => account.ownerName(),
-    ctx: (repo) => {
-      const r = repo === null ? undefined : store.repos().find((x) => x.id === repo);
-      return outgoingCtx(store, { home: home(), dataDir: dataDir(env), hostname: hostname() }, owners, r ? repoDir(r) : null);
-    },
+    ctx: ctxFor,
   });
   // The hooks below run once the engine exists.
   const eng = (): Engine => {
