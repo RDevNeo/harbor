@@ -102,8 +102,10 @@ test("webhooks: known tokens only, signed when signed, body and headers handed o
   expect(names).toContain("content-type");
   expect(names).not.toContain("authorization");
   expect(names).not.toContain("x-hub-signature-256");
-  const big = await fetch(`${base}/hooks/tok1`, { method: "POST", body: "x".repeat((1 << 20) + 1) });
-  expect(big.status).toBe(413);
+  got.length = 0;
+  const big = await fetch(`${base}/hooks/tok1`, { method: "POST", body: "x".repeat((1 << 20) + 5) });
+  expect(big.status).toBe(202);
+  expect(got[0]?.body).toHaveLength(1 << 20);
   server?.stop();
 });
 
@@ -118,6 +120,18 @@ test("a webhook past its minute budget gets 429", async () => {
   expect(limited.headers.get("retry-after")).toBe("60");
   now += 61_000;
   expect((await hit()).status).toBe(202);
+});
+
+test("a chunked webhook body past 1 MB is refused", async () => {
+  const chunk = new TextEncoder().encode("x".repeat(1 << 19));
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      for (let i = 0; i < 3; i++) c.enqueue(chunk);
+      c.close();
+    },
+  });
+  const req = new Request("http://x/hooks/t", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+  expect((await serveHook(req, { tokens: new Set(["t"]), send: () => undefined })).status).toBe(413);
 });
 
 test("a chunked webhook body is read", async () => {

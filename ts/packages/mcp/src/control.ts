@@ -176,7 +176,7 @@ function empty(status: number, extra: Record<string, string> = {}): Response {
 
 async function readCapped(req: Request): Promise<Uint8Array | undefined> {
   const len = req.headers.get("content-length");
-  if (len !== null && Number(len) > BODY_MAX) return undefined;
+  const cut = len !== null && Number(len) > BODY_MAX;
   if (!req.body) return new Uint8Array();
   const parts: Uint8Array[] = [];
   let total = 0;
@@ -187,7 +187,9 @@ async function readCapped(req: Request): Promise<Uint8Array | undefined> {
     total += value.byteLength;
     if (total > BODY_MAX) {
       await reader.cancel();
-      return undefined;
+      if (!cut) return undefined;
+      parts.push(value.subarray(0, value.byteLength - (total - BODY_MAX)));
+      break;
     }
     parts.push(value);
   }

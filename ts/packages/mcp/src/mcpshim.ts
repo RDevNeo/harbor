@@ -1,6 +1,7 @@
 import { writeSync } from "node:fs";
 import { type Json, type JsonObject, isObject, parseJson, sleep } from "./json.ts";
 import { socketPath } from "./control.ts";
+import { harborVersion } from "./version.ts";
 
 const prop = (type: string, description: string): Json => ({ type, description });
 
@@ -274,7 +275,7 @@ export async function run(args: string[], opts: RunOptions = {}): Promise<void> 
   }
   const io = opts.io ?? { lines: stdinLines(), write: stdoutWrite };
   const call = opts.call ?? ((c, n, a) => callApp(c, n, a));
-  const version = opts.version ?? process.env.HARBOR_VERSION ?? "0.0.0";
+  const version = opts.version ?? harborVersion();
   for await (const line of io.lines) {
     const req = parseJson(line);
     if (!isObject(req) || !("id" in req)) continue;

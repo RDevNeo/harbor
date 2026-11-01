@@ -1,5 +1,33 @@
 # @harbor/mcp: progress
 
+| Rust module | Status | Rust tests ported |
+| --- | --- | --- |
+| control | done | 3 of 3 (+5 new: socket, hooks over HTTP, 429, 413, chunked) |
+| mcpshim | done | 2 of 2 (+7 new: stdio protocol, real stdio process, socket retry) |
+| mcp | done | 9 of 9 (+9 new: OAuth, device login, refresh, Google code, callback, agent env) |
+
+## control, mcpshim, mcp (src/control.rs, mcpshim.rs, mcp.rs)
+
+- `mcp.rs` is split in `apps.ts` (catalogue, credential files, Google accounts, refresh), `signin.ts` (device, OAuth and
+  Google flows, the loopback callback, phone flows), `http.ts` and `mcp.ts` (agent env, Claude and Codex config); `mcp.ts`
+  re-exports all of it, so callers import `mcp` only.
+- Every function that may touch the network is async (`token`, `freshToken`, `freshTokenFor`, `agentEnv`, `claudeServers`,
+  `claudeConfig`, `codexArgs`, `googleSaveCode`, `googlePhoneFinish`). The Rust sync callers (turn start) must await.
+- `sign_in(id, ctx)` takes a `changed()` callback instead of an egui context. Credential files keep the Rust layout
+  (`<data>/apps/<id>.json`, `<id>.accounts/`), so a Rust PC's sign-ins are read as they are.
+- Harbor's built-in Google clients (compile-time `option_env!` in Rust) come from `HARBOR_GOOGLE_CLIENT_ID/SECRET` and
+  `HARBOR_GOOGLE_WEB_CLIENT_ID/SECRET` at run time; the release step must set them.
+- The Gmail and Discord servers are reached through `integrate()` (`wire.ts`), not by import, so `mcp.ts` has no cycle with them.
+- `selfExe()` (the command agents get for `harbor app <name>`) is `HARBOR_EXE`, else the running executable; the cli work decides.
+- `which`, `childPath`, `openUrl` (sys.ts) copy providers.rs / git.rs because the agents index was empty; swap for the agents exports.
+- `control.ts`: `Incoming` is generic over the net `Api`/`Msg` and the update `Offer` types. The webhook port serves through
+  `Bun.serve`; there is no cap of 32 simultaneous connections (Rust's `Conns`), Bun's idle timeout (10 s) stays.
+  `serveHook` takes a web `Request`, so the public HTTPS listener (hookcert) shares it.
+- `serve.ts` is `harbor app <gmail|discord|discord-host|discord-repair>`; it sets Discord's setup version from `harborVersion()` (`version.ts`, set by the app at startup with `setHarborVersion`).
+- `serveHook` follows Rust on bodies: a declared length above 1 MB is cut at 1 MB and answered 202, a chunked body above 1 MB gets 413.
+- `mcpshim.ts` is the whole of `harbor mcp`: `run(args)` reads stdin, `bun build` of it is about 17 KB and starts in about 50 ms.
+- bun test trap: `expect(promise).rejects` on a promise that is still pending blocks the test forever; await `.then(ok, err)`.
+
 ## gmail (src/gmail.rs -> src/gmail.ts)
 
 Done. Rust tests ported: 10 of 10 (`base64url_both_ways`, `builds_a_plain_message`, `builds_html_attachments_and_reply_headers`,
