@@ -26,14 +26,14 @@ afterEach(() => {
 const PNG = Buffer.from("\x89PNG\r\n\x1a\n\0\0\0\rIHDR", "latin1");
 const MP4 = Buffer.from("\0\0\0\x18ftypmp42\0\0\0\0", "latin1");
 
-test("finds markdown images outside code", () => {
+test("finds_markdown_images_outside_code", () => {
   const md = 'Here ![The chart](out/chart.png) and `![no](x.png)`\n\n```\n![no](y.png)\n```\n![](<a b.mp4> "t")';
   expect(m.refs(md)).toEqual([["The chart", "out/chart.png"], ["", "a b.mp4"]]);
   expect(m.stripRefs("a ![c](x.png) b ![l](logo)")).toBe("a  b ![l](logo)");
   expect(m.stripRefs("no images")).toBe("no images");
 });
 
-test("cuts a reply at its images", () => {
+test("cuts_a_reply_at_its_images", () => {
   const md = "The chart:\n\n![Chart](out/c.png)\n\nAnd ![inline](x.png) in a line.\n\n- ![in a list](l.png)\n\n![a](a.png)\n![b](b.mp4)\n\nEnd.";
   const t = (text: string): m.Part => ({ type: "text", text });
   const v = (text: string): m.Part => ({ type: "media", text });
@@ -50,7 +50,7 @@ test("cuts a reply at its images", () => {
   expect(m.parts("[![c](a.png)](https://x.y)")).toEqual([t("[![c](a.png)](https://x.y)")]);
 });
 
-test("resolves paths and urls", () => {
+test("resolves_paths_and_urls", () => {
   const d = tmp("resolve");
   mkdirSync(join(d, "out"));
   writeFileSync(join(d, "out/a.png"), PNG);
@@ -71,7 +71,7 @@ test("resolves paths and urls", () => {
   expect(m.resolve("etc/x.png", d) === null || !existsSync(join(d, "etc/x.png"))).toBe(true);
 });
 
-test("checks type, contents and size", () => {
+test("checks_type_contents_and_size", () => {
   const d = tmp("check");
   writeFileSync(join(d, "a.png"), PNG);
   writeFileSync(join(d, "v.mp4"), MP4);
@@ -92,7 +92,7 @@ test("checks type, contents and size", () => {
   expect(!big.ok && big.error.includes("too large")).toBe(true);
 });
 
-test("a kept file shows after it is gone", () => {
+test("a_kept_file_shows_after_it_is_gone", () => {
   const d = tmp("keep");
   const shot = join(d, "shot.png");
   writeFileSync(shot, PNG);
@@ -108,7 +108,7 @@ test("a kept file shows after it is gone", () => {
   expect(m.keepOne("/home/x/.ssh/id.png")).not.toBeNull();
 });
 
-test("find lists shown media then named files", () => {
+test("find_lists_shown_media_then_named_files", () => {
   const d = tmp("find");
   writeFileSync(join(d, "a.png"), PNG);
   writeFileSync(join(d, "v.mp4"), MP4);

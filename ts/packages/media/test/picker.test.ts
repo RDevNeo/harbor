@@ -13,7 +13,7 @@ afterEach(() => {
   dir = "";
 });
 
-test("picker args", () => {
+test("picker_args", () => {
   const o: p.Opts = { title: "Icon", multiple: false, filter: ["Images", ["*.png", "*.svg"]], dir: "/tmp/x" };
   expect(p.zenityArgs(o)).toEqual(["--file-selection", "--separator=\n", "--title=Icon", "--file-filter=Images | *.png *.svg", "--filename=/tmp/x/"]);
   expect(p.kdialogArgs(o)).toEqual(["--getopenfilename", "/tmp/x", "Images (*.png *.svg)", "--title", "Icon"]);

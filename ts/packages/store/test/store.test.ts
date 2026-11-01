@@ -34,7 +34,7 @@ afterEach(() => {
 const text = (s: string): Item => ({ kind: "text", text: s, at: 1 });
 const texts = (store: Store, chat: number): string[] => store.items(chat).map((it) => (it.kind === "text" ? it.text : ""));
 
-test("removing a repo drops its webhooks", () => {
+test("removing_a_repo_drops_its_webhooks", () => {
   const dir = tmp();
   const s = open(join(dir, "harbor.db"));
   const repo = s.addRepo(dir);
@@ -44,7 +44,7 @@ test("removing a repo drops its webhooks", () => {
   expect(s.webhooks()).toEqual([]);
 });
 
-test("a shared project's folder is kept per PC", () => {
+test("a_shared_projects_folder_is_kept_per_pc", () => {
   const dir = tmp();
   const s = open(join(dir, "harbor.db"));
   const owner = "/home/owner/Documents/proj";
@@ -61,7 +61,7 @@ test("a shared project's folder is kept per PC", () => {
   expect(back && repoDir(back)).toBe(owner);
 });
 
-test("settled projects come back", () => {
+test("settled_projects_come_back", () => {
   const dir = tmp();
   const path = join(dir, "harbor.db");
   const s = open(path);
@@ -74,7 +74,7 @@ test("settled projects come back", () => {
   expect(again.repos().length).toBe(1);
 });
 
-test("saves only what changed", () => {
+test("saves_only_what_changed", () => {
   const dir = tmp();
   const path = join(dir, "harbor.db");
   const s = open(path);
@@ -99,7 +99,7 @@ test("saves only what changed", () => {
   expect(texts(fresh, b)).toEqual(["one"]);
 });
 
-test("a deleted main chat is forgotten", () => {
+test("a_deleted_main_chat_is_forgotten", () => {
   const dir = tmp();
   const path = join(dir, "harbor.db");
   let s = open(path);
@@ -124,7 +124,7 @@ test("a deleted main chat is forgotten", () => {
   expect(s.mainChats().size).toBe(0);
 });
 
-test("a retired agent stays retired", () => {
+test("a_retired_agent_stays_retired", () => {
   const path = join(tmp(), "harbor.db");
   let s = open(path);
   const c = s.createChat(blankChat({ title: "t", role: "sub", parent: 1, name: "tests" }));
@@ -138,7 +138,7 @@ test("a retired agent stays retired", () => {
   expect(texts(s, c.id)).toEqual(["its report"]);
 });
 
-test("a database from before retiring gets the column", () => {
+test("a_database_from_before_retiring_gets_the_column", () => {
   const path = join(tmp(), "harbor.db");
   let s = open(path);
   const c = s.createChat(blankChat({ title: "t", role: "sub", parent: 1, name: "tests" }));
@@ -148,7 +148,7 @@ test("a database from before retiring gets the column", () => {
   expect(s.chats().find((x) => x.id === c.id)?.retired).toBe(false);
 });
 
-test("chats have global ids and copies keep theirs", () => {
+test("chats_have_global_ids_and_copies_keep_theirs", () => {
   const s = open(join(tmp(), "harbor.db"));
   const mk = (gid: string, home: string, homeId: number, updated: number) => blankChat({ title: "t", role: "lead", gid, home, homeId, updated });
   const own = s.createChat(mk("", "", 0, 5));

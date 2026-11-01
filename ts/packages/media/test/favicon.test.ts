@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -26,13 +27,13 @@ afterEach(() => {
 
 const png = (w: number, h: number, color = "#f00"): Promise<Buffer> => sharp({ create: { width: w, height: h, channels: 4, background: color } }).png().toBuffer();
 
-test("parses links", () => {
+test("parses_links", () => {
   const html = `<head><link rel="stylesheet" href="a.css"><LINK REL='shortcut icon' HREF='/fav.ico'><link href="/i.svg" rel="icon" type="image/svg+xml"></head>`;
   expect(f.linkIcons(html)).toEqual(["/fav.ico", "/i.svg"]);
   expect(f.linkIcons("İİ<link rel=icon href=a>€ İ<LINK HREF='b' REL=icon>€€")).toEqual(["a", "b"]);
 });
 
-test("only public sites", async () => {
+test("only_public_sites", async () => {
   const lan = [192, 168, 0, 1].join(".");
   const tail = [100, 100, 1, 1].join(".");
   expect(f.domainOf(`https://${lan}/`)).toBeNull();
@@ -47,7 +48,7 @@ test("only public sites", async () => {
   expect(await f.get("http://site.example.org/", "site.example.org", out)).toBe(false);
 });
 
-test("icon sizes are capped", async () => {
+test("icon_sizes_are_capped", async () => {
   const sq = (i: Awaited<ReturnType<typeof f.decodeIcon>>): boolean => i !== null && i.width === f.SIZE && i.height === f.SIZE && i.data.length === f.SIZE * f.SIZE * 4;
   expect(sq(await f.decodeIcon(await png(64, 64)))).toBe(true);
   expect(sq(await f.decodeIcon(await png(3000, 1)))).toBe(true);
@@ -123,4 +124,10 @@ test("an ico icon is read, bitmap or png", async () => {
   for (let i = 0; i < 256; i++) dib.set([0, 0, 255, 255], 40 + i * 4);
   const img = await f.decodeIcon(Buffer.concat([dir, entry(dib.length, 22, 32), dib]));
   expect(img && [img.data[(16 * 32 + 16) * 4], img.data[(16 * 32 + 16) * 4 + 3]]).toEqual([255, 255]);
+});
+
+test("real_projects", async () => {
+  const copy = join(process.env.HOME ?? "", ".cache/hts/tmp/harbor-copy.db");
+  const rows = existsSync(copy) ? (new Database(copy, { readonly: true }).query("SELECT path, name FROM repos").all() as { path: string; name: string }[]) : [];
+  for (const r of rows) expect(typeof (await f.describeLocal(r.path, r.name))).toBe("string");
 });

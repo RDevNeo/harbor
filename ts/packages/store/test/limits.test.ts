@@ -2,13 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { type AccountInfo, type Block, Limits, type LimitsHost, fromText, nextBlock, windowLabel } from "../src/limits.ts";
 import { type Chat, Store, blankChat, now } from "../src/index.ts";
 
-test("fromText survives case changing chars", () => {
+test("from_text_survives_case_changing_chars", () => {
   expect(fromText("İ rate limit try again at ")).not.toBeNull();
   expect(fromText("Kİrate limit, try again at é")).not.toBeNull();
   expect(fromText("İ no limit words here")).toBeNull();
 });
 
-test("claude reset wording", () => {
+test("claude_reset_wording", () => {
   const at = now();
   const parsed = fromText("You've hit your weekly limit · resets 12am (America/Sao_Paulo)");
   expect(parsed?.[0]).toBe("seven_day");
@@ -23,7 +23,7 @@ test("claude reset wording", () => {
   expect(fromText("resets 12am (UTC) but no limit words")).toBeNull();
 });
 
-test("unknown reset keeps known block", () => {
+test("unknown_reset_keeps_known_block", () => {
   const at = 1_000_000;
   const known = nextBlock(undefined, "seven_day", at + 6 * 3600, at);
   expect([known.known, known.until]).toEqual([true, at + 6 * 3600]);

@@ -26,7 +26,7 @@ test("classes", () => {
   expect(new Set(names).size).toBe(names.length);
 });
 
-test("every kv key is classified", () => {
+test("every_kv_key_is_classified", () => {
   const root = join(import.meta.dir, "..", "..", "..", "..");
   const rustDir = join(root, "src");
   const tsDir = join(root, "ts", "packages");
@@ -66,13 +66,13 @@ test("every kv key is classified", () => {
   expect([...missing].sort()).toEqual([]);
 });
 
-test("first sign-in keeps this PC's settings", () => {
+test("first_sign_in_keeps_this_pcs_settings", () => {
   const fill = ss.firstFill(["theme"], { theme: { v: "light", at: 9 }, density: { v: "compact", at: 9 } });
   expect("theme" in fill).toBe(false);
   expect("density" in fill).toBe(true);
 });
 
-test("replaced values are backed up", () => {
+test("replaced_values_are_backed_up", () => {
   const s = open();
   s.setQuiet("voice_lang2", "pt");
   ss.apply(s, { voice_lang2: { v: "en", at: Number.MAX_SAFE_INTEGER - 1 } });
@@ -81,7 +81,7 @@ test("replaced values are backed up", () => {
   expect(b.voice_lang2).toBe("pt");
 });
 
-test("newest wins", () => {
+test("newest_wins", () => {
   const s = open();
   s.setQuiet("theme", "dark");
   ss.internals.at.set("theme", 100);

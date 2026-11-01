@@ -90,14 +90,14 @@ test("a paste brings text with unix line ends or a decoded image", async () => {
   expect(got?.type === "image" && [got.image.width, got.image.height]).toEqual([6, 3]);
 });
 
-test("preview is one short line", () => {
+test("preview_is_one_short_line", () => {
   expect(clip.preview("  https://example.com/x \n")).toBe("https://example.com/x");
   expect(clip.preview("\n  first\nsecond")).toBe("first…");
   expect(clip.preview("a".repeat(80))).toBe(`${"a".repeat(60)}…`);
   expect(clip.preview(" \n\t")).toBeNull();
 });
 
-test("the same notice within a second is skipped", () => {
+test("same_notice_within_a_second_is_skipped", () => {
   let last: { body: string; at: number } | null = null;
   const at = (body: string, t: number): boolean => {
     const r = clip.fresh(last, body, t);

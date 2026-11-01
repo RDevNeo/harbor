@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Item } from "../src/index.ts";
+import { type Item, itemJson } from "../src/index.ts";
 import * as cost from "../src/cost.ts";
 
 const { compact, dayLabel, detail, fixed, money, ofItems, short, sumResults, usageJson, tokens, apiUsage } = cost;
@@ -13,7 +13,7 @@ test("days", () => {
   expect(dayLabel(20_752)).toBe("Mon 26 Oct");
 });
 
-test("compact numbers", () => {
+test("compact_numbers", () => {
   expect(short(950)).toBe("950");
   expect(short(12_400)).toBe("12.4k");
   expect(short(12_000)).toBe("12k");
@@ -26,7 +26,7 @@ test("compact numbers", () => {
   expect([fixed(0.125, 2), fixed(0.375, 2), fixed(2.5, 0), fixed(12.25, 1), fixed(0.1849, 2)]).toEqual(["0.12", "0.38", "2", "12.2", "0.18"]);
 });
 
-test("sums turns", () => {
+test("sums_turns", () => {
   const items: Item[] = [result(10_000, 400, 8_000, 0.12), { kind: "error", text: "x" }, result(2_000, 100, 0, 0.06)];
   const u = ofItems(items);
   expect(u).toEqual({ turns: 2, input: 12_000, output: 500, cached: 8_000, cost: 0.12 + 0.06 });
@@ -37,7 +37,7 @@ test("sums turns", () => {
   expect(usageJson(one).label).toBe("1.5k tok");
 });
 
-test("usage sums results per account and day", () => {
+test("usage_sums_results_per_account_and_day", () => {
   const today = 20_000;
   const chats = new Map<number, [string, string]>([[1, ["claude", "harbor"]], [2, ["codex", ""]]]);
   const t = sumResults(
@@ -63,4 +63,9 @@ test("usage sums results per account and day", () => {
   expect(api.projects.map((r) => r.name)).toEqual(["harbor", "No project"]);
   expect(api.accounts.map((r) => r.name)).toEqual(["CLAUDE", "CLAUDE2", "CODEX"]);
   expect(cost.isEmpty(cost.emptyUsage())).toBe(true);
+});
+
+test("result_rows_are_found_by_their_prefix", () => {
+  const row: Item = { kind: "result", cost_usd: 0.5, duration_ms: 0, turns: 1, input_tokens: 1, output_tokens: 1, cached: 0, at: 1, account: "a", model: "" };
+  expect(itemJson(row).startsWith('{"kind":"result"')).toBe(true);
 });

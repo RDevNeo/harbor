@@ -18,7 +18,7 @@ afterEach(() => {
 const key = (): [string, string][] => [["BOAT_API_KEY", "boat_s3cr3t/V4lue+x"]];
 const b64 = (s: string): string => sec.base64(new TextEncoder().encode(s));
 
-test("scrubs the value and its encodings", () => {
+test("scrubs_the_value_and_its_encodings", () => {
   const s = key();
   const v = s[0]?.[1] ?? "";
   const basic = b64(`user:${v}`);
@@ -42,7 +42,7 @@ test("scrubs the value and its encodings", () => {
   expect(b.length).toBeLessThan("basic ".length + "[hidden: BOAT_API_KEY]".length + 8);
 });
 
-test("base64 cores are found at any offset", () => {
+test("base64_cores_are_found_at_any_offset", () => {
   const v = new TextEncoder().encode("abcdefgh12345");
   for (const pre of ["", "x", "xy", "xyz:"]) {
     const data = new TextEncoder().encode(`${pre}abcdefgh12345!tail`);
@@ -51,22 +51,22 @@ test("base64 cores are found at any offset", () => {
   }
 });
 
-test("scrubs json escaped values", () => {
+test("scrubs_json_escaped_values", () => {
   const s: [string, string][] = [["PW", 'pa"ss\\word']];
   expect(sec.scrub(JSON.stringify({ pw: s[0]?.[1] }), s)).toBe('{"pw":"[hidden: PW]"}');
 });
 
-test("leaves other text alone", () => {
+test("leaves_other_text_alone", () => {
   expect(sec.scrub("nothing to see here\n", key())).toBe("nothing to see here\n");
   expect(sec.scrub("a", [])).toBe("a");
 });
 
-test("a cut value loses its start too", () => {
+test("a_cut_value_loses_its_start_too", () => {
   expect(sec.dropPartial("token: boat_s3cr", key())).toBe("token: [hidden]");
   expect(sec.dropPartial("done", key())).toBe("done");
 });
 
-test("spots pasted keys", () => {
+test("spots_pasted_keys", () => {
   expect(sec.pastedKey("use BOAT_API_KEY=boat_9f8e7d6c5b4a3f2e1d0c please")).toEqual(["boat_9f8e7d6c5b4a3f2e1d0c", "BOAT_API_KEY"]);
   expect(sec.pastedKey("token: `ghp_aB3dE5fG7hJ9kL1mN3pQ5rS7`")?.[1]).toBe("GITHUB_TOKEN");
   expect(sec.pastedKey("sk-ant-api03-abcDEF123456789xyz")?.[1]).toBe("ANTHROPIC_API_KEY");
@@ -74,7 +74,7 @@ test("spots pasted keys", () => {
   expect(sec.pastedKey("sk-short1")).toBeNull();
 });
 
-test("names are env variables", () => {
+test("names_are_env_variables", () => {
   expect(sec.envName("boat-api-key")).toBe("BOAT_API_KEY");
   expect(sec.envName(" OPENAI_API_KEY ")).toBe("OPENAI_API_KEY");
   expect(sec.envName("1KEY")).toBeNull();
@@ -82,7 +82,7 @@ test("names are env variables", () => {
   expect(sec.envName("")).toBeNull();
 });
 
-test("stores values owner only", () => {
+test("stores_values_owner_only", () => {
   const p = join(tmp(), "secrets.json");
   expect(sec.save("boat_api_key", "  boat_123456  ", "Boat CLI", p)).toBe("BOAT_API_KEY");
   sec.save("BOAT_API_KEY", "boat_654321", "", p);
@@ -96,7 +96,7 @@ test("stores values owner only", () => {
   expect(sec.load(p)).toEqual([]);
 });
 
-test("runs with the secret and hides it", async () => {
+test("runs_with_the_secret_and_hides_it", async () => {
   const s = key();
   const cwd = tmpdir();
   const out = await sec.run('echo "$BOAT_API_KEY"; printf %s "$BOAT_API_KEY" | base64 >&2; exit 3', cwd, s, 20_000);
@@ -108,7 +108,7 @@ test("runs with the secret and hides it", async () => {
   expect(slow).not.toContain("boat_s3c");
 });
 
-test("grants expire and cover only their chat", () => {
+test("grants_expire_and_cover_only_their_chat", () => {
   const g: sec.Grant[] = [];
   const names = ["A", "B"];
   sec.grant(g, 1, names, sec.minutesSpan(15), 1000);
@@ -123,7 +123,7 @@ test("grants expire and cover only their chat", () => {
   expect(g).toEqual([]);
 });
 
-test("durations only get shorter", () => {
+test("durations_only_get_shorter", () => {
   expect(sec.spans(15)).toEqual([sec.minutesSpan(15), sec.minutesSpan(5)]);
   expect(sec.spans(120)).toEqual([sec.minutesSpan(120), sec.minutesSpan(5), sec.minutesSpan(60)]);
   expect(sec.spans(3)).toEqual([sec.minutesSpan(3)]);
@@ -134,13 +134,13 @@ test("durations only get shorter", () => {
   expect(sec.spanLabel({ kind: "not" }, 0)).toBe("Save only, no access");
 });
 
-test("env lines quote what needs it", () => {
+test("env_lines_quote_what_needs_it", () => {
   expect(sec.envLine("K", "sk_live_123-abc")).toBe("K=sk_live_123-abc");
   expect(sec.envLine("K", 'a b#c$d"e')).toBe(`K='a b#c$d"e'`);
   expect(sec.envLine("K", "it's\nx\\")).toBe('K="it\'s\\nx\\\\"');
 });
 
-test("env files get the line replaced", () => {
+test("env_files_get_the_line_replaced", () => {
   const old = "# keys\nexport STRIPE_KEY=old\nOTHER=1\nSTRIPE_KEY = older\n";
   expect(sec.setEnvVar(old, "STRIPE_KEY", "sk_new")).toBe("# keys\nexport STRIPE_KEY=sk_new\nOTHER=1\n");
   expect(sec.setEnvVar("A=1", "B", "2")).toBe("A=1\nB=2\n");
@@ -148,7 +148,7 @@ test("env files get the line replaced", () => {
   expect(sec.setEnvVar("STRIPE_KEY_2=x\n", "STRIPE_KEY", "y")).toBe("STRIPE_KEY_2=x\nSTRIPE_KEY=y\n");
 });
 
-test("env files stay in the project", () => {
+test("env_files_stay_in_the_project", () => {
   const base = tmp();
   const root = join(base, "proj");
   mkdirSync(join(root, "apps/web"), { recursive: true });
@@ -168,7 +168,7 @@ test("env files stay in the project", () => {
   expect(statSync(p).mode & 0o777).toBe(0o600);
 });
 
-test("checks and fixes gitignore", () => {
+test("checks_and_fixes_gitignore", () => {
   const root = realpathSync(tmp());
   const file = join(root, ".env.local");
   expect(sec.gitIgnored(root, file)).toBeNull();

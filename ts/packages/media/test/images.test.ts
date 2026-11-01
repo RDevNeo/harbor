@@ -36,7 +36,7 @@ function crc32(b: Uint8Array): number {
   return ~c >>> 0;
 }
 
-test("the viewer stops at either end and widens to the card", () => {
+test("the_viewer_stops_at_either_end_and_widens_to_the_card", () => {
   expect([step(0, 3, -1), step(0, 3, 1), step(2, 3, 1), step(2, 3, -1)]).toEqual([null, 1, null, 1]);
   expect(step(0, 1, 1)).toBeNull();
   const imgs = new Images();
@@ -56,13 +56,13 @@ test("the viewer stops at either end and widens to the card", () => {
   expect(imgs.isOpen()).toBe(false);
 });
 
-test("decodes a normal png", async () => {
+test("decodes_a_normal_png", async () => {
   const { image, dims } = await decode("t.png", await png(64, 64), 384);
   expect(dims).toEqual([64, 64]);
   expect([image.width, image.height, image.data.length]).toEqual([64, 64, 64 * 64 * 4]);
 });
 
-test("refuses huge declared dimensions before allocating", async () => {
+test("refuses_huge_declared_dimensions_before_allocating", async () => {
   const b = await png(1, 1);
   b.writeUInt32BE(2 ** 26, 16);
   b.writeUInt32BE(2 ** 30, 20);
@@ -105,7 +105,7 @@ test("a gif gives its first frame and a photo is turned upright", async () => {
   expect([image.width, image.height]).toEqual([10, 30]);
 });
 
-test("images of another PC's chat come from that PC", async () => {
+test("images_of_another_pcs_chat_come_from_that_pc", async () => {
   const imgs = new Images();
   const asked: string[] = [];
   const home = await png(40, 30);
