@@ -5,7 +5,7 @@ import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
 import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
-import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
+import { newOpened, type Opened, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
@@ -38,7 +38,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type BrowserData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type BrowserData } from "./window.ts";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -110,6 +110,8 @@ export class Shell {
   private rows = new slint.ArrayModel<SideRow>([]);
   private settledRows = new slint.ArrayModel<SideRow>([]);
   private cards = new slint.ArrayModel<CardData>([]);
+  private liveBlocks = new slint.ArrayModel<MdBlockData>([]);
+  private bare = new WeakMap<CardData, CardData>();
   private files = new slint.ArrayModel<{ name: string; image: boolean }>([]);
   private menu = new slint.ArrayModel<MenuEntry>([]);
   private popItems = new slint.ArrayModel<PopItem>([]);
@@ -229,6 +231,7 @@ export class Shell {
     win.side_rows = this.rows;
     win.side_settled = this.settledRows;
     win.cards = this.cards;
+    win.live_blocks = this.liveBlocks;
     win.files = this.files;
     win.menu = this.menu;
     win.pop_items = this.popItems;
@@ -784,9 +787,36 @@ export class Shell {
     }
   }
 
+  /** While a reply streams, its blocks go to `liveBlocks` and its card row carries none. */
+  private live(cards: CardData[], running: boolean): CardData[] {
+    let at = -1;
+    if (running) {
+      for (let i = cards.length - 1; i >= 0; i--) {
+        const k = cards[i]?.kind;
+        if (k === "text") at = i;
+        if (k !== "status" && k !== "space") break;
+      }
+    }
+    const card = cards[at];
+    if (!card) {
+      if (this.win.live_seq !== -1) this.win.live_seq = -1;
+      if (this.liveBlocks.length > 0) sync(this.liveBlocks, []);
+      return cards;
+    }
+    sync(this.liveBlocks, card.blocks, sameBlock);
+    if (this.win.live_seq !== card.seq) this.win.live_seq = card.seq;
+    let bare = this.bare.get(card);
+    if (!bare) this.bare.set(card, (bare = { ...card, blocks: [] }));
+    const out = cards.slice();
+    out[at] = bare;
+    return out;
+  }
+
   private refreshCards(): void {
     if (this.view !== "chat") {
       sync(this.cards, []);
+      sync(this.liveBlocks, []);
+      this.win.live_seq = -1;
       return;
     }
     const chat = this.data.chat(this.chatId);
@@ -805,7 +835,7 @@ export class Shell {
       this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing })),
       { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
     );
-    sync(this.cards, withQueue(next, queue), sameCard);
+    sync(this.cards, withQueue(this.live(next, running), queue), sameCard);
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
 

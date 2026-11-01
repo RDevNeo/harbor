@@ -442,6 +442,8 @@ export component AppWindow inherits Window {
     in property <string> hero-note;
     in property <bool> hero;
     in property <[CardData]> cards;
+    in property <[MdBlock]> live-blocks;
+    in property <int> live-seq: -1;
     in property <bool> chat-running;
     in property <bool> read-only;
     in property <string> read-only-text;
@@ -812,6 +814,8 @@ export component AppWindow inherits Window {
                         width: body.room;
                         height: parent.height - composer-box.height;
                         cards: root.cards;
+                        live-blocks: root.live-blocks;
+                        live-seq: root.live-seq;
                         running: root.chat-running;
                         content-w: root.content-w;
                         toggle(seq) => {

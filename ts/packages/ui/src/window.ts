@@ -349,6 +349,8 @@ export interface AppWindow extends slint.ComponentHandle {
   hero_note: string;
   hero: boolean;
   cards: slint.Model<CardData>;
+  live_blocks: slint.Model<MdBlockData>;
+  live_seq: number;
   chat_running: boolean;
   read_only: boolean;
   read_only_text: string;

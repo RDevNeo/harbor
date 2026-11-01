@@ -76,14 +76,27 @@ function blockData(b: Block, at: Placed, seq: number): MdBlockData {
   }
 }
 
+const sources = new WeakMap<MdBlockData, string>();
+
 /** `seq`: the transcript item the text is in, so a selection of it can be mentioned (-1: none). */
 export function mdBlocks(md: string, seq = -1): MdBlockData[] {
   const bs = blocks(md);
   const at = place(bs);
-  const out = bs.map((b, i) => blockData(b, at[i] as Placed, seq));
+  const out = bs.map((b, i) => {
+    const d = blockData(b, at[i] as Placed, seq);
+    sources.set(d, JSON.stringify([b, at[i], seq]));
+    return d;
+  });
   const last = out.at(-1);
   if (last && (last.kind === "p" || last.kind === "li" || last.kind === "h") && last.after === 0) last.trim = 3;
   return out;
+}
+
+/** Two parses of the same markdown block: the older one can stay on screen, its key still points at the same text. */
+export function sameBlock(a: MdBlockData, b: MdBlockData): boolean {
+  if (a === b) return true;
+  const s = sources.get(a);
+  return s !== undefined && s === sources.get(b) && a.trim === b.trim;
 }
 
 export function userText(ps: readonly Part[]): slint.StyledText {

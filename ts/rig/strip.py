@@ -1,5 +1,5 @@
 import json, os, random, sqlite3, string, shutil, uuid
-T=os.path.expanduser('~/.cache/hts/tmp')
+T=os.path.expanduser(os.environ.get('HTS_TMP','~/.cache/hts/tmp'))
 src=f'{T}/harbor-copy.db'; dst=f'{T}/stripped.db'
 shutil.copy(src,dst); os.chmod(dst,0o600)
 db=sqlite3.connect(dst)
