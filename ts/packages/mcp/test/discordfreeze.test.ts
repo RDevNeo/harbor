@@ -8,14 +8,14 @@ import { cgroupIn, freeze, heldWord, killLeftOver, only, reclaim, signal, thaw, 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const root = "/sys/fs/cgroup";
 
-test("reads the unified cgroup line", () => {
+test("reads_the_unified_cgroup_line: reads the unified cgroup line", () => {
   expect(cgroupIn("0::/user.slice/a.scope\n", root)).toBe(join(root, "user.slice/a.scope"));
   expect(cgroupIn("1:name=x:/y\n0::/z\n", root)).toBe(join(root, "z"));
   expect(cgroupIn("0::/\n", root)).toBeUndefined();
   expect(cgroupIn("1:name=x:/y\n", root)).toBeUndefined();
 });
 
-test("a cgroup with anyone else in it isn't ours", () => {
+test("a_cgroup_with_anyone_else_in_it_isnt_ours: a cgroup with anyone else in it isn't ours", () => {
   expect(only("10\n11\n", [10, 11, 12])).toBe(true);
   expect(only("10\n99\n", [10, 11])).toBe(false);
 });
@@ -25,7 +25,7 @@ const state = (p: number): string => {
   return st.slice(st.lastIndexOf(")") + 1).trim().split(/\s+/)[0] ?? "";
 };
 
-test("signals hold a tree and let it go", async () => {
+test("signals_hold_a_tree_and_let_it_go: signals hold a tree and let it go", async () => {
   const saved = process.env.HARBOR_DISCORD_NO_CGROUP;
   process.env.HARBOR_DISCORD_NO_CGROUP = "1";
   const c = spawn("sh", ["-c", "sleep 30 & wait"], { detached: true, stdio: "ignore" });

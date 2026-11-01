@@ -1,12 +1,12 @@
-import "../sandbox.ts";
+import "./sandbox.ts";
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GhApi, type Call, type GhDeps, type Reply } from "../../src/ghapi.ts";
-import { GH_TIMEOUT, GhSpawnError, ghRun, realGh } from "../../src/github/gh.ts";
-import { detailsPort } from "../../src/github/details.ts";
-import { prsPort } from "../../src/github/prs.ts";
+import { GhApi, type Call, type GhDeps, type Reply } from "../src/ghapi.ts";
+import { GH_TIMEOUT, GhSpawnError, ghRun, realGh } from "../src/github/gh.ts";
+import { detailsPort } from "../src/github/details.ts";
+import { prsPort } from "../src/github/prs.ts";
 
 const SCRIPT = `#!/bin/sh
 {

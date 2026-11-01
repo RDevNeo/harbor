@@ -34,7 +34,7 @@ test("names", () => {
   expect(sslipName("2001:db8::7")).toBe("2001-db8--7.sslip.io");
 });
 
-test("jws and thumbprint", () => {
+test("jws_and_thumbprint: jws and thumbprint", () => {
   const a = newAccount();
   const jwk = JSON.parse(a.jwk()) as Record<string, string>;
   expect([jwk.kty, jwk.crv]).toEqual(["EC", "P-256"]);
@@ -139,7 +139,7 @@ function shown(port: number, name: string, alpn: string[]): Promise<Buffer | nul
   });
 }
 
-test("the TLS-ALPN-01 handshake shows the challenge certificate for its name only", async () => {
+test("tls_alpn_challenge: the TLS-ALPN-01 handshake shows the challenge certificate for its name only", async () => {
   const l = listener();
   const port = await up(l);
   try {

@@ -51,20 +51,20 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("dec survives non-ascii after percent", () => {
+test("dec_survives_non_ascii_after_percent: dec survives non-ascii after percent", () => {
   expect(dec("%1\u{e9}")).toBe("%1\u{e9}");
   expect(dec("%\u{e9}")).toBe("%\u{e9}");
   expect(dec("a%41+b%2")).toBe("aA b%2");
   expect(dec("%C3%A9")).toBe("\u{e9}");
 });
 
-test("sha256 matches known vectors", () => {
+test("sha256_matches_known_vectors: sha256 matches known vectors", () => {
   expect(hex(sha256(""))).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
   expect(hex(sha256("abc"))).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
   expect(hex(sha256(new Uint8Array(1000).fill(0x61)))).toBe("41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
 });
 
-test("google client from fields or json", () => {
+test("google_client_from_fields_or_json: google client from fields or json", () => {
   const id = "123-abc.apps.googleusercontent.com";
   expect(parseGoogleClient(` ${id} `, " s3cret ")).toEqual({ id, secret: "s3cret" });
   expect(parseGoogleClient(id, "")).toBeUndefined();
@@ -73,7 +73,7 @@ test("google client from fields or json", () => {
   expect(parseGoogleClient(file, "")).toEqual({ id, secret: "from-file" });
 });
 
-test("google client choice", () => {
+test("google_client_choice: google client choice", () => {
   const builtin = { id: "harbor.apps.googleusercontent.com", secret: "harbor-secret" };
   const own = { id: "mine.apps.googleusercontent.com", secret: "my-secret" };
   const none = { id: "", secret: "" };
@@ -86,7 +86,7 @@ test("google client choice", () => {
   expect(ownClient(own, undefined)).toEqual(own);
 });
 
-test("google accounts migrate and order", () => {
+test("google_accounts_migrate_and_order: google accounts migrate and order", () => {
   const base = join(root, "base");
   mkdirSync(base);
   const old = join(base, "gmail.json");
@@ -115,7 +115,7 @@ test("google accounts migrate and order", () => {
   expect(names()).toHaveLength(2);
 });
 
-test("google account files and phone redirects", () => {
+test("google_account_files_and_phone_redirects: google account files and phone redirects", () => {
   expect(accountFile(" Ana.B+x@Example.com ")).toBe("ana.b+x@example.com.json");
   expect(accountFile("../../etc/passwd")).toBe(".._.._etc_passwd.json");
   expect(phoneRedirectOk("http://127.0.0.1:43123/")).toBe(true);
@@ -126,14 +126,14 @@ test("google account files and phone redirects", () => {
   expect(u).toContain("state=st");
 });
 
-test("google scopes granted", () => {
+test("google_scopes_granted: google scopes granted", () => {
   const asked = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic";
   expect(missingScopes(asked, undefined)).toEqual([]);
   expect(missingScopes(asked, asked)).toEqual([]);
   expect(missingScopes(asked, "https://www.googleapis.com/auth/gmail.settings.basic openid")).toEqual(["https://www.googleapis.com/auth/gmail.modify"]);
 });
 
-test("token answers keep the refresh token", () => {
+test("token_answers_keep_the_refresh_token: token answers keep the refresh token", () => {
   const c = blankCred({ refresh_token: "r1" });
   applyToken(c, 200, { access_token: "a2", expires_in: 3599, scope: "x", token_type: "Bearer" });
   expect([c.access_token, c.refresh_token]).toEqual(["a2", "r1"]);
@@ -142,7 +142,7 @@ test("token answers keep the refresh token", () => {
   expect(c.access_token).toBe("a2");
 });
 
-test("device codes and names", () => {
+test("device_codes_and_names: device codes and names", () => {
   expect(isCode("62FA-3B18") && isCode("(VZGR-TRNQ)") && !isCode("https://x")).toBe(true);
   expect(localFor("Roblox Studio")?.id).toBe("robloxstudio");
   expect(localFor("blender-mcp")?.id).toBe("blender");

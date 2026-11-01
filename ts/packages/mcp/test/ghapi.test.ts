@@ -8,7 +8,7 @@ const call = (q: [string, string][] = [], over: Partial<Call> = {}): Call => ({ 
 
 const defaultPrFilters: PrFilters = { state: "open", involvement: "all", labels: [] };
 
-test("the project filter lists every pc's projects", () => {
+test("project_filter_lists_every_pcs_projects: the project filter lists every pc's projects", () => {
   const src = (pc: string, name: string, projects: string[]): Source => ({ pc, name, login: "x", projects });
   const d: IssueFetched = { viewer: "", items: [], sources: [src("", "desk", ["o/r"]), src("ts:lap", "laptop", ["o/r", "o/crm"])] };
   const otherProjects = (data: IssueFetched, local: string[]): [string, string, string][] => {
@@ -22,7 +22,7 @@ test("the project filter lists every pc's projects", () => {
   ]);
 });
 
-test("only github pages reach gh", () => {
+test("only_github_pages_reach_gh: only github pages reach gh", () => {
   expect(ghUrl("https://github.com/o/r/pull/12", "pull")).toBeDefined();
   expect(ghUrl(" https://github.com/my-org/repo.rs/issues/3 ", "issues")).toBe("https://github.com/my-org/repo.rs/issues/3");
   for (const bad of ["--help", "https://github.com/o/r/pull/12/files", "https://evil.example/o/r/pull/1", "https://github.com/o/r/issues/1", "https://github.com/../r/pull/1", "https://github.com/o/r/pull/1a"]) {
@@ -30,7 +30,7 @@ test("only github pages reach gh", () => {
   }
 });
 
-test("filters from the query", () => {
+test("filters_from_the_query: filters from the query", () => {
   const a = prFilters(call([["state", "merged"], ["involvement", "authored"], ["label", "bug"], ["label", "ui"], ["draft", "hide"], ["review", "approved"], ["checks", "failing"], ["project", "o/r"], ["sort", "largest"], ["q", "fix"]]));
   expect(a.filters).toEqual({ state: "merged", involvement: "authored", labels: ["bug", "ui"], draft: false, review: "approved", checks: "failing", project: "o/r" });
   expect([a.sort, a.search]).toEqual(["largest", "fix"]);
@@ -65,7 +65,7 @@ const prsPort = (fetched: PrFetched[], failWith?: string): GhDeps["prs"] => ({
   sortLabel: (s) => (s === "ready" ? "Merge readiness" : s),
 });
 
-test("pages on the wire", () => {
+test("pages_on_the_wire: pages on the wire", () => {
   const v = prsPage(prsPort([]), { viewer: "me", items: [pr()] }, defaultPrFilters, "", "ready") as { groups: { key: string; items: Record<string, unknown>[] }[]; labels: { n: number }[]; sorts: unknown[] };
   expect(v.groups[0]?.key).toBe("authored");
   const p = v.groups[0]?.items[0];

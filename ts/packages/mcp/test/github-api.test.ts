@@ -1,10 +1,10 @@
-import "../sandbox.ts";
+import "./sandbox.ts";
 import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Shared, newPeer } from "@harbor/net";
-import { createGhApi } from "../../src/github/api.ts";
+import { createGhApi } from "../src/github/api.ts";
 
 const graphql = JSON.stringify({ data: { viewer: { login: "ann" }, authored: { nodes: [] }, reviewing: { nodes: [] }, p0: { nodes: [] } } });
 

@@ -35,7 +35,7 @@ afterAll(() => {
 
 const base = (): string => `http://127.0.0.1:${server.port}`;
 
-test("sums match the shell files", async () => {
+test("sums_match_the_shell_files: sums match the shell files", async () => {
   expect(shellFiles().length).toBeGreaterThan(0);
   for (const [want, rel] of shellFiles()) {
     expect(await fileSha256(join(repoDiscord, rel))).toBe(want);
@@ -45,7 +45,7 @@ test("sums match the shell files", async () => {
   }
 });
 
-test("rollback returns to the last good version", () => {
+test("rollback_returns_to_the_last_good_version: rollback returns to the last good version", () => {
   const v = new Vencords();
   v.offer("a");
   expect(v.rollback()).toBe(false);
@@ -77,7 +77,7 @@ test("vencord.json round-trips and survives a bad file", () => {
 
 const edit = (old: string, nw: string): Edit => ({ old, new: nw, why: "" });
 
-test("edits apply once and can't add network or token access", () => {
+test("edits_apply_once_and_cant_add_network_or_token_access: edits apply once and can't add network or token access", () => {
   const script = 'a: { props: [["x"]] },\nb: 1,\nb: 1,\n';
   expect(applyEdits(script, [edit('["x"]', '["y"]')])).toBe('a: { props: [["y"]] },\nb: 1,\nb: 1,\n');
   expect(() => applyEdits(script, [edit("nope", "y")])).toThrow("isn't in the script");
@@ -89,7 +89,7 @@ test("edits apply once and can't add network or token access", () => {
   expect(applyEdits("a", [edit("a", "$& $1")])).toBe("$& $1");
 });
 
-test("unzip keeps modes and refuses escapes", async () => {
+test("unzip_keeps_modes_and_refuses_escapes: unzip keeps modes and refuses escapes", async () => {
   const d = join(box.dir, "unzip");
   mkdirSync(d, { recursive: true });
   const p = join(d, "a.zip");

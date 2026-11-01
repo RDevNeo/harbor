@@ -39,7 +39,7 @@ afterEach(() => {
 
 const textOf = (b: Json): string => ((b as { content: { text: string }[] }).content[0] as { text: string }).text;
 
-test("levels and paths", () => {
+test("levels_and_paths: levels and paths", () => {
   expect(allows("read", "grep") && !allows("read", "write") && !allows("edit", "bash") && allows("full", "bash")).toBe(true);
   expect(parseLevel("edit")).toBe("edit");
   expect(parseLevel("nope")).toBeNull();
@@ -89,7 +89,7 @@ describe("serving peers", () => {
   };
   const call = async (peer: string, b: Json): Promise<Json> => (await serveTool(peer, b)).body;
 
-  test("serving checks the level", async () => {
+  test("serving_checks_the_level: serving checks the level", async () => {
     const [proj] = share({ "pc:reader": "read", "pc:off": "off" });
     let r = (await call("pc:reader", { tool: "read", args: { file_path: "a.txt" }, project: "proj" })) as Record<string, Json>;
     expect(r.ok).toBe(true);

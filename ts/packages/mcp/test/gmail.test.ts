@@ -12,7 +12,7 @@ const bytes = (...n: number[]): Uint8Array => Uint8Array.from(n);
 
 const lbl: Label[] = [["INBOX", "INBOX"], ["UNREAD", "UNREAD"], ["STARRED", "STARRED"], ["Label_1", "Work"], ["Label_2", "Clients/Acme"]];
 
-test("base64url both ways", () => {
+test("base64url_both_ways: base64url both ways", () => {
   for (const data of [bytes(), bytes(0x66), Buffer.from("fo"), Buffer.from("foo"), Buffer.from("foob"), bytes(0xff, 0xfe, 0xfd, 0, ...Buffer.from("binary?>")), Buffer.from("Olá, ação ✓")]) {
     expect(unb64(b64url(data))).toEqual(Uint8Array.from(data));
     expect(unb64(b64(data))).toEqual(Uint8Array.from(data));
@@ -24,7 +24,7 @@ test("base64url both ways", () => {
 
 const bodyOf = (part: string): string => part.split("\r\n\r\n").slice(1).join("\r\n\r\n");
 
-test("builds a plain message", () => {
+test("builds_a_plain_message: builds a plain message", () => {
   const m = blankMail({ to: "Ana <ana@example.com>, bo@example.com", subject: "Hi\r\nBcc: evil@example.com", text: "Hello\nthere" });
   const raw = build(m, "B");
   const head = raw.split("\r\n\r\n")[0] ?? "";
@@ -36,7 +36,7 @@ test("builds a plain message", () => {
   expect(raw).not.toContain("In-Reply-To");
 });
 
-test("builds html, attachments and reply headers", () => {
+test("builds_html_attachments_and_reply_headers: builds html, attachments and reply headers", () => {
   const m = blankMail({
     to: "Zoë Müller <z@example.com>",
     subject: "Relatório de ação",
@@ -65,7 +65,7 @@ test("builds html, attachments and reply headers", () => {
   expect(raw).toContain('Content-Disposition: attachment; filename="a.txt"\r\n');
 });
 
-test("long subjects fold into short words", () => {
+test("long_subjects_fold_into_short_words: long subjects fold into short words", () => {
   const s = "ação ".repeat(30);
   const h = encodeWords(s);
   for (const l of h.split("\r\n")) expect(Buffer.byteLength(l.trimEnd())).toBeLessThanOrEqual(76);
@@ -81,7 +81,7 @@ const part = (mime: string, text: string) => ({
   body: { size: text.length, data: b64url(Buffer.from(text)) },
 });
 
-test("reads a Gmail payload", () => {
+test("reads_a_gmail_payload: reads a Gmail payload", () => {
   const p = {
     mimeType: "multipart/mixed",
     parts: [
@@ -106,14 +106,14 @@ test("reads a Gmail payload", () => {
   expect(l.body()).toBe("olá");
 });
 
-test("html as text", () => {
+test("html_as_text: html as text", () => {
   const h =
     "<html><head><style>p{color:red}</style><title>T</title></head><body><!-- x --><p>Hello&nbsp;&amp; welcome&#33;</p>\n<ul><li>one</li><li>two</li></ul><script>alert(1)</script><table><tr><td>a</td><td>b</td></tr></table><a href='mailto:x@example.com'>x@example.com</a> <a href=\"https://example.com\">https://example.com</a> &unknown; &#x263A;</body></html>";
   expect(tidy(htmlText(h))).toBe("Hello & welcome!\n\n- one\n- two\n\na b\n\nx@example.com https://example.com &unknown; ☺");
   expect(entities("Tom &amp; Jerry&#39;s &quot;show&quot;")).toBe("Tom & Jerry's \"show\"");
 });
 
-test("label changes", () => {
+test("label_changes: label changes", () => {
   const p = (a: Record<string, unknown>) => plan(a, lbl);
   expect(p({ move_to: "work" })).toEqual([["Label_1"], ["INBOX"]]);
   expect(p({ move_to: "Clients/Acme", remove_labels: ["Work"] })).toEqual([["Label_2"], ["Label_1", "INBOX"]]);
@@ -138,7 +138,7 @@ test("replies", () => {
   expect(reSubject("RE: Lunch")).toBe("RE: Lunch");
 });
 
-test("accounts and their errors", () => {
+test("accounts_and_their_errors: accounts and their errors", () => {
   const acc = ["ana@example.com", "Work@Example.com"];
   expect(resolve("", acc)).toBe("ana@example.com");
   expect(resolve(" work@example.com ", acc)).toBe("Work@Example.com");
@@ -155,7 +155,7 @@ test("accounts and their errors", () => {
   expect(t.some((x) => x.name === "accounts")).toBe(true);
 });
 
-test("small things", () => {
+test("small_things: small things", () => {
   expect(charset('text/plain; charset="ISO-8859-1"; format=flowed')).toBe("iso-8859-1");
   expect(charset("text/plain")).toBe("utf-8");
   expect(safeName("../../etc/passwd")).toBe("_.._etc_passwd");

@@ -118,7 +118,7 @@ test("the port is not the phone API's", () => {
   expect(PORT).not.toBe(DEFAULT_PORT);
 });
 
-test("finds the forwarded port", () => {
+test("finds_the_forwarded_port: finds the forwarded port", () => {
   writeFileSync(join(work, "cmd.json"), JSON.stringify({ program: "ssh", args: ["-o", "BatchMode=yes", "-R", "127.0.0.1:31234:127.0.0.1:47931", "host", "cmd"] }));
   expect(forwardedPort(work)).toBe(47931);
   writeFileSync(join(work, "cmd.json"), JSON.stringify({ program: "claude", args: ["-p"] }));
@@ -126,7 +126,7 @@ test("finds the forwarded port", () => {
   expect(forwardedPort(join(work, "nowhere"))).toBeNull();
 });
 
-test("resume drops a grant whose forward port is taken", async () => {
+test("resume_drops_a_grant_whose_forward_port_is_taken: resume drops a grant whose forward port is taken", async () => {
   // Someone else holds the port the turn's ssh forwards to: its token isn't served.
   const squat: Server = createServer();
   await new Promise<void>((r) => squat.listen(0, "127.0.0.1", r));
@@ -160,7 +160,7 @@ test("a saved grant reads back as written, and a Rust-shaped file with defaults 
   end(work);
 });
 
-test("serves stdio and origin and refuses unknown tokens", async () => {
+test("serves_stdio_and_origin_and_refuses_unknown_tokens: serves stdio and origin and refuses unknown tokens", async () => {
   // A stdio "server" that answers every request line with its own id.
   const echo = `while read -r l; do id=$(printf '%s' "$l" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p'); [ -n "$id" ] && printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\\n' "$id"; done`;
   const g = base({ commands: true, servers: { echo: { type: "stdio", command: "sh", args: ["-c", echo] } } });
@@ -246,7 +246,7 @@ test("prompts come from the user's commands and skills", async () => {
   }
 });
 
-test("bounds requests", async () => {
+test("bounds_requests: bounds requests", async () => {
   const g = base();
   const p = (await grant(g)) as number;
   // A chunk size alone allocates nothing: unknown token first, then too large.
@@ -277,7 +277,7 @@ test("answers the other methods and bad bodies as the transport asks", async () 
   revoke(g.token);
 });
 
-test("a stdio server that never answers holds up nothing", async () => {
+test("a_stdio_server_that_never_answers_holds_up_nothing: a stdio server that never answers holds up nothing", async () => {
   const pids = join(work, "pids");
   const log = join(work, "log");
   // Answers everything but `hang`; a listen gets only its acknowledgement, as a server of the 2026-07-28 protocol does.
@@ -343,7 +343,7 @@ done`;
   revoke(g.token);
 }, 40_000);
 
-test("ending a turn waits for nothing and leaves the next one's grant", async () => {
+test("ending_a_turn_waits_for_nothing_and_leaves_the_next_ones_grant: ending a turn waits for nothing and leaves the next one's grant", async () => {
   // A stopped turn whose server never answers a request still pending, and the chat's next turn, already running.
   const servers = { slow: { type: "stdio", command: "sh", args: ["-c", "while read -r l; do :; done"] } };
   const a = base({ chat_id: 3, servers });
@@ -427,7 +427,7 @@ describe("http servers", () => {
     revoke(g.token);
   });
 
-  test("a silent http stream ends when its agent leaves", async () => {
+  test("a_silent_http_stream_ends_when_its_agent_leaves: a silent http stream ends when its agent leaves", async () => {
     // An http server that never answers the first request, and opens an event stream for the second that goes silent after a first comment.
     const server = createServer();
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));

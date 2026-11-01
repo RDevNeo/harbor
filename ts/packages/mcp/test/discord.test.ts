@@ -10,14 +10,14 @@ beforeAll(() => {
 });
 afterAll(() => box.restore());
 
-test("base64 comes back the same", () => {
+test("base64_comes_back_the_same: base64 comes back the same", () => {
   for (const data of [Buffer.from(""), Buffer.from("a"), Buffer.from("ab"), Buffer.from("abc"), Buffer.from("abcd"), Buffer.from([0, 255, 16, 128, 7])]) {
     expect(decode(data.toString("base64"))?.equals(data)).toBe(true);
   }
   expect(decode("a*b=")).toBeUndefined();
 });
 
-test("attachments only come from Discord", () => {
+test("attachments_only_come_from_discord: attachments only come from Discord", () => {
   expect(fromDiscord("https://cdn.discordapp.com/attachments/1/2/a.png")).toBe(true);
   expect(fromDiscord("https://media.discordapp.net/attachments/1/2/a.png")).toBe(true);
   expect(fromDiscord("http://cdn.discordapp.com/a.png")).toBe(false);
@@ -25,7 +25,7 @@ test("attachments only come from Discord", () => {
   expect(fromDiscord("file:///etc/passwd")).toBe(false);
 });
 
-test("notes save, recall by id and forget", () => {
+test("notes_save_recall_by_id_and_forget: notes save, recall by id and forget", () => {
   const p = join(box.dir, "notes.json");
   rmSync(p, { force: true });
   expect(notes(p, { action: "recall" })).toContain("no saved notes");
@@ -44,7 +44,7 @@ test("notes save, recall by id and forget", () => {
   expect(readFileSync(p, "utf8")).not.toContain("group:x");
 });
 
-test("low-level tools aren't on the agents' list", () => {
+test("low_level_tools_arent_on_the_agents_list: low-level tools aren't on the agents' list", () => {
   const t: unknown = JSON.parse(readFileSync(join(import.meta.dir, "../../../../discord/tools.json"), "utf8"));
   const names = (t as { name: string }[]).map((x) => x.name);
   for (const gone of ["discord_eval", "discord_click", "discord_key", "discord_query", "discord_findModule", "discord_config", "discord_wait", "discord_console", "discord_reload"]) {

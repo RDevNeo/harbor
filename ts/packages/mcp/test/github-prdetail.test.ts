@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import type { DiffLine } from "../../src/ghapi.ts";
-import { type GhOut, type GhRun, GhSpawnError } from "../../src/github/gh.ts";
-import { FIELDS, cleanMd, fetch, gh, parse, parseDiff, repoOf } from "../../src/github/prdetail.ts";
+import type { DiffLine } from "../src/ghapi.ts";
+import { type GhOut, type GhRun, GhSpawnError } from "../src/github/gh.ts";
+import { FIELDS, cleanMd, fetch, gh, parse, parseDiff, repoOf } from "../src/github/prdetail.ts";
 
 const view = {
   number: 7, title: "T", url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: true,

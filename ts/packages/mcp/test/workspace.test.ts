@@ -7,7 +7,7 @@ import { home } from "@harbor/store";
 import { forAccess, forget, note, numbered, replace, resolve, TOOLS, tools, call } from "../src/workspace.ts";
 
 describe("workspace", () => {
-  test("replaces like claude edit", () => {
+  test("replaces_like_claude_edit: replaces like claude edit", () => {
     expect(replace("a b a", "b", "c", false)).toEqual({ text: "a c a", n: 1 });
     expect(replace("a b a", "a", "x", false)).toMatchObject({ error: expect.stringContaining("2 times") });
     expect(replace("a b a", "a", "x", true)).toEqual({ text: "x b x", n: 2 });
@@ -23,7 +23,7 @@ describe("workspace", () => {
     expect(replace("b b", "b", "$&", true)).toEqual({ text: "$& $&", n: 2 });
   });
 
-  test("paths and numbering", () => {
+  test("paths_and_numbering: paths and numbering", () => {
     const cwd = "/p/proj";
     expect(resolve(cwd, "")).toBe(cwd);
     expect(resolve(cwd, "src/a.rs")).toBe("/p/proj/src/a.rs");
@@ -70,7 +70,7 @@ describe("workspace", () => {
 
   const t = (r: { ok: boolean; content: ({ type: string; text?: string } & Record<string, unknown>)[] }): [boolean, string] => [r.ok, r.content[0]?.text ?? ""];
 
-  test("tools run in the project", async () => {
+  test("tools_run_in_the_project: tools run in the project", async () => {
     mkdirSync(join(dir, "sub"));
     const id = -7;
     expect(t(await call(dir, id, "write", { file_path: "sub/f.txt", content: "hello\nworld\n" }))[0]).toBe(true);

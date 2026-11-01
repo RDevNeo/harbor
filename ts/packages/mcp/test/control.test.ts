@@ -18,7 +18,7 @@ afterEach(() => {
 
 const tag = (token: string, body: string): string => createHmac("sha256", token).update(body).digest("hex");
 
-test("github signatures", () => {
+test("github_signatures: github signatures", () => {
   const t = tag("tok", "{}");
   expect(signatureOk("tok", "{}", `sha256=${t}`)).toBe(true);
   expect(signatureOk("tok", "{ }", `sha256=${t}`)).toBe(false);
@@ -26,13 +26,13 @@ test("github signatures", () => {
   expect(signatureOk("tok", "{}", "sha1=00") || signatureOk("tok", "{}", "sha256=zz")).toBe(false);
 });
 
-test("funnel hooks target port", () => {
+test("funnel_hooks_target_port: funnel hooks target port", () => {
   const st = "# Funnel on:\n#     - https://pc.example.ts.net\n\nhttps://pc.example.ts.net (Funnel on)\n|-- / proxy http://127.0.0.1:3000\n|-- /hooks proxy http://127.0.0.1:47920/hooks\n";
   expect(funnelHooksPort(st)).toBe(47920);
   expect(funnelHooksPort("https://pc.example.ts.net (Funnel on)\n|-- / proxy http://127.0.0.1:3000\n")).toBeUndefined();
 });
 
-test("webhooks are rate limited per token", () => {
+test("webhooks_are_rate_limited_per_token: webhooks are rate limited per token", () => {
   const r = new Rate();
   const t = 1_000_000;
   for (let i = 0; i < HOOK_RATE_LIMIT; i++) expect(r.allow("a", t)).toBe(true);

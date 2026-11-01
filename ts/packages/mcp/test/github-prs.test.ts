@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import type { Pr, PrFetched, PrFilters } from "../../src/ghapi.ts";
-import { type GhOut, type GhRun, GhSpawnError } from "../../src/github/gh.ts";
+import type { Pr, PrFetched, PrFilters } from "../src/ghapi.ts";
+import { type GhOut, type GhRun, GhSpawnError } from "../src/github/gh.ts";
 import {
   activeFilters, ago, authors, defaultFilters, fetch, githubRepo, graphql, groups, hexRgb, isoSecs, labels, makePrsPort, parse, parseQuery, query, sortGroup, sortLabel, thousands,
-} from "../../src/github/prs.ts";
+} from "../src/github/prs.ts";
 
 const pr = (n: number, author: string, over: Partial<Pr> = {}): Pr => ({
   number: n, title: `PR ${n}`, url: `https://github.com/o/r/pull/${n}`, repo: "o/r", state: "open", draft: false, adds: n, dels: 0, created: n, updated: n,

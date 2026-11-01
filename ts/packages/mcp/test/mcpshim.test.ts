@@ -18,7 +18,7 @@ afterEach(() => {
 
 const names = (role: string): string[] => tools(role).map((t) => String(t.name));
 
-test("only leads open chats", () => {
+test("only_leads_open_chats: only leads open chats", () => {
   for (const t of ["open_chat", "list_chats", "message_chat"]) {
     expect(names("lead")).toContain(t);
     expect(names("sub")).not.toContain(t);
@@ -27,7 +27,7 @@ test("only leads open chats", () => {
   expect((open?.inputSchema as { required: string[] }).required).toEqual(["prompt"]);
 });
 
-test("only leads retire agents", () => {
+test("only_leads_retire_agents: only leads retire agents", () => {
   expect(names("lead")).toContain("retire_agent");
   expect(names("sub")).not.toContain("retire_agent");
   const retire = tools("lead").find((t) => t.name === "retire_agent");

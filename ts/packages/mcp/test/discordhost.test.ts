@@ -4,7 +4,7 @@ import { CALL_WAIT, DAY, FREEZE_AFTER, MAX_LOGINS, MAX_QUIT_LOGINS, Policy, QUIT
 const POLICY = new Policy(FREEZE_AFTER, MAX_LOGINS, QUIT_AFTER, MAX_QUIT_LOGINS);
 const many = (at: number, n: number): number[] => Array.from({ length: n }, () => at);
 
-test("with swap it freezes after idle unless busy or past the day's logins", () => {
+test("with_swap_it_freezes_after_idle_unless_busy_or_past_the_days_logins: with swap it freezes after idle unless busy or past the day's logins", () => {
   const p = POLICY;
   const now = 1_000_000;
   expect(p.rest(now, now - 119, 0, [], true)).toBeUndefined();
@@ -15,7 +15,7 @@ test("with swap it freezes after idle unless busy or past the day's logins", () 
   expect(p.rest(now, now - 9999, 0, many(now - DAY - 1, MAX_LOGINS), true)).toBe("freeze");
 });
 
-test("without swap it quits later and never freezes", () => {
+test("without_swap_it_quits_later_and_never_freezes: without swap it quits later and never freezes", () => {
   const p = POLICY;
   const now = 1_000_000;
   expect(p.rest(now, now - 120, 0, [], false)).toBeUndefined();
@@ -27,13 +27,13 @@ test("without swap it quits later and never freezes", () => {
   expect(p.rest(now, now - 9999, 0, many(now - DAY - 1, MAX_QUIT_LOGINS), false)).toBe("quit");
 });
 
-test("reads swap from meminfo", () => {
+test("reads_swap_from_meminfo: reads swap from meminfo", () => {
   expect(swapIn("MemTotal:  8000 kB\nSwapTotal:  11500 kB\nSwapFree:  1 kB\n")).toBe(true);
   expect(swapIn("MemTotal:  8000 kB\nSwapTotal:  0 kB\nSwapFree:  0 kB\n")).toBe(false);
   expect(swapIn("MemTotal:  8000 kB\n")).toBe(false);
 });
 
-test("pace holds back joins, DMs and bursts", () => {
+test("pace_holds_back_joins_dms_and_bursts: pace holds back joins, DMs and bursts", () => {
   const log = (k: string, ago: number[], now: number): [string, number][] => ago.map((a) => [k, now - a]);
   const now = 1_000_000;
   expect(pace("join", [], now)).toEqual({ go: true });
@@ -50,7 +50,7 @@ test("pace holds back joins, DMs and bursts", () => {
   expect("refuse" in p ? p.refuse : "").toContain("4 min");
 });
 
-test("dry runs and reads aren't paced", () => {
+test("dry_runs_and_reads_arent_paced: dry runs and reads aren't paced", () => {
   expect(paceKind("discord_join", { invite: "x" })).toBeUndefined();
   expect(paceKind("discord_join", { apply: true })).toBe("join");
   expect(paceKind("discord_leave", {})).toBeUndefined();
@@ -59,7 +59,7 @@ test("dry runs and reads aren't paced", () => {
   expect(paceKind("discord_history", {})).toBeUndefined();
 });
 
-test("the self-test answer carries only known names and statuses", () => {
+test("the_self_test_answer_carries_only_known_names_and_statuses: the self-test answer carries only known names and statuses", () => {
   const base = 'GuildStore: { x },\n"source:a": { y },\ndiscord_view: { z },';
   const r = {
     vencord: true,
@@ -77,7 +77,7 @@ test("the self-test answer carries only known names and statuses", () => {
   expect(readTest({}, base).missing).toEqual(["Vencord"]);
 });
 
-test("waits get the time they ask for", () => {
+test("waits_get_the_time_they_ask_for: waits get the time they ask for", () => {
   expect(callWait("discord_waitForMessage", { timeoutMs: 600_000 })).toBe(605_000);
   expect(callWait("discord_waitForMessage", {})).toBe(65_000);
   expect(callWait("discord_history", {})).toBe(CALL_WAIT);

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import type { Dest } from "../../src/ghapi.ts";
-import type { GhRun, MeshHttp } from "../../src/github/gh.ts";
-import { FIELDS, fetch, fetchOn, fetchRaw, parse, repoOf, setOpenOn, stateOf } from "../../src/github/issuedetail.ts";
+import type { Dest } from "../src/ghapi.ts";
+import type { GhRun, MeshHttp } from "../src/github/gh.ts";
+import { FIELDS, fetch, fetchOn, fetchRaw, parse, repoOf, setOpenOn, stateOf } from "../src/github/issuedetail.ts";
 
 const view = {
   number: 3, title: "T", body: "b", url: "https://github.com/o/r/issues/3", state: "CLOSED", stateReason: "COMPLETED",

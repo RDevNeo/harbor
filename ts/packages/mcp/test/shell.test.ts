@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { OUTPUT_MAX, Tail, quote, shell } from "../src/shell.ts";
 
-test("shell keeps the end and returns despite background children", async () => {
+test("shell_keeps_the_end_and_returns_despite_background_children: shell keeps the end and returns despite background children", async () => {
   const dir = tmpdir();
   const big = await shell("head -c 3000000 /dev/zero | tr '\\0' a; echo; echo last", dir, 20_000);
   expect(big.kind).toBe("exit");

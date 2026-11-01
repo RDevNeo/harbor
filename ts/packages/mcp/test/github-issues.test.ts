@@ -1,13 +1,13 @@
-import "../sandbox.ts";
+import "./sandbox.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Group, Issue, IssueFetched, IssueFilters, Source } from "../../src/ghapi.ts";
+import type { Group, Issue, IssueFetched, IssueFilters, Source } from "../src/ghapi.ts";
 import {
   type GhRun, type GhRunner, accounts, activeFilters, assignees, authors, createIssuesPort, defaultFilters, fetchIssues, graphql, groups, isoSecs, labels, merge, milestones, notes, otherProjects,
   owner, parse, parseBaseQuery, parseQuery, query, runGh, shortError, sortGroup, sortLabel, stateOf, trusted,
-} from "../../src/github/issues.ts";
+} from "../src/github/issues.ts";
 
 const issue = (n: number, author: string): Issue => ({
   number: n,
