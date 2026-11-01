@@ -99,10 +99,15 @@ Tests: 161 in 15 files (`bun test packages/update`), all passing; Rust `#[test]`
   `0.109.0`, `VERSION` agreeing, no `.staging`, no live preview, schema 8, owner), backs up `harbor.db` by `VACUUM INTO` (checked), `identity.pem`,
   `secrets.json`, `account.json`, the kv key names and `.previous` into `~/.local/state/harbor-switch/<time>/` (0700), keeps Rust in
   `.previous/harbor` as Rust's `replace` does, writes `VERSION`, renames the binary over `harbor` last and waits for the Rust app to exec
-  into it (its Update button, the phone's Update, or its quiet moment). `restart` stops it and starts the new one with its environment.
+  into it. It presses Update itself: once Rust's file watcher has seen the change (about 3 s) it sends the phone's Update
+  (`POST /v1/hub/update`) over loopback with a pairing token from before accounts, read from the PC's own kv, and Rust restarts in
+  place with its screen and queue (`reload_now`), about 5 s after the swap. Without such a token (`status` says so) it waits for the
+  Update button, a phone's Update or Rust's quiet moment. `restart` stops it and starts the new one with its environment.
   `undo` puts Rust back and the original `.previous`; the db only with `--restore-db`, once per backup.
 - **Rig** `ts/rig/install-one/switch.sh` (inside `unshare -Urnm`): Rust 0.109.0 from its signed release archive installed by its own
-  `install.sh` in a fake home, a scrambled harbor.db (319 chats, 74,706 items), throwaway identities, a fake `claude` and a fake `curl`.
+  `install.sh` in a fake home, a scrambled harbor.db (319 chats, 74,706 items), throwaway identities, a fake `claude` and a fake `curl`. The gap
+  before Rust restarts: a turn Rust starts then runs on the TypeScript runner and Rust follows it to its reply; `harbor mcp`
+  (initialize, tools/list, tools/call) and `harbor app gmail` from the TypeScript binary are answered by the old Rust app.
 
 ## Wiring other packages must do
 
