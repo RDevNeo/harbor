@@ -59,6 +59,14 @@
     "packages/ui": {
       "name": "@harbor/ui",
       "version": "0.0.0",
+      "dependencies": {
+        "@harbor/agents": "workspace:*",
+        "@harbor/mcp": "workspace:*",
+        "@harbor/media": "workspace:*",
+        "@harbor/net": "workspace:*",
+        "@harbor/store": "workspace:*",
+        "slint-ui": "1.18.1",
+      },
     },
     "packages/update": {
       "name": "@harbor/update",
