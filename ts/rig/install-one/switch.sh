@@ -107,7 +107,8 @@ check "the Rust app is still pid $P1 and waits for Update" grep -q "hasn't resta
 check ".previous/harbor is the Rust binary" test "$(sha "$L/.previous/harbor")" = "$RUST_SHA"
 check ".previous/VERSION is 0.109.0" test "$(cat "$L/.previous/VERSION")" = 0.109.0
 check "harbor is the TypeScript binary" test "$(sha "$L/harbor")" = "$(sha "$NEW")"
-check "VERSION says 0.109.1-ts" test "$(cat "$L/VERSION")" = 0.109.1-ts
+TV=$("$NEW" --version | cut -d" " -f2)
+check "VERSION says $TV" test "$(cat "$L/VERSION")" = "$TV"
 B=$(readlink -f "$T/a/home/.local/state/harbor-switch/latest")
 check "the backup folder is private" test "$(stat -c %a "$B")" = 700
 check "the backup db passes integrity_check" test "$(sqlite3 "$B/harbor.db" "pragma integrity_check")" = ok
