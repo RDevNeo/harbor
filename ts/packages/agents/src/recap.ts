@@ -1,14 +1,10 @@
-// Claude Code's recap and prompt suggestion (2.1.303). Harbor can't fork the CLI's prompt cache, so
+// Claude Code's prompt suggestion (2.1.303); its session recap was removed (2026-11-01) as unhelpful. Harbor can't fork the CLI's prompt cache, so
 // it asks Haiku with Claude Code's own prompts and filters over a condensed transcript.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Item } from "@harbor/store";
 import { at, optStr, parse } from "./json.ts";
 import { dataDir } from "./paths.ts";
-
-/** Claude Code's recap prompt, verbatim. */
-export const RECAP_PROMPT =
-  "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Lead with the overall goal and current task, then the one next action. Skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.";
 
 /** Claude Code's suggestion prompt, verbatim. */
 export const SUGGEST_PROMPT = `[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]
@@ -274,33 +270,9 @@ export async function askWithin(bin: string, env: Env, system: string, prompt: s
   return (optStr(at(v, "result")) ?? "").trim();
 }
 
-/** After a turn ends, how long the user has to be away before the recap (`HARBOR_TEST_RECAP_S` shortens it for rigs). */
-function delayMs(): number {
-  const v = Number(process.env.HARBOR_TEST_RECAP_S);
-  return (Number.isInteger(v) && v >= 0 ? v : 180) * 1000;
-}
-/** …and at least this long into the absence. */
-const MIN_AWAY_MS = 2000;
-/** Claude Code stops once its prompt cache would be stale (0.9 × the 1 h TTL). */
-const STALE_MS = 54 * 60_000;
-const RETRY_MS = 30_000;
-const MAX_FAILS = 3;
-/** The first recaps say how to turn them off. */
-const HINTED = 3;
-/** A phone that fetched the chat this recently has it open. */
-const PHONE_SEEN_MS = 20_000;
-
-type What = "recap" | "suggestion";
-
 interface Entry {
-  /** When its last turn ended (ms), while a recap is still due for it. */
-  turnEnd: number | null;
-  awaySince: number | null;
   /** Bumped by every turn: results from before it are dropped. */
   turn: number;
-  busy: boolean;
-  fails: number;
-  retryAt: number | null;
 }
 
 /** What `Recaps` needs from the engine around it. */
@@ -320,11 +292,10 @@ export interface RecapHost {
   changed(id: number): void;
 }
 
-/** Recaps and suggestions per chat, kept in kv `recap:<id>` / `suggestion:<id>` as "gid\ntext". */
+/** Suggestions per chat, kept in kv `suggestion:<id>` as "gid\ntext" (`recap:<id>` rows of old recaps are only read, never shown). */
 export class Recaps {
   private readonly entries = new Map<number, Entry>();
   private readonly shown = new Map<number, [string | null, string | null]>();
-  private readonly phoneSeen = new Map<number, number>();
   ask: (bin: string, env: Env, system: string, prompt: string) => Promise<string> = ask;
 
   constructor(private readonly host: RecapHost) {}
@@ -333,27 +304,13 @@ export class Recaps {
     return this.host.store.get(key) !== "0";
   }
 
-  recapEnabled(): boolean {
-    return this.on("recap_enabled");
-  }
-
   suggestEnabled(): boolean {
     return this.on("suggest_enabled");
   }
 
-  /** A phone fetched the chat: it counts as being looked at. */
-  seen(chat: number): void {
-    this.phoneSeen.set(chat, Date.now());
-  }
-
-  private watched(chat: number): boolean {
-    const t = this.phoneSeen.get(chat);
-    return (this.host.watched?.(chat) ?? false) || (t !== undefined && Date.now() - t < PHONE_SEEN_MS);
-  }
-
   private entry(chat: number): Entry {
     let e = this.entries.get(chat);
-    if (!e) this.entries.set(chat, (e = { turnEnd: null, awaySince: null, turn: 0, busy: false, fails: 0, retryAt: null }));
+    if (!e) this.entries.set(chat, (e = { turn: 0 }));
     return e;
   }
 
@@ -374,7 +331,7 @@ export class Recaps {
     return v;
   }
 
-  private save(chat: number, what: What, text: string | null): void {
+  private save(chat: number, what: "recap" | "suggestion", text: string | null): void {
     const gid = this.host.chat(chat)?.gid ?? "";
     this.host.store.set(`${what}:${chat}`, text === null ? "" : `${gid}\n${text}`);
     const slot = this.load(chat);
@@ -382,115 +339,53 @@ export class Recaps {
     this.host.changed(chat);
   }
 
-  /** What shows for a chat: its recap and its suggestion (nothing while its turn runs). */
+  /** What shows for a chat: no recap (removed: they didn't help), and its suggestion (none while its turn runs). */
   shownFor(chat: number): [string | null, string | null] {
-    const [r, s] = this.load(chat);
-    const running = this.host.running(chat);
-    return [this.recapEnabled() && !running ? r : null, this.suggestEnabled() && !running ? s : null];
+    const s = this.load(chat)[1];
+    return [null, this.suggestEnabled() && !this.host.running(chat) ? s : null];
   }
 
-  private spawn(chat: number, what: What): boolean {
+  private spawn(chat: number): boolean {
     const a = this.host.asker(chat);
     if (!a) return false;
-    const prompt = fullPrompt(this.host.items(chat), what === "recap" ? RECAP_PROMPT : SUGGEST_PROMPT);
+    const prompt = fullPrompt(this.host.items(chat), SUGGEST_PROMPT);
     const turn = this.entry(chat).turn;
     this.ask(a.bin, a.env, SYSTEM, prompt).then(
-      (t) => this.landed(chat, what, turn, t),
-      () => this.landed(chat, what, turn, null),
+      (t) => this.landed(chat, turn, t),
+      () => {},
     );
     return true;
   }
 
-  /** A turn ended: the suggestion now; the recap once the user has been away a while. */
+  /** A turn ended: the suggestion now. */
   exited(chat: number, stopped: boolean): void {
     const c = this.host.chat(chat);
     // Claude Code: the main thread only (not sub-agents), this PC's own chats.
     if (!c || c.home !== "" || c.role === "sub") return;
     const e = this.entry(chat);
-    Object.assign(e, { turn: e.turn + 1, turnEnd: Date.now(), awaySince: null, fails: 0, retryAt: null, busy: false });
+    e.turn++;
     if (stopped || c.access === "plan" || !this.suggestEnabled()) return;
     const items = this.host.items(chat);
     // Not this early, and not after an error (let them assess it).
     if (assistantCount(items) < 2 || items[items.length - 1]?.kind === "error") return;
-    this.spawn(chat, "suggestion");
+    this.spawn(chat);
   }
 
-  private landed(chat: number, what: What, turn: number, r: string | null): void {
-    const e = this.entries.get(chat);
-    if (!e || e.turn !== turn) return;
-    const running = this.host.running(chat);
-    if (what === "suggestion") {
-      if (r === null) return;
-      const s = clean(r);
-      if (suppressed(s) === null && !running) this.save(chat, "suggestion", s);
-      return;
-    }
-    e.busy = false;
-    const text = r === null ? null : r.trim() || null;
-    if (text === null) {
-      e.fails++;
-      e.retryAt = Date.now() + RETRY_MS;
-      return;
-    }
-    if (running) return;
-    e.turnEnd = null;
-    const n = Number(this.host.store.get("recap_count") ?? "0") || 0;
-    this.host.store.set("recap_count", String(n + 1));
-    const t = cap(text, RECAP_CAP);
-    this.host.store.set(`recap_users:${chat}`, String(userCount(this.host.items(chat))));
-    this.save(chat, "recap", n < HINTED ? `${t} (disable recaps in Settings)` : t);
+  private landed(chat: number, turn: number, r: string): void {
+    if (this.entries.get(chat)?.turn !== turn) return;
+    const s = clean(r);
+    if (suppressed(s) === null && !this.host.running(chat)) this.save(chat, "suggestion", s);
   }
 
-  /** Now and then: a new turn hides what showed, recaps that are due go out; returns ms until the next is due (null: none). */
+  /** Now and then: a new turn hides the suggestion that showed. Returns ms until something is due (never: null). */
   tick(): number | null {
-    for (const [id, [r, s]] of this.shown) {
-      if ((r !== null || s !== null) && this.host.running(id)) {
-        this.save(id, "recap", null);
+    for (const [id, [, s]] of this.shown) {
+      if (s !== null && this.host.running(id)) {
         this.save(id, "suggestion", null);
         const e = this.entries.get(id);
-        if (e) Object.assign(e, { turn: e.turn + 1, turnEnd: null });
+        if (e) e.turn++;
       }
     }
-    if (!this.recapEnabled()) return null;
-    const t = Date.now();
-    let next: number | null = null;
-    const soon = (ms: number): void => {
-      next = next === null ? ms : Math.min(next, ms);
-    };
-    for (const [id, e] of this.entries) {
-      if (e.turnEnd === null || e.busy) continue;
-      if (t - e.turnEnd > STALE_MS || e.fails >= MAX_FAILS) {
-        e.turnEnd = null;
-        continue;
-      }
-      if (this.watched(id)) {
-        e.awaySince = null;
-        // A phone's look runs out without any event here: wake then.
-        const seen = this.phoneSeen.get(id);
-        if (seen !== undefined && t - seen < PHONE_SEEN_MS) soon(PHONE_SEEN_MS - (t - seen));
-        continue;
-      }
-      e.awaySince ??= t;
-      const due = Math.max(e.turnEnd + delayMs(), e.awaySince + MIN_AWAY_MS, e.retryAt ?? t);
-      if (due > t) {
-        soon(due - t);
-        continue;
-      }
-      if (this.wanted(id)) e.busy = this.spawn(id, "recap");
-      // Not for this turn (too early in the session, a draft, sub-agents at work…).
-      else e.turnEnd = null;
-    }
-    return next;
-  }
-
-  /** Claude Code's checks when the recap is due. */
-  private wanted(chat: number): boolean {
-    if (this.host.running(chat) || (this.host.draft?.(chat) ?? "").trim() !== "") return false;
-    if (this.host.chat(chat)?.role === "lead" && this.host.subsRunning(chat)) return false;
-    if (this.load(chat)[0] !== null) return false;
-    const users = userCount(this.host.items(chat));
-    if (users < 3) return false;
-    const before = Number(this.host.store.get(`recap_users:${chat}`) ?? "");
-    return Number.isInteger(before) && this.host.store.get(`recap_users:${chat}`) !== null && before <= users ? users - before >= 2 : true;
+    return null;
   }
 }

@@ -84,32 +84,23 @@ describe("the timers", () => {
     return { store, chat, r, asked, set: (o: { running?: boolean; watched?: boolean }) => ((running = o.running ?? running), (watched = o.watched ?? watched)) };
   };
 
-  test("a suggestion after the turn, a recap once the user has been away", async () => {
-    process.env.HARBOR_TEST_RECAP_S = "0";
+  test("a suggestion after the turn and never a recap, however long the user is away", async () => {
     const { store, chat, r, asked, set } = setup();
+    store.set(`recap:${chat.id}`, `${chat.gid}\nAn old recap.`);
     r.exited(chat.id, false);
     await Bun.sleep(10);
     expect(asked).toEqual(["suggestion"]);
     expect(r.shownFor(chat.id)).toEqual([null, "run the tests"]);
-    // Watched: no recap.
-    set({ watched: true });
+    set({ watched: false });
+    expect(r.tick()).toBeNull();
+    await Bun.sleep(50);
     r.tick();
     expect(asked).toEqual(["suggestion"]);
-    // Away for at least two seconds.
-    set({ watched: false });
-    r.tick();
-    await Bun.sleep(2100);
-    r.tick();
-    await Bun.sleep(10);
-    expect(asked).toEqual(["suggestion", "recap"]);
-    expect(r.shownFor(chat.id)[0]).toBe("Building the login page; next, add tests. (disable recaps in Settings)");
-    expect(store.get(`recap:${chat.id}`)).toStartWith(`${chat.gid}\n`);
-    // A new turn hides both.
+    // A new turn hides the suggestion.
     set({ running: true });
     r.tick();
     set({ running: false });
     expect(r.shownFor(chat.id)).toEqual([null, null]);
-    delete process.env.HARBOR_TEST_RECAP_S;
     store.close();
   });
 

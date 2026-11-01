@@ -55,9 +55,9 @@ describe("Settings › General (pages.rs general_tab)", () => {
 
   test("defaults read as the Rust app reads them", () => {
     const s = generalSections(kv(), env);
-    expect(s.map((x) => x.title)).toEqual(["", "Background", "Recaps and suggestions", "Issues and pull requests", "Updates"]);
+    expect(s.map((x) => x.title)).toEqual(["", "Background", "Suggestions", "Issues and pull requests", "Updates"]);
     const on = Object.fromEntries(s.flatMap((x) => x.rows).map((r) => [r.key, r.kind === "choice" ? r.selected : r.on]));
-    expect(on).toMatchObject({ follow_up: 1, resume_on_restart: true, order_by_activity: false, fast_mode: false, bg_keep: true, recap_enabled: true, suggest_enabled: true, auto_fix: false, auto_merge: false, auto_update: 0 });
+    expect(on).toMatchObject({ follow_up: 1, resume_on_restart: true, order_by_activity: false, fast_mode: false, bg_keep: true, suggest_enabled: true, auto_fix: false, auto_merge: false, auto_update: 0 });
     expect(s[1]?.rows[2]?.desc.endsWith("No tray was found on this desktop, so quit from here.")).toBe(true);
     expect(generalSections(kv(), { ...env, trayActive: true })[1]?.rows[2]?.desc.endsWith("Also in the tray icon's menu.")).toBe(true);
   });

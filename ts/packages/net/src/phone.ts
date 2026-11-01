@@ -39,10 +39,8 @@ export interface PhoneEngine {
   queueUpdate(id: number, qid: number, text: string | null, mentions: Mention[] | null, editing: string | null): boolean;
   queueRemove(id: number, qid: number): boolean;
   queueResume(id: number): void;
-  /** The session recap and the suggested next message shown under the chat (recap.rs). */
+  /** The session recap (always null now: removed) and the suggested next message shown under the chat (recap.rs). */
   recap(id: number): [string | null, string | null];
-  /** A phone opened the chat: its recap counts as seen. */
-  recapSeen(id: number): void;
   /** Finished while nobody had the chat open, not opened since; whether that last turn failed. */
   unread(id: number): boolean;
   failed(id: number): boolean;
@@ -599,7 +597,6 @@ export class PhoneRoutes {
   items(c: Chat, since: number): Json {
     const hub = this.d.hub;
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
-    this.d.engine?.recapSeen(c.id);
     if (this.d.engine?.opened(c.id)) hub.bump();
     const forks = c.home !== "" ? (this.d.replica.remote.get(c.id)?.forks ?? []) : (this.d.engine?.forksOf(c.id) ?? []);
     const cards = project(items, c.role === "lead", forks);

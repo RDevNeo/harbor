@@ -98,14 +98,8 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
       ],
     },
     {
-      title: "Recaps and suggestions",
+      title: "Suggestions",
       rows: [
-        toggle(
-          "recap_enabled",
-          "Session recap",
-          "When you come back to a chat a few minutes after its turn ended, a one-line summary of where it stands shows over the composer, like Claude Code's. Claude chats only; it uses a little of the chat account's usage (Haiku).",
-          onUnless0(kv, "recap_enabled"),
-        ),
         toggle(
           "suggest_enabled",
           "Prompt suggestions",
@@ -140,7 +134,7 @@ export function setGeneral(kv: Kv, key: string, value: boolean | number): boolea
   const b = (v: boolean) => (v ? "1" : "0");
   if (key === "follow_up" && typeof value === "number") kv.set("follow_up", value === 1 ? "steer" : "queue");
   else if (key === "auto_update" && typeof value === "number") kv.set("auto_update", b(value === 1));
-  else if (["resume_on_restart", "order_by_activity", "fast_mode", "bg_keep", "recap_enabled", "suggest_enabled", "auto_fix", "auto_merge"].includes(key) && typeof value === "boolean") kv.set(key, b(value));
+  else if (["resume_on_restart", "order_by_activity", "fast_mode", "bg_keep", "suggest_enabled", "auto_fix", "auto_merge"].includes(key) && typeof value === "boolean") kv.set(key, b(value));
   else return false;
   return true;
 }

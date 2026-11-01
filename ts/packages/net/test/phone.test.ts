@@ -245,9 +245,6 @@ describe("the phone API's chats (api.rs App side)", () => {
         calls.push("resume");
       },
       recap: () => ["Fixed the build.", "Run the tests"],
-      recapSeen: (id) => {
-        calls.push(`seen ${id}`);
-      },
       unread: () => false,
       failed: () => false,
       opened: () => false,
@@ -268,7 +265,6 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect((await call("POST", `v1/chats/${c.id}/resume`)).status).toBe(200);
     expect(calls).toEqual(["promote 4", "promote 5", "move 4 0", "update 4 edited Pixel", "remove 4", "resume"]);
     const items = (await call("GET", `v1/chats/${c.id}/items`)).body as { status: Record<string, unknown> };
-    expect(calls.at(-1)).toBe(`seen ${c.id}`);
     expect([items.status.recap, items.status.suggestion, items.status.can_steer, items.status.follow_up, items.status.queue]).toEqual(["Fixed the build.", "Run the tests", true, "queue", [{ id: 4, text: "next" }]]);
   });
 
@@ -304,7 +300,6 @@ describe("the phone API's chats (api.rs App side)", () => {
       queueRemove: () => false,
       queueResume: () => {},
       recap: () => [null, null],
-      recapSeen: () => {},
       unread: () => false,
       failed: () => false,
       opened: () => false,
@@ -349,7 +344,6 @@ describe("the phone API's chats (api.rs App side)", () => {
       queueRemove: () => false,
       queueResume: () => {},
       recap: () => [null, null] as [null, null],
-      recapSeen: () => {},
       unread: () => false,
       failed: () => false,
       opened: () => false,
@@ -410,7 +404,6 @@ describe("the phone API's chats (api.rs App side)", () => {
       queueRemove: () => false,
       queueResume: () => {},
       recap: () => [null, null],
-      recapSeen: () => {},
       unread: () => false,
       failed: () => false,
       opened: () => false,
