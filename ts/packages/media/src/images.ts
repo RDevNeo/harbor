@@ -1,0 +1,465 @@
+import { readFileSync, statSync } from "node:fs";
+import { basename } from "node:path";
+import sharp, { type Metadata } from "sharp";
+import { decodeIco, isIco } from "./ico.ts";
+import { check, find, generation, isSvg, isVideo, located, type Media, poster, svgPng } from "./media.ts";
+
+const EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
+export const THUMB_PX = 384;
+const MID = "mid:";
+export const MID_PX = 1280;
+export const FULL_PX = 4096;
+const MAX_BYTES = 100 * 2 ** 20;
+export const MAX_SIDE = 16384;
+const MAX_ALLOC = 512 * 2 ** 20;
+const WORKERS = 2;
+const KEEP = 96;
+const IDLE_SECS = 30;
+
+export function isImage(path: string): boolean {
+  const e = path.split(".").at(-1)?.toLowerCase() ?? "";
+  return path.includes(".") && EXTS.includes(e);
+}
+
+export interface Decoded {
+  width: number;
+  height: number;
+  data: Uint8Array;
+}
+
+export type Slot =
+  | { state: "loading" }
+  | { state: "ready"; image: Decoded; dims: [number, number]; stamp: number | null }
+  | { state: "failed"; error: string };
+
+export type Fetch = (path: string) => Promise<Uint8Array | null>;
+
+export interface Source {
+  image: Fetch;
+  video: Fetch;
+}
+
+export interface VideoHooks {
+  open(key: string, fetch: Fetch | undefined, play: boolean): void;
+  close(): void;
+}
+
+export interface Limits {
+  maxSide: number;
+  maxAlloc: number;
+}
+
+const tooLarge = (w: number, h: number): Error => new Error(`too large (${w}×${h})`);
+
+export async function decodeBytes(bytes: Uint8Array, cap: number, limits: Limits = { maxSide: MAX_SIDE, maxAlloc: MAX_ALLOC }): Promise<{ image: Decoded; dims: [number, number] }> {
+  let input: Uint8Array = bytes;
+  if (isIco(bytes)) {
+    const ico = decodeIco(bytes);
+    input = ico.kind === "png" ? ico.data : await sharp(ico.data, { raw: { width: ico.width, height: ico.height, channels: 4 } }).png().toBuffer();
+  }
+  const opts = { limitInputPixels: limits.maxSide * limits.maxSide, failOn: "error" as const };
+  let meta: Metadata;
+  try {
+    meta = await sharp(input, opts).metadata();
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e));
+  }
+  const [w, h] = [meta.width ?? 0, meta.height ?? 0];
+  if (w === 0 || h === 0) throw new Error("not an image");
+  if (Math.max(w, h) > limits.maxSide || w * h * 4 > limits.maxAlloc) throw tooLarge(w, h);
+  const turned = (meta.orientation ?? 1) >= 5;
+  const dims: [number, number] = turned ? [h, w] : [w, h];
+  let pipe = sharp(input, opts).autoOrient();
+  if (Math.max(dims[0], dims[1]) > cap) pipe = pipe.resize({ width: cap, height: cap, fit: "inside", kernel: "linear" });
+  const out = await pipe.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { image: { width: out.info.width, height: out.info.height, data: new Uint8Array(out.data.buffer, out.data.byteOffset, out.data.byteLength) }, dims };
+}
+
+export async function decode(key: string, bytes: Uint8Array | null, cap: number): Promise<{ image: Decoded; dims: [number, number] }> {
+  let data = bytes;
+  if (data === null && isVideo(key)) {
+    const c = check(key);
+    if (!c.ok) throw new Error(c.error);
+    const p = await poster(key);
+    if (p === null) throw new Error("no preview (ffmpeg isn't installed)");
+    data = readFileSync(p);
+  } else if (data === null && isSvg(key)) {
+    const c = check(key);
+    if (!c.ok) throw new Error(c.error);
+    data = await svgPng(key, Math.min(cap, 2048));
+    if (data === null) throw new Error("can't draw this SVG");
+  } else if (data === null) {
+    const file = located(key);
+    const len = (() => {
+      try {
+        return statSync(file).size;
+      } catch (e) {
+        throw new Error(e instanceof Error && "code" in e && e.code === "ENOENT" ? "file not found" : e instanceof Error ? e.message : String(e));
+      }
+    })();
+    if (len > MAX_BYTES) throw new Error(`too large (${Math.floor(len / 2 ** 20)} MB)`);
+    data = readFileSync(file);
+  }
+  return decodeBytes(data, cap);
+}
+
+const stamp = (key: string): number | null => {
+  try {
+    return statSync(located(key)).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
+interface Job {
+  key: string;
+  full: boolean;
+}
+
+export type LightboxKey = "prev" | "next" | "close";
+
+export function step(at: number, n: number, dir: -1 | 1): number | null {
+  const i = at + dir;
+  return i >= 0 && i < n ? i : null;
+}
+
+export interface LightboxView {
+  key: string;
+  full: Slot | null;
+  small: Slot | null;
+  gallery: string[];
+  index: number;
+  video: boolean;
+}
+
+export class Images {
+  private thumbs = new Map<string, { slot: Slot; used: number }>();
+  private full: { key: string; slot: Slot } | null = null;
+  private opened: string | null = null;
+  private gallery: string[] = [];
+  private card = 0;
+  private clicked: number | null = null;
+  private held: Record<LightboxKey, boolean> = { prev: false, next: false, close: false };
+  private bytes = new Map<string, Uint8Array>();
+  private queue: Job[] = [];
+  private workers = 0;
+  private source: Source | null = null;
+  private remote = new Map<string, Fetch>();
+  private videos = new Map<string, Fetch>();
+  private video: VideoHooks | null = null;
+  private listeners = new Set<() => void>();
+  private idle: (() => void)[] = [];
+
+  onChange(f: () => void): () => void {
+    this.listeners.add(f);
+    return () => void this.listeners.delete(f);
+  }
+
+  private changed(): void {
+    for (const f of this.listeners) f();
+  }
+
+  setVideo(hooks: VideoHooks | null): void {
+    this.video = hooks;
+  }
+
+  setSource(source: Source | null): void {
+    this.source = source;
+  }
+
+  forgetAll(): void {
+    this.thumbs.clear();
+    this.full = null;
+  }
+
+  putBytes(key: string, bytes: Uint8Array): void {
+    this.bytes.set(key, bytes);
+    this.thumbs.delete(key);
+    if (this.full?.key === key) this.full = null;
+  }
+
+  forget(key: string): void {
+    this.bytes.delete(key);
+    this.thumbs.delete(key);
+    if (this.full?.key === key) this.full = null;
+  }
+
+  bytesOf(key: string): Uint8Array | undefined {
+    return this.bytes.get(key);
+  }
+
+  private request(job: Job): void {
+    const real = job.key.startsWith(MID) ? job.key.slice(MID.length) : job.key;
+    if (this.source && !this.bytes.has(real) && !this.remote.has(real)) this.remote.set(real, this.source.image);
+    if (job.full) this.queue.unshift(job);
+    else this.queue.push(job);
+    while (this.workers < WORKERS && this.queue.length > 0) {
+      this.workers++;
+      void this.work();
+    }
+  }
+
+  private async work(): Promise<void> {
+    for (let job = this.queue.shift(); job; job = this.queue.shift()) {
+      const slot = await this.run(job);
+      if (job.full) {
+        if (this.full?.key === job.key) this.full = { key: job.key, slot };
+      } else {
+        const e = this.thumbs.get(job.key);
+        if (e) e.slot = slot;
+      }
+      this.changed();
+    }
+    this.workers--;
+    if (this.workers === 0) for (const f of this.idle.splice(0)) f();
+  }
+
+  private async run(job: Job): Promise<Slot> {
+    const mid = job.key.startsWith(MID);
+    const real = mid ? job.key.slice(MID.length) : job.key;
+    const cap = mid ? MID_PX : job.full ? FULL_PX : THUMB_PX;
+    try {
+      let bytes = this.bytes.get(job.key) ?? this.bytes.get(real) ?? null;
+      if (bytes === null) bytes = await this.fetched(real);
+      const st = bytes === null ? stamp(real) : null;
+      const { image, dims } = await decode(real, bytes, cap);
+      return { state: "ready", image, dims, stamp: st };
+    } catch (e) {
+      return { state: "failed", error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  private async fetched(key: string): Promise<Uint8Array | null> {
+    const fetch = this.remote.get(key);
+    if (!fetch) return null;
+    const bytes = await fetch(key);
+    if (bytes === null) {
+      if (statSafe(located(key))) {
+        this.remote.delete(key);
+        return null;
+      }
+      throw new Error("the PC this chat runs on is off or doesn't have it");
+    }
+    this.bytes.set(key, bytes);
+    return bytes;
+  }
+
+  thumb(key: string, now: number = performance.now() / 1000): Slot {
+    const e = this.thumbs.get(key);
+    if (e) {
+      e.used = now;
+      return e.slot;
+    }
+    const slot: Slot = { state: "loading" };
+    this.thumbs.set(key, { slot, used: now });
+    this.request({ key, full: false });
+    return slot;
+  }
+
+  async settled(): Promise<void> {
+    while (this.workers > 0 || this.queue.length > 0) await new Promise<void>((r) => this.idle.push(r));
+  }
+
+  async ready(key: string): Promise<Slot> {
+    let slot = this.thumb(key);
+    while (slot.state === "loading") {
+      await this.settled();
+      slot = this.thumb(key);
+    }
+    return slot;
+  }
+
+  open(key: string): void {
+    this.openGallery([key], 0);
+  }
+
+  openGallery(keys: string[], index: number): void {
+    const key = keys[index];
+    if (key === undefined) return;
+    this.gallery = keys;
+    this.show(key, true);
+  }
+
+  openClicked(key: string, group: string[]): void {
+    const i = group.indexOf(key);
+    if (i >= 0) this.openGallery([...group], i);
+    else this.open(key);
+    this.clicked = this.card;
+  }
+
+  private show(key: string, play: boolean): void {
+    this.opened = key;
+    if (isVideo(key)) this.video?.open(key, this.videos.get(key), play);
+    else this.video?.close();
+    const local = !this.bytes.has(key);
+    const now = local ? stamp(key) : null;
+    const small = this.thumbs.get(key)?.slot;
+    if (small?.state === "ready" && small.stamp !== null && now !== null && now !== small.stamp) {
+      const e = this.thumbs.get(key);
+      if (e) e.slot = { state: "loading" };
+      this.request({ key, full: false });
+    }
+    const f = this.full;
+    const fresh = f !== null && f.key === key && (f.slot.state === "loading" || (f.slot.state === "ready" && (!local || f.slot.stamp === now)));
+    if (!fresh) {
+      this.full = { key, slot: { state: "loading" } };
+      this.request({ key, full: true });
+    }
+    this.changed();
+  }
+
+  isOpen(): boolean {
+    return this.opened !== null;
+  }
+
+  openKey(): string | null {
+    return this.opened;
+  }
+
+  galleryKeys(): readonly string[] {
+    return this.gallery;
+  }
+
+  close(): void {
+    this.opened = null;
+    this.gallery = [];
+    this.held = { prev: false, next: false, close: false };
+    this.full = null;
+    this.video?.close();
+    this.changed();
+  }
+
+  pressKey(k: LightboxKey): void {
+    if (this.opened !== null) this.held[k] = true;
+  }
+
+  applyKeys(): void {
+    const { prev, next, close } = this.held;
+    this.held = { prev: false, next: false, close: false };
+    if (close) {
+      this.close();
+      return;
+    }
+    const at = this.index();
+    let to: number | null = null;
+    if (prev) to = step(at, this.gallery.length, -1);
+    if (next) to = step(at, this.gallery.length, 1) ?? to;
+    if (to !== null) this.goTo(to);
+  }
+
+  goTo(i: number): void {
+    const key = this.gallery[i];
+    if (key !== undefined) this.show(key, false);
+  }
+
+  private index(): number {
+    return Math.max(this.opened === null ? 0 : this.gallery.indexOf(this.opened), 0);
+  }
+
+  view(now: number = performance.now() / 1000): LightboxView | null {
+    if (this.thumbs.size > KEEP) {
+      for (const [k, e] of this.thumbs) if (e.slot.state !== "loading" && now - e.used >= IDLE_SECS) this.thumbs.delete(k);
+    }
+    const key = this.opened;
+    if (key === null) return null;
+    return {
+      key,
+      full: this.full?.key === key ? this.full.slot : null,
+      small: this.thumbs.get(key)?.slot ?? null,
+      gallery: [...this.gallery],
+      index: this.index(),
+      video: isVideo(key),
+    };
+  }
+
+  inCard(seq: number): void {
+    this.card = seq;
+  }
+
+  takeOpened(): number | null {
+    const c = this.clicked;
+    this.clicked = null;
+    return c;
+  }
+
+  widen(keys: string[]): void {
+    if (this.opened === null || !keys.includes(this.opened)) return;
+    if (this.source) {
+      for (const k of keys) {
+        if (!this.bytes.has(k) && !this.remote.has(k)) this.remote.set(k, this.source.image);
+        if (isVideo(k)) this.videos.set(k, this.source.video);
+      }
+    }
+    this.gallery = keys;
+  }
+
+  setVideoSource(key: string, fetch: Fetch): void {
+    this.videos.set(key, fetch);
+  }
+
+  videoSource(): Fetch | undefined {
+    return this.source?.video;
+  }
+
+  hasSource(): boolean {
+    return this.source !== null;
+  }
+
+  midKey(key: string): string {
+    return `${MID}${key}`;
+  }
+}
+
+function statSafe(p: string): boolean {
+  try {
+    statSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function imageName(key: string): string {
+  return basename(key) || key;
+}
+
+export function cover(tex: [number, number], rect: [number, number]): [number, number, number, number] {
+  const ta = tex[0] / Math.max(tex[1], 1);
+  const ra = rect[0] / Math.max(rect[1], 1);
+  if (ta > ra) {
+    const w = ra / ta;
+    return [(1 - w) / 2, 0, (1 + w) / 2, 1];
+  }
+  const h = ta / ra;
+  return [0, (1 - h) / 2, 1, (1 + h) / 2];
+}
+
+export function inlineSize(width: number): [number, number] {
+  return [Math.min(width, 480), 300];
+}
+
+const found = new Map<string, Media[]>();
+const checks = new Map<string, { at: number; result: ReturnType<typeof check> }>();
+
+export function mediaIn(text: string, cwd: string): Media[] {
+  const k = `${generation.value}\0${cwd}\0${text}`;
+  let v = found.get(k);
+  if (!v) {
+    v = find(text, cwd === "" ? null : cwd);
+    if (found.size > 256) found.clear();
+    found.set(k, v);
+  }
+  return v;
+}
+
+export function checked(key: string, now: number = performance.now() / 1000): ReturnType<typeof check> {
+  const c = checks.get(key);
+  if (c && now - c.at < 5) return c.result;
+  const result = check(key);
+  checks.set(key, { at: now, result });
+  return result;
+}
+
+export function recheck(key: string): void {
+  checks.delete(key);
+}
