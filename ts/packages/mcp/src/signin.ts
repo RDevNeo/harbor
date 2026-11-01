@@ -235,7 +235,7 @@ async function firstJson(urls: string[]): Promise<Record<string, Json> | undefin
   return undefined;
 }
 
-async function oauthLogin(id: string, url: string, signal: AbortSignal, update: (p: Pending) => void): Promise<void> {
+export async function oauthLogin(id: string, url: string, signal: AbortSignal, update: (p: Pending) => void): Promise<void> {
   const rm = (await firstJson(wellKnown(url, "oauth-protected-resource"))) ?? {};
   const servers = rm.authorization_servers;
   const first = Array.isArray(servers) ? servers[0] : undefined;

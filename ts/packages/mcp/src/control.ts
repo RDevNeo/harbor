@@ -209,7 +209,7 @@ export async function serveHook(req: Request, ctx: HookContext): Promise<Respons
   const prefix = "/hooks/";
   let pathname: string;
   try {
-    pathname = new URL(req.url).pathname;
+    pathname = decodeURIComponent(new URL(req.url).pathname);
   } catch {
     return empty(400);
   }

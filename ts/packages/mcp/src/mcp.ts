@@ -30,6 +30,7 @@ import { selfExe, which } from "./sys.ts";
 
 export * from "./apps.ts";
 export * from "./http.ts";
+export { openUrl, setOpener } from "./sys.ts";
 export {
   callbackPage,
   cancel,
@@ -44,6 +45,7 @@ export {
   googleWebClientId,
   isCode,
   listenCallback,
+  oauthLogin,
   pending,
   phoneRedirectOk,
   signIn,

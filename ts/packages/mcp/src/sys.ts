@@ -24,12 +24,20 @@ export function which(bin: string, env: Record<string, string | undefined> = pro
   return undefined;
 }
 
-export function openUrl(url: string): void {
+let opener = (url: string): void => {
   try {
     Bun.spawn(["xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
   } catch {
     // no opener on this PC: the sign-in card still shows the link
   }
+};
+
+export function openUrl(url: string): void {
+  opener(url);
+}
+
+export function setOpener(f: (url: string) => void): void {
+  opener = f;
 }
 
 export function selfExe(env: Record<string, string | undefined> = process.env): string {
