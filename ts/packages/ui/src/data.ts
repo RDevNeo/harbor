@@ -3,8 +3,8 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Account, Engine, providers } from "@harbor/agents";
 import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
-import type { Chat, Item, Repo, Store, Timer } from "@harbor/store";
-import { prompt as mentionsPrompt } from "./logic/mentions.ts";
+import type { Chat, Item, Mention as StoreMention, Repo, Store, Timer } from "@harbor/store";
+import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
 import { expands, personalDir, slashPrompt } from "./logic/slash.ts";
 import { tagsPrompt } from "./logic/tags.ts";
 import { imagesPrompt } from "./logic/usertext.ts";
@@ -19,6 +19,8 @@ export class Data {
   visible: (chatId: number) => boolean = () => false;
   /** A notification was clicked: open these chats (global ids). */
   onNotificationOpen: (gids: string[]) => void = () => {};
+  /** An undone send (or a queued message being edited) goes back into the chat's composer. */
+  onRestoreDraft: (chatId: number, text: string, files: string[], mentions: Mention[]) => void = () => {};
   readonly notifier: Notifier;
 
   constructor(store: Store) {
@@ -38,7 +40,8 @@ export class Data {
         const project = c.repoId === null ? null : (this.repo(c.repoId)?.name ?? null);
         this.notifier.noteTurn({ gid: c.gid, title: c.title, name: c.name, home: c.home, project }, sub, failed, said);
       },
-      mentionsPrompt: (ms) => mentionsPrompt(ms.map((m) => ({ ...m, kind: m.kind === "chat" ? "chat" : "" }))),
+      mentionsPrompt: (ms) => mentionsPrompt(ms.map(mentionOf)),
+      restoreDraft: (id, text, files, ms) => this.onRestoreDraft(id, text, files, ms.map(mentionOf)),
     });
   }
 
@@ -145,4 +148,8 @@ export class Data {
     this.engine.reload();
     return this.repo(id) ? id : null;
   }
+}
+
+export function mentionOf(m: StoreMention): Mention {
+  return { ...m, kind: m.kind === "chat" ? "chat" : "" };
 }

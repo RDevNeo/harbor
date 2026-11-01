@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { EARLIER, groupSeq, newOpened, stripDrawn, toggle, transcriptCards } from "../src/cards.ts";
+import { EARLIER, groupSeq, newOpened, QUEUE_MORE, queueCards, type QueuedView, stripDrawn, subsRunning, toggle, transcriptCards, withQueue } from "../src/cards.ts";
 import { byteAt, charAt, pressOf } from "../src/composer.ts";
 import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
@@ -69,4 +69,41 @@ test("a long transcript builds its latest cards and offers the earlier ones", ()
   toggle(open, EARLIER);
   cards = transcriptCards(items, true, [], open, "");
   expect(cards.filter((c) => c.kind === "text")).toHaveLength(160);
+});
+
+const queued = (id: number, text: string, more: Partial<QueuedView> = {}): QueuedView => ({ id, text, files: 0, written: false, steering: false, note: "", editing: "", ...more });
+const idle = { running: false, steerable: false, held: false, editing: null, unfolded: false };
+
+test("queue_shows_steers_apart_and_numbers_the_waiting_ones", () => {
+  const q = queueCards([queued(1, "now", { steering: true }), queued(2, "", { files: 2, written: true }), queued(3, "a"), queued(4, "b")], { ...idle, running: true, steerable: true });
+  expect(q.steers.map((c) => [c.kind, c.text])).toEqual([["steering", "now"]]);
+  expect(q.next.map((c) => c.kind)).toEqual(["queue-head", "queued", "queued", "queued"]);
+  expect(q.next[0]?.label).toBe("Up next · 3 queued");
+  expect(q.next[1]).toMatchObject({ text: "2 attachment(s)", pending: true, detail: "" });
+  expect(q.next.slice(2).map((c) => [c.detail, c.label, c.expandable, c.url])).toEqual([
+    ["1", "Steer", true, "Send as a steer instead (Ctrl+Shift+Enter)"],
+    ["2", "Steer", true, "Send as a steer instead"],
+  ]);
+  expect(q.next[3]?.icon).toBe("Edit in the composer (Alt+↑)");
+});
+
+test("queue_folds_past_three_and_says_why_it_waits", () => {
+  const four = [queued(1, "a"), queued(2, "b"), queued(3, "c"), queued(4, "d")];
+  const held = queueCards(four, { ...idle, held: true });
+  expect(held.next[0]?.label).toBe("Up next · 4 queued · paused");
+  expect(held.next.map((c) => c.seq)).toEqual([-6, 1, 2, QUEUE_MORE]);
+  expect(held.next[1]).toMatchObject({ label: "Send now", expandable: true, url: "Send it now" });
+  expect(queueCards(four, { ...idle, unfolded: true }).next).toHaveLength(5);
+  const stuck = queueCards([queued(1, "a")], { ...idle, running: true, editing: 1 });
+  expect(stuck.next[1]).toMatchObject({ expandable: false, url: "The agent can't be steered now: it waits for the turn to end", tone: "mine", detail: "", open: false });
+});
+
+test("steers_go_over_working_and_the_queue_after_it", () => {
+  const card = (kind: "text" | "status" | "space", seq: number) => ({ ...transcriptCards([], false, [], newOpened(), "")[0], kind, seq }) as ReturnType<typeof transcriptCards>[number];
+  const q = queueCards([queued(5, "s", { steering: true }), queued(6, "w")], { ...idle, running: true, steerable: true });
+  const order = (cards: ReturnType<typeof transcriptCards>) => withQueue(cards, q).map((c) => c.kind);
+  expect(order([card("text", 0), card("status", -2), card("space", -3)])).toEqual(["text", "steering", "status", "queue-head", "queued", "space"]);
+  expect(order([card("text", 0), card("space", -3)])).toEqual(["text", "steering", "queue-head", "queued", "space"]);
+  expect(subsRunning(0)).toBe("");
+  expect(subsRunning(2)).toBe("  ·  2 sub-agents running");
 });

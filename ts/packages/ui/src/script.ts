@@ -46,7 +46,7 @@ export function runStep(w: slint.Window, s: Step): void {
       w.dispatchEvent({ type: "pointer-scrolled", position, deltaX: 0, deltaY: kind === "wheel" ? 120 : -120 });
       break;
     case "type":
-      for (const c of arg) press(w, c);
+      for (const c of arg.replaceAll("_", " ")) press(w, c);
       break;
     case "key":
       press(w, KEYS[arg] ?? arg);

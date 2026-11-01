@@ -4,7 +4,7 @@ import { join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, git, type Kind, providers } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
-import { newOpened, type Opened, toggle as toggleCard, transcriptCards } from "./cards.ts";
+import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
@@ -15,11 +15,11 @@ import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/ag
 import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
 import { control } from "@harbor/mcp";
-import { Data } from "./data.ts";
+import { Data, mentionOf as fromStore } from "./data.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
-import { defuse, imageCount, writeImage } from "./logic/usertext.ts";
+import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
@@ -110,6 +110,9 @@ export class Shell {
   private menus = new ComposerMenus();
   private mentions = new Map<number, Mention[]>();
   private attached = new Map<number, string[]>();
+  /** queue.rs `Edit`: the queued message in the composer, and the draft set aside meanwhile. */
+  private queueEdit: { chat: number; id: number; original: string; aside: Draft } | null = null;
+  private unfolded = new Set<number>();
   private mentionChips = new slint.ArrayModel<{ head: string; snippet: string; tip: string }>([]);
 
   constructor(win: AppWindow, data: Data) {
@@ -238,6 +241,7 @@ export class Shell {
     w.link = (url) => this.openLink(url);
     w.open_url = (url) => this.openExternal(url);
     w.card_act = (seq, a) => this.cardAction(seq, a);
+    w.queue_menu = (qid, x, y) => this.queueMenu(qid, x, y);
     w.open_media = (path) => {
       Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     };
@@ -570,11 +574,19 @@ export class Shell {
     if (!chat) return;
     const follow = this.win.at_end;
     const since = this.engine.runningSince(chat.id);
-    const status = since !== null ? `Working ${elapsed(Math.floor((Date.now() - since) / 1000))}` : "";
+    const subs = chat.role === "lead" ? this.engine.runningSubs(chat.id).length : 0;
+    const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
     const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760) : undefined);
-    sync(this.cards, next, sameCard);
+    if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
+    const running = this.engine.running(chat.id);
+    const held = this.engine.queue.held.has(chat.id);
+    const queue = queueCards(
+      this.engine.queued(chat.id).map((m) => ({ id: m.id, text: m.text, files: m.files.length, written: m.written, steering: m.intent !== "", note: m.note, editing: m.editing })),
+      { running, steerable: running && this.engine.steering(chat.id) !== "no" && !held, held, editing: this.queueEdit?.chat === chat.id ? this.queueEdit.id : null, unfolded: this.unfolded.has(chat.id) },
+    );
+    sync(this.cards, withQueue(next, queue), sameCard);
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
 
@@ -766,6 +778,8 @@ export class Shell {
     const running = this.view === "chat" && this.engine.running(this.chatId);
     const steer = running && this.engine.steering(this.chatId) !== "no" && this.engine.followDefault() === "steer";
     const draftEmpty = this.win.draft.trim() === "";
+    const editing = this.queueEdit !== null && this.queueEdit.chat === this.key();
+    const resume = this.view === "chat" && draftEmpty && this.resumable(this.chatId);
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
       model_tip: acc ? providers.short(acc) : kind,
@@ -775,8 +789,18 @@ export class Shell {
       access: providers.accessLabel(kind, sel.access),
       access_icon: sel.access === "full" ? ICONS.LOCK_OPEN : sel.access === "plan" ? ICONS.EYE : ICONS.LOCK,
       device: "This PC",
-      action: running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : "send",
-      action_tip: running && draftEmpty ? "Stop (Esc)" : steer ? "Click to steer, Ctrl-click or Ctrl+Enter to queue" : running ? "Queue: it runs after the current turn" : "Send (Enter)",
+      action: editing ? "update" : running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : resume ? "resume" : "send",
+      action_tip: editing
+        ? "Update queued message (Enter)"
+        : running && draftEmpty
+          ? "Stop (Esc)"
+          : steer
+            ? "Click to steer, Ctrl-click or Ctrl+Enter to queue"
+            : running
+              ? "Queue: it runs after the current turn"
+              : resume
+                ? "Resume queue: the next queued message starts"
+                : "Send (Enter)",
       hint: "Ask for changes, send follow-ups, or attach images",
       typing: "",
       notice: "",
@@ -902,13 +926,26 @@ export class Shell {
       return true;
     }
     if (chat !== null && this.keys.matches("steer_queued", p)) {
-      const first = this.engine.queued(chat)[0];
+      const first = this.engine.queued(chat).find((q) => !q.written && q.intent === "");
       if (first) this.engine.queuePromote(chat, first.id);
       return true;
+    }
+    if (chat !== null && this.win.cursor === 0 && this.keys.matches("edit_queued", p)) {
+      const last = this.engine.queued(chat).findLast((q) => !q.written && q.intent === "");
+      if (last) {
+        this.queueEditStart(chat, last.id);
+        this.refreshCards();
+        return true;
+      }
     }
     if (this.keys.matches("stop_turn", p)) {
       if (this.win.pop_id !== "") {
         this.closePopup();
+        return true;
+      }
+      if (this.queueEdit !== null) {
+        this.queueEditEnd(false);
+        this.refreshCards();
         return true;
       }
       if (chat !== null && this.engine.running(chat)) {
@@ -998,6 +1035,16 @@ export class Shell {
     const text = this.win.draft.trim();
     const from = this.key();
     const files = this.attached.get(from) ?? [];
+    if (this.queueEdit?.chat === from) {
+      this.queueEditEnd(true);
+      this.refreshAll();
+      return;
+    }
+    if (from !== DRAFT && text === "" && files.length === 0 && this.resumable(from)) {
+      this.engine.queueResume(from);
+      this.refreshAll();
+      return;
+    }
     if (text === "" && files.length === 0 && this.messageMentions().length === 0) return;
     const mentions = (this.mentions.get(from) ?? []).filter((m) => !isChat(m) || text.includes(m.title));
     let id = this.view === "chat" ? this.chatId : DRAFT;
@@ -1017,6 +1064,94 @@ export class Shell {
     this.engine.send(id, text, { files, mentions, mode });
     this.refreshAll();
     setTimeout(() => this.win.scroll_to_end(), 30);
+  }
+
+  /** Stopped with messages still queued: they wait for Resume (or the next message). */
+  private resumable(id: number): boolean {
+    return !this.engine.running(id) && this.engine.queue.held.has(id) && this.engine.queued(id).length > 0;
+  }
+
+  private takeDraft(chat: number): Draft {
+    const d = { text: this.drafts.get(chat) ?? "", files: this.attached.get(chat) ?? [], mentions: this.mentions.get(chat) ?? [] };
+    this.drafts.delete(chat);
+    this.attached.delete(chat);
+    this.mentions.delete(chat);
+    return d;
+  }
+
+  /** undo.rs `restore_draft`: `d` goes in ahead of what the composer holds; the images there move up a number. */
+  restoreDraft(chat: number, d: Draft): void {
+    const rest = shiftImages(this.drafts.get(chat) ?? "", imageCount(d.files));
+    const text = rest.trim() === "" ? d.text : `${d.text}\n${rest}`;
+    const files = [...d.files, ...(this.attached.get(chat) ?? [])];
+    const mentions = [...d.mentions];
+    for (const m of this.mentions.get(chat) ?? []) addMention(mentions, m);
+    this.drafts.set(chat, text);
+    if (files.length > 0) this.attached.set(chat, files);
+    else this.attached.delete(chat);
+    if (mentions.length > 0) this.mentions.set(chat, mentions);
+    else this.mentions.delete(chat);
+    if (this.key() !== chat) return;
+    this.win.draft = text;
+    this.win.set_cursor(byteAt(text, [...text].length));
+    this.refreshFiles();
+    this.refreshComposer();
+    this.win.focus_composer();
+  }
+
+  /** The pencil (or Alt+↑): the message goes into the composer and keeps its place in the queue. */
+  private queueEditStart(chat: number, id: number): void {
+    if (this.queueEdit !== null) this.queueEditEnd(false);
+    const m = this.engine.queued(chat).find((q) => q.id === id && !q.written);
+    if (!m) return;
+    this.queueEdit = { chat, id, original: m.text, aside: this.takeDraft(chat) };
+    this.engine.queueUpdate(chat, id, null, null, "pc");
+    this.restoreDraft(chat, { text: m.text, files: m.files, mentions: m.mentions.map(fromStore) });
+  }
+
+  /** `save` writes the composer into the message (emptied: it's removed); either way the draft set aside comes back. */
+  private queueEditEnd(save: boolean): void {
+    const e = this.queueEdit;
+    if (e === null) return;
+    this.queueEdit = null;
+    if (this.key() === e.chat) this.drafts.set(e.chat, this.win.draft);
+    const d = this.takeDraft(e.chat);
+    const text = d.text.trim();
+    const here = this.engine.queued(e.chat).some((q) => q.id === e.id && !q.written);
+    if (here && save && text === "" && d.files.length === 0 && d.mentions.length === 0) {
+      this.engine.queueRemove(e.chat, e.id);
+    } else if (here) {
+      const q = this.engine.queue.find(e.chat, e.id);
+      if (save && q) q.files = d.files;
+      this.engine.queueUpdate(e.chat, e.id, save ? text : null, save ? d.mentions : null, "");
+    }
+    this.restoreDraft(e.chat, e.aside);
+    // It started or was removed meanwhile: what was changed stays in the composer.
+    if (!here && text !== "" && text !== e.original.trim()) this.restoreDraft(e.chat, { ...d, text });
+  }
+
+  private queueAction(qid: number, a: string): void {
+    const id = this.chatId;
+    if (a === "q-remove") this.engine.queueRemove(id, qid);
+    else if (a === "q-steer") this.engine.queuePromote(id, qid);
+    else if (a === "q-edit") this.queueEditStart(id, qid);
+    else if (a === "q-cancel") this.queueEditEnd(false);
+    else if (a === "q-unfold") this.unfolded.add(id);
+    this.refreshAll();
+  }
+
+  private queueMenu(qid: number, x: number, y: number): void {
+    const id = this.chatId;
+    const waiting = this.engine.queued(id).filter((q) => !q.written && q.intent === "");
+    const n = waiting.findIndex((q) => q.id === qid);
+    const move = (to: number) => () => {
+      this.engine.queueMove(id, qid, to);
+      this.refreshCards();
+    };
+    const items: (PopItem & { act: () => void })[] = [];
+    if (n > 0) items.push(this.item("Move up", move(n - 1)));
+    if (n >= 0 && n + 1 < waiting.length) items.push(this.item("Move down", move(n + 1)));
+    if (items.length > 0) this.popup("queue", x, y, items, 160);
   }
 
   private stop(id: number): void {
@@ -1453,6 +1588,10 @@ export class Shell {
 
   /** A hover-bar button of message `seq` (chat.rs `msg_action`). */
   private cardAction(seq: number, a: string): void {
+    if (a.startsWith("q-")) {
+      this.queueAction(seq, a);
+      return;
+    }
     const chat = this.data.chat(this.chatId);
     const item = chat ? this.items(chat.id)[seq] : undefined;
     if (!chat || !item) return;
@@ -1526,6 +1665,12 @@ export function utcOffset(): number {
 }
 
 
+interface Draft {
+  text: string;
+  files: string[];
+  mentions: Mention[];
+}
+
 export interface ShellHooks {
   /** The screen to come back to after a restart (a snapshot the previous process left), or null. */
   restore?: Record<string, unknown> | null;
@@ -1539,6 +1684,7 @@ export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
   const win = await loadWindow();
   const shell = new Shell(win, data);
   data.onChange = (id) => shell.changed(id);
+  data.onRestoreDraft = (id, text, files, mentions) => shell.restoreDraft(id, { text, files, mentions });
   data.visible = (id) => shell.showing(id);
   data.onNotificationOpen = (gids) => {
     const c = data.chats.find((x) => gids.includes(x.gid));

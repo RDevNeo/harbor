@@ -12,7 +12,12 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
   turn through `@harbor/agents`' Engine, which keeps chats, transcripts, turns and queues: its events
   stream into the transcript and are saved to harbor.db. Enter steers or queues while a turn runs (the
   Follow-ups setting), Esc undoes a send nothing came of yet or stops the turn, turns left running by
-  an earlier Harbor (Rust or TypeScript) are picked up at start. Copy, Quote and Mention on a message's
+  an earlier Harbor (Rust or TypeScript) are picked up at start; an undone send goes back into the
+  composer. Queued messages show under "Working…" as "Up next" (queue.rs): Steer / Send now, Edit in
+  the composer (pencil or Alt+↑, ✓ or Enter saves, Esc cancels), Remove, move up or down, folded past
+  three, "· paused" after Stop with Resume on the send button; steers on their way in show as
+  "Steering…" over the status line. Checked against the Rust app in the rig, hover and edit states
+  included. Copy, Quote and Mention on a message's
   hover bar work; a theme switch in Omarchy follows within a second.
 - Checked in the private compositor rig against the Rust app on the same synthetic db, dark and light
   (`shots/`: draft, chat, chat light, model picker; `-rust` and `-ts`): the draft screen, sidebar,

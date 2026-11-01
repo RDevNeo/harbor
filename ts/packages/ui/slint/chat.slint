@@ -624,6 +624,242 @@ export component CardView inherits TouchArea {
     }
 }
 
+// egui draws the waiting bubble dashed (4 on, 3 off); Slint borders are solid, so the gaps are painted over.
+component Dashed inherits Rectangle {
+    in property <color> line;
+    property <length> r: Theme.radius-lg;
+    property <int> nx: max(0, floor((self.width - 2 * self.r) / 7px));
+    property <int> ny: max(0, floor((self.height - 2 * self.r) / 7px));
+    border-width: 1px;
+    border-color: self.line;
+    border-radius: self.r;
+    for i in root.nx: Rectangle {
+        x: root.r + i * 7px + 4px;
+        y: 0;
+        width: 3px;
+        height: 1px;
+        background: Theme.bg100;
+    }
+    for i in root.nx: Rectangle {
+        x: root.r + i * 7px + 4px;
+        y: root.height - 1px;
+        width: 3px;
+        height: 1px;
+        background: Theme.bg100;
+    }
+    for i in root.ny: Rectangle {
+        x: 0;
+        y: root.r + i * 7px + 4px;
+        width: 1px;
+        height: 3px;
+        background: Theme.bg100;
+    }
+    for i in root.ny: Rectangle {
+        x: root.width - 1px;
+        y: root.r + i * 7px + 4px;
+        width: 1px;
+        height: 3px;
+        background: Theme.bg100;
+    }
+}
+
+component SteeringBubble {
+    in property <CardData> card;
+    in property <length> avail;
+    in property <length> gap;
+    min-height: col.min-height;
+    preferred-height: col.preferred-height;
+    measure := Text {
+        visible: false;
+        text: root.card.text;
+        font-size: 14px;
+    }
+    col := VerticalLayout {
+        spacing: root.gap;
+        padding-bottom: 6px + root.gap;
+        HorizontalLayout {
+            alignment: end;
+            height: 16px;
+            spacing: 4px;
+            Spinner {
+                y: 2px;
+                size: 12px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: "Steering…";
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            Rectangle {
+                width: min(measure.preferred-width + 2px, max(root.avail * 0.75, 200px) - 24px) + 24px;
+                min-height: inner.min-height;
+                preferred-height: inner.preferred-height;
+                background: Theme.gray-100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                inner := VerticalLayout {
+                    padding: 8px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text {
+                        text: root.card.text;
+                        font-size: 14px;
+                        color: Theme.fg;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Queue cards reuse CardData's fields: `queueCards` in cards.ts says which is which.
+component QueuedBubble inherits TouchArea {
+    in property <CardData> card;
+    in property <length> avail;
+    in property <length> gap;
+    callback act(int, string);
+    callback move-menu(int, length, length);
+    property <bool> edited: root.card.tone != "";
+    property <bool> show: root.has-hover && root.mouse-x >= root.width - max(bubble.width, 200px) && !root.card.pending && !root.edited;
+    property <color> ink: root.card.tone == "mine" ? Theme.fg : Theme.subtle;
+    min-height: col.min-height;
+    preferred-height: col.preferred-height;
+    measure := Text {
+        visible: false;
+        text: root.card.text;
+        font-size: 14px;
+    }
+    col := VerticalLayout {
+        spacing: root.gap;
+        padding-bottom: 4px + root.gap;
+        HorizontalLayout {
+            alignment: end;
+            bubble := Rectangle {
+                width: min(measure.preferred-width + 2px, max(root.avail * 0.75, 200px) - 24px) + 24px;
+                min-height: inner.min-height;
+                preferred-height: inner.preferred-height;
+                background: root.card.pending ? Theme.gray-100 : transparent;
+                border-width: root.card.pending ? 1px : 0px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                if !root.card.pending: Dashed {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    line: root.edited ? Theme.primary : Theme.subtle.with-alpha(0.6);
+                }
+                inner := VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: root.card.pending ? 7px : 8px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    if root.card.pending: Text {
+                        text: "Sending";
+                        font-size: 11.5px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        text: root.card.text;
+                        font-size: 14px;
+                        color: root.ink;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+        if !root.card.pending: Rectangle {
+            height: 28px;
+            if root.card.result != "": Text {
+                x: parent.width - max(bubble.width, 200px);
+                text: root.card.result;
+                font-size: 11.5px;
+                color: Theme.destructive;
+                vertical-alignment: center;
+                height: parent.height;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 2px;
+                if root.edited: Text {
+                    text: root.card.tone == "mine" ? "Editing in the composer" : "Being edited on another device";
+                    font-size: 11.5px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if root.card.tone == "mine": Rectangle {
+                    width: 4px;
+                }
+                if root.card.tone == "mine": Btn {
+                    width: 60px;
+                    text: "Cancel";
+                    size: xs;
+                    variant: ghost-muted;
+                    tip: "Cancel the edit (Esc)";
+                    clicked => {
+                        root.act(root.card.seq, "q-cancel");
+                    }
+                }
+                if !root.show && !root.edited && root.card.detail != "": Text {
+                    text: root.card.detail;
+                    font-size: 11.5px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if !root.show && !root.edited: Rectangle {
+                    width: 2px;
+                }
+                if root.show && root.card.open: Btn {
+                    icon: Icons.grip;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Click to move it up or down";
+                    clicked => {
+                        root.move-menu(root.card.seq, self.absolute-position.x, self.absolute-position.y + self.height);
+                    }
+                }
+                if root.show: Btn {
+                    icon: Icons.compose;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: root.card.icon;
+                    clicked => {
+                        root.act(root.card.seq, "q-edit");
+                    }
+                }
+                if root.show: Btn {
+                    icon: Icons.corner-up-right;
+                    text: root.card.label;
+                    size: xs;
+                    variant: ghost-muted;
+                    enabled: root.card.expandable;
+                    tip: root.card.url;
+                    clicked => {
+                        root.act(root.card.seq, "q-steer");
+                    }
+                }
+                if root.show: Btn {
+                    icon: Icons.x;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Remove from queue";
+                    clicked => {
+                        root.act(root.card.seq, "q-remove");
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component Transcript {
     in property <[CardData]> cards;
     in property <length> content-w: 760px;
@@ -634,6 +870,7 @@ export component Transcript {
     callback act(int, string);
     callback open-media(string);
     callback copy-text(string);
+    callback queue-menu(int, length, length);
     out property <bool> at-end: -list.content-y + list.height >= list.content-height - 48px;
     // Stuck to the end while it grows (egui's stick_to_bottom) until scrolled up.
     in-out property <bool> follow: true;
@@ -641,6 +878,8 @@ export component Transcript {
         root.follow = true;
         list.content-y = min(0px, list.height - col.preferred-height);
     }
+    // egui's item spacing in the transcript, between rows that aren't cards.
+    property <length> gap: Theme.compact ? 8px : 12px;
     property <length> gutter: root.width < 520px ? 12px : 24px;
     property <length> side: max((root.width - root.content-w) / 2, gutter);
     property <length> column: max(0px, root.width - 2 * side);
@@ -671,12 +910,14 @@ export component Transcript {
                 }
                 if c.kind == "status": HorizontalLayout {
                     height: 24px;
-                    spacing: 6px;
+                    spacing: 8px;
                     alignment: start;
-                    Spinner {
-                        y: 6px;
-                        size: 12px;
-                        color: Theme.subtle;
+                    Rectangle {
+                        width: 16px;
+                        Spinner {
+                            size: 13px;
+                            color: Theme.fg;
+                        }
                     }
                     Text {
                         text: c.text;
@@ -685,7 +926,57 @@ export component Transcript {
                         vertical-alignment: center;
                     }
                 }
-                if c.kind != "space" && c.kind != "status" && c.kind != "earlier": CardView {
+                if c.kind == "steering": SteeringBubble {
+                    card: c;
+                    avail: root.column;
+                    gap: root.gap;
+                }
+                if c.kind == "queue-head": HorizontalLayout {
+                    alignment: end;
+                    height: 22px + root.gap;
+                    padding-top: root.gap;
+                    spacing: 6px;
+                    Glyph {
+                        width: 13px;
+                        icon: Icons.list-ordered;
+                        size: 13px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        text: c.label;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                }
+                if c.kind == "queue-head": Rectangle {
+                    height: 2px + root.gap;
+                }
+                if c.kind == "queued": QueuedBubble {
+                    card: c;
+                    avail: root.column;
+                    gap: root.gap;
+                    act(seq, a) => {
+                        root.act(seq, a);
+                    }
+                    move-menu(seq, x, y) => {
+                        root.queue-menu(seq, x, y);
+                    }
+                }
+                if c.kind == "queue-more": HorizontalLayout {
+                    alignment: end;
+                    padding-bottom: 4px + root.gap;
+                    Btn {
+                        text: c.label;
+                        trailing: Icons.down;
+                        size: xs;
+                        variant: ghost-muted;
+                        clicked => {
+                            root.act(c.seq, "q-unfold");
+                        }
+                    }
+                }
+                if c.kind != "space" && c.kind != "status" && c.kind != "earlier" && c.kind != "steering" && c.kind != "queue-head" && c.kind != "queued" && c.kind != "queue-more": CardView {
                     card: c;
                     avail: root.column;
                     running: root.running;

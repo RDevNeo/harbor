@@ -228,3 +228,69 @@ export function toggle(open: Opened, seq: number): void {
   if (set.has(key)) set.delete(key);
   else set.add(key);
 }
+
+export interface QueuedView {
+  id: number;
+  text: string;
+  files: number;
+  written: boolean;
+  steering: boolean;
+  note: string;
+  editing: string;
+}
+
+export interface QueueState {
+  running: boolean;
+  steerable: boolean;
+  held: boolean;
+  editing: number | null;
+  unfolded: boolean;
+}
+
+export const QUEUE_MORE = -7;
+const QUEUE_HEAD = -6;
+
+/** queue.rs `steering_bubbles` and `queued_bubbles`: steers on their way in, then "Up next". */
+export function queueCards(q: readonly QueuedView[], s: QueueState): { steers: CardData[]; next: CardData[] } {
+  const label = (m: QueuedView) => (m.text === "" ? `${m.files} attachment(s)` : m.text);
+  const steers = q.filter((m) => m.steering).map((m) => ({ ...blank(m.id), kind: "steering" as const, text: label(m) }));
+  const waiting = q.filter((m) => !m.steering);
+  if (waiting.length === 0) return { steers, next: [] };
+  const open = waiting.filter((m) => !m.written).length;
+  const fold = waiting.length > 3 && !s.unfolded;
+  const next: CardData[] = [{ ...blank(QUEUE_HEAD), kind: "queue-head", label: `Up next · ${waiting.length} queued${s.held ? " · paused" : ""}` }];
+  let place = 0;
+  for (const m of waiting.slice(0, fold ? 2 : waiting.length)) {
+    const at = place;
+    if (!m.written) place++;
+    const steerTip = s.running ? (at === 0 ? "Send as a steer instead (Ctrl+Shift+Enter)" : "Send as a steer instead") : "Send it now";
+    next.push({
+      ...blank(m.id),
+      kind: "queued",
+      text: label(m),
+      pending: m.written,
+      tone: s.editing === m.id ? "mine" : m.editing !== "" ? "other" : "",
+      result: m.note,
+      label: s.running ? "Steer" : "Send now",
+      expandable: !s.running || s.steerable,
+      url: s.running && !s.steerable ? "The agent can't be steered now: it waits for the turn to end" : steerTip,
+      icon: at === open - 1 ? "Edit in the composer (Alt+↑)" : "Edit in the composer",
+      detail: !m.written && open > 1 ? String(at + 1) : "",
+      open: !m.written && open > 1,
+    });
+  }
+  if (fold) next.push({ ...blank(QUEUE_MORE), kind: "queue-more", label: `Show all ${waiting.length} queued` });
+  return { steers, next };
+}
+
+/** Steers go in with the turn, over "Working…"; "Up next" comes after it. */
+export function withQueue(cards: CardData[], q: { steers: CardData[]; next: CardData[] }): CardData[] {
+  const end = cards.length - 1;
+  const status = cards[end - 1]?.kind === "status" ? end - 1 : end;
+  return [...cards.slice(0, status), ...q.steers, ...cards.slice(status, end), ...q.next, ...cards.slice(end)];
+}
+
+/** waiting.rs `subs_running`: what follows "Working… 12s" while sub-agents run too. */
+export function subsRunning(n: number): string {
+  return n === 0 ? "" : n === 1 ? "  ·  1 sub-agent running" : `  ·  ${n} sub-agents running`;
+}

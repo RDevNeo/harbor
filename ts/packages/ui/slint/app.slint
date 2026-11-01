@@ -386,6 +386,7 @@ export component AppWindow inherits Window {
     callback link(string);
     callback open-url(string);
     callback card-act(int, string);
+    callback queue-menu(int, length, length);
     callback open-media(string);
 
     in-out property <string> draft;
@@ -666,6 +667,9 @@ export component AppWindow inherits Window {
                         }
                         act(seq, a) => {
                             root.card-act(seq, a);
+                        }
+                        queue-menu(seq, x, y) => {
+                            root.queue-menu(seq, x, y);
                         }
                         open-media(p) => {
                             root.open-media(p);

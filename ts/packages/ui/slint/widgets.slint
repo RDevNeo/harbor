@@ -86,6 +86,7 @@ export component TipLayer {
 export component Btn {
     in property <string> text;
     in property <string> icon;
+    in property <string> trailing;
     in property <Variant> variant: outline;
     in property <BtnSize> size: normal;
     in property <bool> enabled: true;
@@ -130,7 +131,7 @@ export component Btn {
     }
     row := HorizontalLayout {
         alignment: center;
-        spacing: root.icon != "" && root.text != "" ? 6px : 0px;
+        spacing: (root.icon != "" || root.trailing != "") && root.text != "" ? 6px : 0px;
         if root.icon != "": Glyph {
             icon: root.icon;
             size: root.glyph;
@@ -142,6 +143,11 @@ export component Btn {
             font-weight: 500;
             color: root.fg;
             vertical-alignment: center;
+        }
+        if root.trailing != "": Glyph {
+            icon: root.trailing;
+            size: root.glyph;
+            color: root.fg;
         }
     }
     area := TipArea {

@@ -50,7 +50,7 @@ export interface MediaRow {
 }
 
 export interface CardData {
-  kind: "" | "user" | "text" | "thinking" | "tool" | "group" | "notice" | "message" | "error" | "divider" | "space" | "status" | "earlier";
+  kind: "" | "user" | "text" | "thinking" | "tool" | "group" | "notice" | "message" | "error" | "divider" | "space" | "status" | "earlier" | "steering" | "queue-head" | "queued" | "queue-more";
   seq: number;
   blocks: MdBlockData[];
   text: string;
@@ -256,6 +256,7 @@ export interface AppWindow extends slint.ComponentHandle {
   link: (url: string) => void;
   open_url: (url: string) => void;
   card_act: (seq: number, action: string) => void;
+  queue_menu: (id: number, x: number, y: number) => void;
   open_media: (path: string) => void;
 
   draft: string;
