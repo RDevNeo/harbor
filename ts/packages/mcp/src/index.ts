@@ -4,3 +4,7 @@ export * as mcpshim from "./mcpshim.ts";
 export * as gmail from "./gmail.ts";
 export * as ghapi from "./ghapi.ts";
 export * as serve from "./serve.ts";
+export * as bridge from "./bridge.ts";
+export * as machines from "./machines.ts";
+export * as workspace from "./workspace.ts";
+export * as hookcert from "./hookcert.ts";

@@ -5,5 +5,5 @@
   "type": "module",
   "main": "src/index.ts",
   "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@harbor/store": "workspace:*" }
+  "dependencies": { "@harbor/net": "workspace:*", "@harbor/store": "workspace:*" }
 }
