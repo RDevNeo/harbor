@@ -27,6 +27,10 @@ export interface EngineHost {
   changed(chatId: number | null): void;
   /** A chat whose home is another PC: its turns run there (net). */
   isForeign?(chatId: number): boolean;
+  /** The chat is being handed to another PC (net's movepcrun.ts): its turns and queue wait. */
+  moving?(chatId: number): boolean;
+  /** A message sent to a moving chat is kept by the host, which sends it where the chat ends up; true when kept. */
+  hold?(chatId: number, text: string, files: string[], mentions: Mention[]): boolean;
   /** Where a chat pinned to a device runs (net's remote.rs); throws the chat's error. */
   remoteSpec?(chat: Chat, account: Account): RemoteSpec | null;
   /** Whose context a turn runs with (net's meshctx.rs). */
@@ -349,7 +353,7 @@ export class Engine {
     if (this.foreign(id) || this.chat(id)?.retired) return;
     // One turn per chat. A runner still going for it, even one this Harbor lost track of, holds
     // the session: the prompt waits for that turn instead.
-    if (this.turns.has(id) || this.adoptRunner(id)) {
+    if (this.turns.has(id) || (this.host.moving?.(id) ?? false) || this.adoptRunner(id)) {
       let p = prompt;
       for (const f of files) p += `\n(attached: ${f})`;
       this.pushPending(id, p);
@@ -792,6 +796,10 @@ export class Engine {
     const mentions = opts.mentions ?? [];
     const sender = opts.sender ?? "";
     const device = opts.device ?? "";
+    if (this.host.hold?.(id, text, files, mentions)) {
+      this.changed(id);
+      return;
+    }
     this.resumeAuto(id);
     if (this.turns.has(id)) {
       const q: Queued = { id: this.queue.id(), text, files, mentions, written: false, sender, device, intent: "", note: "", editing: "" };
@@ -1199,7 +1207,7 @@ export class Engine {
   /** Now and then: an idle chat's next queued message goes out, unless a Stop holds the queue. */
   queueDrain(): void {
     for (const [id, q] of [...this.queue.chats]) {
-      if (q.length === 0 || this.turns.has(id) || this.foreign(id) || this.queue.held.has(id)) continue;
+      if (q.length === 0 || this.turns.has(id) || this.foreign(id) || this.queue.held.has(id) || this.host.moving?.(id)) continue;
       const first = q.shift() as Queued;
       this.queue.tidy(id);
       this.sendQueued(id, [first]);

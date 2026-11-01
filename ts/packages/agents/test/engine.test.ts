@@ -516,3 +516,57 @@ describe("team.rs", () => {
     expect(team.clipMiddle("a".repeat(30), 9)).toBe("aaaaaa\n\n… (21 bytes cut) …\n\naaa");
   });
 });
+
+describe("a chat being handed to another PC", () => {
+  function withHost(over: Partial<EngineHost>): { e: Engine; store: Store } {
+    process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
+    const store = Store.openTemp();
+    return { e: new Engine({ store, accounts: () => [account], changed: () => {}, ...over }), store };
+  }
+
+  test("a message to a moving chat is kept by the host, not run", async () => {
+    const held: [number, string, string[]][] = [];
+    const moving = new Set<number>();
+    const { e, store } = withHost({
+      moving: (id) => moving.has(id),
+      hold: (id, text, files) => {
+        if (!moving.has(id)) return false;
+        held.push([id, text, files]);
+        return true;
+      },
+    });
+    const c = newChat(store);
+    e.reload();
+    moving.add(c.id);
+    e.send(c.id, "while it moves", { files: ["/a"] });
+    expect(held).toEqual([[c.id, "while it moves", ["/a"]]]);
+    expect(e.running(c.id)).toBe(false);
+    expect(e.transcript(c.id).items).toEqual([]);
+    moving.delete(c.id);
+    e.send(c.id, "after");
+    expect(held.length).toBe(1);
+    expect(e.running(c.id)).toBe(true);
+    await until("the turn's end", () => !e.running(c.id));
+    store.close();
+  });
+
+  test("a turn for a moving chat waits as pending, and its queue does not drain", async () => {
+    const moving = new Set<number>();
+    const { e, store } = withHost({ moving: (id) => moving.has(id) });
+    const c = newChat(store);
+    e.reload();
+    moving.add(c.id);
+    e.startTurn(c.id, "[wake] now");
+    expect(e.running(c.id)).toBe(false);
+    expect(e.pending.get(c.id)).toEqual(["[wake] now"]);
+    e.queue.list(c.id).push({ id: e.queue.id(), text: "queued", files: [], mentions: [], written: false, sender: "", device: "", intent: "", note: "", editing: "" });
+    e.queueDrain();
+    expect(e.running(c.id)).toBe(false);
+    expect(e.queued(c.id).length).toBe(1);
+    moving.delete(c.id);
+    e.queueDrain();
+    expect(e.running(c.id)).toBe(true);
+    await until("the turn's end", () => !e.running(c.id));
+    store.close();
+  });
+});

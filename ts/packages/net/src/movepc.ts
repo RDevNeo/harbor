@@ -1,5 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Mention } from "@harbor/store";
 import { http as meshHttp } from "./client.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { resolveUpload } from "./hub.ts";
@@ -37,7 +38,7 @@ export interface MoveTarget {
 export interface HeldMessage {
   text: string;
   files: string[];
-  mentions: unknown[];
+  mentions: Mention[];
 }
 
 /** The UI thread's part. */
@@ -733,7 +734,7 @@ export interface MoveTargetApp {
   home: string;
   accounts(): MoveAccount[];
   defaultAccount(): string;
-  candidates(): MoveCandidate[];
+  candidates(): MoveCandidate[] | Promise<MoveCandidate[]>;
   repo(id: number): { name: string; dir: string } | null;
   isCheckout(dir: string): Promise<boolean>;
   /** This PC's own chat with the gid, and its sub-agents: gid -> id. */
@@ -759,7 +760,7 @@ export async function movePlan(app: MoveTargetApp, body: unknown): Promise<{ rep
   const p = b.project;
   if (p === null || p === undefined) return { repo: null, account };
   const s = (k: string) => str(obj(p)[k]) ?? "";
-  const repo = matchProject(app.candidates(), s("remote"), s("folder"), s("name"));
+  const repo = matchProject(await app.candidates(), s("remote"), s("folder"), s("name"));
   if (repo === null) {
     // A folder without Git has nothing to clone, only its files to copy.
     if (s("remote") === "") throw new Error(`${me} has no project named ${s("name")}: copy its folder there and add it to Harbor first`);

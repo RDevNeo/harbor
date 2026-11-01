@@ -121,6 +121,8 @@ export async function runApp(o: RunOptions): Promise<number> {
       devices: run.devices,
       deviceEnv: run.deviceEnv,
       deviceHost: run.deviceHost,
+      moveTargets: (chatId: number) => run.move.targetsNow(chatId),
+      movePc: (chatId: number, peerId: string) => run.move.movePc(chatId, peerId),
       checkUpdates: async () => (await updater.check(), updater.info().status),
     };
     await ui.runShell(data, hub, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f) });

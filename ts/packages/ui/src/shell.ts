@@ -2586,6 +2586,8 @@ export interface ShellHub extends PageHub {
   devices: () => { list: PairedDevice[]; served: number };
   deviceEnv: DeviceSendEnv;
   deviceHost: (d: PairedDevice) => { shell: string[]; ssh: string[] } | null;
+  moveTargets: (chatId: number) => { why: string | null; targets: { id: string; name: string; why: string | null }[] };
+  movePc: (chatId: number, peerId: string) => Promise<string>;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

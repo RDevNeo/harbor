@@ -17,6 +17,7 @@ export * from "./notify.ts";
 export * from "./profile.ts";
 export * from "./meshctx.ts";
 export * from "./movepc.ts";
+export * from "./movepcrun.ts";
 export * from "./relocate.ts";
 export * from "./clone.ts";
 export * from "./devices.ts";

@@ -89,6 +89,12 @@ export interface Catalog {
   movingTo?(chat: Chat): string | null;
 }
 
+/** "Move to PC…" as the phone routes ask for it (movepcrun.ts `MovePc`). */
+export interface PhoneMove {
+  targetsJson(chat: number): Promise<Json>;
+  movePc(chat: number, pc: string): Promise<string>;
+}
+
 export interface PhoneDeps {
   store: Store;
   hub: Hub;
@@ -125,6 +131,8 @@ export interface PhoneDeps {
   more?: (call: Call, chat: Chat | null) => Promise<Reply | null>;
   /** A chat an agent opened: its first notice names the chat that opened it (openchat.rs). */
   openedFrom?: (chat: number, gid: string, title: string) => void;
+  /** "Move to PC…"; without it the two calls answer 404. */
+  move?: PhoneMove;
 }
 
 export interface RunSettings {
@@ -624,6 +632,8 @@ export class PhoneRoutes {
       return ok(this.items(c, Number.isFinite(since) ? since : 0));
     }
     if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender);
+    if (m === "GET" && p.length === 4 && p[3] === "move_targets") return this.d.move ? ok(await this.d.move.targetsJson(c.id)) : err(404, "no such call");
+    if (m === "POST" && p.length === 4 && p[3] === "move_pc") return this.movePc(c, body);
     if (m === "POST" && p.length === 4 && p[3] === "stop") {
       const e = this.d.engine;
       if (!e) return err(503, "agents aren't available in this build");
@@ -848,9 +858,22 @@ export class PhoneRoutes {
     return ok({ id: global ? c.gid : c.id, gid: c.gid });
   }
 
+  /** 202 once the handoff runs; its outcome shows in the chat. */
+  private async movePc(c: Chat, body: Record<string, unknown>): Promise<Reply> {
+    if (!this.d.move) return err(404, "no such call");
+    try {
+      const to = await this.d.move.movePc(c.id, typeof body.pc === "string" ? body.pc : "");
+      return { status: 202, body: { ok: true, moving: true, to } };
+    } catch (e) {
+      return err(409, e instanceof Error ? e.message : String(e));
+    }
+  }
+
   private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string): Promise<Reply> {
     const peer = this.d.hub.mesh.peer(c.home);
     if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off: the chat is read-only until it's back`);
+    // Moving is its home's to do; a home before it would only say "unknown call".
+    if ((p[3] === "move_pc" || p[3] === "move_targets") && !peer.moves) return err(409, `${this.d.hub.mesh.nameOf(c.home)} runs an older Harbor that can't move chats: update it first`);
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
     const { files: _files, ...rest } = body;
     return this.d.mesh.forward(dest(peer), peer.name, method, path, rest, [], [sender, ""], null);

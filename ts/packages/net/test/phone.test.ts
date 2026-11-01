@@ -12,6 +12,7 @@ import { err } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
+import { newPeer } from "../src/shared.ts";
 import { StoreReplica } from "../src/meshstore.ts";
 import { cardJson, catalogOf, clock, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
@@ -389,4 +390,41 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect((await call("DELETE", `/v1/chats/${gid}`))[0]).toBe(200);
     expect(store.chats()).toEqual([]);
   }, 20_000);
+});
+
+describe("phone: Move to PC…", () => {
+  test("move_targets and move_pc reach the move, and a copy's go to its home PC", async () => {
+    const store = Store.openAt(join(tmp, "move.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const asked: string[] = [];
+    const move = {
+      targetsJson: async (chat: number): Promise<Json> => ({ why: null, targets: [{ id: "pc:b", name: "b", why: null }, { id: `chat:${chat}`, name: "c", why: "x" }] }),
+      movePc: async (chat: number, pc: string): Promise<string> => {
+        asked.push(`${chat} ${pc}`);
+        if (pc === "") throw new Error("that PC isn't one of this PC's");
+        return "b";
+      },
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, move });
+    const c = store.createChat(blankChat({ title: "m", role: "lead", name: "lead" }));
+    const call = (method: string, path: string, body: unknown = null) => routes.route({ method, path: path.split("/"), query: [], body, token: "", device: "Pixel", global: false });
+    expect((await call("GET", `v1/chats/${c.id}/move_targets`)).body).toEqual({ why: null, targets: [{ id: "pc:b", name: "b", why: null }, { id: `chat:${c.id}`, name: "c", why: "x" }] });
+    const r = await call("POST", `v1/chats/${c.id}/move_pc`, { pc: "pc:b" });
+    expect([r.status, r.body]).toEqual([202, { ok: true, moving: true, to: "b" }]);
+    const bad = await call("POST", `v1/chats/${c.id}/move_pc`, {});
+    expect([bad.status, bad.body]).toEqual([409, { error: "that PC isn't one of this PC's" }]);
+    expect(asked).toEqual([`${c.id} pc:b`, `${c.id} `]);
+    // Without the feature (an older build): not a call.
+    const none = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null });
+    expect((await none.route({ method: "GET", path: ["v1", "chats", String(c.id), "move_targets"], query: [], body: null, token: "", device: "", global: false })).status).toBe(404);
+    // A copy of a PC that runs an older Harbor says so itself.
+    hub.mesh.peers.set("pc:old", newPeer({ id: "pc:old", name: "old", online: true, moves: false, addr: "127.0.0.1:1" }));
+    const copy = store.createChat(blankChat({ title: "theirs", role: "lead", name: "lead", gid: "g-old", home: "pc:old", homeId: 4 }));
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const withMesh = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, move });
+    const old = await withMesh.route({ method: "POST", path: ["v1", "chats", String(copy.id), "move_pc"], query: [], body: { pc: "pc:b" }, token: "", device: "", global: false });
+    expect([old.status, old.body]).toEqual([409, { error: "old runs an older Harbor that can't move chats: update it first" }]);
+    store.close();
+  });
 });

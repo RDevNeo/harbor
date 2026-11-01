@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { statusBars } from "./statusbars.ts";
-import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
+import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { mcp } from "./packages/mcp/src/index.ts";
 import {
@@ -54,7 +54,9 @@ import {
   lanPortmapNet,
   loadOrCreate,
   loadTokens,
+  overlays,
   Mesh,
+  MovePc,
   noteJson,
   Notes,
   Notifier,
@@ -75,13 +77,14 @@ import {
   type Dest,
   type Json,
   type MeshApp,
+  type MovePcAccount,
   type Reply,
 } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold">;
 
 export interface HubOptions {
   version: string;
@@ -109,6 +112,7 @@ export interface RunningHub {
   mesh: Mesh;
   phone: PhoneRoutes;
   engine: Engine;
+  move: MovePc;
   prs: chatpr.ChatPrs;
   account: AccountService;
   /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
@@ -307,13 +311,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;
+  let move: MovePc | null = null;
   const meshApp: MeshApp = {
     helloExtra: () => replica.helloExtra(),
     chats: (since, full) => replica.chats(since, full),
     items: (chat, since) => replica.items(chat, since),
-    applyChats: (peer, epoch, body) => replica.applyChats(peer, epoch, body),
+    applyChats: (peer, epoch, body) => {
+      // A chat handed to this peer whose answer was lost: its list settles it first.
+      move?.reconcile(peer, body);
+      return replica.applyChats(peer, epoch, body);
+    },
     applyItems: (peer, epoch, hid, body) => replica.applyItems(peer, epoch, hid, body),
-    route: async (call) => (await services?.routeMesh(call)) ?? (await meshMore(call)) ?? replica.route(call),
+    route: async (call) => (await move?.route(call)) ?? (await services?.routeMesh(call)) ?? (await meshMore(call)) ?? replica.route(call),
   };
   const meshMore = async (call: Call): Promise<Reply | null> => {
     if (call.path[0] !== "mesh" || call.path[1] !== "v1" || call.path.length !== 3) return null;
@@ -377,9 +386,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const subs = store.chats().filter((x) => x.parent === c.id);
     const chats = [c, ...subs].map((x) => ({ id: x.id, name: x.name, device: x.device, claude: accounts.find((y) => y.id === x.account)?.kind === "Claude", running: engine?.running(x.id) ?? false }));
     const lead = deviceList().find(([h]) => h.id === c.device)?.[0];
-    return relocateBlocker({ foreignHome: c.home !== "" ? hub.mesh.nameOf(c.home) : null, isSub: c.role === "sub", movingTo: null, chats, leadDevice: lead ? { os: lead.os } : null });
+    return relocateBlocker({ foreignHome: c.home !== "" ? hub.mesh.nameOf(c.home) : null, isSub: c.role === "sub", movingTo: move?.movingTo(c.id) ?? null, chats, leadDevice: lead ? { os: lead.os } : null });
   };
   catalog.relocateBlocker = blockerOf;
+  catalog.movingTo = (c) => move?.movingTo(c.id) ?? null;
   catalog.deviceWhy = (c) => {
     const devs = deviceList();
     const hosts = [...hub.mesh.peers.values()];
@@ -438,6 +448,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
     offline,
     turnEnded: (id) => prs.want(id, null),
+    moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
+    hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
   };
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
@@ -460,6 +472,33 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, accounts: () => accounts, ...host, ...own });
   const live = engine;
+  const moveAccounts = (): MovePcAccount[] =>
+    accounts.map((a) => ({
+      id: a.id,
+      claude: a.kind === "Claude",
+      email: a.email,
+      short: providers.short(a),
+      configDir: a.configDir,
+      usable: a.kind === "Claude" && a.bin !== null && a.loggedIn !== false && live.limits.blocked(a.id) === undefined && live.limits.ctl.overCap(a.id) === undefined,
+      usage: live.limits.usageOf(a.id),
+    }));
+  const mover = new MovePc({
+    store,
+    engine: live,
+    mesh: hub.mesh,
+    forward: (...a) => mesh.forward(...a),
+    accounts: moveAccounts,
+    home: home(),
+    uploadsDir,
+    worktreeRoot: worktree.root(),
+    overlays: () => overlays({ dataDir: dataDir(env) }),
+    removeWorktree: (repo, dir) => worktree.remove(repo, dir),
+    reindex: () => replica.reload(),
+    forget: (chat) => live.host.forgetWorkspace?.(chat),
+  });
+  mover.load();
+  move = mover;
+  phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc) => mover.movePc(chat, pc) };
   phone.d.engine = {
     running: (id) => live.running(id),
     runningSince: (id) => live.runningSince(id),
@@ -608,6 +647,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mesh,
     phone,
     engine: live,
+    move: mover,
     prs,
     account,
     devices: () => {
