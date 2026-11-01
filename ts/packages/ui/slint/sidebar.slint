@@ -128,11 +128,29 @@ component ProjectRow {
     callback new-chat();
     callback snooze(length, length);
     callback menu(length, length);
-    property <bool> hovering: area.has-hover || plus.hovered || snooze.hovered;
+    in property <bool> grip;
+    // The project dragged across the sidebar (-1: none) and the pointer's window y.
+    in property <int> drag-id: -1;
+    in property <length> drag-y;
+    callback drag(length);
+    callback dropped();
+    property <bool> pointed: drag-y >= self.absolute-position.y && drag-y < self.absolute-position.y + self.height;
+    out property <bool> under: drag-id >= 0 && drag-id != data.id && pointed;
+    out property <bool> above: drag-y < self.absolute-position.y + self.height / 2;
+    property <bool> dragging: drag-id == data.id;
+    property <bool> far;
+    // While a drag runs the pressed handle keeps the hover, so the pointer's row shows it instead.
+    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || plus.hovered || snooze.hovered;
     height: Theme.row-h + 2px;
     Rectangle {
         background: root.data.active || root.hovering ? Theme.accent : transparent;
         border-radius: Theme.radius-md;
+    }
+    // sidebar.rs: egui draws the drop line as a 2px stroke 1px outside the target row.
+    if root.under: Rectangle {
+        y: root.above ? -2px : parent.height;
+        height: 2px;
+        background: Theme.gray-1000;
     }
     area := TipArea {
         tip: root.data.tip;
@@ -145,13 +163,46 @@ component ProjectRow {
             }
         }
     }
-    if root.data.has-avatar: Image {
+    handle := TouchArea {
+        x: 0;
+        width: 30px;
+        enabled: root.grip;
+        mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.far = false;
+            }
+            if e.kind == PointerEventKind.up && root.dragging {
+                root.dropped();
+            }
+        }
+        moved => {
+            // egui's click distance: further than 6px is a drag.
+            root.far = root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px;
+            if root.far {
+                root.drag(self.absolute-position.y + self.mouse-y);
+            }
+        }
+        clicked => {
+            if !root.far {
+                root.open();
+            }
+        }
+    }
+    if root.grip && (root.hovering || root.dragging): Glyph {
+        x: 8px;
+        width: 16px;
+        icon: Icons.grip;
+        size: 16px;
+        color: root.data.active ? Theme.fg : Theme.subtle;
+    }
+    if root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Image {
         x: 8px;
         width: 16px;
         height: 16px;
         source: root.data.avatar;
     }
-    if !root.data.has-avatar: Rectangle {
+    if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Rectangle {
         x: 8px;
         width: 16px;
         height: 16px;
@@ -237,6 +288,12 @@ export component Sidebar inherits Rectangle {
     callback filter(length, length);
     callback ws-filter(length, length);
     callback ws-all();
+    in property <bool> can-drag;
+    callback reorder(int, int, bool);
+    in-out property <int> drag-id: -1;
+    in-out property <length> drag-y;
+    property <int> drop-id: -1;
+    property <bool> drop-above;
     callback settings();
     callback prs();
     callback issues();
@@ -365,6 +422,33 @@ export component Sidebar inherits Rectangle {
                         padding-bottom: 2px;
                         ProjectRow {
                             data: r;
+                            grip: root.can-drag;
+                            drag-id: root.drag-id;
+                            drag-y: root.drag-y;
+                            drag(y) => {
+                                root.drag-id = r.id;
+                                root.drag-y = y;
+                            }
+                            dropped => {
+                                if root.drop-id >= 0 {
+                                    root.reorder(r.id, root.drop-id, root.drop-above);
+                                }
+                                root.drag-id = -1;
+                                root.drop-id = -1;
+                            }
+                            changed under => {
+                                if self.under {
+                                    root.drop-id = r.id;
+                                    root.drop-above = self.above;
+                                } else if root.drop-id == r.id {
+                                    root.drop-id = -1;
+                                }
+                            }
+                            changed above => {
+                                if self.under {
+                                    root.drop-above = self.above;
+                                }
+                            }
                             open => {
                                 root.open-project(r.id);
                             }

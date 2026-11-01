@@ -241,6 +241,7 @@ export interface AppWindow extends slint.ComponentHandle {
   side_ws: boolean;
   side_ws_on: boolean;
   side_ws_tip: string;
+  side_drag: boolean;
   open_chat: (id: number) => void;
   open_project: (id: number) => void;
   new_chat: (repo: number) => void;
@@ -255,6 +256,7 @@ export interface AppWindow extends slint.ComponentHandle {
   filter: (x: number, y: number) => void;
   ws_filter: (x: number, y: number) => void;
   ws_all: () => void;
+  reorder: (id: number, target: number, above: boolean) => void;
   settings: () => void;
   prs: () => void;
   issues: () => void;

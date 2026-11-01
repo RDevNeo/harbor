@@ -68,6 +68,18 @@ export function sidebarOrder(repos: readonly SidebarRepo[], byActivity: boolean,
   return byActivity ? ids.map((id) => [id, activity(id, chats)] as const).sort((a, b) => b[1] - a[1]).map(([id]) => id) : ids;
 }
 
+/** sidebar.rs `move_project`: the shown projects' order with `dragged` dropped above or below `target`. */
+export function reordered(shown: readonly number[], dragged: number, target: number, above: boolean): number[] {
+  const order = [...shown];
+  const from = order.indexOf(dragged);
+  const at = order.indexOf(target);
+  if (from < 0 || at < 0) return order;
+  const to = above ? at : at + 1;
+  order.splice(from, 1);
+  order.splice(Math.min(to > from ? to - 1 : to, order.length), 0, dragged);
+  return order;
+}
+
 /** A project as the list draws it: the repo and the chat rows under it. */
 export interface ProjectRows<C> {
   repo: SidebarRepo;

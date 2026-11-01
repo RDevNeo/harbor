@@ -9,6 +9,7 @@ import {
   isMainOf,
   parseSnooze,
   picked,
+  reordered,
   snoozeLabel,
   snoozePresets,
   snoozePreview,
@@ -310,4 +311,12 @@ test("snooze_labels", () => {
   expect(l(NOW + 10 * 24 * H)).toBe("Sat 7 Nov, 14:20");
   // Local time: 11:20 three hours behind UTC, so 22:20 is still today there.
   expect(snoozeLabel(NOW + 11 * H, NOW, -3 * H)).toBe("Today, 22:20");
+});
+
+test("a dragged project lands above or below the row it's dropped on", () => {
+  expect(reordered([1, 2, 3, 4], 1, 3, true)).toEqual([2, 1, 3, 4]);
+  expect(reordered([1, 2, 3, 4], 1, 3, false)).toEqual([2, 3, 1, 4]);
+  expect(reordered([1, 2, 3, 4], 4, 1, true)).toEqual([4, 1, 2, 3]);
+  expect(reordered([1, 2, 3, 4], 4, 2, false)).toEqual([1, 2, 4, 3]);
+  expect(reordered([1, 2, 3], 2, 9, true)).toEqual([1, 2, 3]);
 });

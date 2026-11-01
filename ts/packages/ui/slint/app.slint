@@ -351,6 +351,7 @@ export component AppWindow inherits Window {
     in property <bool> side-ws;
     in property <bool> side-ws-on;
     in property <string> side-ws-tip;
+    in property <bool> side-drag;
     callback open-chat(int);
     callback open-project(int);
     callback new-chat(int);
@@ -365,6 +366,7 @@ export component AppWindow inherits Window {
     callback filter(length, length);
     callback ws-filter(length, length);
     callback ws-all();
+    callback reorder(int, int, bool);
     callback settings();
     callback prs();
     callback issues();
@@ -596,6 +598,7 @@ export component AppWindow inherits Window {
                 ws-on: root.side-ws-on;
                 ws-tip: root.side-ws-tip;
                 pop-id: root.pop-id;
+                can-drag: root.side-drag;
                 pages-back: root.view == "prs" || root.view == "issues";
                 open-chat(id) => {
                     root.open-chat(id);
@@ -641,6 +644,9 @@ export component AppWindow inherits Window {
                 }
                 ws-all => {
                     root.ws-all();
+                }
+                reorder(id, target, above) => {
+                    root.reorder(id, target, above);
                 }
                 settings => {
                     root.settings();

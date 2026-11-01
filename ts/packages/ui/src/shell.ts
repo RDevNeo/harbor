@@ -28,7 +28,7 @@ import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
-import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
@@ -171,6 +171,7 @@ export class Shell {
   private readonly prs: chatpr.ChatPrs;
   private readonly workspaces: () => Workspaces;
   private readonly hub: ShellHub;
+  private shownProjects: number[] = [];
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -278,6 +279,7 @@ export class Shell {
     w.filter = (x, y) => this.filterMenu(x, y);
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
+    w.reorder = (id, target, above) => this.reorder(id, target, above);
     w.settings = () => this.pages.openSettings();
     w.prs = () => this.pages.openPrs();
     w.issues = () => this.pages.openIssues();
@@ -833,6 +835,8 @@ export class Shell {
     const q = this.query.trim();
     w.side_ws = ws.all.length > 0;
     w.side_ws_on = shown.length > 0;
+    w.side_drag = d.store.get("order_by_activity") !== "1" && q === "" && shown.length === 0;
+    this.shownProjects = list.projects.map((p) => p.repo.id);
     w.side_ws_tip = names.length === 0 ? "Workspace" : `Workspace: ${names.join(", ")}`;
     w.side_empty = list.projects.length > 0 ? "" : q !== "" ? "search" : shown.length > 0 ? (list.loose.length === 0 && list.settled.length === 0 ? "ws" : "") : d.repos.length === 0 ? "projects" : "";
     w.side_empty_desc = w.side_empty === "ws" ? `No chats of ${names.length === 1 ? names[0] : "these workspaces"} reach this PC.` : w.side_empty === "projects" ? "Add a folder or clone a repository to start." : "";
@@ -1980,6 +1984,12 @@ export class Shell {
       ...ws.all.map((x) => this.item(x.name, pick(toggled(stored, x.id, ws.all)), { icon: ICONS.USERS, desc: x.id === ws.mine ? "This PC's workspace" : "", checked: shown.includes(x.id) })),
     ];
     this.popup("workspace", x, y, items, 260);
+  }
+
+  private reorder(dragged: number, target: number, above: boolean): void {
+    reordered(this.shownProjects, dragged, target, above).forEach((id, sort) => this.data.store.saveRepoMeta({ id, sort }));
+    this.engine.reload();
+    this.refreshSidebar();
   }
 
   /** Shows the workspaces `ids` in the sidebar ("": all of them), on this device from now on. */
