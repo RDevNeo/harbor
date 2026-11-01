@@ -211,3 +211,16 @@ and `meshPort(shared, mesh)` (net's `Shared` and `Mesh.forward`). Left to the ap
 agent label, and starting the "Merge with…" / "Fix with…" threads needs the agents Engine), `blocks` (net's markdown blocks)
 and calling `api.handle` from the phone API's `/v1/prs` and `/v1/issues` routes. `MeshPort.mapNew` is async here (Rust polled
 up to 8 s on a thread).
+
+## Engine wiring (connect.ts)
+
+`wireAgents()` registers the servers (`claudeConfig`, `claudeServers`, `codexArgs`), the bridge and the workspace tools with
+`agents.integrate` and sets `setAgentEnv(agentEnvAs)`. `connect({ engine, other, ensureLead, previewReceived, socket, hooks })`
+also starts the control socket (a tool call becomes `engine.tool`, its text or error is the reply) and the webhook listener
+(`engine.hookPort` is the port it got); a hit becomes a notice and an automatic turn in the project's lead (`deliverHook`, Rust's
+`handle_hook`). Socket messages that are not tools or hooks (`api`, `mesh`, `focus`, `preview`, `previewBack`) go to `other`; the app
+provides it, and `ensureLead` (Rust's `ensure_lead` needs the composer's account choice) for a project with no lead yet.
+
+Known flake: hookcert's TLS tests fail now and then when many processes load the PC at once (a handshake is refused: "disconnected
+before secure TLS connection was established"); six parallel runs of the file fail some of the time, a single run under CPU load
+did not in 8 tries. Not found yet whether it is the ClientHello rewind (`rewound`) or Bun's TLSSocket over a Duplex.

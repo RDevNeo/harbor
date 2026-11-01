@@ -5,7 +5,7 @@ import { Duplex } from "node:stream";
 import { TLSSocket } from "node:tls";
 import { canon, HEAD_WAIT, header, identity as meshIdentity, type Identity, type Kv, lanPortmapNet, portmapIsPublic, portmapMapTo, portmapSockText, privateIp, Reader, readBody, readChunked, readHead, scopeKey, Throttle, urlEncode, type PortmapSock } from "@harbor/net";
 import { now as unixNow, stateDir } from "@harbor/store";
-import { type Hook, type Rate, serveHook } from "./control.ts";
+import { type Hook, type Rate, type Tokens, serveHook } from "./control.ts";
 import { isObject } from "./json.ts";
 
 export const PORT = 47911;
@@ -397,7 +397,7 @@ export interface Options {
   /** Settings: `hooks_public` ("1": on) and `hooks_name`. */
   kv: Kv;
   /** The webhooks that are live (their tokens). */
-  tokens: ReadonlySet<string>;
+  tokens: Tokens;
   /** A webhook that arrived. */
   send(h: Hook): void;
   /** Something changed that Settings shows. */

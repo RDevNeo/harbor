@@ -25,6 +25,7 @@
       "name": "@harbor/mcp",
       "version": "0.0.0",
       "dependencies": {
+        "@harbor/agents": "workspace:*",
         "@harbor/net": "workspace:*",
         "@harbor/store": "workspace:*",
       },

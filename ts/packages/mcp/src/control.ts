@@ -196,8 +196,12 @@ async function readCapped(req: Request): Promise<Uint8Array | undefined> {
   return Buffer.concat(parts);
 }
 
+export interface Tokens {
+  has(token: string): boolean;
+}
+
 export interface HookContext {
-  tokens: ReadonlySet<string>;
+  tokens: Tokens;
   send(h: Hook): void;
   rate?: Rate;
   now?: () => number;
@@ -249,7 +253,7 @@ export interface HookServer {
   stop(): void;
 }
 
-export function startHooks(tokens: ReadonlySet<string>, send: (h: Hook) => void, first = HOOK_PORT): HookServer | undefined {
+export function startHooks(tokens: Tokens, send: (h: Hook) => void, first = HOOK_PORT): HookServer | undefined {
   for (let p = first; p < first + 10; p++) {
     try {
       const server = Bun.serve({ hostname: "127.0.0.1", port: p, idleTimeout: 10, fetch: (req) => serveHook(req, { tokens, send }) });
