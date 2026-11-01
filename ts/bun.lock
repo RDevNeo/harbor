@@ -21,6 +21,9 @@
     "packages/mcp": {
       "name": "@harbor/mcp",
       "version": "0.0.0",
+      "dependencies": {
+        "@harbor/store": "workspace:*",
+      },
     },
     "packages/media": {
       "name": "@harbor/media",
