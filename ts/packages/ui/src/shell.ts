@@ -1664,12 +1664,34 @@ export class Shell {
       if (!this.engine.running(id) && repo !== null && repo !== undefined) this.gitOf(repo, true);
     }
     this.wasRunning = new Set(this.engine.turns.keys());
+    this.spin();
+  }
+
+  private spin(): void {
+    const g = busOf<{ driven: boolean; tick: number }>(this.win, "Spin");
     if (this.engine.turns.size > 0) {
-      if (this.view === "chat" && this.engine.running(this.chatId)) this.refreshCards();
-      this.refreshSidebar();
-      this.refreshTeam();
-      this.refreshStrip();
+      if (this.spinTimer !== null) return;
+      g.driven = true;
+      let n = 0;
+      this.spinTimer = setInterval(() => {
+        g.tick = (g.tick + 1) % 24;
+        if (++n % 2 === 0) this.refreshRunning();
+      }, 500);
+    } else if (this.spinTimer !== null) {
+      clearInterval(this.spinTimer);
+      this.spinTimer = null;
+      g.driven = false;
     }
+  }
+
+  private spinTimer: ReturnType<typeof setInterval> | null = null;
+
+  private refreshRunning(): void {
+    if (this.engine.turns.size === 0) return;
+    if (this.view === "chat" && this.engine.running(this.chatId)) this.refreshCards();
+    this.refreshSidebar();
+    this.refreshTeam();
+    this.refreshStrip();
   }
 
   // A shown row is what keeps its PR looked up: one scrolled away goes stale after SHOWN_TTL_MS.
@@ -1911,6 +1933,7 @@ export class Shell {
 
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
   shutdown(): void {
+    if (this.spinTimer !== null) clearInterval(this.spinTimer);
     this.surfaces.dispose();
     this.videoPane?.shutdown();
     for (const [id, run] of this.engine.turns) {

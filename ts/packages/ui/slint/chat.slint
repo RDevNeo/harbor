@@ -1027,6 +1027,8 @@ export component Transcript {
                 property <length> h: row.preferred-height;
                 min-height: h;
                 max-height: h;
+                // Every frame walks each drawn item: rows far off screen are left out.
+                visible: self.y + self.height + list.content-y > -list.height && self.y + list.content-y < 2 * list.height;
                 row := VerticalLayout {
                     y: 0;
                     width: parent.width;
