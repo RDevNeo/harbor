@@ -91,3 +91,49 @@ export function linkLocal(ip: Ip): boolean {
   if (ip.v === 4) return ip.b[0] === 169 && ip.b[1] === 254;
   return (word(ip, 0) & 0xffc0) === 0xfe80;
 }
+
+const RTF_UP = 0x1;
+const RTF_REJECT = 0x200;
+
+/** Linux's routing tables as /proc shows them (IPv4 main table, IPv6). */
+export interface RouteTables {
+  v4: string;
+  v6: string;
+}
+
+function prefixMatch(a: Uint8Array, b: Uint8Array, bits: number): boolean {
+  for (let i = 0; i < bits; i++) {
+    const m = 0x80 >> (i % 8);
+    if (((a[i >> 3] ?? 0) & m) !== ((b[i >> 3] ?? 0) & m)) return false;
+  }
+  return true;
+}
+
+/** Whether a route leads to `ip` (loopback and this PC's own addresses always do). */
+export function routeTo(ip: Ip, tables: RouteTables, own: readonly Ip[] = []): boolean {
+  const c = canonical(ip);
+  if (isLoopback(c) || own.some((o) => o.v === c.v && o.b.every((x, i) => x === c.b[i]))) return true;
+  if (c.v === 4) {
+    for (const line of tables.v4.split("\n").slice(1)) {
+      const f = line.trim().split(/\s+/);
+      if (f.length < 8) continue;
+      const le = (h: string) => Uint8Array.from([0, 1, 2, 3].map((i) => Number.parseInt(h.slice(6 - i * 2, 8 - i * 2), 16)));
+      const dest = le(f[1] ?? "");
+      const mask = le(f[7] ?? "");
+      const flags = Number.parseInt(f[3] ?? "0", 16);
+      if (!(flags & RTF_UP) || flags & RTF_REJECT) continue;
+      if (c.b.every((x, i) => (x & (mask[i] ?? 0)) === (dest[i] ?? 0))) return true;
+    }
+    return false;
+  }
+  for (const line of tables.v6.split("\n")) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 10) continue;
+    const dest = Uint8Array.from((f[0] ?? "").match(/../g) ?? [], (h) => Number.parseInt(h, 16));
+    const bits = Number.parseInt(f[1] ?? "0", 16);
+    const flags = Number.parseInt(f[8] ?? "0", 16);
+    if (!(flags & RTF_UP) || flags & RTF_REJECT) continue;
+    if (prefixMatch(c.b, dest, bits)) return true;
+  }
+  return false;
+}

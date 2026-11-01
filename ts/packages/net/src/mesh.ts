@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { hostname } from "node:os";
+import { readFileSync } from "node:fs";
+import { hostname, networkInterfaces } from "node:os";
 import { type Call, type ConnPeer, MAX_AUDIO } from "./api.ts";
 import { exchange, get, http, jsonBody } from "./client.ts";
 import { err, header, ok, parseJson, query, readBody, segments, type Reader, type Reply, type Request } from "./http.ts";
 import type { Hub, PairedPhone } from "./hub.ts";
-import { isLoopback, parseIp } from "./ip.ts";
+import { isLoopback, parseIp, routeTo, type Ip } from "./ip.ts";
 import { kvJson, now, type Kv } from "./kv.ts";
 import { allowedJson, cleanAddrs, dest, downOf, label, loadAllowed, newPeer, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer } from "./shared.ts";
 import { codeKey, connect, DEFAULT_PORT, hostPort, newCode, normalizeCode, normalizeFp, privateIp, proof, proofOk, tailnetIp, Throttle, type Identity } from "./tls.ts";
@@ -587,7 +588,7 @@ export class Mesh {
           used = dd;
           break;
         } catch (e) {
-          if (!dd.via) errors.push(e instanceof Error ? e.message : String(e));
+          if (!dd.via) errors.push(noRoute(dd.addr) ? "Network is unreachable (os error 101)" : e instanceof Error ? e.message : String(e));
         }
       }
       if (known !== null) {
@@ -785,4 +786,24 @@ export function forHome(method: string, p: string[]): boolean {
   if (p.length < 3 || p[0] !== "v1" || p[1] !== "chats") return false;
   const sub = p[3] ?? "";
   return (["POST", "PATCH", "DELETE"].includes(method) && !["move", "mention", "snooze", "main"].includes(sub)) || (method === "GET" && ["slash", "commit", "move_targets"].includes(sub));
+}
+
+/** No route leads to `addr` from this PC (Linux): Bun calls that "connection refused", which would read as Harbor not running there. */
+function noRoute(addr: string): boolean {
+  const sa = socketAddr(addr);
+  const ip = sa ? parseIp(sa.ip) : null;
+  if (!ip) return false;
+  let tables;
+  try {
+    tables = { v4: readFileSync("/proc/net/route", "utf8"), v6: readFileSync("/proc/net/ipv6_route", "utf8") };
+  } catch {
+    return false;
+  }
+  const own = Object.values(networkInterfaces())
+    .flat()
+    .flatMap((i): Ip[] => {
+      const p = i ? parseIp(i.address) : null;
+      return p ? [p] : [];
+    });
+  return !routeTo(ip, tables, own);
 }
