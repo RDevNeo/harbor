@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { chmodSync, closeSync, existsSync, openSync, readdirSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, openSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { type Item, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
 import { dataDir, newUuid, now, privateDir } from "./paths.ts";
@@ -247,6 +247,11 @@ function chatFrom(r: Row): Chat {
 const CHAT_COLS = `id, repo_id, title, session_id, started, account, model, effort, access, settled, updated, role, parent, name, device,
   gid, home, home_id, retired`;
 
+const temp = new Set<string>();
+process.on("exit", () => {
+  for (const d of temp) rmSync(d, { recursive: true, force: true });
+});
+
 export class Store {
   readonly db: Database;
   /** Per chat, a hash of each item as it is saved (by seq): a save writes only what changed. */
@@ -296,6 +301,7 @@ export class Store {
     static openTemp(): Store {
     const dir = join(process.env.TMPDIR || "/tmp", `harbor-test-${newUuid()}`);
     privateDir(dir);
+    temp.add(dir);
     return Store.openAt(join(dir, "harbor.db"));
   }
 

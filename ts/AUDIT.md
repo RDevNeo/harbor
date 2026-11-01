@@ -34,6 +34,7 @@ under `unshare -Urn` (no network) with a throwaway `HOME` and no `XDG_*` set; ev
 - `test/wire.test.ts`: it called `wire()` and left the mcp bridge and agent env registered for every later test file, which broke
   `agents` "a remote turn without the net package says so" in a full run. It restores them in `afterAll`.
 - `packages/agents/test/engine.test.ts:353`: "snooze sets a wake-up" failed one run in about ten under load: the reply says "in <1m" when a few ms of the minute have passed. The pattern accepts both now.
+- Temp folders: `Store.openTemp()` and about 20 test files left folders in `/tmp` (RAM-backed here): 400 were there. `bunfig.toml` now preloads `test/preload.ts`, which points `TMPDIR` at one `hbt-<pid>-*` folder per run and removes it when the run ends. A run that is killed leaves its folder, and the next run removes folders whose pid is gone. `Store.openTemp()` also removes its folders at exit. Tests that hard-code `/tmp` paths are not covered; none were found.
 - `test/harbor.test.ts`: `harbor` with no command now opens the window (ui), which cannot run headless; the test keeps the unknown
   command half.
 
