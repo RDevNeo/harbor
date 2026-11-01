@@ -434,7 +434,7 @@ export component Input {
         width: parent.width - 24px;
         text: root.hint;
         font-size: root.mono ? 13px : 14px;
-        font-family: root.mono ? "Geist Mono" : "Geist";
+        font-family: "Geist";
         color: Theme.gray-900;
         vertical-alignment: center;
         overflow: elide;
@@ -689,7 +689,9 @@ export component KeyCap {
         }
     }
     label := Text {
-        y: -1px;
+        y: 0px;
+        height: root.height;
+        vertical-alignment: center;
         text: root.text;
         font-family: "Geist Mono";
         font-size: 12px;
@@ -915,11 +917,13 @@ export component SettingRow {
             width: min(max(parent.inner * 0.6, parent.inner - 260px), parent.inner - 60px);
             spacing: 2px;
             Text {
+                min-height: 20px;
                 text: root.title;
                 font-size: 14px;
                 font-weight: 500;
                 color: Theme.fg;
                 wrap: word-wrap;
+                vertical-alignment: center;
             }
             if root.desc != "": Text {
                 text: root.desc;

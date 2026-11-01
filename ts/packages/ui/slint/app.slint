@@ -813,7 +813,7 @@ export component AppWindow inherits Window {
         }
         picker := ModelPicker {
             x: max(4px, min(root.pop-x, root.width - self.width - 4px));
-            y: max(4px, root.pop-y - self.height - 6px);
+            y: max(0px, root.pop-y - self.height - 6px);
             rail: root.picker-rail;
             favorites-active: root.picker-favorites;
             rows: root.picker-rows;
