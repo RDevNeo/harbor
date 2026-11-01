@@ -1,12 +1,13 @@
 import { homedir } from "node:os";
 import * as slint from "slint-ui";
-import { type Account, type Kind, providers } from "@harbor/agents";
+import { type Account, git, type Kind, providers } from "@harbor/agents";
 import { type Chat, type Item, now, parseAccess } from "@harbor/store";
 import { newOpened, type Opened, toggle as toggleCard, transcriptCards } from "./cards.ts";
 import { ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
+import { Keys } from "./logic/keys.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
@@ -17,6 +18,7 @@ import { tilde } from "./logic/app.ts";
 import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
 import { defuse } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
+import { MediaRows } from "./mediarows.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
@@ -25,8 +27,6 @@ import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, typ
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
-const KEY_RETURN = new Set(["\n", "\r"]);
-const KEY_ESCAPE = "\u{1b}";
 
 interface Sel {
   account: string;
@@ -84,8 +84,17 @@ export class Shell {
   private picker: PickerState = { rail: null, search: "", more: false, hover: 0 };
   private pickerRowsNow: Row[] = [];
   private favorites: Favorites;
+  private keys: Keys;
   private stripRows = new slint.ArrayModel<StripRow>([]);
   private avatars = new Map<number, Pixels | null>();
+  private mediaRows: MediaRows | null = null;
+  private gitStatus = new Map<number, git.Status | null>();
+  private gitRunning = new Set<number>();
+
+  /** Images in the transcript, once the media package is loaded. */
+  useMedia(pkg: typeof import("@harbor/media")): void {
+    this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId));
+  }
   private stripFold = new Map<number, boolean>();
   private popActions: (() => void)[] = [];
   private dialogAction: ((ok: boolean, input: string) => void) | null = null;
@@ -120,6 +129,7 @@ export class Shell {
     win.strip_rows = this.stripRows;
     win.picker_rows = this.modelRows;
     this.favorites = new Favorites(data.store);
+    this.keys = Keys.load(data.store);
     win.team_agents = this.teamAgentRows;
     win.team_settled = this.teamSettledRows;
     win.team_wakeups = this.wakeRows;
@@ -152,6 +162,7 @@ export class Shell {
     w.issues = () => this.unported("Issues");
     w.refresh = () => {
       this.data.reload();
+      for (const r of this.data.repos) this.gitOf(r.id, true);
       this.refreshAll();
     };
     w.team = () => {
@@ -205,6 +216,9 @@ export class Shell {
     w.link = (url) => this.openLink(url);
     w.open_url = (url) => this.openExternal(url);
     w.card_act = (seq, a) => this.cardAction(seq, a);
+    w.open_media = (path) => {
+      Bun.spawn(["xdg-open", path], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    };
     w.edited = (t) => {
       this.drafts.set(this.key(), t);
       setTimeout(() => this.refreshMenu(), 0);
@@ -361,13 +375,14 @@ export class Shell {
     w.view = this.view;
     const repo = chat ? (chat.repoId === null ? undefined : this.data.repo(chat.repoId)) : this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
     const parent = chat?.role === "sub" && chat.parent !== null ? this.data.chat(chat.parent) : undefined;
+    const st = repo ? this.gitOf(repo.id) : null;
     w.crumbs = {
       icon: repo ? ICONS.FOLDER : ICONS.SQUARE_DASHED,
       project: repo?.name ?? "No project",
       parent: chat?.role === "sub" ? (parent?.title ?? "Lead") : "",
       title: chat ? (chat.role === "sub" ? chat.name : chat.title) : "New thread",
-      branch: "",
-      changed: 0,
+      branch: st?.branch ?? "",
+      changed: st?.changed ?? 0,
     };
     w.team_enabled = chat?.role === "lead";
     this.refreshTeam();
@@ -482,7 +497,9 @@ export class Shell {
     const follow = this.win.at_end;
     const since = this.engine.runningSince(chat.id);
     const status = since !== null ? `Working ${elapsed(Math.floor((Date.now() - since) / 1000))}` : "";
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset());
+    const cwd = this.data.cwd(chat);
+    const rows = this.mediaRows;
+    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760) : undefined);
     sync(this.cards, next, sameCard);
     if (follow) setTimeout(() => this.win.scroll_to_end(), 16);
   }
@@ -575,6 +592,27 @@ export class Shell {
     w.settled_count = list.settled.length;
     w.running = this.engine.turns.size;
     w.side_empty = list.projects.length > 0 ? "" : this.query.trim() !== "" ? "search" : d.repos.length === 0 ? "projects" : "";
+  }
+
+  /** A project's git status (app.rs `refresh_git`): the last one known, read again in the background. */
+  private gitOf(repo: number, again = false): git.Status | null {
+    const known = this.gitStatus.get(repo);
+    if ((known === undefined || again) && !this.gitRunning.has(repo)) {
+      const r = this.data.repo(repo);
+      if (r) {
+        this.gitRunning.add(repo);
+        void git
+          .status(r.local ?? r.path)
+          .catch(() => null)
+          .then((st) => {
+            this.gitRunning.delete(repo);
+            this.gitStatus.set(repo, st);
+            if (st?.origin && st.origin !== r.remote) this.data.store.setRepoRemote(repo, st.origin);
+            this.refreshView();
+          });
+      }
+    }
+    return known ?? null;
   }
 
   /** A project's icon (sidebar.rs `avatar`): its own or its website's, looked up once; null: the initial. */
@@ -740,28 +778,39 @@ export class Shell {
 
   private composerKey(e: KeyEvent): boolean {
     const m = e.modifiers;
+    const p = pressOf(e.text, m);
     if (this.menu.length > 0) {
-      const r = this.menus.key(this.key(), pressOf(e.text, m));
+      const r = this.menus.key(this.key(), p);
       if (r.taken) {
         if (r.pick !== null) this.pickMenu(r.pick);
-        else if (this.menus.selected >= 0) {
+        else {
           this.win.menu_selected = this.menus.selected;
-          if (pressOf(e.text, m).key === "Escape") sync(this.menu, []);
+          if (p.key === "Escape") sync(this.menu, []);
         }
         return true;
       }
     }
-    if (KEY_RETURN.has(e.text) && !m.shift && !m.alt) {
-      this.send();
+    const chat = this.view === "chat" ? this.chatId : null;
+    if (this.keys.matches("send", p)) {
+      this.send(this.engine.followDefault());
       return true;
     }
-    if (e.text === KEY_ESCAPE) {
+    if (this.keys.matches("send_now", p)) {
+      this.send(this.engine.followDefault() === "steer" ? "queue" : "steer");
+      return true;
+    }
+    if (chat !== null && this.keys.matches("steer_queued", p)) {
+      const first = this.engine.queued(chat)[0];
+      if (first) this.engine.queuePromote(chat, first.id);
+      return true;
+    }
+    if (this.keys.matches("stop_turn", p)) {
       if (this.win.pop_id !== "") {
         this.closePopup();
         return true;
       }
-      if (this.view === "chat" && this.engine.running(this.chatId)) {
-        this.engine.esc(this.chatId);
+      if (chat !== null && this.engine.running(chat)) {
+        this.engine.esc(chat);
         return true;
       }
     }
@@ -773,23 +822,38 @@ export class Shell {
   }
 
   private globalKey(e: KeyEvent): boolean {
-    const m = e.modifiers;
-    const k = e.text.toLowerCase();
-    if (m.control && !m.alt && k === "b") {
-      this.win.sidebar_open = !this.win.sidebar_open;
+    const p = pressOf(e.text, e.modifiers);
+    const w = this.win;
+    if (this.keys.matches("toggle_sidebar", p)) {
+      w.sidebar_open = !w.sidebar_open;
       return true;
     }
-    if (m.control && !m.alt && !m.shift && k === "n") {
+    if (this.keys.matches("new_thread", p)) {
       this.newDraft(this.view === "chat" ? (this.data.chat(this.chatId)?.repoId ?? null) : this.draftRepo);
       return true;
     }
-    if (e.text === KEY_ESCAPE && this.win.pop_id !== "") {
+    if (this.keys.matches("toggle_team", p) && w.team_enabled) {
+      w.team();
+      return true;
+    }
+    if (this.keys.matches("palette", p)) {
+      w.palette();
+      return true;
+    }
+    if (this.keys.matches("settings", p)) {
+      w.settings();
+      return true;
+    }
+    if (p.key === "Escape" && w.pop_id !== "") {
       this.closePopup();
+      return true;
+    }
+    if (this.keys.matches("stop_turn", p) && this.view === "chat" && this.engine.running(this.chatId)) {
+      this.engine.esc(this.chatId);
       return true;
     }
     return false;
   }
-
 
   private async attach(): Promise<void> {
     const key = this.key();
@@ -810,7 +874,7 @@ export class Shell {
     this.refreshComposer();
   }
 
-  private send(): void {
+  private send(mode: "steer" | "queue" = this.engine.followDefault()): void {
     const text = this.win.draft.trim();
     const from = this.key();
     const files = this.attached.get(from) ?? [];
@@ -828,7 +892,7 @@ export class Shell {
     this.attached.delete(from);
     this.win.draft = "";
     this.refreshFiles();
-    this.engine.send(id, text, { files, mentions, mode: this.engine.followDefault() });
+    this.engine.send(id, text, { files, mentions, mode });
     this.refreshAll();
     setTimeout(() => this.win.scroll_to_end(), 30);
   }
@@ -873,8 +937,15 @@ export class Shell {
   }
 
   /** Once a second: queued messages and wake-ups due, and the Working timers. */
+  private wasRunning = new Set<number>();
+
   tick(): void {
     this.followTheme();
+    for (const id of this.wasRunning) {
+      const repo = this.data.chat(id)?.repoId;
+      if (!this.engine.running(id) && repo !== null && repo !== undefined) this.gitOf(repo, true);
+    }
+    this.wasRunning = new Set(this.engine.turns.keys());
     this.engine.queueDrain();
     this.engine.fireTimers();
     if (this.engine.turns.size > 0) {
@@ -1256,7 +1327,8 @@ export class Shell {
 }
 
 function sameCard(a: CardData, b: CardData): boolean {
-  return a === b;
+  const plain = a.kind === "group" || a.kind === "space" || a.kind === "status" || a.kind === "divider";
+  return a === b || (plain && a.kind === b.kind && a.seq === b.seq && a.label === b.label && a.open === b.open && a.pending === b.pending && a.text === b.text && a.url === b.url);
 }
 
 function shortElapsed(secs: number): string {
@@ -1283,6 +1355,10 @@ export async function run(data: Data): Promise<void> {
   data.onChange = (id) => shell.changed(id);
   data.visible = (id) => shell.showing(id);
   data.engine.reattachTurns();
+  void import("@harbor/media").then((pkg) => {
+    shell.useMedia(pkg);
+    shell.changed(null);
+  });
   const last = Number(data.store.get("last_chat") ?? 0);
   shell.newDraft(null);
   if (process.env.HARBOR_VIEW === "chat" && data.chat(last)) shell.openChat(last);

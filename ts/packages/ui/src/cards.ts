@@ -5,7 +5,7 @@ import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { type Part, parts } from "./logic/usertext.ts";
 import { type Block, blocks, escape } from "./markdown.ts";
-import type { CardData, MdBlockData } from "./window.ts";
+import type { CardData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
 export interface Opened {
@@ -105,7 +105,7 @@ const NOTICE_ICONS: Record<string, IconName> = {
 };
 
 function blank(seq: number): CardData {
-  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", files: [], steer: false, url: "", actions: [], time: "" };
+  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", files: [], steer: false, url: "", actions: [], time: "", media: [] };
 }
 
 function base(name: string): string {
@@ -113,16 +113,27 @@ function base(name: string): string {
   return i < 0 ? name : name.slice(i + 1);
 }
 
-function cardData(c: Card, seq: number, open: Opened, off: number): CardData | null {
+/** An image drawn under the reply leaves its markdown reference out of the text (media.rs `strip_refs`). */
+export function stripDrawn(text: string, drawn: readonly string[]): string {
+  if (drawn.length === 0) return text;
+  return text.replace(/!\[[^\]]*\]\(([^)\s]*)[^)]*\)/g, (ref, target: string) => (drawn.some((p) => p.endsWith(target.replace(/^~\//, "").replace(/^\.\//, ""))) ? "" : ref));
+}
+
+/** The images a card shows, as the window draws them; none until they are decoded. */
+export type MediaOf = (c: Card) => MediaRow[];
+
+function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: MediaOf): CardData | null {
   const at = c.kind === "user" || c.kind === "text" ? c.at : 0;
-  const d = { ...blank(seq), actions: c.kind === "user" || c.kind === "text" ? actions(c) : [], time: at > 0 ? clock(at, off) : "" };
+  const d = { ...blank(seq), actions: c.kind === "user" || c.kind === "text" ? actions(c) : [], time: at > 0 ? clock(at, off) : "", media: mediaOf(c) };
   switch (c.kind) {
     case "hidden":
       return null;
     case "user":
       return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cells: [], header: false, gap: 0 }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
-    case "text":
-      return { ...d, kind: "text", blocks: mdBlocks(c.text), text: c.text };
+    case "text": {
+      const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
+      return { ...d, kind: "text", blocks: mdBlocks(md), text: c.text };
+    }
     case "thinking":
       return { ...d, kind: "thinking", text: c.text, open: open.cards.has(seq) };
     case "tool": {
@@ -156,7 +167,15 @@ function cardData(c: Card, seq: number, open: Opened, off: number): CardData | n
 }
 
 /** Every card the transcript draws, a 24px space at each end and the status line if any. */
-export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0): CardData[] {
+// Streaming changes one item at a time: the others keep their card, so their markdown isn't parsed again.
+const memo = new WeakMap<Item, { sig: string; data: CardData | null }>();
+
+function signature(it: Item, open: Opened, seq: number, media: number): string {
+  const body = it.kind === "tool" ? `${it.input.length}:${it.result?.length ?? -1}:${it.is_error}` : "text" in it ? String(it.text.length) : "";
+  return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
+}
+
+export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => []): CardData[] {
   const shown = project(items, lead, forks);
   const runs = groups(shown);
   const out: CardData[] = [{ ...blank(-1), kind: "space" }];
@@ -171,7 +190,12 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
         continue;
       }
     }
-    const c = cardData(s.card, s.seq, open, off);
+    const item = items[s.seq];
+    const media = mediaOf(s.card);
+    const sig = item ? signature(item, open, s.seq, media.length) : "";
+    const hit = item ? memo.get(item) : undefined;
+    const c = hit && hit.sig === sig ? hit.data : cardData(s.card, s.seq, open, off, () => media);
+    if (item) memo.set(item, { sig, data: c });
     if (c) out.push(c);
     for (const f of s.forksAfter) fork(s.seq, f);
   }

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { groupSeq, newOpened, toggle, transcriptCards } from "../src/cards.ts";
+import { groupSeq, newOpened, stripDrawn, toggle, transcriptCards } from "../src/cards.ts";
 import { byteAt, charAt, pressOf } from "../src/composer.ts";
 import type { Item } from "../src/logic/item.ts";
+import { fitIn } from "../src/mediarows.ts";
 import { parseSteps } from "../src/script.ts";
 
 
@@ -45,4 +46,15 @@ test("HARBOR_POINTER steps parse like the Rust app's", () => {
     { x: 5, y: 6, action: "", at: 1 },
     { x: 7, y: 8, action: "type:a", at: 1 },
   ]);
+});
+
+test("a large image fits the transcript's box and keeps its shape", () => {
+  expect(fitIn(1600, 900, [480, 300])).toEqual([480, 270]);
+  expect(fitIn(200, 100, [480, 300])).toEqual([200, 100]);
+  expect(fitIn(300, 1200, [480, 300])).toEqual([75, 300]);
+});
+
+test("an image drawn under a reply leaves its reference out of the text", () => {
+  expect(stripDrawn("See ![shot](./out/a.png) and ![other](b.png)", ["/p/out/a.png"])).toBe("See  and ![other](b.png)");
+  expect(stripDrawn("![x](~/a.png)", [])).toBe("![x](~/a.png)");
 });

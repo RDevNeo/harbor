@@ -40,6 +40,15 @@ export interface MdBlockData {
   gap: number;
 }
 
+export interface MediaRow {
+  image: Pixels;
+  caption: string;
+  large: boolean;
+  w: number;
+  h: number;
+  path: string;
+}
+
 export interface CardData {
   kind: "" | "user" | "text" | "thinking" | "tool" | "group" | "notice" | "message" | "error" | "divider" | "space" | "status";
   seq: number;
@@ -59,6 +68,7 @@ export interface CardData {
   url: string;
   actions: string[];
   time: string;
+  media: MediaRow[];
 }
 
 export interface MenuEntry {
@@ -232,6 +242,7 @@ export interface AppWindow extends slint.ComponentHandle {
   link: (url: string) => void;
   open_url: (url: string) => void;
   card_act: (seq: number, action: string) => void;
+  open_media: (path: string) => void;
 
   draft: string;
   composer: ComposerState;

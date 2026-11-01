@@ -3,6 +3,15 @@ import { Icons } from "icons.slint";
 import { Glyph, Spinner, Btn, TipArea } from "widgets.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 
+export struct MediaRow {
+    image: image,
+    caption: string,
+    large: bool,
+    w: length,
+    h: length,
+    path: string,
+}
+
 export struct CardData {
     kind: string,
     seq: int,
@@ -22,6 +31,7 @@ export struct CardData {
     url: string,
     actions: [string],
     time: string,
+    media: [MediaRow],
 }
 
 component ToolCard {
@@ -266,6 +276,7 @@ export component CardView inherits TouchArea {
     callback link(string);
     callback open-url(string);
     callback act(int, string);
+    callback open-media(string);
     property <bool> right: card.kind == "user";
     min-height: inner.min-height;
     preferred-height: inner.preferred-height;
@@ -489,6 +500,68 @@ export component CardView inherits TouchArea {
                 background: Theme.border;
             }
         }
+        for m in root.card.media: VerticalLayout {
+            padding-top: 4px;
+            padding-bottom: 4px;
+            padding-left: root.card.kind == "tool" ? 30px : 0px;
+            alignment: start;
+            if m.large: VerticalLayout {
+                spacing: 4px;
+                HorizontalLayout {
+                    alignment: root.card.kind == "user" ? LayoutAlignment.end : LayoutAlignment.start;
+                    Rectangle {
+                        width: m.w;
+                        height: m.h;
+                        border-radius: Theme.radius-lg;
+                        clip: true;
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: m.image;
+                            image-fit: contain;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.open-media(m.path);
+                            }
+                        }
+                    }
+                }
+                if m.caption != "": Text {
+                    text: m.caption;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    horizontal-alignment: root.card.kind == "user" ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
+                }
+            }
+        }
+        if root.card.media.length > 0: HorizontalLayout {
+            alignment: root.card.kind == "user" ? LayoutAlignment.end : LayoutAlignment.start;
+            padding-left: root.card.kind == "tool" ? 30px : 0px;
+            spacing: 8px;
+            for m in root.card.media: Rectangle {
+                visible: !m.large;
+                width: m.large ? 0px : 132px;
+                height: m.large ? 0px : 96px;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: m.image;
+                    image-fit: cover;
+                }
+                TipArea {
+                    tip: m.path;
+                    clicked => {
+                        root.open-media(m.path);
+                    }
+                }
+            }
+        }
         if root.card.actions.length > 0: Rectangle {
             height: 16px;
             HorizontalLayout {
@@ -543,6 +616,7 @@ export component Transcript {
     callback link(string);
     callback open-url(string);
     callback act(int, string);
+    callback open-media(string);
     out property <bool> at-end: -list.content-y + list.height >= list.content-height - 48px;
     // Stuck to the end while it grows (egui's stick_to_bottom) until scrolled up.
     in-out property <bool> follow: true;
@@ -600,6 +674,9 @@ export component Transcript {
                     running: root.running;
                     act(seq, a) => {
                         root.act(seq, a);
+                    }
+                    open-media(p) => {
+                        root.open-media(p);
                     }
                     toggle(seq) => {
                         root.toggle(seq);
