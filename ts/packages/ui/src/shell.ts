@@ -1369,7 +1369,7 @@ export class Shell {
 }
 
 function sameCard(a: CardData, b: CardData): boolean {
-  const plain = a.kind === "group" || a.kind === "space" || a.kind === "status" || a.kind === "divider";
+  const plain = a.kind === "group" || a.kind === "space" || a.kind === "status" || a.kind === "divider" || a.kind === "earlier";
   return a === b || (plain && a.kind === b.kind && a.seq === b.seq && a.label === b.label && a.open === b.open && a.pending === b.pending && a.text === b.text && a.url === b.url);
 }
 

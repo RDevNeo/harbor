@@ -668,7 +668,7 @@ export component Transcript {
                         vertical-alignment: center;
                     }
                 }
-                if c.kind != "space" && c.kind != "status": CardView {
+                if c.kind != "space" && c.kind != "status" && c.kind != "earlier": CardView {
                     card: c;
                     avail: root.column;
                     running: root.running;

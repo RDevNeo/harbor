@@ -9,13 +9,18 @@ import type { CardData, MdBlockData, MediaRow } from "./window.ts";
 
 /** Folded and opened state of one chat's cards, by seq. */
 export interface Opened {
+  /** How many of the latest cards are built; "Show earlier messages" raises it. */
+  limit: number;
   /** Tool runs opened (by the seq of their first card). */
   groups: Set<number>;
   /** Tool calls, notices and thinking expanded. */
   cards: Set<number>;
 }
 
-export const newOpened = (): Opened => ({ groups: new Set(), cards: new Set() });
+export const PAGE = 80;
+export const EARLIER = -5;
+
+export const newOpened = (): Opened => ({ limit: PAGE, groups: new Set(), cards: new Set() });
 
 const TOOL_TEXT_MAX = 4000;
 const RESULT_MAX = 8000;
@@ -176,9 +181,13 @@ function signature(it: Item, open: Opened, seq: number, media: number): string {
 }
 
 export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => []): CardData[] {
-  const shown = project(items, lead, forks);
-  const runs = groups(shown);
+  const all = project(items, lead, forks);
+  const runs = groups(all);
+  const visible = all.filter((s) => s.card.kind !== "hidden" && (s.group === null || s.group === s.seq));
+  const from = visible.length > open.limit ? (visible[visible.length - open.limit]?.seq ?? 0) : 0;
+  const shown = all.filter((s) => s.seq >= from && (s.group === null || s.group >= from));
   const out: CardData[] = [{ ...blank(-1), kind: "space" }];
+  if (from > 0) out.push({ ...blank(EARLIER), kind: "earlier", label: `Show earlier messages (${visible.length - open.limit})` });
   const fork = (seq: number, f: number) => out.push({ ...blank(seq), kind: "divider", icon: ICONS.FORK, text: "Conversation fork", label: "Open fork", url: `harbor:chat-id/${f}/0` });
   for (const s of shown) {
     if (s.group !== null) {
@@ -211,6 +220,10 @@ export function groupSeq(first: number): number {
 
 /** Opens or folds what a click on card `seq` toggles: a run's row, a tool call, a notice, thinking. */
 export function toggle(open: Opened, seq: number): void {
+  if (seq === EARLIER) {
+    open.limit += PAGE;
+    return;
+  }
   const [set, key] = seq <= -10 ? [open.groups, -seq - 10] : [open.cards, seq];
   if (set.has(key)) set.delete(key);
   else set.add(key);

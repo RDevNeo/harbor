@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { groupSeq, newOpened, stripDrawn, toggle, transcriptCards } from "../src/cards.ts";
+import { EARLIER, groupSeq, newOpened, stripDrawn, toggle, transcriptCards } from "../src/cards.ts";
 import { byteAt, charAt, pressOf } from "../src/composer.ts";
 import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
@@ -57,4 +57,16 @@ test("a large image fits the transcript's box and keeps its shape", () => {
 test("an image drawn under a reply leaves its reference out of the text", () => {
   expect(stripDrawn("See ![shot](./out/a.png) and ![other](b.png)", ["/p/out/a.png"])).toBe("See  and ![other](b.png)");
   expect(stripDrawn("![x](~/a.png)", [])).toBe("![x](~/a.png)");
+});
+
+test("a long transcript builds its latest cards and offers the earlier ones", () => {
+  const items: Item[] = Array.from({ length: 200 }, (_, i): Item => ({ kind: "text", text: `reply ${i}`, at: i }));
+  const open = newOpened();
+  let cards = transcriptCards(items, true, [], open, "");
+  expect(cards[1]?.kind).toBe("earlier");
+  expect(cards[1]?.label).toBe("Show earlier messages (120)");
+  expect(cards.filter((c) => c.kind === "text")).toHaveLength(80);
+  toggle(open, EARLIER);
+  cards = transcriptCards(items, true, [], open, "");
+  expect(cards.filter((c) => c.kind === "text")).toHaveLength(160);
 });

@@ -50,7 +50,7 @@ export interface MediaRow {
 }
 
 export interface CardData {
-  kind: "" | "user" | "text" | "thinking" | "tool" | "group" | "notice" | "message" | "error" | "divider" | "space" | "status";
+  kind: "" | "user" | "text" | "thinking" | "tool" | "group" | "notice" | "message" | "error" | "divider" | "space" | "status" | "earlier";
   seq: number;
   blocks: MdBlockData[];
   text: string;
