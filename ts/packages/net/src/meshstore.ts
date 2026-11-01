@@ -4,7 +4,7 @@ import type { Call } from "./api.ts";
 import { err, type Reply } from "./http.ts";
 import { draftFromJson, draftJson, previewTail, type Hub, type SharedDraft } from "./hub.ts";
 import type { MeshApp } from "./mesh.ts";
-import { RawJson, type Json } from "./wire.ts";
+import { F64, type Json } from "./wire.ts";
 
 /** What the agents know of one of this PC's chats; an idle chat without it. */
 export interface LiveChat {
@@ -43,14 +43,21 @@ export interface StoreReplicaOptions {
 }
 
 /** A git remote as projects are matched by it: host and path, lowercase, no ".git". */
-export function normalizeRemote(r: string): string {
+export function remoteKey(r: string): string {
   let s = r.trim().toLowerCase().replace(/\/+$/, "").replace(/\.git$/, "");
   s = s.replace(/^[a-z+]+:\/\//, "").replace(/^[^@/]+@/, "");
   return s.replace(/^([^/:]+):(?!\d)/, "$1/");
 }
 
 export function sameRemote(a: string, b: string): boolean {
-  return a !== "" && b !== "" && normalizeRemote(a) === normalizeRemote(b);
+  return a !== "" && b !== "" && remoteKey(a) === remoteKey(b);
+}
+
+/** An item inside a `json!` answer: a map, so its keys go out sorted; a cost stays a float. */
+export function itemValue(it: Item): Json {
+  const v = JSON.parse(itemJson(it)) as Record<string, Json>;
+  if (it.kind === "result") v.cost_usd = new F64(it.cost_usd);
+  return v;
 }
 
 const obj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
@@ -186,7 +193,7 @@ export class StoreReplica implements MeshApp {
     }
     const out: Json[] = [];
     items.forEach((it, i) => {
-      if (since === 0 || (revs[i]?.[1] ?? 0) > since) out.push({ seq: i, item: new RawJson(itemJson(it)) });
+      if (since === 0 || (revs[i]?.[1] ?? 0) > since) out.push({ seq: i, item: itemValue(it) });
     });
     return { epoch: hub.epoch, rev: hub.rev(), count: items.length, items: out };
   }

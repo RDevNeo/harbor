@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { blankChat, Store, type Item } from "@harbor/store";
-import { Api, Hub, loadOrCreate, Mesh, StoreReplica, relayServe, setHello, ok, err, type Allowed } from "@harbor/net";
+import { Api, Hub, loadOrCreate, Mesh, PhoneRoutes, StoreReplica, relayServe, setHello, type Allowed } from "@harbor/net";
 
 const dir = process.env.DIR ?? "";
 const port = Number(process.env.PORT ?? "47931");
@@ -27,11 +27,14 @@ if (process.env.SEED) {
   ];
   store.saveItems(c.id, items);
 }
-const hub = new Hub([], port);
+const token = process.env.TOKEN ?? "";
+const hub = new Hub(token === "" ? [] : [{ token, name: "", created: 0, group: "g".repeat(16), fp: "", account: "", account_name: "" }], port);
+hub.enabled = token !== "";
 hub.mesh.me = { id: process.env.ID ?? "pc:ts", name: process.env.NAME ?? "ts" };
 setHello(hub.mesh.me.id, hub.mesh.me.name, id);
 const replica = new StoreReplica({ store, hub, version: "0.0.0-ts" });
 let api: Api;
+let phone: PhoneRoutes;
 const mesh = new Mesh({
   hub,
   kv: store,
@@ -45,7 +48,7 @@ api = new Api({
   hub,
   id: () => id,
   uploadsDir: join(dir, "uploads"),
-  route: async () => err(404, "no such call"),
+  route: (c) => phone.route(c),
   account: null,
   appInfo: () => ({ version_code: 0, url: "/app.apk", hub: null }),
   apk: () => null,
@@ -55,9 +58,9 @@ api = new Api({
   hubs: () => mesh.hubs(),
   forwardLease: (...a) => mesh.forwardLease(...a),
 });
+phone = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-ts", myFp: () => id.fp, agents: null });
 await api.listen(["127.0.0.1"]);
 mesh.start();
-void ok;
 const secs = Number(process.env.SECS ?? "20");
 await Bun.sleep(secs * 1000);
 for (const c of store.chats()) {
