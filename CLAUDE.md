@@ -56,3 +56,8 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).
 - If no script covers the job you need, stop and ask the user before writing one. Don't improvise
   boat CLI commands; the new script should cover the job for every agent after you.
+
+## TypeScript rewrite on `ts-rewrite`
+
+On this branch `tsc`, `bun test` and `bun build` for `ts/`, and the Phase 0 prototype, run on the
+PC, not on boat.dev. Everything outside `ts/` keeps the boat.dev rule above.
