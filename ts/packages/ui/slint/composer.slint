@@ -200,6 +200,12 @@ component AgentStrip inherits Rectangle {
     }
 }
 
+export struct MentionChip {
+    head: string,
+    snippet: string,
+    tip: string,
+}
+
 export struct FileItem {
     name: string,
     image: bool,
@@ -319,6 +325,8 @@ export component Composer {
     callback strip-stop-all();
     in property <bool> untrusted;
     callback trust();
+    in property <[MentionChip]> mentions;
+    callback remove-mention(int);
     public function focus-text() {
         field.focus();
     }
@@ -429,6 +437,59 @@ export component Composer {
                         text: root.state.typing;
                         font-size: 12px;
                         color: Theme.subtle;
+                    }
+                }
+                if root.mentions.length > 0: VerticalLayout {
+                    padding-bottom: 6px;
+                    spacing: 4px;
+                    for m[i] in root.mentions: Rectangle {
+                        height: 30px;
+                        background: Theme.gray-100;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        border-radius: Theme.radius-md;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 2px;
+                            spacing: 6px;
+                            Glyph {
+                                width: 13px;
+                                icon: Icons.at-sign;
+                                size: 13px;
+                                color: Theme.subtle;
+                            }
+                            Text {
+                                text: m.head;
+                                font-size: 13px;
+                                font-weight: 500;
+                                color: Theme.fg;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: m.snippet;
+                                font-size: 13px;
+                                color: Theme.subtle;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            Btn {
+                                y: 1px;
+                                icon: Icons.x;
+                                size: icon-xs;
+                                variant: ghost-muted;
+                                tip: "Remove";
+                                clicked => {
+                                    root.remove-mention(i);
+                                }
+                            }
+                        }
+                        TipArea {
+                            width: parent.width - 32px;
+                            x: 0;
+                            tip: m.tip;
+                            mouse-cursor: default;
+                        }
                     }
                 }
                 if root.files.length > 0: HorizontalLayout {

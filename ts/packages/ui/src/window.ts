@@ -277,6 +277,8 @@ export interface AppWindow extends slint.ComponentHandle {
   popup: (id: string, x: number, y: number) => void;
   untrusted: boolean;
   trust: () => void;
+  mentions: slint.Model<{ head: string; snippet: string; tip: string }>;
+  remove_mention: (i: number) => void;
   strip_rows: slint.Model<StripRow>;
   strip_title: string;
   strip_names: string;

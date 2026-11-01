@@ -8,7 +8,7 @@ import { Icons } from "icons.slint";
 import { Ui, Btn, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
-import { Composer, ComposerState, MenuEntry, StripRow, FileItem } from "composer.slint";
+import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip } from "composer.slint";
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
@@ -408,6 +408,8 @@ export component AppWindow inherits Window {
 
     in property <bool> untrusted;
     callback trust();
+    in property <[MentionChip]> mentions;
+    callback remove-mention(int);
     in property <[StripRow]> strip-rows;
     in property <string> strip-title;
     in property <string> strip-names;
@@ -762,6 +764,10 @@ export component AppWindow inherits Window {
                                 root.popup(id, x, y);
                             }
                             untrusted: root.untrusted;
+                            mentions: root.mentions;
+                            remove-mention(i) => {
+                                root.remove-mention(i);
+                            }
                             trust => {
                                 root.trust();
                             }

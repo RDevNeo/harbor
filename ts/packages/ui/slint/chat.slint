@@ -604,6 +604,18 @@ export component CardView inherits TouchArea {
             }
         }
     }
+    mention-btn := Btn {
+        x: parent.width - self.width;
+        y: 0px;
+        visible: (root.card.kind == "tool" || root.card.kind == "notice" || root.card.kind == "message") && (root.has-hover || self.hovered);
+        icon: Icons.at-sign;
+        size: icon-xs;
+        variant: ghost-muted;
+        tip: "Mention in your next message";
+        clicked => {
+            root.act(root.card.seq, "mention");
+        }
+    }
     if root.card.kind == "group" || root.card.kind == "thinking": TouchArea {
         mouse-cursor: pointer;
         clicked => {

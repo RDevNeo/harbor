@@ -6,7 +6,7 @@ import { type Account, git, type Kind, providers } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
 import { newOpened, type Opened, toggle as toggleCard, transcriptCards } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
-import { add as addMention, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
+import { add as addMention, chipHead, chipSnippet, chipTip, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { isImage } from "./logic/images.ts";
@@ -110,6 +110,7 @@ export class Shell {
   private menus = new ComposerMenus();
   private mentions = new Map<number, Mention[]>();
   private attached = new Map<number, string[]>();
+  private mentionChips = new slint.ArrayModel<{ head: string; snippet: string; tip: string }>([]);
 
   constructor(win: AppWindow, data: Data) {
     this.win = win;
@@ -135,6 +136,7 @@ export class Shell {
     win.pop_items = this.popItems;
     win.picker_rail = this.railItems;
     win.strip_rows = this.stripRows;
+    win.mentions = this.mentionChips;
     win.picker_rows = this.modelRows;
     this.favorites = new Favorites(data.store);
     this.keys = Keys.load(data.store);
@@ -297,6 +299,13 @@ export class Shell {
     };
     w.picker_key = (e) => this.pickerKey(e);
     w.strip_open_agent = (id) => this.openChat(id);
+    w.remove_mention = (i) => {
+      const shown = this.messageMentions();
+      const m = shown[i];
+      const list = this.mentions.get(this.key()) ?? [];
+      if (m) list.splice(list.indexOf(m), 1);
+      this.refreshMentions();
+    };
     w.trust = () => {
       const r = this.currentRepo();
       if (r) this.data.store.set(`untrusted:${r.local ?? r.path}`, "");
@@ -714,7 +723,21 @@ export class Shell {
     return id === null ? undefined : this.data.repo(id);
   }
 
+  /** The composer's mentioned messages (a mentioned chat is its title in the text instead). */
+  private messageMentions(): Mention[] {
+    return (this.mentions.get(this.key()) ?? []).filter((m) => !isChat(m));
+  }
+
+  private refreshMentions(): void {
+    sync(
+      this.mentionChips,
+      this.messageMentions().map((m) => ({ head: chipHead(m), snippet: chipSnippet(m), tip: chipTip(m, true) })),
+      sameJson,
+    );
+  }
+
   private refreshComposer(): void {
+    this.refreshMentions();
     const repo = this.currentRepo();
     this.win.untrusted = repo !== undefined && !this.engine.trusted(repo.id);
     const sel = this.chatSel();
@@ -955,8 +978,8 @@ export class Shell {
     const text = this.win.draft.trim();
     const from = this.key();
     const files = this.attached.get(from) ?? [];
-    if (text === "" && files.length === 0) return;
-    const mentions = (this.mentions.get(from) ?? []).filter((m) => text.includes(m.title));
+    if (text === "" && files.length === 0 && this.messageMentions().length === 0) return;
+    const mentions = (this.mentions.get(from) ?? []).filter((m) => !isChat(m) || text.includes(m.title));
     let id = this.view === "chat" ? this.chatId : DRAFT;
     if (id === DRAFT) {
       const joins = this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
@@ -1430,6 +1453,7 @@ export class Shell {
       const list = this.mentions.get(this.key()) ?? [];
       addMention(list, m);
       this.mentions.set(this.key(), list);
+      this.refreshMentions();
       this.win.focus_composer();
     } else {
       this.fork(chat.id, seq);
