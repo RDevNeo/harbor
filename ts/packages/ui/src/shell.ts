@@ -64,6 +64,8 @@ export class Shell {
   private view: "draft" | "chat" = "draft";
   private chatId = 0;
   private draftRepo: number | null = null;
+  /** The draft is the project's page: its first message starts the project's main chat. */
+  private draftMain = false;
   private sel: Sel;
   private opened = new Map<number, Opened>();
   private drafts = new Map<number, string>();
@@ -365,13 +367,14 @@ export class Shell {
   private openProject(repo: number): void {
     const main = this.data.mainChat(repo);
     if (main !== null) this.openChat(main);
-    else this.newDraft(repo);
+    else this.newDraft(repo, true);
   }
 
-  newDraft(repo: number | null): void {
+  newDraft(repo: number | null, main = false): void {
     this.drafts.set(this.key(), this.win.draft);
     this.view = "draft";
     this.draftRepo = repo;
+    this.draftMain = main && repo !== null;
     this.win.draft = this.drafts.get(DRAFT) ?? "";
     this.closePopup();
     this.refreshAll();
@@ -398,7 +401,7 @@ export class Shell {
       icon: repo ? ICONS.FOLDER : ICONS.SQUARE_DASHED,
       project: repo?.name ?? "No project",
       parent: chat?.role === "sub" ? (parent?.title ?? "Lead") : "",
-      title: chat ? (chat.role === "sub" ? chat.name : chat.title) : "New thread",
+      title: chat ? (chat.role === "sub" ? chat.name : chat.title) : this.draftMain ? "Main chat" : "New thread",
       branch: st?.branch ?? "",
       changed: st?.changed ?? 0,
     };
@@ -409,7 +412,7 @@ export class Shell {
     w.hero = this.view === "draft" || (chat?.role === "lead" && empty);
     w.hero_subtitle = chat ? `The lead plans and delegates to subagents in ${repo?.name ?? ""}.` : (repo?.name ?? "No project");
     w.hero_link = !chat;
-    w.hero_note = "";
+    w.hero_note = !chat && this.draftMain ? "Starts the project's main chat: its row opens it from now on" : "";
     w.read_only = chat?.role === "chat";
     w.read_only_text = "This is an earlier chat, kept read-only. Start a new chat in the project to continue.";
     w.read_only_action = chat?.repoId !== null && chat?.repoId !== undefined ? "New chat" : "";
@@ -591,7 +594,7 @@ export class Shell {
       const wakeUps = d.timers.some((x) => p.chats.some((c) => c.id === x.chatId) || x.chatId === main);
       const idle = projectIdle(wakeUps);
       const repo = d.repo(p.repo.id);
-      const selected = main !== null && ((this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftRepo === p.repo.id && false));
+      const selected = (main !== null && this.view === "chat" && this.chatId === main) || (this.view === "draft" && this.draftMain && this.draftRepo === p.repo.id);
       rows.push({
         kind: "project",
         id: p.repo.id,
@@ -919,7 +922,9 @@ export class Shell {
     const mentions = (this.mentions.get(from) ?? []).filter((m) => text.includes(m.title));
     let id = this.view === "chat" ? this.chatId : DRAFT;
     if (id === DRAFT) {
-      id = this.engine.newThread(this.draftRepo, text, { ...this.sel, device: "" }).id;
+      const joins = this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
+      id = joins ?? this.engine.newThread(this.draftRepo, text, { ...this.sel, device: "" }).id;
+      if (this.draftMain && this.draftRepo !== null && joins === null) this.data.store.setMainChat(this.draftRepo, id);
       this.view = "chat";
       this.chatId = id;
       this.data.store.set("last_chat", String(id));

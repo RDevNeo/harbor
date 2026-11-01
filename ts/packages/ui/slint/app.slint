@@ -292,6 +292,9 @@ component Hero {
                 }
             }
         }
+        if root.note != "": Rectangle {
+            height: 10px;
+        }
         if root.note != "": Text {
             text: root.note;
             font-size: 13px;
@@ -674,7 +677,7 @@ export component AppWindow inherits Window {
                     }
                     composer-box := VerticalLayout {
                         x: body.side;
-                        y: body.centred ? body.hero-top + 106px : parent.height - self.height;
+                        y: body.centred ? body.hero-top + 106px + (root.hero-note != "" ? 28px : 0px) : parent.height - self.height;
                         width: body.column;
                         height: self.preferred-height;
                         padding-top: body.centred ? 0px : 8px;
@@ -981,6 +984,10 @@ export component AppWindow inherits Window {
     }
 
     TipLayer {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
         window-width: root.width;
     }
 }
