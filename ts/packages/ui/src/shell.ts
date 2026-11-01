@@ -8,7 +8,7 @@ import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir,
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint } from "./logic/mentions.ts";
-import { personalDir } from "./logic/slash.ts";
+import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
@@ -757,7 +757,8 @@ export class Shell {
       this.engine.webhooks
         .filter((h) => h.repoId === lead.repoId)
         .map((h) => {
-          const card = webhookCard(h, `http://127.0.0.1:${control.HOOK_PORT}/hooks/${h.token}`, null, t);
+          const [local, pub] = this.engine.hookUrl(h.token);
+          const card = webhookCard(h, local, pub, t);
           return { id: h.id, name: h.name, public: card.badge === "Public", calls: card.calls, description: card.description ?? "", url: card.url };
         }),
       sameJson,
@@ -1103,7 +1104,7 @@ export class Shell {
     }
   }
 
-  private harborCommand(c: string): void {
+  private harborCommand(c: HarborCommand): void {
     const chat = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
     switch (c) {
       case "model":
@@ -1132,8 +1133,6 @@ export class Shell {
         if (at >= 0) this.fork(chat.id, at);
         return;
       }
-      default:
-        this.unported(`/${c}`);
     }
   }
 
@@ -1690,7 +1689,7 @@ export class Shell {
         return "";
       }
     };
-    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], control.HOOK_PORT);
+    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], this.engine.hookPort);
     let recent: string[] = [];
     try {
       const v: unknown = JSON.parse(this.data.store.get("browser_recent") ?? "[]");
@@ -2243,7 +2242,7 @@ export class Shell {
         return "";
       }
     };
-    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], control.HOOK_PORT);
+    const ports = listeningPorts([read("/proc/net/tcp"), read("/proc/net/tcp6")], this.engine.hookPort);
     return ports.map((p) => `localhost:${p}`);
   }
 
@@ -2498,10 +2497,6 @@ export class Shell {
       (status) => this.toast(updateToast(status)),
       (e: unknown) => this.toast(`Update check failed: ${e instanceof Error ? e.message : String(e)}`),
     );
-  }
-
-  private unported(what: string): void {
-    this.dialog(what, `${what} isn't in the TypeScript app yet: it's listed as not started in ts/packages/ui/PROGRESS.md.`, "OK", false, null, () => {});
   }
 
   /** fork.rs `fork_from`: a new chat with the conversation up to that reply. */

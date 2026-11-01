@@ -49,6 +49,8 @@ export interface EngineHost {
   visible?(chatId: number): boolean;
   /** `harbor://chat/<id>?pc=<PC>` (net's chatlink.rs). */
   chatLink?(chat: Chat): string;
+  /** Where /hooks is reachable from outside (Harbor's own HTTPS, else Tailscale Funnel), ending in /hooks; null: only this PC. */
+  hookBase?(): string | null;
   /** A chat waits for its account's usage limit, or continues after it (net's notify.rs). */
   noteLimit?(chatId: number, account: string, waits: boolean, note: string): void;
   noteResumed?(chatId: number, account: string, text: string): void;
@@ -1379,9 +1381,10 @@ export class Engine {
     return this.host.chatLink?.(c) ?? `harbor://chat/${c.id}`;
   }
 
-  /** The local address of a webhook; its public one is hookcert's (mcp package). */
-  hookUrl(token: string): string {
-    return `http://127.0.0.1:${this.hookPort}/hooks/${token}`;
+  /** A webhook's local address, and its public one when /hooks is reachable from outside (team.rs `hook_url`). */
+  hookUrl(token: string): [string, string | null] {
+    const base = this.host.hookBase?.() ?? null;
+    return [`http://127.0.0.1:${this.hookPort}/hooks/${token}`, base === null ? null : `${base}/${token}`];
   }
 
   modelLabel(kind: Kind, model: string): string {

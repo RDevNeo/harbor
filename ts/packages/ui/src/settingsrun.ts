@@ -2,6 +2,7 @@ import { join } from "node:path";
 import * as slint from "slint-ui";
 import { dataDir, Store } from "@harbor/store";
 import { voice } from "@harbor/media";
+import { control } from "@harbor/mcp";
 import { Desktop, spawnNotifySend, testNote } from "@harbor/net";
 import { uiDir } from "./assets.ts";
 import { Keys } from "./logic/keys.ts";
@@ -33,6 +34,7 @@ await mountSettings(
   {
     store,
     quit: () => process.exit(0),
+    hookPort: () => control.HOOK_PORT,
     keys: Keys.load(store),
     speech: settingsSpeech(store),
     theme: {

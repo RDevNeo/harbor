@@ -8,6 +8,7 @@ import { Engine, type EngineHost, QueueState, type Queued, queuedItem, queuedPro
 import { opposite, parseMode } from "../src/queue.ts";
 import type { Account } from "../src/providers.ts";
 import * as team from "../src/team.ts";
+import { teamTool } from "../src/tools.ts";
 import { Work } from "../src/work.ts";
 
 const base = mkdtempSync(join(tmpdir(), "hts-engine-"));
@@ -523,6 +524,20 @@ describe("a chat being handed to another PC", () => {
     const store = Store.openTemp();
     return { e: new Engine({ store, accounts: () => [account], changed: () => {}, ...over }), store };
   }
+
+  test("webhook tools give the public URL while /hooks is reachable from outside (team.rs hook_url)", async () => {
+    let base: string | null = null;
+    const { e, store } = withHost({ hookBase: () => base });
+    e.hookPort = 47923;
+    const me = newChat(store, { role: "lead", name: "lead", repoId: store.addRepo(join(tmpdir(), "hooks-project")) });
+    const local = await teamTool(e, me, "create_webhook", { name: "deploys" });
+    const token = e.webhooks[0]?.token ?? "";
+    expect(local).toContain(`Only this machine can reach it: http://127.0.0.1:47923/hooks/${token}`);
+    base = "https://box.example.test/hooks";
+    expect(await teamTool(e, me, "list_webhooks", {})).toBe(`- deploys (0 calls): https://box.example.test/hooks/${token}`);
+    expect(await teamTool(e, me, "create_webhook", { name: "builds" })).toMatch(/^Webhook 'builds' created\.\nPublic URL: https:\/\/box\.example\.test\/hooks\/[0-9a-f]{40}\n\(Local: http:\/\/127\.0\.0\.1:47923\/hooks\/[0-9a-f]{40}\)$/);
+    store.close();
+  });
 
   test("a message to a moving chat is kept by the host, not run", async () => {
     const held: [number, string, string[]][] = [];

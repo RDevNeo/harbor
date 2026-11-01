@@ -4,7 +4,7 @@ import { phoneRoutes } from "./phoneroutes.ts";
 import { statusBars } from "./statusbars.ts";
 import { chatpr, commits, openchat, Engine, type EngineHost, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
-import { mcp } from "./packages/mcp/src/index.ts";
+import { Funnel, hookcert, mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
   deviceSshArgs,
@@ -84,7 +84,7 @@ import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/s
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase">;
 
 export interface HubOptions {
   version: string;
@@ -113,6 +113,7 @@ export interface RunningHub {
   phone: PhoneRoutes;
   engine: Engine;
   move: MovePc;
+  funnel: Funnel;
   prs: chatpr.ChatPrs;
   account: AccountService;
   /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
@@ -446,6 +447,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     isForeign: (chat) => hub.mesh.foreign.has(chat),
     hostname: () => hub.mesh.me.name,
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
+    hookBase: () => hookcert.publicBase() ?? funnel.base,
     offline,
     turnEnded: (id) => prs.want(id, null),
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
@@ -472,6 +474,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, accounts: () => accounts, ...host, ...own });
   const live = engine;
+  const funnel = new Funnel(() => providers.which("tailscale") !== null, () => live.hookPort);
   const moveAccounts = (): MovePcAccount[] =>
     accounts.map((a) => ({
       id: a.id,
@@ -608,6 +611,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     env,
   });
   services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, versionsOwn: () => ({ update: versionsOwn().update, served: versionsOwn().served }), account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : o.hookPort === undefined ? {} : { hookPort: o.hookPort }) });
+  if (!offline) void funnel.check();
   if (!offline) {
     const bound = await api.listen();
     hub.net = { addrs: addrs(), bound, error: hub.net.error };
@@ -648,6 +652,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phone,
     engine: live,
     move: mover,
+    funnel,
     prs,
     account,
     devices: () => {

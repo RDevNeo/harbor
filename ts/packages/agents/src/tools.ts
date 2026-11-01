@@ -195,11 +195,15 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
       const token = randomHex(20);
       e.store.addWebhook(repo, name, token, arg(a, "description"));
       e.webhooks = e.store.webhooks();
-      const local = e.hookUrl(token);
+      const [local, pub] = e.hookUrl(token);
+      if (pub !== null) return `Webhook '${name}' created.\nPublic URL: ${pub}\n(Local: ${local})`;
       return `Webhook '${name}' created, but the public URL is not enabled yet. Only this machine can reach it: ${local}\nTell the user to turn on public webhooks in Harbor › Settings › Webhooks; the URL will then be https://<this PC's public name>/hooks/${token}.`;
     }
     case "list_webhooks": {
-      const list = e.webhooks.filter((w) => w.repoId === repoId).map((w) => `- ${w.name} (${w.hits} calls): ${e.hookUrl(w.token)}`);
+      const list = e.webhooks.filter((w) => w.repoId === repoId).map((w) => {
+        const [local, pub] = e.hookUrl(w.token);
+        return `- ${w.name} (${w.hits} calls): ${pub ?? local}`;
+      });
       return list.length === 0 ? "No webhooks." : list.join("\n");
     }
     case "delete_webhook": {

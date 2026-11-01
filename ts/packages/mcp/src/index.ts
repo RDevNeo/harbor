@@ -9,6 +9,7 @@ export * as bridge from "./bridge.ts";
 export * as machines from "./machines.ts";
 export * as workspace from "./workspace.ts";
 export * as hookcert from "./hookcert.ts";
+export { Funnel } from "./funnel.ts";
 export * as discord from "./discord.ts";
 export * as discordfreeze from "./discordfreeze.ts";
 export * as discordhost from "./discordhost.ts";

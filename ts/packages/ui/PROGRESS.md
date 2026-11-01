@@ -72,15 +72,21 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | tray, background | tray: started with the window (Open raises it, Quit closes it); Settings' Quit and "Start Harbor when I log in" work. Background (window closed, Harbor stays): not wired; Slint can't unmap a window on Wayland (`hide()` ends the loop but the window stays drawn until its handle is collected, and the Shell's closures keep it), and the Reloader can't restart a source run (`cfg.exe` is bun). Needs: a restart into `--background` on close and back on focus, for compiled and source runs (`src/tray.ts`, `src/background.ts`) | see `test/tray.test.ts`, `test/background.test.ts` |
 | browser | not started | 0 of 0 |
 
-No entry of Settings, Issues or the palette opens the "isn't in the TypeScript app yet" dialog any more
-(the Shell keeps it for slash commands it doesn't know and for a Settings page that fails to load). The
-window reaches the hub running beside it through `ShellHooks.hub` (`gh`: the Issues list merged with the
-mesh's PCs and Fix on another PC; `checkUpdates`: the palette's "Check for updates", which toasts the
-updater's status line). Providers' Update runs `provupdate.updateAll`; the Webhooks Funnel row reads
-`tailscale funnel status` at start and on Check; the Discord card's email-and-password button asks the
-Discord host for its window. A Fix on another PC and Discord's window need a second PC and the Discord
-host, so they are covered by tests and not shown in the rig. Terminal entries (project menu, palette, Providers' Sign in / Install / Add Claude account,
-Webhooks' Funnel steps, a PR's Check out) open a terminal tab in the bottom pane.
+The "isn't in the TypeScript app yet" dialog is gone: nothing opens it any more. The window reaches the
+hub running beside it through `ShellHub` (`gh`: the Issues list merged with the mesh's PCs and Fix on
+another PC; `checkUpdates`: the palette's "Check for updates"; `funnel` and `hookPort`: Settings ›
+Webhooks; `moveTargets` / `movePc`: the chat menu's "Move to PC…", a submenu of the PCs with why each
+can't take the chat). Providers' Update runs `provupdate.updateAll`; the Discord card's
+email-and-password button asks the Discord host for its window. A Fix on another PC and Discord's window
+need a second PC and the Discord host, so they are covered by tests and not shown in the rig. Terminal
+entries (project menu, palette, Providers' Sign in / Install / Add Claude account, Webhooks' Funnel
+steps, a PR's Check out) open a terminal tab in the bottom pane.
+
+Still missing (shown disabled, saying so):
+- The composer's device picker ("Run on"): it lists only This PC ("Devices aren't in the TypeScript app
+  yet"). net has the pieces (`remote.ts` remoteLaunch, `relocate.ts`, devices in the hub); the picker and
+  moving a started chat to or from an SSH device (relocate.rs) aren't wired. "Move to PC…" of a chat
+  that runs on such a device refuses with "bring it to this PC first".
 
 Rust tests of the shell's modules: 80 of 80 ported, all passing (71 here, view.rs's 9 in `@harbor/net`).
 Package total: 88 tests (17 new: markdown, the safe db copy, theme and icon generation, `.slint`

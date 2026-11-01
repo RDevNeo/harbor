@@ -3,10 +3,9 @@ import { homedir } from "node:os";
 import { git, providers, provupdate, type Account, type Work } from "@harbor/agents";
 import { type voiceCtl } from "@harbor/media";
 import { Desktop, hostname, spawnNotifySend, testNote } from "@harbor/net";
-import { control, discord, hookcert, type ghapi, prs as ghprs } from "@harbor/mcp";
+import { control, discord, type Funnel, hookcert, type ghapi, prs as ghprs } from "@harbor/mcp";
 import { type Chat } from "@harbor/store";
 import { type Data } from "../data.ts";
-import { Funnel } from "../logic/funnel.ts";
 import { fixOnPeer, localDevice } from "../logic/hubseam.ts";
 import { type Keys, type KeyPress } from "../logic/keys.ts";
 import { type Item } from "../logic/palette.ts";
@@ -33,6 +32,8 @@ export interface PageHub {
   gh: ghapi.GhApi;
   /** Looks for a release now and gives the updater's status line once it has an answer. */
   checkUpdates: () => Promise<string>;
+  funnel: Funnel;
+  hookPort: () => number;
 }
 
 /** What the pages ask of the main window around them. */
@@ -74,7 +75,6 @@ export class PageHost {
   private prs: PrsHandle | null = null;
   private issues: IssuesPage | null = null;
   private palette: PaletteHandle | null = null;
-  private readonly funnel = new Funnel(() => providers.which("tailscale") !== null, control.HOOK_PORT);
 
   constructor(private readonly s: PageShell) {}
 
@@ -83,7 +83,7 @@ export class PageHost {
     const store = this.s.data.store;
     if (this.settings === null) {
       const s = this.s;
-      void this.funnel.check().then(() => this.settings).then((h) => h?.show()).catch(() => {});
+      void this.s.hub().funnel.check().then(() => this.settings).then((h) => h?.show()).catch(() => {});
       this.settings = loadQr().then((qr) => mountSettings(
         busOf<SettingsView>(s.win, "SettingsBus"),
         {
@@ -95,8 +95,9 @@ export class PageHost {
           back: () => s.leave(),
           providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), updateAll: (accounts) => void provupdate.updateAll(accounts) },
           integrations: { discordWindow: () => void discord.window().catch(() => {}) },
-          webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => this.funnel.check(), disableFunnel: () => this.funnel.forget(), kick: () => hookcert.kick() },
-          funnel: () => this.funnel,
+          webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => this.s.hub().funnel.check(), disableFunnel: () => this.s.hub().funnel.forget(), kick: () => hookcert.kick() },
+          funnel: () => this.s.hub().funnel,
+          hookPort: () => this.s.hub().hookPort(),
           qr,
           notify: { sendTest: () => void new Desktop({ send: spawnNotifySend }).testPopup(testNote()) },
           copy: (text) => s.win.copy_text(text),

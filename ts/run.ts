@@ -118,6 +118,8 @@ export async function runApp(o: RunOptions): Promise<number> {
       prs: run.prs,
       workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),
       gh: run.services.gh,
+      funnel: run.funnel,
+      hookPort: () => run.engine.hookPort,
       devices: run.devices,
       deviceEnv: run.deviceEnv,
       deviceHost: run.deviceHost,

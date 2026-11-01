@@ -69,6 +69,8 @@ export interface SettingsView {
 
 /** What the page needs from the window around it; the buttons that need a terminal, a clipboard or a browser go through here. */
 export interface SettingsDeps {
+  /** The port the webhook listener bound. */
+  hookPort: () => number;
   store: Store;
   quit: () => void;
   keys: Keys;
@@ -102,7 +104,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const logos = await providerLogos();
   const usageTab = usageFeed(store, logos);
   const integrationsTab = await integrationsFeed({ ...deps.integrations, changed: () => show(), openUrl: (u) => mcp.openUrl(u), copy: deps.copy }, deps.qr);
-  const webhooksTab = webhooksFeed(store, { ...deps.webhooks, changed: () => show(), copy: deps.copy, deleteWebhook: (id) => { store.deleteWebhook(id); } }, deps.funnel);
+  const webhooksTab = webhooksFeed(store, { ...deps.webhooks, changed: () => show(), copy: deps.copy, deleteWebhook: (id) => { store.deleteWebhook(id); } }, deps.funnel, deps.hookPort);
   const providersTab = await providersFeed(store, { ...deps.providers, modelsFor: providers.staticModels }, logos);
   const blocks = await blockTabs(store, () => show(), (t) => {
     tab = t;
