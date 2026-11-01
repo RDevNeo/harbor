@@ -37,6 +37,7 @@
         "micromark-extension-gfm-strikethrough": "2.1.0",
         "micromark-extension-gfm-table": "2.1.2",
         "sharp": "0.35.5",
+        "sherpa-onnx-node": "2.0.1",
       },
     },
     "packages/net": {

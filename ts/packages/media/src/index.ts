@@ -4,3 +4,8 @@ export * as ico from "./ico.ts";
 export * as clipboard from "./clipboard.ts";
 export * as picker from "./picker.ts";
 export * as favicon from "./favicon.ts";
+export * as dictate from "./dictate.ts";
+export * as dictwords from "./dictwords.ts";
+export * as parakeet from "./parakeet.ts";
+export * as voice from "./voice.ts";
+export * as voiceCtl from "./voicectl.ts";
