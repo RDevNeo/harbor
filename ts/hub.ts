@@ -477,6 +477,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     stop: async () => {
       clearInterval(tick);
       if (engineTimer) clearTimeout(engineTimer);
+      for (const [id, r] of live.turns) {
+        live.persist(id);
+        r.turn?.release();
+      }
       clearInterval(refresh);
       stopProviderNews();
       services?.stop();

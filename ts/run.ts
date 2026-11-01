@@ -45,6 +45,11 @@ export async function runApp(o: RunOptions): Promise<number> {
   const data = made.data;
 
   let snapshot: () => Snapshot = () => ({});
+  let hidden = !o.window;
+  const reopen = (): void => {
+    hidden = false;
+    void reloader?.now();
+  };
   const sock = control.startSocket<never, never, preview.Offer>({
     previewReceived: (v) => preview.received(cfg, v as Partial<preview.PushRequest>),
     send: (i) => {
@@ -55,6 +60,8 @@ export async function runApp(o: RunOptions): Promise<number> {
         );
       } else if (i.kind === "preview") {
         if (i.here) void reloader?.now();
+      } else if (i.kind === "focus") {
+        if (!o.window) reopen();
       } else if (i.kind === "previewBack") {
         void preview.back(cfg, i.off, () => void reloader?.now());
       }
@@ -73,7 +80,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     kv: run.store,
     snapshot: () => snapshot(),
     args: () => o.argv,
-    hidden: () => !o.window,
+    hidden: () => hidden,
     beforeExit: stopAll,
     release: () => single.release(),
   });
@@ -83,20 +90,37 @@ export async function runApp(o: RunOptions): Promise<number> {
   if (!offline) updater.start();
 
   const restore = offline ? null : takeSnapshot(run.store);
+  if (!o.window && restore) snapshot = () => restore;
+  const { trayStart } = await import("./packages/ui/src/tray.ts");
   if (!o.window) {
     void confirmStart(cfg);
+    let quit = (): void => {};
+    const tray = offline ? null : trayStart({ onOpen: reopen, onQuit: () => quit(), hidden: () => true });
     await new Promise<void>((resolve) => {
+      quit = resolve;
       process.once("SIGTERM", resolve);
       process.once("SIGINT", resolve);
     });
+    tray?.stop();
     await stopAll();
     return 0;
   }
   if (ui && data) {
     let closeWindow = (): void => {};
-    const tray = ui.trayStart({ onOpen: () => single.raise(), onQuit: () => closeWindow() });
-    await ui.runShell(data, { prs: run.prs }, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), closer: (f) => (closeWindow = f) });
+    let quitting = false;
+    const quit = (): void => {
+      quitting = true;
+      closeWindow();
+    };
+    const tray = offline ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
+    await ui.runShell(data, { prs: run.prs }, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f) });
     tray?.stop();
+    if (!quitting && run.store.get("bg_keep") !== "0") {
+      const note = ui.stillRunning(run.store, tray !== null);
+      if (note) Bun.spawnSync(["notify-send", "-a", "Harbor", ...note], { stdio: ["ignore", "ignore", "ignore"] });
+      hidden = true;
+      if (await reloader.now()) return 0;
+    }
   }
   await stopAll();
   return 0;

@@ -85,6 +85,13 @@ function reloader(over: Partial<ConstructorParameters<typeof Reloader>[0]> = {})
   return { r, kv, calls, spawned, inst };
 }
 
+test("a run from source starts bun again on its entry script", async () => {
+  const inst = makeInstall();
+  const { r, spawned } = reloader({ cfg: { ...configFor(inst), script: "/src/ts/harbor.ts" }, hidden: () => true });
+  expect(await r.now()).toBe(true);
+  expect(spawned[0]?.cmd).toEqual([join(inst.dir, "harbor"), "/src/ts/harbor.ts", "x", "--background"]);
+});
+
 test("a restart saves the screen first, starts the runtime again and then leaves", async () => {
   const { r, kv, calls, spawned, inst } = reloader();
   process.env.HARBOR_VIEW = "chat";

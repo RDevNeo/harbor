@@ -83,7 +83,7 @@ export class Reloader {
     for (const k of DEV_HOOKS) delete env[k];
     try {
       await this.o.beforeExit?.();
-      (this.o.spawn ?? spawnDetached)([cfg.exe, ...args], env);
+      (this.o.spawn ?? spawnDetached)([cfg.exe, ...(cfg.script === undefined ? [] : [cfg.script]), ...args], env);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       cfg.log(`reload failed: ${err}`);

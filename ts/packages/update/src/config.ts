@@ -41,6 +41,8 @@ export interface UpdateConfig {
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   random: () => number;
   exe: string;
+  /** A run from source (`bun harbor.ts`): the entry script `exe` (bun) runs. */
+  script?: string;
   glibc: () => readonly [number, number] | null;
 }
 
@@ -79,6 +81,7 @@ export function defaultConfig(env: Record<string, string | undefined> = process.
     sleep,
     random: Math.random,
     exe,
+    ...(rt ? {} : { script: Bun.main }),
     glibc: hostGlibc,
   };
 }

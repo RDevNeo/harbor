@@ -167,14 +167,8 @@ export class Background {
   /** The window just closed and Harbor stays: say so once, as a desktop notification (there is no window left for a toast). */
   private windowClosed(app: HiddenApp, explain: boolean): void {
     app.windowClosed();
-    if (explain && this.kv.get("bg_explained") === null) {
-      this.kv.set("bg_explained", "1");
-      const how = this.host.trayActive() ? "Quit it from its tray icon" : "Quit it from Settings › General";
-      this.host.notify(
-        "Harbor is still running",
-        `Phones, other PCs and queued work keep reaching this PC. Run Harbor again to open it. ${how}, or turn this off there.`,
-      );
-    }
+    const note = explain ? stillRunning(this.kv, this.host.trayActive()) : null;
+    if (note) this.host.notify(...note);
   }
 
   /** "Ask me" updates with no window: a desktop notification, once per version (automatic updates install and restart by themselves). */
@@ -188,6 +182,14 @@ export class Background {
   }
 }
 
+
+/** The first time the window closes and Harbor stays: the notice saying so (once, kv `bg_explained`). */
+export function stillRunning(kv: BackgroundKv, trayActive: boolean): [string, string] | null {
+  if (kv.get("bg_explained") !== null) return null;
+  kv.set("bg_explained", "1");
+  const how = trayActive ? "Quit it from its tray icon" : "Quit it from Settings › General";
+  return ["Harbor is still running", `Phones, other PCs and queued work keep reaching this PC. Run Harbor again to open it. ${how}, or turn this off there.`];
+}
 
 export function autostartFile(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
