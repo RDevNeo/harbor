@@ -32,6 +32,15 @@ export struct HookRow {
     url: string,
 }
 
+export struct ProcItem {
+    id: int,
+    name: string,
+    url: string,
+    cmd: string,
+    open: bool,
+    output: string,
+}
+
 component Header {
     in property <string> icon;
     in property <string> title;
@@ -172,6 +181,7 @@ export component TeamPanel inherits Rectangle {
     in property <[AgentRow]> settled;
     in property <[WakeRow]> wakeups;
     in property <[HookRow]> hooks;
+    in property <[ProcItem]> procs;
     in property <bool> has-project;
     in-out property <bool> settled-open;
     callback open-agent(int);
@@ -182,6 +192,9 @@ export component TeamPanel inherits Rectangle {
     callback copy-hook(string);
     callback delete-hook(int);
     callback settled-toggled(bool);
+    callback proc-stop(int);
+    callback proc-toggle(int);
+    callback proc-open(string);
     background: Theme.bg200;
     border-width: 1px;
     border-color: Theme.border;
@@ -213,6 +226,109 @@ export component TeamPanel inherits Rectangle {
                 }
                 stop => {
                     root.stop-agent(a.id);
+                }
+            }
+            if root.procs.length > 0: Rectangle {
+                height: 8px;
+            }
+            if root.procs.length > 0: Header {
+                icon: Icons.activity;
+                title: "Processes";
+                count: root.procs.length;
+            }
+            for pr in root.procs: Rectangle {
+                background: Theme.bg100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                min-height: proc-col.min-height;
+                preferred-height: proc-col.preferred-height;
+                proc-col := VerticalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Rectangle {
+                            width: 10px;
+                            Rectangle {
+                                width: 7px;
+                                height: 7px;
+                                border-radius: 3.5px;
+                                background: Theme.green-700;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: pr.name;
+                            font-size: 14px;
+                            font-weight: 500;
+                            color: Theme.fg;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        if pr.url != "": Btn {
+                            icon: Icons.globe;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Open in the browser";
+                            clicked => {
+                                root.proc-open(pr.url);
+                            }
+                        }
+                        Btn {
+                            icon: Icons.stop;
+                            size: icon-xs;
+                            variant: Variant.stop;
+                            tip: "Stop";
+                            clicked => {
+                                root.proc-stop(pr.id);
+                            }
+                        }
+                        Btn {
+                            icon: pr.open ? Icons.up : Icons.down;
+                            size: icon-xs;
+                            variant: ghost-muted;
+                            tip: "Output";
+                            clicked => {
+                                root.proc-toggle(pr.id);
+                            }
+                        }
+                    }
+                    if pr.url != "": Text {
+                        text: pr.url;
+                        font-family: "Geist Mono";
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: pr.cmd;
+                        font-family: "Geist Mono";
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        overflow: elide;
+                    }
+                    if pr.open: Rectangle {
+                        background: Theme.bg200;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        border-radius: Theme.radius-lg;
+                        height: min(out-text.preferred-height + 20px, 220px);
+                        clip: true;
+                        out-text := Text {
+                            x: 12px;
+                            y: min(10px, parent.height - self.preferred-height - 10px);
+                            width: parent.width - 24px;
+                            text: pr.output;
+                            font-family: "Geist Mono";
+                            font-size: 12px;
+                            color: Theme.fg;
+                            wrap: word-wrap;
+                        }
+                    }
                 }
             }
             Rectangle {

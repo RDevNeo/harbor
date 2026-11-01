@@ -23,7 +23,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type PopItem, type SideRow, type StatusData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type PopItem, type SideRow, type StatusData } from "./window.ts";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -78,6 +78,8 @@ export class Shell {
   private teamSettledRows = new slint.ArrayModel<AgentRow>([]);
   private wakeRows = new slint.ArrayModel<WakeRow>([]);
   private hookRows = new slint.ArrayModel<HookRow>([]);
+  private procRows = new slint.ArrayModel<ProcItem>([]);
+  private procsOpen = new Set<number>();
   private logos = new Map<string, Pixels>();
   private railItems = new slint.ArrayModel<RailItem>([]);
   private modelRows = new slint.ArrayModel<ModelRow>([]);
@@ -134,6 +136,7 @@ export class Shell {
     win.team_settled = this.teamSettledRows;
     win.team_wakeups = this.wakeRows;
     win.team_hooks = this.hookRows;
+    win.team_procs = this.procRows;
     win.team_on = data.store.get("show_team") !== "0";
     win.team_settled_open = data.store.get("agents_settled_open") === "1";
     this.wire();
@@ -191,6 +194,16 @@ export class Shell {
       this.refreshTeam();
     };
     w.copy_hook = (url) => w.copy_text(url);
+    w.proc_stop = (id) => {
+      this.engine.procs.find((p) => p.id === id)?.stop();
+      this.refreshTeam();
+    };
+    w.proc_toggle = (id) => {
+      if (this.procsOpen.has(id)) this.procsOpen.delete(id);
+      else this.procsOpen.add(id);
+      this.refreshTeam();
+    };
+    w.proc_open = (url) => this.openExternal(url);
     w.delete_hook = (id) => {
       this.data.store.deleteWebhook(id);
       this.engine.webhooks = this.data.store.webhooks();
@@ -277,6 +290,11 @@ export class Shell {
     };
     w.picker_key = (e) => this.pickerKey(e);
     w.strip_open_agent = (id) => this.openChat(id);
+    w.trust = () => {
+      const r = this.currentRepo();
+      if (r) this.data.store.set(`untrusted:${r.local ?? r.path}`, "");
+      this.refreshComposer();
+    };
     w.strip_ask_stop = (id) => {
       w.strip_asking = id;
     };
@@ -430,8 +448,20 @@ export class Shell {
       for (const m of [this.teamAgentRows, this.teamSettledRows]) sync(m, []);
       sync(this.wakeRows, []);
       sync(this.hookRows, []);
+      sync(this.procRows, []);
       return;
     }
+    sync(
+      this.procRows,
+      this.engine.procs
+        .filter((p) => p.lead === lead.id)
+        .map((p) => {
+          const open = this.procsOpen.has(p.id);
+          const tail = open ? p.tail(30) : "";
+          return { id: p.id, name: p.name, url: p.url ?? "", cmd: p.cmd, open, output: open && tail === "" ? "(no output yet)" : tail };
+        }),
+      sameJson,
+    );
     const t = now();
     const off = utcOffset();
     const marks = loadMarks(this.data.store.get("agent_settle"));
@@ -664,7 +694,14 @@ export class Shell {
     return providers.staticModels(kind).find((m) => m.id === id)?.label ?? (id === "" ? "Default" : id);
   }
 
+  private currentRepo() {
+    const id = this.view === "chat" ? (this.data.chat(this.chatId)?.repoId ?? null) : this.draftRepo;
+    return id === null ? undefined : this.data.repo(id);
+  }
+
   private refreshComposer(): void {
+    const repo = this.currentRepo();
+    this.win.untrusted = repo !== undefined && !this.engine.trusted(repo.id);
     const sel = this.chatSel();
     const kind = this.kind(sel);
     const acc = this.account(sel.account);

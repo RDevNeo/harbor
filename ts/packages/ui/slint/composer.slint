@@ -312,6 +312,8 @@ export component Composer {
     callback strip-cancel();
     callback strip-head();
     callback strip-stop-all();
+    in property <bool> untrusted;
+    callback trust();
     public function focus-text() {
         field.focus();
     }
@@ -353,6 +355,37 @@ export component Composer {
             }
             stop-all => {
                 root.strip-stop-all();
+            }
+        }
+        if root.untrusted: Rectangle {
+            background: Theme.bg200;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 12px;
+            min-height: trust-row.min-height;
+            preferred-height: trust-row.preferred-height;
+            trust-row := HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Cloned project: agents ignore its own agent settings and hooks until you trust it.";
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                Btn {
+                    text: "Trust project";
+                    size: xs;
+                    variant: primary;
+                    clicked => {
+                        root.trust();
+                    }
+                }
             }
         }
         if root.state.notice != "": Rectangle {

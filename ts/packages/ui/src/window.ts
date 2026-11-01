@@ -169,6 +169,15 @@ export interface StripRow {
   tip: string;
 }
 
+export interface ProcItem {
+  id: number;
+  name: string;
+  url: string;
+  cmd: string;
+  open: boolean;
+  output: string;
+}
+
 export interface KeyEvent {
   text: string;
   modifiers: { alt: boolean; control: boolean; shift: boolean; meta: boolean };
@@ -213,6 +222,10 @@ export interface AppWindow extends slint.ComponentHandle {
   team_settled: slint.Model<AgentRow>;
   team_wakeups: slint.Model<WakeRow>;
   team_hooks: slint.Model<HookRow>;
+  team_procs: slint.Model<ProcItem>;
+  proc_stop: (id: number) => void;
+  proc_toggle: (id: number) => void;
+  proc_open: (url: string) => void;
   team_has_project: boolean;
   team_settled_open: boolean;
   team: () => void;
@@ -261,6 +274,8 @@ export interface AppWindow extends slint.ComponentHandle {
   menu_pick: (i: number) => void;
   menu_hover: (i: number) => void;
   popup: (id: string, x: number, y: number) => void;
+  untrusted: boolean;
+  trust: () => void;
   strip_rows: slint.Model<StripRow>;
   strip_title: string;
   strip_names: string;

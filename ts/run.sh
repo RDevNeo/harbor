@@ -8,7 +8,7 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/harbor-ts.XXXXXX")
 mkdir -p "$tmp/data/harbor" "$tmp/state" "$tmp/cache"
 chmod -R go-rwx "$tmp"
 cd "$here"
-[ -d node_modules ] || "$bun" install --frozen-lockfile
+"$bun" install --frozen-lockfile > /dev/null
 if [ -f "$real" ]; then
   "$bun" packages/ui/src/copydb.ts "$real" "$tmp/data/harbor/harbor.db"
   echo "run.sh: a copy of $real is in $tmp (the real one isn't touched)"

@@ -10,10 +10,10 @@ import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
 import { Composer, ComposerState, MenuEntry, StripRow } from "composer.slint";
 import { MdBlock } from "markdown.slint";
-import { TeamPanel, AgentRow, WakeRow, HookRow } from "team.slint";
+import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
 
-export { Theme, Icons, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow }
+export { Theme, Icons, Ui, SideRow, CardData, ComposerState, MenuEntry, MdBlock, AgentRow, WakeRow, HookRow, RailItem, ModelRow, StripRow, ProcItem }
 
 export struct PopItem {
     kind: string,
@@ -349,6 +349,10 @@ export component AppWindow inherits Window {
     in property <[AgentRow]> team-settled;
     in property <[WakeRow]> team-wakeups;
     in property <[HookRow]> team-hooks;
+    in property <[ProcItem]> team-procs;
+    callback proc-stop(int);
+    callback proc-toggle(int);
+    callback proc-open(string);
     in property <bool> team-has-project;
     in-out property <bool> team-settled-open;
     callback team();
@@ -398,6 +402,8 @@ export component AppWindow inherits Window {
     callback menu-hover(int);
     callback popup(string, length, length);
 
+    in property <bool> untrusted;
+    callback trust();
     in property <[StripRow]> strip-rows;
     in property <string> strip-title;
     in property <string> strip-names;
@@ -593,6 +599,16 @@ export component AppWindow inherits Window {
                         settled: root.team-settled;
                         wakeups: root.team-wakeups;
                         hooks: root.team-hooks;
+                        procs: root.team-procs;
+                        proc-stop(id) => {
+                            root.proc-stop(id);
+                        }
+                        proc-toggle(id) => {
+                            root.proc-toggle(id);
+                        }
+                        proc-open(u) => {
+                            root.proc-open(u);
+                        }
                         has-project: root.team-has-project;
                         settled-open <=> root.team-settled-open;
                         open-agent(id) => {
@@ -733,6 +749,10 @@ export component AppWindow inherits Window {
                             }
                             popup(id, x, y) => {
                                 root.popup(id, x, y);
+                            }
+                            untrusted: root.untrusted;
+                            trust => {
+                                root.trust();
                             }
                             strip-rows: root.strip-rows;
                             strip-title: root.strip-title;
