@@ -9,3 +9,4 @@ export * as dictwords from "./dictwords.ts";
 export * as parakeet from "./parakeet.ts";
 export * as voice from "./voice.ts";
 export * as voiceCtl from "./voicectl.ts";
+export * as video from "./video.ts";

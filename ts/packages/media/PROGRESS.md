@@ -77,3 +77,31 @@ Exported from `index.ts` as `voice`, `parakeet`, `dictate`, `dictwords`, `voiceC
 - Recording uses `pw-record`/`parecord` and is tested with a stand-in recorder on PATH, not a microphone.
 - Speech tests use the model already on this PC (`HARBOR_TEST_PARAKEET_DIR`, else a folder under the home cache) and say
   so when it is absent.
+## video
+
+| Rust module | State | Rust tests ported |
+| --- | --- | --- |
+| video.rs | done except the egui drawing (controls bar, spinner, error text, the "Open in your video player" button, the full-window texture): `libmpv.ts` binds libmpv over `bun:ffi` and `video.ts` holds every state, command, key and file rule; the `ui` package draws `Viewer.snapshot()` and puts `Host.frame()` pictures into a Slint image | 7 of 7, plus 16 more that run the real libmpv 0.41 on this PC |
+
+What `ui` calls: `new Viewer({ host, source? })` implements `images.VideoHooks` (`open`, `close`), plus `resize(w, h)` (size of the picture area in pixels), `snapshot()` (stage, position, duration, paused, ended, muted, volume, drag, picture), `seen()` each time the controls are drawn, `pointerMoved()`, `controlsVisible(overBar)`, `toggle()`, `toggleMute()`, `holdVolume(percent)`, `holdSeek(seconds)` / `releaseSeek()`, `clickPicture(double)`, `takeKeys(keys)` (returns what is left for the lightbox: previous, next, close), `restoreVolume(store)` / `persistVolume(store)` for the kv `video_volume`, `shutdown()`. `Host` is what the viewer calls back: `frame()` (RGBA, straight alpha, valid until the next frame), `repaint()`, `fullscreen()`/`setFullscreen()`, `openExternally()` and `toast()` when there is no libmpv, `shut()`. `checkVideo(files)` is `harbor --check-video` (lines and exit code). `clock()` formats the times.
+
+Decisions
+- libmpv is bound lazily (`loadEngine`): Harbor's own `libmpv-harbor.so` when `PlayerSource.library()` gives its path (the `update` package knows where the install is), else `libmpv.so.2`, then `.so.1`. None found: `LibmpvUnavailable`, and the viewer opens the file in the system's player with the Rust toast. Loading takes about 65 ms here and blocks the event loop once.
+- Frames come from libmpv's software renderer (`MPV_RENDER_API_TYPE_SW`, format `rgba`), one buffer the size of the picture area. Inside the video the alpha is 255; the letterbox bars are 0, so the Slint window needs a black background behind the image.
+- Everything libmpv reads or keeps a pointer to (render parameters, the frame buffer, command arguments) lives in `calloc` memory. Small typed arrays passed with `ptr()` move under the collector: libmpv then read a 1 by 1 target size and aborted in `mp_image_crop` in about one run out of three. With native memory 5 runs out of 5 were clean.
+- `BLOCK_FOR_TARGET_TIME` is 0 as in the Rust player. The wakeup and frame callbacks are `threadsafe` `JSCallback`s that only schedule work with `setImmediate`; libmpv is never called from them.
+- The Rust control thread becomes the event loop: commands are queued (`push` keeps only the last seek), run in order when the core exists, and mpv's events are read right after. mpv commands are the synchronous ones; `stop` returns fast with the software renderer.
+- `idle-active` is observed instead of `MPV_EVENT_IDLE` (newer libmpv no longer sends the event), and tells when the video is released so the renderer can be freed, with the Rust 1 s limit.
+- Hardware decoding is `auto-copy-safe` (a software render needs the frame back in memory) and off for Harbor's own library, which gets its VA-API render node from a GL context a software render does not have. This PC has no usable decoder, so hardware decoding is untested.
+- The Rust code reads the viewer's play state from statics; here one `Viewer` owns it.
+- Not ported because the Rust code has none: ffprobe (poster extraction with ffmpeg is `media.poster`, done by media.ts).
+
+Not done / not tested
+- Harbor's own `libmpv-harbor.so` (video/build.sh builds it with a container) is not on this PC: the optional-library probing (`optional`, `audioOutputs`, PipeWire version) is written and its pure parts are tested, but loading that library was never run.
+- Hardware decoding, audio output devices (tests use video-only clips, so no sound plays), fullscreen on a real compositor and the controls are for the `ui` package to wire and look at.
+
+Video finding (Phase 0 left it open)
+- It works: libmpv 0.41 under Bun, `bun:ffi`, software render into an RGBA buffer, copied into a Slint image (`win.frame = { width, height, data }`), shown in a Slint window on a private sway. 1080p source, 3.5 s: 30.1 fps delivered, no dropped frame seen; the window was mapped.
+- Measured on an i5-10210U (8 threads), 1080p H.264 at 30 fps: `mpv_render_context_render` into 1920x1080 takes 3.0 ms on average (max 10.6 ms), into 1280x720 2.5 ms; the copy into a Slint image is 0.5 ms median at 1080p (0.17 ms at 720p), so the copy path costs about 3.5 ms per frame, 10 percent of a core. The whole Bun process (decode, render, copy, Slint draw) uses 66 percent of one core at a 1920x1080 picture and 57 percent at 1280x720; libmpv alone without a window, 35 percent.
+- Cost: the Rust player draws on the GPU with no copy back, so this is more CPU, and every frame crosses the JS thread (render and copy run on it, so a 4K picture area would take over 10 ms of each 33 ms). Mitigations: size the picture area to the video's own size, or render in a `Worker` into a shared buffer.
+- Recommended: keep libmpv over `bun:ffi` with the software path (what is here). If a machine cannot keep up, the fallback is mpv in its own window (`mpv --wid` is not available on Wayland, so a plain window) opened by `Host.openExternally`, which already exists for the no-libmpv case.
