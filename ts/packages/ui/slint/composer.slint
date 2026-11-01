@@ -4,6 +4,7 @@ import { Btn, Glyph, Trigger, VSep, RoundButton, StopButton, FileChip, PopoverFr
 
 export struct MenuEntry {
     icon: string,
+    tone: string,
     label: string,
     desc: string,
     section: string,
@@ -227,49 +228,82 @@ export struct ComposerState {
     notice: string,
 }
 
+// slash.rs, tags.rs and chatmention.rs `row`: 32px rows; a command's source as a pill on the right.
 component ComposerMenu inherits PopoverFrame {
     in property <[MenuEntry]> entries;
     in property <int> selected;
     callback pick(int);
     callback hover(int);
-    height: min(entries.length * 36px + 8px, 320px);
+    height: min(entries.length * 32px, 288px) + 10px;
     Flickable {
-        x: 4px;
-        y: 4px;
-        width: parent.width - 8px;
-        height: parent.height - 8px;
-        content-y: min(0px, max(-root.selected * 36px + self.height / 2 - 18px, self.height - root.entries.length * 36px));
+        x: 5px;
+        y: 5px;
+        width: parent.width - 10px;
+        height: parent.height - 10px;
+        content-y: min(0px, max(-root.selected * 32px + self.height / 2 - 16px, self.height - root.entries.length * 32px));
         VerticalLayout {
             alignment: start;
             for e[i] in root.entries: Rectangle {
-                height: 36px;
-                background: i == root.selected ? Theme.accent : transparent;
-                border-radius: 4px;
-                Glyph {
-                    x: 8px;
-                    width: 16px;
-                    icon: e.icon;
-                    size: 15px;
-                    color: Theme.subtle;
+                property <bool> on: i == root.selected;
+                property <length> pill: e.section == "" ? 0px : pill-measure.preferred-width + 30px;
+                property <length> x0: e.section != "" ? 10px : 32px;
+                height: 32px;
+                background: self.on ? Theme.accent : transparent;
+                border-radius: Theme.radius-md;
+                pill-measure := Text {
+                    visible: false;
+                    text: e.section;
+                    font-size: 11.5px;
+                    font-weight: 500;
                 }
-                Text {
-                    x: e.icon != "" ? 32px : 8px;
-                    width: min(self.preferred-width, parent.width * 0.5);
+                if e.section == "": Glyph {
+                    x: 11px;
+                    width: 14px;
+                    icon: e.icon;
+                    size: 14px;
+                    color: e.tone == "blue" ? Theme.blue-700 : e.tone == "amber" ? Theme.amber-700 : e.tone == "red" ? Theme.red-700 : e.tone == "green" ? Theme.green-700 : Theme.subtle;
+                }
+                name := Text {
+                    x: parent.x0;
+                    width: min(self.preferred-width, e.section != "" ? min(parent.width - parent.pill - 20px - parent.x0, parent.width * 0.45) : (parent.width - 10px - parent.x0) * 0.6);
                     text: e.label;
-                    font-size: 14px;
+                    font-size: 13px;
+                    font-weight: 500;
                     color: Theme.fg;
                     overflow: elide;
                     vertical-alignment: center;
                 }
                 Text {
-                    x: parent.width * 0.5 + 16px;
-                    width: parent.width * 0.5 - 24px;
+                    x: name.x + name.width + 10px;
+                    width: max(0px, parent.width - self.x - (e.section != "" ? parent.pill + 20px : 10px));
+                    visible: self.width > 30px;
                     text: e.desc;
                     font-size: 12.5px;
                     color: Theme.subtle;
                     overflow: elide;
                     vertical-alignment: center;
-                    horizontal-alignment: right;
+                }
+                if e.section != "": Rectangle {
+                    x: parent.width - 8px - self.width;
+                    width: parent.pill;
+                    height: 20px;
+                    border-radius: 10px;
+                    background: parent.on ? Theme.gray-300 : Theme.gray-200;
+                    Glyph {
+                        x: 7.5px;
+                        width: 11px;
+                        icon: e.icon;
+                        size: 11px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        x: 22px;
+                        text: e.section;
+                        font-size: 11.5px;
+                        font-weight: 500;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
                 }
                 TouchArea {
                     mouse-cursor: pointer;
@@ -637,9 +671,9 @@ export component Composer {
         }
     }
     if root.menu.length > 0: ComposerMenu {
-        x: 0;
+        x: 0px;
         y: frame.y - self.height - 6px;
-        width: root.width;
+        width: root.width - 4px;
         entries: root.menu;
         selected: root.menu-selected;
         pick(i) => {

@@ -1,3 +1,4 @@
+import type { MenuEntry } from "./window.ts";
 import { join } from "node:path";
 import { ICONS } from "./icons.ts";
 import * as chatmention from "./logic/chatmention.ts";
@@ -7,12 +8,7 @@ import { menuHover, menuKey, menuPicked, menuShown, menuWord, newMenu } from "./
 import * as slash from "./logic/slash.ts";
 import * as tags from "./logic/tags.ts";
 
-export interface MenuRow {
-  icon: string;
-  label: string;
-  desc: string;
-  section: string;
-}
+export type MenuRow = MenuEntry;
 
 export interface MenuContext {
   /** The composer's chat (0: the draft). */
@@ -85,7 +81,7 @@ export class ComposerMenus {
         this.open = { kind: "slash", word: sw, rows };
         return rows.map((e) => {
           const b = slash.badge(e);
-          return { icon: ICONS[b.icon], label: `/${e.name}${e.hint === "" ? "" : ` ${e.hint}`}`, desc: slash.entryLine(e), section: b.label };
+          return { icon: ICONS[b.icon], tone: "", label: `/${e.name}`, desc: slash.entryLine(e), section: b.label };
         });
       }
     }
@@ -96,7 +92,7 @@ export class ComposerMenus {
         this.open = { kind: "tag", word: tw, rows };
         return rows.map((r) => {
           const t = tags.rowText(r);
-          return { icon: ICONS[t.icon], label: t.name, desc: t.rest, section: "" };
+          return { icon: ICONS[t.icon], tone: t.color === "subtle" ? "" : t.color, label: t.name, desc: t.rest, section: "" };
         });
       }
     }
@@ -105,7 +101,7 @@ export class ComposerMenus {
       const rows = chatmention.chatRows(ctx.chats, ctx.key, ctx.repo, cw.query);
       if (menuShown(this.state, ctx.key, rows.length)) {
         this.open = { kind: "chat", word: cw, rows };
-        return rows.map((c) => ({ icon: ICONS.MESSAGE, label: c.title, desc: chatmention.candLine(c), section: "" }));
+        return rows.map((c) => ({ icon: ICONS.MESSAGE, tone: "", label: c.title, desc: chatmention.candLine(c), section: "" }));
       }
     }
     this.open = null;

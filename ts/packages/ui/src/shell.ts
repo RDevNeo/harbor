@@ -27,7 +27,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type PopItem, type SideRow, type StatusData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type PopItem, type SideRow, type StatusData } from "./window.ts";
 
 /** The draft's key in per-chat maps (app.rs `DRAFT`). */
 const DRAFT = 0;
@@ -78,7 +78,7 @@ export class Shell {
   private settledRows = new slint.ArrayModel<SideRow>([]);
   private cards = new slint.ArrayModel<CardData>([]);
   private files = new slint.ArrayModel<{ name: string; image: boolean }>([]);
-  private menu = new slint.ArrayModel<{ icon: string; label: string; desc: string; section: string }>([]);
+  private menu = new slint.ArrayModel<MenuEntry>([]);
   private popItems = new slint.ArrayModel<PopItem>([]);
   private teamAgentRows = new slint.ArrayModel<AgentRow>([]);
   private teamSettledRows = new slint.ArrayModel<AgentRow>([]);
@@ -1248,6 +1248,7 @@ export class Shell {
     w.pop_w = width;
     w.pop_above = above;
     w.pop_native = native;
+    w.pop_spacing = id === "effort" ? 0 : 8;
     w.pop_id = id;
   }
 
@@ -1289,7 +1290,7 @@ export class Shell {
       for (const [k, label, detail] of providers.efforts(kind)) rows.push({ ...this.item(label, () => set({ effort: k }), { desc: detail, checked: k === cur, badge: k === def ? "Default" : "" }), kind: "choice" });
       if (providers.hasFast(kind)) {
         const fast = this.data.store.get("fast_mode") === "1";
-        rows.push({ ...this.separator(), kind: "gap" }, this.separator(), { ...this.separator(), kind: "gap" }, { ...this.label("Fast Mode"), kind: "header" });
+        rows.push({ ...this.separator(), kind: "gap" }, { ...this.separator(), kind: "rule" }, { ...this.separator(), kind: "gap" }, { ...this.label("Fast Mode"), kind: "header" });
         for (const [on, label] of [[true, "On"], [false, "Off"]] as const) {
           rows.push({ ...this.item(label, () => this.data.store.set("fast_mode", on ? "1" : "0"), { checked: fast === on }), kind: "choice" });
         }
@@ -1300,7 +1301,7 @@ export class Shell {
         id,
         x,
         y,
-        [this.label("Access"), ...providers.access(kind).map(([k, label, detail]) => this.item(label, () => set({ access: k }), { desc: detail, checked: k === sel.access, icon: k === "full" ? ICONS.LOCK_OPEN : k === "plan" ? ICONS.EYE : ICONS.LOCK }))],
+        [{ ...this.label("Access"), kind: "caption" }, ...providers.access(kind).map(([k, label, detail]) => this.item(label, () => set({ access: k }), { desc: detail, checked: k === sel.access, icon: k === "full" ? ICONS.LOCK_OPEN : k === "plan" ? ICONS.EYE : ICONS.LOCK }))],
         320,
         true,
       );
@@ -1417,10 +1418,13 @@ export class Shell {
   }
 
   private projectPicker(x: number, y: number): void {
-    const items: (PopItem & { act?: () => void })[] = [this.item("No project", () => this.newDraft(null), { icon: ICONS.MESSAGE, desc: "Home folder", checked: this.draftRepo === null })];
-    if (this.data.repos.length > 0) items.push(this.separator());
+    const items: (PopItem & { act?: () => void })[] = [
+      { ...this.label("Project"), kind: "caption" },
+      this.item("No project", () => this.newDraft(null), { icon: ICONS.FOLDER, desc: "Runs in your home folder", checked: this.draftRepo === null }),
+    ];
     for (const r of this.data.repos) items.push(this.item(r.name, () => this.newDraft(r.id), { icon: ICONS.FOLDER, desc: tilde(r.local ?? r.path, homedir()), checked: this.draftRepo === r.id }));
-    this.popup("project", x - 110, y, items, 280);
+    items.push(this.separator(), this.item("Add project…", () => this.addProjectDialog(), { icon: ICONS.FOLDER_PLUS }));
+    this.popup("project", x, y, items, 300);
   }
 
   private chatMenu(id: number, x: number, y: number): void {
@@ -1540,7 +1544,7 @@ export class Shell {
       this.data.store.set("order_by_activity", on ? "1" : "0");
       this.refreshSidebar();
     };
-    this.popup("filter", x, y, [this.label("Order projects"), this.item("Manual", order(false), { icon: ICONS.GRIP, desc: "Drag projects to reorder", checked: !byActivity }), this.item("Last activity", order(true), { icon: ICONS.ACTIVITY, desc: "Most recent first", checked: byActivity })], 260);
+    this.popup("filter", x, y, [{ ...this.label("Order projects"), kind: "caption" }, this.item("Manual", order(false), { icon: ICONS.GRIP, desc: "Drag projects to reorder", checked: !byActivity }), this.item("Last activity", order(true), { icon: ICONS.ACTIVITY, desc: "Most recent first", checked: byActivity })], 260);
   }
 
 

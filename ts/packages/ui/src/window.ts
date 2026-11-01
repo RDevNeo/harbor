@@ -76,6 +76,7 @@ export interface CardData {
 
 export interface MenuEntry {
   icon: string;
+  tone: "" | "blue" | "amber" | "red" | "green";
   label: string;
   desc: string;
   section: string;
@@ -98,7 +99,7 @@ export interface ComposerState {
 }
 
 export interface PopItem {
-  kind: "item" | "label" | "separator" | "header" | "gap" | "choice" | "input" | "native";
+  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "native";
   icon: string;
   label: string;
   desc: string;
@@ -304,6 +305,7 @@ export interface AppWindow extends slint.ComponentHandle {
   pop_w: number;
   pop_above: boolean;
   pop_native: boolean;
+  pop_spacing: number;
   pop_pick: (id: string, i: number) => void;
   pop_close: () => void;
   pop_input: string;
