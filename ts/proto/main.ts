@@ -170,8 +170,9 @@ for (let i = 0; i < rows.length; i++) {
   if (r && !r.project) chats.push(r.id);
 }
 const toOpen = Number(process.env.HTS_OPEN ?? 0);
+const openAt = Number(process.env.HTS_OPEN_AT ?? 0);
 if (toOpen > 0) {
-  const list = chats.slice(0, toOpen);
+  const list = chats.slice(openAt, openAt + toOpen);
   let i = 0;
   const step = () => {
     const id = list[i++];

@@ -6,12 +6,12 @@ import { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed } from "s
 /** The period of Slint's own fallback in slint-ui's EventLoop.start(). */
 export const TICK_MS = 16;
 
-/** Resolves when the last window closes or quit() is called. */
-export function runLoop(tickMs: number = TICK_MS): Promise<void> {
+/** Resolves when the last window closes (unless told to keep running) or quit() is called. */
+export function runLoop(tickMs: number = TICK_MS, quitOnLastWindowClosed = true): Promise<void> {
   if (typeof Bun === "undefined") {
-    return slint.runEventLoop().then(() => undefined);
+    return slint.runEventLoop({ quitOnLastWindowClosed }).then(() => undefined);
   }
-  setQuitOnLastWindowClosed(true);
+  setQuitOnLastWindowClosed(quitOnLastWindowClosed);
   return new Promise((resolve) => {
     const id = setInterval(() => {
       if (processEvents() === ProcessEventsResult.Exited) {
