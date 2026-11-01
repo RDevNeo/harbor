@@ -27,7 +27,11 @@ rust() { env -i $(pc r) "$@"; }
 api() { curl -s --max-time 10 -H "Authorization: Bearer $TOK" "http://127.0.0.1:$1$2"; }
 up() { for _ in $(seq 150); do [ -n "$(api "$1" /v1/state)" ] && return 0; sleep 0.2; done; return 1; }
 shot() { env XDG_RUNTIME_DIR=$T/rt WAYLAND_DISPLAY=wayland-1 /usr/bin/grim "$T/shots/$1.png" 2>/dev/null; }
-stopall() { pkill -f "^$RS" 2>/dev/null; pkill -f "$BUN $TS/harbor.ts" 2>/dev/null; pkill -f "^/usr/bin/python3 $FAKE/claude" 2>/dev/null; sleep 1; }
+# Only this rig's processes: every one has its XDG_RUNTIME_DIR. Other agents run the same binaries.
+mine() { local p; for p in /proc/[0-9]*; do tr '\0' '\n' 2>/dev/null < "$p/environ" | grep -qxF "XDG_RUNTIME_DIR=$T/rt" && echo "${p#/proc/}"; done 2>/dev/null; }
+mine_cmd() { local p; for p in $(mine); do tr '\0' ' ' 2>/dev/null < "/proc/$p/cmdline" | grep -q -- "$1" && echo "$p"; done 2>/dev/null; }
+killmine() { local p; for p in $(mine_cmd "$1"); do kill "$p" 2>/dev/null; done; }
+stopall() { killmine "^$RS"; killmine "harbor.ts"; killmine "$FAKE/claude"; sleep 1; }
 field() { python3 -I -c 'import json,sys
 v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v[int(k)] if isinstance(v,list) else (v or {}).get(k)
@@ -78,7 +82,7 @@ check "and viewing the chat" grep -q "rig-t\|pc:" <<< "$VIEW"
 sleep 7
 check "the message reached the Rust PC" test "$(q r "select count(*) from items where chat_id=$RID and body like '%hold this turn%'")" = 1
 echo "   sender: $(q r "select json_extract(body,'$.sender') from items where chat_id=$RID and body like '%hold this turn%'")"
-check "a turn runs on the Rust PC" test -n "$(pgrep -f "^$RS turn")"
+check "a turn runs on the Rust PC" test -n "$(mine_cmd "^$RS turn")"
 sleep 3; shot 3-running
 check "the reply streams into the TypeScript copy" test "$(q t "select count(*) from items where chat_id=$CT and body like '%word word%'")" -ge 1
 sleep 4
@@ -89,11 +93,11 @@ sleep 3
 QN=$(api 47930 "/v1/chats/$RID/items?since=999" | field queued)
 check "Ctrl+Enter queued a message at the Rust PC ($QN)" test "${QN:-0}" -ge 1
 sleep 3; shot 4-stopped
-for _ in $(seq 20); do [ -z "$(pgrep -f "^$RS turn")" ] && break; sleep 0.5; done
-check "Escape stopped the turn on the Rust PC" test -z "$(pgrep -f "^$RS turn")"
+for _ in $(seq 20); do [ -z "$(mine_cmd "^$RS turn")" ] && break; sleep 0.5; done
+check "Escape stopped the turn on the Rust PC" test -z "$(mine_cmd "^$RS turn")"
 check "the Rust PC says it's not running" test "$(api 47930 /v1/state | python3 -I -c "import json,sys; print([c.get('running') for c in json.load(sys.stdin)['chats'] if c['id']==$RID][0])")" = False
 check "and holds the queued message (stop with hold)" test "$(api 47930 "/v1/chats/$RID/items?since=999" | field queued)" -ge 1
-pkill -f "^$RS" ; sleep 15; shot 5-home-off
+killmine "^$RS"; sleep 15; shot 5-home-off
 echo "   look at $T/shots/5-home-off.png: the read-only note"
 stopall
 
@@ -114,6 +118,6 @@ check "the turn ran on the TypeScript PC" test "$(q t "select count(*) from item
 sleep 3
 check "and its reply is in the Rust copy" test "$(q r "select count(*) from items where chat_id=$CR and body like '%DONE%'")" -ge 1
 stopall
-pkill -f "^$SW/bin/sway" 2>/dev/null
+killmine "$SW/bin/sway"
 echo "== $([ $fail = 0 ] && echo ALL PASS || echo SOME FAILED)"
 exit $fail

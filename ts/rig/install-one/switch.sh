@@ -31,7 +31,8 @@ field() { python3 -I -c 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v[int(k)] if isinstance(v,list) else v.get(k)
 print(v if not isinstance(v,(dict,list)) else json.dumps(v))' "$1"; }
 cid() { python3 -I -c 'import json,sys; v=json.load(sys.stdin); print(v.get("id") or v.get("chat",{}).get("id"))'; }
-stopall() { pkill -f "^$T/[a-z]/home/.local/(lib/harbor|bin)/harbor" 2>/dev/null; pkill -f "^/usr/bin/python3 $HERE/fakebin/claude" 2>/dev/null; sleep 1; }
+# Only this rig's processes, by the runtime folder each one has; other agents run the same binaries.
+stopall() { local p; for p in /proc/[0-9]*; do tr '\0' '\n' 2>/dev/null < "$p/environ" | grep -q "^XDG_RUNTIME_DIR=$T/[a-z]/run$" && kill "${p#/proc/}" 2>/dev/null; done 2>/dev/null; sleep 1; }
 rpc() { python3 -I -c 'import json,sys
 for l in open(sys.argv[1]):
     try: m=json.loads(l)
