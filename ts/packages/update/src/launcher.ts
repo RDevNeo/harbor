@@ -29,6 +29,7 @@ export interface LaunchOptions {
   spawn?: (cmd: string[]) => void;
   armWatchdog?: boolean;
   env?: Record<string, string | undefined>;
+  embedded?: AppBundle;
 }
 
 const WINDOW_ARG = "--background";
@@ -61,6 +62,12 @@ export function choose(cfg: UpdateConfig): Chosen {
 function secondary(cfg: UpdateConfig, env: Record<string, string | undefined>): boolean {
   const prior = cfg.dir === null ? null : readAttempt(cfg.dir);
   return prior !== null && prior.pid !== process.pid && alive(prior.pid) && prior.pid !== Number(env[RELOADED_PID]);
+}
+
+// A single executable runs the bundle it carries unless an update put a newer one beside it.
+export function useEmbedded(chosen: Chosen, embedded: AppBundle | undefined): embedded is AppBundle {
+  if (embedded === undefined || chosen.kind !== "release") return false;
+  return !isFile(chosen.path) || !newer(chosen.version, embedded.meta.version);
 }
 
 const watchdogSpawn = (cmd: string[]): void => {
@@ -115,9 +122,10 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
       if (opts.armWatchdog !== false) (opts.spawn ?? watchdogSpawn)([base.exe, "start-watch", String(process.pid)]);
     }
   }
-  const info: RuntimeInfo = { version: base.runtime, bundle: chosen.path, preview: chosen.kind === "preview", exe: base.exe };
+  const own = useEmbedded(chosen, opts.embedded);
+  const info: RuntimeInfo = { version: base.runtime, bundle: own ? base.exe : chosen.path, preview: chosen.kind === "preview", exe: base.exe };
   globalThis.__harbor = { ...globalThis.__harbor, runtime: info };
-  const m = await load(chosen.path);
+  const m = own ? opts.embedded : await load(chosen.path);
   if (!isBundle(m)) {
     err(`harbor: ${chosen.path} is not a Harbor bundle`);
     return 1;

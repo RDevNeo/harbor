@@ -83,6 +83,8 @@ export class Reloader {
     for (const k of DEV_HOOKS) delete env[k];
     try {
       await this.o.beforeExit?.();
+      // The Rust app waits for the lock only when it replaced its own pid.
+      this.o.release?.();
       (this.o.spawn ?? spawnDetached)([cfg.exe, ...(cfg.script === undefined ? [] : [cfg.script]), ...args], env);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
@@ -91,7 +93,6 @@ export class Reloader {
       this.going = false;
       return false;
     }
-    this.o.release?.();
     (this.o.exit ?? process.exit)(0);
     return true;
   }

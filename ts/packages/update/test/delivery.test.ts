@@ -182,11 +182,12 @@ test("a version that was rolled back from is offered, not installed", async () =
 });
 
 test("an install that fails is reported and not tried again for a while", async () => {
-  const { host, updater, swapped } = await rig({ worker: false });
+  const { host, key, updater, swapped } = await rig({ worker: false });
+  await host.publish(key, "1.1.0", { "harbor-app.json": JSON.stringify({ version: "1.1.0", minRuntime: "1.0.0", runtime: "1.0.0" }) });
   host.latest = "1.1.0";
   await updater.githubCheck();
   expect(updater.state().t).toBe("failed");
-  expect(updater.info().error).toContain("harbor-app.json");
+  expect(updater.info().error).toContain("harbor-app.js");
   expect(updater.info().status).toStartWith("update failed:");
   const hits = host.hits.length;
   await updater.onRelease("1.1.0");

@@ -40,6 +40,13 @@ export function newer(candidate: string, current: string): boolean {
   return c !== null && c > 0;
 }
 
+// The Rust release whose behaviour this app matches. Rust PCs and phones read only the first three numbers.
+export const RUST_PARITY = "0.109.0";
+
+export function advertised(v: string): string {
+  return newer(v, RUST_PARITY) ? `${RUST_PARITY}.ts` : v;
+}
+
 export function versionCode(v: string): number {
   const p = parse(v);
   return p === null ? 0 : p[0] * 1_000_000 + p[1] * 1000 + p[2];

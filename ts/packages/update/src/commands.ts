@@ -1,6 +1,6 @@
 import { defaultConfig, sleep, type UpdateConfig } from "./config.ts";
 import { Updater } from "./delivery.ts";
-import { install, rollback, current } from "./install.ts";
+import { install, NoBuild, rollback, current } from "./install.ts";
 import { ask, cli as previewCli, label } from "./preview.ts";
 import { GIT_SHA, newer, VERSION } from "./version.ts";
 
@@ -19,7 +19,13 @@ export async function updateCli(cfg: UpdateConfig, arg: string, io: CliIo): Prom
         return 0;
       }
       io.out(`Installing Harbor ${v}…`);
-      await install(cfg, v);
+      try {
+        await install(cfg, v);
+      } catch (e) {
+        if (!(e instanceof NoBuild)) throw e;
+        io.out(`Harbor ${v} has no build of this app yet: staying on ${current(cfg)}.`);
+        return 0;
+      }
       io.out(`Harbor ${v} is installed.`);
       return 0;
     }

@@ -3,6 +3,7 @@ import { directoryPcWorkspaces, preview as meshPreview } from "./packages/net/sr
 import { dataDir, single, Store } from "./packages/store/src/index.ts";
 import {
   Reloader,
+  advertised,
   Updater,
   confirmStart,
   defaultConfig,
@@ -31,14 +32,14 @@ export async function runApp(o: RunOptions): Promise<number> {
   wire();
 
   let reloader: Reloader | null = null;
-  const updater = new Updater(cfg, { swap: () => void reloader?.now() });
+  const updater = new Updater(cfg, { swap: () => void reloader?.now(), advertise: advertised });
   const store = Store.open(dataDir());
   const offline = isOffline();
   const ui = o.window ? await import("./packages/ui/src/index.ts") : null;
   const made: { data: InstanceType<NonNullable<typeof ui>["Data"]> | null } = { data: null };
   let taking = Promise.resolve();
   const run = await startHub({
-    version: o.version,
+    version: advertised(o.version),
     updater,
     store,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),

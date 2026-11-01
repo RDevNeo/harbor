@@ -102,7 +102,7 @@ test("a restart saves the screen first, starts the runtime again and then leaves
     delete process.env.HARBOR_VIEW;
     delete process.env.HARBOR_POINTER;
   }
-  expect(calls).toEqual(["snapshot", "beforeExit", "spawn", "release", "exit 0"]);
+  expect(calls).toEqual(["snapshot", "beforeExit", "release", "spawn", "exit 0"]);
   expect(JSON.parse(kv.get(STATE_KEY) ?? "{}")).toEqual({ drafts: { "5": "a draft" } });
   expect(spawned[0]?.cmd).toEqual([join(inst.dir, "harbor"), "x"]);
   expect(spawned[0]?.env[RELOADED_PID]).toBe(String(process.pid));

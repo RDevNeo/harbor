@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
-import { fetchSigned } from "./download.ts";
+import { DownloadError, fetchSigned } from "./download.ts";
 import { pendingExtras } from "./extras.ts";
 import { BUNDLE_FILE, fresh, isFile, read, remove, replace, RUNTIME_FILE, writeAtomic } from "./files.ts";
 import { MANIFEST, parseManifest, type Manifest } from "./manifest.ts";
@@ -66,8 +66,17 @@ export async function smokeBundle(runtime: string, bundle: string, expected: str
   if (said !== `harbor ${expected}`) throw new Error(`the bundle says ${said || "nothing"}, not harbor ${expected}`);
 }
 
+// A release of the Rust app only: nothing in it runs here.
+export class NoBuild extends Error {
+  constructor(readonly version: string) {
+    super(`Harbor ${version} has no build of this app`);
+  }
+}
+
 async function fetchManifest(cfg: UpdateConfig, version: string, stage: string): Promise<Manifest> {
-  const file = await fetchSigned(cfg, version, MANIFEST, stage);
+  const file = await fetchSigned(cfg, version, MANIFEST, stage).catch((e: unknown) => {
+    throw e instanceof DownloadError && e.status === 404 ? new NoBuild(version) : e;
+  });
   const m = parseManifest(await Bun.file(file).text());
   if (m.version !== version) throw new Error("the manifest is for another version");
   return m;

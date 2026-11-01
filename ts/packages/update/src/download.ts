@@ -6,9 +6,18 @@ import { read } from "./files.ts";
 const TRIES = 3;
 const TIMEOUT_MS = 15 * 60 * 1000;
 
+export class DownloadError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+  ) {
+    super(message);
+  }
+}
+
 export async function download(cfg: UpdateConfig, release: string, name: string, to: string): Promise<void> {
   const url = assetUrl(cfg, release, name);
-  let last = `download failed: ${name}`;
+  let last = new DownloadError(`download failed: ${name}`, null);
   for (let i = 0; i < TRIES; i++) {
     if (i > 0) await cfg.sleep(1000 * i);
     try {
@@ -17,13 +26,13 @@ export async function download(cfg: UpdateConfig, release: string, name: string,
         await Bun.write(to, res);
         return;
       }
-      last = `download failed: ${name} (HTTP ${res.status})`;
+      last = new DownloadError(`download failed: ${name} (HTTP ${res.status})`, res.status);
       if (res.status < 500) break;
     } catch (e) {
-      last = `download failed: ${name} (${e instanceof Error ? e.message : String(e)})`;
+      last = new DownloadError(`download failed: ${name} (${e instanceof Error ? e.message : String(e)})`, null);
     }
   }
-  throw new Error(last);
+  throw last;
 }
 
 export async function fetchSigned(cfg: UpdateConfig, release: string, name: string, stage: string): Promise<string> {

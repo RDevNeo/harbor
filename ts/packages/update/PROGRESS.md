@@ -79,21 +79,30 @@ Tests: 146 in 13 files (`bun test packages/update`), all passing; Rust `#[test]`
 - Watchdog and fallback exist only for window launches (`isWindowLaunch`): a helper such as `harbor turn` never writes an attempt.
 - aarch64 runtimes are compiled on `ubuntu-24.04-arm` rather than cross-compiled, because the Slint addon is per architecture.
 
-## In-place upgrade from the Rust app (Hard rule, not done)
+## In-place switch on one PC: one executable and `install-one.sh` (done, run only in rigs)
 
-A last Rust release can install the TypeScript runtime with little change, because the Rust updater already replaces `harbor` in the
-install folder and execs into it with `HARBOR_RELOADED_PID` set. It needs:
-
-1. **One Rust change** (src/update.rs `install`, on `main`, in a last Rust release): also move `harbor-app.js` (and `RUNTIME`) from the
-   unpacked archive into the install folder, before the final `replace(harbor)`. Nothing else in `install` needs to change: it
-   keeps `.previous/harbor` (the Rust binary), `VERSION` and `.managed`, so "Restore previous version" goes back to Rust.
-2. **A bridging TypeScript release** that also publishes the legacy archive name that Rust fetches (`harbor-<arch>-linux.tar.gz` with a
-   `.minisig`, trusted comment `harbor v<ver> harbor-<arch>-linux.tar.gz`), holding the runtime as `harbor`, `harbor-app.js`,
-   `RUNTIME`, `VERSION`, `browser.id`, `video.id` and `licenses/`. That asset is not built by `ts-release.yml` yet.
-3. The TypeScript side already accepts the handover: it opens the same `harbor.db`, takes the instance lock for the old pid, and
-   restores the Rust app's `reload_state` snapshot.
-
-Until step 1 is in a shipped Rust release, a Rust PC cannot reach the runtime by itself; a person would run an installer.
+- **One executable**: `scripts/build.ts single OUT --version V --sha S` compiles `ts/single.ts`: the runtime with the bundle inside
+  (182 MB on x86_64). It sits where the Rust `harbor` sits (`~/.local/lib/harbor/harbor`, `.managed` beside it) and needs no Rust
+  change. It runs the bundle it carries, unless an update put a newer `harbor-app.js` (by `VERSION`) beside it (`useEmbedded`).
+  `--version`, `runtime-version`, `--check-native` (sharp and sherpa), `turn`, `mcp`, `app`, `nc`, `mesh` work from it; the browser engine,
+  libmpv, the APK and its version file are read from the install folder as before.
+- **Version**: this build is `0.109.1-ts`, above Rust 0.109.0 for both apps. To peers, phones, the account directory and discovery it
+  says `0.109.0.ts` (`advertised`, `RUST_PARITY`): Rust's `parse`, the phone's `Update.code` and this app all read it as 0.109.0, so a
+  Rust PC hears no news (`peer_news`), shows no "is out" or Update for any PC, and a phone offers nothing. `harbor --version` and the
+  updater keep the real version.
+- **Rust releases**: a release without `harbor-app.json` (every Rust release) is `NoBuild`: the updater stays "up to date", logs nothing,
+  doesn't ask again for an hour and never swaps; it takes that release's signed phone app when it is newer than the one beside it.
+  `harbor --update` says "has no build of this app yet" and exits 0.
+- **Back to Rust**: a restart into another program releases the instance lock before it starts it (Rust waits for the lock only when it
+  replaced its own pid). The TS watchdog's rollback, "Restore previous version" and `harbor --restore-previous` restore `.previous/harbor`.
+- **`ts/scripts/install-one.sh`**: `install BINARY`, `undo [--restore-db]`, `restart`, `status`. Checks the folder (`.managed`, Rust
+  `0.109.0`, `VERSION` agreeing, no `.staging`, no live preview, schema 8, owner), backs up `harbor.db` by `VACUUM INTO` (checked), `identity.pem`,
+  `secrets.json`, `account.json`, the kv key names and `.previous` into `~/.local/state/harbor-switch/<time>/` (0700), keeps Rust in
+  `.previous/harbor` as Rust's `replace` does, writes `VERSION`, renames the binary over `harbor` last and waits for the Rust app to exec
+  into it (its Update button, the phone's Update, or its quiet moment). `restart` stops it and starts the new one with its environment.
+  `undo` puts Rust back and the original `.previous`; the db only with `--restore-db`, once per backup.
+- **Rig** `ts/rig/install-one/switch.sh` (inside `unshare -Urnm`): Rust 0.109.0 from its signed release archive installed by its own
+  `install.sh` in a fake home, a scrambled harbor.db (319 chats, 74,706 items), throwaway identities, a fake `claude` and a fake `curl`.
 
 ## Wiring other packages must do
 

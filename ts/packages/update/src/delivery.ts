@@ -1,11 +1,11 @@
 import { join } from "node:path";
 import type { UpdateConfig } from "./config.ts";
-import { apk, browserUnsupported, engineStale, NO_BROWSER, pendingExtras, retryAfter, type ExtraWork } from "./extras.ts";
-import { exists, read, readJson, remove } from "./files.ts";
-import { current, hasPrevious, install, onDisk, rollback, rolledBack, skipped, type RolledBack } from "./install.ts";
+import { apk, browserUnsupported, engineStale, fetchApk, NO_BROWSER, pendingExtras, retryAfter, type ExtraWork } from "./extras.ts";
+import { exists, fresh, read, readJson, remove } from "./files.ts";
+import { current, hasPrevious, install, NoBuild, onDisk, rollback, rolledBack, skipped, type RolledBack } from "./install.ts";
 import { parseManifest, type Manifest } from "./manifest.ts";
 import { previewInfo } from "./preview.ts";
-import { newer, tagged } from "./version.ts";
+import { newer, tagged, versionCode } from "./version.ts";
 
 const POLL_TIMEOUT_MS = 75_000;
 const FALLBACK_MS = 5 * 60 * 1000;
@@ -14,6 +14,7 @@ const BACKOFF_MAX_MS = 5 * 60 * 1000;
 const START_DELAY_MS = 2_000;
 const EXTRAS_DELAY_MS = 35_000;
 const ANSWER_NOT_NEWER_MS = 5_000;
+const NO_BUILD_MS = 60 * 60 * 1000;
 
 export type State =
   | { t: "idle" }
@@ -27,6 +28,7 @@ export type State =
 export interface Deps {
   swap?: (version: string) => void | Promise<void>;
   changed?: () => void;
+  advertise?: (version: string) => string;
 }
 
 export interface UpdateInfo {
@@ -81,6 +83,7 @@ export class Updater {
   private extraRunning = new Set<string>();
   private browserOutcome: { ok: true } | { ok: false; error: string } | null = null;
   private asking = false;
+  private noBuild = new Map<string, number>();
 
   constructor(
     private readonly cfg: UpdateConfig,
@@ -201,6 +204,10 @@ export class Updater {
       if (this.st.t !== "installing" && this.st.t !== "installed") this.set({ t: "upToDate" });
       return;
     }
+    if (this.hasNoBuild(version)) {
+      if (this.st.t !== "installing" && this.st.t !== "installed") this.set({ t: "upToDate" });
+      return;
+    }
     if (skipped(this.cfg, version)) {
       this.set({ t: "available", v: version });
       return;
@@ -247,6 +254,12 @@ export class Updater {
       try {
         await install(this.cfg, version);
       } catch (e) {
+        if (e instanceof NoBuild) {
+          this.noBuild.set(version, this.cfg.now() + NO_BUILD_MS);
+          this.set({ t: "upToDate" });
+          await this.phoneApp(version);
+          return;
+        }
         const n = (this.failed?.version === version ? this.failed.n : 0) + 1;
         this.failed = { version, at: this.cfg.now() + retryAfter(n), n };
         const error = e instanceof Error ? e.message : String(e);
@@ -263,6 +276,26 @@ export class Updater {
     });
     this.job = job;
     return job;
+  }
+
+  private hasNoBuild(version: string): boolean {
+    const until = this.noBuild.get(version);
+    return until !== undefined && this.cfg.now() < until;
+  }
+
+  // The phone app of a release this app can't run, as the Rust app takes it with every update.
+  private async phoneApp(version: string): Promise<void> {
+    const dir = this.cfg.dir;
+    const code = versionCode(version);
+    if (dir === null || (apk(dir)?.code ?? 0) >= code) return;
+    const stage = fresh(join(dir, ".staging-apk"));
+    try {
+      await fetchApk(this.cfg, version, code, dir, stage);
+    } catch (e) {
+      this.cfg.log(`phone app ${version} not taken: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      remove(stage);
+    }
   }
 
   private retryLater(version: string, ms: number): void {
@@ -311,7 +344,7 @@ export class Updater {
     else if (s.t === "upToDate") status = "up to date";
     else if (s.t === "failed") status = `update failed: ${s.error}`;
     return {
-      version: cur,
+      version: this.deps.advertise?.(cur) ?? cur,
       runtime: this.cfg.runtime,
       managed,
       latest,

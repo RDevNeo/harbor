@@ -52,9 +52,10 @@ const addonsFromRuntime: BunPlugin = {
       ),
       loader: "js",
     }));
-    build.onResolve({ filter: /(\/|^)(sharp|sherpa-onnx)\.node$/ }, (a) => ({ path: a.path, namespace: "addon" }));
+    // Named by the addon, not the file: the single executable also imports these files as files.
+    build.onResolve({ filter: /(\/|^)(sharp|sherpa-onnx)\.node$/ }, (a) => (a.importer === "harbor:native" ? undefined : { path: a.path.includes("sharp") ? "sharp" : "sherpa", namespace: "addon" }));
     build.onLoad({ filter: /.*/, namespace: "addon" }, (a) => ({
-      contents: `module.exports = globalThis.__harbor.addon(${JSON.stringify(a.path.includes("sharp") ? "sharp" : "sherpa")});`,
+      contents: `module.exports = globalThis.__harbor.addon(${JSON.stringify(a.path)});`,
       loader: "js",
     }));
   },
@@ -101,10 +102,12 @@ const opt = (name: string): string | undefined => (rest.includes(name) ? rest[re
 const defines = (pairs: Array<[string, string | undefined]>): Record<string, string> =>
   Object.fromEntries(pairs.filter((p): p is [string, string] => p[1] !== undefined).map(([k, v]) => [k, JSON.stringify(v)]));
 
-if ((kind !== "app" && kind !== "runtime") || outfile === undefined) {
-  console.error("usage: build.ts app|runtime OUTFILE [--version V] [--min-runtime V] [--sha SHA]");
+if ((kind !== "app" && kind !== "runtime" && kind !== "single") || outfile === undefined) {
+  console.error("usage: build.ts app|runtime|single OUTFILE [--version V] [--min-runtime V] [--sha SHA]");
   process.exit(2);
 }
+
+const version = opt("--version");
 
 const r =
   kind === "app"
@@ -117,13 +120,22 @@ const r =
         naming: basename(outfile),
         define: defines([["HARBOR_VERSION", opt("--version")], ["HARBOR_MIN_RUNTIME", opt("--min-runtime")], ["HARBOR_GIT_SHA", opt("--sha")]]),
       })
-    : await Bun.build({
-        entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
-        plugins: [noExtraBinaries, nativeAddons],
-        compile: { outfile },
-        minify: !rest.includes("--debug"),
-        sourcemap: "none",
-        define: defines([["HARBOR_RUNTIME_VERSION", opt("--version")]]),
-      });
+    : kind === "single"
+      ? await Bun.build({
+          entrypoints: [new URL("../single.ts", import.meta.url).pathname],
+          plugins: [noExtraBinaries, nativeAddons, embedAssets, addonsFromRuntime],
+          compile: { outfile },
+          minify: !rest.includes("--debug"),
+          sourcemap: "none",
+          define: defines([["HARBOR_VERSION", version], ["HARBOR_RUNTIME_VERSION", version], ["HARBOR_MIN_RUNTIME", version], ["HARBOR_GIT_SHA", opt("--sha")]]),
+        })
+      : await Bun.build({
+          entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
+          plugins: [noExtraBinaries, nativeAddons],
+          compile: { outfile },
+          minify: !rest.includes("--debug"),
+          sourcemap: "none",
+          define: defines([["HARBOR_RUNTIME_VERSION", version]]),
+        });
 for (const log of r.logs) console.log(log.message);
 if (!r.success) process.exit(1);

@@ -139,8 +139,9 @@ test("a missing asset fails with its name, after trying again", async () => {
   const host = new FakeHost();
   const inst = makeInstall();
   const cfg = host.config(inst, key, { sleep: async () => undefined });
-  await expect(install(cfg, "9.9.9")).rejects.toThrow("download failed: harbor-app.json (HTTP 404)");
-  expect(host.hits.length).toBe(1);
+  await host.publish(key, "9.9.9", { "harbor-app.json": JSON.stringify({ version: "9.9.9", minRuntime: "1.0.0", runtime: "1.0.0" }) });
+  await expect(install(cfg, "9.9.9")).rejects.toThrow("download failed: harbor-app.js (HTTP 404)");
+  expect(host.hits.length).toBe(3);
 });
 
 test("a server error is tried again", async () => {
