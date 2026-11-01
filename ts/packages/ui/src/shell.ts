@@ -27,7 +27,7 @@ import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
-import { chatIdle, parseSnooze, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, tree } from "./logic/sidebar.ts";
+import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
@@ -168,6 +168,7 @@ export class Shell {
     focus: (d, terminal) => setTimeout(() => this.win.focus_pane(d, terminal), 30),
   });
   private readonly prs: chatpr.ChatPrs;
+  private readonly workspaces: () => Workspaces;
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -188,6 +189,7 @@ export class Shell {
     this.win = win;
     this.data = data;
     this.prs = hub.prs;
+    this.workspaces = hub.workspaces;
     const get = (k: string, d: string) => data.store.get(k) ?? d;
     const model = get("default_model", "claude-opus-5-5");
     this.sel = {
@@ -270,6 +272,8 @@ export class Shell {
     };
     w.palette = () => this.openPalette();
     w.filter = (x, y) => this.filterMenu(x, y);
+    w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
+    w.ws_all = () => this.setWsFilter("");
     w.settings = () => this.pages.openSettings();
     w.prs = () => this.pages.openPrs();
     w.issues = () => this.pages.openIssues();
@@ -758,7 +762,10 @@ export class Shell {
     const t = now();
     const snoozed = d.snoozed();
     const ids = sidebarOrder(d.repos, d.store.get("order_by_activity") === "1", d.chats);
-    const tr = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t);
+    const ws = this.workspaces();
+    const shown = picked(d.store.get("sidebar_workspace") ?? "", ws.all);
+    const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t);
+    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats);
     const list = sidebarList(tr, d.chats, d.repos, this.query);
     const rows: SideRow[] = [];
     const chatRow = (c: Chat, kind: "thread" | "loose"): SideRow => {
@@ -818,7 +825,13 @@ export class Shell {
     const w = this.win;
     w.settled_count = list.settled.length;
     w.running = this.engine.turns.size;
-    w.side_empty = list.projects.length > 0 ? "" : this.query.trim() !== "" ? "search" : d.repos.length === 0 ? "projects" : "";
+    const names = ws.all.filter((x) => shown.includes(x.id)).map((x) => x.name);
+    const q = this.query.trim();
+    w.side_ws = ws.all.length > 0;
+    w.side_ws_on = shown.length > 0;
+    w.side_ws_tip = names.length === 0 ? "Workspace" : `Workspace: ${names.join(", ")}`;
+    w.side_empty = list.projects.length > 0 ? "" : q !== "" ? "search" : shown.length > 0 ? (list.loose.length === 0 && list.settled.length === 0 ? "ws" : "") : d.repos.length === 0 ? "projects" : "";
+    w.side_empty_desc = w.side_empty === "ws" ? `No chats of ${names.length === 1 ? names[0] : "these workspaces"} reach this PC.` : w.side_empty === "projects" ? "Add a folder or clone a repository to start." : "";
   }
 
   /** A project's git status (app.rs `refresh_git`): the last one known, read again in the background. */
@@ -1948,6 +1961,29 @@ export class Shell {
   }
 
 
+  /** sidebar.rs `ws_filter_menu`: a checklist that stays open, All then the account's workspaces. */
+  private wsMenu(x: number, y: number): void {
+    const ws = this.workspaces();
+    const stored = this.data.store.get("sidebar_workspace") ?? "";
+    const shown = picked(stored, ws.all);
+    const pick = (ids: string) => () => {
+      this.setWsFilter(ids);
+      this.wsMenu(x, y);
+    };
+    const items = [
+      { ...this.label("Workspace"), kind: "caption" as const },
+      this.item("All", pick(""), { icon: ICONS.LAYERS, desc: "Every chat on this PC", checked: shown.length === 0 }),
+      ...ws.all.map((x) => this.item(x.name, pick(toggled(stored, x.id, ws.all)), { icon: ICONS.USERS, desc: x.id === ws.mine ? "This PC's workspace" : "", checked: shown.includes(x.id) })),
+    ];
+    this.popup("workspace", x, y, items, 260);
+  }
+
+  /** Shows the workspaces `ids` in the sidebar ("": all of them), on this device from now on. */
+  private setWsFilter(ids: string): void {
+    this.data.store.set("sidebar_workspace", ids);
+    this.refreshSidebar();
+  }
+
   private dialog(title: string, text: string, ok: string, danger: boolean, input: string | null, act: (ok: boolean, input: string) => void): void {
     const w = this.win;
     w.dialog_title = title;
@@ -2203,6 +2239,14 @@ interface Draft {
 /** What the window takes from the running hub. */
 export interface ShellHub {
   prs: chatpr.ChatPrs;
+  workspaces: () => Workspaces;
+}
+
+/** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */
+export interface Workspaces {
+  all: Workspace[];
+  mine: string;
+  pcs: ReadonlyMap<string, string>;
 }
 
 export interface ShellHooks {

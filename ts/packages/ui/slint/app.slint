@@ -347,6 +347,10 @@ export component AppWindow inherits Window {
     in-out property <string> search;
     in property <int> running;
     in property <string> side-empty;
+    in property <string> side-empty-desc;
+    in property <bool> side-ws;
+    in property <bool> side-ws-on;
+    in property <string> side-ws-tip;
     callback open-chat(int);
     callback open-project(int);
     callback new-chat(int);
@@ -359,6 +363,8 @@ export component AppWindow inherits Window {
     callback searched(string);
     callback palette();
     callback filter(length, length);
+    callback ws-filter(length, length);
+    callback ws-all();
     callback settings();
     callback prs();
     callback issues();
@@ -585,6 +591,11 @@ export component AppWindow inherits Window {
                 search <=> root.search;
                 running: root.running;
                 empty-kind: root.side-empty;
+                empty-desc: root.side-empty-desc;
+                workspaces: root.side-ws;
+                ws-on: root.side-ws-on;
+                ws-tip: root.side-ws-tip;
+                pop-id: root.pop-id;
                 pages-back: root.view == "prs" || root.view == "issues";
                 open-chat(id) => {
                     root.open-chat(id);
@@ -624,6 +635,12 @@ export component AppWindow inherits Window {
                 }
                 filter(x, y) => {
                     root.filter(x, y);
+                }
+                ws-filter(x, y) => {
+                    root.ws-filter(x, y);
+                }
+                ws-all => {
+                    root.ws-all();
                 }
                 settings => {
                     root.settings();

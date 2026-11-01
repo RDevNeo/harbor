@@ -216,6 +216,11 @@ export component Sidebar inherits Rectangle {
     in-out property <string> search <=> search-field.text;
     in property <int> running;
     in property <string> empty-kind;
+    in property <string> empty-desc;
+    in property <bool> workspaces;
+    in property <bool> ws-on;
+    in property <string> ws-tip;
+    in property <string> pop-id;
     in property <bool> pages-back;
     callback open-chat(int);
     callback open-project(int);
@@ -230,6 +235,8 @@ export component Sidebar inherits Rectangle {
     callback hide();
     callback palette();
     callback filter(length, length);
+    callback ws-filter(length, length);
+    callback ws-all();
     callback settings();
     callback prs();
     callback issues();
@@ -286,11 +293,23 @@ export component Sidebar inherits Rectangle {
                     root.searched(t);
                 }
             }
+            if root.workspaces: Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.users;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.pop-id == "workspace" || root.ws-on;
+                tip: root.ws-tip;
+                clicked => {
+                    root.ws-filter(self.absolute-position.x, self.absolute-position.y + self.height);
+                }
+            }
             filter-btn := Btn {
                 y: (parent.height - self.height) / 2;
                 icon: Icons.filter;
                 size: icon-xs;
                 variant: ghost-muted;
+                pressed: root.pop-id == "filter";
                 tip: "Order and view";
                 clicked => {
                     root.filter(self.absolute-position.x, self.absolute-position.y + self.height);
@@ -328,12 +347,16 @@ export component Sidebar inherits Rectangle {
                 if root.empty-kind != "": VerticalLayout {
                     padding-top: 24px;
                     Empty {
-                        icon: root.empty-kind == "search" ? Icons.search : Icons.folder-plus;
-                        title: root.empty-kind == "search" ? "No match" : "No projects yet";
-                        desc: root.empty-kind == "search" ? "" : "Add a folder or clone a repository to start.";
-                        action: root.empty-kind == "search" ? "" : "Add project";
+                        icon: root.empty-kind == "search" ? Icons.search : root.empty-kind == "ws" ? Icons.users : Icons.folder-plus;
+                        title: root.empty-kind == "search" ? "No match" : root.empty-kind == "ws" ? "Nothing here" : "No projects yet";
+                        desc: root.empty-desc;
+                        action: root.empty-kind == "search" ? "" : root.empty-kind == "ws" ? "Show all" : "Add project";
                         act => {
-                            root.add-project();
+                            if root.empty-kind == "ws" {
+                                root.ws-all();
+                            } else {
+                                root.add-project();
+                            }
                         }
                     }
                 }

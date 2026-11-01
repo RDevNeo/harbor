@@ -237,6 +237,10 @@ export interface AppWindow extends slint.ComponentHandle {
   search: string;
   running: number;
   side_empty: string;
+  side_empty_desc: string;
+  side_ws: boolean;
+  side_ws_on: boolean;
+  side_ws_tip: string;
   open_chat: (id: number) => void;
   open_project: (id: number) => void;
   new_chat: (repo: number) => void;
@@ -249,6 +253,8 @@ export interface AppWindow extends slint.ComponentHandle {
   searched: (q: string) => void;
   palette: () => void;
   filter: (x: number, y: number) => void;
+  ws_filter: (x: number, y: number) => void;
+  ws_all: () => void;
   settings: () => void;
   prs: () => void;
   issues: () => void;
