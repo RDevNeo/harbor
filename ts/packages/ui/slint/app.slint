@@ -5,7 +5,7 @@ import "fonts/GeistMono-Regular.ttf";
 import "fonts/lucide.ttf";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Ui, Btn, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
+import { Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
 import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip } from "composer.slint";
@@ -465,6 +465,8 @@ export component AppWindow inherits Window {
     in property <string> dialog-text;
     in-out property <string> dialog-input;
     in property <bool> dialog-has-input;
+    // undo.rs `stop_all_dialog`: small buttons, the red Stop one.
+    in property <bool> dialog-stop;
     in property <string> dialog-ok;
     in property <bool> dialog-danger;
     callback dialog-done(string, bool);
@@ -1067,13 +1069,15 @@ export component AppWindow inherits Window {
                     spacing: 8px;
                     Btn {
                         text: "Cancel";
+                        size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
                         clicked => {
                             root.dialog-done(root.dialog-id, false);
                         }
                     }
                     Btn {
                         text: root.dialog-ok;
-                        variant: root.dialog-danger ? destructive : primary;
+                        size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
+                        variant: root.dialog-stop ? Variant.stop : root.dialog-danger ? Variant.destructive : Variant.primary;
                         clicked => {
                             root.dialog-done(root.dialog-id, true);
                         }

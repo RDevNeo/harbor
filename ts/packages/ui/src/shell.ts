@@ -338,9 +338,16 @@ export class Shell {
       }
       this.refreshStrip();
     };
-    w.strip_stop_all = () => this.dialog("Stop all agents?", "Every running sub-agent stops and their queues are cleared.", "Stop all", true, null, (ok) => {
-      if (ok) this.engine.stopAll(this.chatId);
-    });
+    w.strip_stop_all = () => {
+      const lead = this.chatId;
+      const n = this.engine.runningSubs(lead).length;
+      const subs = n === 1 ? "1 running sub-agent" : `${n} running sub-agents`;
+      const title = this.engine.running(lead) ? `Stop the main agent and ${subs}?` : `Stop ${subs}?`;
+      this.dialog(title, "Sub-agent queues are cleared; your queued messages wait until you resume. Finished work and transcripts stay.", "Stop all", true, null, (ok) => {
+        if (ok) this.engine.stopAll(lead);
+      });
+      this.win.dialog_stop = true;
+    };
   }
 
 
@@ -1555,6 +1562,7 @@ export class Shell {
     w.dialog_ok = ok;
     w.dialog_danger = danger;
     w.dialog_has_input = input !== null;
+    w.dialog_stop = false;
     w.dialog_input = input ?? "";
     this.dialogAction = act;
     w.dialog_id = "dialog";

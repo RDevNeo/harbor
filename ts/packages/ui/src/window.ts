@@ -336,6 +336,7 @@ export interface AppWindow extends slint.ComponentHandle {
   dialog_text: string;
   dialog_input: string;
   dialog_has_input: boolean;
+  dialog_stop: boolean;
   dialog_ok: string;
   dialog_danger: boolean;
   dialog_done: (id: string, ok: boolean) => void;
