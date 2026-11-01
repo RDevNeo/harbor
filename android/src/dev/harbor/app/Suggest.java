@@ -5,8 +5,9 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.TextView;
 
-/** The hub's prompt suggestion (recap.rs, PROTOCOL.md "status"), drawn like the desktop: the empty
- *  composer's grayer placeholder, which the "⇥ Use" chip puts into the text (the desktop's Tab).
+/** The hub's prompt suggestion (recap.rs, PROTOCOL.md "status"): only the "⇥ Use" chip in the empty
+ *  composer, which puts it into the text (the desktop's Tab). The suggestion itself isn't shown as a
+ *  grayed placeholder (the owner's call: the gray text was noise); the box keeps its usual hint.
  *  The session recap beside it in the same reply is the desktop's alone. */
 final class Suggest {
     private Suggest() { }
@@ -29,35 +30,16 @@ final class Suggest {
         return t;
     }
 
-    /** A tap on the grayed suggestion itself takes it, like the chip (anywhere else in the empty
-     *  box only focuses it, for typing something else). */
-    static void tapToUse(Composer comp) {
-        comp.edit.setOnTouchListener((v, e) -> {
-            if (e.getAction() != android.view.MotionEvent.ACTION_UP || comp.ghost == null || comp.edit.getText().length() > 0) return false;
-            android.text.Layout l = comp.edit.getLayout();
-            float hintW = comp.edit.getPaint().measureText(comp.ghost);
-            float x = e.getX() - comp.edit.getTotalPaddingLeft();
-            float y = e.getY() - comp.edit.getTotalPaddingTop();
-            int lines = l == null ? 1 : Math.max(1, l.getLineCount());
-            if (x >= 0 && x <= Math.min(hintW, comp.edit.getWidth()) && y >= 0 && y <= comp.edit.getLineHeight() * lines) {
-                comp.use.performClick();
-            }
-            return false;
-        });
-    }
-
     /** The hub's suggestion for this chat ("" or null: none). */
     static void set(Composer comp, String s) {
         comp.ghost = s == null || s.isEmpty() ? null : s;
         refresh(comp);
     }
 
-    /** Placeholder and chip follow the text: typing anything hides both. */
+    /** The chip follows the text: typing anything hides it. */
     static void refresh(Composer comp) {
         if (comp.use == null) return;
         boolean show = comp.ghost != null && comp.edit.getText().length() == 0;
-        comp.edit.setHint(show ? comp.ghost : comp.hint);
-        comp.edit.setHintTextColor(show ? Ui.G700 : Ui.G600);
         comp.use.setVisibility(show ? View.VISIBLE : View.GONE);
         // The text keeps clear of the chip in the corner.
         int right = show ? Ui.dp(10) + Math.max(comp.use.getWidth(), Ui.dp(64)) : Ui.dp(10);

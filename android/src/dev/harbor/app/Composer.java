@@ -116,7 +116,6 @@ final class Composer {
         box.addView(edit, new FrameLayout.LayoutParams(-1, -2));
         use = Suggest.useChip(a, this);
         box.addView(use, Ui.margins(new FrameLayout.LayoutParams(-2, Ui.dp(28), Gravity.TOP | Gravity.END), 0, 8, 6, 0));
-        Suggest.tapToUse(this);
         // Who else writes in this chat (the draft here is theirs then), as the desktop's corner.
         whoRow = Ui.row(a);
         whoRow.setGravity(Gravity.CENTER_VERTICAL);
