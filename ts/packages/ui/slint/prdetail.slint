@@ -1,0 +1,1036 @@
+import "fonts/Geist-Regular.ttf";
+import "fonts/Geist-Medium.ttf";
+import "fonts/Geist-SemiBold.ttf";
+import "fonts/GeistMono-Regular.ttf";
+import "fonts/lucide.ttf";
+import { ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, BtnSize, Card, Glyph, Separator, Spinner, TipArea, Ui, Variant } from "widgets.slint";
+import { MdBlock, MdBlockView } from "markdown.slint";
+import { DetailHeader, DetailTab, TabActKind } from "listdetail.slint";
+
+export global PrTone {
+    public pure function color(t: string) -> color {
+        return t == "green" ? Theme.green-900 : t == "red" ? Theme.red-900 : t == "amber" ? Theme.amber-900 : t == "blue" ? Theme.blue-900
+            : t == "merged" ? (Theme.dark ? #c4b5fd : #7c3aed) : t == "gray-700" ? Theme.gray-700 : t == "gray-800" ? Theme.gray-800
+            : t == "subtle" ? Theme.subtle : Theme.fg;
+    }
+}
+
+export struct PrChip {
+    name: string,
+    color: color,
+}
+
+export struct PrHeader {
+    repo: string,
+    number: int,
+    title: string,
+    author: string,
+    letter: string,
+    updated: string,
+    checkout: string,
+    open: bool,
+    draft: bool,
+    busy: bool,
+    can-project: bool,
+    merge-enabled: bool,
+    merge-tip: string,
+    checkout-tip: string,
+    ready-label: string,
+    base: string,
+    head: string,
+    conflicting: bool,
+    has-full: bool,
+    files: string,
+    adds: string,
+    dels: string,
+    error: string,
+    loading: bool,
+    checks-icon: string,
+    checks-tone: string,
+    checks-text: string,
+}
+
+export struct PrReviewer {
+    who: string,
+    letter: string,
+    icon: string,
+    tone: string,
+    tip: string,
+}
+
+export struct PrCheck {
+    icon: string,
+    tone: string,
+    name: string,
+    url: string,
+}
+
+export struct PrNote {
+    who: string,
+    letter: string,
+    what: string,
+    blocks: [MdBlock],
+}
+
+export struct PrEvent {
+    kind: string,
+    icon: string,
+    tone: string,
+    text: string,
+    mono: bool,
+    age: string,
+    note: PrNote,
+}
+
+export struct PrLine {
+    t: string,
+    path: string,
+    adds: string,
+    dels: string,
+    text: string,
+}
+
+export struct PrSummary {
+    reviewers: [PrReviewer],
+    labels: [PrChip],
+    desc-open: bool,
+    body: [MdBlock],
+    checks-open: bool,
+    checks-icon: string,
+    checks-tone: string,
+    checks-text: string,
+    checks: [PrCheck],
+    has-checks: bool,
+    comments-open: bool,
+    comments-title: string,
+    comments: [PrNote],
+}
+
+export component PrAvatar {
+    in property <string> letter;
+    in property <length> r: 8px;
+    width: r * 2;
+    height: r * 2;
+    Rectangle {
+        border-radius: root.r;
+        background: Theme.gray-300;
+    }
+    Text {
+        text: root.letter;
+        font-size: root.r * 1.1;
+        font-weight: 500;
+        color: Theme.fg;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component PrChipView {
+    in property <PrChip> chip;
+    in property <length> h: 18px;
+    in property <length> font: 12px;
+    in property <length> dot-x: 9px;
+    in property <length> text-x: 16px;
+    in property <length> extra: 22px;
+    width: label.preferred-width + extra;
+    height: h;
+    Rectangle {
+        border-radius: root.h / 2;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    Rectangle {
+        x: root.dot-x - 4px;
+        y: (root.h - 8px) / 2;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.chip.color;
+    }
+    label := Text {
+        x: root.text-x;
+        height: root.h;
+        text: root.chip.name;
+        font-size: root.font;
+        color: Theme.fg;
+        vertical-alignment: center;
+    }
+}
+
+component Seg {
+    in property <string> text;
+    in property <bool> on;
+    callback clicked;
+    height: 28px;
+    width: label.preferred-width + 24px;
+    Rectangle {
+        background: root.on ? Theme.bg100 : area.has-hover ? Theme.accent.with-alpha(0.6) : transparent;
+        border-width: root.on ? 1px : 0px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md - 1px;
+    }
+    label := Text {
+        text: root.text;
+        font-size: 14px;
+        font-weight: 500;
+        color: root.on ? Theme.fg : Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component SectionToggle {
+    in property <string> text;
+    in property <bool> open;
+    callback clicked;
+    height: 20px;
+    horizontal-stretch: 0;
+    preferred-width: row.preferred-width;
+    max-width: row.preferred-width;
+    row := HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        Text {
+            text: root.text;
+            font-size: 14px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Glyph {
+            width: 14px;
+            icon: root.open ? Icons.down : Icons.right;
+            size: 13px;
+            color: Theme.subtle;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Field {
+    in property <string> icon;
+    in property <string> name;
+    height: 28px;
+    Glyph {
+        x: 0px;
+        y: 6px;
+        width: 16px;
+        height: 16px;
+        icon: root.icon;
+        size: 16px;
+        color: Theme.subtle;
+    }
+    Text {
+        x: 24px;
+        height: 28px;
+        text: root.name;
+        font-size: 14px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    HorizontalLayout {
+        x: 120px;
+        width: parent.width - 120px;
+        spacing: 8px;
+        alignment: start;
+        @children
+    }
+}
+
+component NoteCard {
+    in property <PrNote> note;
+    callback link(string);
+    callback copy(string);
+    vertical-stretch: 0;
+    height: inner.preferred-height;
+    Card {
+        inner := VerticalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 16px;
+            padding-bottom: 10px;
+            HorizontalLayout {
+                height: 20px;
+                spacing: 8px;
+                alignment: start;
+                PrAvatar {
+                    y: 1px;
+                    letter: root.note.letter;
+                    r: 8px;
+                }
+                Text {
+                    text: root.note.who;
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.note.what;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+            }
+            if root.note.blocks.length > 0: VerticalLayout {
+                padding-top: 12px;
+                for b in root.note.blocks: MdBlockView {
+                    block: b;
+                    size: 14px;
+                    link(u) => {
+                        root.link(u);
+                    }
+                    copy(t) => {
+                        root.copy(t);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component CodeRow {
+    in property <PrLine> line;
+    height: 26px;
+    property <color> add-bg: Theme.green-700.with-alpha(0.14);
+    property <color> del-bg: Theme.red-700.with-alpha(0.14);
+    property <color> hunk-bg: Theme.blue-700.with-alpha(0.10);
+    Rectangle {
+        height: 18px;
+        background: root.line.t == "file" ? Theme.gray-100 : root.line.t == "hunk" ? root.hunk-bg : root.line.t == "add" ? root.add-bg : root.line.t == "del" ? root.del-bg : transparent;
+    }
+    if root.line.t == "file": Rectangle {
+        height: 1px;
+        background: Theme.border;
+    }
+    if root.line.t == "file": Glyph {
+        x: 16px + 4px - 7px;
+        height: 18px;
+        width: 14px;
+        icon: Icons.file;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    if root.line.t == "file": HorizontalLayout {
+        x: 16px + 16px;
+        height: 18px;
+        spacing: 10px;
+        alignment: start;
+        Text {
+            text: root.line.path;
+            font-size: 13px;
+            font-weight: 500;
+            color: Theme.fg;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.line.adds;
+            font-family: "Geist Mono";
+            font-size: 12.5px;
+            color: Theme.green-900;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.line.dels;
+            font-family: "Geist Mono";
+            font-size: 12.5px;
+            color: Theme.red-900;
+            vertical-alignment: center;
+        }
+    }
+    if root.line.t != "file": Text {
+        x: 16px;
+        height: 18px;
+        width: 14px;
+        text: root.line.t == "add" ? "+" : root.line.t == "del" ? "-" : "";
+        font-family: "Geist Mono";
+        font-size: 12.5px;
+        color: root.line.t == "add" ? Theme.green-900 : Theme.red-900;
+        vertical-alignment: center;
+    }
+    if root.line.t != "file": Text {
+        x: 16px + 14px;
+        height: 18px;
+        text: root.line.text;
+        font-family: "Geist Mono";
+        font-size: 12.5px;
+        color: root.line.t == "hunk" ? Theme.blue-900 : root.line.t == "ctx" ? Theme.subtle : Theme.fg;
+        vertical-alignment: center;
+    }
+}
+
+component Busy {
+    in property <string> text;
+    in property <length> pad: 20px;
+    height: 30px;
+    HorizontalLayout {
+        padding-left: root.pad;
+        spacing: 9px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Spinner {
+                size: 30px;
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: 14px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// prdetail.rs `pr_detail`: the header, the Summary / Timeline / Code tabs and their bodies.
+export component PrDetailPanel inherits Rectangle {
+    in property <[DetailTab]> tabs;
+    in property <int> active;
+    in property <bool> max;
+    in property <PrHeader> head;
+    in property <string> tab: "summary";
+    in property <PrSummary> summary;
+    in property <[PrEvent]> events;
+    in property <string> code-state: "loading";
+    in property <string> code-error;
+    in property <[PrLine]> lines;
+    in property <string> agent;
+    callback act(string);
+    callback tab-act(TabActKind, int);
+    callback close-page();
+    callback pick-tab(string);
+    callback toggle(string);
+    callback link(string);
+    callback copy(string);
+    callback open-check(string);
+    callback popup(string, length, length);
+    VerticalLayout {
+        Rectangle {
+            height: 10px;
+        }
+        DetailHeader {
+            tabs: root.tabs;
+            active: root.active;
+            max: root.max;
+            close-hint: "Close";
+            act(k, n) => {
+                root.tab-act(k, n);
+            }
+            close-page => {
+                root.close-page();
+            }
+        }
+        VerticalLayout {
+            vertical-stretch: 0;
+            VerticalLayout {
+            padding-left: 20px;
+            padding-right: 16px;
+            Rectangle {
+                height: 15px;
+            }
+            HorizontalLayout {
+                height: 28px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 5px;
+                    Text {
+                        text: root.head.repo.to-lowercase() + " #" + root.head.number;
+                        font-size: 14px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    Glyph {
+                        width: 14px;
+                        icon: Icons.external;
+                        size: 13px;
+                        color: Theme.subtle;
+                    }
+                    TipArea {
+                        tip: "Open on GitHub";
+                        clicked => {
+                            root.act("web");
+                        }
+                        pointer-event(e) => {
+                            if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                                root.popup("link", self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.height);
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                if root.head.open && root.head.draft: Btn {
+                    text: root.head.ready-label;
+                    icon: root.head.busy ? "" : Icons.pr-open;
+                    variant: Variant.primary;
+                    size: BtnSize.xs;
+                    enabled: !root.head.busy;
+                    tip: "Mark this draft ready for review (gh pr ready)";
+                    clicked => {
+                        root.act("ready");
+                    }
+                }
+                if root.head.open: Btn {
+                    text: "Check out";
+                    icon: Icons.branch;
+                    variant: Variant.outline;
+                    size: BtnSize.xs;
+                    enabled: root.head.can-project;
+                    tip: root.head.checkout-tip;
+                    clicked => {
+                        root.act("checkout");
+                    }
+                }
+                if root.head.open: HorizontalLayout {
+                    spacing: 2px;
+                    Btn {
+                        text: "Merge with " + root.agent;
+                        icon: Icons.sparkles;
+                        variant: Variant.primary;
+                        size: BtnSize.xs;
+                        enabled: root.head.merge-enabled;
+                        tip: root.head.merge-tip;
+                        clicked => {
+                            root.act("merge");
+                        }
+                    }
+                    more-agent := Btn {
+                        icon: Icons.down;
+                        variant: Variant.primary;
+                        size: BtnSize.xs;
+                        tip: "Pick the provider, or add instructions";
+                        clicked => {
+                            root.popup("agent", self.absolute-position.x + self.width, self.absolute-position.y + self.height);
+                        }
+                    }
+                }
+                more := Btn {
+                    icon: "⋯";
+                    variant: Variant.ghost-muted;
+                    size: BtnSize.icon-xs;
+                    tip: "More actions";
+                    clicked => {
+                        root.popup("more", self.absolute-position.x + self.width, self.absolute-position.y + self.height);
+                    }
+                }
+            }
+            Rectangle {
+                height: 15px;
+            }
+            Text {
+                vertical-stretch: 0;
+                text: root.head.title;
+                font-size: 20px;
+                font-weight: 600;
+                letter-spacing: -0.4px;
+                color: Theme.fg;
+                wrap: word-wrap;
+            }
+            Rectangle {
+                height: 23px;
+            }
+            HorizontalLayout {
+                height: 18px;
+                spacing: 8px;
+                PrAvatar {
+                    letter: root.head.letter;
+                    r: 9px;
+                }
+                Text {
+                    text: root.head.author;
+                    font-size: 14px;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.head.updated;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                copy-cmd := Text {
+                    text: root.head.checkout;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                    TipArea {
+                        tip: "Copy";
+                        clicked => {
+                            root.act("copy_checkout");
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                height: 27px;
+            }
+            if root.head.has-full: HorizontalLayout {
+                height: 16px;
+                spacing: 5px;
+                Text {
+                    text: root.head.base;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: root.head.conflicting ? Theme.amber-900 : Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if root.head.conflicting: Glyph {
+                    width: 14px;
+                    icon: Icons.alert;
+                    size: 13px;
+                    color: Theme.amber-900;
+                    TipArea {
+                        tip: "Has conflicts with the base branch";
+                    }
+                }
+                Glyph {
+                    width: 14px;
+                    icon: Icons.arrow-left;
+                    size: 12px;
+                    color: Theme.gray-700;
+                }
+                Text {
+                    text: root.head.head;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                    TipArea {
+                        tip: "Copy branch name";
+                        clicked => {
+                            root.act("copy_branch");
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Glyph {
+                    width: 14px;
+                    icon: Icons.file;
+                    size: 13px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: root.head.files;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.head.adds;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: Theme.green-900;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.head.dels;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: Theme.red-900;
+                    vertical-alignment: center;
+                }
+            }
+            if !root.head.has-full: Rectangle {
+                height: 16px;
+            }
+            if root.head.error != "": Text {
+                text: root.head.error;
+                font-family: "Geist Mono";
+                font-size: 13px;
+                color: Theme.red-900;
+                wrap: word-wrap;
+            }
+            Rectangle {
+                height: 25px;
+            }
+            }
+            Separator { }
+            Rectangle {
+                height: 17px;
+            }
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                height: 34px;
+                vertical-stretch: 0;
+                Rectangle {
+                    width: segs.preferred-width + 6px;
+                    background: Theme.gray-100;
+                    border-radius: Theme.radius-md;
+                    segs := HorizontalLayout {
+                        padding: 3px;
+                        spacing: 2px;
+                        Seg {
+                            text: "Summary";
+                            on: root.tab == "summary";
+                            clicked => {
+                                root.pick-tab("summary");
+                            }
+                        }
+                        Seg {
+                            text: "Timeline";
+                            on: root.tab == "timeline";
+                            clicked => {
+                                root.pick-tab("timeline");
+                            }
+                        }
+                        Seg {
+                            text: "Code";
+                            on: root.tab == "code";
+                            clicked => {
+                                root.pick-tab("code");
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: end;
+                    if root.head.loading: Spinner {
+                        y: 11px;
+                        size: 12px;
+                    }
+                    if !root.head.loading && root.head.has-full: Glyph {
+                        width: 14px;
+                        icon: root.head.checks-icon;
+                        size: 14px;
+                        color: PrTone.color(root.head.checks-tone);
+                    }
+                    if !root.head.loading && root.head.has-full: Text {
+                        text: root.head.checks-text;
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle {
+                height: 19px;
+            }
+            Separator { }
+        }
+        if !root.head.has-full: VerticalLayout {
+            padding-top: 24px;
+            alignment: start;
+            if root.head.loading: Busy {
+                text: "Loading pull request…";
+            }
+        }
+        if root.head.has-full && root.tab == "summary": ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 21px;
+                padding-bottom: 24px;
+                spacing: 0px;
+                Field {
+                    icon: Icons.users;
+                    name: "Reviewers";
+                    if root.summary.reviewers.length == 0: Text {
+                        text: "None";
+                        font-size: 14px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    for r in root.summary.reviewers: HorizontalLayout {
+                        spacing: 8px;
+                        VerticalLayout {
+                            alignment: center;
+                            PrAvatar {
+                                letter: r.letter;
+                                r: 8px;
+                            }
+                        }
+                        Text {
+                            text: r.who;
+                            font-size: 14px;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                        }
+                        Glyph {
+                            width: 14px;
+                            icon: r.icon;
+                            size: 13px;
+                            color: PrTone.color(r.tone);
+                            TipArea {
+                                tip: r.tip;
+                            }
+                        }
+                        Rectangle {
+                            width: 6px;
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 12px;
+                }
+                Field {
+                    icon: Icons.tag;
+                    name: "Labels";
+                    if root.summary.labels.length == 0: Text {
+                        text: "None";
+                        font-size: 14px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    for c in root.summary.labels: PrChipView {
+                        y: 3px;
+                        chip: c;
+                        h: 22px;
+                        font: 12.5px;
+                        dot-x: 11px;
+                        text-x: 20px;
+                        extra: 28px;
+                    }
+                }
+                Rectangle {
+                    height: 26px;
+                }
+                SectionToggle {
+                    text: "Description";
+                    open: root.summary.desc-open;
+                    clicked => {
+                        root.toggle("desc");
+                    }
+                }
+                if root.summary.desc-open: VerticalLayout {
+                    padding-top: 13px;
+                    if root.summary.body.length == 0: Text {
+                        text: "No description provided.";
+                        font-size: 14px;
+                        color: Theme.subtle;
+                    }
+                    for b in root.summary.body: MdBlockView {
+                        block: b;
+                        size: 14px;
+                        link(u) => {
+                            root.link(u);
+                        }
+                        copy(t) => {
+                            root.copy(t);
+                        }
+                    }
+                    Rectangle {
+                        height: 8px;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Btn {
+                            text: "Open in Web";
+                            icon: Icons.external;
+                            size: BtnSize.xs;
+                            clicked => {
+                                root.act("web");
+                            }
+                        }
+                        Btn {
+                            text: "Open in Harbor's browser";
+                            icon: Icons.globe;
+                            size: BtnSize.xs;
+                            clicked => {
+                                root.act("pane");
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 30px;
+                }
+                HorizontalLayout {
+                    height: 20px;
+                    spacing: 8px;
+                    alignment: start;
+                    SectionToggle {
+                        text: "Checks";
+                        open: root.summary.checks-open;
+                        clicked => {
+                            root.toggle("checks");
+                        }
+                    }
+                    if root.summary.has-checks: Glyph {
+                        width: 14px;
+                        icon: root.summary.checks-icon;
+                        size: 13px;
+                        color: PrTone.color(root.summary.checks-tone);
+                    }
+                    if root.summary.has-checks: Text {
+                        text: root.summary.checks-text;
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.summary.checks-open: VerticalLayout {
+                    padding-top: 4px;
+                    spacing: 8px;
+                    if !root.summary.has-checks: Text {
+                        text: "No checks reported.";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                    }
+                    for c in root.summary.checks: HorizontalLayout {
+                        height: 20px;
+                        spacing: 8px;
+                        alignment: start;
+                        Glyph {
+                            width: 14px;
+                            icon: c.icon;
+                            size: 14px;
+                            color: PrTone.color(c.tone);
+                        }
+                        Text {
+                            text: c.name;
+                            font-size: 14px;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                            if c.url != "": TipArea {
+                                tip: "Open the run";
+                                clicked => {
+                                    root.open-check(c.url);
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 34px;
+                }
+                SectionToggle {
+                    text: root.summary.comments-title;
+                    open: root.summary.comments-open;
+                    clicked => {
+                        root.toggle("comments");
+                    }
+                }
+                if root.summary.comments-open && root.summary.comments.length == 0: VerticalLayout {
+                    padding-top: 4px;
+                    Text {
+                        text: "No comments yet.";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                    }
+                }
+                if root.summary.comments-open: VerticalLayout {
+                    spacing: 8px;
+                    padding-top: 8px;
+                    for n in root.summary.comments: NoteCard {
+                        note: n;
+                        link(u) => {
+                            root.link(u);
+                        }
+                        copy(t) => {
+                            root.copy(t);
+                        }
+                    }
+                }
+            }
+        }
+        if root.head.has-full && root.tab == "timeline": ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 20px;
+                padding-bottom: 24px;
+                spacing: 8px;
+                for e in root.events: VerticalLayout {
+                    if e.kind == "note": VerticalLayout {
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        NoteCard {
+                            note: e.note;
+                            link(u) => {
+                                root.link(u);
+                            }
+                            copy(t) => {
+                                root.copy(t);
+                            }
+                        }
+                    }
+                    if e.kind == "event": HorizontalLayout {
+                        height: 32px;
+                        spacing: 8px;
+                        Glyph {
+                            width: 14px;
+                            icon: e.icon;
+                            size: 14px;
+                            color: PrTone.color(e.tone);
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: e.text;
+                            font-family: e.mono ? "Geist Mono" : "Geist";
+                            font-size: e.mono ? 13px : 14px;
+                            color: Theme.fg;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: e.age;
+                            font-size: 13px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+        if root.head.has-full && root.tab == "code" && root.code-state == "loading": VerticalLayout {
+            padding-top: 24px;
+            alignment: start;
+            Busy {
+                text: "Loading the diff…";
+            }
+        }
+        if root.head.has-full && root.tab == "code" && root.code-state == "error": VerticalLayout {
+            padding: 20px;
+            alignment: start;
+            Text {
+                text: root.code-error;
+                font-family: "Geist Mono";
+                font-size: 13px;
+                color: Theme.red-900;
+                wrap: word-wrap;
+            }
+        }
+        if root.head.has-full && root.tab == "code" && root.code-state == "empty": VerticalLayout {
+            padding: 20px;
+            alignment: start;
+            Text {
+                text: "No changes.";
+                font-size: 14px;
+                color: Theme.subtle;
+            }
+        }
+        if root.head.has-full && root.tab == "code" && root.code-state == "lines": ListView {
+            for l in root.lines: CodeRow {
+                line: l;
+            }
+        }
+    }
+}

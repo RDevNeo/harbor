@@ -1,0 +1,611 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Badge, Btn, Card, Glyph, Input, Separator, Spinner, TipArea } from "widgets.slint";
+
+export struct IntTile {
+    kind: string,
+    logo: image,
+    glyph: string,
+    glyph-color: color,
+    initial: string,
+}
+
+export struct IntAccount {
+    email: string,
+    default: bool,
+    label: string,
+}
+
+export struct IntApp {
+    id: string,
+    label: string,
+    sub: string,
+    sub-tone: int,
+    tile: IntTile,
+    busy: bool,
+    action: string,
+    action-text: string,
+    action-primary: bool,
+    badge: bool,
+    gear: bool,
+    form: string,
+    code: string,
+    has-url: bool,
+    qr: image,
+    has-qr: bool,
+    window-btn: bool,
+    builtin-hint: bool,
+    builtin: bool,
+    client-id: string,
+    client-secret: string,
+    accounts: [IntAccount],
+}
+
+export struct IntError {
+    id: string,
+    text: string,
+}
+
+export struct IntChip {
+    id: string,
+    label: string,
+    tile: IntTile,
+    found: bool,
+    off: bool,
+    tip: string,
+}
+
+export struct IntRow {
+    left: IntApp,
+    right: IntApp,
+    has-right: bool,
+}
+
+export struct IntData {
+    rows: [IntRow],
+    errors: [IntError],
+    chips: [IntChip],
+}
+
+component Tile {
+    in property <IntTile> tile;
+    in property <length> size: 36px;
+    width: size;
+    height: size;
+    Rectangle {
+        background: Theme.gray-100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-lg;
+    }
+    if root.tile.kind == "image": Image {
+        x: root.size * 0.22;
+        y: root.size * 0.22;
+        width: root.size * 0.56;
+        height: root.size * 0.56;
+        source: root.tile.logo;
+    }
+    if root.tile.kind == "glyph": Glyph {
+        x: root.size * 0.22;
+        y: root.size * 0.22;
+        width: root.size * 0.56;
+        height: root.size * 0.56;
+        icon: root.tile.glyph;
+        size: root.size * 0.56;
+        color: root.tile.glyph-color;
+    }
+    if root.tile.kind == "initial": Text {
+        text: root.tile.initial;
+        font-size: root.size * 0.45;
+        font-weight: 600;
+        color: Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component Note inherits Text {
+    font-size: 12px;
+    color: Theme.subtle;
+    wrap: word-wrap;
+}
+
+component DiscordForm {
+    callback clicked;
+    VerticalLayout {
+        padding-top: 8px;
+        spacing: 6px;
+        Note {
+            text: "Discord's rules forbid automating personal accounts, and this account can be banned for it. Harbor signs in with a real Discord page and paces joins, new DMs and uploads, but that doesn't make it allowed. Use an account you can afford to lose.";
+        }
+        HorizontalLayout {
+            alignment: start;
+            Btn {
+                text: "I understand, sign in";
+                size: sm;
+                variant: primary;
+                clicked => {
+                    root.clicked();
+                }
+            }
+        }
+    }
+}
+
+component GoogleForm {
+    in property <IntApp> app;
+    callback act(string, string, string, string);
+    pure callback valid(string, string) -> bool;
+    property <bool> ready: root.valid(client.text, secret.text);
+    VerticalLayout {
+        padding-top: 8px;
+        spacing: 4px;
+        client := Input {
+            hint: "Client ID, or the client's JSON file";
+            mono: true;
+            text: root.app.client-id;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            secret := Input {
+                hint: "Client secret";
+                mono: true;
+                text: root.app.client-secret;
+                accepted => {
+                    if root.ready {
+                        root.act("save-google", root.app.id, client.text, secret.text);
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    text: "Sign in";
+                    size: sm;
+                    variant: primary;
+                    enabled: root.ready;
+                    clicked => {
+                        root.act("save-google", root.app.id, client.text, secret.text);
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Btn {
+                    icon: Icons.external;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Create an OAuth client in Google Cloud";
+                    clicked => {
+                        root.act("google-help", root.app.id, "", "");
+                    }
+                }
+            }
+        }
+        Rectangle {
+            height: 2px;
+        }
+        Note {
+            text: (root.app.builtin ? "Sign in through your own Google Cloud project instead of Harbor's. " : "Gmail needs your own OAuth client. ") + "In Google Cloud console: create a project, enable the Gmail API, set the OAuth consent screen to In production (sign-ins in Testing end after 7 days), then Credentials \u{203a} Create OAuth client ID \u{203a} Desktop app.";
+        }
+        if root.app.builtin: HorizontalLayout {
+            alignment: start;
+            Btn {
+                text: "Use Harbor's client";
+                size: sm;
+                variant: ghost;
+                clicked => {
+                    root.act("harbors", root.app.id, "", "");
+                }
+            }
+        }
+    }
+}
+
+component AppCard {
+    in property <IntApp> app;
+    callback act(string, string, string, string);
+    pure callback valid(string, string) -> bool;
+    Card {
+        VerticalLayout {
+            padding: 12px;
+            padding-top: 13px;
+            padding-bottom: 13px;
+            HorizontalLayout {
+                height: 36px;
+                spacing: 12px;
+                Tile {
+                    tile: root.app.tile;
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text {
+                        text: root.app.label;
+                        font-size: 14px;
+                        font-weight: 600;
+                        letter-spacing: -0.28px;
+                        color: Theme.fg;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.app.sub;
+                        font-size: 13px;
+                        color: root.app.sub-tone == 1 ? Theme.blue-900 : root.app.sub-tone == 2 ? Theme.amber-900 : Theme.subtle;
+                        overflow: elide;
+                    }
+                }
+                if root.app.busy: VerticalLayout {
+                    alignment: center;
+                    Spinner { }
+                }
+                if root.app.badge: VerticalLayout {
+                    alignment: center;
+                    Badge {
+                        text: "Signed in";
+                        tone: green;
+                    }
+                }
+                if root.app.gear: VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        icon: Icons.settings;
+                        size: icon-xs;
+                        variant: ghost-muted;
+                        tip: "Use your own OAuth client";
+                        clicked => {
+                            root.act("own-client", root.app.id, "", "");
+                        }
+                    }
+                }
+                if root.app.action != "": VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        text: root.app.action-text;
+                        icon: root.app.action == "add" ? Icons.plus : "";
+                        size: sm;
+                        variant: root.app.action-primary ? primary : root.app.action == "signout" || root.app.action == "cancel" || root.app.action == "cancel-form" || root.app.action == "add" ? ghost : outline;
+                        tip: root.app.action == "add" ? "Connect another Google account" : "";
+                        clicked => {
+                            root.act(root.app.action, root.app.id, "", "");
+                        }
+                    }
+                }
+            }
+            if root.app.form == "discord-qr": VerticalLayout {
+                padding-top: 8px;
+                spacing: 6px;
+                if root.app.has-qr: Image {
+                    source: root.app.qr;
+                    width: 180px;
+                    height: 180px;
+                    image-fit: contain;
+                    image-rendering: pixelated;
+                }
+                Note {
+                    text: "In the Discord app on your phone: Settings \u{203a} Scan QR Code.";
+                }
+            }
+            if root.app.window-btn: VerticalLayout {
+                padding-top: 8px;
+                alignment: start;
+                HorizontalLayout {
+                    alignment: start;
+                    Btn {
+                        text: "Use email and password";
+                        size: sm;
+                        variant: ghost;
+                        tip: "Sign in on Discord's own page, in a window: for a password, 2FA or a captcha";
+                        clicked => {
+                            root.act("discord-window", root.app.id, "", "");
+                        }
+                    }
+                }
+            }
+            if root.app.form == "pending" && (root.app.code != "" || root.app.has-url): HorizontalLayout {
+                padding-top: 8px;
+                spacing: 8px;
+                alignment: start;
+                if root.app.code != "": Rectangle {
+                    width: code-text.preferred-width + 22px;
+                    height: 32px;
+                    background: Theme.gray-100;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    border-radius: Theme.radius-md;
+                    code-text := Text {
+                        text: root.app.code;
+                        font-size: 16px;
+                        font-family: "Geist Mono";
+                        color: Theme.fg;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.app.code != "": Btn {
+                    icon: Icons.copy;
+                    text: "Copy";
+                    size: sm;
+                    variant: ghost;
+                    clicked => {
+                        root.act("copy", root.app.id, root.app.code, "");
+                    }
+                }
+                if root.app.has-url: Btn {
+                    icon: Icons.external;
+                    text: "Open page";
+                    size: sm;
+                    variant: ghost;
+                    tip: "Open the sign-in page again";
+                    clicked => {
+                        root.act("open-page", root.app.id, "", "");
+                    }
+                }
+            }
+            if root.app.builtin-hint: VerticalLayout {
+                padding-top: 6px;
+                Note {
+                    text: "If Google says it hasn't verified this app, click Advanced, then Go to Harbor.";
+                }
+            }
+            if root.app.form == "discord": DiscordForm {
+                clicked => {
+                    root.act("discord-ok", root.app.id, "", "");
+                }
+            }
+            if root.app.form == "google": GoogleForm {
+                app: root.app;
+                act(w, i, a, b) => {
+                    root.act(w, i, a, b);
+                }
+                valid(c, k) => {
+                    return root.valid(c, k);
+                }
+            }
+            if root.app.form == "key": HorizontalLayout {
+                padding-top: 8px;
+                spacing: 8px;
+                keyfield := Input {
+                    hint: "Paste your API key";
+                    mono: true;
+                    accepted => {
+                        if self.text != "" {
+                            root.act("save-key", root.app.id, self.text, "");
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        text: "Save";
+                        size: sm;
+                        variant: primary;
+                        enabled: keyfield.text != "";
+                        clicked => {
+                            root.act("save-key", root.app.id, keyfield.text, "");
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        icon: Icons.external;
+                        size: icon-xs;
+                        variant: ghost-muted;
+                        tip: "Get a key";
+                        clicked => {
+                            root.act("get-key", root.app.id, "", "");
+                        }
+                    }
+                }
+            }
+            if root.app.form == "accounts": VerticalLayout {
+                padding-top: 6px;
+                for e in root.app.accounts: HorizontalLayout {
+                    height: 32px;
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: e.email;
+                        font-size: 13px;
+                        color: Theme.fg;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if e.label != "": VerticalLayout {
+                        alignment: center;
+                        Badge {
+                            text: e.label;
+                            tone: green;
+                        }
+                    }
+                    if e.label == "": VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            text: "Make default";
+                            size: sm;
+                            variant: ghost;
+                            tip: "Agents use the default account when they name none";
+                            clicked => {
+                                root.act("make-default", root.app.id, e.email, "");
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            text: "Sign out";
+                            size: sm;
+                            variant: ghost;
+                            tip: "Sign " + e.email + " out: agents lose its mail";
+                            clicked => {
+                                root.act("signout-account", root.app.id, e.email, "");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component Chip {
+    in property <IntChip> chip;
+    callback clicked;
+    property <bool> on: chip.found && !chip.off;
+    height: 28px;
+    width: label.preferred-width + 54px;
+    Rectangle {
+        background: area.has-hover && root.chip.found ? Theme.gray-200 : Theme.gray-100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md;
+    }
+    if root.chip.tile.kind == "image": Image {
+        x: 10px;
+        y: 7px;
+        width: 14px;
+        height: 14px;
+        source: root.chip.tile.logo;
+    }
+    if root.chip.tile.kind == "glyph": Glyph {
+        x: 10px;
+        y: 7px;
+        width: 14px;
+        height: 14px;
+        icon: root.chip.tile.glyph;
+        size: 14px;
+        color: root.chip.tile.glyph-color;
+    }
+    label := Text {
+        x: 30px;
+        text: root.chip.label;
+        font-size: 13px;
+        font-weight: 500;
+        color: root.on ? Theme.fg : Theme.subtle;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: parent.width - 12px - 3.5px;
+        y: 14px - 3.5px;
+        width: 7px;
+        height: 7px;
+        border-radius: 3.5px;
+        background: root.on ? Theme.green-700 : Theme.gray-600;
+    }
+    area := TipArea {
+        tip: root.chip.tip;
+        mouse-cursor: root.chip.found ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component IntegrationsTab {
+    in property <IntData> data;
+    callback act(string, string, string, string);
+    pure callback valid(string, string) -> bool;
+    VerticalLayout {
+        alignment: start;
+        Text {
+            text: "Agents Harbor starts get the MCP servers below, plus only the apps you sign in to here. Your own sign-ins (gh, git, Claude Code, Convex) aren't shared with them.";
+            font-size: 14px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+        VerticalLayout {
+            padding-top: 19px;
+            padding-bottom: 14px;
+            Text {
+                height: 24px;
+                text: "Apps";
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+        }
+        for row in root.data.rows: HorizontalLayout {
+            padding-bottom: 8px;
+            spacing: 8px;
+            VerticalLayout {
+                width: (root.width - 8px) / 2;
+                alignment: start;
+                AppCard {
+                    app: row.left;
+                    act(w, i, a, b) => {
+                        root.act(w, i, a, b);
+                    }
+                    valid(c, s) => {
+                        return root.valid(c, s);
+                    }
+                }
+            }
+            VerticalLayout {
+                width: (root.width - 8px) / 2;
+                alignment: start;
+                if row.has-right: AppCard {
+                    app: row.right;
+                    act(w, i, a, b) => {
+                        root.act(w, i, a, b);
+                    }
+                    valid(c, s) => {
+                        return root.valid(c, s);
+                    }
+                }
+            }
+        }
+        for e in root.data.errors: HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text {
+                text: "\u{26a0}  " + e.text;
+                font-size: 13px;
+                color: Theme.red-900;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.x;
+                size: icon-xs;
+                variant: ghost-muted;
+                clicked => {
+                    root.act("dismiss", e.id, "", "");
+                }
+            }
+        }
+        VerticalLayout {
+            padding-top: 16px;
+            padding-bottom: 16px;
+            Text {
+                height: 24px;
+                text: "MCP servers";
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            for c in root.data.chips: Chip {
+                chip: c;
+                clicked => {
+                    root.act("chip", c.id, "", "");
+                }
+            }
+        }
+        Rectangle {
+            height: 13px;
+        }
+        Text {
+            text: "Local tools on this machine, set up in your Claude Code config. Click one to turn it off or on for agents.";
+            font-size: 12px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+    }
+}

@@ -1,0 +1,40 @@
+import { Theme } from "theme.slint";
+
+// widgets.slint's SettingRow with its description always present: a wrapped description inside an `if` isn't counted in the row's height.
+export component FullRow {
+    in property <string> title;
+    in property <string> desc;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: Theme.compact ? 8px : 12px;
+        padding-bottom: Theme.compact ? 8px : 12px;
+        spacing: 12px;
+        property <length> inner: root.width - 32px;
+        VerticalLayout {
+            width: min(max(parent.inner * 0.6, parent.inner - 260px), parent.inner - 60px);
+            spacing: root.desc != "" ? 2px : 0px;
+            Text {
+                text: root.title;
+                font-size: 14px;
+                font-weight: 500;
+                color: Theme.fg;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.desc;
+                font-size: 13px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            alignment: end;
+            VerticalLayout {
+                alignment: start;
+                @children
+            }
+        }
+    }
+}

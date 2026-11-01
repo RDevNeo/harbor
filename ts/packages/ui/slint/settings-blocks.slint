@@ -1,0 +1,862 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Badge, Btn, BtnSize, Card, Glyph, Input, Separator, Toggle, Tone, Variant, Well } from "widgets.slint";
+
+export struct BlockBtn {
+    key: string,
+    label: string,
+    icon: string,
+    variant: string,
+    enabled: bool,
+    tip: string,
+    on: bool,
+}
+
+export struct BlockBadge {
+    text: string,
+    tone: string,
+}
+
+export struct BlockToggle {
+    key: string,
+    label: string,
+    on: bool,
+    tip: string,
+}
+
+export struct BlockField {
+    key: string,
+    hint: string,
+    text: string,
+    mono: bool,
+    password: bool,
+    // Characters needed before a form's button works (0: may stay empty).
+    min: int,
+    // 0 stretches.
+    width: length,
+    row: int,
+}
+
+export struct BlockEdit {
+    kind: string,
+    label: string,
+    fields: [BlockField],
+    buttons: [BlockBtn],
+    toggles: [BlockToggle],
+    text: string,
+}
+
+export struct BlockRow {
+    key: string,
+    icon: string,
+    title: string,
+    desc: string,
+    // A second small line, then a coloured one (`note-tone` as a badge's).
+    line: string,
+    note: string,
+    note-tone: string,
+    mono-title: bool,
+    badges: [BlockBadge],
+    side: [BlockBadge],
+    buttons: [BlockBtn],
+    control: string,
+    on: bool,
+    text: string,
+    hint: string,
+    mono: bool,
+    width: length,
+    edit: [BlockEdit],
+    well: bool,
+    lead: length,
+    mark: string,
+}
+
+export struct Block {
+    kind: string,
+    key: string,
+    before: length,
+    title: string,
+    desc: string,
+    text: string,
+    size: int,
+    tone: string,
+    badge: BlockBadge,
+    rows: [BlockRow],
+    empty: string,
+    buttons: [BlockBtn],
+    fields: [BlockField],
+    submit: BlockBtn,
+    cancel: BlockBtn,
+    frame: string,
+    chips-title: string,
+    chips: [BlockBtn],
+    image: image,
+    height: length,
+}
+
+global Conv {
+    public pure function tone(s: string) -> Tone {
+        if s == "green" {
+            return Tone.green;
+        }
+        if s == "amber" {
+            return Tone.amber;
+        }
+        if s == "red" {
+            return Tone.red;
+        }
+        return Tone.gray;
+    }
+    public pure function ink(s: string) -> color {
+        if s == "green" {
+            return Theme.green-900;
+        }
+        if s == "amber" {
+            return Theme.amber-900;
+        }
+        if s == "red" {
+            return Theme.red-900;
+        }
+        return Theme.subtle;
+    }
+    public pure function variant(s: string) -> Variant {
+        if s == "primary" {
+            return Variant.primary;
+        }
+        if s == "ghost" {
+            return Variant.ghost;
+        }
+        if s == "destructive" {
+            return Variant.ghost-destructive;
+        }
+        if s == "muted" {
+            return Variant.ghost-muted;
+        }
+        return Variant.outline;
+    }
+}
+
+component BBtn inherits Btn {
+    in property <BlockBtn> b;
+    text: b.label;
+    icon: b.icon;
+    variant: Conv.variant(b.variant);
+    size: b.label == "" ? BtnSize.icon-xs : BtnSize.sm;
+    enabled: b.enabled;
+    pressed: b.on;
+    tip: b.tip;
+}
+
+component BBadges inherits HorizontalLayout {
+    in property <[BlockBadge]> list;
+    spacing: 6px;
+    for g in root.list: VerticalLayout {
+        alignment: center;
+        Badge {
+            text: g.text;
+            tone: Conv.tone(g.tone);
+        }
+    }
+}
+
+// A card's row in the settings layout (widgets.slint's SettingRow, with a lead icon and any controls).
+component SettingLine inherits Rectangle {
+    in property <BlockRow> r;
+    callback pressed(string);
+    callback toggled(string, bool);
+    callback edited(string, string);
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: Theme.compact ? 8px : 12px;
+        padding-bottom: Theme.compact ? 8px : 12px;
+        spacing: 12px;
+        property <length> inner: root.width - 32px;
+        VerticalLayout {
+            alignment: start;
+            width: min(max(parent.inner * 0.6, parent.inner - 260px), parent.inner - 60px);
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                if root.r.icon != "": Glyph {
+                    icon: root.r.icon;
+                    size: 14px;
+                    color: Theme.fg;
+                }
+                Text {
+                    text: root.r.title;
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+            if root.r.desc != "": Text {
+                text: root.r.desc;
+                font-size: 13px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            alignment: end;
+            VerticalLayout {
+                alignment: start;
+                HorizontalLayout {
+                    spacing: 6px;
+                    BBadges {
+                        list: root.r.badges;
+                    }
+                    for b in root.r.buttons: BBtn {
+                        b: b;
+                        clicked => {
+                            root.pressed(b.key);
+                        }
+                    }
+                    if root.r.control == "toggle": Toggle {
+                        on: root.r.on;
+                        toggled(v) => {
+                            root.toggled(root.r.key, v);
+                        }
+                    }
+                    if root.r.control == "input": Input {
+                        width: root.r.width;
+                        mono: root.r.mono;
+                        hint: root.r.hint;
+                        text: root.r.text;
+                        edited(t) => {
+                            root.edited(root.r.key, t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component EditLine inherits HorizontalLayout {
+    in property <BlockEdit> e;
+    callback pressed(string);
+    callback toggled(string, bool);
+    callback edited(string, string);
+    callback submitted(string, string, string, string) -> string;
+    property <string> typed;
+    property <string> err;
+    spacing: 8px;
+    alignment: start;
+    if root.e.kind == "replace": VerticalLayout {
+        alignment: start;
+        horizontal-stretch: 1;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 8px;
+            Input {
+                horizontal-stretch: 1;
+                password: root.e.fields[0].password;
+                hint: root.e.fields[0].hint;
+                edited(t) => {
+                    root.typed = t;
+                }
+                accepted(t) => {
+                    if root.typed.character-count >= root.e.fields[0].min {
+                        root.err = root.submitted(root.e.buttons[0].key, root.typed, "", "");
+                    }
+                }
+            }
+            BBtn {
+                b: root.e.buttons[0];
+                enabled: root.typed.character-count >= root.e.fields[0].min;
+                clicked => {
+                    root.err = root.submitted(root.e.buttons[0].key, root.typed, "", "");
+                }
+            }
+            BBtn {
+                b: root.e.buttons[1];
+                clicked => {
+                    root.pressed(root.e.buttons[1].key);
+                }
+            }
+        }
+        if root.err != "": Text {
+            text: root.err;
+            font-size: 13px;
+            color: Theme.red-900;
+            wrap: word-wrap;
+        }
+    }
+    if root.e.kind == "warn": HorizontalLayout {
+        spacing: 6px;
+        alignment: start;
+        Glyph {
+            icon: Icons.alert;
+            size: 12px;
+            color: Theme.amber-900;
+        }
+        Text {
+            text: root.e.text;
+            font-size: 12px;
+            color: Theme.amber-900;
+            wrap: word-wrap;
+        }
+    }
+    if root.e.kind != "warn" && root.e.label != "": Text {
+        width: 100px;
+        text: root.e.label;
+        font-size: 13px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    if root.e.kind == "field": HorizontalLayout {
+        horizontal-stretch: 1;
+        spacing: 8px;
+        for f in root.e.fields: Input {
+            horizontal-stretch: 0;
+            preferred-width: f.width > 0 ? f.width : 320px;
+            mono: f.mono;
+            hint: f.hint;
+            text: f.text;
+            edited(t) => {
+                root.edited(f.key, t);
+            }
+        }
+    }
+    if root.e.kind == "icons" || root.e.kind == "buttons": HorizontalLayout {
+        spacing: 2px;
+        alignment: start;
+        for b in root.e.buttons: BBtn {
+            b: b;
+            clicked => {
+                root.pressed(b.key);
+            }
+        }
+    }
+    if root.e.kind == "toggles": HorizontalLayout {
+        spacing: 12px;
+        alignment: start;
+        for t in root.e.toggles: HorizontalLayout {
+            spacing: 8px;
+            Toggle {
+                y: 0px;
+                on: t.on;
+                toggled(v) => {
+                    root.toggled(t.key, v);
+                }
+            }
+            Text {
+                text: t.label;
+                font-size: 13px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component ListLine inherits VerticalLayout {
+    alignment: start;
+    in property <BlockRow> r;
+    callback pressed(string);
+    callback toggled(string, bool);
+    callback edited(string, string);
+    callback submitted(string, string, string, string) -> string;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 12px;
+    padding-bottom: 9px;
+    spacing: 10px;
+    HorizontalLayout {
+        spacing: 8px;
+        if root.r.mark != "": VerticalLayout {
+            alignment: start;
+            Glyph {
+                width: 32px;
+                height: 32px;
+                icon: root.r.mark;
+                size: 22px;
+                color: Theme.fg;
+            }
+        }
+        VerticalLayout {
+            alignment: start;
+            horizontal-stretch: 1;
+            spacing: root.r.lead > 24px ? 8px : root.r.lead > 0px ? 1px : 3px;
+            HorizontalLayout {
+                min-height: max(root.r.lead, 18px);
+                spacing: 6px;
+                alignment: start;
+                if root.r.icon != "": Glyph {
+                    icon: root.r.icon;
+                    size: 14px;
+                    color: Theme.fg;
+                }
+                Text {
+                    text: root.r.title;
+                    font-size: root.r.mono-title ? 13px : 14px;
+                    font-family: root.r.mono-title ? "Geist Mono" : "Geist";
+                    font-weight: root.r.mono-title ? 400 : 500;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                BBadges {
+                    list: root.r.badges;
+                }
+            }
+            if root.r.desc != "": Text {
+                text: root.r.desc;
+                font-size: root.r.mono-title ? 12px : 13px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+            if root.r.line != "": Text {
+                text: root.r.line;
+                font-size: 12px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+            if root.r.note != "": Text {
+                text: root.r.note;
+                font-size: 12px;
+                color: Conv.ink(root.r.note-tone);
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                spacing: 6px;
+                BBadges {
+                    list: root.r.side;
+                }
+                for b in root.r.buttons: BBtn {
+                    b: b;
+                    clicked => {
+                        root.pressed(b.key);
+                    }
+                }
+            }
+        }
+    }
+    if root.r.edit.length > 0 && root.r.well: Well {
+        VerticalLayout {
+            alignment: start;
+            padding: 12px;
+            spacing: 8px;
+            for e in root.r.edit: EditLine {
+                e: e;
+                pressed(k) => {
+                    root.pressed(k);
+                }
+                toggled(k, v) => {
+                    root.toggled(k, v);
+                }
+                edited(k, t) => {
+                    root.edited(k, t);
+                }
+                submitted(k, a, b, c) => {
+                    return root.submitted(k, a, b, c);
+                }
+            }
+        }
+    }
+    if root.r.edit.length > 0 && !root.r.well: VerticalLayout {
+        alignment: start;
+        spacing: 8px;
+        for e in root.r.edit: EditLine {
+            e: e;
+            pressed(k) => {
+                root.pressed(k);
+            }
+            toggled(k, v) => {
+                root.toggled(k, v);
+            }
+            edited(k, t) => {
+                root.edited(k, t);
+            }
+            submitted(k, a, b, c) => {
+                return root.submitted(k, a, b, c);
+            }
+        }
+    }
+}
+
+component FormButtons inherits HorizontalLayout {
+    in property <Block> b;
+    in property <bool> ready;
+    in property <length> gap: 8px;
+    callback go;
+    callback pressed(string);
+    padding-left: root.gap;
+    spacing: 8px;
+    BBtn {
+        b: root.b.submit;
+        enabled: root.ready && root.b.submit.enabled;
+        clicked => {
+            root.go();
+        }
+    }
+    if root.b.cancel.label != "": BBtn {
+        b: root.b.cancel;
+        clicked => {
+            root.pressed(root.b.cancel.key);
+        }
+    }
+}
+
+component FormBlock inherits VerticalLayout {
+    alignment: start;
+    in property <Block> b;
+    callback pressed(string);
+    callback submitted(string, string, string, string) -> string;
+    property <[string]> vals: ["", "", ""];
+    property <string> err;
+    property <bool> two: root.b.fields[0].row == 1 || root.b.fields[1].row == 1 || root.b.fields[2].row == 1;
+    property <bool> ready: (root.b.fields.length < 1 || root.vals[0].character-count >= root.b.fields[0].min)
+        && (root.b.fields.length < 2 || root.vals[1].character-count >= root.b.fields[1].min)
+        && (root.b.fields.length < 3 || root.vals[2].character-count >= root.b.fields[2].min);
+    function go() {
+        if root.ready && root.b.submit.enabled {
+            root.err = root.submitted(root.b.key, root.vals[0], root.vals[1], root.vals[2]);
+        }
+    }
+    spacing: 12px;
+    HorizontalLayout {
+        alignment: start;
+        for f[i] in root.b.fields: HorizontalLayout {
+            horizontal-stretch: f.row == 0 && f.width == 0 ? 1 : 0;
+            max-width: f.row == 0 && f.width > 0 ? f.width + (i > 0 ? 4px : 0px) + (i + 1 < root.b.fields.length && root.b.fields[i + 1].row == 0 ? 4px : 0px) : 100000px;
+            preferred-width: f.row == 0 ? (f.width > 0 ? self.max-width : 100px) : 0px;
+            padding-left: f.row == 0 && i > 0 ? 4px : 0px;
+            padding-right: f.row == 0 && root.b.fields[i + 1].row == 0 && i + 1 < root.b.fields.length ? 4px : 0px;
+            if f.row == 0: Input {
+                mono: f.mono;
+                password: f.password;
+                hint: f.hint;
+                text: f.text;
+                edited(t) => {
+                    root.vals[i] = t;
+                }
+                accepted(t) => {
+                    root.go();
+                }
+            }
+        }
+        if !root.two: FormButtons {
+            b: root.b;
+            gap: 8px;
+            ready: root.ready;
+            go => {
+                root.go();
+            }
+            pressed(k) => {
+                root.pressed(k);
+            }
+        }
+    }
+    if root.two: HorizontalLayout {
+        alignment: start;
+        for f[i] in root.b.fields: HorizontalLayout {
+            horizontal-stretch: f.row == 1 && f.width == 0 ? 1 : 0;
+            max-width: f.row == 1 && f.width > 0 ? f.width + (i > 0 && root.b.fields[i - 1].row == 1 ? 4px : 0px) + (i + 1 < root.b.fields.length && root.b.fields[i + 1].row == 1 ? 4px : 0px) : 100000px;
+            preferred-width: f.row == 1 ? (f.width > 0 ? self.max-width : 100px) : 0px;
+            padding-left: f.row == 1 && i > 0 && root.b.fields[i - 1].row == 1 ? 4px : 0px;
+            padding-right: f.row == 1 && i + 1 < root.b.fields.length && root.b.fields[i + 1].row == 1 ? 4px : 0px;
+            if f.row == 1: Input {
+                mono: f.mono;
+                password: f.password;
+                hint: f.hint;
+                text: f.text;
+                edited(t) => {
+                    root.vals[i] = t;
+                }
+                accepted(t) => {
+                    root.go();
+                }
+            }
+        }
+        FormButtons {
+            b: root.b;
+            gap: 12px;
+            ready: root.ready;
+            go => {
+                root.go();
+            }
+            pressed(k) => {
+                root.pressed(k);
+            }
+        }
+    }
+    if root.err != "": Text {
+        text: root.err;
+        font-size: 13px;
+        color: Theme.red-900;
+        wrap: word-wrap;
+    }
+}
+
+component BlockView inherits VerticalLayout {
+    alignment: start;
+    in property <Block> b;
+    in property <int> i;
+    callback pressed(string);
+    callback toggled(string, bool);
+    callback edited(string, string);
+    callback submitted(string, string, string, string) -> string;
+    padding-top: root.b.before;
+    if root.b.kind == "title": VerticalLayout {
+        alignment: start;
+        padding-top: root.b.height;
+        padding-bottom: 15px;
+        Text {
+            text: root.b.title;
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: -0.32px;
+            color: Theme.fg;
+        }
+    }
+    if root.b.kind == "gap": Rectangle {
+        height: root.b.height;
+    }
+    if root.b.kind == "copy": Text {
+        text: root.b.text;
+        font-size: root.b.size * 1px;
+        font-family: root.b.title == "mono" ? "Geist Mono" : "Geist";
+        color: Conv.ink(root.b.tone);
+        wrap: word-wrap;
+    }
+    if root.b.kind == "status": HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        if root.b.badge.text != "": VerticalLayout {
+            alignment: start;
+            Badge {
+                text: root.b.badge.text;
+                tone: Conv.tone(root.b.badge.tone);
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.b.text;
+            font-size: root.b.size * 1px;
+            font-family: root.b.title == "mono" ? "Geist Mono" : "Geist";
+            color: root.b.title == "mono" ? Theme.fg : Theme.subtle;
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+        for c in root.b.buttons: VerticalLayout {
+            alignment: start;
+            BBtn {
+                b: c;
+                clicked => {
+                    root.pressed(c.key);
+                }
+            }
+        }
+    }
+    if root.b.kind == "buttons": HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        for c in root.b.buttons: BBtn {
+            b: c;
+            clicked => {
+                root.pressed(c.key);
+            }
+        }
+        if root.b.text != "": Text {
+            text: root.b.text;
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+    if root.b.kind == "rows": Card {
+        VerticalLayout {
+            alignment: start;
+            if root.b.rows.length == 0: VerticalLayout {
+                alignment: start;
+                padding: 16px;
+                Text {
+                    text: root.b.empty;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    wrap: word-wrap;
+                }
+            }
+            for r[n] in root.b.rows: VerticalLayout {
+                alignment: start;
+                if n > 0: Separator { }
+                SettingLine {
+                    r: r;
+                    pressed(k) => {
+                        root.pressed(k);
+                    }
+                    toggled(k, v) => {
+                        root.toggled(k, v);
+                    }
+                    edited(k, t) => {
+                        root.edited(k, t);
+                    }
+                }
+            }
+        }
+    }
+    if root.b.kind == "list": Card {
+        VerticalLayout {
+            alignment: start;
+            if root.b.rows.length == 0: VerticalLayout {
+                alignment: start;
+                padding: 16px;
+                Text {
+                    text: root.b.empty;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    wrap: word-wrap;
+                }
+            }
+            for r[n] in root.b.rows: VerticalLayout {
+                alignment: start;
+                if n > 0: VerticalLayout {
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    Separator { }
+                }
+                ListLine {
+                    r: r;
+                    submitted(k, a, b, c) => {
+                        return root.submitted(k, a, b, c);
+                    }
+                    pressed(k) => {
+                        root.pressed(k);
+                    }
+                    toggled(k, v) => {
+                        root.toggled(k, v);
+                    }
+                    edited(k, t) => {
+                        root.edited(k, t);
+                    }
+                }
+            }
+        }
+    }
+    if root.b.kind == "form" && root.b.frame == "none": FormBlock {
+        b: root.b;
+        pressed(k) => {
+            root.pressed(k);
+        }
+        submitted(k, a, c, d) => {
+            return root.submitted(k, a, c, d);
+        }
+    }
+    if root.b.kind == "form" && root.b.frame != "none": Card {
+        VerticalLayout {
+            alignment: start;
+            if root.b.title != "": SettingLine {
+                r: { title: root.b.title, desc: root.b.desc };
+            }
+            if root.b.title != "": Separator { }
+            VerticalLayout {
+                alignment: start;
+                padding: root.b.title != "" ? 0px : 16px;
+                padding-left: root.b.title != "" ? 12px : 16px;
+                FormBlock {
+                    b: root.b;
+                    pressed(k) => {
+                        root.pressed(k);
+                    }
+                    submitted(k, a, c, d) => {
+                        return root.submitted(k, a, c, d);
+                    }
+                }
+                if root.b.chips.length > 0: VerticalLayout {
+                    alignment: start;
+                    padding-top: 10px;
+                    spacing: 4px;
+                    Text {
+                        text: root.b.chips-title;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        for c in root.b.chips: BBtn {
+                            b: c;
+                            clicked => {
+                                root.pressed(c.key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.b.kind == "qr": Card {
+        HorizontalLayout {
+            padding: 16px;
+            spacing: 12px;
+            alignment: start;
+            Rectangle {
+                width: 160px;
+                height: 160px;
+                background: white;
+                border-radius: Theme.radius-md;
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.b.image;
+                    image-rendering: pixelated;
+                }
+            }
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.b.text;
+                    font-size: 12px;
+                    font-family: "Geist Mono";
+                    color: Theme.fg;
+                    overflow: elide;
+                    vertical-alignment: top;
+                }
+                for c in root.b.buttons: VerticalLayout {
+                    alignment: start;
+                    BBtn {
+                        b: c;
+                        clicked => {
+                            root.pressed(c.key);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component BlocksTab inherits VerticalLayout {
+    alignment: start;
+    in property <[Block]> blocks;
+    callback pressed(string);
+    callback toggled(string, bool);
+    callback edited(string, string);
+    callback submitted(string, string, string, string) -> string;
+    for b[i] in root.blocks: BlockView {
+        b: b;
+        i: i;
+        pressed(k) => {
+            root.pressed(k);
+        }
+        toggled(k, v) => {
+            root.toggled(k, v);
+        }
+        edited(k, t) => {
+            root.edited(k, t);
+        }
+        submitted(k, a, c, d) => {
+            return root.submitted(k, a, c, d);
+        }
+    }
+}

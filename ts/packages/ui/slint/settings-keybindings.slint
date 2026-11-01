@@ -1,0 +1,295 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Card, Glyph, KbdCombo, SearchField, Separator, TipArea } from "widgets.slint";
+
+export struct KeyRow {
+    id: string,
+    label: string,
+    when: string,
+    caps: [string],
+    custom: bool,
+    fixed: bool,
+    capturing: bool,
+    note: string,
+    note-kind: string,
+    back-tip: string,
+}
+
+export struct KeyGroup {
+    title: string,
+    rows: [KeyRow],
+}
+
+export struct KeysView {
+    search: string,
+    groups: [KeyGroup],
+    capture: string,
+    empty: string,
+    has-custom: bool,
+    footer: string,
+}
+
+component KeyLine inherits Rectangle {
+    in property <KeyRow> data;
+    callback act(string, string);
+    height: left.preferred-height + 20px;
+    left := VerticalLayout {
+        x: 16px;
+        y: 10px;
+        width: root.width - 32px - 240px;
+        alignment: start;
+        spacing: 2px;
+        Text {
+            min-height: 20px;
+            text: root.data.label;
+            font-size: 14px;
+            vertical-alignment: center;
+            color: Theme.fg;
+            wrap: word-wrap;
+        }
+        if root.data.when != "": Text {
+            text: "when " + root.data.when;
+            font-family: "Geist Mono";
+            font-size: 12px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+        if root.data.note != "": HorizontalLayout {
+            spacing: 6px;
+            if root.data.note-kind == "conflict": Glyph {
+                width: 12px;
+                icon: Icons.alert;
+                size: 12px;
+                color: Theme.amber-900;
+                vertical-alignment: top;
+            }
+            Text {
+                text: root.data.note;
+                font-size: 12px;
+                color: root.data.note-kind == "hint" ? Theme.blue-900 : Theme.amber-900;
+                wrap: word-wrap;
+            }
+        }
+    }
+    HorizontalLayout {
+        x: 16px;
+        y: (root.height - 28px) / 2;
+        width: root.width - 32px;
+        height: 28px;
+        alignment: end;
+        spacing: 6px;
+        if root.data.capturing: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 112px;
+                height: 24px;
+                background: Theme.blue-100;
+                border-width: 1px;
+                border-color: Theme.blue-700;
+                border-radius: Theme.radius-md;
+                Text {
+                    text: "Press keys…";
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: Theme.blue-900;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.act("cancel", root.data.id);
+                    }
+                }
+            }
+        }
+        if !root.data.capturing && root.data.custom: VerticalLayout {
+            alignment: center;
+            Btn {
+                icon: Icons.rotate-cw;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: root.data.back-tip;
+                clicked => {
+                    root.act("reset", root.data.id);
+                }
+            }
+        }
+        if !root.data.capturing: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: caps.preferred-width;
+                height: 22px;
+                if !root.data.fixed && change.has-hover: Rectangle {
+                    x: -3px;
+                    y: -3px;
+                    width: parent.width + 6px;
+                    height: parent.height + 6px;
+                    border-width: 1px;
+                    border-color: Theme.gray-600;
+                    border-radius: 6px;
+                }
+                caps := KbdCombo {
+                    caps: root.data.caps;
+                }
+                change := TipArea {
+                    enabled: !root.data.fixed;
+                    tip: root.data.fixed ? "" : "Change";
+                    clicked => {
+                        root.act("capture", root.data.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component KeybindingsTab inherits VerticalLayout {
+    in property <KeysView> view;
+    callback act(string, string);
+    // The name of the key (a stored name or the character typed), then Ctrl, Shift and Alt.
+    callback key(string, bool, bool, bool);
+    alignment: start;
+    property <bool> capturing: root.view.capture != "";
+    pure function key-name(t: string) -> string {
+        if t == Key.Escape {
+            return "Escape";
+        } else if t == Key.Backspace {
+            return "Backspace";
+        } else if t == Key.Return {
+            return "Enter";
+        } else if t == Key.Tab {
+            return "Tab";
+        } else if t == Key.Delete {
+            return "Delete";
+        } else if t == Key.UpArrow {
+            return "Up";
+        } else if t == Key.DownArrow {
+            return "Down";
+        } else if t == Key.LeftArrow {
+            return "Left";
+        } else if t == Key.RightArrow {
+            return "Right";
+        } else if t == Key.Home {
+            return "Home";
+        } else if t == Key.End {
+            return "End";
+        } else if t == Key.PageUp {
+            return "PageUp";
+        } else if t == Key.PageDown {
+            return "PageDown";
+        } else if t == Key.Insert {
+            return "Insert";
+        } else if t == Key.F1 {
+            return "F1";
+        } else if t == Key.F2 {
+            return "F2";
+        } else if t == Key.F3 {
+            return "F3";
+        } else if t == Key.F4 {
+            return "F4";
+        } else if t == Key.F5 {
+            return "F5";
+        } else if t == Key.F6 {
+            return "F6";
+        } else if t == Key.F7 {
+            return "F7";
+        } else if t == Key.F8 {
+            return "F8";
+        } else if t == Key.F9 {
+            return "F9";
+        } else if t == Key.F10 {
+            return "F10";
+        } else if t == Key.F11 {
+            return "F11";
+        } else if t == Key.F12 {
+            return "F12";
+        }
+        return t;
+    }
+    keys := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(e) => {
+            if !root.capturing {
+                return reject;
+            }
+            root.key(root.key-name(e.text), e.modifiers.control, e.modifiers.shift, e.modifiers.alt);
+            return accept;
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 34px;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius-md;
+            SearchField {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                hint: "Search shortcuts";
+                text: root.view.search;
+                edited(t) => {
+                    root.act("search", t);
+                }
+            }
+        }
+        Btn {
+            text: "Reset all";
+            size: sm;
+            enabled: root.view.has-custom;
+            clicked => {
+                root.act("reset-all", "");
+            }
+        }
+    }
+    for g in root.view.groups: VerticalLayout {
+        padding-top: 13px;
+        VerticalLayout {
+            padding-top: 17px;
+            padding-bottom: 15px;
+            Text {
+                text: g.title;
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+            }
+        }
+        Card {
+            VerticalLayout {
+                for r[i] in g.rows: VerticalLayout {
+                    if i > 0: Separator { }
+                    KeyLine {
+                        data: r;
+                        act(w, id) => {
+                            if w == "capture" {
+                                keys.focus();
+                            }
+                            root.act(w, id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.view.empty != "": VerticalLayout {
+        padding-top: 16px;
+        Text {
+            text: root.view.empty;
+            font-size: 14px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+    }
+    VerticalLayout {
+        padding-top: 10px;
+        Text {
+            text: root.view.footer;
+            font-size: 12px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+    }
+}

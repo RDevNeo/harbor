@@ -120,3 +120,6 @@ export function matchIndices(hay: string, q: string): number[] {
 export function cmpStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
+
+/** `v` if it is one of `of`, typed as that member. */
+export const pick = <T extends string>(v: string, of: readonly T[]): T | undefined => of.find((x) => x === v);

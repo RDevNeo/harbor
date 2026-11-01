@@ -1,0 +1,665 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, BtnSize, Glyph, MenuItem, PopoverFrame, Separator, Spinner, TipArea, Variant } from "widgets.slint";
+import { MdBlock, MdBlockView } from "markdown.slint";
+
+export struct IssueChip {
+    name: string,
+    color: color,
+}
+
+export struct IssueAgent {
+    id: string,
+    label: string,
+    current: bool,
+}
+
+export struct IssuePerson {
+    login: string,
+    letter: string,
+    avatar: image,
+    has-avatar: bool,
+}
+
+export struct IssueNote {
+    author: string,
+    letter: string,
+    what: string,
+    blocks: [MdBlock],
+    avatar: image,
+    has-avatar: bool,
+}
+
+export struct IssueDetailData {
+    repo-line: string,
+    title: string,
+    state: string,
+    state-text: string,
+    author: IssuePerson,
+    opened: string,
+    updated: string,
+    error: string,
+    loading: bool,
+    has-full: bool,
+    assignees: [IssuePerson],
+    labels: [IssueChip],
+    milestone: string,
+    has-milestone: bool,
+    body: [MdBlock],
+    desc-open: bool,
+    comments-open: bool,
+    comments-title: string,
+    comments: [IssueNote],
+    busy: bool,
+    is-open: bool,
+    act-text: string,
+    act-tip: string,
+    fix-label: string,
+    fix-enabled: bool,
+    fix-tip: string,
+}
+
+// prs.rs `paint_avatar`
+export component IssueAvatar {
+    in property <length> d: 14px;
+    in property <string> letter;
+    in property <image> img;
+    in property <bool> has;
+    width: d;
+    height: d;
+    Rectangle {
+        border-radius: root.d / 2;
+        clip: true;
+        background: root.has ? transparent : Theme.gray-300;
+        if root.has: Image {
+            source: root.img;
+            width: root.d;
+            height: root.d;
+        }
+        if !root.has: Text {
+            text: root.letter;
+            font-size: root.d / 2 * 1.1;
+            font-weight: 500;
+            color: Theme.fg;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// prdetail.rs `chip`
+component DetailChip {
+    in property <string> text;
+    in property <color> dot;
+    in property <bool> has-dot;
+    min-width: label.preferred-width + 16px + (has-dot ? 12px : 0px);
+    max-width: label.preferred-width + 16px + (has-dot ? 12px : 0px);
+    height: 22px;
+    Rectangle {
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 11px;
+    }
+    if root.has-dot: Rectangle {
+        x: 11px - 4px;
+        y: 7px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.dot;
+    }
+    label := Text {
+        x: 8px + (root.has-dot ? 12px : 0px);
+        height: 22px;
+        text: root.text;
+        font-size: 12.5px;
+        color: Theme.fg;
+        vertical-alignment: center;
+    }
+}
+
+// prdetail.rs `field`
+component Field {
+    in property <string> icon;
+    in property <string> name;
+    height: 32px;
+    Glyph {
+        x: 0px;
+        width: 16px;
+        icon: root.icon;
+        size: 16px;
+        color: Theme.subtle;
+    }
+    Text {
+        x: 24px;
+        height: 32px;
+        text: root.name;
+        font-size: 14px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    HorizontalLayout {
+        x: 128px;
+        width: root.width - 128px;
+        spacing: 8px;
+        alignment: start;
+        @children
+    }
+}
+
+// prdetail.rs `section_toggle`
+component SectionToggle {
+    in property <string> text;
+    in property <bool> open;
+    callback toggled();
+    height: 20px;
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        Text {
+            text: root.text;
+            font-size: 14px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Glyph {
+            width: 13px;
+            icon: root.open ? Icons.down : Icons.right;
+            size: 13px;
+            color: Theme.subtle;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+export component IssueDetail inherits Rectangle {
+    in property <IssueDetailData> data;
+    in property <[IssueAgent]> agents;
+    callback act(string);
+    callback link(string);
+    callback copy-text(string);
+    property <length> head-h: header.preferred-height;
+    header := VerticalLayout {
+        x: 20px;
+        y: 0px;
+        width: root.width - 36px;
+        padding-top: 14px;
+        spacing: 0px;
+        alignment: start;
+        Rectangle {
+            height: 28px;
+            repo := TipArea {
+                x: 0px;
+                width: repo-text.preferred-width + 8px + 14px;
+                tip: "Open on GitHub";
+                clicked => {
+                    root.act("open-web");
+                }
+            }
+            repo-text := Text {
+                x: 0px;
+                height: 28px;
+                text: root.data.repo-line;
+                font-size: 14px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            Glyph {
+                x: repo-text.preferred-width + 8px;
+                y: 7px;
+                width: 14px;
+                height: 14px;
+                icon: Icons.external;
+                size: 14px;
+                color: Theme.subtle;
+            }
+            more := PopupWindow {
+                    x: root.width - 36px - 200px;
+                    y: 32px;
+                    width: 200px;
+                    PopoverFrame {
+                        VerticalLayout {
+                            padding: 4px;
+                            MenuItem {
+                                icon: Icons.refresh;
+                                label: "Refresh";
+                                clicked => {
+                                    root.act("refresh");
+                                }
+                            }
+                            Rectangle {
+                                height: 9px;
+                                Separator {
+                                    y: 4px;
+                                    x: -4px;
+                                    width: parent.width + 8px;
+                                }
+                            }
+                            MenuItem {
+                                icon: Icons.globe;
+                                label: "Open in the side browser";
+                                clicked => {
+                                    root.act("open-pane");
+                                }
+                            }
+                            MenuItem {
+                                icon: Icons.external;
+                                label: "Open on GitHub";
+                                clicked => {
+                                    root.act("open-web");
+                                }
+                            }
+                            MenuItem {
+                                icon: Icons.link;
+                                label: "Copy link";
+                                clicked => {
+                                    root.act("copy-link");
+                                }
+                            }
+                            MenuItem {
+                                icon: Icons.copy;
+                                label: "Copy issue number";
+                                clicked => {
+                                    root.act("copy-number");
+                                }
+                            }
+                        }
+                    }
+                }
+            agent-menu := PopupWindow {
+                            x: root.width - 36px - 250px;
+                            y: 32px;
+                            width: 200px;
+                            PopoverFrame {
+                                VerticalLayout {
+                                    padding: 4px;
+                                    for a in root.agents: MenuItem {
+                                        icon: a.current ? Icons.check : " ";
+                                        label: a.label;
+                                        clicked => {
+                                            root.act("agent:" + a.id);
+                                        }
+                                    }
+                                    Rectangle {
+                                        height: 9px;
+                                        Separator {
+                                            y: 4px;
+                                            x: -4px;
+                                            width: parent.width + 8px;
+                                        }
+                                    }
+                                    MenuItem {
+                                        icon: Icons.pen-line;
+                                        label: "Fix with instructions…";
+                                        enabled: root.data.fix-enabled;
+                                        clicked => {
+                                            root.act("fix-ask");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 6px;
+                if root.data.is-open: HorizontalLayout {
+                    spacing: 2px;
+                    Btn {
+                        icon: Icons.sparkles;
+                        text: root.data.fix-label;
+                        variant: Variant.primary;
+                        size: BtnSize.xs;
+                        enabled: root.data.fix-enabled;
+                        tip: root.data.fix-tip;
+                        clicked => {
+                            root.act("fix");
+                        }
+                    }
+                    Btn {
+                        icon: Icons.down;
+                        variant: Variant.primary;
+                        size: BtnSize.xs;
+                        tip: "Pick the provider, or add instructions";
+                        clicked => {
+                            agent-menu.show();
+                        }
+
+                    }
+                }
+                Btn {
+                    icon: root.data.is-open ? Icons.circle-check : Icons.circle-dot;
+                    text: root.data.busy ? "Saving…" : root.data.is-open ? "Close" : "Reopen";
+                    variant: Variant.outline;
+                    size: BtnSize.xs;
+                    enabled: !root.data.busy;
+                    tip: root.data.act-tip;
+                    clicked => {
+                        root.act(root.data.is-open ? "close" : "reopen");
+                    }
+                }
+                Btn {
+                    text: "⋯";
+                    variant: Variant.ghost-muted;
+                    size: BtnSize.icon-xs;
+                    tip: "More actions";
+                    clicked => {
+                        more.show();
+                    }
+
+                }
+            }
+        }
+        Rectangle {
+            height: 15px;
+        }
+        Rectangle {
+            height: title.preferred-height + 2px;
+            title := Text {
+                width: parent.width;
+                text: root.data.title;
+                font-size: 20px;
+                font-weight: 600;
+                letter-spacing: -0.4px;
+                wrap: word-wrap;
+                color: Theme.fg;
+            }
+        }
+        Rectangle {
+            height: 20px;
+        }
+        HorizontalLayout {
+            height: 20px;
+            spacing: 8px;
+            alignment: start;
+            Glyph {
+                width: 15px;
+                icon: root.data.state == "open" ? Icons.circle-dot : root.data.state == "done" ? Icons.circle-check : Icons.circle-slash;
+                size: 15px;
+                color: root.data.state == "open" ? Theme.green-900 : root.data.state == "done" ? (Theme.dark ? #c4b5fd : #7c3aed) : Theme.gray-800;
+            }
+            Text {
+                text: root.data.state-text;
+                font-size: 14px;
+                color: root.data.state == "open" ? Theme.green-900 : root.data.state == "done" ? (Theme.dark ? #c4b5fd : #7c3aed) : Theme.gray-800;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                width: 6px;
+            }
+            VerticalLayout {
+                alignment: center;
+                IssueAvatar {
+                    d: 18px;
+                    letter: root.data.author.letter;
+                    img: root.data.author.avatar;
+                    has: root.data.author.has-avatar;
+                }
+            }
+            Text {
+                text: root.data.author.login;
+                font-size: 14px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+            if root.data.opened != "": Text {
+                text: root.data.opened;
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.data.updated != "": Text {
+                text: root.data.updated;
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+        }
+        if root.data.error != "": Rectangle {
+            height: 6px + err.preferred-height;
+            err := Text {
+                y: 6px;
+                width: parent.width;
+                text: root.data.error;
+                font-family: "Geist Mono";
+                font-size: 13px;
+                wrap: word-wrap;
+                color: Theme.red-900;
+            }
+        }
+        Rectangle {
+            height: 23px;
+        }
+    }
+    Separator {
+        y: root.head-h;
+    }
+    if !root.data.has-full: HorizontalLayout {
+        y: root.head-h + 25px;
+        x: 20px;
+        spacing: 8px;
+        height: 20px;
+        alignment: start;
+        if root.data.loading: Spinner {
+            size: 16px;
+        }
+        if root.data.loading: Text {
+            text: "Loading issue…";
+            font-size: 14px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+    if root.data.has-full: Flickable {
+        y: root.head-h + 1px;
+        height: root.height - self.y;
+        viewport-height: max(self.height, body.preferred-height);
+        body := VerticalLayout {
+            x: 20px;
+            width: root.width - 40px;
+            padding-top: 20px;
+            padding-bottom: 24px;
+            spacing: 8px;
+            alignment: start;
+            Field {
+                icon: Icons.user-check;
+                name: "Assignees";
+                if root.data.assignees.length == 0: Text {
+                    text: "None";
+                    font-size: 14px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                for p in root.data.assignees: HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        IssueAvatar {
+                            d: 16px;
+                            letter: p.letter;
+                            img: p.avatar;
+                            has: p.has-avatar;
+                        }
+                    }
+                    Text {
+                        text: p.login;
+                        font-size: 14px;
+                        color: Theme.fg;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 6px;
+                    }
+                }
+            }
+            Field {
+                icon: Icons.tag;
+                name: "Labels";
+                if root.data.labels.length == 0: Text {
+                    text: "None";
+                    font-size: 14px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                for l in root.data.labels: VerticalLayout {
+                    alignment: center;
+                    DetailChip {
+                        text: l.name;
+                        dot: l.color;
+                        has-dot: true;
+                    }
+                }
+            }
+            Field {
+                icon: Icons.milestone;
+                name: "Milestone";
+                if !root.data.has-milestone: Text {
+                    text: "None";
+                    font-size: 14px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if root.data.has-milestone: VerticalLayout {
+                    alignment: center;
+                    DetailChip {
+                        text: root.data.milestone;
+                    }
+                }
+            }
+            Rectangle {
+                height: 8px;
+            }
+            SectionToggle {
+                text: "Description";
+                open: root.data.desc-open;
+                toggled => {
+                    root.act("toggle-desc");
+                }
+            }
+            if root.data.desc-open: VerticalLayout {
+                spacing: 0px;
+                padding-top: 4px;
+                if root.data.body.length == 0: Text {
+                    text: "No description provided.";
+                    font-size: 14px;
+                    color: Theme.subtle;
+                }
+                for b in root.data.body: MdBlockView {
+                    block: b;
+                    size: 14px;
+                    link(u) => {
+                        root.link(u);
+                    }
+                    copy(t) => {
+                        root.copy-text(t);
+                    }
+                }
+                Rectangle {
+                    height: 17px;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    height: 28px;
+                    Btn {
+                        icon: Icons.external;
+                        text: "Open in Web";
+                        variant: Variant.outline;
+                        size: BtnSize.xs;
+                        clicked => {
+                            root.act("open-web");
+                        }
+                    }
+                    Btn {
+                        icon: Icons.globe;
+                        text: "Open in Harbor's browser";
+                        variant: Variant.outline;
+                        size: BtnSize.xs;
+                        clicked => {
+                            root.act("open-pane");
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                height: 14px;
+            }
+            SectionToggle {
+                text: root.data.comments-title;
+                open: root.data.comments-open;
+                toggled => {
+                    root.act("toggle-comments");
+                }
+            }
+            if root.data.comments-open && root.data.comments.length == 0: Text {
+                text: "No comments yet.";
+                font-size: 13px;
+                color: Theme.subtle;
+            }
+            if root.data.comments-open && root.data.comments.length > 0: Rectangle {
+                height: 7px;
+            }
+            if root.data.comments-open: VerticalLayout {
+                spacing: 16px;
+                for c in root.data.comments: Rectangle {
+                    height: card.preferred-height;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.bg100;
+                    card := VerticalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 0px;
+                        HorizontalLayout {
+                            height: 32px;
+                            spacing: 8px;
+                            alignment: start;
+                            VerticalLayout {
+                                alignment: center;
+                                IssueAvatar {
+                                    d: 16px;
+                                    letter: c.letter;
+                                    img: c.avatar;
+                                    has: c.has-avatar;
+                                }
+                            }
+                            Text {
+                                text: c.author;
+                                font-size: 14px;
+                                font-weight: 500;
+                                color: Theme.fg;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: c.what;
+                                font-size: 13px;
+                                color: Theme.subtle;
+                                vertical-alignment: center;
+                            }
+                        }
+                        if c.blocks.length > 0: Rectangle {
+                            height: 12px;
+                        }
+                        for b in c.blocks: MdBlockView {
+                            block: b;
+                            size: 14px;
+                            link(u) => {
+                                root.link(u);
+                            }
+                            copy(t) => {
+                                root.copy-text(t);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

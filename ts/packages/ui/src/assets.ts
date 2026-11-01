@@ -15,10 +15,25 @@ import chat from "../slint/chat.slint" with { type: "file" };
 import composer from "../slint/composer.slint" with { type: "file" };
 import gallery from "../slint/gallery.slint" with { type: "file" };
 import icons from "../slint/icons.slint" with { type: "file" };
+import issuedetail from "../slint/issuedetail.slint" with { type: "file" };
+import issues from "../slint/issues.slint" with { type: "file" };
 import listdetail from "../slint/listdetail.slint" with { type: "file" };
 import markdown from "../slint/markdown.slint" with { type: "file" };
 import palette from "../slint/palette.slint" with { type: "file" };
 import picker from "../slint/picker.slint" with { type: "file" };
+import prdetail from "../slint/prdetail.slint" with { type: "file" };
+import prs from "../slint/prs.slint" with { type: "file" };
+import settings from "../slint/settings.slint" with { type: "file" };
+import settingsAppearance from "../slint/settings-appearance.slint" with { type: "file" };
+import settingsBlocks from "../slint/settings-blocks.slint" with { type: "file" };
+import settingsIntegrations from "../slint/settings-integrations.slint" with { type: "file" };
+import settingsKeybindings from "../slint/settings-keybindings.slint" with { type: "file" };
+import settingsNotifications from "../slint/settings-notifications.slint" with { type: "file" };
+import settingsProviders from "../slint/settings-providers.slint" with { type: "file" };
+import settingsRows from "../slint/settings-rows.slint" with { type: "file" };
+import settingsUsage from "../slint/settings-usage.slint" with { type: "file" };
+import settingsVoice from "../slint/settings-voice.slint" with { type: "file" };
+import settingsWebhooks from "../slint/settings-webhooks.slint" with { type: "file" };
 import sidebar from "../slint/sidebar.slint" with { type: "file" };
 import team from "../slint/team.slint" with { type: "file" };
 import terminal from "../slint/terminal.slint" with { type: "file" };
@@ -32,10 +47,25 @@ export const FILES: Readonly<Record<string, string>> = {
   "composer.slint": composer,
   "gallery.slint": gallery,
   "icons.slint": icons,
+  "issuedetail.slint": issuedetail,
+  "issues.slint": issues,
   "listdetail.slint": listdetail,
   "markdown.slint": markdown,
   "palette.slint": palette,
   "picker.slint": picker,
+  "prdetail.slint": prdetail,
+  "prs.slint": prs,
+  "settings-appearance.slint": settingsAppearance,
+  "settings-blocks.slint": settingsBlocks,
+  "settings-integrations.slint": settingsIntegrations,
+  "settings-keybindings.slint": settingsKeybindings,
+  "settings-notifications.slint": settingsNotifications,
+  "settings-providers.slint": settingsProviders,
+  "settings-rows.slint": settingsRows,
+  "settings-usage.slint": settingsUsage,
+  "settings-voice.slint": settingsVoice,
+  "settings-webhooks.slint": settingsWebhooks,
+  "settings.slint": settings,
   "sidebar.slint": sidebar,
   "team.slint": team,
   "terminal.slint": terminal,
