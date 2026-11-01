@@ -451,6 +451,11 @@ export class Store {
     return (this.db.query(`SELECT ${CHAT_COLS} FROM chats ORDER BY updated DESC`).all() as Row[]).map(chatFrom);
   }
 
+  /** A lead's sub-agents, without reading the other chats. */
+  subs(parent: number): Chat[] {
+    return (this.db.query(`SELECT ${CHAT_COLS} FROM chats WHERE parent=?1 ORDER BY updated DESC`).all(parent) as Row[]).map(chatFrom);
+  }
+
   /** One chat, without reading the others. */
   chat(id: number): Chat | undefined {
     const r = this.db.query(`SELECT ${CHAT_COLS} FROM chats WHERE id=?1`).get(id) as Row | null;

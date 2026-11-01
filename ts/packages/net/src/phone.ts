@@ -350,7 +350,7 @@ export class PhoneRoutes {
   /** api.rs `team_working`: a lead works while a sub-agent runs or has work queued. */
   private teamWorking(c: Chat): boolean {
     if (c.role !== "lead") return this.running(c);
-    const team = this.chats().filter((x) => x.id === c.id || (x.role === "sub" && x.parent === c.id));
+    const team = [c, ...this.d.store.subs(c.id).filter((x) => x.role === "sub")];
     return team.some((x) => this.since(x.id) !== null) || (this.d.engine?.subsQueued(c.id) ?? 0) > 0;
   }
 
@@ -413,7 +413,7 @@ export class PhoneRoutes {
   chatJson(c: Chat, global: boolean): Json {
     const hub = this.d.hub;
     const repos = this.d.store.repos();
-    const parent = c.parent === null ? null : (this.chats().find((x) => x.id === c.parent) ?? null);
+    const parent = c.parent === null ? null : (this.d.store.chat(c.parent) ?? null);
     const project = c.repoId === null ? null : (repos.find((r) => r.id === c.repoId) ?? null);
     return {
       id: this.idOf(c, global),
@@ -946,7 +946,7 @@ export class PhoneRoutes {
     const out: Record<string, Json> = { ...(rb as Record<string, Json>) };
     if (ch !== null) {
       const repo = c.repoId === null ? null : (this.d.store.repos().find((x) => x.id === c.repoId) ?? null);
-      const parent = c.parent === null ? null : (this.d.store.chats().find((x) => x.id === c.parent) ?? null);
+      const parent = c.parent === null ? null : (this.d.store.chat(c.parent) ?? null);
       out.chat = global
         ? { ...ch, id: c.gid, project_id: repo ? repo.path : null, parent: parent ? parent.gid : null, gid: c.gid }
         : { ...ch, id: c.id, project_id: c.repoId, parent: c.parent, gid: c.gid };

@@ -479,7 +479,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     };
   };
   const blockerOf = (c: Chat): string | null => {
-    const subs = store.chats().filter((x) => x.parent === c.id);
+    const subs = store.subs(c.id);
     const chats = [c, ...subs].map((x) => ({ id: x.id, name: x.name, device: x.device, claude: accounts.find((y) => y.id === x.account)?.kind === "Claude", running: engine?.running(x.id) ?? false }));
     const lead = deviceList().find(([h]) => h.id === c.device)?.[0];
     return relocateBlocker({ foreignHome: c.home !== "" ? hub.mesh.nameOf(c.home) : null, isSub: c.role === "sub", movingTo: move?.movingTo(c.id) ?? null, chats, leadDevice: lead ? { os: lead.os } : null });
@@ -490,7 +490,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     const devs = deviceList();
     const hosts = [...hub.mesh.peers.values()];
     const ids = ["", ...devs.filter(([h]) => !h.hidden).map(([h]) => h.id), ...hosts.map((p) => p.id)];
-    return deviceWhy(c.started, c.home !== "", ids, (id) => relocateWhy({ started: c.started, device: c.device, to: id, blocker: () => blockerOf(c), place: placeOf(id, hosts, devs), meshOn: hub.mesh.on }));
+    // The blocker is the same for every place: worked out once, and only when a place asks for it.
+    let blocker: string | null | undefined;
+    const once = () => (blocker === undefined ? (blocker = blockerOf(c)) : blocker);
+    return deviceWhy(c.started, c.home !== "", ids, (id) => relocateWhy({ started: c.started, device: c.device, to: id, blocker: once, place: placeOf(id, hosts, devs), meshOn: hub.mesh.on }));
   };
   const ctxFor = (repo: number | null): Json => {
     const r = repo === null ? undefined : store.repos().find((x) => x.id === repo);
@@ -557,7 +560,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     replica,
     phone,
     env,
-    chat: (id) => (engine ? engine.chat(id) : store.chats().find((c) => c.id === id)),
+    chat: (id) => (engine ? engine.chat(id) : store.chat(id)),
     ownerName: () => account.ownerName(),
     ctx: ctxFor,
   });
@@ -667,7 +670,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     newThread: (repo, first, sel) => live.newThread(repo, first, sel),
     reload: () => live.reload(),
     worktreeOf: (id) => {
-      const c = store.chats().find((x) => x.id === id);
+      const c = store.chat(id);
       return c ? live.worktreeOf(c) : null;
     },
     queuePromote: (id, q) => live.queuePromote(id, q),
