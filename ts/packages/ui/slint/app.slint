@@ -475,6 +475,7 @@ export component AppWindow inherits Window {
     callback trust();
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
+    callback note-edited(int, string);
     in property <[StripRow]> strip-rows;
     in property <string> strip-title;
     in property <string> strip-names;
@@ -926,6 +927,12 @@ export component AppWindow inherits Window {
                             mentions: root.mentions;
                             remove-mention(i) => {
                                 root.remove-mention(i);
+                            }
+                            note-edited(i, t) => {
+                                root.note-edited(i, t);
+                            }
+                            note-done => {
+                                root.focus-composer();
                             }
                             trust => {
                                 root.trust();

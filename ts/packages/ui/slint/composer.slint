@@ -205,6 +205,9 @@ export struct MentionChip {
     head: string,
     snippet: string,
     tip: string,
+    note: string,
+    hint: string,
+    focus: bool,
 }
 
 export struct FileItem {
@@ -366,6 +369,8 @@ export component Composer {
     callback trust();
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
+    callback note-edited(int, string);
+    callback note-done();
     public function focus-text() {
         field.focus();
     }
@@ -479,55 +484,102 @@ export component Composer {
                     }
                 }
                 if root.mentions.length > 0: VerticalLayout {
-                    padding-bottom: 6px;
+                    padding-bottom: 14px;
                     spacing: 4px;
+                    // mentions.rs `draft`: the chip heads a card, its note box under it.
                     for m[i] in root.mentions: Rectangle {
-                        height: 30px;
                         background: Theme.gray-100;
                         border-width: 1px;
                         border-color: Theme.border;
                         border-radius: Theme.radius-md;
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 2px;
-                            spacing: 6px;
-                            Glyph {
-                                width: 13px;
-                                icon: Icons.at-sign;
-                                size: 13px;
-                                color: Theme.subtle;
-                            }
-                            Text {
-                                text: m.head;
-                                font-size: 13px;
-                                font-weight: 500;
-                                color: Theme.fg;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                horizontal-stretch: 1;
-                                text: m.snippet;
-                                font-size: 13px;
-                                color: Theme.subtle;
-                                overflow: elide;
-                                vertical-alignment: center;
-                            }
-                            Btn {
-                                y: 1px;
-                                icon: Icons.x;
-                                size: icon-xs;
-                                variant: ghost-muted;
-                                tip: "Remove";
-                                clicked => {
-                                    root.remove-mention(i);
+                        VerticalLayout {
+                            padding-bottom: 4px;
+                            Rectangle {
+                                height: 26px;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 2px;
+                                    spacing: 6px;
+                                    Glyph {
+                                        width: 13px;
+                                        icon: Icons.at-sign;
+                                        size: 13px;
+                                        color: Theme.subtle;
+                                    }
+                                    Text {
+                                        text: m.head;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        color: Theme.fg;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: m.snippet;
+                                        font-size: 13px;
+                                        color: Theme.subtle;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    Btn {
+                                        y: 1px;
+                                        icon: Icons.x;
+                                        size: icon-xs;
+                                        variant: ghost-muted;
+                                        tip: "Remove";
+                                        clicked => {
+                                            root.remove-mention(i);
+                                        }
+                                    }
+                                }
+                                TipArea {
+                                    width: parent.width - 32px;
+                                    x: 0;
+                                    tip: m.tip;
+                                    mouse-cursor: default;
                                 }
                             }
-                        }
-                        TipArea {
-                            width: parent.width - 32px;
-                            x: 0;
-                            tip: m.tip;
-                            mouse-cursor: default;
+                            // egui's one-row TextEdit: its own 2px margin over the text, 15px under it.
+                            HorizontalLayout {
+                                padding-left: 22px;
+                                padding-right: 10px;
+                                padding-top: 2px;
+                                Rectangle {
+                                    min-height: note.preferred-height + 15px;
+                                    if note.text == "": Text {
+                                        x: 0;
+                                        y: 0;
+                                        text: m.hint;
+                                        font-size: 13px;
+                                        color: Theme.subtle;
+                                    }
+                                    note := TextInput {
+                                        x: 0;
+                                        y: 0;
+                                        width: parent.width;
+                                        font-size: 13px;
+                                        color: Theme.fg;
+                                        wrap: word-wrap;
+                                        single-line: false;
+                                        init => {
+                                            self.text = m.note;
+                                            if m.focus {
+                                                self.focus();
+                                            }
+                                        }
+                                        edited => {
+                                            root.note-edited(i, self.text);
+                                        }
+                                        key-pressed(e) => {
+                                            if e.text == "\n" && !e.modifiers.shift {
+                                                root.note-done();
+                                                return accept;
+                                            }
+                                            reject
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

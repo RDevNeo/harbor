@@ -7,7 +7,7 @@ import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor
 import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
-import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf } from "./logic/mentions.ts";
+import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint } from "./logic/mentions.ts";
 import { personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { updateToast } from "./logic/hubseam.ts";
@@ -175,6 +175,7 @@ export class Shell {
   private readonly hub: ShellHub;
   private shownProjects: number[] = [];
   private selection: { seq: number; text: string } | null = null;
+  private noteFocus: Mention | null = null;
   private readonly deviceRows = new slint.ArrayModel<DeviceRow>([]);
   private readonly transferRows = new slint.ArrayModel<TransferRow>([]);
   private transfers: DeviceTransfer[] = [];
@@ -199,7 +200,7 @@ export class Shell {
   /** queue.rs `Edit`: the queued message in the composer, and the draft set aside meanwhile. */
   private queueEdit: { chat: number; id: number; original: string; aside: Draft } | null = null;
   private unfolded = new Set<number>();
-  private mentionChips = new slint.ArrayModel<{ head: string; snippet: string; tip: string }>([]);
+  private mentionChips = new slint.ArrayModel<{ head: string; snippet: string; tip: string; note: string; hint: string; focus: boolean }>([]);
 
   constructor(win: AppWindow, data: Data, hub: ShellHub) {
     this.win = win;
@@ -496,6 +497,10 @@ export class Shell {
     };
     w.picker_key = (e) => this.pickerKey(e);
     w.strip_open_agent = (id) => this.openChat(id);
+    w.note_edited = (i, t) => {
+      const m = this.messageMentions()[i];
+      if (m) m.note = t;
+    };
     w.remove_mention = (i) => {
       const shown = this.messageMentions();
       const m = shown[i];
@@ -994,7 +999,7 @@ export class Shell {
   private refreshMentions(): void {
     sync(
       this.mentionChips,
-      this.messageMentions().map((m) => ({ head: chipHead(m), snippet: chipSnippet(m), tip: chipTip(m, true) })),
+      this.messageMentions().map((m) => ({ head: chipHead(m), snippet: chipSnippet(m), tip: chipTip(m, true), note: m.note, hint: noteHint(m), focus: m === this.noteFocus })),
       sameJson,
     );
   }
@@ -2534,8 +2539,11 @@ export class Shell {
       const list = this.mentions.get(this.key()) ?? [];
       addMention(list, m);
       this.mentions.set(this.key(), list);
+      // mentions.rs: a selection just mentioned gets its note box focused; a message, the composer.
+      this.noteFocus = a === "excerpt" ? (list.find((x) => x.item === m.item && x.excerpt === m.excerpt && x.text === m.text) ?? null) : null;
       this.refreshMentions();
-      this.win.focus_composer();
+      this.noteFocus = null;
+      if (a !== "excerpt") this.win.focus_composer();
     } else {
       this.fork(chat.id, seq);
     }
