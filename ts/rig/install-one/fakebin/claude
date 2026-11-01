@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import json, os, sys, time, uuid
+import json, os, re, sys, time, uuid
 if '--version' in sys.argv: print('2.1.311 (Claude Code)'); sys.exit()
 if '-p' not in sys.argv: sys.exit(0)
 try: stdin = sys.stdin.readline()
@@ -7,7 +7,8 @@ except Exception: stdin = ''
 sid = str(uuid.uuid4())
 out = lambda o: (sys.stdout.write(json.dumps(o) + '\n'), sys.stdout.flush())
 out({"type": "system", "subtype": "init", "session_id": sid, "mcp_servers": []})
-secs = float(os.environ.get('RIG_HOLD_S', '60')) if 'hold' in stdin else 0.3
+m = re.search(r'hold(\d+)s', stdin)
+secs = float(m.group(1)) if m else float(os.environ.get('RIG_HOLD_S', '60')) if 'hold' in stdin else 0.3
 text = ''; t0 = time.time()
 while time.time() - t0 < secs:
     text += 'word '

@@ -32,6 +32,12 @@ for k in sys.argv[1].split("."): v=v[int(k)] if isinstance(v,list) else v.get(k)
 print(v if not isinstance(v,(dict,list)) else json.dumps(v))' "$1"; }
 cid() { python3 -I -c 'import json,sys; v=json.load(sys.stdin); print(v.get("id") or v.get("chat",{}).get("id"))'; }
 stopall() { pkill -f "^$T/[a-z]/home/.local/(lib/harbor|bin)/harbor" 2>/dev/null; pkill -f "^/usr/bin/python3 $HERE/fakebin/claude" 2>/dev/null; sleep 1; }
+rpc() { python3 -I -c 'import json,sys
+for l in open(sys.argv[1]):
+    try: m=json.loads(l)
+    except Exception: continue
+    if m.get("id")==int(sys.argv[2]) and "result" in m and (len(sys.argv)<4 or sys.argv[3] in json.dumps(m["result"])): sys.exit(0)
+sys.exit(1)' "$@"; }
 rss() { awk '/VmRSS/{print $2}' "/proc/$1/status" 2>/dev/null; }
 apppid() { on "$1" bash "$ONE" status | sed -n 's/^running: *//p' | awk '{print $1}'; }
 
@@ -69,7 +75,7 @@ check "a detached turn runs (chat $C, runner ${RUNNER:-none})" test -n "$RUNNER"
 CHATS0=$(sqlite3 "$(db a)" "select count(*) from chats")
 
 echo "== 2. install-one.sh install, Rust running a turn and asking before it updates"
-on a bash "$ONE" install "$NEW" --wait 6 > "$T/a/install1.txt" 2>&1; rc=$?
+on a bash "$ONE" install "$NEW" --wait 6 --no-trigger > "$T/a/install1.txt" 2>&1; rc=$?
 cat "$T/a/install1.txt"
 check "install exits 0" test $rc = 0
 check "the Rust app is still pid $P1 and waits for Update" grep -q "hasn't restarted yet" "$T/a/install1.txt"
@@ -84,9 +90,33 @@ check "the backup keeps identity.pem" test "$(sha "$B/identity.pem")" = "$PEM_SH
 on a bash "$ONE" install "$NEW" --wait 2 > "$T/a/install2.txt" 2>&1; rc=$?
 check "install twice: nothing to do ($(cat "$T/a/install2.txt"))" test $rc = 0 -a "$(grep -c "Already installed" "$T/a/install2.txt")" = 1
 check "the second run kept .previous as Rust" test "$(sha "$L/.previous/harbor")" = "$RUST_SHA"
+check "status says it can press Update from here" sh -c "env -i $(pc_env a) bash $ONE status | grep -q \"Update from here: yes\""
 
-echo "== 3. The phone's Update: Rust restarts in place into the TypeScript app"
-post a /v1/hub/update '{}' > /dev/null
+echo "== 2b. The gap: Rust 0.109.0 still runs while what it starts is the TypeScript binary"
+TSI=$(stat -c %i "$L/harbor")
+G=$(post a /v1/chats '{"text":"a turn in the gap hold8s","account":"claude"}' | cid)
+sleep 3
+GR=$(pgrep -f "^$L/harbor turn" | tail -1)
+check "Rust started chat $G's runner from the new file: the TypeScript binary (pid ${GR:-none})" test -n "$GR" -a "$(stat -L -c %i "/proc/$GR/exe" 2>/dev/null)" = "$TSI"
+check "Rust itself is still the old binary (pid $P1)" test "$(stat -L -c %i "/proc/$P1/exe")" != "$TSI"
+for _ in $(seq 60); do [ "$(get a /v1/state | python3 -I -c "import json,sys; s=json.load(sys.stdin); print([c for c in s['chats'] if c['id']==${G:-0}][0].get('running'))" 2>/dev/null)" = False ] && break; sleep 1; done
+check "Rust followed the TypeScript runner to the end: chat $G has its reply" test "$(sqlite3 "$(db a)" "select count(*) from items where chat_id=${G:-0} and body like '%DONE%'")" -ge 1
+check "and Rust says chat $G is no longer running" test "$(get a /v1/state | python3 -I -c "import json,sys; s=json.load(sys.stdin); print([c for c in s['chats'] if c['id']==${G:-0}][0].get('running'))")" = False
+MCPIN='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"rig","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_processes","arguments":{}}}'
+(printf '%s\n' "$MCPIN"; sleep 6) | on a timeout 20 "$L/harbor" mcp --chat "$C" > "$T/a/mcp-gap.txt" 2> "$T/a/mcp-gap.err"
+check "harbor mcp from the TypeScript binary: Rust's socket answers initialize" rpc "$T/a/mcp-gap.txt" 1
+check "  tools/list ($(grep -o '"name":"[a-z_]*"' "$T/a/mcp-gap.txt" | wc -l) names)" rpc "$T/a/mcp-gap.txt" 2 list_processes
+check "  and a tools/call that Rust runs (list_processes)" rpc "$T/a/mcp-gap.txt" 3
+(printf '%s\n' "$(echo "$MCPIN" | head -2)"; sleep 4) | on a timeout 15 "$L/harbor" app gmail > "$T/a/gmail-gap.txt" 2>&1
+check "harbor app gmail from the TypeScript binary answers initialize" rpc "$T/a/gmail-gap.txt" 1
+
+echo "== 3. install-one.sh trigger: the phone's Update over loopback, Rust restarts in place into the TypeScript app"
+on a bash "$ONE" trigger --wait 30 > "$T/a/trigger.txt" 2>&1; rc=$?
+cat "$T/a/trigger.txt"
+check "trigger exits 0" test $rc = 0
 for _ in $(seq 60); do [ "$(stat -L -c %i "/proc/$P1/exe" 2>/dev/null)" = "$(stat -c %i "$L/harbor")" ] && break; sleep 0.5; done
 check "same pid $P1, now running the TypeScript binary" test "$(stat -L -c %i "/proc/$P1/exe" 2>/dev/null)" = "$(stat -c %i "$L/harbor")"
 check "the TypeScript hub answers" up a
@@ -133,8 +163,23 @@ echo "   RSS: Rust app $(rss "$P2") KB"
 on a bash "$ONE" undo > "$T/a/undo2.txt" 2>&1; rc=$?
 check "undo twice: already Rust ($(cat "$T/a/undo2.txt"))" test $rc = 0 -a "$(grep -c "Already Rust" "$T/a/undo2.txt")" = 1
 
-echo "== 5. install again with restart now, then undo with the db restored"
-on a bash "$ONE" install "$NEW" --wait 2 > "$T/a/install3.txt" 2>&1
+echo "== 5. install as the lead runs it: it presses Update itself; then undo"
+C5=$(post a /v1/chats '{"text":"hold a turn over the triggered switch","account":"claude"}' | cid)
+sleep 3
+R5=$(pgrep -f "^$L/harbor turn" | tail -1)
+P5=$(apppid a)
+on a bash "$ONE" install "$NEW" --wait 30 > "$T/a/install5.txt" 2>&1; rc=$?
+cat "$T/a/install5.txt"
+check "install restarted Rust in place by itself (pid $P5)" test $rc = 0 -a "$(grep -c "restarted in place" "$T/a/install5.txt")" = 1 -a "$(stat -L -c %i "/proc/$P5/exe" 2>/dev/null)" = "$(stat -c %i "$L/harbor")"
+echo "   $(grep -o "[0-9]* s after the swap" "$T/a/install5.txt")"
+check "the runner $R5 outlived it" test -n "$R5" -a -d "/proc/$R5"
+check "the TypeScript hub answers" up a
+on a bash "$ONE" undo --wait 30 > "$T/a/undo5.txt" 2>&1
+check "undo again: Rust back" test "$(sha "$L/harbor")" = "$RUST_SHA"
+check "Rust is up" up a
+
+echo "== 5c. install without the trigger, restart now, then undo with the db restored"
+on a bash "$ONE" install "$NEW" --wait 2 --no-trigger > "$T/a/install3.txt" 2>&1
 C2=$(post a /v1/chats '{"text":"hold this one too","account":"claude"}' | cid)
 sleep 3
 R2=$(pgrep -f "^$L/harbor turn" | tail -1)

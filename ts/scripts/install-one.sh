@@ -1,5 +1,5 @@
 #!/bin/bash
-# install-one.sh install BINARY [--wait S] | undo [--restore-db] [--wait S] | restart | status
+# install-one.sh install BINARY [--wait S] [--no-trigger] | trigger | undo [--restore-db] [--wait S] | restart | status
 # Puts the TypeScript Harbor (one executable) where the Rust one is installed, and back.
 set -uo pipefail
 
@@ -12,6 +12,7 @@ BACKUPS=${XDG_STATE_HOME:-$HOME/.local/state}/harbor-switch
 EXE=$LIB/harbor
 WAIT=30
 RESTORE_DB=0
+TRIGGER=1
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install-one: %s\n' "$*" >&2; exit 1; }
@@ -82,6 +83,37 @@ restart_now() {
   [ -d "/proc/$pid" ] && { kill -KILL "$pid" 2>/dev/null; sleep 0.5; }
   (cd "$cwd" && mapfile -t E < "$env_file" && mapfile -t A < "$args_file" && rm -f "$env_file" "$args_file" &&
     exec setsid -f env -i "${E[@]}" "$EXE" "${A[@]}" < /dev/null > /dev/null 2>&1)
+}
+
+# A pairing token from before accounts works in full over loopback: the phone's Update, which restarts the Rust app in place.
+legacy_token() {
+  sql "$DATA/harbor.db" "select v from kv where k='api_tokens'" 2>/dev/null |
+    python3 -I -c 'import json,sys
+try: ts=json.loads(sys.stdin.read() or "[]")
+except Exception: ts=[]
+print(next((t["token"] for t in ts if isinstance(t,dict) and t.get("token") and not t.get("account")), ""))'
+}
+
+api_port() {
+  local p
+  p=$(sql "$DATA/harbor.db" "select v from kv where k='api_port'" 2>/dev/null)
+  echo "${p:-47930}"
+}
+
+trigger() {
+  local tok port i code
+  command -v curl > /dev/null || { say "No curl: can't press Update for Harbor."; return 1; }
+  tok=$(legacy_token)
+  [ -n "$tok" ] || { say "No pairing token from before accounts on this PC: can't press Update for Harbor from here; click Update in Harbor, or Update on the phone's banner."; return 1; }
+  port=$(api_port)
+  sleep 3.5
+  for ((i = 0; i < 15; i++)); do
+    code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $tok" -X POST -d '{}' "http://127.0.0.1:$port/v1/hub/update")
+    [ "$code" = 200 ] && break
+    sleep 1
+  done
+  [ "$code" = 200 ] || { say "Harbor's phone API on port $port answered ${code:-nothing} to Update."; return 1; }
+  say "Pressed Update in the running Harbor (the phone's Update over loopback): it restarts in place and keeps its screen."
 }
 
 check_layout() {
@@ -155,6 +187,7 @@ install_cmd() {
   rm -f "$LIB/.skip"
   mv -f "$tmp" "$EXE" || die "can't move the new harbor into place"
   want=$(inode "$EXE")
+  local swapped_at=$SECONDS
   say "Swapped: $EXE is now $nv (Rust $EXPECT_RUST was $rv)."
   if [ -z "$pids" ]; then say "Harbor wasn't running: the next start opens the TypeScript app."; exit 0; fi
   if is_ts "$rv"; then
@@ -162,9 +195,10 @@ install_cmd() {
     else say "The running TypeScript Harbor didn't restart within ${WAIT}s: 'install-one.sh restart' does it now."; fi
     exit 0
   fi
+  [ "$TRIGGER" = 1 ] && trigger
   for pid in $pids; do
     if wait_exec "$want" "$pid"; then
-      say "Harbor (pid $pid) restarted in place into $nv; turns running: $(turn_pids | wc -w)."
+      say "Harbor (pid $pid) restarted in place into $nv $((SECONDS - swapped_at)) s after the swap; turns running: $(turn_pids | wc -w)."
     elif [ -d "/proc/$pid" ]; then
       say "Harbor (pid $pid) hasn't restarted yet. It switches by itself when nobody sees it (window closed, or focused and untouched for 2 minutes, updating automatically), or when Update is clicked in it. 'install-one.sh restart' restarts it now (turns keep running; the screen and unsent queue are not kept)."
     else
@@ -226,6 +260,18 @@ undo_cmd() {
   fi
 }
 
+trigger_cmd() {
+  local pids pid want
+  check_layout
+  want=$(inode "$EXE")
+  pids=$(app_pids)
+  [ -n "$pids" ] || die "Harbor isn't running"
+  trigger || exit 1
+  for pid in $pids; do
+    wait_exec "$want" "$pid" && say "Harbor (pid $pid) restarted in place into $(version_of "$EXE")." || die "Harbor (pid $pid) didn't restart within ${WAIT}s"
+  done
+}
+
 restart_cmd() {
   local pids pid want
   pids=$(app_pids)
@@ -246,6 +292,8 @@ status_cmd() {
   say "running: $(app_pids | tr '\n' ' ')"
   say "turns: $(turn_pids | wc -w)"
   [ -e "$BACKUPS/latest" ] && say "latest backup: $(readlink -f "$BACKUPS/latest")"
+  if [ -n "$(legacy_token)" ]; then say "Update from here: yes (a pairing token from before accounts, phone API port $(api_port))"
+  else say "Update from here: no (no pairing token from before accounts): the switch waits for Update in Harbor or on a phone"; fi
 }
 
 cmd=${1:-}; shift || true
@@ -254,6 +302,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --wait) WAIT=${2:?--wait needs seconds}; shift ;;
     --restore-db) RESTORE_DB=1 ;;
+    --no-trigger) TRIGGER=0 ;;
     -*) die "unknown option $1" ;;
     *) arg=$1 ;;
   esac
@@ -263,6 +312,7 @@ case "$cmd" in
   install) install_cmd "$arg" ;;
   undo) undo_cmd ;;
   restart) restart_cmd ;;
+  trigger) trigger_cmd ;;
   status) status_cmd ;;
-  *) die "usage: install-one.sh install BINARY [--wait S] | undo [--restore-db] [--wait S] | restart | status" ;;
+  *) die "usage: install-one.sh install BINARY [--wait S] [--no-trigger] | trigger | undo [--restore-db] [--wait S] | restart | status" ;;
 esac

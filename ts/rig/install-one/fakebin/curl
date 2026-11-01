@@ -1,4 +1,9 @@
 #!/bin/bash
+for a in "$@"; do
+  case "$a" in
+    http://127.0.0.1:* | http://localhost:*) exec /usr/bin/curl "$@" ;;
+  esac
+done
 printf '%s\n' "$*" >> "${RIG_CURL_LOG:?}"
 for a in "$@"; do
   case "$a" in
