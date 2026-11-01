@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { mcpshim } from "../packages/mcp/src/index.ts";
-import { blankChat, dataDir, Store } from "../packages/store/src/index.ts";
+import { newPeer } from "../packages/net/src/index.ts";
+import { blankChat, type Chat, dataDir, Store } from "../packages/store/src/index.ts";
 import { type RunningHub, startHub } from "../hub.ts";
 
 let root: string;
@@ -100,4 +101,31 @@ test("a phone gets a reply's image from the hub", async () => {
   expect(st).toBe(200);
   const [missing] = await call("GET", `/v1/media?path=${encodeURIComponent(join(root, "nope.mp4"))}`);
   expect(missing).toBe(404);
+});
+
+test("every turn gets the machines server while the mesh has other PCs, on this PC and on a device", () => {
+  const lead = h.store.createChat({ ...blankChat(), role: "lead", name: "lead", title: "Mesh", access: "full" });
+  const chat = h.store.createChat({ ...blankChat(), title: "Plan", access: "plan" });
+  h.engine.reload();
+  const ctx = (c: Chat, remote: boolean) => h.engine.host.turnContext?.(c, remote) ?? null;
+  expect(ctx(lead, false)?.machines ?? null).toBeNull();
+  h.hub.mesh.on = true;
+  h.hub.mesh.peers.set("pc-2", newPeer({ id: "pc-2", name: "Laptop", online: true }));
+  try {
+    for (const remote of [false, true]) {
+      expect(ctx(lead, remote)?.machines).toEqual({ chat: lead.gid, project: "", tools: ["bash", "read", "glob", "grep"], commander: "", memory_id: "" });
+      expect(ctx(chat, remote)?.machines).toEqual({ chat: chat.gid, project: "", tools: ["read", "glob", "grep"], commander: "", memory_id: "" });
+      expect(ctx(lead, remote)?.note).toContain("mcp__machines__");
+    }
+    h.engine.host.adopt?.(lead.id, { peer: "pc-2", name: "Laptop", ctx: { owner: "Ana", memory_id: "m-1", memory: {} } });
+    const guest = ctx(lead, false);
+    expect(guest?.machines).toMatchObject({ commander: "pc-2", memory_id: "m-1" });
+    expect(guest?.overlay).toContain("guests");
+    expect(guest?.note).toContain("commanded from another PC");
+    h.engine.host.adopt?.(lead.id, null);
+    expect(ctx(lead, false)?.overlay ?? null).toBeNull();
+  } finally {
+    h.hub.mesh.peers.delete("pc-2");
+    h.hub.mesh.on = false;
+  }
 });

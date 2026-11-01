@@ -20,6 +20,13 @@ export { NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt
 import { Recaps } from "./recap.ts";
 
 /** What the engine needs from the app around it; the optional parts belong to other packages. */
+/** The PC that forwarded a message, and the context it sent with it. */
+export interface SentBy {
+  peer: string;
+  name: string;
+  ctx: unknown;
+}
+
 export interface EngineHost {
   store: Store;
   accounts(): readonly Account[];
@@ -35,6 +42,8 @@ export interface EngineHost {
   remoteSpec?(chat: Chat, account: Account): RemoteSpec | null;
   /** Whose context a turn runs with (net's meshctx.rs). */
   turnContext?(chat: Chat, remote: boolean): agent.Context;
+  /** A message reached the chat: from another PC (`from`) its turns run with that PCs context, typed here they run with this PCs again (meshctx.rs `ctx_adopt`). */
+  adopt?(chatId: number, from: SentBy | null): void;
   /** Slash commands expanded for agents that don't expand them, tags and images (ui's slash.rs). */
   slashPrompt?(chatId: number, text: string, files: readonly string[]): string;
   /** Mentioned messages quoted before the user's text (ui's mentions.rs). */
@@ -832,7 +841,7 @@ export class Engine {
   }
 
   /** A new turn when the chat is idle (with what waited for it), else a follow-up that steers or queues per `mode` (Queue unless said). */
-  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: Mode; sender?: string; device?: string } = {}): void {
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: Mode; sender?: string; device?: string; from?: SentBy | null } = {}): void {
     const files = opts.files ?? [];
     const mentions = opts.mentions ?? [];
     const sender = opts.sender ?? "";
@@ -841,6 +850,7 @@ export class Engine {
       this.changed(id);
       return;
     }
+    this.host.adopt?.(id, opts.from ?? null);
     this.resumeAuto(id);
     if (this.turns.has(id)) {
       const q: Queued = { id: this.queue.id(), text, files, mentions, written: false, sender, device, intent: "", note: "", editing: "" };

@@ -322,6 +322,60 @@ describe("the phone API's chats (api.rs App side)", () => {
     store.close();
   });
 
+  test("a message another PC forwards keeps its sender and the context it sent; a phone's has none", async () => {
+    const store = Store.openAt(join(tmp, "forwarded.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.peers.set("pc-1", newPeer({ id: "pc-1", name: "Desk", online: true }));
+    const sent: [string, string, unknown][] = [];
+    const engine = {
+      running: () => false,
+      runningSince: () => 0,
+      transcript: () => ({ items: [] }),
+      send: (_id: number, _text: string, o: { sender?: string; device?: string; from?: unknown }) => {
+        sent.push([o.sender ?? "", o.device ?? "", o.from ?? null]);
+      },
+      stop: () => {},
+      queued: () => [],
+      takeQueue: () => [],
+      queueJson: () => [],
+      steering: () => "now",
+      followDefault: () => "queue",
+      held: () => false,
+      newThread: (repo: number | null) => store.createChat(blankChat({ repoId: repo })),
+      reload: () => {},
+      queuePromote: () => false,
+      queueMove: () => false,
+      queueUpdate: () => false,
+      queueRemove: () => false,
+      queueResume: () => {},
+      recap: () => [null, null] as [null, null],
+      recapSeen: () => {},
+      unread: () => false,
+      failed: () => false,
+      opened: () => false,
+      subsQueued: () => 0,
+      queuedCount: () => 0,
+      mainChat: () => null,
+      forksOf: () => [],
+    } satisfies PhoneEngine;
+    let routes: PhoneRoutes | null = null;
+    const replica = new StoreReplica({ store, hub, version: "t", route: (call) => (routes as PhoneRoutes).route(call) });
+    routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
+    const c = store.createChat(blankChat({ title: "m" }));
+    const path = ["v1", "chats", String(c.id), "send"];
+    const meshCall = (sender: string) => replica.route({ method: "POST", path: ["mesh", "v1", "call"], query: [], body: { method: "POST", path, body: { text: "hi" }, sender, device: "dev-9", ctx: { owner: "Ana" } }, token: "", device: "pc-1", global: false });
+    expect((await meshCall("")).status).toBe(200);
+    expect((await meshCall("Pixel 8 (Ana)")).status).toBe(200);
+    expect((await routes.route({ method: "POST", path, query: [], body: { text: "hi" }, token: "", device: "Pixel", global: false })).status).toBe(200);
+    const by = { peer: "pc-1", name: "Desk", ctx: { owner: "Ana" } };
+    expect(sent).toEqual([
+      ["Desk", "dev-9", by],
+      ["Pixel 8 (Ana)", "dev-9", by],
+      ["Pixel", "", null],
+    ]);
+    store.close();
+  });
+
   test("a signed-in phone over pinned TLS starts a chat, reads it, sends, and hears of the reply", async () => {
     const hubId = generateIdentity();
     const phoneId = generateIdentity();

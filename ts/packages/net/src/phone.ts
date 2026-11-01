@@ -1,5 +1,5 @@
 import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
-import type { providers } from "@harbor/agents";
+import type { providers, SentBy } from "@harbor/agents";
 import { blankChat, itemHash, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
@@ -24,7 +24,7 @@ export interface PhoneEngine {
   running(id: number): boolean;
   runningSince(id: number): number | null;
   transcript(id: number): { items: Item[] };
-  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string }): void;
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string; from?: SentBy | null }): void;
   stop(id: number): void;
   queued(id: number): readonly { intent: string; text: string; files: string[] }[];
   takeQueue(id: number): { text: string; files: string[] }[];
@@ -635,10 +635,12 @@ export class PhoneRoutes {
     const p = call.path;
     const m = call.method;
     const body = obj(call.body);
-    const sender = this.d.hub.callerLabel(call.token, call.device);
+    const by = call.from ? { peer: call.from.peer, name: call.from.name, ctx: call.from.ctx } : null;
+    const sender = call.from ? call.from.sender || call.from.name : this.d.hub.callerLabel(call.token, call.device);
+    const device = call.from?.device ?? "";
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
-    if (m === "POST" && p.length === 2) return this.create(body, sender, call.global);
+    if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by);
     const c = this.chatOf(p[2] ?? "");
     if (!c) return err(404, "no such chat");
     if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender);
@@ -646,7 +648,7 @@ export class PhoneRoutes {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");
       return ok(this.items(c, Number.isFinite(since) ? since : 0));
     }
-    if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender);
+    if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender, device, by);
     if (m === "GET" && p.length === 4 && p[3] === "move_targets") return this.d.move ? ok(await this.d.move.targetsJson(c.id)) : err(404, "no such call");
     if (m === "POST" && p.length === 4 && p[3] === "move_pc") return this.movePc(c, body);
     if (m === "POST" && p.length === 4 && p[3] === "stop") {
@@ -747,7 +749,7 @@ export class PhoneRoutes {
     return resolveUpload(dir, rel) === null ? null : rel;
   }
 
-  private async send(c: Chat, body: Record<string, unknown>, sender: string, device = ""): Promise<Reply> {
+  private async send(c: Chat, body: Record<string, unknown>, sender: string, device = "", from: SentBy | null = null): Promise<Reply> {
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const files: string[] = [];
     for (const f of Array.isArray(body.files) ? body.files : []) {
@@ -765,7 +767,7 @@ export class PhoneRoutes {
     const running = e.running(c.id);
     const mode = body.mode === "steer" ? "steer" : "queue";
     this.d.hub.clearDraft(c.id);
-    e.send(c.id, text, { files, mentions, mode, sender, device });
+    e.send(c.id, text, { files, mentions, mode, sender, device, from });
     const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;
     this.d.replica.touch(c.id);
     return ok({ ok: true, queued, steering: running && !queued && c.home === "" });
@@ -835,7 +837,7 @@ export class PhoneRoutes {
   }
 
   /** api.rs `api_create_in`. */
-  private async create(body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
+  private async create(body: Record<string, unknown>, sender: string, global: boolean, from: SentBy | null = null): Promise<Reply> {
     const peer = this.d.hub.mesh.on && typeof body.device === "string" ? this.d.hub.mesh.peer(body.device) : null;
     if (peer !== null) return this.createOnPeer(peer, body, sender, global);
     const found = this.createRepo(body);
@@ -850,12 +852,12 @@ export class PhoneRoutes {
         return err(409, x instanceof Error ? x.message : String(x));
       }
     }
-    const r = await this.createHere(body, sender, global, repo, made);
+    const r = await this.createHere(body, sender, global, repo, made, from);
     if (made !== null && r.status >= 300) this.d.worktrees?.discard(repo, made);
     return r;
   }
 
-  private async createHere(body: Record<string, unknown>, sender: string, global: boolean, repo: number | null, wt: unknown): Promise<Reply> {
+  private async createHere(body: Record<string, unknown>, sender: string, global: boolean, repo: number | null, wt: unknown, from: SentBy | null): Promise<Reply> {
     const cat = this.d.catalog;
     const d = cat?.defaults() ?? { account: "claude", model: "", effort: "", access: "full", device: "" };
     const s = (k: string, dflt: string) => (typeof body[k] === "string" ? (body[k] as string) : dflt);
@@ -885,7 +887,7 @@ export class PhoneRoutes {
       const m = e.mainChat(main);
       if (m !== null) {
         const mc = this.chats().find((x) => x.id === m);
-        if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender);
+        if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender, "", from);
         return ok({ id: global ? (mc?.gid ?? "") : m, gid: mc?.gid ?? "" });
       }
     }
@@ -898,11 +900,11 @@ export class PhoneRoutes {
     if (title !== "") c = { ...c, title };
     this.d.store.saveChat(c);
     e?.reload();
-    const from = obj(body.opened_from);
-    if (typeof from.gid === "string" && typeof from.title === "string") this.d.openedFrom?.(c.id, from.gid, from.title);
+    const opened = obj(body.opened_from);
+    if (typeof opened.gid === "string" && typeof opened.title === "string") this.d.openedFrom?.(c.id, opened.gid, opened.title);
     this.d.replica.touch(c.id);
     if (text !== "" || files.length > 0) {
-      const sent = await this.send(c, { text, files: body.files ?? [] }, sender);
+      const sent = await this.send(c, { text, files: body.files ?? [] }, sender, "", from);
       if (sent.status !== 200) return sent;
     }
     return ok({ id: global ? c.gid : c.id, gid: c.gid });

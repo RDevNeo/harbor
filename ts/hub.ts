@@ -50,6 +50,7 @@ import {
   GITHUB_KEY,
   meshPcs,
   OWNER_KEY,
+  type Pc,
   type Peer,
   profileInputs,
   versionsInput,
@@ -92,11 +93,12 @@ import {
   outgoingCtx,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
+import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
 import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/store/src/index.ts";
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt">;
 
 export interface HubOptions {
   version: string;
@@ -275,11 +277,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const profile = new ProfileScheduler();
   const profileCheckNow = (): Json => profileCheckJson(profileCheck(store, { confirmed: ownerConfirmed(store, owners), owner: ownerOf(store, owners), github: githubOf(store, owners) }));
   const peersNow = (): Peer[] => [...hub.mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const detectNow = (): void => {
-    if (!engine || profile.running || !(profileFull || profile.want)) return;
-    const live = engine;
+  const pcsNow = (): Pc[] => {
     const [versions] = gatherVersions(versionsInput(hub, versionsOwn()));
-    const pcs = meshPcs({
+    return meshPcs({
       kv: store,
       owners,
       me: hub.mesh.me,
@@ -291,6 +291,25 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       hosts: peersNow(),
       elsewhere: hub.elsewhere,
     });
+  };
+  const meshTurns = new MeshTurns({
+    store,
+    env: { dataDir: dataDir(env) },
+    pcs: pcsNow,
+    hostGithub: () => githubOf(store, owners),
+    chat: (id) => engine?.chat(id),
+    projectName: (c) => (c.repoId === null ? "" : (store.repos().find((r) => r.id === c.repoId)?.name ?? "")),
+    cwd: (c) => engine?.chatCwd(c) ?? null,
+    peer: (id) => {
+      const p = hub.mesh.peer(id);
+      return p ? { online: p.online, dest: dest(p) } : null;
+    },
+    notice: (id, text) => engine?.notice(id, "users", text, GUEST_NOTICE),
+  });
+  const detectNow = (): void => {
+    if (!engine || profile.running || !(profileFull || profile.want)) return;
+    const live = engine;
+    const pcs = pcsNow();
     const main = accounts.find((a) => a.id === "claude" && a.bin !== null && a.loggedIn === true);
     const askable = main !== undefined && live.limits.blocked(main.id) === undefined && !(live.limits.quota.get(main.id) ?? []).some(([, used]) => used >= 0.9) && env.HARBOR_PROFILE_RULES === undefined;
     const inputs = () =>
@@ -549,7 +568,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     remoteSpec,
     hookBase: () => hookcert.publicBase() ?? funnel.base,
     offline,
-    turnEnded: (id) => prs.want(id, null),
+    turnEnded: (id) => {
+      prs.want(id, null);
+      void meshTurns.afterTurn(id).catch(() => undefined);
+    },
+    turnContext: (chat, remote) => meshTurns.context(chat, remote),
+    adopt: (id, from) => meshTurns.adopt(id, from),
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
     hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
     missingFolder: (c) => projectClones.missingFolder(c),

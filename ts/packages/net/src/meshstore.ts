@@ -384,7 +384,8 @@ export class StoreReplica implements MeshApp {
       const path = (Array.isArray(b.path) ? b.path : []).filter((x): x is string => typeof x === "string");
       if (path[0] !== "v1") return err(400, "not a call");
       if (!this.o.route) return err(404, "unknown mesh call");
-      const r = await this.o.route({ method: s(b, "method") || "GET", path, query: [], body: b.body ?? null, token: "", device: "", global: false });
+      const from = { peer: call.device, name: this.o.hub.mesh.nameOf(call.device), ctx: b.ctx ?? null, sender: [...s(b, "sender")].slice(0, 60).join(""), device: [...s(b, "device")].slice(0, 60).join("") };
+      const r = await this.o.route({ method: s(b, "method") || "GET", path, query: [], body: b.body ?? null, token: "", device: "", global: false, from });
       const rb = obj(r.body);
       if (r.status < 300 && typeof rb.id === "number" && Number.isInteger(rb.id)) return { status: r.status, body: { ...(rb as Record<string, Json>), home: this.o.hub.mesh.me.id } };
       return r;

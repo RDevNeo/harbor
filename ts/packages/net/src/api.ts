@@ -42,6 +42,16 @@ export interface Call {
   token: string;
   device: string;
   global: boolean;
+  /** A call another PC forwarded (`/mesh/v1/call`): that PC, its context and who wrote there. */
+  from?: CallFrom;
+}
+
+export interface CallFrom {
+  peer: string;
+  name: string;
+  ctx: unknown;
+  sender: string;
+  device: string;
 }
 
 /** Who is on the other end of a connection. */
