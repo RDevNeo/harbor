@@ -153,6 +153,53 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect(s.defaults.model).toBe("claude-opus-5-5");
   });
 
+  test("the queue's calls reach the Engine, and a gone message is 404", async () => {
+    const store = Store.openAt(join(tmp, "queue.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const calls: string[] = [];
+    const engine: PhoneEngine = {
+      running: () => true,
+      runningSince: () => 1761200000000,
+      transcript: () => ({ items: [] }),
+      send: () => {},
+      stop: () => {},
+      queued: () => [],
+      takeQueue: () => [],
+      queueJson: () => [{ id: 4, text: "next" }],
+      steering: () => "now",
+      followDefault: () => "queue",
+      held: () => false,
+      newThread: (repo) => store.createChat(blankChat({ repoId: repo })),
+      reload: () => {},
+      queuePromote: (_c, q) => (calls.push(`promote ${q}`), q === 4),
+      queueMove: (_c, q, to) => (calls.push(`move ${q} ${to}`), true),
+      queueUpdate: (_c, q, text, _m, editing) => (calls.push(`update ${q} ${text} ${editing}`), true),
+      queueRemove: (_c, q) => (calls.push(`remove ${q}`), true),
+      queueResume: () => {
+        calls.push("resume");
+      },
+      recap: () => ["Fixed the build.", "Run the tests"],
+      recapSeen: (id) => {
+        calls.push(`seen ${id}`);
+      },
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine });
+    const c = store.createChat(blankChat({ title: "q", role: "lead", name: "lead" }));
+    const call = (method: string, path: string, body: unknown = null) => routes.route({ method, path: path.split("/"), query: [], body, token: "", device: "Pixel", global: false });
+    expect((await call("POST", `v1/chats/${c.id}/queue/4/steer`)).status).toBe(200);
+    expect((await call("POST", `v1/chats/${c.id}/queue/5/steer`)).status).toBe(404);
+    expect((await call("POST", `v1/chats/${c.id}/queue/4/move`, { to: 0 })).status).toBe(200);
+    expect((await call("POST", `v1/chats/${c.id}/queue/4/move`, {})).status).toBe(400);
+    expect((await call("PATCH", `v1/chats/${c.id}/queue/4`, { text: " edited ", editing: true })).status).toBe(200);
+    expect((await call("DELETE", `v1/chats/${c.id}/queue/4`)).status).toBe(200);
+    expect((await call("POST", `v1/chats/${c.id}/resume`)).status).toBe(200);
+    expect(calls).toEqual(["promote 4", "promote 5", "move 4 0", "update 4 edited Pixel", "remove 4", "resume"]);
+    const items = (await call("GET", `v1/chats/${c.id}/items`)).body as { status: Record<string, unknown> };
+    expect(calls.at(-1)).toBe(`seen ${c.id}`);
+    expect([items.status.recap, items.status.suggestion, items.status.can_steer, items.status.follow_up, items.status.queue]).toEqual(["Fixed the build.", "Run the tests", true, "queue", [{ id: 4, text: "next" }]]);
+  });
+
   test("a signed-in phone over pinned TLS starts a chat, reads it, sends, and hears of the reply", async () => {
     const hubId = generateIdentity();
     const phoneId = generateIdentity();
@@ -181,6 +228,13 @@ describe("the phone API's chats (api.rs App side)", () => {
       held: () => false,
       newThread: (repo, first, sel) => store.createChat(blankChat({ repoId: repo, title: first.split("\n")[0] ?? "", account: sel.account, model: sel.model, role: "lead", name: "lead" })),
       reload: () => {},
+      queuePromote: () => false,
+      queueMove: () => false,
+      queueUpdate: () => false,
+      queueRemove: () => false,
+      queueResume: () => {},
+      recap: () => [null, null],
+      recapSeen: () => {},
     };
     const mesh = new Mesh({ hub, kv: new MemKv(), id: () => hubId, app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
     const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-test", myFp: () => hubId.fp, engine, uploadsDir: tmp });

@@ -26,6 +26,15 @@ export interface PhoneEngine {
   held(id: number): boolean;
   newThread(repo: number | null, first: string, sel: { account: string; model: string; effort: string; access: string; device: string }): Chat;
   reload(): void;
+  queuePromote(id: number, qid: number): boolean;
+  queueMove(id: number, qid: number, to: number): boolean;
+  queueUpdate(id: number, qid: number, text: string | null, mentions: Mention[] | null, editing: string | null): boolean;
+  queueRemove(id: number, qid: number): boolean;
+  queueResume(id: number): void;
+  /** The session recap and the suggested next message shown under the chat (recap.rs). */
+  recap(id: number): [string | null, string | null];
+  /** A phone opened the chat: its recap counts as seen. */
+  recapSeen(id: number): void;
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -277,7 +286,7 @@ export class PhoneRoutes {
     if (r) return r.status;
     const e = this.d.engine;
     const since = e?.runningSince(c.id) ?? null;
-    return {
+    const out: Record<string, Json> = {
       queue: (e?.queueJson(c.id) ?? []) as Json[],
       working: since === null ? null : { since_ms: since, subagents: 0, text: "Working…" },
       waiting: null,
@@ -288,6 +297,10 @@ export class PhoneRoutes {
       held: e?.held(c.id) ?? false,
       follow_up: e?.followDefault() ?? "steer",
     };
+    const [recap, suggestion] = e?.recap(c.id) ?? [null, null];
+    if (recap !== null) out.recap = recap;
+    if (suggestion !== null) out.suggestion = suggestion;
+    return out;
   }
 
   private idOf(c: Chat, global: boolean): Json {
@@ -443,6 +456,7 @@ export class PhoneRoutes {
   items(c: Chat, since: number): Json {
     const hub = this.d.hub;
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
+    this.d.engine?.recapSeen(c.id);
     const forks = this.d.replica.remote.get(c.id)?.forks ?? [];
     const cards = project(items, c.role === "lead", forks);
     const revs = this.revs.get(c.id) ?? [];
@@ -498,8 +512,9 @@ export class PhoneRoutes {
       e.stop(c.id);
       const returned = hold ? [] : e.takeQueue(c.id).map((q) => ({ text: q.text, files: q.files.map((f) => this.uploadId(f)).filter((x): x is string => x !== null) }));
       this.d.hub.touch(c.id, true);
-      return ok({ ok: true, returned, held: hold });
+      return ok({ ok: true, returned, held: e.held(c.id) });
     }
+    if (p[3] === "queue" || (m === "POST" && p.length === 4 && p[3] === "resume")) return this.queue(c, m, p, body, call.device);
     if (m === "PATCH" && p.length === 3) {
       if (typeof body.title === "string" && body.title.trim() !== "") {
         this.d.store.saveChat({ ...c, title: body.title.trim() });
@@ -517,6 +532,32 @@ export class PhoneRoutes {
       return ok({ ok: true });
     }
     return err(404, "no such call");
+  }
+
+  /** api.rs `api_route`'s queue ops (queue.rs). */
+  private queue(c: Chat, m: string, p: string[], body: Record<string, unknown>, device: string): Reply {
+    const e = this.d.engine;
+    if (!e) return err(503, "agents aren't available in this build");
+    if (p[3] === "resume") {
+      e.queueResume(c.id);
+      return ok({ ok: true });
+    }
+    const q = /^\d+$/.test(p[4] ?? "") ? Number(p[4]) : null;
+    if (q === null) return err(404, "no such queued message");
+    const gone = err(404, "no such queued message (it may have started)");
+    let done: boolean;
+    if (m === "POST" && p.length === 6 && p[5] === "steer") done = e.queuePromote(c.id, q);
+    else if (m === "POST" && p.length === 6 && p[5] === "move") {
+      if (typeof body.to !== "number" || !Number.isInteger(body.to) || body.to < 0) return err(400, 'send {"to": position}');
+      done = e.queueMove(c.id, q, body.to);
+    } else if (m === "PATCH" && p.length === 5) {
+      const text = typeof body.text === "string" ? body.text.trim() : null;
+      const mentions = Array.isArray(body.mentions) ? body.mentions.map((x) => mention(typeof x === "object" && x !== null ? (x as Partial<Mention>) : {})) : null;
+      const editing = body.editing === true ? device || "Phone" : body.editing === false ? "" : null;
+      done = e.queueUpdate(c.id, q, text, mentions, editing);
+    } else if (m === "DELETE" && p.length === 5) done = e.queueRemove(c.id, q);
+    else return err(404, "no such queue action");
+    return done ? ok({ ok: true }) : gone;
   }
 
   private uploadId(path: string): string | null {

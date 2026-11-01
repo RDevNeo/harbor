@@ -179,6 +179,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     held: (id) => live.queue.held.has(id),
     newThread: (repo, first, sel) => live.newThread(repo, first, sel),
     reload: () => live.reload(),
+    queuePromote: (id, q) => live.queuePromote(id, q),
+    queueMove: (id, q, to) => live.queueMove(id, q, to),
+    queueUpdate: (id, q, text, mentions, editing) => live.queueUpdate(id, q, text, mentions, editing),
+    queueRemove: (id, q) => live.queueRemove(id, q),
+    queueResume: (id) => live.queueResume(id),
+    recap: (id) => live.recaps.shownFor(id),
+    recapSeen: (id) => live.recaps.seen(id),
   };
   live.reattachTurns();
   let engineTimer: ReturnType<typeof setTimeout> | null = null;
