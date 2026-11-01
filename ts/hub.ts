@@ -62,7 +62,7 @@ import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/s
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded">;
 
 export interface HubOptions {
   version: string;
@@ -91,6 +91,7 @@ export interface RunningHub {
   phone: PhoneRoutes;
   engine: Engine;
   prs: chatpr.ChatPrs;
+  account: AccountService;
   services: Services;
   stop(): Promise<void>;
 }
@@ -186,7 +187,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const r = engine?.repo(c.repoId);
       return engine && r ? { repo: repoDir(r), dir: engine.worktreeOf(c) ?? repoDir(r) } : null;
     },
-    changed: (chatId) => hub.touch(chatId, true),
+    changed: (chatId) => (engine ? engine.changed(chatId) : hub.touch(chatId, true)),
   });
   const prOf = (c: Chat): Json => {
     const p = c.home !== "" ? chatpr.prFrom(replica.remote.get(c.id)?.pr) : prs.of(c);
@@ -321,11 +322,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     hostname: () => hub.mesh.me.name,
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
     offline,
+    turnEnded: (id) => prs.want(id, null),
   };
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
     keepMedia: (text, cwd) => media.keep(text, cwd),
-    turnEnded: (id) => prs.want(id, null),
     noteTurn: (id, sub, failed, said) => {
       const c = eng().chat(id);
       if (!c) return;
@@ -471,6 +472,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phone,
     engine: live,
     prs,
+    account,
     services,
     stop: async () => {
       clearInterval(tick);

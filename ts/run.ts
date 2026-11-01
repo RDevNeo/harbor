@@ -95,7 +95,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   if (ui && data) {
     let closeWindow = (): void => {};
     const tray = ui.trayStart({ onOpen: () => single.raise(), onQuit: () => closeWindow() });
-    await ui.runShell(data, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), closer: (f) => (closeWindow = f) });
+    await ui.runShell(data, { prs: run.prs }, { restore, shown: () => void confirmStart(cfg), snapshotWith: (f) => (snapshot = f), closer: (f) => (closeWindow = f) });
     tray?.stop();
   }
   await stopAll();

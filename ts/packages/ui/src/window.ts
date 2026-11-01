@@ -25,7 +25,10 @@ export interface SideRow {
   has_avatar: boolean;
   settled: boolean;
   snoozed: boolean;
-  worktree: number;
+  worktree: "" | "live" | "gone";
+  worktree_tip: string;
+  pr: "" | "open" | "draft" | "merged" | "closed";
+  pr_tip: string;
   tip: string;
 }
 

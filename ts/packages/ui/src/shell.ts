@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
-import { type Account, git, type Kind, providers, recap, Work } from "@harbor/agents";
+import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess } from "@harbor/store";
 import { newOpened, type Opened, queueCards, subsRunning, toggle as toggleCard, transcriptCards, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf } from "./composer.ts";
@@ -65,6 +65,20 @@ const sameSideRow = (a: SideRow, b: SideRow): boolean => a.avatar === b.avatar &
 
 function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
+}
+
+type Marks = Pick<SideRow, "worktree" | "worktree_tip" | "pr" | "pr_tip">;
+
+/** sidebar.rs: a chat in its own worktree gets its folder mark, then its branch's PR state. */
+export function marksOf(dir: string | null, gone: boolean, pr: chatpr.ChatPr | null): Marks {
+  if (dir === null) return { worktree: "", worktree_tip: "", pr: "", pr_tip: "" };
+  const name = basename(dir);
+  return {
+    worktree: gone ? "gone" : "live",
+    worktree_tip: gone ? `Its worktree, ${name}, is gone` : `Runs in its own worktree, ${name}`,
+    pr: pr?.state ?? "",
+    pr_tip: pr ? `${chatpr.label(pr)}: ${pr.title}` : "",
+  };
 }
 
 export class Shell {
@@ -153,6 +167,7 @@ export class Shell {
     changed: () => this.refreshPanes(),
     focus: (d, terminal) => setTimeout(() => this.win.focus_pane(d, terminal), 30),
   });
+  private readonly prs: chatpr.ChatPrs;
   private readonly paneTabs: Record<Dock, slint.ArrayModel<SurfaceTab>> = { right: new slint.ArrayModel<SurfaceTab>([]), bottom: new slint.ArrayModel<SurfaceTab>([]) };
   /** Each pane's terminal grid, rows and columns, as its view last measured it. */
   private readonly gridOf: Record<Dock, [number, number] | null> = { right: null, bottom: null };
@@ -169,9 +184,10 @@ export class Shell {
   private unfolded = new Set<number>();
   private mentionChips = new slint.ArrayModel<{ head: string; snippet: string; tip: string }>([]);
 
-  constructor(win: AppWindow, data: Data) {
+  constructor(win: AppWindow, data: Data, hub: ShellHub) {
     this.win = win;
     this.data = data;
+    this.prs = hub.prs;
     const get = (k: string, d: string) => data.store.get(k) ?? d;
     const model = get("default_model", "claude-opus-5-5");
     this.sel = {
@@ -759,7 +775,7 @@ export class Shell {
         has_avatar: false,
         settled: c.settled,
         snoozed: until !== null && until > t,
-        worktree: 0,
+        ...this.marks(c),
         tip: "",
       };
     };
@@ -781,13 +797,16 @@ export class Shell {
         has_avatar: this.avatar(p.repo.id) !== null,
         settled: false,
         snoozed: snoozed.has(`r${p.repo.id}`),
-        worktree: 0,
+        worktree: "",
+        worktree_tip: "",
+        pr: "",
+        pr_tip: "",
         tip: repo ? tilde(repo.local ?? repo.path, homedir()) : "",
       });
       for (const c of p.chats) rows.push(chatRow(c, "thread"));
     }
     if (list.loose.length > 0) {
-      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: 0, tip: "" });
+      rows.push({ kind: "label", id: 0, title: "Threads", active: false, status: blankStatus(), letter: "", avatar: noPixels, has_avatar: false, settled: false, snoozed: false, worktree: "", worktree_tip: "", pr: "", pr_tip: "", tip: "" });
       for (const c of list.loose) rows.push(chatRow(c, "loose"));
     }
     sync(this.rows, rows, sameSideRow);
@@ -1376,7 +1395,13 @@ export class Shell {
     }
   }
 
-  /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
+  // A shown row is what keeps its PR looked up: one scrolled away goes stale after SHOWN_TTL_MS.
+  private marks(c: Chat): Marks {
+    const dir = this.engine.worktreeOf(c);
+    if (dir !== null && !this.data.offline) this.prs.want(c.id, chatpr.SHOWN_TTL_MS);
+    return marksOf(dir, dir !== null && !existsSync(dir), dir === null ? null : this.prs.of(c));
+  }
+
   /** images.rs: the clicked image in the lightbox, browsing the images of its message. */
   private openImage(path: string): void {
     const img = this.images;
@@ -1594,6 +1619,7 @@ export class Shell {
     this.popup("browser-menu", x, y, items, 260);
   }
 
+  /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
   shutdown(): void {
     this.surfaces.dispose();
     for (const [id, run] of this.engine.turns) {
@@ -2174,6 +2200,11 @@ interface Draft {
   mentions: Mention[];
 }
 
+/** What the window takes from the running hub. */
+export interface ShellHub {
+  prs: chatpr.ChatPrs;
+}
+
 export interface ShellHooks {
   /** The screen to come back to after a restart (a snapshot the previous process left), or null. */
   restore?: Record<string, unknown> | null;
@@ -2186,9 +2217,9 @@ export interface ShellHooks {
   closer?: (close: () => void) => void;
 }
 
-export async function run(data: Data, hooks: ShellHooks = {}): Promise<void> {
+export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Promise<void> {
   const win = await loadWindow();
-  const shell = new Shell(win, data);
+  const shell = new Shell(win, data, hub);
   data.onChange = (id) => shell.changed(id);
   data.onRestoreDraft = (id, text, files, mentions) => shell.restoreDraft(id, { text, files, mentions });
   data.visible = (id) => shell.showing(id);

@@ -4,6 +4,7 @@ import { byteAt, charAt, pressOf } from "../src/composer.ts";
 import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
 import { parseSteps } from "../src/script.ts";
+import { marksOf } from "../src/shell.ts";
 
 
 const user = (text: string): Item => ({ kind: "user", text, files: ["/tmp/a.txt"], at: 1, mentions: [], sender: "", intent: "" });
@@ -106,4 +107,16 @@ test("steers_go_over_working_and_the_queue_after_it", () => {
   expect(order([card("text", 0), card("space", -3)])).toEqual(["text", "steering", "queue-head", "queued", "space"]);
   expect(subsRunning(0)).toBe("");
   expect(subsRunning(2)).toBe("  ·  2 sub-agents running");
+});
+
+test("a chat in a worktree shows its folder mark, red once gone, and its PR's state", () => {
+  expect(marksOf(null, false, null)).toEqual({ worktree: "", worktree_tip: "", pr: "", pr_tip: "" });
+  const pr = { number: 42, state: "open" as const, url: "https://github.com/o/r/pull/42", title: "Add thing", branch: "add-thing" };
+  expect(marksOf("/w/harbor-add-thing", false, pr)).toEqual({
+    worktree: "live",
+    worktree_tip: "Runs in its own worktree, harbor-add-thing",
+    pr: "open",
+    pr_tip: "PR #42 · Open: Add thing",
+  });
+  expect(marksOf("/w/harbor-old-try", true, null)).toMatchObject({ worktree: "gone", worktree_tip: "Its worktree, harbor-old-try, is gone", pr: "" });
 });

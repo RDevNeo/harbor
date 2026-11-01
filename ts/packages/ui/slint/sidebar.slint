@@ -13,7 +13,10 @@ export struct SideRow {
     has-avatar: bool,
     settled: bool,
     snoozed: bool,
-    worktree: int,
+    worktree: string,
+    worktree-tip: string,
+    pr: string,
+    pr-tip: string,
     tip: string,
 }
 
@@ -51,15 +54,36 @@ component ThreadRow {
             size: 14px;
             color: root.data.active ? Theme.fg : Theme.subtle;
         }
-        Text {
+        title := Text {
             x: root.indented ? 8px : 32px;
-            width: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree > 0 ? 20px : 0px);
+            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px);
+            width: min(self.preferred-width, max(self.room, 10px));
             text: root.data.title;
             font-size: 14px;
             font-weight: root.data.active ? 500 : 400;
             color: Theme.fg;
             overflow: elide;
             vertical-alignment: center;
+        }
+        if root.data.worktree != "": TipArea {
+            x: title.x + title.width + 5px;
+            width: 16px;
+            tip: root.data.worktree-tip;
+            Glyph {
+                icon: Icons.folder-git;
+                size: 13px;
+                color: root.data.worktree == "gone" ? Theme.red-900 : root.data.active ? Theme.fg : Theme.subtle;
+            }
+        }
+        if root.data.pr != "": TipArea {
+            x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px);
+            width: 16px;
+            tip: root.data.pr-tip;
+            Glyph {
+                icon: root.data.pr == "merged" ? Icons.git-merge : root.data.pr == "draft" ? Icons.pr-draft : root.data.pr == "closed" ? Icons.pr-closed : Icons.pr-open;
+                size: 13px;
+                color: root.data.pr == "open" ? Theme.green-900 : root.data.pr == "draft" ? Theme.gray-800 : root.data.pr == "closed" ? Theme.red-900 : Theme.dark ? #c4b5fd : #7c3aed;
+            }
         }
         status := StatusView {
             visible: !root.hovering;
