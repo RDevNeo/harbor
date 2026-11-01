@@ -5,6 +5,8 @@ still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z
 
 ## [Unreleased]
 
+## [0.109.0] - 2026-11-01
+
 ### Added
 - A "Scroll to bottom" button floats over the transcript while you read further up, on the desktop
   and the phone. A click goes to the end and the chat follows new output again.
@@ -2257,7 +2259,8 @@ The first public release.
   version for a one-click restore, and can be set to only notify (Settings › General).
 - `harbor --version`.
 
-[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.108.0...HEAD
+[Unreleased]: https://github.com/RDevNeo/harbor/compare/v0.109.0...HEAD
+[0.109.0]: https://github.com/RDevNeo/harbor/compare/v0.108.0...v0.109.0
 [0.108.0]: https://github.com/RDevNeo/harbor/compare/v0.107.0...v0.108.0
 [0.107.0]: https://github.com/RDevNeo/harbor/compare/v0.106.1...v0.107.0
 [0.106.1]: https://github.com/RDevNeo/harbor/compare/v0.106.0...v0.106.1
