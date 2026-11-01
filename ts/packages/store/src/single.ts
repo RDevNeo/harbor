@@ -8,7 +8,7 @@ import { runDir } from "./paths.ts";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-/** Set on the exec of a hot reload: this pid is a reload, not a second launch. */
+/** Set by a restart (reload.ts): the pid of the process that is leaving. The Rust app's exec keeps its pid; the runtime starts a new process. */
 export const RELOADED_PID = "HARBOR_RELOADED_PID";
 
 const LOCK_EX = 2;
@@ -39,14 +39,15 @@ export async function acquire(env: Record<string, string | undefined> = process.
     // No lock file (read-only runtime dir?): don't keep Harbor from starting.
     return true;
   }
-  // After a hot reload the lock was released by the exec a moment ago.
-  const reloaded = Number(env[RELOADED_PID]) === process.pid;
-  const deadline = Date.now() + (reloaded ? 3000 : 0);
+  // After a restart the lock is released by the old process a moment from now.
+  const reloaded = Number(env[RELOADED_PID]) > 0;
+  const deadline = Date.now() + (reloaded ? 5000 : 0);
   for (;;) {
     if (libc.symbols.flock(fd, LOCK_EX | LOCK_NB) === 0) {
       ftruncateSync(fd, 0);
       writeSync(fd, `${process.pid}\n`, 0);
       held = fd;
+      if (env === process.env) delete process.env[RELOADED_PID];
       return true;
     }
     if (Date.now() >= deadline) {

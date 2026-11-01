@@ -19,6 +19,8 @@ Wire format: see "Accounts" in `android/PROTOCOL.md`.
 - `GET /oauth/android`: bounces the OAuth redirect to `harbor://oauth`
 - `GET /v1/invites`, `POST /v1/invites/{id}/accept|decline`: the signed-in account's pending invitations
 - `GET /invite`: a landing page (unused while invitations aren't emailed)
+- `POST /v1/release`: the release workflow's ping. The body is ignored; the worker re-reads GitHub's latest release itself (`src/release.js`)
+- `GET /v1/release/wait?have=<version>`: held until a release newer than `have` exists (answers `{version}` at once if one already does, `204` after about 50 s so the PC reconnects)
 
 ## Deploy
 
@@ -58,6 +60,14 @@ subset the Worker uses) and the real Worker under `wrangler dev --local`, driven
   20 members per organization, sessions fixed at 7 days, no MFA.
 - Cloudflare Workers free: 100k requests per day.
 - D1 free: 5M rows read and 100k rows written per day.
+
+## Release news (Durable Object)
+
+`src/release.js` is the `ReleaseHub` class bound as `RELEASES` (`wrangler.toml`, with its migration). One object holds every PC's long-poll
+and answers all of them when a newer release is published, which it only believes after reading GitHub (and finding the release's
+`harbor-app.json.minisig`, so an older release without the update files is never announced). Nothing here is deployed by the TypeScript
+rewrite's branch: `wrangler deploy` is the owner's step. Held requests keep the object awake: a few PCs cost seconds of duration a day;
+`MAX_WAITERS` (1000) bounds it.
 
 ## Phone sign-in with Android's own account picker (optional)
 

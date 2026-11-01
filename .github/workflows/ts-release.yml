@@ -1,0 +1,294 @@
+name: ts-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v, e.g. 0.110.0"
+        required: true
+        type: string
+      base:
+        description: "Ref to compare against for the lane (default: the latest release's tag)"
+        required: false
+        type: string
+      lane:
+        description: "auto decides from the changed files"
+        required: false
+        type: choice
+        options: [auto, bundle, runtime]
+        default: auto
+
+concurrency:
+  group: ts-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+  MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+  HARBOR_WORKER: ${{ vars.HARBOR_WORKER_URL || 'https://harbor-accounts.rdevneo.workers.dev' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      lane: ${{ steps.lane.outputs.lane }}
+      bun: ${{ steps.bun.outputs.version }}
+      first: ${{ steps.prev.outputs.first }}
+      runtime: ${{ steps.prev.outputs.runtime }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: bun
+        run: echo "version=$(jq -r '.packageManager | sub("bun@"; "")' ts/package.json)" >> "$GITHUB_OUTPUT"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+      - name: The latest release and its manifest
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          mkdir -p prev
+          if [ -n "$tag" ] && gh release download "$tag" -p harbor-app.json -D prev 2>/dev/null; then
+            echo "first=false" >> "$GITHUB_OUTPUT"
+            echo "runtime=$(jq -r .runtime prev/harbor-app.json)" >> "$GITHUB_OUTPUT"
+          else
+            echo "first=true" >> "$GITHUB_OUTPUT"
+            echo "runtime=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Decide the lane from the changed files
+        id: lane
+        env:
+          BASE: ${{ inputs.base || steps.prev.outputs.tag }}
+          FORCE: ${{ inputs.lane }}
+          FIRST: ${{ steps.prev.outputs.first }}
+        run: |
+          set -eu
+          args="lane --force $FORCE"
+          if [ "$FIRST" = true ] || [ -z "$BASE" ]; then args="lane --first"; else args="$args --base $BASE"; fi
+          bun ts/scripts/release.ts $args >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: previous-manifest
+          path: prev
+          if-no-files-found: ignore
+
+  check:
+    runs-on: ubuntu-24.04
+    needs: plan
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ needs.plan.outputs.bun }}
+      - run: bun install --frozen-lockfile
+        working-directory: ts
+      - run: node_modules/.bin/tsc --noEmit
+        working-directory: ts
+      - run: bun test
+        working-directory: ts
+
+  bundle:
+    runs-on: ubuntu-24.04
+    needs: [plan, check]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: previous-manifest
+          path: prev
+        continue-on-error: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ needs.plan.outputs.bun }}
+      - run: bun install --frozen-lockfile
+        working-directory: ts
+      - name: Build the bundle and its manifest
+        env:
+          VERSION: ${{ inputs.version }}
+          LANE: ${{ needs.plan.outputs.lane }}
+        run: |
+          set -eu
+          mkdir -p dist
+          prev=""
+          [ ! -f prev/harbor-app.json ] || prev="--previous prev/harbor-app.json"
+          bun ts/scripts/release.ts manifest --version "$VERSION" --lane "$LANE" --out dist/harbor-app.json $prev
+          min=$(jq -r .minRuntime dist/harbor-app.json)
+          bun ts/scripts/build.ts app dist/harbor-app.js --version "$VERSION" --min-runtime "$min" --sha "${GITHUB_SHA:0:7}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: dist
+
+  runtime:
+    if: needs.plan.outputs.lane == 'runtime'
+    needs: [plan, check]
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ needs.plan.outputs.bun }}
+      - run: bun install --frozen-lockfile
+        working-directory: ts
+      - name: Compile the runtime on its own architecture
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          bun ts/scripts/build.ts runtime "dist/harbor-runtime-${{ matrix.arch }}" --version "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.arch }}
+          path: dist
+
+  smoke:
+    if: needs.plan.outputs.lane == 'runtime'
+    needs: [plan, bundle, runtime]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: x86_64, image: "ubuntu:22.04" }
+          - { os: ubuntu-24.04, arch: x86_64, image: "debian:12" }
+          - { os: ubuntu-24.04, arch: x86_64, image: "archlinux:latest" }
+          - { os: ubuntu-24.04-arm, arch: aarch64, image: "ubuntu:22.04" }
+          - { os: ubuntu-24.04-arm, arch: aarch64, image: "debian:12" }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-${{ matrix.arch }}
+          path: dist
+      - name: Start the runtime and load the bundle on a clean image
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          rt="harbor-runtime-${{ matrix.arch }}"
+          chmod +x "dist/$rt"
+          docker run --rm -v "$PWD/dist:/dist:ro" "${{ matrix.image }}" sh -c '
+            set -eu
+            [ "$(/dist/'"$rt"' runtime-version)" = "'"$VERSION"'" ]
+            [ "$(/dist/'"$rt"' smoke-bundle /dist/harbor-app.js)" = "harbor '"$VERSION"'" ]'
+
+  verify:
+    if: needs.plan.outputs.lane == 'bundle'
+    needs: [plan, bundle]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+          path: dist
+      - name: Start the bundle on the runtime PCs have now
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUNTIME: ${{ needs.plan.outputs.runtime }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          gh release download "v$RUNTIME" -p harbor-runtime-x86_64 -D dist
+          chmod +x dist/harbor-runtime-x86_64
+          [ "$(dist/harbor-runtime-x86_64 smoke-bundle dist/harbor-app.js)" = "harbor $VERSION" ]
+
+  publish:
+    needs: [plan, bundle, runtime, smoke, verify]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.release.outcome }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "{bundle,runtime-*}"
+          path: dist
+          merge-multiple: true
+      - name: Get minisign
+        run: |
+          curl -fsSL "$MINISIGN_URL" -o /tmp/minisign.tgz
+          echo "$MINISIGN_SHA256  /tmp/minisign.tgz" | sha256sum -c -
+          tar -xzf /tmp/minisign.tgz -C /tmp
+      - name: Sign every asset for this release
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          [ -n "$MINISIGN_SECRET_KEY" ] || { echo "::error::MINISIGN_SECRET_KEY is not set"; exit 1; }
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          for f in dist/*; do
+            case "$f" in *.minisig) continue ;; esac
+            /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor v$VERSION $(basename "$f")"
+          done
+          rm -f /tmp/minisign.key
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: packaging/minisign.pub
+          path: key
+      - name: Check every signature against the release key
+        run: |
+          set -eu
+          for f in dist/*; do
+            case "$f" in *.minisig) continue ;; esac
+            /tmp/minisign-linux/x86_64/minisign -Vm "$f" -p key/packaging/minisign.pub
+          done
+      - name: Publish the release, as a draft first so PCs never see half of it
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          pre=""
+          case "$VERSION" in *-*) pre="--prerelease" ;; esac
+          gh release create "v$VERSION" dist/* --draft --target "$SHA" --title "Harbor $VERSION" --generate-notes $pre
+          if [ -z "$pre" ]; then gh release edit "v$VERSION" --draft=false --latest; else gh release edit "v$VERSION" --draft=false; fi
+      - name: Tell the account worker, which reads GitHub itself and answers every waiting PC
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          curl -fsS -X POST "$HARBOR_WORKER/v1/release" -H 'content-type: application/json' -d "{\"version\":\"$VERSION\"}" \
+            || echo "::warning::the worker could not be reached, so PCs find the release on their own"
+
+  attest:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "{bundle,runtime-*}"
+          path: dist
+          merge-multiple: true
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
