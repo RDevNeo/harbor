@@ -16,3 +16,8 @@ export * from "./meshstore.ts";
 export * from "./view.ts";
 export * from "./markdown.ts";
 export * from "./phone.ts";
+export * from "./chatlink.ts";
+export * from "./versions.ts";
+export * from "./notify.ts";
+export * from "./profile.ts";
+export * from "./remote.ts";
