@@ -36,7 +36,7 @@ class Input {
   }
 }
 
-async function main(): Promise<number> {
+export async function runSpeechWorker(): Promise<number> {
   const input = new Input();
   for (;;) {
     const line = await input.line();
@@ -67,4 +67,4 @@ async function main(): Promise<number> {
   }
 }
 
-process.exit(await main());
+if (import.meta.main) process.exit(await runSpeechWorker());

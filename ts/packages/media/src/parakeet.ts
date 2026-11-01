@@ -356,6 +356,12 @@ export function setWorkerCommand(cmd: string[] | null): void {
   workerCmd = cmd;
 }
 
+export const compiled = (): boolean => Bun.main.startsWith("/$bunfs/");
+
+export function useOwnBinaryForWorker(): void {
+  if (compiled()) setWorkerCommand([process.execPath, "--speech-worker"]);
+}
+
 export function setCallTimeout(ms: number): void {
   callTimeoutMs = ms;
 }

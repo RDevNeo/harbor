@@ -5,7 +5,7 @@ import { type Shell, startShell } from "../proto/pty.ts";
 let sh: Shell | null = null;
 
 function shell(cols = 80, rows = 24): Shell {
-  sh = startShell({ argv: ["bash", "--norc", "--noprofile"], cwd: tmpdir(), cols, rows, env: { PS1: "$ " } });
+  sh = startShell({ argv: ["bash", "--norc", "--noprofile"], cwd: tmpdir(), cols, rows, env: { PS1: "$ ", HISTFILE: "/dev/null" } });
   return sh;
 }
 

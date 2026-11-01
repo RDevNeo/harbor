@@ -540,8 +540,8 @@ describe("the listener (api.rs)", () => {
     const app = (g: string) => local.find((p) => p.group === g)?.app;
     expect([app("ga"), app("gb"), app("gc")]).toEqual([18001, APP_INBOX, 0]);
     const later = Math.floor(Date.now() / 1000) + 1;
-    hub.elsewhere.set("pc:acer", [
-      "acer",
+    hub.elsewhere.set("pc:box", [
+      "box",
       [
         { group: "gc", name: "A13", seen: later, app: 16002, alive: 0, platform: "" },
         { group: "zz", name: "not ours", seen: later, app: 1, alive: 0, platform: "" },
@@ -549,7 +549,7 @@ describe("the listener (api.rs)", () => {
     ]);
     const p = hub.pairedPhones();
     expect(p).toHaveLength(3);
-    expect([p[0]?.group, p[0]?.seen, p[0]?.via, p[0]?.name, p[0]?.app]).toEqual(["gc", later, "acer", "A13", 16002]);
+    expect([p[0]?.group, p[0]?.seen, p[0]?.via, p[0]?.name, p[0]?.app]).toEqual(["gc", later, "box", "A13", 16002]);
     expect(p.find((x) => x.group === "ga")?.via).toBe("");
   });
 

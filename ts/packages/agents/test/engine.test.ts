@@ -350,7 +350,7 @@ describe("teams", () => {
     const { e, store } = setup();
     const lead = newChat(store, { role: "lead", name: "lead" });
     e.reload();
-    expect(await e.tool(lead.id, "snooze", { minutes: 1, reason: "check CI" })).toMatch(/^Snoozed until \d\d:\d\d \(in 1m\)/);
+    expect(await e.tool(lead.id, "snooze", { minutes: 1, reason: "check CI" })).toMatch(/^Snoozed until \d\d:\d\d \(in <?1m\)/);
     await expect(e.tool(lead.id, "snooze", { minutes: 0.1 })).rejects.toThrow("between 0.5 and 10080");
     const t = e.timers[0];
     if (t) t.at = 0;

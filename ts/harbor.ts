@@ -25,6 +25,7 @@ const commands: Record<string, Command> = {
     console.log(`harbor ${pkg.version} (ts)`);
     return 0;
   },
+  "--speech-worker": async () => (await import("./packages/media/src/speech-worker.ts")).runSpeechWorker(),
   "--background": async () => {
     const h = await startHub({ version: pkg.version });
     await new Promise<void>((resolve) => {

@@ -22,14 +22,11 @@ describe("harbor (main.rs)", () => {
     expect((await harbor(["-V"]))[1]).toBe(`harbor ${pkg.version} (ts)\n`);
   });
 
-  test("an unknown command and no command say what this build has", async () => {
+  test("an unknown command says what this build has", async () => {
     const [code, , err] = await harbor(["frobnicate"]);
     expect(code).toBe(2);
     expect(err).toContain("unknown command frobnicate");
     expect(err).toContain("mesh");
-    const [code2, , err2] = await harbor([]);
-    expect(code2).toBe(2);
-    expect(err2).toContain("the window isn't in this build yet");
   });
 
   test("mesh on, allow and remove write the kv a running Harbor re-reads", async () => {

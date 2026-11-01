@@ -510,8 +510,8 @@ export class Store {
     try {
       write();
       this.saved.set(chatId, hashes);
-    } catch {
-      // kept out of the cache
+    } catch (e) {
+      console.error(`harbor: can't save the transcript of chat ${chatId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

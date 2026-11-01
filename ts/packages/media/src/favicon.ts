@@ -3,8 +3,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import { isIP } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { dataDir } from "@harbor/store";
-import sharp from "sharp";
 import { type Decoded, decodeBytes } from "./images.ts";
+import { sharpLib } from "./sharplib.ts";
 
 export const SIZE = 32;
 const MAX_FILE = 8 * 2 ** 20;
@@ -182,6 +182,7 @@ export async function localCandidates(root: string, name: string): Promise<strin
 }
 
 async function bestOf(files: string[]): Promise<string[]> {
+  const sharp = await sharpLib().catch(() => null);
   const rows: [number, number, number, string][] = [];
   for (const [i, p] of files.entries()) {
     if (!isFile(p)) continue;
@@ -191,7 +192,7 @@ async function bestOf(files: string[]): Promise<string[]> {
     if (ext === "svg") [rank, size] = [0, Number.MAX_SAFE_INTEGER];
     else if (ext === "ico") [rank, size] = [2, 0];
     else {
-      const m = await sharp(p).metadata().catch(() => null);
+      const m = sharp ? await sharp(p).metadata().catch(() => null) : null;
       if (m?.width && m.height) [rank, size] = m.width === m.height ? [0, m.width] : [1, Math.min(m.width, m.height)];
     }
     rows.push([rank, -size, i, p]);
@@ -319,6 +320,7 @@ export async function decode(p: string): Promise<Decoded | null> {
   const svg = p.toLowerCase().endsWith(".svg") || head.includes("<svg") || head.startsWith("<?xml");
   if (!svg) return decodeIcon(bytes);
   try {
+    const sharp = await sharpLib();
     const png = await sharp(bytes, { density: 384 }).resize(SIZE * 2, SIZE * 2, { fit: "inside" }).png().toBuffer();
     return decodeIcon(png);
   } catch {
@@ -328,6 +330,7 @@ export async function decode(p: string): Promise<Decoded | null> {
 
 export async function decodeIcon(bytes: Uint8Array): Promise<Decoded | null> {
   try {
+    const sharp = await sharpLib();
     const { image } = await decodeBytes(bytes, SIZE * 4, { maxSide: MAX_SIDE, maxAlloc: MAX_ALLOC });
     const s = Math.max(image.width, image.height);
     let pipe = sharp(image.data, { raw: { width: image.width, height: image.height, channels: 4 } }).resize({ width: s, height: s, fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } });

@@ -461,7 +461,7 @@ describe("remote", () => {
   });
 
   test("tailscale_devices_move_to_ssh", () => {
-    const text = "Host mac\n  HostName Mac-Air.local\n  User me\nHost acer\n  HostName 192.0.2.3\nHost gh\n  HostName github.com\n  User git\n";
+    const text = "Host mac\n  HostName Mac-Air.local\n  User me\nHost box\n  HostName 192.0.2.3\nHost gh\n  HostName github.com\n  User git\n";
     const entries = parseRemoteSshConfig(text, () => null, 0);
     const ts = (id: string, host: string) => newHost({ id, name: "My Mac", host, os: "macOS", bridge: true, icon: "laptop" });
     const paired = [allowed({ fp: "f", id: "ts:home-desk", name: "home-desk" })];

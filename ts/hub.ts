@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { commits, Engine, providers } from "./packages/agents/src/index.ts";
-import { dictate, voice } from "./packages/media/src/index.ts";
+import { commits, Engine, providers, recap } from "./packages/agents/src/index.ts";
+import { dictate, parakeet, voice } from "./packages/media/src/index.ts";
 import {
   AccountService,
   Api,
@@ -91,6 +91,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
   };
   let accounts = providers.discover();
+  parakeet.useOwnBinaryForWorker();
+  const mirrorDictation = (): void => {
+    const a = accounts.find((x) => x.id === "claude" && x.bin !== null && x.loggedIn === true);
+    dictate.setAccount(a ? (system, prompt, ms) => recap.askWithin(providers.binStr(a), providers.accountEnv(a), system, prompt, ms) : null);
+  };
+  mirrorDictation();
   const catalog = catalogOf(providers, () => accounts.map(catalogAccount), store);
   const portmap = new Portmap({ kv: store, net: lanPortmapNet() });
   const addrs = () => phoneAddrs(port, lanAddrs(env), portmap.publicAddr());
@@ -264,6 +270,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }, 10_000);
   const refresh = setInterval(() => {
     accounts = providers.discover();
+    mirrorDictation();
   }, 60_000);
   return {
     store,

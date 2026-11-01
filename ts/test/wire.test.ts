@@ -2,12 +2,17 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agent, movechat } from "../packages/agents/src/index.ts";
+import { agent, movechat, setAgentEnv, signedOutEnv } from "../packages/agents/src/index.ts";
 import { bridge } from "../packages/mcp/src/index.ts";
 import { profileSetup, shSetup } from "../packages/net/src/index.ts";
 import { wire } from "../wire.ts";
 
-afterAll(() => bridge.close());
+const before = { ...agent.integrations };
+afterAll(() => {
+  bridge.close();
+  agent.integrate(before);
+  setAgentEnv(signedOutEnv);
+});
 
 test("remote_turn_sends_the_login_on_stdin through net's launcher and mcp's bridge", async () => {
   wire();

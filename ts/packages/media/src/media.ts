@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { dataDir, home } from "@harbor/store";
+import { sharpLib } from "./sharplib.ts";
 import type { Image, Paragraph, Parent, PhrasingContent, Root, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
-import sharp from "sharp";
 
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg"] as const;
 export const VIDEO_EXTS = ["mp4", "webm", "mov"] as const;
@@ -479,6 +479,7 @@ export async function svgPng(svg: string, px: number): Promise<Uint8Array | null
   const c = check(svg);
   if (!c.ok || c.video) return null;
   try {
+    const sharp = await sharpLib();
     const drawn = await sharp(readFileSync(located(svg)), { density: 144, limitInputPixels: 4096 * 4096 }).png().toBuffer();
     const meta = await sharp(drawn).metadata();
     if (Math.max(meta.width ?? 0, meta.height ?? 0) <= px) return drawn;

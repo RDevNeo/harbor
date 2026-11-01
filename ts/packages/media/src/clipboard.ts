@@ -1,6 +1,6 @@
 import { limits } from "@harbor/store";
-import sharp from "sharp";
 import { type Decoded, decodeBytes } from "./images.ts";
+import { sharpLib } from "./sharplib.ts";
 
 const TEXT = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT"];
 const IMAGES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -114,7 +114,7 @@ export async function copyImage(bytes: Uint8Array): Promise<boolean> {
   let png: Uint8Array = bytes;
   if (!isPng(bytes)) {
     try {
-      png = await sharp(bytes).png().toBuffer();
+      png = await (await sharpLib())(bytes).png().toBuffer();
     } catch {
       return false;
     }

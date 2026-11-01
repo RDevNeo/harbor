@@ -1,7 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
-import sharp, { type Metadata } from "sharp";
+import type { Metadata } from "sharp";
 import { decodeIco, isIco } from "./ico.ts";
+import { sharpLib } from "./sharplib.ts";
 import { check, find, generation, isSvg, isVideo, located, type Media, poster, svgPng } from "./media.ts";
 
 const EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
@@ -52,6 +53,7 @@ export interface Limits {
 const tooLarge = (w: number, h: number): Error => new Error(`too large (${w}×${h})`);
 
 export async function decodeBytes(bytes: Uint8Array, cap: number, limits: Limits = { maxSide: MAX_SIDE, maxAlloc: MAX_ALLOC }): Promise<{ image: Decoded; dims: [number, number] }> {
+  const sharp = await sharpLib();
   let input: Uint8Array = bytes;
   if (isIco(bytes)) {
     const ico = decodeIco(bytes);
