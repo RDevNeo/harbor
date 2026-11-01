@@ -8,3 +8,5 @@ export { integrate, Turn, type Event, type Integrations, type Steering, type Tur
 export * as git from "./git.ts";
 export * as procs from "./procs.ts";
 export * as provupdate from "./provupdate.ts";
+export * as worktree from "./worktree.ts";
+export * as recap from "./recap.ts";
