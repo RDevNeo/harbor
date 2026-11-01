@@ -181,7 +181,9 @@ export async function spawn(cmd: Cmd, input: string | null, keepInput: boolean, 
     try {
       const s = readFileSync(join(dir, "pid"), "utf8").trim();
       if (/^\d+$/.test(s)) pid = Number(s);
-    } catch {}
+    } catch {
+      // not written yet: the runner is still starting
+    }
     if (pid !== undefined) break;
     if (Date.now() - t > 5000) throw new Error("the turn runner didn't start");
     await sleep(10);
@@ -206,7 +208,9 @@ export function writeInput(dir: string, text: string): boolean {
 export function closeInput(dir: string): void {
   try {
     writeFileSync(join(dir, "in.closed"), "");
-  } catch {}
+  } catch {
+    // a folder already gone: the turn ended
+  }
 }
 
 export function inputOpen(dir: string): boolean {
@@ -274,7 +278,9 @@ function fdOf(pid: number, dir: string, name: string): string | undefined {
     try {
       const t = readlinkSync(p);
       if (t === want || t === `${want} (deleted)`) return p;
-    } catch {}
+    } catch {
+      // an fd closed meanwhile
+    }
   }
   return undefined;
 }
@@ -339,7 +345,9 @@ export function recover(dir: string, pid: number, chatId: number, userAt: UserTi
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "in.closed"), "");
     writeFileSync(join(dir, "meta.json"), metaJson(meta));
-  } catch {}
+  } catch {
+    // the runner is followed anyway; only a later pickup misses the folder
+  }
   return meta;
 }
 
@@ -369,7 +377,9 @@ export function leftovers(rootDir: string = root()): [string, Meta][] {
   let names: string[] = [];
   try {
     names = readdirSync(rootDir);
-  } catch {}
+  } catch {
+    // no turns folder yet: no leftovers
+  }
   let live: [number, string, number][] | undefined;
   for (const n of names) {
     const dir = join(rootDir, n);
@@ -383,7 +393,9 @@ export function leftovers(rootDir: string = root()): [string, Meta][] {
     let old = true;
     try {
       old = Date.now() - statSync(dir).mtimeMs > KEEP_MS;
-    } catch {}
+    } catch {
+      // gone meanwhile: nothing to sweep
+    }
     if (old) rmSync(dir, { recursive: true, force: true });
   }
   v.sort((a, b) => a[1].started - b[1].started);
@@ -416,7 +428,9 @@ export function signedOutEnv(): [string, string | null][] {
   if (!existsSync(hosts)) {
     try {
       writePrivate(hosts, "github.com:\n    oauth_token: sign-in-to-github-in-harbor\n    git_protocol: https\n    user: harbor\n");
-    } catch {}
+    } catch {
+      // gh then finds no login, the same as signed out
+    }
   }
   v.push(["GH_CONFIG_DIR", gh], ["GIT_TERMINAL_PROMPT", "0"]);
   const helper = "!f() { test \"$1\" = get && echo 'Harbor: GitHub is not signed in. Sign in under Settings > Integrations > Apps.' >&2; }; f";
@@ -453,7 +467,9 @@ function ioText(e: unknown): string {
 function appendTo(path: string, text: string): void {
   try {
     if (existsSync(path)) appendFileSync(path, text);
-  } catch {}
+  } catch {
+    // a turn folder deleted under its runner
+  }
 }
 
 function size(path: string): number {
@@ -473,7 +489,9 @@ export async function run(args: readonly string[]): Promise<void> {
   if (dir === undefined) return;
   try {
     writeFileSync(join(dir, "pid"), String(process.pid));
-  } catch {}
+  } catch {
+    // Harbor's spawn then times out and says the runner didn't start
+  }
   let text: string;
   try {
     text = readFileSync(join(dir, "cmd.json"), "utf8");
@@ -514,7 +532,9 @@ export async function run(args: readonly string[]): Promise<void> {
         try {
           lend(overlay, acct, t);
           lent = overlay;
-        } catch {}
+        } catch {
+          // the token still reaches the agent; only commands it runs miss the login
+        }
       }
       env.CLAUDE_CODE_OAUTH_TOKEN = t;
     } else if (overlay !== undefined && !overlayInUse(overlay, process.pid)) {
@@ -633,7 +653,9 @@ function feed(child: Child, dir: string): { gone: boolean } {
         } finally {
           closeSync(fd);
         }
-      } catch {}
+      } catch {
+        // no input file yet: read it next time
+      }
       if (parts.length > 0) {
         try {
           sink.write(Buffer.concat(parts));
@@ -644,7 +666,9 @@ function feed(child: Child, dir: string): { gone: boolean } {
       } else if (closed) {
         try {
           await sink.end();
-        } catch {}
+        } catch {
+          // the agent already exited
+        }
         return;
       } else {
         await sleep(POLL_MS);
@@ -723,7 +747,9 @@ export function takeBack(dir: string, runner: number): void {
   let spec: unknown;
   try {
     spec = parse(readFileSync(join(dir, "cmd.json"), "utf8"));
-  } catch {}
+  } catch {
+    // no command file: nothing was lent
+  }
   const varOf = (k: string): string | undefined => {
     const kv = arr(at(spec, "env")).find((p) => at(p, 0) === k);
     return kv === undefined ? undefined : optStr(at(kv, 1));
@@ -740,7 +766,9 @@ function overlayInUse(overlay: string, runner: number): boolean {
     let spec: unknown;
     try {
       spec = parse(readFileSync(join(dir, "cmd.json"), "utf8"));
-    } catch {}
+    } catch {
+      // a runner whose folder is gone lends nothing
+    }
     return arr(at(spec, "env")).some((kv) => at(kv, 0) === "CLAUDE_CONFIG_DIR" && at(kv, 1) === overlay);
   });
 }
@@ -768,7 +796,9 @@ export async function waitRemote(child: { readonly pid: number; readonly exitCod
         } finally {
           closeSync(fd);
         }
-      } catch {}
+      } catch {
+        // no output yet
+      }
       let i: number;
       while ((i = partial.indexOf(10)) >= 0) {
         const line = partial.subarray(0, i + 1);
@@ -784,13 +814,17 @@ export async function waitRemote(child: { readonly pid: number; readonly exitCod
     if (ended !== undefined && Date.now() - ended[1] >= timing.lingerMs) {
       try {
         child.kill("SIGTERM");
-      } catch {}
+      } catch {
+        // ssh exited meanwhile
+      }
       const t = Date.now();
       while (!exited() && Date.now() - t < 2000) await sleep(POLL_MS);
       if (!exited()) {
         try {
           child.kill("SIGKILL");
-        } catch {}
+        } catch {
+          // ssh exited meanwhile
+        }
         while (!exited()) await sleep(10);
       }
       appendTo(join(dir, "err"), `harbor: the agent there exited ${Math.floor((Date.now() - ended[1]) / 1000)} s ago and ssh still held the connection open; closed it\n`);

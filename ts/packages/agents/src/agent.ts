@@ -168,7 +168,9 @@ export class Turn {
     // Marks it stopped on purpose, so a later Harbor doesn't take it for cut off.
     try {
       writeFileSync(join(this.dir, "stopped"), "");
-    } catch {}
+    } catch {
+      // the kill below still happens; a later Harbor then reads it as cut off
+    }
     if (aliveMeta(this.meta)) killTree(this.meta.pid);
     detach.takeBack(this.dir, this.meta.pid);
   }

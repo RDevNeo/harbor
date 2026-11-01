@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { Chat, Item, Mention, Repo, Store, Timer, Webhook } from "@harbor/store";
+import { type Chat, type Item, limits, type Mention, type Repo, type Store, type Timer, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import { parse as parseJson } from "./json.ts";
 import type { Event, RemoteSpec, Turn } from "./agent.ts";
@@ -43,10 +43,11 @@ export interface EngineHost {
   visible?(chatId: number): boolean;
   /** `harbor://chat/<id>?pc=<PC>` (net's chatlink.rs). */
   chatLink?(chat: Chat): string;
-  /** An account at its usage limit holds the prompt until the reset; true when it did (store's limits). */
-  limitGuard?(chatId: number, prompt: string, files: readonly string[]): boolean;
-  /** Limit and quota events; true when consumed. */
-  limitEvent?(chatId: number, ev: Event): boolean;
+  /** A chat waits for its account's usage limit, or continues after it (net's notify.rs). */
+  noteLimit?(chatId: number, account: string, waits: boolean, note: string): void;
+  noteResumed?(chatId: number, account: string, text: string): void;
+  /** A desktop notification about a usage cap or its warning. */
+  notify?(kind: string, key: string, title: string, body: string): void;
   /** After a turn's end, for limits, recaps, pull requests and git status. */
   turnEnded?(chatId: number, stopped: boolean): void;
   /** The overlay profiles of chats commanded from other PCs, where a session may have been written (net's meshctx.rs). */
@@ -60,8 +61,6 @@ export interface EngineHost {
   openElsewhere?(me: Chat, machine: string, args: unknown): Promise<string>;
   /** Text in the chat's composer (recaps wait while there is some). */
   draft?(chatId: number): string;
-  /** The account can't ask Haiku now (at or near its usage limit: store's limits). */
-  recapBlocked?(accountId: string): boolean;
   /** An undone message goes back to the chat's composer (ui), with its attachments and mentions. */
   restoreDraft?(chatId: number, text: string, files: string[], mentions: Mention[]): void;
   /** Tools other packages answer (secrets, chats across PCs, open_chat); undefined: not theirs. */
@@ -140,9 +139,39 @@ export class Engine {
   hookPort = 47920;
 
   readonly recaps: Recaps;
+  /** Usage limits and caps: blocked accounts, chats waiting for a reset (kv `limits`). */
+  readonly limits: limits.Limits;
 
   constructor(readonly host: EngineHost) {
     this.reload();
+    const info = (a: Account): limits.AccountInfo => ({ id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage });
+    this.limits = new limits.Limits({
+      store: host.store,
+      chat: (id) => this.chat(id),
+      chats: () => this.chats,
+      account: (id) => {
+        const a = this.account(id);
+        return a ? info(a) : undefined;
+      },
+      accounts: () => host.accounts().map(info),
+      pending: this.pending,
+      turnRunning: (id) => this.turns.has(id),
+      runningSubs: (lead) => this.runningSubs(lead).length,
+      startTurn: (id, prompt) => this.startTurn(id, prompt),
+      notice: (id, icon, text, detail) => this.notice(id, icon, text, detail),
+      noteLimit: (id, account, waits, note) => host.noteLimit?.(id, account, waits, note),
+      noteResumed: (id, account, text) => host.noteResumed?.(id, account, text),
+      notify: (kind, key, title, body) => host.notify?.(kind, key, title, body),
+      persist: (id) => this.persist(id),
+      setAccount: (id, account) => {
+        const c = this.chat(id);
+        if (c) {
+          c.account = account;
+          this.store.saveChat(c);
+        }
+      },
+      sessionFile: (configDir, sid) => sessionCopies(configDir, sid)[0] ?? null,
+    });
     this.recaps = new Recaps({
       store: host.store,
       chat: (id) => this.chat(id),
@@ -152,7 +181,9 @@ export class Engine {
       asker: (id) => {
         const c = this.chat(id);
         const a = c ? this.account(c.account) : undefined;
-        if (!a || a.kind !== "Claude" || this.host.recapBlocked?.(a.id)) return null;
+        // Not at (or near) a usage limit.
+        if (!a || a.kind !== "Claude" || this.limits.blocked(a.id) || this.limits.paused.has(id)) return null;
+        if ((this.limits.quota.get(a.id) ?? []).some(([, used]) => used >= 0.9)) return null;
         return { bin: binStr(a), env: accountEnv(a) };
       },
       watched: (id) => this.host.visible?.(id) ?? false,
@@ -166,7 +197,8 @@ export class Engine {
     this.queueDrain();
     const timers = this.fireTimers();
     const recap = this.recaps.tick();
-    const due = [timers, recap].filter((x): x is number => x !== null);
+    const waits = this.limits.fireLimitTimers();
+    const due = [timers, recap, waits === null ? null : waits * 1000].filter((x): x is number => x !== null);
     return due.length === 0 ? null : Math.min(...due);
   }
 
@@ -305,7 +337,7 @@ export class Engine {
       this.persist(id);
       return;
     }
-    if (this.host.limitGuard?.(id, prompt, files)) return;
+    if (this.limits.limitGuard(id, prompt, files)) return;
     const chat = this.chat(id);
     if (!chat) return;
     const account = this.account(chat.account);
@@ -331,7 +363,9 @@ export class Engine {
       const also = [...(this.host.overlays?.() ?? []), account.configDir ?? `${home()}/.claude`];
       try {
         ensureSessionIn(context.overlay ?? account.configDir, also, chat.sessionId, cwd);
-      } catch {}
+      } catch {
+        // without the copy Claude starts the session fresh, as the Rust app does
+      }
     }
     const spec: agent.TurnSpec = {
       chatId: id,
@@ -407,11 +441,12 @@ export class Engine {
     // A stopped turn's end that came after the chat's next turn started: that one goes on.
     const current = this.turns.get(id);
     if (ev.type === "exited" && current !== undefined && current !== from) return;
-    if (this.queueEvent(id, ev) || this.host.limitEvent?.(id, ev)) return;
+    if (this.queueEvent(id, ev) || this.limits.limitEvent(id, limitEvent(ev))) return;
     const exited = ev.type === "exited" ? !this.turns.has(id) : null;
     this.applyEvent(id, ev);
     if (exited !== null) {
       this.queueExited(id, exited);
+      this.limits.limitExited(id);
       this.host.turnEnded?.(id, exited);
       this.restartExited(id);
       this.recaps.exited(id, exited);
@@ -601,7 +636,8 @@ export class Engine {
   afterTurn(id: number, stopped: boolean): void {
     const chat = this.chat(id);
     if (!chat) return;
-    if (chat.role === "sub" && !stopped && !this.resumes(id) && chat.parent !== null) {
+    // A sub-agent stopped by a usage limit hasn't finished: it continues after the reset.
+    if (chat.role === "sub" && !stopped && !this.limits.hitLimit(id) && !this.resumes(id) && chat.parent !== null) {
       const report = this.lastReply(id);
       this.notice(chat.parent, "report", reportLine(chat.name, report), report);
       this.trigger(chat.parent, `[agent ${chat.name}] finished its turn. Its report:\n\n${report}`, true);
@@ -680,7 +716,9 @@ export class Engine {
     let meta: detach.Meta | undefined;
     try {
       meta = detach.readMeta(readFileSync(join(dir, "meta.json"), "utf8"));
-    } catch {}
+    } catch {
+      // no meta.json: recovered from the process below
+    }
     meta ??= detach.recover(dir, pid, id, userTimes(this.store.items(id)));
     this.notice(id, "alert", "A turn of this chat was still running: new messages wait for it");
     this.pickUp(dir, meta);
@@ -700,7 +738,7 @@ export class Engine {
   /** After a cut-off turn's replay: continues the chat in its session (unless something else already did). */
   private restartExited(id: number): void {
     const go = this.resumes(id);
-    if (!this.cutOff.delete(id) || !go || this.turns.has(id)) return;
+    if (!this.cutOff.delete(id) || !go || this.turns.has(id) || this.limits.paused.has(id)) return;
     this.notice(id, "restart", "The turn was cut off while Harbor was away · continuing");
     this.startTurn(id, detach.RESTARTED);
   }
@@ -775,14 +813,18 @@ export class Engine {
       if (resumes && chat.device === "") {
         try {
           ensureSession(acc.configDir, chat.sessionId, this.chatCwd(chat));
-        } catch {}
+        } catch {
+          // the turn then writes a new copy, which undo removes
+        }
       }
       const path = resumes ? (sessionCopies(acc.configDir, chat.sessionId)[0] ?? null) : null;
       let len: number | null = null;
       if (path !== null) {
         try {
           len = statSync(path).size;
-        } catch {}
+        } catch {
+          // gone meanwhile: the turn makes it, and undo removes it
+        }
       }
       jsonl = [path, len];
     }
@@ -850,14 +892,18 @@ export class Engine {
     if (path !== null && len !== null) {
       try {
         truncateSync(path, len);
-      } catch {}
+      } catch {
+        // the session keeps the message; the chat's started flag goes back anyway
+      }
     } else if (s.jsonl !== null) {
       // The turn created the file (a new session, or a resumed one with no file yet).
       const p = sessionCopies(config, s.sessionId)[0];
       if (p !== undefined) {
         try {
           unlinkSync(p);
-        } catch {}
+        } catch {
+          // already gone
+        }
       }
     }
     if (chat) {
@@ -911,7 +957,9 @@ export class Engine {
         try {
           forkJsonl(f, sessionId, items);
           forked = true;
-        } catch {}
+        } catch {
+          // the message isn't in the session: the fork gets the conversation as its first message's preamble
+        }
       }
     }
     const title = src.role === "sub" && src.name !== "" ? `${src.name} · ${src.title}` : src.title;
@@ -1275,6 +1323,7 @@ export class Engine {
     this.pending.delete(id);
     this.stop(id);
     waiting += this.takeQueue(id).length;
+    this.limits.cancelLimit(id);
     this.notice(id, "report", "Retired: this agent's job is done");
     const ps = this.procs.filter((p) => p.owner === id).map((p) => p.name);
     let out = `Retired ${c.name}${running ? " (its running turn was stopped)" : ""}. It's off the team for good; its chat stays readable: ${this.chatLink(c)}`;
@@ -1436,6 +1485,13 @@ export function subsRunning(n: number): string {
   return n === 1 ? "  ·  1 sub-agent running" : `  ·  ${n} sub-agents running`;
 }
 
+
+function limitEvent(ev: Event): limits.LimitEvent {
+  if (ev.type === "quota") return { type: "quota", windows: ev.windows };
+  if (ev.type === "limit") return { type: "limit", kind: ev.kind, resetsAt: ev.resetsAt, text: ev.text };
+  if (ev.type === "error") return { type: "error", text: ev.text };
+  return { type: "other" };
+}
 
 /** Per item: its time if it is a user message, for `detach.recover`. */
 export function userTimes(items: readonly Item[]): (number | null)[] {

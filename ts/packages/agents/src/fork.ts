@@ -86,5 +86,7 @@ export function forkJsonl(src: string, newId: string, items: readonly Item[]): v
   // As private as the session it came from.
   try {
     chmodSync(dst, statSync(src).mode & 0o7777);
-  } catch {}
+  } catch {
+    // the copy keeps the folder's default mode
+  }
 }

@@ -116,8 +116,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   let accounts = providers.discover();
   parakeet.useOwnBinaryForWorker();
+  let engine: Engine | null = null;
   const mirrorDictation = (): void => {
-    const a = accounts.find((x) => x.id === "claude" && x.bin !== null && x.loggedIn === true);
+    // As voice.rs: not while the account is blocked by a usage limit.
+    const a = accounts.find((x) => x.id === "claude" && x.bin !== null && x.loggedIn === true && engine?.limits.blocked(x.id) === undefined);
     dictate.setAccount(a ? (system, prompt, ms) => recap.askWithin(providers.binStr(a), providers.accountEnv(a), system, prompt, ms) : null);
   };
   mirrorDictation();
@@ -127,7 +129,6 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const meshAddrs = () => addrs().map((a) => (parseIp(a) ? hostPort(a, port) : a));
   const account = new AccountService({ kv: store, stateDir: state, identity: () => id, me: () => hub.mesh.me, addrs: meshAddrs, version: o.version, env });
   account.load();
-  let engine: Engine | null = null;
   let services: Services | null = null;
   let phoneRoute: (call: Call) => Promise<Reply> = async () => err(503, "Harbor is starting");
   const replica = new StoreReplica({

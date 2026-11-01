@@ -13,7 +13,9 @@ function libc(): typeof lib {
     try {
       lib = dlopen(name, { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
       return lib;
-    } catch {}
+    } catch {
+      // not this libc's name: try the next
+    }
   }
   lib = null;
   return lib;

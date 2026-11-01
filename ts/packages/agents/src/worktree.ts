@@ -242,7 +242,9 @@ async function takenBranches(repo: string): Promise<Set<string>> {
       const n = afterSlash(r);
       if (n !== undefined) set.add(n);
     }
-  } catch {}
+  } catch {
+    // not a repository: no branch names taken
+  }
   return set;
 }
 
@@ -545,7 +547,9 @@ export async function remove(repo: string, dir: string): Promise<void> {
   let isDir = false;
   try {
     isDir = statSync(dir).isDirectory();
-  } catch {}
+  } catch {
+    // gone: only git's worktree list is pruned
+  }
   if (!isDir) {
     await ok(git(repo, ["worktree", "prune"]));
     return;

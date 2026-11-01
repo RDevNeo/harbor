@@ -122,5 +122,7 @@ function scan(dir: string, depth: number, out: string[]): void {
 export function openUrl(url: string): void {
   try {
     Bun.spawn(["xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  } catch {}
+  } catch {
+    // no xdg-open: the link just doesn't open
+  }
 }

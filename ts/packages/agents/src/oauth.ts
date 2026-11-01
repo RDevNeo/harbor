@@ -49,7 +49,9 @@ export function tokenAt(path: string, nowMs: number, refresh: (rt: string) => un
     if (fresh === null) return access;
     try {
       write(path, root);
-    } catch {}
+    } catch {
+      // the new token works for this turn; the CLI refreshes again next time
+    }
     return fresh;
   } finally {
     unlock?.();
@@ -110,7 +112,9 @@ export function lend(overlay: string, configDir: string | null, tok: string): vo
   let src: unknown;
   try {
     src = parse(readFileSync(credentialsPath(configDir), "utf8"));
-  } catch {}
+  } catch {
+    // the account has no login file: the lent login has only the token
+  }
   const from = at(src, "claudeAiOauth");
   const login: Record<string, unknown> = { accessToken: tok, scopes: ["user:inference"] };
   if (optStr(at(from, "accessToken")) === tok) {
@@ -134,6 +138,7 @@ export function unlend(overlay: string): void {
   try {
     rmSync(path, { force: true });
   } catch {
+    // never lent
   } finally {
     unlock?.();
   }

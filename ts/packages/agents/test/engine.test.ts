@@ -44,6 +44,11 @@ for await (const chunk of Bun.stdin.stream()) {
     const text = JSON.parse(line).message.content.at(-1).text;
     out({ type: "user", isReplay: true, message: { content: [{ type: "text", text }] } });
     if (text.includes("slow")) await Bun.sleep(700);
+    if (text.includes("limit")) {
+      out({ type: "assistant", error: "rate_limit", quotaLimits: { rateLimitType: "five_hour", resetsAt: Math.floor(Date.now() / 1000) + 3600 }, message: { content: [{ type: "text", text: "You've hit your limit" }] } });
+      out({ type: "result", subtype: "error_during_execution", is_error: true, result: "You've hit your limit", usage: {} });
+      continue;
+    }
     out({ type: "assistant", message: { content: [{ type: "text", text: "echo: " + text }] } });
     out({ type: "result", subtype: "success", total_cost_usd: 0, duration_ms: 3, num_turns: 1, usage: { input_tokens: 1, output_tokens: 1 } });
   }
@@ -235,6 +240,25 @@ describe("undo and fork", () => {
     expect(answer).toStartWith("echo: This conversation is a fork of an earlier one.");
     expect(answer).toContain("user: first");
     expect(e.takeForkPreamble(f.id)).toBe("");
+    store.close();
+  });
+});
+
+describe("usage limits", () => {
+  test("a turn that hits the limit blocks the account: the chat waits, the next prompt is held, no recap asks", async () => {
+    const { e, store } = setup();
+    const c = newChat(store, { role: "lead", name: "lead" });
+    e.reload();
+    e.send(c.id, "hit the limit");
+    await until("its end", () => !e.running(c.id));
+    expect(e.limits.blocked("claude")?.kind).toBe("five_hour");
+    expect(e.limits.paused.has(c.id)).toBe(true);
+    expect(e.transcript(c.id).items.some((i) => i.kind === "notice")).toBe(true);
+    e.send(c.id, "and now?");
+    expect(e.running(c.id)).toBe(false);
+    expect(e.pending.get(c.id)?.at(-1)).toContain("and now?");
+    // The state is kept in kv `limits`, as the Rust app keeps it.
+    expect(store.get("limits")).toContain('"claude":{"until":');
     store.close();
   });
 });

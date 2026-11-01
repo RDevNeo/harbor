@@ -9,7 +9,9 @@ export function projectSlug(cwd: string): string {
   let real = cwd;
   try {
     real = realpathSync(cwd);
-  } catch {}
+  } catch {
+    // a folder that doesn't exist (yet) maps by its given path, as Claude Code's would
+  }
   return [...real].map((c) => (/^[A-Za-z0-9]$/.test(c) ? c : "-")).join("");
 }
 
@@ -54,7 +56,9 @@ export function sessionCopies(config: string | null, sid: string): string[] {
   let dirs: string[] = [];
   try {
     dirs = readdirSync(root);
-  } catch {}
+  } catch {
+    // no projects folder: no sessions
+  }
   return dirs.map((d) => join(root, d, `${sid}.jsonl`)).filter(isFile).sort(newestFirst);
 }
 
@@ -80,7 +84,9 @@ export function ensureSessionIn(config: string | null, also: readonly string[], 
   if (isDir(side)) {
     try {
       cpSync(side, join(dir, sid), { recursive: true });
-    } catch {}
+    } catch {
+      // the session is there; only its sidecar files are missing
+    }
   }
   return true;
 }

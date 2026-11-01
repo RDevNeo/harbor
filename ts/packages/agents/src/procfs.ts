@@ -116,7 +116,9 @@ function signal(sig: NodeJS.Signals, list: number[]): void {
   for (const p of list) {
     try {
       process.kill(p, sig);
-    } catch {}
+    } catch {
+      // the process ended meanwhile
+    }
   }
 }
 

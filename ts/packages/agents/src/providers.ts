@@ -201,7 +201,9 @@ export function discover(): Account[] {
   let names: string[] = [];
   try {
     names = readdirSync(h);
-  } catch {}
+  } catch {
+    // no home folder to read: only the default Claude account
+  }
   for (const name of names) {
     if (!name.startsWith(".claude")) continue;
     const rest = name.slice(7);
@@ -279,7 +281,9 @@ export function cursorModels(cursorBin: string): Model[] {
   try {
     const r = Bun.spawnSync([cursorBin, "models"], { env: { ...process.env, PATH: childPath() }, stdout: "pipe", stderr: "ignore" });
     text = r.stdout.toString();
-  } catch {}
+  } catch {
+    // cursor-agent didn't run: its list is the default
+  }
   return parseCursorModels(text);
 }
 
@@ -352,7 +356,9 @@ export function defaultEffort(k: Kind): string {
     let text = "";
     try {
       text = readFileSync(join(home(), ".codex/config.toml"), "utf8");
-    } catch {}
+    } catch {
+      // no Codex config: its default effort
+    }
     const line = text.split("\n").find((l) => l.startsWith("model_reasoning_effort"));
     const v = line?.slice("model_reasoning_effort".length).replace(/^[ =]+/, "").trim().replace(/^"+|"+$/g, "");
     codexEffort = efforts("Codex").find((e) => e[0] === v)?.[0] ?? "medium";

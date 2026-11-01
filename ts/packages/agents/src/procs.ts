@@ -55,7 +55,9 @@ export class Proc {
 export function signalGroup(sig: NodeJS.Signals, pgid: number): void {
   try {
     process.kill(-pgid, sig);
-  } catch {}
+  } catch {
+    // the group ended meanwhile
+  }
 }
 
 /** The live processes of process group `pgid` (field 5 of /proc/<pid>/stat). */
@@ -113,7 +115,9 @@ function capLog(log: string): void {
     if (len > LOG_MAX) {
       try {
         trim(log, LOG_KEEP);
-      } catch {}
+      } catch {
+        // tried again in 30 s
+      }
     }
   }, 30_000);
   timer.unref();

@@ -256,7 +256,9 @@ export async function askWithin(bin: string, env: Env, system: string, prompt: s
   try {
     p.stdin.write(prompt);
     await p.stdin.end();
-  } catch {}
+  } catch {
+    // Claude exited before reading its prompt: its output says why
+  }
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;

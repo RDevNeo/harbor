@@ -19,7 +19,9 @@ export class Work {
       let v: unknown;
       try {
         v = JSON.parse(this.e.store.get("auto_handled") ?? "[]");
-      } catch {}
+      } catch {
+        // not JSON: nothing handled yet
+      }
       this.handledList = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
     }
     return this.handledList;
