@@ -823,6 +823,12 @@ export class Shell {
         if (chat) for (const q of [...this.engine.queued(chat.id)]) this.engine.queueRemove(chat.id, q.id);
         this.refreshAll();
         return;
+      case "fork": {
+        if (!chat) return;
+        const at = forkable(this.items(chat.id)).findLastIndex((x) => x !== null);
+        if (at >= 0) this.fork(chat.id, at);
+        return;
+      }
       default:
         this.unported(`/${c}`);
     }
@@ -1394,6 +1400,14 @@ export class Shell {
     this.dialog(what, `${what} isn't in the TypeScript app yet: it's listed as not started in ts/packages/ui/PROGRESS.md.`, "OK", false, null, () => {});
   }
 
+  /** fork.rs `fork_from`: a new chat with the conversation up to that reply. */
+  private fork(id: number, reply: number): void {
+    const c = this.engine.forkFrom(id, reply);
+    if (!c) return;
+    this.data.reload();
+    this.openChat(c.id);
+  }
+
   /** A hover-bar button of message `seq` (chat.rs `msg_action`). */
   private cardAction(seq: number, a: string): void {
     const chat = this.data.chat(this.chatId);
@@ -1418,7 +1432,7 @@ export class Shell {
       this.mentions.set(this.key(), list);
       this.win.focus_composer();
     } else {
-      this.unported("Forking a chat");
+      this.fork(chat.id, seq);
     }
   }
 
