@@ -55,16 +55,16 @@ async function request(sock: TLSSocket, method: string, path: string, auth: stri
 }
 
 describe("the phone API's chats (api.rs App side)", () => {
-  test("a_chat_is_exported_to_peers_with_its_pull_request_and_worktree_name", () => {
+  test("a_chat_is_exported_to_peers_with_its_pull_request_and_worktree_name", async () => {
     const store = Store.openAt(join(tmp, "export.db"));
     const c = store.createChat(blankChat({ title: "mine" }));
     const pr = { number: 7, state: "open", label: "PR #7 · Open", title: "Add it", url: "https://github.com/o/r/pull/7" };
     const hub = new Hub([], 0);
-    const bare = new StoreReplica({ store, hub, version: "t" }).chats(0, true).chats[0] as Record<string, Json>;
+    const bare = (await new StoreReplica({ store, hub, version: "t" }).chats(0, true)).chats[0] as Record<string, Json>;
     expect([bare.pr, bare.worktree]).toEqual([null, null]);
     const status = { queue: [], working: { since_ms: 1, subagents: 2, text: "Working…  ·  2 sub-agents running" }, waiting: null, limit: null, agents: null, folder: null, can_steer: true, held: false, follow_up: "steer" };
     const replica = new StoreReplica({ store, hub, version: "t", pr: (x) => (x.id === c.id ? pr : null), worktree: () => "fix-login", forks: () => [[3, 9]], queued: () => 2, status: () => status, about: () => ({ owner: "Ana Souza", github: "anasouza", owner_suggested: true }) });
-    const out = replica.chats(0, true).chats[0] as Record<string, Json>;
+    const out = (await replica.chats(0, true)).chats[0] as Record<string, Json>;
     expect([out.pr, out.worktree, out.forks, out.queued, out.status]).toEqual([pr, "fix-login", [[3, 9]], 2, status]);
     expect(replica.helloExtra()).toMatchObject({ owner: "Ana Souza", github: "anasouza", owner_suggested: true });
     expect([bare.forks, bare.queued]).toEqual([[], 0]);

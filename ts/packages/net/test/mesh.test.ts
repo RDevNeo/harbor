@@ -198,28 +198,28 @@ describe("mesh.rs", () => {
     expect(sameRemote("", "")).toBe(false);
   });
 
-  test("a copy's project with no folder here learns the remote its home sends, one here keeps its own", () => {
+  test("a copy's project with no folder here learns the remote its home sends, one here keeps its own", async () => {
     const store = Store.openAt(join(tmp, "learn.db"));
     const away = store.addRepo("/nowhere/owner/app");
     const here = store.addRepo(tmp);
     store.setRepoRemote(here, "git@example.org:me/mine.git");
     const replica = new StoreReplica({ store, hub: new Hub([], 0), version: "t" });
     const copy = (id: number, path: string, name: string, remote: string) => ({ id, gid: `g${id}`, title: "t", project: { path, name, remote } });
-    replica.applyChats("pc:home", 1, { chats: [copy(1, "/nowhere/owner/app", "app", "git@example.org:o/app.git"), copy(2, "/elsewhere/x", basename(tmp), "git@example.org:o/other.git")] });
+    await replica.applyChats("pc:home", 1, { chats: [copy(1, "/nowhere/owner/app", "app", "git@example.org:o/app.git"), copy(2, "/elsewhere/x", basename(tmp), "git@example.org:o/other.git")] });
     const remotes = new Map(store.repos().map((r) => [r.id, r.remote]));
     expect(remotes.get(away)).toBe("git@example.org:o/app.git");
     expect(remotes.get(here)).toBe("git@example.org:me/mine.git");
     store.close();
   });
 
-  test("a chat's published cwd is where its agent works, its worktree before its project", () => {
+  test("a chat's published cwd is where its agent works, its worktree before its project", async () => {
     const store = Store.openAt(join(tmp, "cwd.db"));
     const repo = store.addRepo(tmp);
     store.createChat(blankChat({ repoId: repo, title: "in a worktree" }));
-    const cwdOf = (o: { cwd?: () => string | null }) => (new StoreReplica({ store, hub: new Hub([], 0), version: "t", ...o }).chats(0, true).chats as { cwd: string }[])[0]?.cwd;
-    expect(cwdOf({ cwd: () => "/wt/app-fix" })).toBe("/wt/app-fix");
-    expect(cwdOf({ cwd: () => null })).toBe(tmp);
-    expect(cwdOf({})).toBe(tmp);
+    const cwdOf = async (o: { cwd?: () => string | null }) => ((await new StoreReplica({ store, hub: new Hub([], 0), version: "t", ...o }).chats(0, true)).chats as { cwd: string }[])[0]?.cwd;
+    expect(await cwdOf({ cwd: () => "/wt/app-fix" })).toBe("/wt/app-fix");
+    expect(await cwdOf({ cwd: () => null })).toBe(tmp);
+    expect(await cwdOf({})).toBe(tmp);
     store.close();
   });
 });
@@ -321,7 +321,7 @@ describe("two TypeScript PCs", () => {
     expect(b.heard).toContain(null);
     expect(b.heard).toContain(copy?.id ?? -1);
     // The copy is never served back as its own, and the hubs list knows the peer.
-    expect(b.replica.chats(0, true).chats).toEqual([]);
+    expect((await b.replica.chats(0, true)).chats).toEqual([]);
     const hubs = b.mesh.hubs() as { hubs: { id: string; online: boolean }[] };
     expect(hubs.hubs.map((h) => [h.id, h.online])).toEqual([
       ["pc:beta", true],

@@ -221,8 +221,10 @@ export class Fnv {
 
   update(bytes: Uint8Array): this {
     let { hi, lo } = this;
-    for (const b of bytes) {
-      lo = (lo ^ b) >>> 0;
+    // An indexed loop: `for…of` over a Uint8Array goes through the iterator protocol per byte,
+    // which made hashing a PC's transcripts take seconds on the window's thread.
+    for (let i = 0, n = bytes.length; i < n; i++) {
+      lo = (lo ^ bytes[i]!) >>> 0;
       const p = lo * 0x1b3;
       const carry = Math.floor(p / 0x100000000);
       const nlo = p >>> 0;
@@ -251,11 +253,17 @@ export function itemHash(it: Item): bigint {
 
 /** A transcript's digest as copies compare it: FNV over each item's hash (8 bytes little-endian). */
 export function digest(items: readonly Item[]): bigint {
+  return digestOf(items.map(itemHash));
+}
+
+/** `digest` from the items' hashes (`itemHash`), in order. */
+export function digestOf(hashes: readonly bigint[]): bigint {
   const h = new Fnv();
   const buf = new DataView(new ArrayBuffer(8));
-  for (const it of items) {
-    buf.setBigUint64(0, itemHash(it), true);
-    h.update(new Uint8Array(buf.buffer));
+  const bytes = new Uint8Array(buf.buffer);
+  for (const x of hashes) {
+    buf.setBigUint64(0, x, true);
+    h.update(bytes);
   }
   return h.value();
 }

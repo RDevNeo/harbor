@@ -7,6 +7,17 @@ import { draftFromJson, draftJson, previewTail, type Hub, type SharedDraft } fro
 import type { MeshApp } from "./mesh.ts";
 import { F64, type Json } from "./wire.ts";
 
+/** Gives the event loop a turn after every 8 ms of work, so a long chat list never holds the window
+ * (and the turns, and every other peer) for seconds. */
+function yielder(): () => Promise<void> {
+  let at = performance.now();
+  return async () => {
+    if (performance.now() - at < 8) return;
+    await new Promise<void>((r) => setImmediate(r));
+    at = performance.now();
+  };
+}
+
 /** What the agents know of one of this PC's chats; an idle chat without it. */
 export interface LiveChat {
   running: boolean;
@@ -39,6 +50,8 @@ export interface StoreReplicaOptions {
   live?: (chat: number) => LiveChat | null;
   /** A chat's items as they are now (the Engine's transcript while it streams); else the store's. */
   items?: (chat: number) => Item[];
+  /** The Engine's transcript only while it holds one in memory (null: the saved one is current). */
+  liveItems?: (chat: number) => Item[] | null;
   accounts?: () => Json[];
   update?: () => Json;
   about?: () => { owner: string; github: string; owner_suggested: boolean };
@@ -139,10 +152,16 @@ export class StoreReplica implements MeshApp {
     return r ? repoDir(r) : homedir();
   }
 
+  /** A transcript's length and digest as peers compare them: the saved one's are cached by the store. */
+  private summary(chat: number): { count: number; digest: bigint } {
+    const live = this.o.liveItems?.(chat) ?? null;
+    return live ? { count: live.length, digest: digest(live) } : this.o.store.summary(chat);
+  }
+
   private chatJson(c: Chat, full: boolean): Json {
     const hub = this.o.hub;
     const r = c.repoId === null ? null : (this.repos.find((x) => x.id === c.repoId) ?? null);
-    const items = this.itemsOf(c.id);
+    const sum = full ? this.summary(c.id) : null;
     const live = this.o.live?.(c.id) ?? null;
     const typing = hub.typing(c.id).map((t) => {
       const v: Record<string, Json> = { device: t.device, kind: t.kind, label: t.label };
@@ -167,8 +186,8 @@ export class StoreReplica implements MeshApp {
       parent: c.parent,
       name: c.name,
       started: c.started,
-      count: full ? items.length : 0,
-      digest: full ? digest(items).toString(16).padStart(16, "0") : null,
+      count: sum ? sum.count : 0,
+      digest: sum ? sum.digest.toString(16).padStart(16, "0") : null,
       running: live?.running ?? false,
       since_ms: live?.sinceMs ?? null,
       queued: this.o.queued?.(c.id) ?? live?.queued ?? 0,
@@ -183,13 +202,19 @@ export class StoreReplica implements MeshApp {
     };
   }
 
-  chats(since: number, full: boolean): { chats: Json[]; update: Json } {
+  async chats(since: number, full: boolean): Promise<{ chats: Json[]; update: Json }> {
     this.reload();
     const own = this.list
       .filter((c) => c.home === "")
       .filter((c) => full || this.o.hub.chatRev(c.id) > since)
       .sort((a, b) => Number(a.role === "sub") - Number(b.role === "sub") || a.id - b.id);
-    return { chats: own.map((c) => this.chatJson(c, full)), update: this.o.update?.() ?? null };
+    const out: Json[] = [];
+    const turn = yielder();
+    for (const c of own) {
+      out.push(this.chatJson(c, full));
+      await turn();
+    }
+    return { chats: out, update: this.o.update?.() ?? null };
   }
 
   items(chat: number, since: number): Json | null {
@@ -327,8 +352,9 @@ export class StoreReplica implements MeshApp {
     return id;
   }
 
-  applyChats(peer: string, epoch: number, body: Record<string, unknown>): [number, number][] {
+  async applyChats(peer: string, epoch: number, body: Record<string, unknown>): Promise<[number, number][]> {
     this.reload();
+    const turn = yielder();
     const full = body.full === true;
     const wants: [number, number][] = [];
     const listed = new Set<number>();
@@ -345,7 +371,8 @@ export class StoreReplica implements MeshApp {
       let need = true;
       if (full) {
         const d = typeof m.digest === "string" && /^[0-9a-f]{1,16}$/i.test(m.digest) ? BigInt(`0x${m.digest}`) : null;
-        need = d !== digest(this.o.store.items(local));
+        need = d !== this.o.store.summary(local).digest;
+        await turn();
       }
       if (need) wants.push([hid, full && since === 0 ? 0 : since]);
     }

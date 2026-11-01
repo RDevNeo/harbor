@@ -291,6 +291,11 @@ export class Engine {
     return this.transcripts.get(id)?.items ?? this.store.items(id);
   }
 
+  /** The transcript held in memory (open or streaming), which can be ahead of the saved one; null: none. */
+  liveItems(id: number): Item[] | null {
+    return this.transcripts.get(id)?.items ?? null;
+  }
+
   release(id: number): void {
     if (!this.turns.has(id) && !this.pending.has(id)) this.transcripts.delete(id);
   }

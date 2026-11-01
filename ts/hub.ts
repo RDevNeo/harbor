@@ -256,7 +256,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const prs = new chatpr.ChatPrs({
     store,
     chats: () => store.chats(),
-    chat: (chatId) => store.chats().find((x) => x.id === chatId),
+    chat: (chatId) => store.chat(chatId),
     folders: (c) => {
       const r = engine?.repo(c.repoId);
       return engine && r ? { repo: repoDir(r), dir: engine.worktreeOf(c) ?? repoDir(r) } : null;
@@ -347,6 +347,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return w === null ? null : basename(w);
     },
     items: (chat) => (engine ? engine.itemsOf(chat) : store.items(chat)),
+    liveItems: (chat) => engine?.liveItems(chat) ?? null,
     live: (chat) => {
       if (!engine) return null;
       const since = engine.runningSince(chat);

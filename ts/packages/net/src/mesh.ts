@@ -24,11 +24,11 @@ export interface MeshApp {
   /** What `hello` says beyond id, name, epoch, keys and addresses. */
   helloExtra(): { version: string; accounts: Json[]; update: Json; owner: string; github: string; owner_suggested: boolean };
   /** `GET /mesh/v1/chats`: this PC's own chats changed after `since` (all when `full`). */
-  chats(since: number, full: boolean): { chats: Json[]; update: Json };
+  chats(since: number, full: boolean): { chats: Json[]; update: Json } | Promise<{ chats: Json[]; update: Json }>;
   /** `GET /mesh/v1/chats/{id}/items`; null: not one of this PC's own chats. */
   items(chat: number, since: number): Json | null;
   /** A peer's chats list: copies made or updated; returns [home id, since] of those whose items to fetch. */
-  applyChats(peer: string, epoch: number, body: Record<string, unknown>): [number, number][];
+  applyChats(peer: string, epoch: number, body: Record<string, unknown>): [number, number][] | Promise<[number, number][]>;
   applyItems(peer: string, epoch: number, homeId: number, body: Record<string, unknown>): void;
   /** `POST /mesh/v1/call` and the other calls answered by the app (memory, adopt, phones…). */
   route(call: Call): Promise<Reply>;
@@ -324,7 +324,7 @@ export class Mesh {
       const since = uint(query(req, "since"));
       const full = since === 0 || uint(query(req, "epoch")) !== hub.epoch;
       const rev = hub.rev();
-      const { chats, update } = this.d.app.chats(since, full);
+      const { chats, update } = await this.d.app.chats(since, full);
       const gone = full ? [] : shared.gone.filter(([g]) => g > since).map(([, id]) => id);
       return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update });
     }
@@ -694,7 +694,7 @@ export class Mesh {
         }
         if (changed) this.savePeers();
       }
-      const wants = this.d.app.applyChats(id, epoch, chats);
+      const wants = await this.d.app.applyChats(id, epoch, chats);
       for (const [hid, isince] of wants) {
         const body = obj(await get(d, `/mesh/v1/chats/${hid}/items?since=${isince}&epoch=${epoch}`, 60_000));
         if (body.epoch !== epoch) return;

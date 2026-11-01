@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, openSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type Item, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
+import { type Item, digest, digestOf, fnvText, itemHash, itemJson, parseItem } from "./item.ts";
 import { dataDir, newUuid, now, privateDir } from "./paths.ts";
 import { changed as settingChanged } from "./settingsync.ts";
 
@@ -256,6 +256,8 @@ export class Store {
   readonly db: Database;
   /** Per chat, a hash of each item as it is saved (by seq): a save writes only what changed. */
   private saved = new Map<number, bigint[]>();
+  /** Per chat, its saved transcript's length and digest as peers compare them; dropped when it's written. */
+  private sums = new Map<number, { count: number; digest: bigint }>();
 
   private constructor(db: Database) {
     this.db = db;
@@ -449,6 +451,12 @@ export class Store {
     return (this.db.query(`SELECT ${CHAT_COLS} FROM chats ORDER BY updated DESC`).all() as Row[]).map(chatFrom);
   }
 
+  /** One chat, without reading the others. */
+  chat(id: number): Chat | undefined {
+    const r = this.db.query(`SELECT ${CHAT_COLS} FROM chats WHERE id=?1`).get(id) as Row | null;
+    return r ? chatFrom(r) : undefined;
+  }
+
     createChat(chat: Chat): Chat {
     const c = { ...chat };
     // A copy of another PC's chat keeps its time; a new one starts now.
@@ -485,6 +493,7 @@ export class Store {
     this.db.query("UPDATE repos SET main_chat=0 WHERE main_chat=?1").run(id);
     // Ids can be reused: a new chat with this one must not look saved.
     this.saved.delete(id);
+    this.sums.delete(id);
   }
 
   items(chatId: number): Item[] {
@@ -497,6 +506,17 @@ export class Store {
     return out;
   }
 
+  /** A saved transcript's length and digest (item.ts `digest`), read once and kept until it's written again. */
+  summary(chatId: number): { count: number; digest: bigint } {
+    let v = this.sums.get(chatId);
+    if (!v) {
+      const items = this.items(chatId);
+      v = { count: items.length, digest: digest(items) };
+      this.sums.set(chatId, v);
+    }
+    return v;
+  }
+
   /** Saves a chat's transcript: only items new or changed since the last save are written, and items past its end are deleted. */
   saveItems(chatId: number, items: readonly Item[]): void {
     const hashes = items.map(itemHash);
@@ -507,6 +527,7 @@ export class Store {
       return;
     }
     // On any failure the cache stays empty for the chat, so the next save compares with the database.
+    this.sums.delete(chatId);
     const write = this.db.transaction(() => {
       const put = this.db.query("INSERT OR REPLACE INTO items(chat_id, seq, body) VALUES(?1, ?2, ?3)");
       items.forEach((it, i) => {
@@ -517,6 +538,7 @@ export class Store {
     try {
       write();
       this.saved.set(chatId, hashes);
+      this.sums.set(chatId, { count: items.length, digest: digestOf(hashes) });
     } catch (e) {
       console.error(`harbor: can't save the transcript of chat ${chatId}: ${e instanceof Error ? e.message : String(e)}`);
     }
