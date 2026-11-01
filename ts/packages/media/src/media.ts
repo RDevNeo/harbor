@@ -488,3 +488,53 @@ export async function svgPng(svg: string, px: number): Promise<Uint8Array | null
     return null;
   }
 }
+
+/** A served image: status, content type and bytes (an error's bytes are its text). */
+export interface ImageAnswer {
+  status: number;
+  ctype: string;
+  body: Uint8Array;
+}
+
+const answerError = (status: number, error: string): ImageAnswer => ({ status, ctype: "text/plain", body: new TextEncoder().encode(error) });
+
+function imageType(b: Uint8Array): string {
+  if (startsWith(b, "\x89PNG")) return "image/png";
+  if (startsWith(b, "\xFF\xD8\xFF")) return "image/jpeg";
+  if (startsWith(b, "GIF87a") || startsWith(b, "GIF89a")) return "image/gif";
+  if (b.length >= 12 && latin(b, 0, 4) === "RIFF" && latin(b, 8, 12) === "WEBP") return "image/webp";
+  return "application/octet-stream";
+}
+
+/** api.rs `serve_image`: a card's image (a video's poster, an SVG drawn), scaled to JPEG within `max` when asked; also once a temp file is gone (its kept copy). */
+export async function imageAnswer(path: string, max: number | null): Promise<ImageAnswer> {
+  // An https image still downloading into the cache: wait for it a little.
+  await waitFor(path, 20_000);
+  const c = check(path);
+  if (!c.ok) return answerError(404, `no such image: ${c.error}`);
+  const m = max === null ? null : Math.min(2048, Math.max(16, max));
+  let bytes: Uint8Array | null = null;
+  if (c.video) {
+    const p = await poster(path);
+    bytes = p === null ? null : readFileSync(p);
+  } else if (isSvg(path)) bytes = await svgPng(path, m ?? 1024);
+  else {
+    try {
+      bytes = readFileSync(located(path));
+    } catch {
+      bytes = null;
+    }
+  }
+  if (bytes === null) return answerError(404, c.video ? "no preview of this video" : "unreadable image");
+  if (m === null) return { status: 200, ctype: imageType(bytes), body: bytes };
+  try {
+    const sharp = await sharpLib();
+    const img = sharp(bytes, { limitInputPixels: 16384 * 16384 });
+    const meta = await img.metadata();
+    const big = (meta.width ?? 0) > m || (meta.height ?? 0) > m;
+    const out = await (big ? img.resize(m, m, { fit: "inside" }) : img).flatten({ background: "#ffffff" }).jpeg().toBuffer();
+    return { status: 200, ctype: "image/jpeg", body: out };
+  } catch {
+    return answerError(415, "not an image Harbor can read");
+  }
+}

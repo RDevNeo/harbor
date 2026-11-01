@@ -2,6 +2,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { type Account, Engine, type EngineHost, providers } from "@harbor/agents";
+import { media } from "@harbor/media";
 import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { Chat, Item, Mention as StoreMention, Repo, Store, Timer } from "@harbor/store";
 import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
@@ -47,6 +48,10 @@ export class Data {
       },
       mentionsPrompt: (ms) => mentionsPrompt(ms.map(mentionOf)),
       restoreDraft: (id, text, files, ms) => this.onRestoreDraft(id, text, files, ms.map(mentionOf)),
+      noteLimit: (id, account, waits, note) => this.notifier.noteLimit(this.chat(id) ?? null, account, this.engine.accountLabel(account), waits, note),
+      noteResumed: (id, account, text) => this.notifier.noteResumed(this.chat(id) ?? null, account, this.engine.accountLabel(account), text, this.engine.limits.limitSettings().notify),
+      notify: (kind, key, title, body) => this.notifier.post(kind, key, title, body, "", false),
+      keepMedia: (text, cwd) => media.keep(text, cwd),
     });
   }
 

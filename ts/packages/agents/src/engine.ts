@@ -37,6 +37,8 @@ export interface EngineHost {
   mentionsPrompt?(mentions: readonly Mention[]): string;
   /** This PC's name, for "[The user sent this from …]". */
   hostname?(): string;
+  /** A reply's shown files are copied aside, so they outlive a cleaned-up /tmp (media.rs `keep`); `cwd`: where its relative paths start. */
+  keepMedia?(text: string, cwd: string): void;
   /** A finished turn worth a notification (net's notify.rs). */
   noteTurn?(chatId: number, sub: boolean, failed: boolean, said: string): void;
   /** The chat is on screen with the window focused. */
@@ -133,7 +135,14 @@ export class Engine {
   webhooks: Webhook[] = [];
   /** Turns stopped to restart them (a Codex steer): their exit is dropped. */
   private readonly swallow = new Set<Running>();
-  fast = false;
+  /** Fast mode for every turn (Claude's fastMode, Codex's priority tier): kv `fast_mode`, as the composer sets it. */
+  get fast(): boolean {
+    return this.store.get("fast_mode") === "1";
+  }
+
+  set fast(on: boolean) {
+    this.store.set("fast_mode", on ? "1" : "0");
+  }
   /** Per chat, the message that started its running turn. */
   private readonly undoStarted = new Map<number, Started>();
   /** Chats whose undone turn hasn't reported its exit yet: their events are dropped. */
@@ -193,6 +202,12 @@ export class Engine {
       draft: (id) => this.host.draft?.(id) ?? "",
       changed: (id) => this.changed(id),
     });
+  }
+
+  /** An account as limit notices name it: a Claude account by its own name, others by provider. */
+  accountLabel(id: string): string {
+    const a = this.account(id);
+    return a ? limits.accountName({ id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage }) : id;
   }
 
   /** The app's tick: queued messages to idle chats, due wake-ups, recaps. Returns ms until something is due (null: nothing). */
@@ -457,6 +472,11 @@ export class Engine {
     }
   }
 
+  /** A chat on another device keeps its files there. */
+  private keepMedia(chat: Chat | undefined, text: string): void {
+    if (chat && chat.device === "") this.host.keepMedia?.(text, this.chatCwd(chat));
+  }
+
   private applyEvent(id: number, ev: Event): void {
     const chat = this.chat(id);
     const tr = this.transcript(id);
@@ -483,6 +503,7 @@ export class Engine {
         break;
       }
       case "textFinal": {
+        this.keepMedia(chat, ev.text);
         const i = tr.pendingText;
         tr.pendingText = null;
         const it = i === null ? undefined : tr.items[i];
@@ -557,6 +578,15 @@ export class Engine {
       case "quota":
         break;
       case "exited": {
+        // The turn's replies, for an agent that only streams them (unchanged files are skipped).
+        let from = 0;
+        for (let i = tr.items.length - 1; i >= 0; i--) {
+          if (tr.items[i]?.kind === "user") {
+            from = i + 1;
+            break;
+          }
+        }
+        for (const it of tr.items.slice(from)) if (it.kind === "text") this.keepMedia(chat, it.text);
         const stopped = !this.turns.delete(id);
         const last = tr.items[tr.items.length - 1];
         const failed = !stopped && !resumes && (!tr.gotResult || last?.kind === "error");

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { commits, Engine, type EngineHost, providers, provupdate, recap } from "./packages/agents/src/index.ts";
-import { dictate, parakeet, voice } from "./packages/media/src/index.ts";
+import { dictate, media, parakeet, voice } from "./packages/media/src/index.ts";
 import {
   AccountService,
   Api,
@@ -19,6 +19,8 @@ import {
   Mesh,
   noteJson,
   Notes,
+  Notifier,
+  loadRemote,
   ok,
   parseIp,
   PhoneRoutes,
@@ -50,6 +52,8 @@ export interface HubOptions {
   store?: Store;
   /** The window's Engine, made with the hub's host and notes (the phones' notifications). */
   engine?: (host: HubHost, notes: Notes) => Engine;
+  /** The first port the webhook listener tries (false: none); a test hub keeps off the real one's. */
+  hookPort?: number | false;
 }
 
 /** HARBOR_OFFLINE=1 (ts/run.sh, on a copy of someone's data): no mesh, relay, account, discovery or listening, and
@@ -129,6 +133,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   hub.loadRemembered(store);
   setHello(me.id, me.name, id);
   const notes = new Notes();
+  const notifier = new Notifier({ notes });
   hub.notes = {
     last: () => notes.last(),
     wait: async (since, ms) => {
@@ -202,6 +207,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: providerUpdates() }),
     catalog,
     voice: () => ({ transcribe: true, why: null, lang: voice.config()[0] }),
+    // Relative paths start where the chat works; another PC's chat has its files there.
+    find: (text, c) => media.find(text, c.home === "" && engine ? engine.chatCwd(c) : null),
+    refs: { strip: (md) => media.stripRefs(md), parts: (md) => media.parts(md) },
+    runSettings: {
+      accounts: () => accounts,
+      modelsFor: (k) => providers.staticModels(k),
+      // The devices of Settings › Devices; Tailscale's PCs and paired ones aren't offered from the phone yet.
+      devices: () => loadRemote(store).devices.map((h) => h.id),
+      setFast: (on) => {
+        if (engine) engine.fast = on;
+      },
+    },
     commits: (c) => {
       const r = c.repoId === null ? null : store.repos().find((x) => x.id === c.repoId);
       const dir = r ? repoDir(r) : null;
@@ -209,6 +226,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return { ofText: (md) => commits.ofText(dir, md, () => hub.touch(c.id, false)), tokens: (t) => commits.tokens(t) };
     },
   });
+  // The hooks below run once the engine exists.
+  const eng = (): Engine => {
+    if (!engine) throw new Error("the engine isn't started");
+    return engine;
+  };
   const host: HubHost = {
     changed: (chat) => {
       hub.touch(chat, true);
@@ -218,7 +240,20 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
     offline,
   };
-  engine = o.engine ? o.engine(host, notes) : new Engine({ store, accounts: () => accounts, ...host });
+  // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
+  const own: Partial<EngineHost> = {
+    keepMedia: (text, cwd) => media.keep(text, cwd),
+    noteTurn: (id, sub, failed, said) => {
+      const c = eng().chat(id);
+      if (!c) return;
+      const project = c.repoId === null ? null : (eng().repo(c.repoId)?.name ?? null);
+      notifier.noteTurn({ gid: c.gid, title: c.title, name: c.name, home: c.home, project }, sub, failed, said);
+    },
+    noteLimit: (id, account, waits, note) => notifier.noteLimit(eng().chat(id) ?? null, account, eng().accountLabel(account), waits, note),
+    noteResumed: (id, account, text) => notifier.noteResumed(eng().chat(id) ?? null, account, eng().accountLabel(account), text, eng().limits.limitSettings().notify),
+    notify: (kind, key, title, body) => notifier.post(kind, key, title, body, "", false),
+  };
+  engine = o.engine ? o.engine(host, notes) : new Engine({ store, accounts: () => accounts, ...host, ...own });
   const live = engine;
   phone.d.engine = {
     running: (id) => live.running(id),
@@ -281,6 +316,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     relay: (p, q, r, w) => relayServe({ hub, myFp: () => id.fp, isPhone: (pp, rq) => { try { return api?.caller(pp, rq).level === null; } catch { return false; } } }, p, q, r, w),
     hubs: () => mesh.hubs(),
     forwardLease: (...a) => mesh.forwardLease(...a),
+    image: (path, max) => media.imageAnswer(path, max),
+    mediaCheck: (path) => {
+      const c = media.check(path);
+      return c.ok ? null : c.error;
+    },
+    mime: (path) => media.mime(path),
+    located: (path) => media.located(path),
+    mediaWait: (path) => media.waitFor(path, 20_000),
     transcribe: async (wav, q) => {
       const get = (k: string) => q.find(([x]) => x === k)?.[1] ?? null;
       const langQ = get("lang");
@@ -298,13 +341,14 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     reached: (ip) => portmap.reached(ip),
     env,
   });
-  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : {}) });
+  services = await startServices({ store, hub, mesh, engine: live, version: o.version, env, account, composer: () => catalog.defaults(), accounts: () => accounts, ...(offline ? { hookPort: false as const } : o.hookPort === undefined ? {} : { hookPort: o.hookPort }) });
   if (!offline) {
     const bound = await api.listen();
     hub.net = { addrs: addrs(), bound, error: hub.net.error };
     mesh.start();
   }
-  const disc = offline ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
+  // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
+  const disc = offline || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
   const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => store.get("net_map") !== "0") : () => {};
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   if (signIn) account.start();

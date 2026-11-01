@@ -6,5 +6,6 @@
   "voice::builtin_downloads_and_transcribes": "`#[ignore]` in Rust: downloads a real Whisper model and needs a recording (HARBOR_VOICE_TEST_WAV); a manual rig.",
   "procs::reaps_only_inherited_children": "Rust's reload execs in place and inherits the old image's children; the TypeScript update starts a new runtime process and exits (packages/update reload.ts), and Bun reaps its own children.",
   "update::schedule": "The 5-minute check is replaced by the worker's long-poll (the plan's Architecture); its backoff is tested in packages/update/test/delivery.test.ts.",
-  "reload::swaps_only_when_nobody_sees_it": "The plan removes the idle wait: a release swaps in at once, so there is no moment to wait for."
+  "reload::swaps_only_when_nobody_sees_it": "The plan removes the idle wait: a release swaps in at once, so there is no moment to wait for.",
+  "mesh::upgrade_from_tailscale": "The pre-0.13 Tailscale enroll path: every PC runs 0.107 or later and enrolled its key long ago, and a TypeScript PC never pairs over plain Tailscale."
 }

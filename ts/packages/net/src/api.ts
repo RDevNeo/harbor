@@ -95,6 +95,9 @@ export interface ApiDeps {
   /** `/v1/media`'s checks (media.rs `check`): null when the file may be served, else why not. */
   mediaCheck?: (path: string) => string | null;
   mime?: (path: string) => string;
+  /** Where a shown file is now: itself, or its kept copy once a temp file is gone (media.rs `located`). */
+  located?: (path: string) => string;
+  mediaWait?: (path: string) => Promise<void>;
   /** `POST /v1/transcribe` (voice package): the WAV body and the query. */
   transcribe?: (wav: Uint8Array, q: [string, string][]) => Promise<Reply>;
   /** The router opened the port and a public address reached it (portmap.rs `reached`). */
@@ -558,12 +561,14 @@ export class Api {
     sendBytes(w, 200, a.ctype, a.body);
   }
 
-  private serveMedia(w: Duplex, path: string, range: string | null): void {
+  private async serveMedia(w: Duplex, path: string, range: string | null): Promise<void> {
+    await this.d.mediaWait?.(path);
     const why = this.d.mediaCheck ? this.d.mediaCheck(path) : "media isn't served by this Harbor yet";
     if (why !== null) return sendJson(w, 404, { error: `no such media: ${why}` });
+    const file = this.d.located?.(path) ?? path;
     let len: number;
     try {
-      len = statSync(path).size;
+      len = statSync(file).size;
     } catch {
       return sendJson(w, 404, { error: "unreadable file" });
     }
@@ -575,12 +580,12 @@ export class Api {
     }
     if (br === null) {
       w.write(response(200, mime, len, "Accept-Ranges: bytes\r\n"));
-      createReadStream(path).pipe(w);
+      createReadStream(file).pipe(w);
       return;
     }
     const [from, to] = br;
     w.write(response(206, mime, to - from + 1, `Accept-Ranges: bytes\r\nContent-Range: bytes ${from}-${to}/${len}\r\n`));
-    createReadStream(path, { start: from, end: to }).pipe(w);
+    createReadStream(file, { start: from, end: to }).pipe(w);
   }
 
   /** `POST /v1/upload?name=&chat=`: the raw body into uploads/<chat or pending>/<ms>-<name>. */
