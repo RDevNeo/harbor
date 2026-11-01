@@ -362,7 +362,7 @@ export component CardView inherits TouchArea {
             }
             if root.card.pending && root.running: Spinner {
                 y: 10px;
-                size: 12px;
+                radius: 5px;
             }
             TouchArea {
                 width: 0px;
@@ -735,8 +735,8 @@ component SteeringBubble {
             height: 16px;
             spacing: 4px;
             Spinner {
-                y: 2px;
-                size: 12px;
+                y: 2.6px;
+                radius: 4.5px;
                 color: Theme.subtle;
             }
             Text {
@@ -970,7 +970,8 @@ export component Transcript {
                     Rectangle {
                         width: 16px;
                         Spinner {
-                            size: 13px;
+                            y: (parent.height - self.height) / 2 + 2.5px;
+                            radius: 7px;
                             color: Theme.fg;
                         }
                     }

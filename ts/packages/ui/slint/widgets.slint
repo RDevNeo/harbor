@@ -255,11 +255,12 @@ export component MenuRow {
 }
 
 // Steps every 500 ms, not every frame, like the Rust app's spinner.
+// widgets.rs `spinner`: 8 dashes on a ring of `radius`, a 15° step every 500ms.
 export component Spinner {
     in property <color> color: Theme.subtle;
-    in property <length> size: 12px;
-    width: size;
-    height: size;
+    in property <length> radius: 5px;
+    width: radius * 2.4;
+    height: radius * 2.4;
     property <int> tick;
     Timer {
         interval: 500ms;
@@ -269,13 +270,13 @@ export component Spinner {
         }
     }
     Path {
-        width: root.size;
-        height: root.size;
+        width: root.width;
+        height: root.height;
         viewbox-width: 24;
         viewbox-height: 24;
         stroke: root.color;
         stroke-width: 1.5px;
-        commands: "M 22.0 12.0 A 10 10 0 0 1 20.03 17.95 M 19.07 19.07 A 10 10 0 0 1 13.57 21.88 M 12.0 22.0 A 10 10 0 0 1 6.05 20.03 M 4.93 19.07 A 10 10 0 0 1 2.12 13.57 M 2.0 12.0 A 10 10 0 0 1 3.97 6.05 M 4.93 4.93 A 10 10 0 0 1 10.43 2.12 M 12.0 2.0 A 10 10 0 0 1 17.95 3.97 M 19.07 4.93 A 10 10 0 0 1 21.88 10.43";
+        commands: "M 22.00 12.00 A 10 10 0 0 1 21.08 16.19 M 19.07 19.07 A 10 10 0 0 1 15.46 21.38 M 12.00 22.00 A 10 10 0 0 1 7.81 21.08 M 4.93 19.07 A 10 10 0 0 1 2.62 15.46 M 2.00 12.00 A 10 10 0 0 1 2.92 7.81 M 4.93 4.93 A 10 10 0 0 1 8.54 2.62 M 12.00 2.00 A 10 10 0 0 1 16.19 2.92 M 19.07 4.93 A 10 10 0 0 1 21.38 8.54";
         transform-rotation: root.tick * 15deg;
     }
 }
@@ -304,10 +305,11 @@ export component StatusView {
                 background: Theme.blue-700;
             }
         }
-        if root.status.kind == "working": VerticalLayout {
-            alignment: center;
+        // widgets.rs: in a 13px icon box, radius 13/2 - 0.5 (egui's feathered stroke reads half a pixel wider).
+        if root.status.kind == "working": Rectangle {
+            width: 13px;
             Spinner {
-                size: 12px;
+                radius: 6.5px;
                 color: root.shade;
             }
         }
