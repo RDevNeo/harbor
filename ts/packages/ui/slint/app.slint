@@ -715,13 +715,16 @@ export component AppWindow inherits Window {
                                     wrap: word-wrap;
                                     vertical-alignment: center;
                                 }
-                                if root.read-only-action != "": Btn {
-                                    icon: Icons.compose;
-                                    text: root.read-only-action;
-                                    size: xs;
-                                    variant: primary;
-                                    clicked => {
-                                        root.read-only-act();
+                                if root.read-only-action != "": VerticalLayout {
+                                    alignment: center;
+                                    Btn {
+                                        icon: Icons.compose;
+                                        text: root.read-only-action;
+                                        size: xs;
+                                        variant: primary;
+                                        clicked => {
+                                            root.read-only-act();
+                                        }
                                     }
                                 }
                             }
