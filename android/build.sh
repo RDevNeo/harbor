@@ -4,7 +4,7 @@
 # vendored as source in third_party/sherpa-onnx, and the few Google Play services client libraries
 # Gmail's native sign-in needs (below, third_party/play-services/NOTICE).
 #
-# Version: versionName is Cargo.toml's version; versionCode is major*1000000 + minor*1000 + patch
+# Version: versionName is ts/package.json's version; versionCode is major*1000000 + minor*1000 + patch
 # (0.7.0 -> 7000), so the app the desktop serves and the one on the phone compare as numbers.
 #
 # Toolchain: $ANDROID_BUILD (default ~/.local/opt/android-build, holding jdk/ and sdk/), else
@@ -35,7 +35,7 @@ BT=$SDK/build-tools/${BUILD_TOOLS:-34.0.0}
 JAR=$SDK/platforms/android-${PLATFORM:-34}/android.jar
 [ -x "$BT/aapt2" ] && [ -f "$JAR" ] || { echo "missing build-tools or platform in $SDK" >&2; exit 1; }
 
-VER=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)
+VER=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ROOT/ts/package.json" | head -1)
 IFS=.- read -r MA MI PA _ <<< "$VER"
 CODE=$((MA * 1000000 + MI * 1000 + PA))
 

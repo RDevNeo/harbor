@@ -5,7 +5,7 @@ usage() {
 Usage: scripts/boat/snapshot [--from NAME] [--build] [--save NAME] [--rm NAME]
 
 Looks at a saved snapshot from the inside: starts a fresh `large` boat.dev sandbox from it (default
-harbor-build) and reports what its warm target holds on disk (.github/boat/snapshot.sh).
+harbor-build) and reports what its ~/cache holds on disk (.github/boat/snapshot.sh).
 
 Options:
   --from NAME  the snapshot to look at

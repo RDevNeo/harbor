@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Store, settingsync as ss } from "../src/index.ts";
 
@@ -31,7 +31,8 @@ test("every_kv_key_is_classified", () => {
   const rustDir = join(root, "src");
   const tsDir = join(root, "ts", "packages");
   const files: [string, string][] = [];
-  for (const f of readdirSync(rustDir)) if (f.endsWith(".rs") && f !== "settingsync.rs") files.push([f, readFileSync(join(rustDir, f), "utf8")]);
+  // Rust's sources are gone from main; an old checkout still checks them.
+  if (existsSync(rustDir)) for (const f of readdirSync(rustDir)) if (f.endsWith(".rs") && f !== "settingsync.rs") files.push([f, readFileSync(join(rustDir, f), "utf8")]);
   for (const pkg of readdirSync(tsDir)) {
     const src = join(tsDir, pkg, "src");
     try {

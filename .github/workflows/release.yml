@@ -3,9 +3,13 @@
 # run beside the publishing, and a failure there fails this run. Every build and test runs on
 # boat.dev sandboxes (.github/boat/); this runner only signs, attests and publishes.
 #
+# Harbor is TypeScript on Bun (ts/); build.sh compiles it into one executable per architecture.
+#
 # Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), install.sh,
-# harbor-android.apk (the phone app), SHA256SUMS, and a minisign .minisig for each. Harbor's
-# updater checks those signatures with the public key in src/update.rs.
+# harbor-android.apk (the phone app), what an installed Harbor updates from (harbor-app.json, the
+# manifest; harbor-app.js, the app bundle; harbor-runtime-{x86_64,aarch64} when the runtime changed),
+# SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with the
+# public key in ts/packages/update/src/minisign.ts (packaging/minisign.pub).
 #
 # Secrets: MINISIGN_SECRET_KEY (unencrypted minisign secret key file contents);
 # BOAT_API_KEY (a boat.dev API key that can create, use and delete sandboxes);
@@ -38,41 +42,83 @@ permissions:
   attestations: write
 
 env:
-  CARGO_TERM_COLOR: always
+  HARBOR_WORKER: ${{ vars.HARBOR_WORKER_URL || 'https://harbor-accounts.rdevneo.workers.dev' }}
   MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
   MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
 
 jobs:
-  # The snapshot `harbor-build` keeps Rust, the crates, both target/ folders and the Android SDK warm.
+  # The version, and what installed Harbors update from: the bundle alone when the runtime (Bun,
+  # the native packages, the updater) didn't change since the latest release, both otherwise
+  # (ts/scripts/release.ts: plain file reading, nothing installed or built). The manifest also
+  # names the browser engine, video player and phone app of this release.
+  plan:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      lane: ${{ steps.plan.outputs.lane }}
+      min: ${{ steps.plan.outputs.min }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag matches ts/package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v="v$(jq -r .version ts/package.json)"
+          [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but ts/package.json says $v"; exit 1; }
+      - id: bun
+        run: echo "version=$(jq -r '.packageManager | sub("bun@"; "")' ts/package.json)" >> "$GITHUB_OUTPUT"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+      - name: Plan the update (lane and harbor-app.json)
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ver=$(jq -r .version ts/package.json)
+          tag=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          mkdir -p prev manifest
+          prev=""
+          if [ -n "$tag" ] && gh release download "$tag" -p harbor-app.json -D prev 2>/dev/null; then
+            lane=$(bun ts/scripts/release.ts lane --base "$tag" | sed -n 's/^lane=//p')
+            prev="--previous prev/harbor-app.json"
+          else
+            lane=runtime
+          fi
+          IFS=.- read -r ma mi pa _ <<< "$ver"
+          bun ts/scripts/release.ts manifest --version "$ver" --lane "$lane" --out manifest/harbor-app.json $prev \
+            --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" --apk-code $((ma * 1000000 + mi * 1000 + pa))
+          cat manifest/harbor-app.json
+          { echo "version=$ver"; echo "lane=$lane"; echo "min=$(jq -r .minRuntime manifest/harbor-app.json)"; } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harbor-manifest
+          path: manifest/harbor-app.json
+
+  # The snapshot `harbor-build` keeps Bun, its package cache and the Android SDK warm.
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    needs: plan
     outputs:
       sandbox: ${{ steps.boat.outputs.id }}
     steps:
       - uses: actions/checkout@v7
-      - name: Tag matches Cargo.toml
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          v="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
       - uses: ./.github/actions/boat
         id: boat
         with:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
       - name: Build (on boat)
-        # Harbor's Google Cloud Web client id: the phone's own Google account picker. A repository
-        # secret, not a variable: GitHub prints a step's env in its log, masking only secrets.
-        # Missing: picker off. Harbor's Google OAuth Desktop client (the Gmail app's one-click
-        # sign-in, mcp.rs) is baked into both desktop builds the same way; missing (forks): each
-        # user brings their own client.
+        # Harbor's Google Cloud Web client id: the phone's own Google account picker (the APK). A
+        # repository secret, not a variable: GitHub prints a step's env in its log, masking only
+        # secrets. Missing: picker off.
         env:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
-          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences android
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" bash .github/boat/build.sh x86_64 licences android
       - name: Fetch the results
         run: |
           set -eu
@@ -84,7 +130,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-x86_64
-          path: out/harbor-x86_64/harbor
+          path: out/harbor-x86_64/
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-android-unsigned
@@ -94,9 +140,10 @@ jobs:
           name: harbor-extra
           path: out/extra/
 
-  # aarch64 on a sandbox of its own, from the same snapshot, which it doesn't save: on their own the
-  # targets took 81-132 s, sharing 8 vCPUs 126-293 s. warm.sh keeps its dependencies warm.
+  # aarch64 on a sandbox of its own, from the same snapshot, which it doesn't save: Bun builds it
+  # under qemu (build.sh), which would slow x86_64's build beside it.
   build-aarch64:
+    needs: plan
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -107,12 +154,7 @@ jobs:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
       - name: Build (on boat)
-        env:
-          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
-          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh aarch64
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" bash .github/boat/build.sh aarch64
       - name: Fetch the results
         run: |
           set -eu
@@ -122,7 +164,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-aarch64
-          path: out/harbor-aarch64/harbor
+          path: out/harbor-aarch64/
       - name: Delete the sandbox
         if: always()
         env:
@@ -173,7 +215,7 @@ jobs:
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
   # archives and their checksum lists, and the attestations.
   package:
-    needs: [build, build-aarch64, browser, video]
+    needs: [plan, build, build-aarch64, browser, video]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -226,7 +268,7 @@ jobs:
       - name: Assemble
         run: |
           set -eu
-          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          ver="${{ needs.plan.outputs.version }}"
           mkdir -p dist
           for arch in x86_64 aarch64; do
             d=pkg/harbor-$arch-linux
@@ -248,8 +290,15 @@ jobs:
             cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
             cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
             cp packaging/speech-NOTICE.txt "$d/licenses/speech-NOTICE.txt"
-            [ ! -f art/harbor-extra/lic/harbor.html ] || cp art/harbor-extra/lic/harbor.html "$d/licenses/third-party-harbor.html"
+            [ ! -f art/harbor-extra/lic/third-party-harbor.txt ] || cp art/harbor-extra/lic/third-party-harbor.txt "$d/licenses/third-party-harbor.txt"
           done
+
+          # What installed Harbors update from (plan): the manifest and bundle always, the runtimes
+          # when the lane says the runtime changed.
+          cp art/harbor-manifest/harbor-app.json art/harbor-x86_64/harbor-app.js dist/
+          if [ "${{ needs.plan.outputs.lane }}" = runtime ]; then
+            for arch in x86_64 aarch64; do install -m755 "art/harbor-$arch/harbor-runtime-$arch" "dist/harbor-runtime-$arch"; done
+          fi
 
           # The browser engine per arch (artifact harbor-browser is x86_64). A release must ship the
           # x86_64 one; aarch64's build may fail without holding it back (browser.yml).
@@ -321,7 +370,7 @@ jobs:
           done
           cp packaging/install.sh dist/install.sh
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk
-          (cd dist && sha256sum *.tar.gz install.sh harbor-android.apk > SHA256SUMS)
+          (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
           ls -la dist
           tar -tzf dist/harbor-x86_64-linux.tar.gz | grep SHA256SUMS
       - name: Sign
@@ -332,7 +381,8 @@ jobs:
           set -eu
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
-          for f in dist/*.tar.gz dist/install.sh dist/harbor-android.apk dist/SHA256SUMS; do
+          for f in dist/*.tar.gz dist/install.sh dist/harbor-android.apk dist/harbor-app.json dist/harbor-app.js dist/harbor-runtime-* dist/SHA256SUMS; do
+            [ -f "$f" ] || continue
             /tmp/minisign-linux/x86_64/minisign -S -s /tmp/minisign.key -m "$f" -t "harbor $GITHUB_REF_NAME $(basename "$f")"
           done
           rm -f /tmp/minisign.key
@@ -345,6 +395,9 @@ jobs:
             dist/*.tar.gz
             dist/install.sh
             dist/harbor-android.apk
+            dist/harbor-app.js
+            dist/harbor-app.json
+            dist/harbor-runtime-*
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -392,3 +445,7 @@ jobs:
           pre=""
           case "$ver" in *-*) pre="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* --title "Harbor $ver" --notes-file notes.md --generate-notes $pre
+      - name: Tell the account worker, which reads GitHub itself and answers every waiting PC
+        run: |
+          curl -fsS -X POST "$HARBOR_WORKER/v1/release" -H 'content-type: application/json' -d "{\"version\":\"${GITHUB_REF_NAME#v}\"}" \
+            || echo "::warning::the worker could not be reached, so PCs find the release on their own"

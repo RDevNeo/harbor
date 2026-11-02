@@ -1,34 +1,19 @@
 #!/bin/bash
-# Run by release.yml (job cache) on the build's sandbox, before its snapshot is saved: the release
-# build doesn't compile the tests, but scripts/boat/check does, from this snapshot. When the
-# dependencies or the compiler changed, compiles them once so every check after this starts warm.
-# Then gives each build script's binary its own copy, or the next sandbox can't link it (relink.sh).
-# Also saves the images as folders for the next sandbox (lib.sh), and drops what nothing uses: a
-# sandbox loads its whole snapshot in the background, and the disk can stall whatever runs meanwhile
-# for minutes (at 30 GB, a 732 s compile, an 8 minute scp; at 10 GB it loaded in 124 s). Cargo never
-# deletes an old version's Harbor, 0.9 GB a release, and aarch64 is never built for debug.
+# Run by release.yml (job cache) on the build's sandbox, before its snapshot is saved: keeps Bun and
+# its package cache warm for the next build and for scripts/boat/check, saves the images as folders
+# for the next sandbox (lib.sh), and drops what nothing uses: a sandbox loads its whole snapshot in
+# the background, and the disk can stall whatever runs meanwhile for minutes (at 30 GB, a 732 s
+# compile, an 8 minute scp; at 10 GB it loaded in 124 s).
 . "$(dirname "$0")/lib.sh"
 rootfs_save harbor-builder .github/boat/Dockerfile
 rootfs_save harbor-android .github/boat/Dockerfile.android
 core=$(image harbor-builder .github/boat/Dockerfile)
-rustc=$(run_in "$core" "${rust[@]}" -- rustc -V)
-key=$( (sha256sum < Cargo.lock; echo "$rustc") | sha256sum | cut -c1-32)
-if [ "$(cat "$cache/test-deps" 2>/dev/null)" != "$key" ]; then
-  run_in "$core" "${rust[@]}" -e CARGO_TARGET_DIR=/c/target -- cargo test --locked --no-run
-  echo "$key" > "$cache/test-deps"
-fi
-# aarch64 compiles on a sandbox nobody saves (release.yml), so its dependencies are only warm if
-# this one compiles them when they change. Harbor's own version doesn't count.
-key=$( (sed '/^name = "harbor[^"]*"$/{n;d}' Cargo.lock; echo "$rustc") | sha256sum | cut -c1-32)
-if [ "$(cat "$cache/aarch64-deps" 2>/dev/null)" != "$key" ]; then
-  run_in "$core" "${rust[@]}" "${cross[@]}" -- cargo build --release --locked
-  echo "$key" > "$cache/aarch64-deps"
-fi
-rm -rf "${cache:?}/target-aarch64/debug" "${cache:?}/target-aarch64/aarch64-unknown-linux-gnu/debug"
-for d in "$cache"/target/{debug,release}/deps "$cache"/target-aarch64/aarch64-unknown-linux-gnu/release/deps; do
-  { ls -t "$d"/harbor-???????????????? 2>/dev/null || true; } | tail -n +2 | while read -r old; do rm -f "$old" "$old.d"; done
-done
-{ ls -td "$cache"/target/debug/incremental/harbor-* 2>/dev/null || true; } | tail -n +2 | xargs -r rm -rf
-bash .github/boat/relink.sh --split "$cache"/target/{release,debug} "$cache"/target-aarch64/release
+b=$(bun_get "$core" x64)
+bun_get "$core" aarch64 >/dev/null
+run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e BUN_INSTALL_CACHE_DIR=/c/bun-cache -- bash -euo pipefail -c 'cd ts && bun install --frozen-lockfile >/dev/null'
+# Older Bun versions, and the Rust app's build folders from before it was rewritten (0.109 and older).
+v=$(bun_version)
+find "$cache/bun" -mindepth 1 -maxdepth 1 ! -name "$v-*" -exec rm -rf {} + 2>/dev/null || true
+rm -rf "${cache:?}/target" "${cache:?}/target-aarch64" "${cache:?}/test-deps" "${cache:?}/aarch64-deps"
 echo "disk at the save: $(findmnt -no FSTYPE -T "$cache") (fuse: still loading)"
 rootfs_down

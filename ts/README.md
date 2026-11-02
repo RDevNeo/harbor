@@ -1,13 +1,14 @@
 # Harbor in TypeScript
 
-The rewrite of Harbor on Bun, TypeScript and Slint (the plan and every package's state:
-`ts/PROGRESS.md` and `ts/packages/*/PROGRESS.md`). It doesn't replace the installed Harbor yet.
+Harbor on Bun, TypeScript and Slint: the app releases ship since the Rust app was retired after
+0.109.0 (how it was ported, and every package's state: `ts/PROGRESS.md` and
+`ts/packages/*/PROGRESS.md`).
 
 ## Try it on a PC
 
 ```bash
-git clone --branch ts-rewrite https://github.com/RDevNeo/harbor.git harbor-ts
-cd harbor-ts/ts
+git clone https://github.com/RDevNeo/harbor.git
+cd harbor/ts
 ./run.sh
 ```
 
@@ -35,8 +36,8 @@ clicked.
 
 ## For agents working on it
 
-- `~/.cache/hts/check.sh [bun test args]` runs `tsc --noEmit` and `bun test` (on the PC, not boat.dev:
-  see `CLAUDE.md` on this branch).
+- `bunx tsc --noEmit && bun test [args]` here, on the PC (see `CLAUDE.md`); `scripts/boat/check` runs
+  the same on a clean sandbox and builds the release executable.
 - `bun harbor.ts` with no command opens the window on whatever `XDG_DATA_HOME` points at.
   `HARBOR_VIEW=chat` opens the last chat, `HARBOR_POINTER` scripts clicks and keys (see
   `packages/ui/src/script.ts`), as in the Rust app.

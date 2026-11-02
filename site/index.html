@@ -30,11 +30,11 @@
 <main>
   <section class="hero wrap">
     <h1>Harbor</h1>
-    <p class="pitch">A native chat client for coding agents. Claude Code, Codex, Gemini and others, organised by repository. Written in Rust: no Electron, no WebView.</p>
-    <ul class="stats" aria-label="Measured on Harbor 0.1.2">
-      <li><b>0%</b> CPU when idle</li>
-      <li><b>~70 MB</b> memory when idle</li>
-      <li><b>~15 MB</b> app binary</li>
+    <p class="pitch">A native chat client for coding agents. Claude Code, Codex, Gemini and others, organised by repository. TypeScript on Bun with a native Slint window: no Electron, no WebView.</p>
+    <ul class="stats" aria-label="Harbor at a glance">
+      <li><b>~1%</b> CPU when idle</li>
+      <li><b>1</b> self-contained executable</li>
+      <li><b>x86_64 + arm64</b> Linux</li>
     </ul>
     <div class="install" id="install">
       <div class="card rec">
@@ -43,16 +43,17 @@
           <code><span class="prompt">$</span> <span id="cmd">curl -fsSL https://github.com/RDevNeo/harbor/releases/latest/download/install.sh | sh</span></code>
           <button type="button" id="copy" aria-label="Copy install command">Copy</button>
         </div>
-        <p class="small">Installs into <code>~/.local</code> without sudo. Add <code>sh -s -- --with-browser</code> for the optional browser engine (about 45 MB).</p>
+        <p class="small">Installs into <code>~/.local</code> without sudo, with the built-in browser's engine where it runs (glibc 2.39+). Add <code>sh -s -- --no-browser</code> to leave it out.</p>
       </div>
       <div class="card">
         <p class="label">Manual install</p>
         <a class="btn primary" href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-x86_64-linux.tar.gz">
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Download for Linux (.tar.gz)
+          Download for Linux x86_64 (.tar.gz)
         </a>
+        <p class="small">On ARM: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/harbor-aarch64-linux.tar.gz">harbor-aarch64-linux.tar.gz</a></p>
         <ol class="steps">
-          <li>Extract it: <code>tar xzf harbor-x86_64-linux.tar.gz</code></li>
+          <li>Extract it: <code>tar xzf harbor-x86_64-linux.tar.gz</code> (or the aarch64 one)</li>
           <li>Run <code>./install.sh</code> inside the folder (works offline; it checks the files against the signed checksums)</li>
           <li>Open Harbor from your app menu</li>
         </ol>
@@ -72,7 +73,7 @@
         <p class="small">Or get <a href="https://github.com/RDevNeo/harbor/releases/latest">harbor-android.apk from GitHub releases</a>.</p>
       </div>
     </div>
-    <p class="note">One universal build for Linux x86_64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. No .deb or distro packages.
+    <p class="note">One build per architecture, Linux x86_64 and aarch64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+, Arch), Wayland or X11. No .deb or distro packages.
     Needs a coding-agent CLI such as <code>claude</code>, <code>codex</code> or <code>gemini</code>. Checksums: <a href="https://github.com/RDevNeo/harbor/releases/latest/download/SHA256SUMS">SHA256SUMS</a> (signed with minisign) · <a href="https://github.com/RDevNeo/harbor">View on GitHub</a></p>
   </section>
 
@@ -119,15 +120,15 @@
 
   <section class="perf wrap" id="performance">
     <h2>Light by design</h2>
-    <p class="lede">Harbor is a native Rust app (egui). There is no Electron, no WebView, and no Node or Chromium runtime behind the app window.</p>
+    <p class="lede">Harbor is written in TypeScript and runs on Bun, compiled into one executable. Its window is drawn natively by Slint: there is no Electron, no WebView and no Chromium behind it.</p>
     <div class="grid">
       <article>
-        <h3>0% CPU when idle</h3>
-        <p>Harbor only redraws when something changes. Measured on 0.1.2: no CPU time used over 30 seconds with the window open and nothing running.</p>
+        <h3>About 1% CPU when idle</h3>
+        <p>The window wakes on input and redraws only what changed; a streaming reply redraws its own part of the transcript, a few times a second.</p>
       </article>
       <article>
-        <h3>Small and lean</h3>
-        <p>A single binary of about 15 MB that uses about 70 MB of memory when idle. Memory grows with what you open, not with a bundled browser.</p>
+        <h3>Memory that lets go</h3>
+        <p>A long chat keeps only its last 15 messages loaded and pages in the rest as you scroll up, then lets them go again. Images are decoded once, at the size they're drawn. With the window closed, Harbor keeps running in the background in under 100 MB.</p>
       </article>
       <article>
         <h3>Agents run directly</h3>
@@ -139,14 +140,14 @@
       </article>
       <article>
         <h3>Browser only when you want it</h3>
-        <p>The optional browser panel uses Servo in a separate helper process. It isn't installed by default and only runs while that panel is open.</p>
+        <p>The browser panel uses Servo in a separate helper process. It only runs while that panel is open, and <code>--no-browser</code> leaves it out entirely.</p>
       </article>
       <article>
         <h3>Updates itself</h3>
-        <p>New versions are checked against their signatures and swapped in place, without a restart.</p>
+        <p>New versions are checked against their signatures and swapped in place. Most updates are only the app bundle, a few megabytes; running agents carry on.</p>
       </article>
     </div>
-    <p class="caption">Measured with Harbor 0.1.2 on x86_64 Linux, idle window. Memory varies with your GPU driver and how many chats are open.</p>
+    <p class="caption">CPU measured on x86_64 Linux with the window open and nothing running. Memory varies with your GPU driver and what you have open.</p>
   </section>
 
   <section class="features wrap" id="features">
@@ -186,7 +187,7 @@
 
 <footer class="wrap">
   <p>Harbor is open source. The app is <a href="https://github.com/RDevNeo/harbor/blob/main/LICENSE">MIT</a>; the browser helper is <a href="https://github.com/RDevNeo/harbor/tree/main/browser">MIT</a> (it links Servo, MPL-2.0).
-  Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
+  Made with <a href="https://slint.dev">Slint</a> and <a href="https://bun.sh">Bun</a>. Geist fonts under the <a href="/fonts/OFL.txt">SIL Open Font License</a>. Product names and logos belong to their owners.</p>
   <p>No cookies, no analytics. <a href="/privacy">Privacy</a> · <a href="https://github.com/RDevNeo/harbor/releases">All releases</a> · <a href="https://github.com/RDevNeo/harbor/issues">Issues</a></p>
 </footer>
 

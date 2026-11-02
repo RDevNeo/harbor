@@ -1,9 +1,23 @@
 # Changelog
 
 All notable changes to Harbor. Versions follow [SemVer](https://semver.org/) (0.x: anything may
-still change); the version in `Cargo.toml` is the source of truth, and a `vX.Y.Z` tag publishes it.
+still change); the version in `ts/package.json` is the source of truth, and a `vX.Y.Z` tag publishes it.
 
 ## [Unreleased]
+
+### Changed
+- Harbor is rewritten in TypeScript: it runs on Bun, compiled into one executable, with a native
+  Slint window (still no Electron or WebView). Your chats, settings, pairings and phones carry over
+  as they are, and it works beside PCs that still run 0.109.0. Installed copies update from a small
+  app bundle; the runtime comes along only when it changed.
+- A long chat keeps its last 15 messages loaded. Scrolling up loads earlier ones, and they're let
+  go again after a while at the end of the chat. Images are decoded once, at the size they're drawn.
+- The session recap is gone. Suggested next messages stay.
+- The phone shows a suggestion only as its Use chip, not as gray text in the composer.
+
+### Added
+- A Resume button in the composer asks the agent to continue what it was saying or doing.
+
 
 ## [0.109.0] - 2026-11-01
 

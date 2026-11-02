@@ -47,7 +47,18 @@ test("signals_hold_a_tree_and_let_it_go: signals hold a tree and let it go", asy
     else process.env.HARBOR_DISCORD_NO_CGROUP = saved;
   }
   await new Promise((r) => c.once("exit", r));
-  expect(tree(leader)).toEqual([]);
+  // The killed sleep can stay a zombie until whoever adopted it reaps it (on a sandbox whose init
+  // doesn't, for good): dead all the same.
+  const living = (): number[] =>
+    tree(leader).filter((p) => {
+      try {
+        return state(p) !== "Z";
+      } catch {
+        return false;
+      }
+    });
+  for (let i = 0; i < 20 && living().length > 0; i++) await sleep(50);
+  expect(living()).toEqual([]);
 });
 
 test("freezing nothing is an error", async () => {

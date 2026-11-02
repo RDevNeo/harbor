@@ -122,27 +122,3 @@ test("the manifest command writes harbor-app.json", async () => {
   expect(JSON.parse(a.written["m.json"] ?? "")).toEqual({ version: "1.0.1", minRuntime: "1.0.0", runtime: "1.0.0", browser: { id: "b2", release: "1.0.1" }, apk: { code: 1000001, release: "1.0.1" } });
   expect(await releaseCli(["manifest", "--version", "1.0.1"], a.d)).toBe(2);
 });
-
-const workflow = (): Record<string, unknown> => Bun.YAML.parse(readFileSync(join(root, ".github", "workflows", "ts-release.yml"), "utf8")) as Record<string, unknown>;
-
-test("the release workflow runs only by hand: not on a push, a tag, a branch, a pull request or a schedule", () => {
-  const doc = workflow();
-  const on = (doc.on ?? doc.true) as Record<string, unknown>;
-  expect(Object.keys(on)).toEqual(["workflow_dispatch"]);
-  const text = readFileSync(join(root, ".github", "workflows", "ts-release.yml"), "utf8");
-  expect(text).not.toMatch(/^\s*(push|pull_request|pull_request_target|schedule|release|workflow_run|create):/m);
-});
-
-test("the release workflow has both lanes, signs with the one secret and tells the worker after publishing", () => {
-  const doc = workflow();
-  const jobs = doc.jobs as Record<string, { needs?: string | string[]; if?: string }>;
-  expect(Object.keys(jobs)).toEqual(["plan", "check", "bundle", "runtime", "smoke", "verify", "publish", "attest"]);
-  expect(jobs.runtime?.if).toContain("'runtime'");
-  expect(jobs.verify?.if).toContain("'bundle'");
-  const text = readFileSync(join(root, ".github", "workflows", "ts-release.yml"), "utf8");
-  expect([...text.matchAll(/secrets\.(\w+)/g)].map((m) => m[1])).toEqual(["MINISIGN_SECRET_KEY"]);
-  expect(text.indexOf("gh release edit")).toBeLessThan(text.indexOf("/v1/release"));
-  expect(text).toContain("--draft");
-  expect(text).toContain("runtime-version");
-  expect(text).toContain("smoke-bundle");
-});

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,42 +7,10 @@ import { dictate } from "../packages/media/src/index.ts";
 import { blankChat, dataDir, Store } from "../packages/store/src/index.ts";
 import { type RunningHub, startHub } from "../hub.ts";
 
-const rustSrc = join(import.meta.dir, "..", "..", "src");
+// The routes the last Rust hub (0.109.0) answered, read from its src/*.rs before Rust was removed:
+// phones in the field still call them.
+const rustRoutes = (): string[] => JSON.parse(readFileSync(join(import.meta.dir, "rust-routes.json"), "utf8")) as string[];
 
-const ACTIONS: Record<string, string[]> = {
-  "/v1/chats/{}/{}": ["send", "stop", "resume", "retire", "fork", "move", "move_pc", "slash", "stop_all", "continue", "cancel_limit", "continue_on", "clone", "run_on"],
-  "/v1/apps/gmail/{}": ["code", "start", "finish", "default", "signout"],
-  "/v1/apps/discord/{}": ["signin", "window", "cancel", "signout"],
-  "/v1/chats/{}/queue/{}/{}": ["steer", "move"],
-};
-
-const SKIPPED = new Set(["POST /v1/chats/{}/slash | move | main", "POST /mesh/v1/pair", "POST /mesh/v1/enroll", "POST /mesh/v1/mint", "GET /mesh/v1/events", "GET /v1/events"]);
-
-function rustRoutes(): string[] {
-  const out = new Set<string>();
-  const arm = /\(\s*"(GET|POST|PATCH|PUT|DELETE)"\s*,\s*\[([^\]]*)\]/g;
-  for (const f of ["api.rs", "commits.rs", "ghapi.rs", "mesh.rs", "worktree.rs"]) {
-    for (const m of readFileSync(join(rustSrc, f), "utf8").matchAll(arm)) {
-      const toks = (m[2] ?? "").split(/,(?![^(]*\))/).map((s) => s.trim()).filter((s) => s !== "..");
-      if (!/^"(v1|mesh)"/.test(toks[0] ?? "")) continue;
-      let paths: string[][] = [[]];
-      for (const tk of toks) {
-        const alt = tk.match(/^\w+ @ \((.*)\)$/);
-        if (alt) {
-          const vs = (alt[1] ?? "").split("|").map((s) => s.trim().replaceAll('"', ""));
-          paths = paths.flatMap((p) => vs.map((v) => [...p, v]));
-        } else paths = paths.map((p) => [...p, tk.startsWith('"') ? tk.replaceAll('"', "") : "{}"]);
-      }
-      for (const p of paths) out.add(`${m[1]} /${p.join("/")}`);
-    }
-  }
-  const all = [...out].flatMap((r) => {
-    const [method = "", path = ""] = r.split(" ");
-    const acts = ACTIONS[path];
-    return acts ? acts.map((a) => `${method} ${path.replace(/\/\{\}$/, "")}/${a}`.replace("/queue/{}/", "/queue/{}/")) : [r];
-  });
-  return [...new Set(all.map((r) => r.replace(/\/\{\}\/(steer|move)$/, "/{}/$1")))].filter((r) => !SKIPPED.has(r) && !/\{\}\/\{\}$/.test(r)).sort();
-}
 
 let root: string;
 let h: RunningHub;
@@ -130,7 +98,6 @@ const PENDING: string[] = [
 ];
 
 test("every_route_the_rust_hub_answers_is_answered_by_the_ts_hub", async () => {
-  if (!existsSync(rustSrc)) return;
   const routes = rustRoutes();
   expect(routes.length).toBeGreaterThan(80);
   const missing: string[] = [];

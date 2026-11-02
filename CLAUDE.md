@@ -1,40 +1,48 @@
 # Harbor: notes for agents
 
+Harbor is TypeScript on Bun, with a Slint window (`ts/`; Bun's version is pinned in
+`ts/package.json`). The Rust app was retired after 0.109.0; its sources are in git history only.
+The phone app is Java (`android/`); the built-in browser's engine is Servo, a Rust crate of its own
+(`browser/`); the video player is libmpv (`video/`).
+
+## TypeScript checks run on the PC
+
+`tsc --noEmit`, `bun test` and `bun build` for `ts/` are light and run on the PC, with the pinned
+Bun (`cd ts && bun install && bunx tsc --noEmit && bun test`). `scripts/boat/check` runs the same on
+a clean sandbox and builds the release executable. Everything else keeps the boat.dev rule below.
+
 ## Compute runs on boat.dev
 
 Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on the PCs
 and not on GitHub-hosted runners. GitHub Actions only orchestrates: checkout, start the boat job,
 then sign, attest and publish.
 
-A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor. The old
-local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
+A PC may well have cargo, rustc or an Android SDK installed: don't use them for Harbor (the APK,
+the browser engine, the video player and releases build on boat).
 
 - What a PC needs: the boat CLI (`curl -fsSL https://boat.dev/install | sh`) logged in to the
   account that holds the snapshot `harbor-build` (`boat login`, or `boat login --key-stdin` with an
   API key), plus jq, git and GNU tar. No toolchain. If `boat` is missing or logged out, say so and
   stop; don't fall back to a local build.
-- Rigs and anything else that needs a binary on this PC: compile on boat, run here. `scripts/boat/check
-  --out DIR` brings the release binary back (`--no-release` can't be combined with it); copy it to
-  the rig and run it as usual. Running a binary or a rig locally is fine; compiling is not.
+- Rigs and anything else that needs the release executable: `scripts/boat/check --out DIR` brings
+  it back (`--no-release` can't be combined with it), or `bun ts/scripts/build.ts single OUT` builds
+  it here; copy it to the rig and run it as usual.
 - Use the premade scripts; don't drive the `boat` CLI by hand.
-  - `scripts/boat/check`: every build or test of local changes. Tests the working tree (uncommitted
-    changes included), then builds it for release; `-- <filter>` picks tests, `--out DIR` brings
-    the binary back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
+  - `scripts/boat/check`: the working tree (uncommitted changes included) on a clean sandbox:
+    `tsc`, `bun test`, then the release executable; `-- <filter>` picks tests, `--out DIR` brings
+    the executable back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
     give it the longest timeout, or run it in the background.
-  - `scripts/boat/dev`: see a change running, 7-20 seconds after the edit once the sandbox is warm.
-    The first runs after it stopped take from 30 s to a few minutes, while its disk loads. Builds
-    the working tree on one warm sandbox (`harbor-live`) with the `quick` profile, brings back a
-    patch, and Harbor restarts into it on this PC and on the PCs that turned live previews on
-    (`src/preview.rs`). `--check` is only `cargo check`, `--status` shows VM-hours, `--stop` stops
-    it now. It's a preview, not a check: tests and releases stay with `scripts/boat/check`.
   - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
-  - `scripts/boat/snapshot`: what a saved snapshot's warm target really holds (`--from NAME`), and
+  - `scripts/boat/snapshot`: what a saved snapshot's ~/cache really holds (`--from NAME`), and
     the release's build and save steps on a copy of it (`--build --save NAME`, `--rm NAME`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
     the outputs back and deletes the sandbox (also on failure or cancellation, via
     `.github/boat/cleanup.sh`).
-  - `.github/boat/build.sh`: the parts it's given, side by side, of Harbor for x86_64, for aarch64,
-    the licence reports and the unsigned APK (release.yml, each target on its own sandbox). A
+  - `.github/boat/build.sh`: the parts it's given, side by side, of Harbor for x86_64, for aarch64
+    (Bun under qemu), the licence reports and the unsigned APK (release.yml, each target on its own
+    sandbox). Each architecture gives the single executable `harbor` (the archives) and the runtime
+    alone; x86_64 also the app bundle `harbor-app.js`. Installed copies update from the bundle, the
+    runtime only when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A
     release is the `v*` tag alone: a push to main builds nothing, and running release.yml by hand
     on main is the dry run (signs and publishes nothing, saves the snapshot).
   - `.github/boat/browser.sh`: the Servo engine for x86_64, or (`browser.sh aarch64`) cross-compiled
@@ -48,16 +56,9 @@ local build script, `~/.cache/harbor-rel/build.sh`, is retired and only says so.
     doesn't fail it.
   - `.github/workflows/prune.yml`: by hand, drops other engines' caches from `harbor-browser`.
 - Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
-  `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends. The one
-  exception is `harbor-live` (`scripts/boat/dev`): it stays, stopped, and boat's own timer stops it
-  30 minutes after the last build, so VM-hours only run while someone is building.
+  `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends.
 - A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
   30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).
 - If no script covers the job you need, stop and ask the user before writing one. Don't improvise
   boat CLI commands; the new script should cover the job for every agent after you.
-
-## TypeScript rewrite on `ts-rewrite`
-
-On this branch `tsc`, `bun test` and `bun build` for `ts/`, and the Phase 0 prototype, run on the
-PC, not on boat.dev. Everything outside `ts/` keeps the boat.dev rule above.

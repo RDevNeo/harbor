@@ -318,6 +318,12 @@ test("a file that is not a video fails with a reason", async () => {
 });
 
 const live = { dir: "", clip: "" };
+// The tests below play a real clip: they need ffmpeg to make it and a libmpv to play it (Harbor's own
+// or the system's libmpv.so.2). A machine without them (the release image, Ubuntu 22.04) skips them.
+// Probed in another process: loading the player here would change what the tests above see.
+const canPlay =
+  Bun.which("ffmpeg") !== null &&
+  Bun.spawnSync([process.execPath, "-e", `(await import(${JSON.stringify(join(import.meta.dir, "../src/video.ts"))})).loadEngine(null)`], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
 async function ffmpeg(args: string[]): Promise<void> {
   const p = Bun.spawn(["ffmpeg", "-v", "error", "-y", ...args], { stderr: "pipe" });
@@ -326,6 +332,7 @@ async function ffmpeg(args: string[]): Promise<void> {
 }
 
 beforeAll(async () => {
+  if (!canPlay) return;
   live.dir = tmp("live");
   live.clip = join(live.dir, "clip.mp4");
   await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", live.clip]);
@@ -340,7 +347,7 @@ async function playing(): Promise<{ viewer: v.Viewer; log: Log }> {
   return { viewer, log: h.log };
 }
 
-test("libmpv draws frames into RGBA buffers: size, opaque picture, moving content", async () => {
+test.skipIf(!canPlay)("libmpv draws frames into RGBA buffers: size, opaque picture, moving content", async () => {
   const { viewer, log } = await playing();
   const first = log.frames[0]!;
   expect([first.width, first.height]).toEqual([320, 240]);
@@ -355,7 +362,7 @@ test("libmpv draws frames into RGBA buffers: size, opaque picture, moving conten
   viewer.shutdown();
 });
 
-test("pause, seek, mute and volume reach the core and its position", async () => {
+test.skipIf(!canPlay)("pause, seek, mute and volume reach the core and its position", async () => {
   const { viewer } = await playing();
   viewer.toggle();
   await until("paused", () => viewer.snapshot()?.paused === true);
@@ -372,7 +379,7 @@ test("pause, seek, mute and volume reach the core and its position", async () =>
   viewer.shutdown();
 });
 
-test("a video that reaches its end stays on the last frame, and Space plays it again", async () => {
+test.skipIf(!canPlay)("a video that reaches its end stays on the last frame, and Space plays it again", async () => {
   const { viewer } = await playing();
   await until("end", () => viewer.snapshot()?.ended === true, 10_000, () => viewer.seen());
   expect(viewer.snapshot()?.picture).toBe(true);
@@ -381,7 +388,7 @@ test("a video that reaches its end stays on the last frame, and Space plays it a
   viewer.shutdown();
 });
 
-test("a window out of sight pauses the video by itself", async () => {
+test.skipIf(!canPlay)("a window out of sight pauses the video by itself", async () => {
   const h = host();
   let t = 0;
   const viewer = new v.Viewer({ host: h.host, now: () => t });
@@ -394,7 +401,7 @@ test("a window out of sight pauses the video by itself", async () => {
   viewer.shutdown();
 });
 
-test("closing lets go of the video and opening another one starts after it", async () => {
+test.skipIf(!canPlay)("closing lets go of the video and opening another one starts after it", async () => {
   const { viewer } = await playing();
   const other = join(live.dir, "other.mp4");
   writeFileSync(other, readFileSync(live.clip));
@@ -408,7 +415,7 @@ test("closing lets go of the video and opening another one starts after it", asy
   viewer.shutdown();
 });
 
-test("a file mpv can not decode ends in the failed stage", async () => {
+test.skipIf(!canPlay)("a file mpv can not decode ends in the failed stage", async () => {
   const bad = join(live.dir, "bad.mp4");
   writeFileSync(bad, Buffer.concat([MP4, Buffer.alloc(2000, 7)]));
   const h = host();
@@ -418,7 +425,7 @@ test("a file mpv can not decode ends in the failed stage", async () => {
   viewer.shutdown();
 });
 
-test("--check-video loads the player, checks it is locked down and plays files through", () => {
+test.skipIf(!canPlay)("--check-video loads the player, checks it is locked down and plays files through", () => {
   const out = v.checkVideo([live.clip, join(live.dir, "missing.mp4")]);
   expect(out.lines[0]).toBe("player: the system's libmpv");
   expect(out.lines).toContain("options/config=no");

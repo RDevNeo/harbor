@@ -109,7 +109,29 @@ binfmt() {
   docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64 >/dev/null
 }
 
-# The Rust toolchain, kept in ~/cache: run_in <image> "${rust[@]}" … -- cargo …
+# Bun, the app's runtime and compiler, at the version ts/package.json pins: bun_get <image>
+# <x64|aarch64> leaves it in ~/cache/bun/<version>-<arch>/bun, checked against Bun's
+# SHASUMS256.txt (downloaded inside <image>, which has curl and python3), and prints that folder as
+# a container sees it (/c/bun/…). Downloads once per version.
+bun_version() { sed -n 's/.*"packageManager": *"bun@\([^"]*\)".*/\1/p' ts/package.json; }
+bun_get() {
+  local img="$1" arch="$2" v; v=$(bun_version)
+  [ -n "$v" ] || { echo "no bun version in ts/package.json" >&2; return 1; }
+  if [ ! -x "$cache/bun/$v-$arch/bun" ]; then
+    run_in "$img" -e V="$v" -e A="$arch" -- bash -euo pipefail -c '
+      d=/c/bun/$V-$A z=bun-linux-$A.zip base=https://github.com/oven-sh/bun/releases/download/bun-v$V
+      rm -rf "$d.tmp" && mkdir -p "$d.tmp" && cd "$d.tmp"
+      curl -fsSL --retry 3 "$base/$z" -o "$z"
+      curl -fsSL --retry 3 "$base/SHASUMS256.txt" -o SHASUMS256.txt
+      grep " $z\$" SHASUMS256.txt | sha256sum -c - >&2
+      python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(\".\")" "$z"
+      install -m755 "bun-linux-$A/bun" bun.bin
+      mkdir -p "$d" && mv bun.bin "$d/bun" && cd / && rm -rf "$d.tmp"' >&2
+  fi
+  echo "/c/bun/$v-$arch"
+}
+
+# The Rust toolchain for the browser engine (browser.sh, browser-android.sh), kept in ~/cache: run_in <image> "${rust[@]}" … -- cargo …
 rust=(-e RUSTUP_HOME=/c/rustup -e CARGO_HOME=/c/cargo -e PATH=/c/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
 # And for aarch64, after those: run_in <image> "${rust[@]}" "${cross[@]}" … -- cargo …
 cross=(-e CARGO_TARGET_DIR=/c/target-aarch64 -e CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu

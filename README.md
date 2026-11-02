@@ -1,7 +1,8 @@
 # Harbor
 
 A native, lightweight desktop chat client for coding agents, organised by project.
-Rust + egui (glow): no Electron, no webview, no async runtime. Linux only.
+TypeScript on Bun, with a native [Slint](https://slint.dev) window: no Electron, no webview, no browser engine
+behind the window. Linux only (x86_64 and aarch64, glibc 2.35+).
 
 - **Providers**: Claude Code (one entry per account: `~/.claude`, `~/.claude2`, …), Codex, Cursor, Grok,
   Gemini, Meta (Muse) and OpenCode. Each is its own CLI, run headless per message; the conversation
@@ -96,13 +97,17 @@ or restores the previous version. Releases also carry `SHA256SUMS` and GitHub bu
 
 ### From source
 
-Rust stable:
+Bun (the version `ts/package.json` pins):
 
 ```sh
-cargo build --release   # target/release/harbor
+cd ts
+bun install
+bun harbor.ts                                     # run it from source
+bun scripts/build.ts single harbor --version dev  # one executable, as releases ship it
 ```
 
-The browser pane's engine (Servo, `browser/`) is a separate program, built separately:
+`./run.sh` in `ts/` starts it on a throwaway copy of this PC's Harbor data, offline. The browser
+pane's engine (Servo, `browser/`) is a separate Rust program, built separately:
 `cd browser && cargo build --release` (or the pane's "Build engine"). Releases ship it prebuilt.
 
 **Devices** (a side pane) lists what is paired with this Harbor: your other PCs (Settings › Devices)
@@ -141,7 +146,7 @@ them; a started chat stays where its session is.
   device's folder (the project's path mirrored under its home, or the device's folder + project name),
   under the device's own Claude login (`~/.claudeN` too, when the device has it). Only key-based ssh and
   Claude Code are needed there.
-- **The bridge** (`src/bridge.rs`) gives the remote agent this PC's MCP servers: Harbor serves them on
+- **The bridge** (`ts/packages/mcp/src/bridge.ts`) gives the remote agent this PC's MCP servers: Harbor serves them on
   `127.0.0.1` as streamable-HTTP MCP and `ssh -R` forwards that port to the device's `127.0.0.1`; the
   remote `--mcp-config` points there, with a random per-turn token in each URL. Stdio servers (Omarchy,
   Blender, Playwright, Harbor's own team tools…) run here; HTTP apps (GitHub, Vercel…) are proxied with
@@ -151,7 +156,7 @@ them; a started chat stays where its session is.
 - **Work on this PC's files** (per device, on by default): the remote Claude runs without its own Bash,
   Read, Write, Edit, Glob, Grep (and LSP, Monitor, worktrees) and starts in its home, so the project
   needn't exist there; `origin` offers `bash`, `read`, `write`, `edit`, `glob` and `grep` instead
-  (`src/workspace.rs`), running here in the chat's project, so edits, builds and git commits happen in
+  (`ts/packages/mcp/src/workspace.ts`), running here in the chat's project, so edits, builds and git commits happen in
   one place. They follow Claude Code's tools (bash keeps its folder per chat, has timeouts and a
   background option; edit is exact-string replace; grep is ripgrep), the project's `CLAUDE.md` files
   go into the system prompt, and the chat's access applies: read only gets read/glob/grep, auto-edit adds
@@ -180,6 +185,9 @@ page by name too (`general|appearance|keybindings|providers|limits|integrations|
 - **Discord shell** (`discord/`): GPL-3.0-or-later, see [discord/LICENSE](discord/LICENSE). A separate
   program, not part of the Harbor binary: Harbor downloads it on first use and talks to it over
   stdin and stdout. Harbor stays MIT.
+- **Slint** (the window toolkit), triple-licensed (GPLv3, royalty-free or commercial): see
+  [slint.dev](https://slint.dev). **Bun** (the runtime, in the executable): MIT. The other npm packages
+  the executable carries, with their licences: `licenses/third-party-harbor.txt` in the release archive.
 - **Browser helper** (`browser/`): MIT, see [browser/LICENSE](browser/LICENSE). It links
   [Servo](https://servo.org), which is MPL-2.0.
 - **Fonts**: [Geist and Geist Mono](https://vercel.com/font) (SIL OFL 1.1, `assets/fonts/OFL.txt`) and a
