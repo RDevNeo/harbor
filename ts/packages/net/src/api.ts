@@ -2,6 +2,7 @@ import { closeSync, createReadStream, existsSync, mkdirSync, openSync, rmSync, s
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
+import type { SentVia } from "@harbor/store";
 import {
   bearer,
   err,
@@ -52,6 +53,9 @@ export interface CallFrom {
   ctx: unknown;
   sender: string;
   device: string;
+  /** The person who wrote it and on what (PCs from 0.115; "" and null from older ones). */
+  who: string;
+  via: SentVia | null;
 }
 
 /** Who is on the other end of a connection. */

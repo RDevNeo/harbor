@@ -28,6 +28,8 @@ export struct CardData {
     pending: bool,
     expandable: bool,
     sender: string,
+    joined: bool,
+    tight: bool,
     files: [string],
     steer: bool,
     url: string,
@@ -132,36 +134,56 @@ component ToolCard {
 component UserBubble {
     in property <CardData> card;
     in property <length> avail;
+    // The card is hovered: a tight card (the next one joins it) shows its actions beside the bubble.
+    in property <bool> hover;
+    callback act(string);
     callback link(string);
     callback open-media(string);
-    property <length> hug: max(measure.preferred-width, from-measure.preferred-width);
+    property <length> hug: measure.preferred-width;
     measure := StyledText {
         visible: false;
         text: root.card.blocks[0].text;
         default-font-size: 14px;
         default-font-family: "Geist";
     }
-    from-measure := Text {
-        visible: false;
-        text: root.card.sender != "" ? "from " + root.card.sender : "";
-        font-size: 12px;
-    }
     // chat.rs: at least 220px with files, three thumbnails' width with images.
     property <length> need: max(hug, root.card.files.length > 0 ? 220px : 0px, root.card.media.length > 0 ? min(3, root.card.media.length) * 140px - 8px : 0px);
     property <length> w: max(min(need + 2px, avail * 0.8 - 28px), 40px) + 28px;
+    // Who wrote it elsewhere, over the first bubble of a run only.
+    property <bool> who: root.card.sender != "" && !root.card.joined;
     VerticalLayout {
         spacing: 2px;
-        if root.card.steer: HorizontalLayout {
+        // Over the bubble: who wrote it elsewhere (a phone or PC icon, then the name) and/or "Steer".
+        if root.card.steer || root.who: HorizontalLayout {
             alignment: end;
             height: 16px;
             spacing: 4px;
-            Glyph {
+            if root.who: Glyph {
+                width: 13px;
+                icon: root.card.icon;
+                size: 13px;
+                color: Theme.subtle;
+            }
+            if root.who: Text {
+                text: root.card.sender;
+                font-size: 11.5px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.who && root.card.steer: Text {
+                text: "·";
+                font-size: 11.5px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.card.steer: Glyph {
                 width: 12px;
                 icon: Icons.redo-2;
                 size: 12px;
                 color: Theme.subtle;
             }
-            Text {
+            if root.card.steer: Text {
                 text: "Steer";
                 font-size: 11.5px;
                 color: Theme.subtle;
@@ -170,12 +192,43 @@ component UserBubble {
         }
         HorizontalLayout {
             alignment: end;
+            spacing: 6px;
+            // A tight card has no room under it: its time and actions on hover sit beside the bubble.
+            if root.card.tight && root.card.actions.length > 0: VerticalLayout {
+                alignment: end;
+                HorizontalLayout {
+                    height: 24px;
+                    spacing: 2px;
+                    visible: root.hover;
+                    if root.card.time != "": Text {
+                        text: root.card.time;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    if root.card.time != "": Rectangle {
+                        width: 6px;
+                    }
+                    for a in root.card.actions: Btn {
+                        icon: a == "copy" ? Icons.copy : a == "quote" ? Icons.link : a == "fork" ? Icons.fork : Icons.at-sign;
+                        size: icon-xs;
+                        variant: ghost-muted;
+                        tip: a == "copy" ? "Copy" : a == "quote" ? "Quote in reply" : a == "fork" ? "Fork from this response" : "Mention in your next message";
+                        clicked => {
+                            root.act(a);
+                        }
+                    }
+                }
+            }
             Rectangle {
                 min-height: box2.min-height;
                 preferred-height: box2.preferred-height;
                 width: root.w;
                 background: Theme.gray-100;
                 border-radius: Theme.radius-lg;
+                // In a run the joined corners on the right are tighter, as WhatsApp draws them.
+                border-top-right-radius: root.card.joined ? 3px : Theme.radius-lg;
+                border-bottom-right-radius: root.card.tight ? 3px : Theme.radius-lg;
                 box2 := VerticalLayout {
                     padding-left: 14px;
                     padding-right: 14px;
@@ -236,18 +289,6 @@ component UserBubble {
                                 color: Theme.subtle;
                                 wrap: word-wrap;
                             }
-                        }
-                    }
-                    // chat.rs pulls "from …" 6px up.
-                    if root.card.sender != "": Rectangle {
-                        height: from-text.preferred-height - 6px;
-                        from-text := Text {
-                            y: -6px;
-                            text: "from " + root.card.sender;
-                            font-size: 12px;
-                            color: Theme.subtle;
-                            horizontal-alignment: right;
-                            overflow: elide;
                         }
                     }
                 }
@@ -324,11 +365,17 @@ export component CardView inherits TouchArea {
     property <bool> right: card.kind == "user";
     min-height: inner.min-height;
     preferred-height: inner.preferred-height;
+    // A user card the next one joins: 4px to it, as a WhatsApp run.
+    property <bool> tight: root.card.kind == "user" && root.card.tight;
     inner := VerticalLayout {
-        padding-bottom: Theme.compact ? 8px : 12px;
+        padding-bottom: root.tight ? 4px : Theme.compact ? 8px : 12px;
         if root.card.kind == "user": UserBubble {
             card: root.card;
             avail: root.avail;
+            hover: root.has-hover;
+            act(a) => {
+                root.act(root.card.seq, a);
+            }
             link(u) => {
                 root.link(u);
             }
@@ -670,7 +717,7 @@ export component CardView inherits TouchArea {
             }
         }
         // egui's item spacing, then the 24px row of hover actions pulled 8px up (chat.rs `hover_actions`).
-        if root.card.actions.length > 0: Rectangle {
+        if root.card.actions.length > 0 && !root.tight: Rectangle {
             property <length> above: (Theme.compact ? 8px : 12px) - 8px;
             height: self.above + 24px;
             HorizontalLayout {

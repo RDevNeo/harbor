@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Chat, type Item, limits, type Mention, type Repo, type Store, type Timer, type Webhook } from "@harbor/store";
+import { type Chat, type Item, limits, type Mention, type Repo, type Store, type Timer, type SentVia, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import { parse as parseJson } from "./json.ts";
 import type { Event, RemoteSpec, Turn } from "./agent.ts";
@@ -15,7 +15,7 @@ import * as procs from "./procs.ts";
 import { type Account, accountEnv, binStr, type Kind, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as tools from "./tools.ts";
-import { type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode } from "./queue.ts";
+import { type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode, withWho } from "./queue.ts";
 export { NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, type Mode } from "./queue.ts";
 import { Recaps } from "./recap.ts";
 
@@ -861,7 +861,7 @@ export class Engine {
   }
 
   /** A new turn when the chat is idle (with what waited for it), else a follow-up that steers or queues per `mode` (Queue unless said). */
-  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: Mode; sender?: string; device?: string; from?: SentBy | null } = {}): void {
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: Mode; sender?: string; device?: string; who?: string; via?: SentVia | undefined; from?: SentBy | null } = {}): void {
     const files = opts.files ?? [];
     const mentions = opts.mentions ?? [];
     const sender = opts.sender ?? "";
@@ -874,6 +874,8 @@ export class Engine {
     this.resumeAuto(id);
     if (this.turns.has(id)) {
       const q: Queued = { id: this.queue.id(), text, files, mentions, written: false, sender, device, intent: "", note: "", editing: "" };
+      if (sender !== "" && opts.who) q.who = opts.who;
+      if (sender !== "" && opts.via) q.via = opts.via;
       if ((opts.mode ?? "queue") === "steer" && this.steering(id) !== "no") this.steer(id, q, STEER);
       else {
         this.queue.list(id).push(q);
@@ -896,7 +898,7 @@ export class Engine {
     }
     const from = sentFrom(sender, device, back, this.host.hostname?.());
     const at = now();
-    tr.items.push({ kind: "user", text, files: [...files], at, mentions, sender, intent: "" });
+    tr.items.push(withWho({ kind: "user", text, files: [...files], at, mentions, sender, intent: "" }, opts.who, opts.via));
     const quoted = `${from}${this.mentions(mentions)}`;
     // Anything queued for an idle chat goes first; a fork's context before all.
     const fork = this.takeForkPreamble(id);

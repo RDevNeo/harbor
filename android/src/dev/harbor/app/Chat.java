@@ -441,7 +441,57 @@ public class Chat extends Base implements Images.Gallery {
             Integer next = views.higherKey(seq);
             idx = next == null ? content.getChildCount() : content.indexOfChild(views.get(next));
         }
-        content.addView(nv, Math.max(0, Math.min(idx, content.getChildCount())), Ui.fill());
+        JSONObject it = items.get(seq);
+        boolean joined = it != null && joinedAbove(it);
+        // A joined bubble is pulled up to 3 dp under the one above (whose padding is 10 dp).
+        content.addView(nv, Math.max(0, Math.min(idx, content.getChildCount())), joined ? Ui.margins(Ui.fill(), 0, -7, 0, 0) : Ui.fill());
+        // The bubble above loses its rounded bottom-right corner when this one joins it.
+        Integer above = drawnAbove(seq);
+        if (above != null) reshape(above);
+    }
+
+    private static final String BUBBLE = "bubble";
+
+    /** Whether user card `it` joins the one drawn above it; never the first card drawn. */
+    private boolean joinedAbove(JSONObject it) {
+        return it.optBoolean("joined") && it.optInt("seq") > from && drawnAbove(it.optInt("seq")) != null;
+    }
+
+    /** The seq of the card drawn above `seq` when it is a user card (hidden cards skipped). */
+    private Integer drawnAbove(int seq) {
+        for (Integer k = items.lowerKey(seq); k != null && k >= from; k = items.lowerKey(k)) {
+            String kind = items.get(k).optString("kind");
+            if ("hidden".equals(kind)) continue;
+            return "user".equals(kind) ? k : null;
+        }
+        return null;
+    }
+
+    /** Whether the card drawn below user card `seq` joins it. */
+    private boolean joinedBelow(int seq) {
+        for (Integer k = items.higherKey(seq); k != null; k = items.higherKey(k)) {
+            JSONObject n = items.get(k);
+            String kind = n.optString("kind");
+            if ("hidden".equals(kind)) continue;
+            return "user".equals(kind) && n.optBoolean("joined");
+        }
+        return false;
+    }
+
+    /** Redraws the corners of user card `seq`'s bubble. */
+    private void reshape(int seq) {
+        View v = views.get(seq);
+        View b = v == null ? null : v.findViewWithTag(BUBBLE);
+        if (b != null) b.setBackground(bubbleShape(joinedAbove(items.get(seq)), joinedBelow(seq)));
+    }
+
+    /** A user bubble: 20 dp corners, 6 dp on the right where it joins the bubble above or below. */
+    private static android.graphics.drawable.GradientDrawable bubbleShape(boolean top, boolean bottom) {
+        android.graphics.drawable.GradientDrawable g = Ui.round(Ui.G100, 0, 20);
+        float r = Ui.dp(20), t = Ui.dp(6);
+        float tr = top ? t : r, br = bottom ? t : r;
+        g.setCornerRadii(new float[] { r, r, tr, tr, br, br, r, r });
+        return g;
     }
 
     private void earlierButton() {
@@ -1171,14 +1221,26 @@ public class Chat extends Base implements Images.Gallery {
                 break;
             case "user": {
                 wrap.setGravity(Gravity.END);
-                // It steered a running turn: "↻ Steer" over the bubble (its why in the long-press menu).
+                // Over the bubble, as the desktop draws it: who wrote it on a phone or another PC
+                // (icon, then the name) and "↻ Steer" when it steered a running turn (its why in the
+                // long-press menu), in one row.
                 String intent = it.optString("intent", "");
-                if (!intent.isEmpty()) {
+                // WhatsApp-style runs: a message joined to the user message above it (the hub's
+                // `joined`) has no sender row and sits close under it.
+                boolean joined = joinedAbove(it);
+                CharSequence meta = userMeta(it, !intent.isEmpty(), joined);
+                if (meta != null) {
                     wrap.setOrientation(LinearLayout.VERTICAL);
-                    wrap.addView(caption(Ui.I_REDO, "Steer"), Ui.margins(Ui.wrap(), 0, 0, 0, 2));
+                    TextView row = Ui.text(this, meta, 12, Ui.G700);
+                    row.setSingleLine(true);
+                    row.setEllipsize(TextUtils.TruncateAt.END);
+                    row.setGravity(Gravity.END);
+                    row.setMaxWidth(maxBubble());
+                    wrap.addView(row, Ui.margins(Ui.wrap(), 0, 0, 0, 2));
                 }
                 LinearLayout bubble = Ui.col(this);
-                bubble.setBackground(Ui.round(Ui.G100, 0, 20));
+                bubble.setTag(BUBBLE);
+                bubble.setBackground(bubbleShape(joined, joinedBelow(seq)));
                 bubble.setPadding(Ui.dp(16), Ui.dp(11), Ui.dp(16), Ui.dp(11));
                 // The text as the desktop draws it (hubs from 0.94): mentioned chats are links in
                 // it, so only the other mentions are chips.
@@ -1226,17 +1288,6 @@ public class Chat extends Base implements Images.Gallery {
                     f.setMaxWidth(maxBubble());
                     bubble.addView(f);
                 }
-                // Written on another PC or a phone: "from …" small in the bubble's bottom-right
-                // corner (as the desktop shows it).
-                String from = it.optString("sender", "");
-                TextView fromView = null;
-                if (!from.isEmpty()) {
-                    fromView = Ui.text(this, "from " + from, 12, Ui.G700);
-                    fromView.setSingleLine(true);
-                    fromView.setEllipsize(TextUtils.TruncateAt.END);
-                    fromView.setGravity(Gravity.END);
-                    bubble.addView(fromView, Ui.margins(Ui.fill(), 0, 2, 0, 0));
-                }
                 bubble.setOnLongClickListener(v -> { itemMenu(it, text); return true; });
                 // Hug the content like the desktop: as wide as the longest line (or the image
                 // strip), at most maxBubble(); a wrap_content bubble cut lines short next to images.
@@ -1248,11 +1299,10 @@ public class Chat extends Base implements Images.Gallery {
                 JSONArray ims = it.optJSONArray("images");
                 if (ims != null && ims.length() > 0) need = Math.max(need, Math.min(ims.length(), 3) * Ui.dp(104));
                 if (files != null && files.length() > 0) need = Math.max(need, Ui.dp(160));
-                if (fromView != null) need = Math.max(need, fromView.getPaint().measureText(fromView.getText().toString()));
                 int avail = getResources().getDisplayMetrics().widthPixels - Ui.dp(76); // the row's padding
                 int w = (int) Math.min(need + Ui.dp(34), Math.min(avail, maxBubble() + Ui.dp(32)));
                 wrap.addView(bubble, new LinearLayout.LayoutParams(w, -2));
-                wrap.setPadding(Ui.dp(56), Ui.dp(10), Ui.dp(20), Ui.dp(10));
+                wrap.setPadding(Ui.dp(56), joined ? 0 : Ui.dp(10), Ui.dp(20), Ui.dp(10));
                 break;
             }
             case "text": {
@@ -1735,7 +1785,36 @@ public class Chat extends Base implements Images.Gallery {
         ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(composer, 0);
     }
 
-    /** A small muted icon + label, right-aligned ("↻ Steer", "↻ Steering…"). */
+    /** The row over a user bubble: "[phone or PC] Name · ↻ Steer", either part alone; null when
+     *  it has neither. A message joined to the one above has no name. Hubs before 0.115 send
+     *  only `sender`: "from …" without an icon. */
+    private CharSequence userMeta(JSONObject it, boolean steer, boolean joined) {
+        String from = joined ? "" : it.optString("sender", "");
+        if (from.isEmpty() && !steer) return null;
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+        String via = it.optString("via", "");
+        if (!from.isEmpty() && via.isEmpty()) sb.append("from ").append(from);
+        else if (!from.isEmpty()) {
+            glyph(sb, "phone".equals(via) ? Ui.I_PHONE : Ui.I_MONITOR, 13);
+            sb.append(" ").append(it.optString("who", from));
+        }
+        if (!from.isEmpty() && steer) sb.append("  \u00b7  ");
+        if (steer) {
+            glyph(sb, Ui.I_REDO, 12);
+            sb.append(" Steer");
+        }
+        return sb;
+    }
+
+    /** A Lucide glyph at `dp` in the text. */
+    private static void glyph(android.text.SpannableStringBuilder sb, String g, int dp) {
+        int at = sb.length();
+        sb.append(g);
+        sb.setSpan(new Ui.Font(Ui.icons, 0), at, sb.length(), 0);
+        sb.setSpan(new android.text.style.AbsoluteSizeSpan(dp, true), at, sb.length(), 0);
+    }
+
+    /** A small muted icon + label, right-aligned ("↻ Steering…"). */
     private TextView caption(String icon, String label) {
         TextView t = Ui.text(this, "", 12, Ui.G700);
         android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(icon + "  " + label);

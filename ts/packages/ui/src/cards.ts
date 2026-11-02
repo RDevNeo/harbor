@@ -16,11 +16,18 @@ export interface Opened {
   grew: number;
   /** The cards built for the cards shown, by seq: streaming changes one item at a time, so the others keep
    * their card and their markdown isn't parsed again. Cards that leave the window leave this too. */
-  memo: Map<number, { item: Item; sig: string; data: CardData | null }>;
+  memo: Map<number, { item: Item; sig: string; data: CardData | null; joins?: Joins }>;
   /** Tool runs opened (by the seq of their first card). */
   groups: Set<number>;
   /** Tool calls, notices and thinking expanded. */
   cards: Set<number>;
+}
+
+/** A user card's look in a run of joined messages, kept with its memo so the same card is the same object. */
+interface Joins {
+  joined: boolean;
+  tight: boolean;
+  data: CardData;
 }
 
 export const PAGE = 15;
@@ -166,7 +173,13 @@ const NOTICE_ICONS: Record<string, IconName> = {
 };
 
 function blank(seq: number): CardData {
-  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", files: [], steer: false, url: "", actions: [], time: "", media: [] };
+  return { kind: "", seq, blocks: [], text: "", label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [] };
+}
+
+/** The row over the bubble for a message written elsewhere: a phone or PC icon and the person (else the device). */
+function senderLine(c: { who: string; via: string }): { sender: string; icon: string } {
+  if (c.who === "") return { sender: "", icon: "" };
+  return { sender: c.who, icon: ICONS[c.via === "phone" ? "SMARTPHONE" : "MONITOR"] };
 }
 
 function base(name: string): string {
@@ -190,7 +203,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "hidden":
       return null;
     case "user":
-      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }], text: c.text, sender: c.sender, files: c.files.map(base), steer: c.intent !== "" };
+      return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }], text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "" };
     case "text": {
       const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
       return { ...d, kind: "text", blocks: mdBlocks(md, seq), text: c.text };
@@ -258,18 +271,39 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     const media = mediaOf(s.card);
     const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) : "";
     const hit = open.memo.get(s.seq);
-    const c = hit && hit.item === item && hit.sig === sig ? hit.data : cardData(s.card, s.seq, open, off, () => media);
+    const same = hit !== undefined && hit.item === item && hit.sig === sig;
+    const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media);
     if (item) {
-      open.memo.set(s.seq, { item, sig, data: c });
+      open.memo.set(s.seq, same && hit.joins ? { item, sig, data: c, joins: hit.joins } : { item, sig, data: c });
       built.add(s.seq);
     }
     if (c) out.push(c);
     for (const f of s.forksAfter) fork(s.seq, f);
   }
   for (const k of open.memo.keys()) if (!built.has(k)) open.memo.delete(k);
+  joinRuns(out, open);
   if (status !== "") out.push({ ...blank(-2), kind: "status", text: status });
   out.push({ ...blank(-3), kind: "space" });
   return out;
+}
+
+/** Joined user cards (WhatsApp-style runs): one joins only a user card drawn right above it (not
+ * the first card after "Show earlier messages"), and the one above is marked `tight`. */
+function joinRuns(out: CardData[], open: Opened): void {
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i] as CardData;
+    if (c.kind !== "user") continue;
+    const joined = c.joined && out[i - 1]?.kind === "user";
+    const tight = out[i + 1]?.kind === "user" && (out[i + 1] as CardData).joined;
+    if (joined === c.joined && tight === c.tight) continue;
+    const m = open.memo.get(c.seq);
+    if (m?.data !== c) {
+      out[i] = { ...c, joined, tight };
+      continue;
+    }
+    if (!m.joins || m.joins.joined !== joined || m.joins.tight !== tight) m.joins = { joined, tight, data: { ...c, joined, tight } };
+    out[i] = m.joins.data;
+  }
 }
 
 /** A run's chevron row stands for the run, not its first card: its own (negative) seq. */

@@ -17,7 +17,7 @@ const win = new (ui.AppWindow as new () => AppWindow)();
 
 const words = "the quick brown fox jumps over the lazy dog while **harbor** keeps `every` chat in sync".split(" ");
 const block = (text: string): MdBlockData => ({ kind: "p", text: slint.StyledText.fromMarkdown(text), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 16, bar_top: 0, bar_bottom: 0, trim: 0, plain: text, key: "" });
-const card = (kind: CardData["kind"], seq: number, text = ""): CardData => ({ kind, seq, blocks: [], text, label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", files: [], steer: false, url: "", actions: [], time: "", media: [] });
+const card = (kind: CardData["kind"], seq: number, text = ""): CardData => ({ kind, seq, blocks: [], text, label: "", icon: "", tone: "", detail: "", result: "", open: false, pending: false, expandable: false, sender: "", joined: false, tight: false, files: [], steer: false, url: "", actions: [], time: "", media: [] });
 const user = card("user", 0, "hello");
 user.blocks = [block("hello")];
 const cards = new slint.ArrayModel<CardData>([card("space", -1), user, card("text", 1), card("status", -2, "Working…"), card("space", -3)]);

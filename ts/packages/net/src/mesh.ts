@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
+import type { SentVia } from "@harbor/store";
 import { type Call, type ConnPeer, MAX_AUDIO } from "./api.ts";
 import { exchange, get, http, jsonBody } from "./client.ts";
 import { err, header, ok, parseJson, query, readBody, segments, type Reader, type Reply, type Request } from "./http.ts";
@@ -10,6 +11,9 @@ import { kvJson, now, type Kv } from "./kv.ts";
 import { allowedJson, cleanAddrs, dest, downOf, label, loadAllowed, newPeer, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer } from "./shared.ts";
 import { codeKey, connect, DEFAULT_PORT, hostPort, newCode, normalizeCode, normalizeFp, privateIp, proof, proofOk, tailnetIp, Throttle, type Identity } from "./tls.ts";
 import { Ordered, type Json } from "./wire.ts";
+
+/** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, and the person and device kind when known. */
+export type Sender = [label: string, device: string, who?: string, via?: SentVia | ""];
 
 const POLL = 20_000;
 const CALL_WAIT = 60_000;
@@ -708,7 +712,7 @@ export class Mesh {
   }
 
   /** A call forwarded to a chat's home PC: its files first (uploads there), then the call. */
-  async forward(d: Dest, name: string, method: string, path: string[], body: Record<string, unknown>, files: { name: string; data: Uint8Array }[], sender: [string, string], ctx: Json): Promise<Reply> {
+  async forward(d: Dest, name: string, method: string, path: string[], body: Record<string, unknown>, files: { name: string; data: Uint8Array }[], sender: Sender, ctx: Json): Promise<Reply> {
     const off = err(503, `${name} is off or unreachable: the chat is read-only until it's back`);
     const ids: Json[] = [];
     for (const f of files) {
@@ -723,6 +727,8 @@ export class Mesh {
     const b: Record<string, Json> = { ...(body as Record<string, Json>) };
     if (files.length > 0) b.files = ids;
     const call: Record<string, Json> = { method, path, body: b, sender: sender[0], device: sender[1] };
+    if (sender[2]) call.who = sender[2];
+    if (sender[3]) call.via = sender[3];
     if (ctx !== null) call.ctx = ctx;
     try {
       const [status, v] = await http(d, "POST", "/mesh/v1/call", jsonBody(call), CALL_WAIT);

@@ -1,4 +1,5 @@
-import type { Item, Mention } from "@harbor/store";
+import type { Item, Mention, SentVia } from "@harbor/store";
+import { sentBy } from "./senders.ts";
 
 export interface Media {
   /** A local absolute path (for an https URL: where its download is cached). */
@@ -13,7 +14,7 @@ export interface Media {
 /** One transcript item as the desktop draws it and the phone API sends it (view.rs `Card`). */
 export type Card =
   | { kind: "hidden" }
-  | { kind: "user"; text: string; files: string[]; images: string[]; mentions: Mention[]; at: number; sender: string; intent: string }
+  | { kind: "user"; text: string; files: string[]; images: string[]; mentions: Mention[]; at: number; sender: string; intent: string; who: string; via: SentVia | ""; joined: boolean }
   | { kind: "text"; text: string; at: number; forkable: boolean }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; label: string; summary: string; input: string; result: string | null; is_error: boolean }
@@ -125,7 +126,7 @@ export function hidden(items: readonly Item[], lead: boolean): boolean[] {
 function card(it: Item, canFork: boolean): Card {
   switch (it.kind) {
     case "user":
-      return { kind: "user", text: it.text, sender: it.sender, intent: it.intent, files: it.files.filter((f) => !isImage(f)), images: it.files.filter(isImage), mentions: it.mentions, at: it.at };
+      return { kind: "user", text: it.text, sender: it.sender, ...sentBy(it.sender, it.who, it.via), joined: false, intent: it.intent, files: it.files.filter((f) => !isImage(f)), images: it.files.filter(isImage), mentions: it.mentions, at: it.at };
     case "text":
       return { kind: "text", text: it.text, at: it.at, forkable: canFork };
     case "thinking":
@@ -164,7 +165,31 @@ export function project(items: readonly Item[], lead: boolean, forks: readonly [
     group: null,
   }));
   if (!lead) markGroups(out);
+  markJoined(out);
   return out;
+}
+
+/** Seconds within which a message from the same place joins the one before it. */
+export const JOIN_SECS = 5 * 60;
+
+/**
+ * WhatsApp-style runs: a user card joins the card drawn before it (no sender row, a small gap)
+ * when that one is a user card from the same person on the same kind of device (or both typed on
+ * this PC), sent at most JOIN_SECS before it, with nothing drawn between (hidden cards don't count,
+ * a fork divider does). Decided from the card before only, so a new message never changes it.
+ */
+function markJoined(cards: Shown[]): void {
+  let prev: Shown | null = null;
+  for (const s of cards) {
+    const c = s.card;
+    if (c.kind === "hidden") {
+      if (s.forksAfter.length > 0) prev = null;
+      continue;
+    }
+    const p = prev?.card;
+    if (c.kind === "user" && p?.kind === "user" && prev?.forksAfter.length === 0 && p.who === c.who && p.via === c.via && c.at >= p.at && c.at - p.at <= JOIN_SECS) c.joined = true;
+    prev = s;
+  }
 }
 
 function markGroups(cards: Shown[]): void {

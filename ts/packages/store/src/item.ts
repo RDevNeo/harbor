@@ -13,8 +13,24 @@ export interface Mention {
   title: string;
 }
 
+/** The device a message came from (`Item` user's `via`). */
+export type SentVia = "phone" | "pc";
+
 export type Item =
-  | { kind: "user"; text: string; files: string[]; at: number; mentions: Mention[]; sender: string; intent: string }
+  | {
+      kind: "user";
+      text: string;
+      files: string[];
+      at: number;
+      mentions: Mention[];
+      /** Where it was written when not on this PC: "Pixel 8 (Sam)", "work-pc (Sam)"; "" typed here. */
+      sender: string;
+      intent: string;
+      /** The person who wrote it elsewhere ("" unknown; items from before 0.115 have only `sender`). */
+      who?: string;
+      /** What it was written on: the Harbor phone app or another PC (items from before 0.115: unset). */
+      via?: SentVia;
+    }
   | { kind: "text"; text: string; at: number }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; summary: string; input: string; result: string | null; is_error: boolean }
@@ -101,7 +117,10 @@ export function parseItem(body: string): Item | null {
         if (!p) return null;
         mentions.push(p);
       }
-      return { kind: "user", text, files, at, mentions, sender, intent };
+      const it: Item = { kind: "user", text, files, at, mentions, sender, intent };
+      if (typeof v.who === "string" && v.who !== "") it.who = v.who;
+      if (v.via === "phone" || v.via === "pc") it.via = v.via;
+      return it;
     }
     case "text": {
       const text = str(v, "text", true);
@@ -195,6 +214,8 @@ export function itemJson(it: Item): string {
       if (it.mentions.length > 0) o += `,"mentions":[${it.mentions.map(mentionJson).join(",")}]`;
       if (it.sender) o += `,"sender":${s(it.sender)}`;
       if (it.intent) o += `,"intent":${s(it.intent)}`;
+      if (it.who) o += `,"who":${s(it.who)}`;
+      if (it.via) o += `,"via":${s(it.via)}`;
       return `${o}}`;
     }
     case "text":

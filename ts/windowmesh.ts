@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { hostname } from "node:os";
-import { dest, err, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, startsTurn, type StoreReplica } from "./packages/net/src/index.ts";
+import { dest, err, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica } from "./packages/net/src/index.ts";
 import type { Chat } from "./packages/store/src/index.ts";
 
 export interface WindowMeshDeps {
@@ -65,10 +65,10 @@ export class WindowMesh {
     return all.filter((t) => t.device !== this.me());
   }
 
-  private sender(): [string, string] {
+  private sender(): Sender {
     const me = this.myName();
     const owner = this.d.ownerName();
-    return [owner ? `${me} (${owner})` : me, this.me()];
+    return [owner ? `${me} (${owner})` : me, this.me(), owner ?? "", "pc"];
   }
 
   private files(paths: readonly string[]): { name: string; data: Uint8Array }[] {

@@ -93,6 +93,7 @@ import {
   type Reply,
   preview,
   outgoingCtx,
+  knowDevices,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
@@ -245,6 +246,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const meshAddrs = () => addrs().map((a) => (parseIp(a) ? hostPort(a, port) : a));
   const account = new AccountService({ kv: store, stateDir: state, identity: () => id, me: () => hub.mesh.me, addrs: meshAddrs, version: o.version, env });
   account.load();
+  // Messages saved before 0.115 have only their sender's label: the bubbles match it with these.
+  knowDevices({
+    pcs: () => [[hub.mesh.me.name, account.ownerName() ?? ""], ...[...hub.mesh.peers.values()].map((p) => [p.name, p.owner] as const)],
+    phones: () => hub.localPhones().map((p) => [p.name, p.owner] as const),
+  });
   let services: Services | null = null;
   let phoneRoute: (call: Call) => Promise<Reply> = async () => err(503, "Harbor is starting");
   const prs = new chatpr.ChatPrs({

@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Chats: a message written on the phone app or on another PC now says who wrote it and where, in a
+  small row over the bubble: a phone or PC icon and the person's name (their Google account on a
+  phone, the PC owner's on a PC), instead of "from <device>" inside the bubble. A steer shows its
+  Steer mark in the same row. Older messages get the same row from their device's name.
+- Chats: messages sent one after another from the same place (within 5 minutes, nothing between
+  them) sit close together as one run, WhatsApp-style: only the first shows who wrote it, and the
+  joined corners are tighter. Same on the desktop and the phone.
+
 ### Fixed
 - `harbor app discord` answers a tool list it's still preparing (the first one downloads Discord's
   shell) even when its input has already ended, as with `printf … | harbor app discord`.

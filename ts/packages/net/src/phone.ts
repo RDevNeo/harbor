@@ -1,6 +1,6 @@
 import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
-import { blankChat, itemHash, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Store } from "@harbor/store";
+import { blankChat, itemHash, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
@@ -17,6 +17,14 @@ import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 
 const CLIP = 16 << 10;
+
+/** Who wrote a message elsewhere and on what (`Item` user's `who` and `via`). */
+interface Who {
+  who: string;
+  via: SentVia | null;
+}
+
+const NOBODY: Who = { who: "", via: null };
 const now = (): number => Math.floor(Date.now() / 1000);
 const utcOffset = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -25,7 +33,7 @@ export interface PhoneEngine {
   running(id: number): boolean;
   runningSince(id: number): number | null;
   transcript(id: number): { items: Item[] };
-  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string; from?: SentBy | null }): void;
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string; who?: string; via?: SentVia | undefined; from?: SentBy | null }): void;
   stop(id: number): void;
   queued(id: number): readonly { intent: string; text: string; files: string[] }[];
   takeQueue(id: number): { text: string; files: string[] }[];
@@ -248,6 +256,13 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       break;
     case "user":
       v = { text: c.text, files: c.files.map(fileName), images, mentions: c.mentions.map(mentionJson), at: c.at, sender: c.sender };
+      // Hubs from 0.115: the bubble's "<person> <phone or PC icon>" line (older apps show `sender`).
+      if (c.via !== "") {
+        v.who = c.who;
+        v.via = c.via;
+      }
+      // Joins the user card before it (hubs from 0.115): no sender row, a small gap.
+      if (c.joined) v.joined = true;
       if (c.intent !== "") v.intent = c.intent;
       {
         const ps = usertext.parts(c.text, c.mentions);
@@ -609,7 +624,7 @@ export class PhoneRoutes {
     const hashes = cards.map((s, i) => {
       const it = items[i];
       const shas = look && s.card.kind === "text" ? [...look.ofText(s.card.text).keys()].sort().join(",") : "";
-      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
+      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && s.card.joined}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
       return (it ? fingerprint(it) : 0n) ^ hashStr(extra);
     });
     revs.length = Math.min(revs.length, hashes.length);
@@ -641,24 +656,26 @@ export class PhoneRoutes {
     const by = call.from ? { peer: call.from.peer, name: call.from.name, ctx: call.from.ctx } : null;
     const sender = call.from ? call.from.sender || call.from.name : this.d.hub.callerLabel(call.token, call.device);
     const device = call.from?.device ?? "";
+    // Who wrote it and on what: a phone here, else as the forwarding PC says (older PCs: unknown).
+    const who: Who = call.from ? { who: call.from.who, via: call.from.via } : { who: this.d.hub.callerWho(call.token), via: "phone" };
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
-    if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by);
+    if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
     const c = this.chatOf(p[2] ?? "");
     if (!c) return err(404, "no such chat");
     // A send the phone repeats (it never got the answer) is answered, not run again; a copy's
     // send goes on to its home PC with the same client id, which does the same there.
     if (m === "POST" && p.length === 4 && p[3] === "send") {
       const key = sendKey(c.gid === "" ? String(c.id) : c.gid, body);
-      const run = () => (c.home !== "" ? this.forward(c, m, p, body, sender, call.global) : this.send(c, body, sender, device, by));
+      const run = () => (c.home !== "" ? this.forward(c, m, p, body, sender, call.global, who) : this.send(c, body, sender, device, by, who));
       if (key !== null) return this.sends.run(key, run);
     }
-    if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global);
+    if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global, who);
     if (m === "GET" && p.length === 4 && p[3] === "items") {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");
       return ok(this.items(c, Number.isFinite(since) ? since : 0));
     }
-    if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender, device, by);
+    if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender, device, by, who);
     if (m === "GET" && p.length === 4 && p[3] === "move_targets") return this.d.move ? ok(await this.d.move.targetsJson(c.id)) : err(404, "no such call");
     if (m === "POST" && p.length === 4 && p[3] === "move_pc") return this.movePc(c, body);
     if (m === "POST" && p.length === 4 && p[3] === "stop") {
@@ -759,7 +776,7 @@ export class PhoneRoutes {
     return resolveUpload(dir, rel) === null ? null : rel;
   }
 
-  private async send(c: Chat, body: Record<string, unknown>, sender: string, device = "", from: SentBy | null = null): Promise<Reply> {
+  private async send(c: Chat, body: Record<string, unknown>, sender: string, device = "", from: SentBy | null = null, who: Who = NOBODY): Promise<Reply> {
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const files: string[] = [];
     for (const f of Array.isArray(body.files) ? body.files : []) {
@@ -777,7 +794,7 @@ export class PhoneRoutes {
     const running = e.running(c.id);
     const mode = body.mode === "steer" ? "steer" : "queue";
     this.d.hub.clearDraft(c.id);
-    e.send(c.id, text, { files, mentions, mode, sender, device, from });
+    e.send(c.id, text, { files, mentions, mode, sender, device, from, who: who.who, via: who.via ?? undefined });
     const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;
     this.d.replica.touch(c.id);
     return ok({ ok: true, queued, steering: running && !queued && c.home === "" });
@@ -816,14 +833,14 @@ export class PhoneRoutes {
   }
 
   /** mesh.rs `mesh_proxy` and `map_new`: a new chat on another PC's Harbor, answered with the copy of it that arrives here. */
-  private async createOnPeer(peer: Peer, body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
+  private async createOnPeer(peer: Peer, body: Record<string, unknown>, sender: string, global: boolean, who: Who): Promise<Reply> {
     if (!peer.online || !this.d.mesh) return err(409, `${peer.name} is off: pick a PC that's on`);
     const pref = body.project_id;
     const repos = this.d.store.repos();
     const repo = typeof pref === "string" ? repos.find((r) => r.path === pref) : typeof pref === "number" ? repos.find((r) => r.id === pref) : undefined;
     const { project_id: _p, files: ids, ...rest } = body;
     const ctx = this.d.ctx?.(repo?.id ?? null) ?? null;
-    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, ""], ctx);
+    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, "", who.who, who.via ?? ""], ctx);
     return this.mapNew(peer.id, r, global);
   }
 
@@ -853,9 +870,9 @@ export class PhoneRoutes {
   }
 
   /** api.rs `api_create_in`. */
-  private async create(body: Record<string, unknown>, sender: string, global: boolean, from: SentBy | null = null): Promise<Reply> {
+  private async create(body: Record<string, unknown>, sender: string, global: boolean, from: SentBy | null = null, who: Who = NOBODY): Promise<Reply> {
     const peer = this.d.hub.mesh.on && typeof body.device === "string" ? this.d.hub.mesh.peer(body.device) : null;
-    if (peer !== null) return this.createOnPeer(peer, body, sender, global);
+    if (peer !== null) return this.createOnPeer(peer, body, sender, global, who);
     const found = this.createRepo(body);
     if (!("repo" in found)) return found;
     const repo = found.repo;
@@ -868,12 +885,12 @@ export class PhoneRoutes {
         return err(409, x instanceof Error ? x.message : String(x));
       }
     }
-    const r = await this.createHere(body, sender, global, repo, made, from);
+    const r = await this.createHere(body, sender, global, repo, made, from, who);
     if (made !== null && r.status >= 300) this.d.worktrees?.discard(repo, made);
     return r;
   }
 
-  private async createHere(body: Record<string, unknown>, sender: string, global: boolean, repo: number | null, wt: unknown, from: SentBy | null): Promise<Reply> {
+  private async createHere(body: Record<string, unknown>, sender: string, global: boolean, repo: number | null, wt: unknown, from: SentBy | null, who: Who): Promise<Reply> {
     const cat = this.d.catalog;
     const d = cat?.defaults() ?? { account: "claude", model: "", effort: "", access: "full", device: "" };
     const s = (k: string, dflt: string) => (typeof body[k] === "string" ? (body[k] as string) : dflt);
@@ -903,7 +920,7 @@ export class PhoneRoutes {
       const m = e.mainChat(main);
       if (m !== null) {
         const mc = this.chats().find((x) => x.id === m);
-        if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender, "", from);
+        if (mc && (text !== "" || files.length > 0)) await this.send(mc, { text, files: body.files ?? [] }, sender, "", from, who);
         return ok({ id: global ? (mc?.gid ?? "") : m, gid: mc?.gid ?? "" });
       }
     }
@@ -920,7 +937,7 @@ export class PhoneRoutes {
     if (typeof opened.gid === "string" && typeof opened.title === "string") this.d.openedFrom?.(c.id, opened.gid, opened.title);
     this.d.replica.touch(c.id);
     if (text !== "" || files.length > 0) {
-      const sent = await this.send(c, { text, files: body.files ?? [] }, sender, "", from);
+      const sent = await this.send(c, { text, files: body.files ?? [] }, sender, "", from, who);
       if (sent.status !== 200) return sent;
     }
     return ok({ id: global ? c.gid : c.id, gid: c.gid });
@@ -938,7 +955,7 @@ export class PhoneRoutes {
   }
 
   /** mesh.rs `mesh_proxy`: a call about a copy, made at its home PC and answered with this PC's ids. */
-  private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string, global: boolean): Promise<Reply> {
+  private async forward(c: Chat, method: string, p: string[], body: Record<string, unknown>, sender: string, global: boolean, who: Who): Promise<Reply> {
     const peer = this.d.hub.mesh.peer(c.home);
     if (!peer?.online || !this.d.mesh) return err(409, `${this.d.hub.mesh.nameOf(c.home)} is off: the chat is read-only until it's back`);
     // Moving is its home's to do; a home before it would only say "unknown call".
@@ -946,7 +963,7 @@ export class PhoneRoutes {
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
     const { files: ids, ...rest } = body;
     const ctx = startsTurn(method, p.slice(3)) ? (this.d.ctx?.(c.repoId) ?? null) : null;
-    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, ""], ctx);
+    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, "", who.who, who.via ?? ""], ctx);
     if (p[3] === "fork") r = await this.mapNew(c.home, r, global);
     const rb = obj(r.body);
     const ch = typeof rb.chat === "object" && rb.chat !== null && !Array.isArray(rb.chat) ? (rb.chat as Record<string, Json>) : null;

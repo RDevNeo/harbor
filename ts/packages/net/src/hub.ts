@@ -648,6 +648,11 @@ export class Hub {
     return t ? `${phone} (${t.account_name})` : phone;
   }
 
+  /** The person a phone is signed in as ("" for a phone paired before accounts). */
+  callerWho(token: string): string {
+    return this.tokens.find((x) => x.token === token)?.account_name ?? "";
+  }
+
   /** The handle of a signed-in phone (key `fp`): made the first time it calls. */
   accountPhone(c: PhoneClaims, fp: string): string {
     const name = c.name === "" ? c.email : c.name;

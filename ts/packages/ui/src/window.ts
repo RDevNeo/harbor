@@ -137,6 +137,10 @@ export interface CardData {
   pending: boolean;
   expandable: boolean;
   sender: string;
+  /** A user card that joins the user card above it: no sender row, a small gap (view.ts `markJoined`). */
+  joined: boolean;
+  /** A user card the next one joins: a small gap under it, its hover actions beside the bubble. */
+  tight: boolean;
   files: string[];
   steer: boolean;
   url: string;

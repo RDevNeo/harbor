@@ -1,4 +1,4 @@
-import type { Item, Mention } from "@harbor/store";
+import type { Item, Mention, SentVia } from "@harbor/store";
 import { now } from "./paths.ts";
 
 /** What a follow-up does while the agent works. */
@@ -30,6 +30,9 @@ export interface Queued {
   /** Where it was written, when not on this PC (`Item::User::sender`). */
   sender: string;
   device: string;
+  /** Who wrote it there and on what (`Item::User::who`, `via`). */
+  who?: string;
+  via?: SentVia;
   intent: Intent;
   note: Note;
   /** The device editing it in its composer; empty when nobody is. */
@@ -53,7 +56,15 @@ export function queuedPrompt(q: Queued, said: string, mentions: string): string 
 }
 
 export function queuedItem(q: Queued): Item {
-  return { kind: "user", text: q.text, files: [...q.files], at: now(), mentions: q.mentions, sender: q.sender, intent: q.intent };
+  return withWho({ kind: "user", text: q.text, files: [...q.files], at: now(), mentions: q.mentions, sender: q.sender, intent: q.intent }, q.who, q.via);
+}
+
+/** A user item with who wrote it and on what, set only when known (old items and this PC's leave them out). */
+export function withWho(it: Item, who: string | undefined, via: SentVia | undefined): Item {
+  if (it.kind !== "user" || it.sender === "") return it;
+  if (who) it.who = who;
+  if (via) it.via = via;
+  return it;
 }
 
 export const steering = (q: Queued): boolean => q.intent !== "";
@@ -135,6 +146,8 @@ function queuedJson(q: Queued): Record<string, unknown> {
   if (q.intent !== "") v.intent = q.intent;
   if (q.note !== "") v.note = q.note;
   if (q.editing !== "") v.editing = q.editing;
+  if (q.who) v.who = q.who;
+  if (q.via) v.via = q.via;
   return v;
 }
 
@@ -142,7 +155,7 @@ function queuedFrom(v: unknown): Queued | null {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o.text !== "string" || !Array.isArray(o.files) || !Array.isArray(o.mentions) || typeof o.written !== "boolean") return null;
   const s = (k: string): string => (typeof o[k] === "string" ? (o[k] as string) : "");
-  return {
+  const q: Queued = {
     id: typeof o.id === "number" ? o.id : 0,
     text: o.text,
     files: o.files.filter((f): f is string => typeof f === "string"),
@@ -154,5 +167,8 @@ function queuedFrom(v: unknown): Queued | null {
     note: s("note") === NOT_LANDED ? NOT_LANDED : "",
     editing: s("editing"),
   };
+  if (s("who") !== "") q.who = s("who");
+  if (o.via === "phone" || o.via === "pc") q.via = o.via;
+  return q;
 }
 
