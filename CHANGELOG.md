@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.112.2] - 2026-11-02
+
 ### Fixed
 - Phone: a project in the drawer has the desktop's project options. A long press on it (or its new
   `⋯`) did nothing for a project without chats, and for one with a main chat showed only that
