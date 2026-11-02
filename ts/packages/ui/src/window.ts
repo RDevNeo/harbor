@@ -559,9 +559,8 @@ export interface AppWindow extends slint.ComponentHandle {
   readonly transcript_height: number;
   /** Physical pixels per logical pixel. */
   readonly scale_factor: number;
-  /** Browser-style zoom: the level (1 = 100%) and the brief "110%" shown when it changes ("" = none). */
+  /** Browser-style zoom: the level (1 = 100%). */
   zoom_level: number;
-  zoom_badge: string;
   /** A zoom key: 1 in, -1 out, 0 back to 100%. */
   zoom: (step: number) => void;
   /** The window's scale changed: Harbor's own zoom, or the display's (another screen, a new setting). */

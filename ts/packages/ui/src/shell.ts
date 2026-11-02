@@ -305,7 +305,6 @@ export class Shell {
           w.requestRedraw();
         },
         level: (l) => (win.zoom_level = l),
-        badge: (t) => (win.zoom_badge = t),
         changed: () => {
           // Images were decoded for the old scale: decode them again once the keys stop.
           if (this.zoomCards !== null) clearTimeout(this.zoomCards);
@@ -2071,7 +2070,6 @@ export class Shell {
 
   shutdown(): void {
     if (this.spinTimer !== null) clearInterval(this.spinTimer);
-    this.zoomer.stop();
     if (this.zoomCards !== null) clearTimeout(this.zoomCards);
     this.surfaces.dispose();
     this.videoPane?.shutdown();

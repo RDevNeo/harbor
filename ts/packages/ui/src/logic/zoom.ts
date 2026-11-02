@@ -21,11 +21,6 @@ export function stepZoom(level: number, step: number): number {
   return STEPS.findLast((s) => s < level - 0.001) ?? (STEPS[0] ?? 1);
 }
 
-/** "110%", as Chrome shows it. */
-export function zoomLabel(level: number): string {
-  return `${Math.round(level * 100)}%`;
-}
-
 /** What the zoom needs of the window. */
 export interface Zoomable {
   /** The window's scale now (physical pixels per logical pixel). */
@@ -34,13 +29,9 @@ export interface Zoomable {
   setScale(scale: number): void;
   /** The level, for the window's minimum size. */
   level(level: number): void;
-  /** The brief "110%" ("" hides it). */
-  badge(text: string): void;
   /** The level was saved: images are decoded again for the new size. */
   changed(): void;
 }
-
-const BADGE_MS = 1500;
 
 /** The window's zoom: the display's own scale times this PC's level. */
 export class Zoom {
@@ -49,7 +40,6 @@ export class Zoom {
   private display: number | null = null;
   /** The scale Harbor set last, to tell the display's own changes from it. */
   private applied = 0;
-  private badgeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private win: Zoomable,
@@ -79,18 +69,12 @@ export class Zoom {
   /** A zoom key: 1 in, -1 out, 0 back to 100%. */
   key(step: number): void {
     const next = stepZoom(this.current, step);
-    this.badge(next);
     if (next === this.current) return;
     this.current = next;
     this.store.set(KEY, String(next));
     this.win.level(next);
     this.apply();
     this.win.changed();
-  }
-
-  stop(): void {
-    if (this.badgeTimer !== null) clearTimeout(this.badgeTimer);
-    this.badgeTimer = null;
   }
 
   private apply(): void {
@@ -100,12 +84,4 @@ export class Zoom {
     if (Math.abs(this.win.scale() - target) >= 0.001) this.win.setScale(target);
   }
 
-  private badge(level: number): void {
-    this.win.badge(zoomLabel(level));
-    if (this.badgeTimer !== null) clearTimeout(this.badgeTimer);
-    this.badgeTimer = setTimeout(() => {
-      this.badgeTimer = null;
-      this.win.badge("");
-    }, BADGE_MS);
-  }
 }

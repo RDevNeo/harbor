@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { KEY, parseZoom, STEPS, stepZoom, Zoom, zoomLabel } from "../src/logic/zoom.ts";
+import { KEY, parseZoom, STEPS, stepZoom, Zoom } from "../src/logic/zoom.ts";
 import { listed, classOf } from "../../store/src/settingsync.ts";
 
 test("steps_like_chrome", () => {
@@ -15,8 +15,6 @@ test("steps_like_chrome", () => {
   // between steps it goes to the next one
   expect(stepZoom(1.2, 1)).toBe(1.25);
   expect(stepZoom(1.2, -1)).toBe(1.1);
-  expect(zoomLabel(0.67)).toBe("67%");
-  expect(zoomLabel(1.1)).toBe("110%");
 });
 
 test("parse_stored_level", () => {
@@ -36,7 +34,7 @@ test("level_stays_on_this_pc", () => {
 function rig(stored: string | null, display = 1.25) {
   const kv = new Map<string, string>();
   if (stored !== null) kv.set(KEY, stored);
-  const w = { scale: display, sets: [] as number[], level: 0, badge: "", changed: 0 };
+  const w = { scale: display, sets: [] as number[], level: 0, changed: 0 };
   const z = new Zoom(
     {
       scale: () => w.scale,
@@ -45,7 +43,6 @@ function rig(stored: string | null, display = 1.25) {
         w.sets.push(s);
       },
       level: (l) => (w.level = l),
-      badge: (t) => (w.badge = t),
       changed: () => w.changed++,
     },
     { get: (k) => kv.get(k), set: (k, v) => kv.set(k, v) },
@@ -62,7 +59,6 @@ test("applies_saved_level_on_show_over_the_display_scale", () => {
   // Slint tells of the scale Harbor set: nothing more to do
   z.scaleChanged(1.875);
   expect(w.sets).toEqual([1.875]);
-  z.stop();
 });
 
 test("at_100_percent_nothing_changes", () => {
@@ -70,7 +66,6 @@ test("at_100_percent_nothing_changes", () => {
   z.shown();
   z.scaleChanged(1.25);
   expect(w.sets).toEqual([]);
-  z.stop();
 });
 
 test("keys_zoom_and_save", () => {
@@ -79,19 +74,16 @@ test("keys_zoom_and_save", () => {
   z.key(1);
   expect(w.sets).toEqual([1.1]);
   expect(kv.get(KEY)).toBe("1.1");
-  expect(w.badge).toBe("110%");
   expect(w.changed).toBe(1);
   z.key(1);
   z.key(-1);
   z.key(0);
   expect(w.sets).toEqual([1.1, 1.25, 1.1, 1]);
   expect(kv.get(KEY)).toBe("1");
-  expect(w.badge).toBe("100%");
-  // already at 100%: the badge shows, nothing else
+  // already at 100%: nothing changes
   z.key(0);
   expect(w.sets.length).toBe(4);
   expect(w.changed).toBe(4);
-  z.stop();
 });
 
 test("display_scale_change_keeps_the_level", () => {
@@ -102,7 +94,6 @@ test("display_scale_change_keeps_the_level", () => {
   w.scale = 1.5;
   z.scaleChanged(1.5);
   expect(w.sets).toEqual([2, 3]);
-  z.stop();
 });
 
 test("a_scale_before_show_waits", () => {
@@ -112,15 +103,4 @@ test("a_scale_before_show_waits", () => {
   w.scale = 2;
   z.shown();
   expect(w.sets).toEqual([2.5]);
-  z.stop();
-});
-
-test("badge_hides_after_a_moment", async () => {
-  const { z, w } = rig(null, 1);
-  z.shown();
-  z.key(-1);
-  expect(w.badge).toBe("90%");
-  await Bun.sleep(1600);
-  expect(w.badge).toBe("");
-  z.stop();
 });
