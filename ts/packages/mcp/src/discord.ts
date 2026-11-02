@@ -320,7 +320,7 @@ export async function statusText(): Promise<string> {
       run = "Discord is frozen while idle: the next tool call wakes it.";
       break;
     default:
-      run = "Discord isn't running: it starts on the first tool call (10 to 15 seconds).";
+      run = "Discord isn't running: it starts on the first tool call, in a few seconds.";
   }
   const bad = items(get(s, "failing"))
     .filter((x): x is string => typeof x === "string")
@@ -329,7 +329,63 @@ export async function statusText(): Promise<string> {
   if (bad !== "") out += `\nCan't find in Discord: ${bad}.${get(s, "repairing") === true ? " Harbor is repairing this." : ""}`;
   const attention = str(get(s, "attention"));
   if (attention !== undefined && attention !== "") out += `\n${attention}`;
+  const c = get(s, "captcha");
+  const end = get(s, "captcha_end");
+  if (isObj(c)) out += `\nA captcha to join ${str(get(c, "guild")) ?? "a server"} is waiting for the user to solve it in Harbor.`;
+  else if (isObj(end)) out += `\nThe last captcha (${str(get(end, "guild")) ?? "a server"}): ${CAPTCHA_ENDS[str(get(end, "outcome")) ?? ""] ?? "ended"}.`;
   return out;
+}
+
+const CAPTCHA_ENDS: Record<string, string> = {
+  joined: "solved, and the server was joined",
+  closed: "closed without joining",
+  timeout: "nobody solved it in time, so the server wasn't joined",
+  stopped: "Discord stopped before it was solved",
+};
+
+/** A captcha waiting for a person, for Harbor's window; undefined: none. Doesn't start anything. */
+export interface CaptchaFrame {
+  guild: string | null;
+  /** JPEG, base64; absent while the captcha is between frames. */
+  data?: string;
+  width: number;
+  height: number;
+  /** Where the captcha is on the page: the only place clicks go. */
+  rect: { x: number; y: number; width: number; height: number } | null;
+}
+
+export async function captchaFrame(): Promise<CaptchaFrame | undefined> {
+  const s = await status();
+  const c = get(s, "captcha");
+  if (!isObj(c)) return undefined;
+  const guild = str(get(c, "guild")) ?? null;
+  let f: Json;
+  try {
+    f = await ask(setup.socket(), { op: "captcha_frame" }, 10_000);
+  } catch {
+    return { guild, width: 0, height: 0, rect: null };
+  }
+  const r = get(f, "rect");
+  const num = (v: Json | undefined): number => (typeof v === "number" ? v : 0);
+  const out: CaptchaFrame = {
+    guild,
+    width: num(get(f, "width")),
+    height: num(get(f, "height")),
+    rect: isObj(r) ? { x: num(get(r, "x")), y: num(get(r, "y")), width: num(get(r, "width")), height: num(get(r, "height")) } : null,
+  };
+  const data = str(get(f, "data"));
+  if (data !== undefined) out.data = data;
+  return out;
+}
+
+/** The person's pointer on the captcha, in page pixels: the shell drops what's outside it. */
+export async function captchaInput(kind: "move" | "down" | "up" | "wheel", x: number, y: number, dy = 0): Promise<void> {
+  await ask(setup.socket(), { op: "captcha_input", kind, x, y, dy }, 5000).catch(() => {});
+}
+
+/** Closes the captcha: the join it held doesn't happen. */
+export async function captchaCancel(): Promise<void> {
+  await ask(setup.socket(), { op: "captcha_cancel" }, 5000).catch(() => {});
 }
 
 /** `files` paths become what the page needs: names, types and bytes. */

@@ -38,6 +38,7 @@ import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { VideoPane } from "./videopane.ts";
+import { CaptchaPane } from "./captchapane.ts";
 import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row } from "./picker.ts";
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
@@ -193,7 +194,11 @@ export class Shell {
     this.voice.load();
     this.refreshVoice();
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId), (p) => this.nativeImage(p));
+    // A Discord join that waits on a captcha comes up over the window for the person to solve.
+    this.captcha = new CaptchaPane(this.win, async (b) => (await pkg.images.decodeBytes(b, 1280)).image);
+    this.captcha.start();
   }
+  private captcha: CaptchaPane | null = null;
   private media: typeof import("@harbor/media") | null = null;
   private voice: import("@harbor/media").voiceCtl.VoiceCtl | null = null;
   private images: import("@harbor/media").images.Images | null = null;
@@ -523,6 +528,10 @@ export class Shell {
       this.fitTerm(dock(d));
     };
     w.open_media = (path) => this.openImage(path);
+    w.cap_pointer = (kind, x, y) => this.captcha?.pointer(kind, x, y);
+    w.cap_wheel = (x, y, dy) => this.captcha?.wheel(x, y, dy);
+    w.cap_show = (shown) => this.captcha?.show(shown);
+    w.cap_cancel = () => this.captcha?.cancel();
     w.lb_close = () => this.images?.close();
     w.lb_go = (i) => this.images?.goTo(i);
     w.lb_copy_image = () => void this.copyShownImage();
@@ -2073,6 +2082,7 @@ export class Shell {
     if (this.zoomCards !== null) clearTimeout(this.zoomCards);
     this.surfaces.dispose();
     this.videoPane?.shutdown();
+    this.captcha?.stop();
     for (const [id, run] of this.engine.turns) {
       this.engine.persist(id);
       run.turn?.release();

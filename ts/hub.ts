@@ -9,7 +9,7 @@ import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
-import { Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
+import { discord, Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
   deviceSshArgs,
@@ -113,6 +113,8 @@ export interface HubOptions {
   hookPort?: number | false;
   /** Live previews between PCs (update's preview.ts, run by the process that can restart into one). */
   preview?: HubPreview;
+  /** Posts what the Discord host wants the user to know (signed out, a captcha to solve): the real app only, a test hub would take the user's. */
+  discordNotices?: boolean;
 }
 
 export interface HubPreview {
@@ -642,6 +644,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, accounts: () => accounts, ...host, ...own });
   const live = engine;
+  const stopDiscord = o.discordNotices === true && !offline ? discord.watch((n) => live.host.notify?.(n.kind, n.key, n.title, n.body)) : () => {};
   const funnel = new Funnel(() => providers.which("tailscale") !== null, () => live.hookPort);
   const moveAccounts = (): MovePcAccount[] =>
     accounts.map((a) => ({
@@ -868,6 +871,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       }
       clearInterval(refresh);
       services?.stop();
+      stopDiscord();
       mesh.stop();
       disc?.stop();
       stopMap();

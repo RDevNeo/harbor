@@ -27,6 +27,11 @@ const LIVE_WAIT = 25_000;
 const SESSION_WAIT = 45_000;
 /** Sign-in gives up after this long. */
 const SIGNIN_WAIT = 15 * 60;
+/** A captcha nobody solved is closed after this long (seconds), and its join given up. */
+export const CAPTCHA_WAIT = 10 * 60;
+/** How often the host looks at a captcha, and how many looks without one end it. */
+const CAPTCHA_LOOK_MS = 1000;
+const CAPTCHA_GONE_LOOKS = 3;
 
 
 /** How the page runs. `scratch` is repair's throwaway logged-out page. */
@@ -206,7 +211,8 @@ export class Electron implements Engine {
     const c = this.child;
     if (c === undefined) return;
     this.child = undefined;
-    rmSync(leftOverPath(), { force: true });
+    // Only its own: repair's scratch page stops while the real client runs.
+    if (safeRead(leftOverPath()).trim() === String(c.pid)) rmSync(leftOverPath(), { force: true });
     const gone = (): boolean => c.exitCode !== null || c.signalCode !== null;
     if (!gone()) await this.askOn(c, { op: "quit" }, 5000).catch(() => {});
     c.stdin?.end();
@@ -510,6 +516,20 @@ export function loadSaved(): Saved {
   };
 }
 
+/** A join waiting on a captcha only a person may solve: Harbor's window shows it. */
+export type Captcha = {
+  guild: string | null;
+  guildId: string | null;
+  since: number;
+};
+
+/** How the last captcha ended. */
+export type CaptchaEnd = {
+  outcome: "joined" | "closed" | "timeout" | "stopped";
+  guild: string | null;
+  at: number;
+};
+
 interface St {
   phase: Phase;
   /** Setup's progress. */
@@ -538,6 +558,8 @@ interface St {
   signinAt: number;
   /** The desktop the sign-in started from. */
   display: Display;
+  captcha: Captcha | null;
+  captchaEnd: CaptchaEnd | null;
 }
 
 function newSt(): St {
@@ -560,6 +582,8 @@ function newSt(): St {
     restart: false,
     chatTested: false,
     repairing: false,
+    captcha: null,
+    captchaEnd: null,
   };
 }
 
@@ -1066,6 +1090,7 @@ export class Host {
     switch (name) {
       case "discord_join":
         if (get(v, "joined") === true) paceNote("join");
+        else if (get(v, "captchaRequired") === true) this.captchaStart(v);
         break;
       case "discord_leave":
         if (get(v, "left") === true) paceNote("leave");
@@ -1089,6 +1114,10 @@ export class Host {
   }
 
   private async runTool(name: string, args: Obj): Promise<Json> {
+    const c = this.st.captcha;
+    if (c !== null && name === "discord_join" && get(args, "apply") === true) {
+      return { joined: false, captchaPending: true, note: `A captcha to join ${c.guild ?? "a server"} is waiting for the user to solve it in Harbor. Try again after that one is done.` };
+    }
     const missing = this.st.broken.get(name);
     if (missing !== undefined) {
       const doing = this.st.repairing ? "Harbor is repairing it; try again in a few minutes." : "Discord tools need attention.";
@@ -1111,6 +1140,89 @@ export class Host {
     return typeof r === "string" ? (parse(r) ?? null) : null;
   }
 
+
+  /**
+   * A join is waiting on a captcha: the client stays awake and unfrozen while a person solves it
+   * in Harbor's window, which the notice points to. Nothing here solves or clicks anything.
+   */
+  private captchaStart(v: Json): void {
+    if (this.st.captcha !== null) return;
+    const g = get(v, "guild");
+    const c: Captcha = { guild: str(get(g, "name")) ?? null, guildId: str(get(g, "id")) ?? null, since: now() };
+    this.set((st) => {
+      st.captcha = c;
+      st.captchaEnd = null;
+      st.busy += 1;
+    });
+    setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. Open Harbor on this PC to solve it; it's given up in ${CAPTCHA_WAIT / 60} minutes.`);
+    background(() => this.captchaFollow(c));
+  }
+
+  /** Follows a captcha until the join lands, the captcha goes away, or time runs out. */
+  private async captchaFollow(c: Captcha): Promise<void> {
+    let gone = 0;
+    while (this.st.captcha === c) {
+      await sleep(CAPTCHA_LOOK_MS);
+      let s: Json;
+      try {
+        s = await this.engine.ask({ op: "captcha" }, 5000);
+      } catch {
+        return this.captchaEnd(c, "stopped");
+      }
+      if (get(get(s, "pending"), "joined") === true) return this.captchaEnd(c, "joined");
+      if (get(s, "showing") === true) gone = 0;
+      else if (++gone >= CAPTCHA_GONE_LOOKS) return this.captchaEnd(c, "closed");
+      if (now() - c.since > CAPTCHA_WAIT) {
+        await this.engine.ask({ op: "captcha_cancel" }, 5000).catch(() => {});
+        return this.captchaEnd(c, "timeout");
+      }
+    }
+  }
+
+  private captchaEnd(c: Captcha, outcome: CaptchaEnd["outcome"]): void {
+    if (this.st.captcha !== c) return;
+    this.set((st) => {
+      st.captcha = null;
+      st.captchaEnd = { outcome, guild: c.guild, at: now() };
+      st.busy -= 1;
+      st.lastUse = now();
+    });
+    this.engine.ask({ op: "captcha_end" }, 5000).catch(() => {});
+    const g = c.guild ?? "the server";
+    switch (outcome) {
+      case "joined":
+        paceNote("join");
+        setup.notice("Discord: joined", `The captcha was solved: Discord joined ${g}.`);
+        break;
+      case "closed":
+        setup.notice("Discord: not joined", `The captcha was closed, so Discord didn't join ${g}.`);
+        break;
+      case "timeout":
+        setup.notice("Discord: not joined", `Nobody solved the captcha in ${CAPTCHA_WAIT / 60} minutes, so Discord didn't join ${g}.`);
+        break;
+      case "stopped":
+        setup.notice("Discord: not joined", `Discord stopped before the captcha was solved, so it didn't join ${g}.`);
+        break;
+    }
+  }
+
+  /** The person's side of a captcha: what it looks like, their pointer, and giving up. */
+  private async captchaOp(op: string, req: Json): Promise<Json> {
+    if (this.st.captcha === null) {
+      if (op === "captcha_frame") return { showing: false };
+      throw new Error("No captcha is waiting.");
+    }
+    switch (op) {
+      case "captcha_frame":
+        return await this.engine.ask({ op }, 10_000);
+      case "captcha_input": {
+        const n = (k: string): number => (typeof get(req, k) === "number" ? (get(req, k) as number) : Number.NaN);
+        return await this.engine.ask({ op, kind: str(get(req, "kind")) ?? "", x: n("x"), y: n("y"), dy: n("dy") }, 5000);
+      }
+      default:
+        return await this.engine.ask({ op: "captcha_cancel" }, 5000);
+    }
+  }
 
   private signin(display: Display): void {
     const st = this.st;
@@ -1324,6 +1436,11 @@ export class Host {
         case "capture":
           r = await this.pageOp(req);
           break;
+        case "captcha_frame":
+        case "captcha_input":
+        case "captcha_cancel":
+          r = await this.captchaOp(op, req);
+          break;
         case "signin":
           if (get(req, "accept") !== true) throw new Error("Sign-in needs the warning accepted first.");
           this.signin(Display.from(get(req, "display")));
@@ -1467,6 +1584,8 @@ function statusJson(st: St | undefined, saved: Saved): Json {
     repairing: st?.repairing ?? false,
     busy: st?.busy ?? 0,
     held: st?.held ?? "",
+    captcha: st?.captcha ?? null,
+    captcha_end: st?.captchaEnd ?? null,
     logins_today: saved.logins.filter((t) => at - t < DAY).length,
     vencord: setup.Vencords.load().current,
     electron: setup.ELECTRON,

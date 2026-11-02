@@ -30,6 +30,9 @@ const NEEDS = {
     MessageStore: { props: [["getMessage", "getMessages"]] },
     MessageActions: { props: [["sendMessage", "editMessage"]] },
     ChannelActions: { props: [["selectChannel", "selectVoiceChannel"]] },
+    // selectChannel only moves a store; these change what's on the page, as the sidebar does.
+    ChannelRouter: { find: W => (W.Common?.ChannelRouter?.transitionToChannel ? W.Common.ChannelRouter : undefined) },
+    NavigationRouter: { find: W => (W.Common?.NavigationRouter?.transitionTo ? W.Common.NavigationRouter : undefined) },
     RelationshipStore: { props: [["getRelationshipType", "isFriend"]] },
     PresenceStore: { props: [["getStatus", "getActivities"], ["getStatus", "isMobileOnline"]], optional: true },
     TypingStore: { props: [["getTypingUsers", "isTyping"]], optional: true },
@@ -42,7 +45,10 @@ const NEEDS = {
     FluxDispatcher: { props: [["dispatch", "subscribe"]] },
     InviteActions: { props: [["acceptInvite", "resolveInvite"]] },
     AuthTokenStore: { props: [["getToken"], ["getCachedToken"]] },
-    MuteStore: { props: [["isMuted", "getMuteConfig"]] },
+    // The guild settings store. Not just isMuted + getMuteConfig: the joined-threads store has both
+    // too, keyed by thread, and it says "not muted" for every guild.
+    MuteStore: { props: [["isGuildCollapsed", "getMuteConfig", "isMuted"], ["getMutedChannels", "getMuteConfig", "isMuted"]] },
+    GuildMemberStore: { props: [["getMember", "getNick", "memberOf"], ["getMember", "getNick"]], optional: true },
     MuteActions: { props: [["updateGuildNotificationSettings", "updateChannelOverrideSettings"]] },
     GuildActions: { props: [["leaveGuild"]] },
     GatewayConnectionStore: { props: [["getSocket", "isTryingToConnect"]] },
@@ -51,12 +57,20 @@ const NEEDS = {
     // The same module emits both events; found by what its functions dispatch.
     ReactionActions: {
         lazy: true,
-        find: W => W.find(m => m && typeof m === "object"
-            && Object.values(m).some(v => typeof v === "function" && /"MESSAGE_REACTION_ADD"/.test(v.toString()))
-            && Object.values(m).some(v => typeof v === "function" && /"MESSAGE_REACTION_REMOVE"/.test(v.toString()))),
+        // Over the module cache by hand: W.find gives up at a module whose exports throw when read.
+        find: W => {
+            const sources = m => { try { return Object.values(m).filter(v => typeof v === "function").map(v => Function.prototype.toString.call(v)); } catch { return []; } };
+            for (const id in W.wreq.c) {
+                let m;
+                try { m = W.wreq.c[id]?.exports; } catch { continue; }
+                if (!m || typeof m !== "object") continue;
+                const fns = sources(m);
+                if (fns.some(f => f.includes('"MESSAGE_REACTION_ADD"')) && fns.some(f => f.includes('"MESSAGE_REACTION_REMOVE"'))) return m;
+            }
+        },
     },
     PreloadedUserSettings: { find: W => (W.findAll?.(m => m?.ProtoClass && m?.updateAsync) ?? []).find(m => m.type === 1) },
-    "source:chat-messages": { source: "chat-messages-", lazy: true },
+    "source:chat-messages": { source: "chat-messages", lazy: true },
     "source:messagesWrapper": { source: "messagesWrapper", lazy: true },
     "source:optionButtonWrapper": { source: "optionButtonWrapper", optional: true, lazy: true },
 };
@@ -97,6 +111,42 @@ function api(url, init = {}) {
         if (sp) headers["x-super-properties"] = sp;
     } catch { /* optional */ }
     return fetch(url, { ...init, headers });
+}
+
+/* ------------------------------------------------------------ navigation -- */
+
+/** How long a channel gets to show up after navigating, its first messages coming from the network. */
+const RENDER_WAIT_MS = 10_000;
+
+/** Whether the page really shows this channel: its route, and its messages in the list (or a
+ * loaded channel with none). The store alone says nothing about what's on the page. */
+function shows(channelId, messageId) {
+    if (!location.pathname.split("/").includes(channelId)) return false;
+    if (!document.querySelector('[data-list-id="chat-messages"]')) return false;
+    if (messageId) return !!document.getElementById(`chat-messages-${channelId}-${messageId}`);
+    if (document.querySelector(`[id^="chat-messages-${channelId}-"]`)) return true;
+    const loaded = need("MessageStore")?.getMessages?.(channelId);
+    return !!loaded?.ready && !loaded.length;
+}
+
+/** Goes to a channel as the sidebar does; whether it's on the page by the end. */
+async function navigate(channelId, guildId, messageId) {
+    if (shows(channelId, messageId)) return true;
+    const known = !!need("ChannelStore")?.getChannel?.(channelId);
+    const router = need("ChannelRouter");
+    if (known && !messageId && router) router.transitionToChannel(channelId);
+    else {
+        const nav = need("NavigationRouter");
+        if (!nav) throw new Error("NavigationRouter not found — webpack module shape may have changed.");
+        // A DM that was only just created isn't in the store yet: the router would skip it.
+        nav.transitionTo(`/channels/${guildId ?? "@me"}/${channelId}` + (messageId ? "/" + messageId : ""));
+    }
+    const until = Date.now() + RENDER_WAIT_MS;
+    while (Date.now() < until) {
+        if (shows(channelId, messageId)) return true;
+        await sleep(100);
+    }
+    return false;
 }
 
 /* ------------------------------------------------------- send message -- */
@@ -1207,30 +1257,14 @@ async function bridgeOpenChannel(args) {
 
     const ChannelStore = need("ChannelStore");
     const SelectedChannelStore = need("SelectedChannelStore");
-    const ChannelActions = need("ChannelActions");
     const GuildStore = need("GuildStore");
     const UserStore = need("UserStore");
-
-    if (!ChannelActions?.selectChannel)
-        throw new Error("ChannelActions.selectChannel not found — webpack module shape may have changed.");
 
     const channel = ChannelStore?.getChannel?.(args.channelId);
     if (!channel) throw new Error("Channel not found in ChannelStore: " + args.channelId);
 
     const guildId = channel.guild_id || null;
-    ChannelActions.selectChannel({
-        guildId,
-        channelId: args.channelId,
-        messageId: args.messageId,
-    });
-
-    // Selection dispatches synchronously, but the renderer redraw takes a
-    // frame or two. Poll briefly so callers get an accurate "did it flip?".
-    const deadline = Date.now() + 2500;
-    while (Date.now() < deadline) {
-        if (SelectedChannelStore?.getChannelId?.() === args.channelId) break;
-        await new Promise(r => setTimeout(r, 50));
-    }
+    const rendered = await navigate(args.channelId, guildId, args.messageId);
 
     const guild = guildId ? GuildStore?.getGuild?.(guildId) : null;
     const renderName = (u) => u?.globalName ?? u?.global_name ?? u?.username ?? null;
@@ -1240,10 +1274,11 @@ async function bridgeOpenChannel(args) {
         return u ? { id: u.id, username: u.username, name: renderName(u) } : { id: rid };
     });
 
-    const current = SelectedChannelStore?.getChannelId?.();
     return {
-        ok: current === args.channelId,
-        currentChannelId: current,
+        ok: rendered,
+        ...(rendered ? {} : { note: "Discord didn't show this channel in time, so discord_view won't see its messages. It may have no message list (a forum or voice channel), or still be loading: try again, or use discord_history." }),
+        currentChannelId: SelectedChannelStore?.getChannelId?.() ?? null,
+        path: location.pathname,
         channel: {
             id: channel.id,
             name: channel.name || (recipients[0]?.name ?? recipients[0]?.username ?? null),
@@ -1252,7 +1287,7 @@ async function bridgeOpenChannel(args) {
             guildName: guild?.name || null,
             recipients: recipients.length ? recipients : undefined,
         },
-        scrolledToMessage: args.messageId || null,
+        scrolledToMessage: rendered ? args.messageId || null : null,
     };
 }
 
@@ -1609,6 +1644,96 @@ async function bridgeMember(args) {
     };
 }
 
+/**
+ * People by name, from what this client already holds: users it has seen (friends, DM contacts,
+ * authors and members of servers it loaded), friend nicknames and server nicknames. Nothing is
+ * requested: Discord's only lookup of a stranger's username is sending them a friend request, and
+ * asking a server for its members is what self-bots get caught doing.
+ */
+const RELATIONSHIP = { 1: "friend", 2: "blocked", 3: "incoming friend request", 4: "outgoing friend request", 5: "implicit" };
+
+async function bridgeFindUser(args) {
+    let q = String(args?.query ?? "").trim().replace(/^@/, "").toLowerCase();
+    if (!q) throw new Error("`query` is required: a username, display name or nickname.");
+    const tag = /^(.+)#(\d{4})$/.exec(q);
+    if (tag) q = tag[1];
+    const limit = Math.min(Math.max(Number(args?.limit) || 10, 1), 25);
+
+    const UserStore = need("UserStore");
+    const Rel = need("RelationshipStore");
+    const Members = need("GuildMemberStore");
+    const GuildStore = need("GuildStore");
+    const ChannelStore = need("ChannelStore");
+    const me = UserStore?.getCurrentUser?.()?.id;
+
+    const users = new Map();
+    const add = u => { if (u?.id && u.id !== me && !users.has(u.id)) users.set(u.id, u); };
+    try { for (const u of Object.values(UserStore?.getUsers?.() ?? {})) add(u); } catch { /* */ }
+    try { UserStore?.forEach?.(add); } catch { /* */ }
+
+    // Server nicknames, from the members this client already has.
+    const nicks = new Map();
+    const guilds = Object.values(GuildStore?.getGuilds?.() ?? {});
+    for (const g of guilds) {
+        let list = [];
+        try { list = Members?.getMembers?.(g.id) ?? []; } catch { /* */ }
+        for (const m of list) {
+            const uid = m?.userId ?? m?.user?.id;
+            if (!uid || !m.nick) continue;
+            if (!m.nick.toLowerCase().includes(q)) continue;
+            (nicks.get(uid) ?? nicks.set(uid, []).get(uid)).push({ guildId: g.id, guildName: g.name, nick: m.nick });
+            if (!users.has(uid)) add(UserStore?.getUser?.(uid));
+        }
+    }
+
+    const found = [];
+    for (const u of users.values()) {
+        const username = (u.username ?? "").toLowerCase();
+        const global = (u.globalName ?? u.global_name ?? "").toLowerCase();
+        const friendNick = Rel?.getNickname?.(u.id) ?? null;
+        const serverNicks = nicks.get(u.id) ?? [];
+        let rank;
+        if (username === q) rank = 0;
+        else if (global === q || friendNick?.toLowerCase() === q || serverNicks.some(n => n.nick.toLowerCase() === q)) rank = 1;
+        else if (username.includes(q) || global.includes(q) || friendNick?.toLowerCase().includes(q) || serverNicks.length) rank = 2;
+        else continue;
+        found.push({ rank, u, friendNick, serverNicks });
+    }
+    found.sort((a, b) => a.rank - b.rank || String(a.u.username).localeCompare(String(b.u.username)));
+
+    const shared = uid => {
+        const out = [];
+        for (const g of guilds) {
+            try { if (Members?.getMember?.(g.id, uid)) out.push({ id: g.id, name: g.name }); } catch { /* */ }
+            if (out.length >= 10) break;
+        }
+        return out;
+    };
+    const matches = found.slice(0, limit).map(({ rank, u, friendNick, serverNicks }) => ({
+        id: u.id,
+        username: u.username,
+        globalName: u.globalName ?? u.global_name ?? null,
+        bot: !!u.bot,
+        match: rank === 0 ? "username" : rank === 1 ? "exact name" : "partial",
+        relationship: RELATIONSHIP[Rel?.getRelationshipType?.(u.id)] ?? "none",
+        friendNickname: friendNick,
+        serverNicknames: serverNicks.slice(0, 5),
+        dmChannelId: ChannelStore?.getDMFromUserId?.(u.id) ?? null,
+        sharedServers: shared(u.id),
+    }));
+    return {
+        query: args.query,
+        matches,
+        more: Math.max(0, found.length - matches.length),
+        searched: { users: users.size, servers: guilds.length },
+        note: matches.length
+            ? "From people this account already knows. A 1:1 DM with someone listed here can be opened with discord_dm_open."
+            : "Nobody by that name among the people this account already knows (friends, DMs, servers it has loaded). " +
+              "Discord's only way to look up a stranger's username is to send them a friend request, and Harbor won't do that. " +
+              "Ask the person to send this account a DM or a friend request, or to share a server with it; then search again.",
+    };
+}
+
 /* ------------------------------------------------------- unread / ack --- */
 
 /**
@@ -1616,7 +1741,10 @@ async function bridgeMember(args) {
  * channels (when `includeGuilds`). For each, asks ReadStateStore for unread
  * count + mention count + oldest unread id.
  */
-function bridgeUnread(args = {}) {
+/** Between the per-channel requests of discord_unread. */
+const COUNT_GAP_MS = 300;
+
+async function bridgeUnread(args = {}) {
 
     const ChannelStore = need("ChannelStore");
     const ReadStateStore = need("ReadStateStore");
@@ -1631,6 +1759,8 @@ function bridgeUnread(args = {}) {
     const renderName = (u) => u?.globalName ?? u?.global_name ?? u?.username ?? null;
     const limit = Math.max(1, Math.min(500, args.limit ?? 100));
     const mentionsOnly = !!args.mentionsOnly;
+    // Counting asks Discord once a channel, so only the ones at the top of the list.
+    const countTop = Math.max(0, Math.min(25, args.countTop ?? 10));
 
     const channelIds = [];
     if (typeof SortStore?.getPrivateChannelIds === "function") {
@@ -1651,19 +1781,19 @@ function bridgeUnread(args = {}) {
     }
 
     const out = [];
-    let totalUnread = 0;
     let totalMentions = 0;
     for (const cid of channelIds) {
         const mentions = ReadStateStore.getMentionCount?.(cid) || 0;
+        // Discord counts unread messages from the ones it has in memory: 0 for a channel not
+        // opened yet, whatever is there, and too low for one partly loaded.
         const unread = ReadStateStore.getUnreadCount?.(cid) || 0;
         const has = ReadStateStore.hasUnread?.(cid);
         if (!unread && !mentions && !has) continue;
         if (mentionsOnly && !mentions) continue;
-        totalUnread += unread;
         totalMentions += mentions;
         const ch = ChannelStore?.getChannel?.(cid);
         const oldest = ReadStateStore.getOldestUnreadMessageId?.(cid) || null;
-        const lastRead = ReadStateStore.lastMessageId?.(cid) || null;
+        const lastRead = ReadStateStore.ackMessageId?.(cid) || null;
         const isDm = ch && (ch.type === 1 || ch.type === 3);
         let name = ch?.name || null;
         if (isDm) {
@@ -1683,20 +1813,50 @@ function bridgeUnread(args = {}) {
             name,
             guildId: ch?.guild_id || null,
             guildName: ch?.guild_id ? GuildStore?.getGuild?.(ch.guild_id)?.name ?? null : null,
-            unreadCount: unread,
+            unreadCount: has ? null : unread,
+            memoryCount: unread,
             mentionCount: mentions,
             oldestUnreadId: oldest,
             lastReadMessageId: lastRead,
+            lastMessageId: ReadStateStore.lastMessageId?.(cid) || null,
         });
     }
 
-    out.sort((a, b) => (b.mentionCount - a.mentionCount) || (b.unreadCount - a.unreadCount));
+    const newest = (a, b) => (BigInt(b.lastMessageId ?? 0) > BigInt(a.lastMessageId ?? 0) ? 1 : -1);
+    out.sort((a, b) => (b.mentionCount - a.mentionCount) || (b.memoryCount - a.memoryCount) || newest(a, b));
+    const shown = out.slice(0, limit);
+
+    // The rest of the truth comes from the messages themselves.
+    const token = getAuthToken();
+    let asked = 0;
+    for (const c of shown) {
+        if (c.unreadCount !== null) continue;
+        if (asked >= countTop) break;
+        if (asked++) await sleep(COUNT_GAP_MS);
+        try {
+            const msgs = await restFetchMessages(c.channelId, { after: c.lastReadMessageId ?? undefined, limit: 100 }, token);
+            c.unreadCount = msgs.length;
+            if (msgs.length >= 100) c.unreadCountAtLeast = true;
+            c.oldestUnreadId = msgs.at(-1)?.id ?? c.oldestUnreadId;
+        } catch { /* stays unknown: the channel may not be readable */ }
+    }
+    // What's left is all Discord knows: at least that many, or unknown.
+    for (const c of out) {
+        if (c.unreadCount === null && c.memoryCount > 0) {
+            c.unreadCount = c.memoryCount;
+            c.unreadCountAtLeast = true;
+            c.notCounted = true;
+        } else if (c.unreadCount === null) c.notCounted = true;
+        delete c.memoryCount;
+    }
     return {
         channelsScanned: channelIds.length,
-        totalUnread,
+        totalUnread: out.reduce((n, c) => n + (c.unreadCount ?? 0), 0),
+        // Channels with unread messages that aren't in totalUnread.
+        channelsNotCounted: out.filter(c => c.notCounted).length,
         totalMentions,
         count: out.length,
-        channels: out.slice(0, limit),
+        channels: shown,
     };
 }
 
@@ -1854,22 +2014,12 @@ async function bridgeDmOpen(args) {
 
     const UserStore = need("UserStore");
     const RelationshipStore = need("RelationshipStore");
-    const ChannelActions = need("ChannelActions");
-    const SelectedChannelStore = need("SelectedChannelStore");
     const renderName = (u) => u?.global_name ?? u?.globalName ?? u?.username ?? null;
 
     // Resolving the channel via REST is not enough — the agent's mental model
-    // of `dmOpen` is "navigate to this DM". Without selectChannel the renderer
-    // stays on the prior channel, and a follow-up `sendMessage` would have to
-    // pre-select itself. Do it here so the name matches the behavior.
-    if (ChannelActions?.selectChannel && SelectedChannelStore?.getChannelId?.() !== ch.id) {
-        ChannelActions.selectChannel({ guildId: null, channelId: ch.id });
-        const deadline = Date.now() + 1500;
-        while (Date.now() < deadline) {
-            if (SelectedChannelStore?.getChannelId?.() === ch.id) break;
-            await new Promise(r => setTimeout(r, 25));
-        }
-    }
+    // of `dmOpen` is "navigate to this DM". Do it here so the name matches the
+    // behavior, and say whether it made it onto the page.
+    const rendered = await navigate(ch.id, null);
 
     const recipients = (ch.recipients || []).map((u) => {
         const cached = UserStore?.getUser?.(u.id);
@@ -1893,6 +2043,7 @@ async function bridgeDmOpen(args) {
         name,
         memberCount: isGroup ? recipients.length : undefined,
         recipients,
+        rendered,
         created: !existing,
     };
 }
@@ -2266,9 +2417,9 @@ async function bridgeJoinInvite(args) {
     // wedge the whole eval past the 15s plugin budget. Fire it, stash the
     // outcome, and poll the store for a bounded window instead.
     const targetId = guild?.id;
-    let acceptError = null;
-    InviteActions.acceptInvite({ inviteKey: code, context: { location: "Join Guild" } })
-        .catch((e) => { acceptError = String(e?.message || e); });
+    let acceptError = null, accepted = false;
+    const accepting = InviteActions.acceptInvite({ inviteKey: code, context: { location: "Join Guild" } });
+    accepting.then(() => { accepted = true; }, (e) => { acceptError = String(e?.message || e); });
 
     // Poll the store for ~6s (within the 15s eval budget). A captcha-gated join
     // won't land in this window — we detect that by the hCaptcha iframe and
@@ -2283,13 +2434,20 @@ async function bridgeJoinInvite(args) {
     const captchaUp = !memberNow && isCaptchaShowing();
 
     if (memberNow) return { joined: true, ...preview };
-    if (captchaUp) return {
-        joined: false,
-        captchaRequired: true,
-        ...preview,
-        note: "Discord wants a captcha for this join, and a person has to solve it. Ask the user to " +
-            "join this server from their own Discord app; don't retry.",
-    };
+    if (captchaUp) {
+        // The join waits on the captcha: Harbor shows it to the user and follows it from here.
+        const pending = { code, guildId: targetId ?? null, guildName: guild?.name ?? null, since: Date.now(), done: false, error: null };
+        accepting.then(() => { pending.done = true; }, (e) => { pending.error = String(e?.message || e); });
+        window.$harborCaptcha = pending;
+        return {
+            joined: false,
+            captchaRequired: true,
+            ...preview,
+            note: "Discord wants a captcha for this join, and only a person may solve it. Harbor has asked the " +
+                "user to solve it in Harbor and will tell them how it went; don't retry. discord_status says " +
+                "whether it's still waiting; discord_guilds shows the server once joined.",
+        };
+    }
     if (acceptError) return { joined: false, error: acceptError, ...preview };
     return {
         joined: false,
@@ -2826,10 +2984,11 @@ async function toolMuteGuild(args) {
     const action = args?.action === "unmute" ? "unmute" : "mute";
     const duration = args?.duration || "forever";
     const selectedWindow = durationSeconds[duration] ?? -1;
-    const before = {
-        muted: SettingsStore?.isMuted?.(guildId) ?? null,
-        muteConfig: SettingsStore?.getMuteConfig?.(guildId) ?? null,
-    };
+    const state = () => ({
+        muted: SettingsStore.isMuted(guildId) === true,
+        muteConfig: SettingsStore.getMuteConfig?.(guildId) ?? null,
+    });
+    const before = state();
     const preview = {
         guild: guild ? { id: guild.id, name: guild.name, ownerId: guild.ownerId ?? guild.owner_id ?? null } : { id: guildId, name: null },
         action,
@@ -2837,9 +2996,15 @@ async function toolMuteGuild(args) {
         before,
     };
 
-    if (!guild) return { applied: false, alreadyAbsent: true, ...preview };
+    if (!guild) return { applied: false, alreadyAbsent: true, note: "Not a server this account is in.", ...preview };
     if (!Actions?.updateGuildNotificationSettings)
         throw new Error("Guild notification settings action not found - webpack module shape may have changed.");
+    const wanted = action === "mute";
+    // A timed mute is still a change when it's already muted another way.
+    const endless = c => !c?.end_time;
+    const already = before.muted === wanted && (!wanted || (selectedWindow <= 0) === endless(before.muteConfig));
+    if (already)
+        return { applied: false, unchanged: true, note: wanted ? "Already muted that way: nothing to change." : "Not muted: nothing to change.", ...preview };
     if (!args?.apply)
         return {
             applied: false,
@@ -2848,34 +3013,37 @@ async function toolMuteGuild(args) {
             ...preview,
         };
 
-    const patch = action === "unmute"
-        ? { muted: false }
-        : {
+    const patch = wanted
+        ? {
             muted: true,
             mute_config: {
                 selected_time_window: selectedWindow,
                 end_time: selectedWindow > 0 ? new Date(Date.now() + selectedWindow * 1000).toISOString() : null,
             },
-        };
+        }
+        : { muted: false };
     await Actions.updateGuildNotificationSettings(guildId, patch);
 
-    for (let i = 0; i < 30; i++) {
-        const mutedNow = SettingsStore?.isMuted?.(guildId);
-        if (action === "mute" ? mutedNow === true : mutedNow === false) break;
+    // Success is what the store shows afterwards, not that the call returned.
+    let after = state();
+    for (let i = 0; i < 30 && after.muted !== wanted; i++) {
         await sleep(200);
+        after = state();
     }
-    const after = {
-        muted: SettingsStore?.isMuted?.(guildId) ?? null,
-        muteConfig: SettingsStore?.getMuteConfig?.(guildId) ?? null,
-    };
+    if (after.muted !== wanted)
+        return {
+            applied: false,
+            failed: true,
+            ...preview,
+            after,
+            note: `Discord didn't take the change: the server still shows as ${after.muted ? "muted" : "not muted"}. Nothing else was tried.`,
+        };
     return {
         applied: true,
-        changed: action === "mute" ? after.muted === true : after.muted === false,
         ...preview,
-        patch,
         after,
-        note: action === "mute" && selectedWindow <= 0 ? "Muted until manually turned back on."
-            : action === "mute" ? "Muted for the requested duration." : "Server unmuted.",
+        note: wanted && selectedWindow <= 0 ? "Muted until manually turned back on."
+            : wanted ? "Muted for the requested duration." : "Server unmuted.",
     };
 }
 
@@ -2925,17 +3093,18 @@ const TOOLS = {
     discord_search: { run: bridgeSearchMessages, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_user_messages: { run: bridgeUserMessages, needs: ["AuthTokenStore", "GuildStore"] },
     discord_stats: { run: bridgeGetStats, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
-    discord_open: { run: bridgeOpenChannel, live: true, needs: ["ChannelActions", "ChannelStore", "GuildStore", "SelectedChannelStore", "UserStore"] },
+    discord_open: { run: bridgeOpenChannel, live: true, needs: ["ChannelRouter", "ChannelStore", "GuildStore", "MessageStore", "NavigationRouter", "SelectedChannelStore", "UserStore"] },
     discord_react: { run: bridgeReact, needs: ["ChannelStore", "MessageStore", "ReactionActions", "SelectedChannelStore", "UserStore"] },
     discord_edit: { run: bridgeEdit, needs: ["MessageActions", "MessageStore", "SelectedChannelStore", "UserStore"] },
     discord_delete: { run: bridgeDelete, needs: ["MessageActions", "MessageStore", "SelectedChannelStore", "UserStore"] },
     discord_pins: { run: bridgePins, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
     discord_threads: { run: bridgeThreads, needs: ["AuthTokenStore", "ChannelStore", "SelectedChannelStore"] },
+    discord_find_user: { run: bridgeFindUser, live: true, needs: ["ChannelStore", "GuildStore", "RelationshipStore", "UserStore"] },
     discord_member: { run: bridgeMember, needs: ["AuthTokenStore", "PresenceStore", "UserStore"] },
-    discord_unread: { run: bridgeUnread, live: true, needs: ["ChannelStore", "GuildChannelStore", "GuildStore", "PrivateChannelSortStore", "ReadStateStore", "RelationshipStore", "UserStore"] },
+    discord_unread: { run: bridgeUnread, live: true, needs: ["AuthTokenStore", "ChannelStore", "GuildChannelStore", "GuildStore", "PrivateChannelSortStore", "ReadStateStore", "RelationshipStore", "UserStore"] },
     discord_ack: { run: bridgeAck, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "ReadStateStore"] },
     discord_emoji: { run: bridgeEmoji, live: true, needs: ["EmojiStore", "GuildStore"] },
-    discord_dm_open: { run: bridgeDmOpen, needs: ["AuthTokenStore", "ChannelActions", "RelationshipStore", "SelectedChannelStore", "UserStore"] },
+    discord_dm_open: { run: bridgeDmOpen, needs: ["AuthTokenStore", "ChannelRouter", "ChannelStore", "MessageStore", "NavigationRouter", "RelationshipStore", "UserStore"] },
     discord_attachment: { run: bridgeAttachment, needs: ["AuthTokenStore", "MessageStore", "SelectedChannelStore"] },
     discord_resolveMessage: { run: bridgeResolveMessage, needs: ["AuthTokenStore", "ChannelStore", "MessageStore", "SelectedChannelStore"] },
     discord_guilds: { run: bridgeListGuilds, live: true, needs: ["GuildStore", "SortedGuildStore"] },
@@ -3001,12 +3170,40 @@ function me() {
     return u ? { id: u.id, username: u.username, name: u.globalName ?? u.global_name ?? u.username } : null;
 }
 
-/** A hCaptcha someone can see (Discord keeps invisible ones around too). */
-function captchaShowing() {
-    return [...document.querySelectorAll('iframe[src*="hcaptcha.com"]')].some(f => {
+/** The hCaptchas someone can see (Discord keeps invisible ones around too). */
+function captchaFrames() {
+    return [...document.querySelectorAll('iframe[src*="hcaptcha.com"]')].filter(f => {
         const r = f.getBoundingClientRect();
         return r.width >= 80 && r.height >= 40 && getComputedStyle(f).visibility !== "hidden";
     });
+}
+
+function captchaShowing() {
+    return captchaFrames().length > 0;
+}
+
+/** Where the captcha is on the page (its checkbox and challenge together): the only place
+ * Harbor lets a person's clicks through to. */
+function captchaRect() {
+    const rs = captchaFrames().map(f => f.getBoundingClientRect());
+    if (!rs.length) return null;
+    const x = Math.max(0, Math.floor(Math.min(...rs.map(r => r.left))));
+    const y = Math.max(0, Math.floor(Math.min(...rs.map(r => r.top))));
+    const right = Math.min(innerWidth, Math.ceil(Math.max(...rs.map(r => r.right))));
+    const bottom = Math.min(innerHeight, Math.ceil(Math.max(...rs.map(r => r.bottom))));
+    return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
+}
+
+/** A captcha a join waits on, and how that join is going. */
+function captchaState() {
+    const p = window.$harborCaptcha ?? null;
+    const rect = captchaRect();
+    const joined = !!p && (p.guildId ? !!need("GuildStore")?.getGuild?.(p.guildId) : p.done);
+    return {
+        showing: !!rect,
+        rect,
+        pending: p ? { guildId: p.guildId, guildName: p.guildName, since: p.since, joined, error: p.error } : null,
+    };
 }
 
 /* ---------------------------------------------------------- the gateway after a freeze -- */
@@ -3077,6 +3274,9 @@ window.$harbor = {
         return { path: location.pathname, user: me() };
     },
     settled,
+    captcha: captchaState,
+    /** Harbor is done with the captcha (solved, closed or given up). */
+    captchaDone: () => { window.$harborCaptcha = null; },
     gateway: () => ({ opens: gate.opens, resumes: gate.resumes, closes: gate.closes, caught: gate.caught }),
     selftest,
     elementRect,

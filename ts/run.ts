@@ -45,6 +45,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     version: advertised(o.version),
     updater,
     store,
+    discordNotices: true,
     ...(ui ? { engine: (host, notes, voice) => (made.data = new ui.Data(store, host, notes, voice)).engine } : {}),
     preview: {
       refuses: (full, offer) => preview.refuses(cfg, full, offer),

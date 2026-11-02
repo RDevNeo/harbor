@@ -21,6 +21,7 @@ import icons from "../slint/icons.slint" with { type: "file" };
 import issuedetail from "../slint/issuedetail.slint" with { type: "file" };
 import issues from "../slint/issues.slint" with { type: "file" };
 import lightbox from "../slint/lightbox.slint" with { type: "file" };
+import captcha from "../slint/captcha.slint" with { type: "file" };
 import video from "../slint/video.slint" with { type: "file" };
 import listdetail from "../slint/listdetail.slint" with { type: "file" };
 import markdown from "../slint/markdown.slint" with { type: "file" };
@@ -56,6 +57,7 @@ export const FILES: Readonly<Record<string, string>> = {
   "issuedetail.slint": issuedetail,
   "issues.slint": issues,
   "lightbox.slint": lightbox,
+  "captcha.slint": captcha,
   "video.slint": video,
   "listdetail.slint": listdetail,
   "markdown.slint": markdown,

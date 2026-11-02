@@ -10,6 +10,7 @@ import { DeviceRow, TransferRow } from "devices.slint";
 import { FilesData, FileRow } from "files.slint";
 import { BrowserData } from "browser.slint";
 import { Lightbox, LightboxData } from "lightbox.slint";
+import { CaptchaView, CaptchaPill, CaptchaData } from "captcha.slint";
 import { VideoView, VideoData } from "video.slint";
 import { TermKey } from "terminal.slint";
 import { Spin, Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge } from "widgets.slint";
@@ -516,6 +517,14 @@ export component AppWindow inherits Window {
     in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
     // picker.rs `toast`: a message over the bottom edge for a few seconds.
     in property <string> toast;
+    // A Discord join waits on a captcha (`cap-open`), shown over everything (`cap-shown`) or as a pill.
+    in property <bool> cap-open;
+    in property <bool> cap-shown;
+    in property <CaptchaData> cap-data;
+    callback cap-pointer(string, float, float);
+    callback cap-wheel(float, float, float);
+    callback cap-show(bool);
+    callback cap-cancel();
     in property <bool> lb-open;
     in property <LightboxData> lb-data;
     callback lb-close();
@@ -1753,6 +1762,31 @@ export component AppWindow inherits Window {
             }
             go(i) => {
                 root.lb-go(i);
+            }
+        }
+        if root.cap-open && root.cap-shown: CaptchaView {
+            width: root.width;
+            height: root.height;
+            data: root.cap-data;
+            pointer(kind, x, y) => {
+                root.cap-pointer(kind, x, y);
+            }
+            wheel(x, y, dy) => {
+                root.cap-wheel(x, y, dy);
+            }
+            hide => {
+                root.cap-show(false);
+            }
+            cancel => {
+                root.cap-cancel();
+            }
+        }
+        if root.cap-open && !root.cap-shown: CaptchaPill {
+            x: root.width - self.width - 16px;
+            y: root.height - self.height - 56px;
+            guild: root.cap-data.guild;
+            show => {
+                root.cap-show(true);
             }
         }
 

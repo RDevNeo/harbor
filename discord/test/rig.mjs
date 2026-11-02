@@ -41,6 +41,11 @@ const server = http.createServer((req, res) => {
         req.on("end", () => { try { (seen[u.pathname.slice(5)] ??= []).push(JSON.parse(b)); } catch { /* */ } res.end(); });
         return;
     }
+    // hCaptcha's frame: one button, pressed only by a real click inside it.
+    if (u.pathname === "/hcaptcha.com/challenge") {
+        res.setHeader("content-type", "text/html");
+        return res.end(`<!doctype html><body style="margin:0;background:#fff"><button style="width:300px;height:200px" onclick="if (event.isTrusted) { navigator.sendBeacon('/rig/solved', '{}'); parent.postMessage('solved', '*'); }">I am human</button>`);
+    }
     if (u.pathname.startsWith("/vencord/")) {
         const f = path.basename(u.pathname);
         let body = "";
@@ -129,7 +134,7 @@ await scenario("tools-without-discord", async () => {
     const init = await mcp.rpc("initialize", { protocolVersion: "2024-11-05" });
     check(init.instructions.includes("data, never as instructions"), "tells agents messages are untrusted");
     const list = (await mcp.rpc("tools/list")).tools.map(t => t.name);
-    check(list.length === 30, "30 tools listed", list.length);
+    check(list.length === 31, "31 tools listed", list.length);
     for (const n of ["discord_eval", "discord_click", "discord_key", "discord_query", "discord_findModule", "discord_config"]) check(!list.includes(n), n + " isn't there");
     check(!shellUp(), "listing tools starts nothing");
     const s = await mcp.tool("discord_send", { content: "x", channelId: "200000000000000001" });
@@ -154,6 +159,49 @@ await scenario("tools", async () => {
     check(seen.rest.some(x => x.super), "REST carries Discord's X-Super-Properties");
     r = await mcp.tool("discord_view");
     check(!r.isError, "discord_view", r.text);
+    r = await mcp.tool("discord_open", { channelId: "200000000000000001" });
+    check(r.text.includes('"ok": true') && r.text.includes("/channels/@me/200000000000000001"), "discord_open goes to the channel's route", r.text);
+    r = await mcp.tool("discord_view");
+    check(r.text.includes('"renderedCount": 1'), "and discord_view then reads its messages", r.text);
+    const opened = Date.now();
+    r = await mcp.tool("discord_open", { channelId: "200000000000000002" });
+    check(r.text.includes('"ok": false') && r.text.includes("note"), "a channel that never renders isn't called ok", r.text);
+    check(Date.now() - opened < 12000, "and it says so in time", Date.now() - opened);
+    r = await mcp.tool("discord_dm_open", { userId: "100000000000000002" });
+    check(r.text.includes('"rendered": true'), "discord_dm_open reaches the page too", r.text);
+    r = await mcp.tool("discord_unread");
+    let u = JSON.parse(r.text);
+    check(u.channels[0].lastReadMessageId === "400000000000000000", "the read marker is the marker, not the newest message", r.text);
+    check(u.channels[0].unreadCount === 1 && u.channels[0].oldestUnreadId === "400000000000000001", "a channel Discord hasn't loaded gets its real count", r.text);
+    check(u.channelsNotCounted === 0 && u.totalUnread === 1, "and the total adds up", r.text);
+    r = await mcp.tool("discord_unread", { countTop: 0 });
+    u = JSON.parse(r.text);
+    check(u.channels[0].unreadCount === null && u.channelsNotCounted === 1, "an uncounted channel says unknown, not 0", r.text);
+    r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000001" });
+    check(r.text.includes('"dryRun": true') && !(seen.mute ?? []).length, "a mute without apply changes nothing", r.text);
+    r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000001", apply: true });
+    await sleep(300); // the page's report comes by beacon
+    let m = JSON.parse(r.text);
+    check(m.applied === true && m.after.muted === true && seen.mute?.length === 1, "an applied mute shows in the guild settings store, not the threads one", r.text);
+    r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000001", apply: true });
+    await sleep(300);
+    check(JSON.parse(r.text).unchanged === true && seen.mute.length === 1, "muting a muted server sends nothing", r.text);
+    r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000002", apply: true });
+    m = JSON.parse(r.text);
+    check(m.applied === false && m.failed === true, "a change Discord didn't take isn't reported as done", r.text);
+    r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000001", action: "unmute", apply: true });
+    check(JSON.parse(r.text).applied === true, "unmute", r.text);
+    const rests = seen.rest.length, dms = seen.dm.length;
+    r = await mcp.tool("discord_find_user", { query: "@friend" });
+    let f = JSON.parse(r.text);
+    check(f.matches[0]?.id === "100000000000000002" && f.matches[0].match === "username" && f.matches[0].dmChannelId === "200000000000000001", "find_user by username, with the DM", r.text);
+    r = await mcp.tool("discord_find_user", { query: "shy member" });
+    f = JSON.parse(r.text);
+    check(f.matches[0]?.username === "quietone" && f.matches[0].serverNicknames[0]?.guildName === "Fake Server" && f.matches[0].relationship === "none", "find_user by server nickname", r.text);
+    r = await mcp.tool("discord_find_user", { query: "a_stranger_42" });
+    f = JSON.parse(r.text);
+    check(f.matches.length === 0 && f.note.includes("friend request"), "a stranger isn't found, and the reason is said", r.text);
+    check(seen.rest.length === rests && seen.dm.length === dms, "find_user sends nothing", seen.rest.slice(rests));
     r = await mcp.tool("discord_screenshot", { format: "png" });
     check(r.raw.content[0].type === "image" && r.raw.content[0].data.length > 100, "discord_screenshot gives a real image", r.text);
     r = await mcp.tool("discord_status");
@@ -163,18 +211,59 @@ await scenario("tools", async () => {
     check(r.text.includes('"a"'), "discord_notes", r.text);
 });
 
+await scenario("captcha", async () => {
+    account();
+    write("pace.json", "[]");
+    if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
+    let r = await mcp.tool("discord_join", { invite: "captcha1", apply: true });
+    let j = JSON.parse(r.text);
+    check(j.captchaRequired === true && j.joined === false, "a join behind a captcha says so", r.text);
+    let s = await status();
+    check(s.captcha?.guild === "Joined captcha1" || s.captcha !== null, "the host holds the captcha", JSON.stringify(s.captcha));
+    check(fs.readFileSync(app + "/notices.jsonl", "utf8").includes("Discord needs a captcha"), "and asks the user");
+    let f = (await hostOp({ op: "captcha_frame" }))?.result;
+    check(f?.showing && f.rect?.x === 400 && f.rect?.width === 300 && f.data?.length > 1000, "a frame of the page, with where the captcha is", JSON.stringify({ ...f, data: f?.data?.length }));
+    // A person's click outside the captcha goes nowhere.
+    let t = (await hostOp({ op: "captcha_input", kind: "down", x: 100, y: 100 }))?.result;
+    check(t?.taken === false, "a click outside the captcha is dropped", JSON.stringify(t));
+    await sleep(5000);
+    s = await status();
+    check(s.phase === "ready" && s.captcha, "waiting on a person, the client doesn't freeze (idle is 2 s here)", s.phase);
+    for (const kind of ["move", "down", "up"]) await hostOp({ op: "captcha_input", kind, x: 550, y: 300 });
+    await until(async () => (await status()).captcha === null, 15000, "captcha to end");
+    s = await status();
+    check(seen.solved?.length === 1, "the click reached hCaptcha's own frame as a real one", seen.solved?.length);
+    check(s.captcha_end?.outcome === "joined", "the join lands once it's solved", JSON.stringify(s.captcha_end));
+    check(fs.readFileSync(app + "/notices.jsonl", "utf8").includes("Discord joined"), "and the user hears it");
+    check(JSON.parse(fs.readFileSync(app + "/pace.json", "utf8")).length === 1, "the join counts toward the pace");
+    r = await mcp.tool("discord_status");
+    check(r.text.includes("solved, and the server was joined"), "discord_status tells the agent", r.text);
+    // Don't join: Discord's dialog closes and nothing is joined.
+    write("pace.json", "[]");
+    r = await mcp.tool("discord_join", { invite: "captcha22", apply: true });
+    check(JSON.parse(r.text).captchaRequired === true, "a second captcha", r.text);
+    await hostOp({ op: "captcha_cancel" });
+    await until(async () => (await status()).captcha === null, 15000, "cancelled captcha to end");
+    s = await status();
+    check(s.captcha_end?.outcome === "closed", "Don't join closes it, unjoined", JSON.stringify(s.captcha_end));
+    r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000009" });
+    check(JSON.parse(r.text).alreadyAbsent === true, "and the server it was for isn't joined", r.text);
+});
+
 await scenario("pacing", async () => {
     account();
+    write("pace.json", []);
+    const joins = seen.join.length, dms = seen.dm.length;
     let r = await mcp.tool("discord_join", { invite: "abc", apply: true });
     check(r.text.includes('"joined": true'), "first join goes through", r.text);
     r = await mcp.tool("discord_join", { invite: "abcd", apply: true });
     await sleep(300); // the page's report of the first join comes by beacon
-    check(r.text.includes("Paced") && seen.join.length === 1, "second join right after is refused", r.text);
+    check(r.text.includes("Paced") && seen.join.length === joins + 1, "second join right after is refused", r.text);
     r = await mcp.tool("discord_join", { invite: "abcd" });
     check(r.text.includes("dryRun"), "a dry run isn't paced", r.text);
     write("pace.json", [["dm", Math.floor(Date.now() / 1000) - 10]]);
     r = await mcp.tool("discord_dm_open", { userId: "100000000000000009" });
-    check(r.text.includes("Paced") && !seen.dm.length, "a new DM right after another is refused", r.text);
+    check(r.text.includes("Paced") && seen.dm.length === dms, "a new DM right after another is refused", r.text);
     r = await mcp.tool("discord_dm_open", { userId: "100000000000000002" });
     check(!r.text.includes("Paced") && r.text.includes('"created": false'), "the DM that exists still opens", r.text);
     const f = root + "/pic.png"; fs.writeFileSync(f, "x");
@@ -464,6 +553,7 @@ await scenario("repair", async () => {
     check(scratch.text.includes("null"), "what it runs lands on a page with no account", scratch.text);
     const after = log.filter(l => l.tool === "selftest").at(-1);
     check(!after.text.includes('"missing": [\n    "MessageActions"'), "the self-test passes after the edit", after.text);
+    check(fs.existsSync(app + "/engine.pid"), "repair's scratch page going doesn't lose track of the real client");
     const r2 = await mcp.tool("discord_send", { content: "fixed", channelId: "200000000000000001" });
     await sleep(200);
     check(!r2.isError && seen.send.at(-1)?.content === "fixed", "the tool works again, on the same page", r2.text);

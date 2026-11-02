@@ -26,6 +26,10 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(3);
 }
 Menu.setApplicationMenu(null);
+// hCaptcha's frame is another site. With each site in a process of its own, an offscreen page
+// doesn't route input past its top frame, so a person couldn't click a captcha at all. The signed-in
+// page keeps the frames it embeds in its own sandboxed renderer instead (fewer processes, too).
+if (cfg.mode === "run") app.commandLine.appendSwitch("disable-site-isolation-trials");
 
 const vencordFile = f => fs.readFileSync(path.join(cfg.vencord, f), "utf8");
 const watchQr = cfg.mode !== "run";
@@ -113,14 +117,84 @@ async function loaded() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/** The page paints at 1 fps while idle; tools that read the page need it to keep up. */
-let calm;
-function busy() {
-    if (!win?.webContents.isOffscreen()) return;
+/** The page paints at 1 fps while idle; tools that read the page need it to keep up, and a
+ * channel opening takes longer than a moment. */
+let calm, calls = 0;
+function fast() {
+    if (!win?.webContents.isOffscreen()) return false;
     win.webContents.setFrameRate(BUSY_FPS);
     clearTimeout(calm);
-    calm = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.setFrameRate(IDLE_FPS); }, 3000);
+    return true;
 }
+function busy() {
+    if (fast() && !calls && !solving) calm = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.setFrameRate(IDLE_FPS); }, 3000);
+}
+/** Full speed for the length of a call. A waitForMessage only waits, for up to 10 minutes. */
+async function during(name, run) {
+    if (name === "discord_waitForMessage") return run();
+    calls++;
+    fast();
+    try {
+        return await run();
+    } finally {
+        calls--;
+        busy();
+    }
+}
+
+/** A captcha only a person may solve, on the hidden page: Harbor's window shows its frames, and
+ * that person's pointer goes through, but only onto the captcha itself and only while one is
+ * showing. Nothing here clicks by itself. */
+let solving = false, solveRect = null, solveAt = 0, pressed = false;
+async function captchaLook() {
+    const s = await run("$harbor.captcha()");
+    solveRect = s.showing ? s.rect : null;
+    solveAt = Date.now();
+    return s;
+}
+const inside = (r, x, y) => !!r && x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height;
+const captchaOps = {
+    captcha: captchaLook,
+    captcha_frame: async () => {
+        const s = await captchaLook();
+        if (!s.showing) return s;
+        solving = true;
+        fast();
+        const img = await win.webContents.capturePage(undefined, { stayHidden: true });
+        const { width, height } = img.getSize();
+        if (width < 1 || height < 1) throw new Error("capturePage returned an empty image");
+        return { ...s, width, height, mimeType: "image/jpeg", data: img.toJPEG(80).toString("base64") };
+    },
+    captcha_input: async m => {
+        const x = Math.round(Number(m.x)), y = Math.round(Number(m.y));
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("no position");
+        // The captcha moves (its challenge opens beside the checkbox): a look that's old is looked again.
+        if (Date.now() - solveAt > 1000) await captchaLook();
+        const releasing = m.kind === "up" && pressed;
+        if (!releasing && !inside(solveRect, x, y)) return { taken: false };
+        const wc = win.webContents;
+        switch (m.kind) {
+            case "move": wc.sendInputEvent({ type: "mouseMove", x, y }); break;
+            case "down": pressed = true; wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 }); break;
+            case "up": pressed = false; wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 }); break;
+            case "wheel": wc.sendInputEvent({ type: "mouseWheel", x, y, deltaX: 0, deltaY: -Math.round(Number(m.dy) || 0), canScroll: true }); break;
+            default: throw new Error("no such input: " + m.kind);
+        }
+        return { taken: true };
+    },
+    // Discord's own way out of its captcha dialog; the join it held fails.
+    captcha_cancel: () => {
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+    },
+    captcha_end: async () => {
+        solving = false;
+        solveRect = null;
+        pressed = false;
+        busy();
+        await run("$harbor.captchaDone()");
+    },
+};
 
 /** What the login page shows, for Harbor's own sign-in card. */
 function watchSignin() {
@@ -196,7 +270,7 @@ async function quit() {
 const scratch = cfg.mode === "scratch" ? require("./scratch.js") : null;
 
 const ops = {
-    call: m => { busy(); return run(`$harbor.call(${JSON.stringify(m.name)}, ${JSON.stringify(m.args ?? {})})`); },
+    call: m => during(m.name, () => run(`$harbor.call(${JSON.stringify(m.name)}, ${JSON.stringify(m.args ?? {})})`)),
     rect: m => { busy(); return run(`$harbor.elementRect(${JSON.stringify(m.selector)})`); },
     capture,
     selftest: () => run("$harbor.selftest()"),
@@ -211,6 +285,7 @@ const ops = {
     thawed: () => { busy(); return run("$harbor.thawed()"); },
     settled: () => run("$harbor.settled()"),
     gateway: () => run("$harbor.gateway()"),
+    ...captchaOps,
     // The real window, on the same session; the hidden page goes.
     show: () => {
         const old = win;

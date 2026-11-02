@@ -15,6 +15,8 @@ type Plan = {
   failFlush?: boolean;
   eventGapMs?: number;
   breakable?: boolean;
+  /** A captcha on the page: whether it shows, and whether the join it held has landed. */
+  captcha?: { showing: boolean; joined: boolean };
 };
 
 const cfg = JSON.parse(process.env.HARBOR_DISCORD ?? "{}") as { mode: string; data: string; page: string; vencord: string; url: string | null };
@@ -53,6 +55,11 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
   logout: () => null,
   rect: () => ({ x: 0, y: 0, width: 10, height: 10 }),
   capture: () => ({ data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png", width: 10, height: 10, bytes: 9 }),
+  captcha: () => ({ showing: plan().captcha?.showing ?? false, rect: plan().captcha?.showing ? { x: 400, y: 200, width: 300, height: 200 } : null, pending: { joined: plan().captcha?.joined ?? false } }),
+  captcha_frame: () => ({ showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, width: 1280, height: 720, mimeType: "image/jpeg", data: Buffer.from("jpeg").toString("base64") }),
+  captcha_input: (m) => ({ taken: m.x === 450 }),
+  captcha_cancel: () => null,
+  captcha_end: () => null,
   quit: () => {
     setTimeout(() => process.exit(0), 10);
     return null;
@@ -61,7 +68,7 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
 
 createInterface({ input: process.stdin }).on("line", (line) => {
   const m = JSON.parse(line) as Record<string, unknown>;
-  log({ op: m.op, name: m.name, args: m.args });
+  log({ op: m.op, name: m.name, args: m.args, ...(m.kind !== undefined ? { kind: m.kind, x: m.x, y: m.y } : {}) });
   if ((plan().silent ?? []).includes(String(m.op))) return;
   try {
     const f = ops[String(m.op)] ?? (cfg.mode === "scratch" ? (): unknown => plan().scratch?.[String(m.op)] ?? { scratch: m.op } : undefined);

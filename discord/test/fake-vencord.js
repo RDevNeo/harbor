@@ -11,11 +11,12 @@
     window.Vencord = {
         Plugins: {},
         Webpack: {
-            get wreq() { return window.FAKE ? { m: window.FAKE.sources, c: {} } : undefined; },
+            get wreq() { return window.FAKE ? { m: window.FAKE.sources, c: Object.fromEntries(mods().map((exports, i) => [i, { exports }])) } : undefined; },
             findByProps: (...p) => mods().find(m => hasAll(m, p)),
             findByCode: (...c) => window.FAKE?.CloudUpload,
             find: f => mods().find(m => { try { return f(m); } catch { return false; } }),
             findAll: f => mods().filter(m => { try { return f(m); } catch { return false; } }),
+            get Common() { return window.FAKE?.common ?? {}; },
         },
     };
     const realFetch = window.fetch;

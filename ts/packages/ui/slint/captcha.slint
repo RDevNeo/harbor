@@ -1,0 +1,168 @@
+import { Theme } from "theme.slint";
+import { Btn, Spinner } from "widgets.slint";
+
+// What the Discord app's hidden page shows while a join waits on a captcha.
+export struct CaptchaData {
+    image: image,
+    // The page's size in its own pixels; 0 until the first frame.
+    width: length,
+    height: length,
+    // Where the captcha is on the page, in the page's pixels: the only place clicks go.
+    rect-x: length,
+    rect-y: length,
+    rect-w: length,
+    rect-h: length,
+    guild: string,
+}
+
+// The captcha for a person to solve, over the window: the page's frames, the person's pointer
+// back to the page. The shell itself drops anything outside the captcha.
+export component CaptchaView inherits Rectangle {
+    in property <CaptchaData> data;
+    // kind ("move", "down", "up"), then the page's own coordinates.
+    callback pointer(string, float, float);
+    callback wheel(float, float, float);
+    callback hide();
+    callback cancel();
+    background: black.with-alpha(220 / 255);
+    TouchArea { }
+    property <length> room-x: 48px;
+    property <length> room-y: 96px;
+    property <length> room-w: root.width - 96px;
+    property <length> room-h: root.height - 140px;
+    property <float> scale: min(root.room-w / max(root.data.width, 1px), root.room-h / max(root.data.height, 1px), 1);
+    Text {
+        x: 48px;
+        y: 24px;
+        width: root.width - 300px;
+        text: "Discord needs a captcha";
+        font-size: 18px;
+        font-weight: 600;
+        color: white;
+    }
+    Text {
+        x: 48px;
+        y: 52px;
+        width: root.width - 300px;
+        text: "To join " + (root.data.guild != "" ? root.data.guild : "a server") + ", Discord wants a person to solve this. Only the captcha takes your clicks; Harbor never answers it for you.";
+        font-size: 13px;
+        color: #d2d2d2;
+        wrap: word-wrap;
+    }
+    if root.data.width > 0px: Rectangle {
+        width: root.data.width * root.scale;
+        height: root.data.height * root.scale;
+        x: root.room-x + (root.room-w - self.width) / 2;
+        y: root.room-y + (root.room-h - self.height) / 2;
+        border-radius: Theme.radius-md;
+        clip: true;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.data.image;
+            image-fit: fill;
+        }
+        // The page around the captcha, dimmed: nothing there takes a click.
+        Rectangle {
+            background: black.with-alpha(0.35);
+        }
+        Rectangle {
+            x: root.data.rect-x * root.scale;
+            y: root.data.rect-y * root.scale;
+            width: root.data.rect-w * root.scale;
+            height: root.data.rect-h * root.scale;
+            clip: true;
+            Image {
+                x: -parent.x;
+                y: -parent.y;
+                width: root.data.width * root.scale;
+                height: root.data.height * root.scale;
+                source: root.data.image;
+                image-fit: fill;
+            }
+        }
+        TouchArea {
+            moved => {
+                root.pointer("move", self.mouse-x / root.scale / 1px, self.mouse-y / root.scale / 1px);
+            }
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.move && !self.pressed {
+                    root.pointer("move", self.mouse-x / root.scale / 1px, self.mouse-y / root.scale / 1px);
+                }
+                if (e.kind == PointerEventKind.down || e.kind == PointerEventKind.up) && e.button == PointerEventButton.left {
+                    root.pointer(e.kind == PointerEventKind.down ? "down" : "up", self.mouse-x / root.scale / 1px, self.mouse-y / root.scale / 1px);
+                }
+            }
+            scroll-event(e) => {
+                root.wheel(self.mouse-x / root.scale / 1px, self.mouse-y / root.scale / 1px, e.delta-y / 1px);
+                accept
+            }
+        }
+    }
+    if root.data.width == 0px: Spinner {
+        x: root.width / 2 - self.width / 2;
+        y: root.room-y + root.room-h / 2 - self.height / 2;
+        radius: 12px;
+        color: white;
+    }
+    HorizontalLayout {
+        x: root.width - 12px - self.width;
+        y: 12px;
+        width: self.preferred-width;
+        height: 32px;
+        spacing: 6px;
+        Btn {
+            y: 2px;
+            text: "Hide";
+            tip: "The captcha keeps waiting: the button at the bottom brings it back";
+            size: xs;
+            variant: secondary;
+            clicked => {
+                root.hide();
+            }
+        }
+        Btn {
+            y: 2px;
+            text: "Don't join";
+            size: xs;
+            variant: secondary;
+            clicked => {
+                root.cancel();
+            }
+        }
+    }
+}
+
+// The captcha, hidden: still waiting, one click from coming back.
+export component CaptchaPill inherits Rectangle {
+    in property <string> guild;
+    callback show();
+    width: row.preferred-width + 24px;
+    height: 36px;
+    border-radius: 18px;
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 12px;
+    drop-shadow-color: black.with-alpha(0.3);
+    row := HorizontalLayout {
+        x: 12px;
+        spacing: 8px;
+        alignment: center;
+        Text {
+            vertical-alignment: center;
+            text: "Discord captcha waiting" + (root.guild != "" ? " · " + root.guild : "");
+            font-size: 13px;
+            color: Theme.fg;
+        }
+        Btn {
+            y: 4px;
+            text: "Solve";
+            size: xs;
+            variant: primary;
+            clicked => {
+                root.show();
+            }
+        }
+    }
+}

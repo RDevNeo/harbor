@@ -139,7 +139,7 @@
  },
  {
   "name": "discord_open",
-  "description": "Switch Discord to a specific channel (DM, group DM, or guild channel) — same code path the sidebar uses (`ChannelActions.selectChannel`). Optionally scroll-jump to a message via `messageId`. Result confirms whether `SelectedChannelStore` actually flipped, and includes resolved channel + recipients.\n\nRULE: when the user names the target by phrase rather than ID (\"my group\", \"the gamers chat\", a nickname), call `discord_notes` `recall` FIRST — the user stores aliases there mapping phrases → channelIds. Only fall back to `discord_dms` / `discord_guilds` search if no alias matches.\n\nTypical flow: `discord_notes(recall)` → if alias hit, use its channelId → else `discord_dms({query})` → `discord_open({channelId})` → `discord_view()`.",
+  "description": "Switch Discord to a specific channel (DM, group DM, or guild channel), the way the sidebar does. Optionally jump to a message via `messageId`. `ok` is true only once the channel's messages are really on the page, so `discord_view` can read them; otherwise `note` says what to do. Result includes the resolved channel + recipients.\n\nRULE: when the user names the target by phrase rather than ID (\"my group\", \"the gamers chat\", a nickname), call `discord_notes` `recall` FIRST — the user stores aliases there mapping phrases → channelIds. Only fall back to `discord_dms` / `discord_guilds` search if no alias matches.\n\nTypical flow: `discord_notes(recall)` → if alias hit, use its channelId → else `discord_dms({query})` → `discord_open({channelId})` → `discord_view()`.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -570,6 +570,28 @@
   }
  },
  {
+  "name": "discord_find_user",
+  "description": "Find a person by username, display name, friend nickname or server nickname, among the people this account already knows: friends, DM contacts, and members and authors of servers the client has loaded. Read-only and local: it sends nothing to Discord, so it never adds anyone, never sends a friend request and never asks a server for its member list. Each match has its `id` (for `discord_dm_open` or `discord_member`), the relationship (friend, blocked, pending request, none), an existing DM's `dmChannelId` and shared servers. No match doesn't mean the username doesn't exist: Discord's only lookup of a stranger's username is a friend request, which Harbor won't send. Then ask the user to have that person DM this account or share a server.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Username (with or without @), display name or nickname. Exact username matches come first, then exact names, then partial matches."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 25,
+     "description": "Default 10."
+    }
+   },
+   "required": [
+    "query"
+   ]
+  }
+ },
+ {
   "name": "discord_member",
   "description": "Look up a user's full profile — display name, avatar, bio/pronouns, mutual guilds (via `/users/{id}/profile`), plus live status and activities (`PresenceStore`). Useful for disambiguating (\"which Ana?\"), tone calibration (don't ping at 3am), or addressing someone by their `globalName` instead of their `username`. Some users return limited data when you share no context — username/avatar fall back to the local UserStore if the profile API rejects.",
   "inputSchema": {
@@ -644,7 +666,7 @@
  },
  {
   "name": "discord_dm_open",
-  "description": "Open (or fetch) a 1:1 DM with a user, or a group DM with several users — REST `POST /users/@me/channels`. Use when the target person isn't in the DM sidebar yet, so `discord_dms` can't find them. Discord reuses the existing DM if one already exists, so this is safe to call repeatedly. Result shape matches `discord_dms` entries — pipe the `channelId` straight into `discord_send`. Harbor limits how many new DMs can be started per hour and per day: on `paced`, tell the user instead of retrying.",
+  "description": "Open (or fetch) a 1:1 DM with a user, or a group DM with several users — REST `POST /users/@me/channels`. Use when the target person isn't in the DM sidebar yet, so `discord_dms` can't find them. Discord reuses the existing DM if one already exists, so this is safe to call repeatedly. Result shape matches `discord_dms` entries — pipe the `channelId` straight into `discord_send`. Harbor limits how many new DMs can be started per hour and per day: on `paced`, tell the user instead of retrying. To get a user ID from a name, use `discord_find_user`.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -688,7 +710,7 @@
  },
  {
   "name": "discord_unread",
-  "description": "List channels with unread messages — the \"what did I miss?\" lookup. Always scans DMs + group DMs; pass `includeGuilds: true` to also walk every guild text channel the user has access to (heavier — only when needed). Each entry: `{ channelId, kind, name, guildId, guildName, unreadCount, mentionCount, oldestUnreadId, lastReadMessageId }`. Sorted by mentions, then unread count. Pass `mentionsOnly: true` to only return channels where someone pinged the viewer. Pipe a channelId into `discord_history({ after: oldestUnreadId })` to see exactly what was missed.",
+  "description": "List channels with unread messages — the \"what did I miss?\" lookup. Always scans DMs + group DMs; pass `includeGuilds: true` to also walk every guild text channel the user has access to (heavier — only when needed). Each entry: `{ channelId, kind, name, guildId, guildName, unreadCount, mentionCount, oldestUnreadId, lastReadMessageId, lastMessageId }`. Sorted by mentions, then unread count, then newest. Discord only knows a count for messages it has in memory, so the first `countTop` channels are counted by asking for their messages. For the rest `unreadCount` is what's in memory with `unreadCountAtLeast`, or null when nothing is (they have unread messages, how many isn't known); `unreadCountAtLeast` is also set at 100, the most one request sees. `notCounted` marks those channels and `channelsNotCounted` says how many there are, so `totalUnread` is a lower bound when it isn't 0. Pass `mentionsOnly: true` to only return channels where someone pinged the viewer. Pipe a `lastReadMessageId` into `discord_history({ after })` to see exactly what was missed.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -705,6 +727,12 @@
      "minimum": 1,
      "maximum": 500,
      "description": "Cap on results (default 100)."
+    },
+    "countTop": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 25,
+     "description": "How many channels without a known count to count by asking Discord (default 10; one request each)."
     }
    }
   }
@@ -739,7 +767,7 @@
  },
  {
   "name": "discord_mute_guild",
-  "description": "Mute or unmute a Discord guild/server by guild ID. This changes the same per-server notification setting as Discord's Server Menu -> Mute Server. Default is dry-run: it verifies membership and reports the target without changing anything. Pass `apply: true` only when the user explicitly asked to mute/unmute that exact server. The default mute duration is `forever`, equivalent to Discord's \"Until I turn it back on\".",
+  "description": "Mute or unmute a Discord guild/server by guild ID. This changes the same per-server notification setting as Discord's Server Menu -> Mute Server. Default is dry-run: it verifies membership and reports the target without changing anything. Pass `apply: true` only when the user explicitly asked to mute/unmute that exact server. `applied` is true only when Discord's own settings show the change afterwards; `unchanged` means it was already that way and nothing was sent; `failed` means Discord didn't take it. The default mute duration is `forever`, equivalent to Discord's \"Until I turn it back on\".",
   "inputSchema": {
    "type": "object",
    "properties": {

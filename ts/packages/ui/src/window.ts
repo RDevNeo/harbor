@@ -65,6 +65,17 @@ export interface TermScreen {
   scrolled: string;
 }
 
+export interface CaptchaData {
+  image: Pixels;
+  width: number;
+  height: number;
+  rect_x: number;
+  rect_y: number;
+  rect_w: number;
+  rect_h: number;
+  guild: string;
+}
+
 export interface LightboxData {
   image: Pixels;
   width: number;
@@ -499,6 +510,13 @@ export interface AppWindow extends slint.ComponentHandle {
   voice_note: string;
   mic_tip: string;
   toast: string;
+  cap_open: boolean;
+  cap_shown: boolean;
+  cap_data: CaptchaData;
+  cap_pointer: (kind: string, x: number, y: number) => void;
+  cap_wheel: (x: number, y: number, dy: number) => void;
+  cap_show: (shown: boolean) => void;
+  cap_cancel: () => void;
   lb_open: boolean;
   lb_data: LightboxData;
   lb_close: () => void;

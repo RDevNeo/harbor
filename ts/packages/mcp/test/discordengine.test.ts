@@ -138,6 +138,22 @@ test("stop kills what the shell left behind", async () => {
   plan(root, {});
 }, 15_000);
 
+test("stopping repair's scratch page leaves the real client's pid file alone", async () => {
+  plan(root, {});
+  const real = make();
+  await real.start("run", new Display());
+  await until(() => real.ready());
+  const pidPath = join(root, "engine.pid");
+  const pid = readFileSync(pidPath, "utf8");
+  const scratch = new Electron(join(root, "scratch"), () => {});
+  await scratch.start("scratch", new Display());
+  await until(() => scratch.ready());
+  await scratch.stop();
+  expect(readFileSync(pidPath, "utf8")).toBe(pid);
+  await real.stop();
+  expect(existsSync(pidPath)).toBe(false);
+}, 15_000);
+
 test("the live script and Vencord folder are handed to the shell", async () => {
   writeFileSync(join(root, "vencord.json"), JSON.stringify({ current: "abc", good: "", bad: [], checked: 1 }));
   const e = make();

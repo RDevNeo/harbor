@@ -1,4 +1,5 @@
 import "./wire.ts";
+import { providers } from "@harbor/agents";
 import * as discord from "./discord.ts";
 import * as discordhost from "./discordhost.ts";
 import * as discordrepair from "./discordrepair.ts";
@@ -6,9 +7,16 @@ import * as discordsetup from "./discordsetup.ts";
 import * as gmail from "./gmail.ts";
 import { harborVersion } from "./version.ts";
 
+/** The Claude Code login Discord's repair runs on: the main one first, as discordrepair.rs did. */
+export function repairAccount(): discordsetup.ClaudeAccount | undefined {
+  const usable = providers.discover().filter((a) => a.kind === "Claude" && a.bin !== null && a.loggedIn === true);
+  const a = usable.find((x) => x.id === "claude") ?? usable[0];
+  return a === undefined ? undefined : { bin: providers.binStr(a), env: providers.accountEnv(a) };
+}
+
 /** `harbor app <name>`: serves one of Harbor's own app servers on stdio. */
 export async function serve(args: string[]): Promise<number> {
-  discordsetup.configure({ version: harborVersion });
+  discordsetup.configure({ version: harborVersion, claude: repairAccount });
   switch (args[0]) {
     case gmail.NAME:
       await gmail.run({ auth: gmail.harborAuth(), version: harborVersion() });
