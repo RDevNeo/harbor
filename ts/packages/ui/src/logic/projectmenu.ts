@@ -5,7 +5,7 @@ import { ICONS } from "../icons.ts";
  * phone's project sheet are both built from this list, so they offer the same things in the
  * same order with the same words.
  */
-export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "remove";
+export type ProjectAct = "terminal" | "prs" | "issues" | "remote" | "rename_main" | "settle_main" | "refresh_icon" | "choose_icon" | "website_icon" | "settle_project" | "unsettle_project" | "remove";
 
 export interface ProjectMenuItem {
   act: ProjectAct;
@@ -24,6 +24,8 @@ export interface ProjectMenuInput {
   main: boolean;
   /** An icon of the user's own is set. */
   customIcon: boolean;
+  /** The project is settled (it's under Settled). */
+  settled?: boolean;
 }
 
 export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
@@ -49,6 +51,8 @@ export function projectMenu(p: ProjectMenuInput): ProjectMenuItem[] {
   add("choose_icon", "Choose icon…");
   if (p.customIcon) add("website_icon", "Use website icon");
   sep = true;
+  if (p.settled === true) add("unsettle_project", "Unsettle project", ICONS.UNARCHIVE, "It and the chats settled with it come back");
+  else add("settle_project", "Settle project", ICONS.ARCHIVE, "It and its chats go to Settled; a new chat or new activity in it brings it back");
   add("remove", "Remove from Harbor");
   return out;
 }

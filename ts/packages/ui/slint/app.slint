@@ -363,6 +363,7 @@ export component AppWindow inherits Window {
     callback new-thread();
     callback add-project();
     callback settle(int, bool);
+    callback settle-project(int, bool);
     callback snooze(string, length, length);
     callback chat-menu(int, length, length);
     callback project-menu(int, length, length);
@@ -732,6 +733,9 @@ export component AppWindow inherits Window {
                     }
                     settle(id, on) => {
                         root.settle(id, on);
+                    }
+                    settle-project(id, on) => {
+                        root.settle-project(id, on);
                     }
                     snooze(k, x, y) => {
                         root.snooze(k, x, y);

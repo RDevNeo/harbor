@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Call, err, ok, type Reply } from "../packages/net/src/index.ts";
-import { Store } from "../packages/store/src/index.ts";
+import { blankChat, Store } from "../packages/store/src/index.ts";
 import { realDisk } from "../packages/ui/src/addproject.ts";
 import type { GhList } from "../packages/ui/src/logic/addproject.ts";
 import { ProjectsApi, type ProjectsHost } from "../projectsapi.ts";
@@ -196,7 +196,8 @@ test("the_phones_project_sheet_lists_what_the_desktops_project_menu_does", async
     ["Refresh icon", "", true, true],
     ["Choose icon…", "", false, true],
     ["Use website icon", "", false, true],
-    ["Remove from Harbor", "", true, true],
+    ["Settle project", "archive", true, true],
+    ["Remove from Harbor", "", false, true],
   ]);
   expect(items[0]?.desc).toBe("It opens in Harbor's window on desk");
   // By number too (a phone without global ids).
@@ -211,7 +212,7 @@ test("a_chat_less_project_without_a_remote_still_has_its_menu", async () => {
   const { api: a } = api();
   const m = body(await a.route(call("v1/projects/menu", { project: dir })));
   expect(m.main).toBeNull();
-  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Remove from Harbor"]);
+  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Settle project", "Remove from Harbor"]);
 });
 
 test("the_project_sheets_acts_run_on_the_pc", async () => {
@@ -262,4 +263,37 @@ test("a_project_menu_on_another_pc_goes_there", async () => {
   expect(store.repos().some((x) => x.path === "/home/sam/x")).toBe(false);
   const old = api({ forward: async () => err(404, "no such call") }).api;
   expect(body(await old.route(call("v1/projects/do", { pc: "pc:laptop", project: "/x", act: "remove" }))).error).toBe("laptop runs an older Harbor that can't change its projects from a phone: update it there first");
+});
+
+test("a_phone_settles_and_unsettles_a_project", async () => {
+  const dir = join(home, "Projects", "menu-settle");
+  mkdirSync(dir, { recursive: true });
+  const id = store.addRepo(dir);
+  const lead = store.createChat(blankChat({ repoId: id, title: "work", role: "lead" }));
+  const told: [number, boolean][] = [];
+  let reloaded = 0;
+  const { api: a, touched } = api({ settled: (repo, on) => told.push([repo, on]), reload: () => reloaded++ });
+  const before = touched();
+  const r = await a.route(call("v1/projects/do", { project: dir, act: "settle_project" }));
+  expect(body(r)).toEqual({ ok: true, settled: true });
+  expect(store.settledProjects().has(id)).toBe(true);
+  expect(store.chat(lead.id)?.settled).toBe(true);
+  expect([told, reloaded > 0, touched() > before]).toEqual([[[id, true]], true, true]);
+  // Under Settled, the sheet offers Unsettle project and none of the row's buttons.
+  const m = body(await a.route(call("v1/projects/menu", { project: dir })));
+  expect(m.settled).toBe(true);
+  expect(m.row).toEqual([]);
+  expect((m.items as { label: string }[]).map((i) => i.label)).toContain("Unsettle project");
+  expect((m.items as { label: string }[]).map((i) => i.label)).not.toContain("Settle project");
+  expect(body(await a.route(call("v1/projects/do", { project: dir, act: "unsettle_project" })))).toEqual({ ok: true, settled: false });
+  expect(store.settledProjects().has(id)).toBe(false);
+  expect(store.chat(lead.id)?.settled).toBe(false);
+  expect(told.at(-1)).toEqual([id, false]);
+});
+
+test("settling a project on another pc goes there", async () => {
+  const { api: a, forwarded } = api({ forward: async (peer, path, b) => (forwarded.push({ peer, path, body: b }), ok({ ok: true, settled: true })) });
+  expect(body(await a.route(call("v1/projects/do", { pc: "pc:laptop", project: "/home/sam/x", act: "settle_project" })))).toEqual({ ok: true, settled: true });
+  expect(forwarded.at(-1)).toEqual({ peer: "pc:laptop", path: ["v1", "projects", "do"], body: { project: "/home/sam/x", act: "settle_project" } });
+  expect(body(await a.route(call("v1/projects/do", { pc: "pc:off", project: "/x", act: "settle_project" }))).error).toBe("sam-work is off: pick a PC that's on");
 });

@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Settle project, on the desktop and the phone: the project menu (right-click on the desktop, the
+  project's sheet on the phone) settles a project with all its chats. It leaves the list for
+  Settled, where it shows above the settled chats with Unsettle project (the desktop row's
+  Unsettle button, or its menu; a long press on the phone), which brings it back with the chats
+  it settled. A new chat or new activity in a settled project brings it back by itself. It's kept
+  by the PC that has the project, so the desktop and the phones agree.
+
 ## [0.113.0] - 2026-11-02
 
 ### Added

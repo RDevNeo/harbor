@@ -148,7 +148,7 @@ export interface RunningHub {
   /** What else holds a worktree folder's rename back: the window's terminals open in it. */
   setBusyIn(f: (dir: string) => string | null): void;
   /** What the window does when a phone changes a project's icon or removes it. */
-  setWindowProjects(p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void }): void;
+  setWindowProjects(p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void }): void;
   /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
   devices(): { list: PairedDevice[]; served: number };
   deviceEnv: DeviceSendEnv;
@@ -297,8 +297,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       windowProjects?.removed(repo);
     },
     uploadPath: (id) => resolveUpload(uploadsDir, id),
+    settled: (repo, on) => windowProjects?.settled(repo, on),
   });
-  let windowProjects: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void } | null = null;
+  let windowProjects: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void } | null = null;
   let busyIn: (dir: string) => string | null = () => null;
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);

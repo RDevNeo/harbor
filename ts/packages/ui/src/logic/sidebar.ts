@@ -54,6 +54,7 @@ export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: 
     threads: keep(t.threads),
     settled: keep(t.settled),
     snoozed: keep(t.snoozed),
+    settledProjects: t.settledProjects.filter((p) => shown(mine) || ours.some((c) => c.repoId === p)),
   };
 }
 
@@ -87,7 +88,7 @@ export interface ProjectRows<C> {
 }
 
 /** What the sidebar lists for search `query`: projects with their chat rows, Threads, Settled. Snoozed chats come back only while searching. */
-export function sidebarList<C extends SidebarChat>(t: Tree, chats: readonly C[], repos: readonly SidebarRepo[], query: string): { projects: ProjectRows<C>[]; loose: C[]; settled: C[] } {
+export function sidebarList<C extends SidebarChat>(t: Tree, chats: readonly C[], repos: readonly SidebarRepo[], query: string): { projects: ProjectRows<C>[]; loose: C[]; settled: C[]; settledProjects: SidebarRepo[] } {
   const q = query.trim().toLowerCase();
   const chat = (id: number) => chats.find((c) => c.id === id);
   const all = (ids: readonly number[]) => ids.map(chat).filter((c): c is C => c !== undefined);
@@ -104,7 +105,8 @@ export function sidebarList<C extends SidebarChat>(t: Tree, chats: readonly C[],
     if (q === "" || named || cs.length > 0) projects.push({ repo, chats: cs });
   }
   const homeless = asleep.filter((c) => !t.projects.some((p) => p.id === c.repoId));
-  return { projects, loose: [...all(t.threads), ...homeless].filter(matches), settled: all(t.settled) };
+  const settledProjects = t.settledProjects.map((id) => repos.find((r) => r.id === id)).filter((r): r is SidebarRepo => r !== undefined && (q === "" || r.name.toLowerCase().includes(q)));
+  return { projects, loose: [...all(t.threads), ...homeless].filter(matches), settled: all(t.settled), settledProjects };
 }
 
 /** Whether projects can be dragged into another order: by hand, with every one of them listed. */

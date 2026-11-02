@@ -310,13 +310,26 @@ final class Sidebar {
             first = false;
             group("", "Threads", loose, you, q.isEmpty(), null, false);
         }
-        if (!settled.isEmpty()) {
+        // Settled projects (hubs from 0.113), above the settled chats as on the desktop: a tap opens
+        // the project, a long press its sheet (Unsettle project).
+        List<String> settledProjects = new ArrayList<>();
+        JSONArray sp = tree == null ? null : tree.optJSONArray("settled_projects");
+        for (int i = 0; sp != null && i < sp.length(); i++) {
+            String pid = sp.optString(i);
+            if (!scope.showsProject(pid) || (!filter.isEmpty() && !filter.equals(pid))) continue;
+            if (!q.isEmpty() && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
+            settledProjects.add(pid);
+        }
+        if (!settled.isEmpty() || !settledProjects.isEmpty()) {
             if (!first) divider();
-            TextView h = Ui.label(a, "Settled · " + settled.size() + (showSettled ? "  ▾" : "  ▸"));
+            TextView h = Ui.label(a, "Settled · " + (settled.size() + settledProjects.size()) + (showSettled ? "  ▾" : "  ▸"));
             h.setBackground(Ui.press(0, 0, 0));
             h.setOnClickListener(v -> { showSettled = !showSettled; render(st); });
             list.addView(h, Ui.fill());
-            if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
+            if (showSettled) {
+                for (String pid : settledProjects) list.addView(settledProjectRow(pid, projects.get(pid)), Ui.inset());
+                for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
+            }
         } else if (first) {
             none(nothing); // nothing to show, or only main chats of projects the filter left out
         }
@@ -549,19 +562,30 @@ final class Sidebar {
     /** Project `key`'s sheet (ProjectMenu): the desktop project row's options (an older hub
      *  says to update it). */
     private void projectMenu(String key, String name, JSONObject main) {
-        Runnable removed = () -> {
-            // Out of a chat of that project (it's gone with it), else the list again.
+        // Removed or settled: out of a chat of that project, else the list again.
+        ProjectMenu.Gone gone = say -> {
             String of = null;
             JSONArray cs = st == null ? null : st.optJSONArray("chats");
             for (int i = 0; current != null && cs != null && i < cs.length(); i++) {
                 JSONObject c = cs.optJSONObject(i);
                 if (c != null && current.equals(c.optString("id"))) of = c.isNull("project_id") ? null : c.optString("project_id");
             }
-            Ui.toast(a, "Removed “" + (name == null ? "Project" : name) + "” from Harbor");
+            Ui.toast(a, say);
             if (key.equals(of) && a instanceof Chat) a.finish();
             else a.refresh();
         };
-        ProjectMenu.show(a, a.hub, key, name, () -> newChat(key, false), a::refresh, removed);
+        ProjectMenu.show(a, a.hub, key, name, () -> newChat(key, false), a::refresh, gone);
+    }
+
+    /** A settled project under Settled (the desktop's settled project row). */
+    private View settledProjectRow(String pid, String name) {
+        String title = name == null || name.isEmpty() ? "Project" : name;
+        LinearLayout r = Ui.listRow(a, Ui.I_FOLDER, Ui.G700, title, Ui.G700);
+        r.setBackground(Ui.press(0, 0, 12));
+        r.setContentDescription(title + ", settled project");
+        r.setOnClickListener(v -> { Chats.openProject(a, a.hub, pid); a.closeDrawer(); });
+        r.setOnLongClickListener(v -> { projectMenu(pid, name, null); return true; });
+        return r;
     }
 
     /** A chat's status at the end of its row (or its project's header, for a main chat): who's

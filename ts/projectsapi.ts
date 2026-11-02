@@ -42,6 +42,8 @@ export interface ProjectsHost {
   setIcon?: (repo: number, how: "refresh" | "website" | { file: string }) => Promise<string | null>;
   /** Removes the project from Harbor, as the window's Remove from Harbor. */
   remove?: (repo: number) => void;
+  /** The window hears project `repo` was settled or unsettled here. */
+  settled?: (repo: number, on: boolean) => void;
   /** The file a phone uploaded (`POST /v1/upload`'s id), or null. */
   uploadPath?: (id: string) => string | null;
 }
@@ -68,9 +70,11 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.PULL, "pr"],
   [ICONS.CIRCLE_DOT, "circle-dot"],
   [ICONS.EXTERNAL, "external"],
+  [ICONS.ARCHIVE, "archive"],
+  [ICONS.UNARCHIVE, "unarchive"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "remove"];
 const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -335,7 +339,8 @@ export class ProjectsApi {
     const remote = this.remoteOf(r);
     const main = this.h.mainChat?.(r.id, global) ?? null;
     const until = this.snoozeOf(`r${r.id}`);
-    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false }).map((it): Json => {
+    const settled = this.h.store.settledProjects().has(r.id);
+    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false, settled }).map((it): Json => {
       const off = it.act === "terminal";
       return {
         act: it.act,
@@ -356,7 +361,8 @@ export class ProjectsApi {
       github: remote === null ? null : githubRepo(remote),
       main,
       snoozed: until === null ? null : `until ${sidebartree.snoozeLabel(until, now(), zone(now()))}`,
-      row: [
+      settled,
+      row: settled ? [] : [
         { act: "new_chat", label: "New chat in this project", icon: "plus" },
         { act: "snooze", label: "Snooze", icon: "clock" },
       ],
@@ -380,6 +386,15 @@ export class ProjectsApi {
         }
         const bad = await this.h.setIcon(r.id, how);
         return bad === null ? ok({ ok: true }) : err(409, bad);
+      }
+      case "settle_project":
+      case "unsettle_project": {
+        const on = act === "settle_project";
+        this.h.store.settleProject(r.id, on);
+        this.h.reload();
+        this.h.settled?.(r.id, on);
+        this.h.touch();
+        return ok({ ok: true, settled: on });
       }
       case "remove":
         if (!this.h.remove) return err(409, "can't remove projects here");
@@ -407,7 +422,7 @@ export class ProjectsApi {
         return ok({ ok: true, snoozed_until_ms: until * 1000, snoozed_label: sidebartree.snoozeLabel(until, at, off) });
       }
       default:
-        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze or remove");
+        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze, settle_project, unsettle_project or remove");
     }
   }
 

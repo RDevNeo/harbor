@@ -355,6 +355,61 @@ export class Store {
     this.db.query("UPDATE repos SET main_chat=?2 WHERE id=?1").run(repo, chat ?? 0);
   }
 
+  /** Settled projects (`repos.settled`, unused since the Rust schema 7): project id → when, in seconds. */
+  settledProjects(): Map<number, number> {
+    const rows = this.db.query("SELECT id, settled FROM repos WHERE settled != 0").all() as Row[];
+    return new Map(rows.map((r) => [num(r.id), num(r.settled)]));
+  }
+
+  /**
+   * Settles project `repo` and its own leads that aren't settled yet (they're remembered), or
+   * unsettles it and brings those leads back. Copies of other PCs' chats aren't touched: the
+   * sidebar shows every chat of a settled project under Settled.
+   */
+  settleProject(repo: number, on: boolean, at: number = now()): void {
+    const key = `project_settled:${repo}`;
+    if (on) {
+      const all = this.chats().filter((c) => c.repoId === repo);
+      const leads = all.filter((c) => c.role === "lead" && !c.settled && !foreign(c));
+      // Chats saved first (no wake: the project isn't settled yet); then the time, never before their last activity.
+      for (const c of leads) this.saveChat({ ...c, settled: true });
+      this.db.query("UPDATE repos SET settled=?2 WHERE id=?1").run(repo, Math.max(at, 1, ...all.map((c) => c.updated)));
+      this.set(key, JSON.stringify(leads.map((c) => c.id)));
+      return;
+    }
+    this.db.query("UPDATE repos SET settled=0 WHERE id=?1").run(repo);
+    for (const id of this.settledWith(repo)) {
+      const c = this.chat(id);
+      if (c && c.repoId === repo && c.settled) this.saveChat({ ...c, settled: false });
+    }
+    this.set(key, "");
+  }
+
+  /** The chats settling project `repo` settled. */
+  private settledWith(repo: number): number[] {
+    try {
+      const v: unknown = JSON.parse(this.get(`project_settled:${repo}`) || "[]");
+      return Array.isArray(v) ? v.filter((x): x is number => typeof x === "number") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * New activity in a settled project unsettles it: a new chat of this PC, or a chat of it saved
+   * with a newer time than the settle. The active chat comes back with it when the settle had
+   * settled it (`c` is changed in place, so the caller's copy agrees); the others stay settled.
+   */
+  private wake(c: Chat, created: boolean): void {
+    if (c.repoId === null) return;
+    const at = num((this.db.query("SELECT settled FROM repos WHERE id=?1").get(c.repoId) as Row | null)?.settled ?? 0);
+    if (at === 0 || (created ? foreign(c) : c.updated <= at)) return;
+    const back = this.settledWith(c.repoId).includes(c.id);
+    this.db.query("UPDATE repos SET settled=0 WHERE id=?1").run(c.repoId);
+    this.set(`project_settled:${c.repoId}`, "");
+    if (back && c.settled) c.settled = false;
+  }
+
   saveRepoMeta(r: Pick<Repo, "id" | "sort">): void {
     this.db.query("UPDATE repos SET sort=?2 WHERE id=?1").run(r.id, r.sort);
   }
@@ -475,10 +530,12 @@ export class Store {
       )
       .run(c.repoId, c.title, c.sessionId, +c.started, c.account, c.model, c.effort, c.access, +c.settled, c.updated, c.role, c.parent, c.name, c.device, c.gid, c.home, c.homeId, +c.retired);
     c.id = Number(r.lastInsertRowid);
+    this.wake(c, true);
     return c;
   }
 
   saveChat(c: Chat): void {
+    this.wake(c, false);
     this.db
       .query(
         `UPDATE chats SET repo_id=?2, title=?3, session_id=?4, started=?5, account=?6, model=?7, effort=?8,

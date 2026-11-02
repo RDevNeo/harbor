@@ -16,7 +16,7 @@ export interface StatusData {
 }
 
 export interface SideRow {
-  kind: "project" | "thread" | "loose" | "label";
+  kind: "project" | "thread" | "loose" | "label" | "settled-project";
   id: number;
   title: string;
   active: boolean;
@@ -328,6 +328,7 @@ export interface AppWindow extends slint.ComponentHandle {
   new_thread: () => void;
   add_project: () => void;
   settle: (id: number, on: boolean) => void;
+  settle_project: (id: number, on: boolean) => void;
   snooze: (key: string, x: number, y: number) => void;
   chat_menu: (id: number, x: number, y: number) => void;
   project_menu: (id: number, x: number, y: number) => void;

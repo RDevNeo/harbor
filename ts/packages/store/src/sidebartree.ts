@@ -33,6 +33,8 @@ export interface Tree {
   threads: number[];
   settled: number[];
   snoozed: number[];
+  /** Settled projects, in the sidebar's order: under Settled, every chat of theirs too. */
+  settledProjects: number[];
 }
 
 /** Whether `c` can be project `repo`'s main chat now: an unsettled lead of that project. */
@@ -40,16 +42,22 @@ export function isMainOf(c: SidebarChat | null | undefined, repo: number): boole
   return !!c && c.role === "lead" && c.repoId === repo && !c.settled;
 }
 
-/** The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `mains` is each project's stored main chat, `snoozed` takes "r<project>" and "c<chat>". */
-export function tree(repos: readonly number[], chats: readonly SidebarChat[], mains: ReadonlyMap<number, number>, snoozed: (key: string) => boolean): Tree {
+/** The sidebar `Tree` of `chats` for `repos` (in the sidebar's order); `mains` is each project's stored main chat, `snoozed` takes "r<project>" and "c<chat>", `settledRepos` the settled projects. */
+export function tree(repos: readonly number[], chats: readonly SidebarChat[], mains: ReadonlyMap<number, number>, snoozed: (key: string) => boolean, settledRepos: ReadonlySet<number> = new Set()): Tree {
   const leads = chats.filter((c) => c.role === "lead").sort((a, b) => b.updated - a.updated || b.id - a.id);
   const main = (r: number): number | null => {
     const m = mains.get(r);
     return m !== undefined && isMainOf(chats.find((c) => c.id === m), r) ? m : null;
   };
-  const t: Tree = { projects: repos.map((r) => ({ id: r, snoozed: snoozed(`r${r}`), main: main(r), chats: [] })), threads: [], settled: [], snoozed: [] };
+  const t: Tree = {
+    projects: repos.filter((r) => !settledRepos.has(r)).map((r) => ({ id: r, snoozed: snoozed(`r${r}`), main: main(r), chats: [] })),
+    threads: [],
+    settled: [],
+    snoozed: [],
+    settledProjects: repos.filter((r) => settledRepos.has(r)),
+  };
   for (const c of leads) {
-    if (c.settled) t.settled.push(c.id);
+    if (c.settled || (c.repoId !== null && settledRepos.has(c.repoId))) t.settled.push(c.id);
     else if (t.projects.some((p) => p.main === c.id)) {
       // The project row is the main chat.
     } else if (snoozed(`c${c.id}`)) t.snoozed.push(c.id);

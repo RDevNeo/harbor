@@ -531,13 +531,15 @@ export class PhoneRoutes {
     const chats = this.chats();
     const repos = this.d.store.repos();
     const pid = (id: number) => (global ? (repos.find((r) => r.id === id)?.path ?? id) : id);
-    const placed = sidebartree.tree(repos.map((r) => r.id), chats, this.d.store.mainChats(), (key) => this.snoozeUntil(key) !== null);
+    const settledRepos = this.d.store.settledProjects();
+    const placed = sidebartree.tree(repos.map((r) => r.id), chats, this.d.store.mainChats(), (key) => this.snoozeUntil(key) !== null, new Set(settledRepos.keys()));
     const idsOf = (list: number[]): Json[] => list.map((id) => this.idOf(chats.find((c) => c.id === id) as Chat, global));
     const tree = {
       projects: placed.projects.map((p) => ({ id: pid(p.id), snoozed: p.snoozed, main: p.main === null ? null : idsOf([p.main])[0] ?? null, chats: idsOf(p.chats) })),
       threads: idsOf(placed.threads),
       settled: idsOf(placed.settled),
       snoozed: idsOf(placed.snoozed),
+      settled_projects: placed.settledProjects.map(pid),
     };
     const cat = this.d.catalog;
     const slug = (k: string) => k.toLowerCase();
@@ -578,7 +580,7 @@ export class PhoneRoutes {
       hub_name: me.name === "" ? hostname() : me.name,
       you,
       rev: hub.rev(),
-      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path })),
+      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id) })),
       chats: chats.map((c) => this.chatJson(c, global)),
       tree,
       accounts,

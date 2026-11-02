@@ -1091,6 +1091,14 @@ project is gone.
   id `POST /v1/upload` gave the picked image), `remove` (as the desktop's Remove from Harbor:
   chats out of Harbor, nothing on disk), `snooze` (`until_ms`, or `text` + `off` as a chat's
   snooze, or `wake: true`). `200 {ok}`; `400`/`409 {error}` says why.
+- Settle project (0.113): `do` with `act` `settle_project` or `unsettle_project` answers
+  `200 {ok, settled}`. Settling settles the project's own unsettled leads too (remembered:
+  Unsettle brings back those); a new chat of the PC in it, or a chat of it with newer activity,
+  unsettles it (and that chat, when the settle had settled it). `menu` says `settled`; a settled
+  project's `row` is empty and its items offer Unsettle project instead of Settle project.
+  `/v1/state`: `tree.settled_projects` lists settled projects (out of `tree.projects`; every chat
+  of theirs is in `tree.settled`), and `projects[].settled` says it too. The drawer shows them
+  under Settled above the settled chats: a tap opens the project, a long press its sheet.
 
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 

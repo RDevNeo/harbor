@@ -10,6 +10,7 @@ import {
   parseSnooze,
   picked,
   reordered,
+  sidebarList,
   snoozeLabel,
   snoozePresets,
   snoozePreview,
@@ -31,7 +32,7 @@ function place(id: number, snoozed: boolean, main: number | null, chats: number[
 }
 
 function emptyTree(t: Partial<Tree>): Tree {
-  return { projects: [], threads: [], settled: [], snoozed: [], ...t };
+  return { projects: [], threads: [], settled: [], snoozed: [], settledProjects: [], ...t };
 }
 
 function only(ws: string): string[] {
@@ -319,4 +320,16 @@ test("a dragged project lands above or below the row it's dropped on", () => {
   expect(reordered([1, 2, 3, 4], 4, 1, true)).toEqual([4, 1, 2, 3]);
   expect(reordered([1, 2, 3, 4], 4, 2, false)).toEqual([1, 2, 4, 3]);
   expect(reordered([1, 2, 3], 2, 9, true)).toEqual([1, 2, 3]);
+});
+
+test("a_settled_project_and_every_chat_of_it_are_under_settled", () => {
+  // Chat 3 is another PC's copy, still unsettled: it goes with its project all the same.
+  const chats = [chat(1, 6, "lead", 10), chat(2, 7, "lead", 20), chat(3, 6, "lead", 30)];
+  const t = tree([6, 7], chats, new Map([[6, 1]]), () => false, new Set([6]));
+  expect(t.projects).toEqual([place(7, false, null, [2])]);
+  expect(t.settledProjects).toEqual([6]);
+  expect(t.settled).toEqual([3, 1]);
+  const list = sidebarList(t, chats, [{ id: 6, name: "alpha", path: "/a" }, { id: 7, name: "beta", path: "/b" }] as never, "");
+  expect(list.settledProjects.map((r: { name: string }) => r.name)).toEqual(["alpha"]);
+  expect(sidebarList(t, chats, [{ id: 6, name: "alpha", path: "/a" }] as never, "zzz").settledProjects).toEqual([]);
 });

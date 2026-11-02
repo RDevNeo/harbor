@@ -50,7 +50,7 @@ component ThreadRow {
         if !root.indented: Glyph {
             x: 8px;
             width: 16px;
-            icon: Icons.message;
+            icon: root.data.kind == "settled-project" ? Icons.folder : Icons.message;
             size: 14px;
             color: root.data.active ? Theme.fg : Theme.subtle;
         }
@@ -279,6 +279,7 @@ export component Sidebar inherits Rectangle {
     callback new-thread();
     callback add-project();
     callback settle(int, bool);
+    callback settle-project(int, bool);
     callback snooze(string, length, length);
     callback chat-menu(int, length, length);
     callback project-menu(int, length, length);
@@ -537,13 +538,25 @@ export component Sidebar inherits Rectangle {
                 for r in root.settled: ThreadRow {
                     data: r;
                     open => {
-                        root.open-chat(r.id);
+                        if r.kind == "settled-project" {
+                            root.open-project(r.id);
+                        } else {
+                            root.open-chat(r.id);
+                        }
                     }
                     settle(on) => {
-                        root.settle(r.id, on);
+                        if r.kind == "settled-project" {
+                            root.settle-project(r.id, on);
+                        } else {
+                            root.settle(r.id, on);
+                        }
                     }
                     menu(x, y) => {
-                        root.chat-menu(r.id, x, y);
+                        if r.kind == "settled-project" {
+                            root.project-menu(r.id, x, y);
+                        } else {
+                            root.chat-menu(r.id, x, y);
+                        }
                     }
                 }
             }

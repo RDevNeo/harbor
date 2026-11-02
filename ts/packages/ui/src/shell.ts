@@ -366,6 +366,7 @@ export class Shell {
     w.new_thread = () => this.newDraft(null);
     w.add_project = () => this.addProject();
     w.settle = (id, on) => this.setSettled(id, on);
+    w.settle_project = (id, on) => this.settleProject(id, on);
     w.snooze = (key, x, y) => this.snoozeMenu(key, x, y);
     w.chat_menu = (id, x, y) => this.chatMenu(id, x, y);
     w.project_menu = (id, x, y) => this.projectMenu(id, x, y);
@@ -1003,7 +1004,8 @@ export class Shell {
     const ids = sidebarOrder(d.repos, d.store.get("order_by_activity") === "1", d.chats);
     const ws = this.workspaces();
     const shown = picked(d.store.get("sidebar_workspace") ?? "", ws.all);
-    const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t);
+    const settledRepos = d.store.settledProjects();
+    const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t, new Set(settledRepos.keys()));
     const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats);
     const list = sidebarList(tr, d.chats, d.repos, this.query);
     const rows: SideRow[] = [];
@@ -1056,13 +1058,30 @@ export class Shell {
       for (const c of list.loose) rows.push(chatRow(c, "loose"));
     }
     sync(this.rows, rows, sameSideRow);
-    sync(
-      this.settledRows,
-      list.settled.map((c) => chatRow(c, "loose")),
-      sameSideRow,
-    );
+    const projectRow = (r: { id: number; name: string }): SideRow => {
+      const repo = d.repo(r.id);
+      return {
+        kind: "settled-project",
+        id: r.id,
+        title: r.name,
+        active: false,
+        status: this.statusData(projectIdle(false)),
+        letter: projectInitial(r.name),
+        avatar: noPixels,
+        has_avatar: false,
+        settled: true,
+        snoozed: false,
+        worktree: "",
+        worktree_tip: "",
+        pr: "",
+        pr_tip: "",
+        tip: repo ? tilde(repo.local ?? repo.path, homedir()) : "",
+      };
+    };
+    const settledRows = [...list.settledProjects.map(projectRow), ...list.settled.map((c) => chatRow(c, "loose"))];
+    sync(this.settledRows, settledRows, sameSideRow);
     const w = this.win;
-    w.settled_count = list.settled.length;
+    w.settled_count = settledRows.length;
     w.running = this.engine.turns.size;
     const names = ws.all.filter((x) => shown.includes(x.id)).map((x) => x.name);
     const q = this.query.trim();
@@ -2375,6 +2394,7 @@ export class Shell {
     const remote = this.gitStatus.get(id)?.remote ?? (stored === "" ? null : git.webUrl(stored));
     const main = this.data.mainChat(id);
     const custom = this.media !== null && existsSync(this.media.favicon.customPath(id));
+    const settled = this.data.store.settledProjects().has(id);
     const acts: Record<ProjectAct, () => void> = {
       terminal: () => this.projectTerminal(id),
       prs: () => this.pages.openPrs(id),
@@ -2390,10 +2410,12 @@ export class Shell {
           this.loadIcon(id, false);
         });
       },
+      settle_project: () => this.settleProject(id, true),
+      unsettle_project: () => this.settleProject(id, false),
       remove: () => this.removeRepoDialog(id),
     };
     const items: (PopItem & { act?: () => void })[] = [];
-    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom })) {
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
       if (it.icon !== "") extra.icon = it.icon;
@@ -2783,6 +2805,20 @@ export class Shell {
   }
 
   /** After project `id` left Harbor (here, or from a phone): off the draft, out of a chat of it. */
+  /** Settle project (logic/projectmenu.ts): it and its chats go to Settled; Unsettle brings them back. */
+  private settleProject(id: number, on: boolean): void {
+    this.data.store.settleProject(id, on);
+    this.data.reload();
+    this.projectSettled(id, on);
+  }
+
+  /** After project `id` was settled or unsettled (here, or from a phone): out of a chat of it. */
+  projectSettled(id: number, on: boolean): void {
+    const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    if (on && ((c !== undefined && c.repoId === id) || (this.view === "draft" && this.draftRepo === id))) this.newDraft(null);
+    else this.refreshAll();
+  }
+
   projectRemoved(id: number): void {
     this.avatars.delete(id);
     if (this.draftRepo === id) this.draftRepo = null;
@@ -3088,7 +3124,7 @@ export interface ShellHooks {
   /** Gets why a folder can't be renamed now as far as the window knows (a terminal open in it). */
   busyIn?: (busy: (dir: string) => string | null) => void;
   /** Gets what the window does when a phone changes a project's icon or removes it. */
-  projects?: (p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void }) => void;
+  projects?: (p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void }) => void;
 }
 
 export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Promise<void> {
@@ -3114,7 +3150,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   hooks.closer?.(() => win.hide());
   hooks.toaster?.((t) => shell.toast(t));
   hooks.busyIn?.((dir) => (shell.terminalIn(dir) ? "a terminal is open in it" : null));
-  hooks.projects?.({ icon: (repo, refresh) => shell.reloadIcon(repo, refresh), removed: (repo) => shell.projectRemoved(repo) });
+  hooks.projects?.({ icon: (repo, refresh) => shell.reloadIcon(repo, refresh), removed: (repo) => shell.projectRemoved(repo), settled: (repo, on) => shell.projectSettled(repo, on) });
   win.show();
   shell.shown();
   win.focus_composer();

@@ -252,3 +252,58 @@ test("a store opens while another process holds the write lock for a moment, as 
   expect(s.repos()).toEqual([]);
   expect(await holder.exited).toBe(0);
 });
+
+test("a_settled_project_settles_its_chats_and_unsettle_brings_them_back", () => {
+  const dir = tmp();
+  const path = join(dir, "harbor.db");
+  let s = open(path);
+  const repo = s.addRepo(dir);
+  const other = s.addRepo(join(dir, "other"));
+  const lead = (title: string, r = repo) => s.createChat(blankChat({ repoId: r, title, role: "lead" }));
+  const a = lead("a");
+  const b = lead("b");
+  const before = lead("settled before");
+  s.saveChat({ ...before, settled: true });
+  const copy = s.createChat(blankChat({ repoId: repo, title: "copy", role: "lead", home: "pc:laptop", homeId: 4 }));
+  const elsewhere = lead("elsewhere", other);
+  const at = Math.floor(Date.now() / 1000) + 10;
+  s.settleProject(repo, true, at);
+  expect(s.settledProjects()).toEqual(new Map([[repo, at]]));
+  expect([a, b, before, copy, elsewhere].map((c) => s.chat(c.id)?.settled)).toEqual([true, true, true, false, false]);
+  // Kept across a restart.
+  s.close();
+  s = open(path);
+  expect(s.settledProjects().get(repo)).toBe(at);
+  s.settleProject(repo, false);
+  expect(s.settledProjects().size).toBe(0);
+  // What the settle settled comes back; a chat settled before stays settled.
+  expect([a, b, before].map((c) => s.chat(c.id)?.settled)).toEqual([false, false, true]);
+});
+
+test("new_activity_in_a_settled_project_unsettles_it", () => {
+  const dir = tmp();
+  const s = open(join(dir, "harbor.db"));
+  const repo = s.addRepo(dir);
+  const a = s.createChat(blankChat({ repoId: repo, title: "a", role: "lead" }));
+  const b = s.createChat(blankChat({ repoId: repo, title: "b", role: "lead" }));
+  const at = Math.floor(Date.now() / 1000) + 100;
+  s.settleProject(repo, true, at);
+  // Saved again with no newer time (a rename): still settled.
+  const fresh = s.chat(a.id);
+  if (!fresh) throw new Error("gone");
+  s.saveChat({ ...fresh, title: "renamed" });
+  expect(s.settledProjects().has(repo)).toBe(true);
+  // A turn in it: the project and that chat come back, the other stays settled.
+  const active = { ...fresh, updated: at + 5 };
+  s.saveChat(active);
+  expect(active.settled).toBe(false);
+  expect(s.settledProjects().has(repo)).toBe(false);
+  expect(s.chat(a.id)?.settled).toBe(false);
+  expect(s.chat(b.id)?.settled).toBe(true);
+  // A new chat of this PC in a settled project unsettles it; a copy arriving from another PC doesn't.
+  s.settleProject(repo, true, at);
+  s.createChat(blankChat({ repoId: repo, title: "copy", role: "lead", home: "pc:laptop", homeId: 9, updated: 1 }));
+  expect(s.settledProjects().has(repo)).toBe(true);
+  s.createChat(blankChat({ repoId: repo, title: "new", role: "lead" }));
+  expect(s.settledProjects().has(repo)).toBe(false);
+});

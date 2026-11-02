@@ -184,10 +184,31 @@ test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
   const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
   expect(st).toBe(200);
   expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
-  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Remove from Harbor"]);
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Settle project", "Remove from Harbor"]);
   const [gone] = await json("POST", "/v1/projects/do", { project: pid, act: "remove" });
   expect(gone).toBe(200);
   const [, state] = await json("GET", "/v1/state");
   expect((state.projects as { id: unknown }[]).some((p) => p.id === pid)).toBe(false);
   expect((await json("POST", "/v1/projects/menu", { project: pid }))[0]).toBe(404);
+});
+
+test("a_settled_project_leaves_the_phones_drawer_for_settled", async () => {
+  const [, made] = await json("POST", "/v1/projects", { act: { kind: "create", name: "settling", git: false } });
+  const pid = made.id as number;
+  const c = h.store.createChat(blankChat({ title: "Its work", account: "claude", role: "lead", name: "lead", repoId: pid }));
+  h.engine.reload();
+  expect((await json("POST", "/v1/projects/do", { project: pid, act: "settle_project" }))[0]).toBe(200);
+  const [, st] = await json("GET", "/v1/state");
+  const tree = st.tree as { projects: { id: unknown }[]; settled: unknown[]; settled_projects: unknown[] };
+  expect(tree.projects.some((p) => p.id === pid)).toBe(false);
+  expect(tree.settled_projects).toContain(pid);
+  expect(tree.settled).toContain(c.id);
+  expect((st.projects as { id: unknown; settled: boolean }[]).find((p) => p.id === pid)?.settled).toBe(true);
+  expect((st.chats as { id: unknown; settled: boolean }[]).find((x) => x.id === c.id)?.settled).toBe(true);
+  // A new chat in it brings it back.
+  h.store.createChat(blankChat({ title: "Next", account: "claude", role: "lead", name: "lead", repoId: pid }));
+  h.engine.reload();
+  const [, again] = await json("GET", "/v1/state");
+  expect((again.tree as { projects: { id: unknown }[] }).projects.some((p) => p.id === pid)).toBe(true);
+  expect((again.tree as { settled_projects: unknown[] }).settled_projects).not.toContain(pid);
 });

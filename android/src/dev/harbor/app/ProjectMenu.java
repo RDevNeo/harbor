@@ -27,9 +27,12 @@ final class ProjectMenu {
 
     interface NewChat { void start(); }
 
+    /** The project left the list (removed or settled): `say` is the toast. */
+    interface Gone { void on(String say); }
+
     /** Opens project `pid`'s sheet (`name` while it loads). `newChat` starts a chat in it;
      *  `after` runs after a change; `removed` after Remove from Harbor. */
-    static void show(Base a, Hub hub, String pid, String name, NewChat newChat, Runnable after, Runnable removed) {
+    static void show(Base a, Hub hub, String pid, String name, NewChat newChat, Runnable after, Gone gone) {
         Ui.bg(a, () -> {
             try {
                 return hub.call("POST", "/v1/projects/menu", new JSONObject().put("project", pid));
@@ -37,7 +40,7 @@ final class ProjectMenu {
                 if (e.code == 404 && !e.getMessage().contains("project")) throw new Hub.ApiError(404, "This PC runs an older Harbor without the project menu: update it first.");
                 throw e;
             }
-        }, m -> sheet(a, hub, pid, name, m, newChat, after, removed));
+        }, m -> sheet(a, hub, pid, name, m, newChat, after, gone));
     }
 
     private static String glyph(String name) {
@@ -48,17 +51,20 @@ final class ProjectMenu {
             case "pr": return Ui.I_PR_OPEN;
             case "circle-dot": return Ui.I_CIRCLE_DOT;
             case "external": return Ui.I_EXTERNAL;
+            case "archive": return Ui.I_ARCHIVE;
+            case "unarchive": return Ui.I_ARCHIVE;
             default: return null;
         }
     }
 
-    private static void sheet(Base a, Hub hub, String pid, String name, JSONObject m, NewChat newChat, Runnable after, Runnable removed) {
+    private static void sheet(Base a, Hub hub, String pid, String name, JSONObject m, NewChat newChat, Runnable after, Gone gone) {
         String title = m.optString("name", name == null || name.isEmpty() ? "Project" : name);
         Sheet s = new Sheet(a, title);
         String snoozed = m.isNull("snoozed") ? "" : m.optString("snoozed");
 
-        LinearLayout row = s.card();
+        // The row's own buttons (none for a settled project).
         JSONArray rs = m.optJSONArray("row");
+        LinearLayout row = rs != null && rs.length() > 0 ? s.card() : null;
         for (int i = 0; rs != null && i < rs.length(); i++) {
             JSONObject it = rs.optJSONObject(i);
             if (it == null) continue;
@@ -82,14 +88,14 @@ final class ProjectMenu {
             boolean on = it.optBoolean("enabled", true);
             String act = it.optString("act");
             LinearLayout r = Ui.cardRow(a, glyph(it.optString("icon")), it.optString("label"), it.optString("desc"), on ? Ui.FG : Ui.G600,
-                    on ? v -> { s.dismiss(); act(a, hub, pid, m, act, after, removed); } : null);
+                    on ? v -> { s.dismiss(); act(a, hub, pid, m, act, after, gone); } : null);
             Ui.wrapSub(r, 3);
             card.addView(r, Ui.fill());
         }
         s.show();
     }
 
-    private static void act(Base a, Hub hub, String pid, JSONObject m, String act, Runnable after, Runnable removed) {
+    private static void act(Base a, Hub hub, String pid, JSONObject m, String act, Runnable after, Gone gone) {
         JSONObject main = m.optJSONObject("main");
         switch (act) {
             case "prs":
@@ -123,11 +129,17 @@ final class ProjectMenu {
                     }, r -> Ui.toast(a, "Icon set on " + m.optString("pc_name", "the PC")));
                 });
                 break;
+            case "settle_project":
+                Ui.bg(a, () -> run(hub, pid, act, null), r -> gone.on("Settled “" + m.optString("name", "Project") + "”: it's under Settled"));
+                break;
+            case "unsettle_project":
+                Ui.bg(a, () -> run(hub, pid, act, null), r -> { Ui.toast(a, "“" + m.optString("name", "Project") + "” is back"); after.run(); });
+                break;
             case "remove":
                 Ui.dialog(a).setTitle("Remove project?")
                         .setMessage("Its chats are removed from Harbor. Nothing on disk is touched.")
                         .setNegativeButton("Cancel", null)
-                        .setPositiveButton("Remove", (d, w) -> Ui.bg(a, () -> run(hub, pid, act, null), r -> removed.run()))
+                        .setPositiveButton("Remove", (d, w) -> Ui.bg(a, () -> run(hub, pid, act, null), r -> gone.on("Removed “" + m.optString("name", "Project") + "” from Harbor")))
                         .show();
                 break;
             default:
