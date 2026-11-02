@@ -1,5 +1,5 @@
 import { fixed } from "./cost.ts";
-import { accountName, type Limits, when } from "./limits.ts";
+import { accountName, type Limits, type Quota, type UsageWindow, when } from "./limits.ts";
 
 /** How often caps are checked against usage (seconds). */
 const CHECK_EVERY = 5;
@@ -47,6 +47,78 @@ export function span(secs: number): string {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
+/** "81%", of a fraction used. */
+export function percentText(used: number): string {
+  return `${fixed(Math.min(Math.max(used * 100, 0), 100), 0)}%`;
+}
+
+/** "resets in 3h 12m"; null when unknown or already past. */
+export function resetsIn(at: number | null, now: number): string | null {
+  return at !== null && at > now ? `resets in ${span(at - now)}` : null;
+}
+
+/** "81%  ·  resets in 2d 3h", or why there's no number. */
+export function readingText(w: Win, now: number): string {
+  const used = w.used === null ? "no data since the reset" : percentText(w.used);
+  const r = resetsIn(w.resetsAt, now);
+  return r === null ? used : `${used}  ·  ${r}`;
+}
+
+/** One account as the usage read-out shows it. */
+export interface Reading {
+  id: string;
+  label: string;
+  plan: string;
+  signedIn: boolean;
+  /** When its numbers were last seen, from the monitor or a turn (Unix time). */
+  seen: number | null;
+  windows: Win[];
+}
+
+/** An account of this PC, as the read-out needs it. */
+export interface ReadingAccount {
+  id: string;
+  kind: string;
+  /** "Claude · FS" */
+  short: string;
+  email: string;
+  plan: string;
+  installed: boolean;
+  loggedIn: boolean | null;
+}
+
+/** One account for the phone (PROTOCOL.md, `limits` of `GET /v1/usage`). */
+export function readingJson(r: Reading, now: number): { id: string; label: string; plan: string; signed_in: boolean; seen_ms: number | null; windows: { label: string; percent: number | null; text: string }[] } {
+  return {
+    id: r.id,
+    label: r.label,
+    plan: r.plan,
+    signed_in: r.signedIn,
+    seen_ms: r.seen === null ? null : r.seen * 1000,
+    windows: r.windows.map((w) => ({ label: w.label, percent: w.used === null ? null : Math.round(w.used * 1000) / 10, text: readingText(w, now) })),
+  };
+}
+
+/** The monitor's windows and what turns reported, the newer source winning a window both have; 5-hour first. */
+export function mergeWindows(monitor: readonly UsageWindow[], live: readonly Quota[], monitorNewer: boolean, now: number): Win[] {
+  const fromMonitor = monitor.map((w): [string, number, number | null] => [w.label, w.percent, w.resetsAt]);
+  const fromTurns = live.map(([k, u, r]): [string, number, number | null] => [k, u, r > 0 ? r : null]);
+  const v: Win[] = [];
+  for (const [name, used, resets] of monitorNewer ? [...fromTurns, ...fromMonitor] : [...fromMonitor, ...fromTurns]) {
+    const [key, label] = keyLabel(name);
+    // A window that has reset since: its number is stale.
+    const u = resets !== null && resets <= now ? null : used;
+    const x = v.find((w) => w.key === key);
+    if (x) {
+      x.used = u;
+      x.resetsAt = resets ?? x.resetsAt;
+    } else {
+      v.push({ key, label, used: u, resetsAt: resets });
+    }
+  }
+  return [...v.filter((w) => w.key === "5h"), ...v.filter((w) => w.key !== "5h")];
+}
+
 type Caps = Record<string, Record<string, number>>;
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -61,25 +133,35 @@ export class UsageCtl {
 
   constructor(private readonly limits: Limits) {}
 
-  /** The account's usage windows, merging the usage monitor's cache with what turns reported live (fresher, so it wins). */
+  /** The account's usage windows, merging the usage monitor's cache with what turns reported live. A report with no
+   *  time (saved by an older Harbor) counts as the newer one. */
   windows(account: string): Win[] {
-    const at = this.limits.now();
-    const v: Win[] = [];
-    const put = (name: string, used: number, resets: number | null): void => {
-      const [key, label] = keyLabel(name);
-      // A window that has reset since: its number is stale.
-      const u = resets !== null && resets <= at ? null : used;
-      const x = v.find((w) => w.key === key);
-      if (x) {
-        x.used = u;
-        x.resetsAt = resets ?? x.resetsAt;
-      } else {
-        v.push({ key, label, used: u, resetsAt: resets });
-      }
-    };
-    for (const w of this.limits.host.account(account)?.usage ?? []) put(w.label, w.percent, w.resetsAt);
-    for (const [k, u, r] of this.limits.quota.get(account) ?? []) put(k, u, r > 0 ? r : null);
-    return v;
+    const a = this.limits.host.account(account);
+    const monitorAt = a?.usageAt ?? null;
+    const quotaAt = this.limits.quotaAt.get(account);
+    const monitorNewer = monitorAt !== null && quotaAt !== undefined && monitorAt > quotaAt;
+    return mergeWindows(a?.usage ?? [], this.limits.quota.get(account) ?? [], monitorNewer, this.limits.now());
+  }
+
+  /** Every Claude account on this PC, for the usage read-out. */
+  readings(accounts: readonly ReadingAccount[]): Reading[] {
+    return accounts
+      .filter((a) => a.kind.toLowerCase() === "claude" && a.installed)
+      .map((a) => {
+        const info = this.limits.host.account(a.id);
+        const monitor = info && info.usage.length > 0 ? (info.usageAt ?? null) : null;
+        const turns = this.limits.quotaAt.get(a.id) ?? null;
+        // Accounts can share a badge: the email tells those apart.
+        const twin = accounts.some((x) => x.id !== a.id && x.short === a.short);
+        return {
+          id: a.id,
+          label: twin && a.email !== "" ? a.email : a.short,
+          plan: a.plan,
+          signedIn: a.loggedIn !== false,
+          seen: monitor === null ? turns : turns === null ? monitor : Math.max(monitor, turns),
+          windows: this.windows(a.id),
+        };
+      });
   }
 
   private caps(): Caps {

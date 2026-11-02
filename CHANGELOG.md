@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- A gauge in the sidebar's footer, and "Claude usage" in the phone's + sheet, show each Claude
+  account's 5-hour and weekly usage and when they reset. The numbers are read when you open them,
+  and not otherwise.
+
+### Fixed
+- Usage limits: a turn's report no longer beats the usage monitor's newer numbers.
+
 ## [0.117.0] - 2026-11-02
 
 ### Added

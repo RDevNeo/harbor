@@ -33,6 +33,7 @@ import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
+import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
 import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
@@ -147,6 +148,7 @@ export class Shell {
   private files = new slint.ArrayModel<{ name: string; image: boolean }>([]);
   private menu = new slint.ArrayModel<MenuEntry>([]);
   private popItems = new slint.ArrayModel<PopItem>([]);
+  private readonly popEsc = new EscHold();
   private teamAgentRows = new slint.ArrayModel<AgentRow>([]);
   private teamSettledRows = new slint.ArrayModel<AgentRow>([]);
   private wakeRows = new slint.ArrayModel<WakeRow>([]);
@@ -383,6 +385,7 @@ export class Shell {
     };
     w.palette = () => this.openPalette();
     w.filter = (x, y) => this.filterMenu(x, y);
+    w.usage = (x, y) => (w.pop_id === "usage" ? this.closePopup() : this.usageMenu(x, y));
     w.ws_filter = (x, y) => (w.pop_id === "workspace" ? this.closePopup() : this.wsMenu(x, y));
     w.ws_all = () => this.setWsFilter("");
     w.reorder = (id, target, above) => this.reorder(id, target, above);
@@ -1427,6 +1430,7 @@ export class Shell {
     if (this.keys.matches("stop_turn", p)) {
       if (this.win.pop_id !== "") {
         this.closePopup();
+        if (p.key === "Escape") this.popEsc.closed();
         return true;
       }
       if (this.queueEdit !== null) {
@@ -1447,7 +1451,7 @@ export class Shell {
   }
 
   private escOfViewer(e: KeyEvent): boolean {
-    return e.text === "\u{1b}" && (this.images?.heldEsc(e.repeat) ?? false);
+    return e.text === "\u{1b}" && ((this.images?.heldEsc(e.repeat) ?? false) || this.popEsc.swallow(e.repeat));
   }
 
   /**
@@ -1530,6 +1534,7 @@ export class Shell {
     }
     if (p.key === "Escape" && w.pop_id !== "") {
       this.closePopup();
+      this.popEsc.closed();
       return true;
     }
     const scroll = transcriptKey(e.text, e.modifiers);
@@ -2183,7 +2188,7 @@ export class Shell {
     w.pop_w = width;
     w.pop_above = above;
     w.pop_native = native;
-    w.pop_spacing = id === "effort" ? 0 : 8;
+    w.pop_spacing = id === "effort" || id === "usage" ? 0 : 8;
     w.pop_id = id;
   }
 
@@ -2192,15 +2197,15 @@ export class Shell {
   }
 
   private item(label: string, act: () => void, extra: Partial<PopItem> = {}): PopItem & { act: () => void } {
-    return { kind: "item", icon: "", label, desc: "", checked: false, enabled: true, badge: "", ...extra, act };
+    return { kind: "item", icon: "", label, desc: "", checked: false, enabled: true, badge: "", value: 0, ...extra, act };
   }
 
   private label(text: string): PopItem {
-    return { kind: "label", icon: "", label: text, desc: "", checked: false, enabled: false, badge: "" };
+    return { kind: "label", icon: "", label: text, desc: "", checked: false, enabled: false, badge: "", value: 0 };
   }
 
   private separator(): PopItem {
-    return { kind: "separator", icon: "", label: "", desc: "", checked: false, enabled: false, badge: "" };
+    return { kind: "separator", icon: "", label: "", desc: "", checked: false, enabled: false, badge: "", value: 0 };
   }
 
   private composerPopup(id: string, x: number, y: number): void {
@@ -2558,6 +2563,12 @@ export class Shell {
 
   private refreshAllBound = (): void => this.refreshAll();
 
+  /** The sidebar gauge's read-out, on numbers read now. */
+  private usageMenu(x: number, y: number): void {
+    const rows = usageRows(this.engine.usageReadings(), now());
+    this.popup("usage", x, y, rows.map((r) => ({ icon: "", checked: false, enabled: false, ...r })), 300, true);
+  }
+
   private filterMenu(x: number, y: number): void {
     const byActivity = this.data.store.get("order_by_activity") === "1";
     const order = (on: boolean) => () => {
@@ -2644,7 +2655,7 @@ export class Shell {
       this.closePopup();
       this.sendToDevice(d, "text", text, []);
     };
-    this.popup("device-text", x, y, [{ ...this.label(`Text for ${d.name}'s clipboard`), kind: "caption" }, { kind: "textbox", icon: "", label: "Send", desc: "Type or paste text", checked: false, enabled: true, badge: "" }], 300);
+    this.popup("device-text", x, y, [{ ...this.label(`Text for ${d.name}'s clipboard`), kind: "caption" }, { kind: "textbox", icon: "", label: "Send", desc: "Type or paste text", checked: false, enabled: true, badge: "", value: 0 }], 300);
   }
 
   private sendToDevice(d: PairedDevice, kind: DeviceSendKind, text: string | null, files: string[]): void {

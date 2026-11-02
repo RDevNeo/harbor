@@ -74,6 +74,8 @@ export interface Account {
   bin: string | null;
   loggedIn: boolean | null;
   usage: Window[];
+  /** When the usage monitor wrote `usage` (Unix time). */
+  usageAt?: number | null;
 }
 
 export function installed(a: Account): boolean {
@@ -200,16 +202,25 @@ export function discover(): Account[] {
   return out;
 }
 
-/** Plan and 5-hour/weekly windows from the agents-usage-monitor cache, if present. */
-function applyUsage(accounts: Account[]): void {
-  const j = readJson(join(home(), ".local/state/omarchy/agents-usage-monitor/usage.json"));
+/** Plan and 5-hour/weekly windows from the agents-usage-monitor cache, if present. The monitor writes that file by
+ *  itself; Harbor reads it at start, on Refresh and when usage is asked for. */
+export function applyUsage(accounts: readonly Account[]): void {
+  const p = join(home(), ".local/state/omarchy/agents-usage-monitor/usage.json");
+  const j = readJson(p);
   const list = at(j, "providers");
   if (!Array.isArray(list)) return;
+  let written: number | null = null;
+  try {
+    written = Math.floor(statSync(p).mtimeMs / 1000);
+  } catch {
+    // gone since the read
+  }
   for (const prov of list) {
     const id = str(at(prov, "id"));
     const a = accounts.find((x) => x.id === id);
     if (!a) continue;
     a.plan = str(at(prov, "plan"));
+    a.usageAt = written;
     a.usage = arr(at(prov, "windows")).map((x) => {
       const t = optStr(at(x, "resetsAt"));
       const ms = t === undefined ? NaN : Date.parse(t);

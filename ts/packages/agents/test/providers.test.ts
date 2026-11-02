@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as p from "../src/providers.ts";
@@ -75,4 +75,37 @@ test("efforts, access and their labels", () => {
   expect(p.badgeFrom("9z@x", "C1")).toBe("C1");
   expect(["claude", "claude2", "claude+3", "codex"].every(p.knownAccount)).toBe(true);
   expect(["cursor", "grok", "gemini", "meta", "opencode", ""].some(p.knownAccount)).toBe(false);
+});
+
+test("the usage monitor's file: read again on each call, an empty reset is unknown, and its time is kept", () => {
+  const h = join(base, "usage-home");
+  const dir = join(h, ".local/state/omarchy/agents-usage-monitor");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "usage.json");
+  const write = (percent: number, mtime: number): void => {
+    const windows = [
+      { label: "5-hour", percent: 0, resetsAt: "" },
+      { label: "Weekly", percent, resetsAt: "2026-11-03T03:00:00.051695+00:00" },
+    ];
+    writeFileSync(file, JSON.stringify({ providers: [{ id: "claude", plan: "Max 20x", windows }] }));
+    utimesSync(file, mtime, mtime);
+  };
+  const was = process.env.HOME;
+  process.env.HOME = h;
+  try {
+    const a: p.Account = { id: "claude", kind: "Claude", name: "Claude", email: "", badge: "AB", plan: "", configDir: null, bin: null, loggedIn: true, usage: [] };
+    write(0.94, 1_800_000_000);
+    p.applyUsage([a]);
+    expect(a.plan).toBe("Max 20x");
+    expect(a.usageAt).toBe(1_800_000_000);
+    expect(a.usage).toEqual([
+      { label: "5-hour", percent: 0, resetsAt: null },
+      { label: "Weekly", percent: 0.94, resetsAt: 1_793_674_800 },
+    ]);
+    write(0.95, 1_800_000_300);
+    p.applyUsage([a]);
+    expect([a.usage[1]?.percent, a.usageAt]).toEqual([0.95, 1_800_000_300]);
+  } finally {
+    process.env.HOME = was;
+  }
 });

@@ -227,13 +227,15 @@ export interface FileRow {
 }
 
 export interface PopItem {
-  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native";
+  kind: "item" | "label" | "caption" | "separator" | "rule" | "header" | "gap" | "choice" | "input" | "textbox" | "native" | "usage-account" | "usage-window" | "usage-note";
   icon: string;
   label: string;
   desc: string;
   checked: boolean;
   enabled: boolean;
   badge: string;
+  /** A usage window's fraction used, for its bar. */
+  value: number;
 }
 
 export interface Crumbs {
@@ -345,6 +347,7 @@ export interface AppWindow extends slint.ComponentHandle {
   settle: (id: number, on: boolean) => void;
   settle_project: (id: number, on: boolean) => void;
   snooze: (key: string, x: number, y: number) => void;
+  usage: (x: number, y: number) => void;
   chat_menu: (id: number, x: number, y: number) => void;
   project_menu: (id: number, x: number, y: number) => void;
   searched: (q: string) => void;

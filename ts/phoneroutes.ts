@@ -1,5 +1,5 @@
 import { actions, apiMoveTargets, apiPeople, codeState, movePcBlocker, movePcTargets, apiPeopleSet, type Call, confirmOwner, err, gatherVersions, type Hub, type Json, meshPcs, type OwnerSources, ok, type PhoneRoutes, profileCheckJson, project, type ProfileScheduler, type Reply, versionsInput, versionsJson } from "./packages/net/src/index.ts";
-import { type Chat, cost, type Store } from "./packages/store/src/index.ts";
+import { type Chat, cost, type Store, usageCtl } from "./packages/store/src/index.ts";
 import { type Engine, providers } from "./packages/agents/src/index.ts";
 import { forkable } from "./packages/agents/src/fork.ts";
 import { machines } from "./packages/mcp/src/index.ts";
@@ -597,7 +597,8 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       const chats = new Map(h.store.chats().map((c): [number, [string, string]] => [c.id, [c.account, c.repoId === null ? "" : (names.get(c.repoId) ?? "")]]));
       const today = Math.floor(now() / 86400);
       const totals = cost.sumResults(h.store.results(), chats, today);
-      return ok(JSON.parse(JSON.stringify(cost.apiUsage(totals, today, (id) => e.accountLabel(id)))) as Json);
+      const at = now();
+      return ok(JSON.parse(JSON.stringify({ ...cost.apiUsage(totals, today, (id) => e.accountLabel(id)), limits: e.usageReadings().map((r) => usageCtl.readingJson(r, at)) })) as Json);
     }
     if (m === "GET" && p[1] === "snooze") {
       const at = now();

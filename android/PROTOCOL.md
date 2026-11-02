@@ -1375,10 +1375,16 @@ Ask the PC the screen talks to; another PC's projects aren't its own.
 ### `GET /v1/usage`
 
 Settings › Usage's breakdown (since 0.39; older PCs answer `404`): `{"projects": [row], "days":
-[row], "accounts": [row]}`, each `row` `{"name", "label", "detail", "usage": {turns, input, output,
+[row], "accounts": [row], "limits": [limit]}`, each `row` `{"name", "label", "detail", "usage": {turns, input, output,
 cached, cost, label, detail}}` (as in `usage` of the items call). `projects` costliest first ("No
 project" for chats without one); `days` the last 14 that had turns, newest first ("Today",
 "Yesterday", "Mon 24 Oct"); `accounts` by account name. All from every chat's turn results.
+
+`limits` (since 0.115; older PCs leave it out: say the PC needs an update) is the desktop's Claude
+usage read-out, read at this call: each `limit` `{"id", "label", "plan", "signed_in", "seen_ms",
+"windows": [{"label", "percent", "text"}]}`, one per Claude account on this PC. `seen_ms`: when its
+numbers were last read (null: unknown). `percent`: 0–100 (null: no data since the window reset).
+`text`: the line to show, "81%  ·  resets in 2d 3h".
 
 ### `GET /v1/palette?q=&chat=`
 

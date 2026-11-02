@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { type AccountInfo, type Block, Limits, type LimitsHost, fromText, nextBlock, windowLabel } from "../src/limits.ts";
+import { mergeWindows, percentText, readingJson, readingText, type ReadingAccount, resetsIn } from "../src/usage_ctl.ts";
 import { type Chat, Store, blankChat, now } from "../src/index.ts";
 
 test("from_text_survives_case_changing_chars", () => {
@@ -169,4 +170,91 @@ test("warnings are sent once per window", () => {
   l.ctl.checkCaps();
   expect(h.notices.filter((n) => n === "Usage warning").length).toBe(1);
   expect(l.ctl.warnAt("claude")).toBe(50);
+});
+
+test("the usage read-out: percents, reset times and the line that joins them", () => {
+  expect([0, 0.814, 0.996, 1.2, -0.1].map(percentText)).toEqual(["0%", "81%", "100%", "100%", "0%"]);
+  const at = 1_000_000;
+  expect(resetsIn(at + 3 * 3600 + 12 * 60, at)).toBe("resets in 3h 12m");
+  expect(resetsIn(at + 86400 + 15 * 3600, at)).toBe("resets in 1d 15h");
+  expect(resetsIn(at + 30, at)).toBe("resets in 1m");
+  expect(resetsIn(at, at)).toBeNull();
+  expect(resetsIn(null, at)).toBeNull();
+  const win = (used: number | null, resetsAt: number | null) => ({ key: "week", label: "Weekly", used, resetsAt });
+  expect(readingText(win(0.81, at + 7200), at)).toBe("81%  ·  resets in 2h 0m");
+  expect(readingText(win(0, null), at)).toBe("0%");
+  expect(readingText(win(null, null), at)).toBe("no data since the reset");
+});
+
+test("the phone gets percents and the same line", () => {
+  const at = 1_000_000;
+  const r = { id: "claude", label: "Claude · FS", plan: "Max 20x", signedIn: true, seen: at - 60, windows: [{ key: "week", label: "Weekly", used: 0.814, resetsAt: at + 7200 }, { key: "5h", label: "5-hour", used: null, resetsAt: null }] };
+  expect(JSON.parse(JSON.stringify(readingJson(r, at)))).toEqual({
+    id: "claude",
+    label: "Claude · FS",
+    plan: "Max 20x",
+    signed_in: true,
+    seen_ms: (at - 60) * 1000,
+    windows: [
+      { label: "Weekly", percent: 81.4, text: "81%  ·  resets in 2h 0m" },
+      { label: "5-hour", percent: null, text: "no data since the reset" },
+    ],
+  });
+  expect(readingJson({ ...r, seen: null }, at).seen_ms).toBeNull();
+});
+
+test("the newer source wins a window; extra windows stay; 5-hour comes first", () => {
+  const at = 1_000_000;
+  const monitor = [
+    { label: "Weekly", percent: 0.81, resetsAt: at + 3600 },
+    { label: "5-hour", percent: 0, resetsAt: null },
+  ];
+  const live: [string, number, number][] = [
+    ["seven_day", 0.4, at + 3600],
+    ["seven_day_opus", 0.2, at + 3600],
+  ];
+  const turnsWin = mergeWindows(monitor, live, false, at);
+  expect(turnsWin.map((w) => [w.key, w.label, w.used])).toEqual([
+    ["5h", "5-hour", 0],
+    ["week", "Weekly", 0.4],
+    ["week:opus", "Weekly · Opus", 0.2],
+  ]);
+  expect(mergeWindows(monitor, live, true, at).find((w) => w.key === "week")?.used).toBe(0.81);
+  // A window that has reset since has no number, whichever source says it.
+  expect(mergeWindows(monitor, [], false, at + 7200).find((w) => w.key === "week")?.used).toBeNull();
+});
+
+test("a turn's report wins only while it is newer than the monitor's file, and its time is stored", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  h.accountsList = [acct("claude", { usage: [{ label: "Weekly", percent: 0.81, resetsAt: h.clock + 86400 }], usageAt: h.clock - 600 }), acct("claude2")];
+  l.limitEvent(c.id, { type: "quota", windows: [["seven_day", 0.4, h.clock + 86400]] });
+  expect(l.quotaAt.get("claude")).toBe(h.clock);
+  expect(l.ctl.windows("claude")[0]?.used).toBe(0.4);
+  h.accountsList[0] = { ...(h.accountsList[0] as AccountInfo), usageAt: h.clock + 60 };
+  expect(l.ctl.windows("claude")[0]?.used).toBe(0.81);
+  // A report saved without its time counts as the newer one.
+  l.quotaAt.delete("claude");
+  expect(l.ctl.windows("claude")[0]?.used).toBe(0.4);
+  l.limitEvent(c.id, { type: "quota", windows: [["seven_day", 0.4, h.clock + 86400]] });
+  const again = new Limits(h);
+  again.load();
+  expect(again.quotaAt.get("claude")).toBe(h.clock);
+  expect(h.store.get("limits")).toContain(`"quota_at":{"claude":${h.clock}}`);
+});
+
+test("the read-out lists Claude accounts with when their numbers were seen", () => {
+  const [h, l] = setup();
+  const c = h.addChat();
+  h.accountsList = [acct("claude", { usage: [{ label: "Weekly", percent: 0.5, resetsAt: null }], usageAt: h.clock - 600 }), acct("claude2", { loggedIn: false }), acct("codex", { kind: "codex" })];
+  const ra = (id: string, over: Partial<ReadingAccount> = {}): ReadingAccount => ({ id, kind: "Claude", short: `Claude · ${id}`, email: `${id}@example.com`, plan: "", installed: true, loggedIn: true, ...over });
+  const list = [ra("claude", { plan: "Max 20x" }), ra("claude2", { loggedIn: false }), ra("claude3", { installed: false }), ra("codex", { kind: "Codex", short: "Codex" })];
+  expect(l.ctl.readings(list).map((r) => [r.id, r.label, r.plan, r.signedIn, r.seen])).toEqual([
+    ["claude", "Claude · claude", "Max 20x", true, h.clock - 600],
+    ["claude2", "Claude · claude2", "", false, null],
+  ]);
+  l.limitEvent(c.id, { type: "quota", windows: [["five_hour", 0.1, h.clock + 60]] });
+  expect(l.ctl.readings(list)[0]?.seen).toBe(h.clock);
+  // Accounts that share a badge are told apart by their email.
+  expect(l.ctl.readings([ra("claude"), ra("claude2", { short: "Claude · claude" })]).map((r) => r.label)).toEqual(["claude@example.com", "claude2@example.com"]);
 });

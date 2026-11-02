@@ -44,6 +44,8 @@ final class Attach {
     private final LinearLayout chips;
     private final List<Up> ups = new ArrayList<>();
 
+    Hub hub() { return hub; }
+
     /** The files changed here (added and uploaded, or removed): the shared draft follows. */
     Runnable onChange;
     /** An image was added here, or left (its tile's ✕, a failed upload): its number. */

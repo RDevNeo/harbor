@@ -155,7 +155,8 @@ test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
   const [, withHooks] = await json("GET", `/v1/chats/${lead.id}/team`);
   expect((withHooks.webhooks as { name: string; url: unknown; public: boolean }[]).map((w) => [w.name, typeof w.url, w.public])).toEqual([["deploys", "string", false]]);
   const [, usage] = await json("GET", "/v1/usage");
-  expect(Object.keys(usage).sort()).toEqual(["accounts", "days", "projects"]);
+  expect(Object.keys(usage).sort()).toEqual(["accounts", "days", "limits", "projects"]);
+  expect(Array.isArray(usage.limits)).toBe(true);
   const [, versions] = await json("GET", "/v1/versions");
   expect(versions.pcs).toHaveLength(1);
 });

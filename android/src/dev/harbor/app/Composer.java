@@ -552,6 +552,8 @@ final class Composer {
         tiles.addView(tile(a, s, Ui.I_UPLOAD, "Files", attach::files), tileParams(10));
         s.body.addView(tiles, Ui.margins(Ui.fill(), 0, 0, 0, 12));
         if (run != null) run.rows(a, s, (f, v) -> { s.dismiss(); ch.apply(f, v); });
+        s.card().addView(Ui.cardRow(a, Ui.I_GAUGE, "Claude usage", "5-hour and weekly limits", Ui.FG,
+                v -> { s.dismiss(); Limits.show(a, attach.hub()); }), Ui.fill());
         return s.show();
     }
 

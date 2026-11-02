@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Chat, type Item, limits, type Mention, type Repo, type Store, type Timer, type SentVia, type Webhook } from "@harbor/store";
+import { type Chat, type Item, limits, type Mention, type Repo, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import { parse as parseJson } from "./json.ts";
 import type { Event, RemoteSpec, Turn } from "./agent.ts";
@@ -12,7 +12,7 @@ import { forkable, forkJsonl, forksKey, preambleKey } from "./fork.ts";
 import { home, newUuid, now } from "./paths.ts";
 import { alive as aliveNow } from "./procfs.ts";
 import * as procs from "./procs.ts";
-import { type Account, accountEnv, binStr, type Kind, knownAccount, short, staticModels } from "./providers.ts";
+import { type Account, accountEnv, applyUsage, binStr, installed, type Kind, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as tools from "./tools.ts";
 import { type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode, withWho } from "./queue.ts";
@@ -175,7 +175,7 @@ export class Engine {
 
   constructor(readonly host: EngineHost) {
     this.reload();
-    const info = (a: Account): limits.AccountInfo => ({ id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage });
+    const info = (a: Account): limits.AccountInfo => ({ id: a.id, kind: a.kind.toLowerCase(), name: a.name, short: short(a), loggedIn: a.loggedIn, configDir: a.configDir, usage: a.usage, usageAt: a.usageAt ?? null });
     this.limits = new limits.Limits({
       store: host.store,
       chat: (id) => this.chat(id),
@@ -268,6 +268,14 @@ export class Engine {
 
   account(id: string): Account | undefined {
     return this.host.accounts().find((a) => a.id === id);
+  }
+
+  /** The Claude accounts' usage windows for the read-out, the usage monitor's file read now: until then an
+   *  account's `usage` is as old as the last read. */
+  usageReadings(): usageCtl.Reading[] {
+    const accounts = this.host.accounts();
+    applyUsage(accounts);
+    return this.limits.ctl.readings(accounts.map((a) => ({ id: a.id, kind: a.kind, short: short(a), email: a.email, plan: a.plan, installed: installed(a), loggedIn: a.loggedIn })));
   }
 
   private foreign(id: number): boolean {

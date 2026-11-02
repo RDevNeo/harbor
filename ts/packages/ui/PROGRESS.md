@@ -66,6 +66,7 @@ The shell: design layer, sidebar, chat transcript with markdown, composer, app w
 | addproject | done: the sidebar's folder-plus and the composer's "Add project…" open it; new, local, Git URL and GitHub sources (`src/addproject.ts`) | 0 of 0 |
 | prs, prdetail | done: footer button and a GitHub project's menu open the page; list, filters, panel with Summary/Timeline/Code (`src/prs.ts`, `src/pages/prs.ts`) | in mcp |
 | issues, issuedetail | done: footer button and a GitHub project's menu open the page (`src/issues.ts`, `src/pages/issues.ts`) | in mcp |
+| usagepop | done: the footer gauge opens the Claude usage popover, read when it opens (`src/logic/usagepop.ts`, `usage-*` rows of the popup in `slint/app.slint`); Esc closes only it | 2 new |
 | listdetail | done: the split, tabs, divider and menu keys of the PR and Issues pages (`src/logic/listdetail.ts`, `slint/listdetail.slint`) | 4 of 4 |
 | accountui, secretsui, remoteui, phonesui | done as Settings tabs (Account, Secrets, Devices, Phones); mesh actions run on the hub, not in the window yet | 0 of 0 |
 | terminal | done: in the surface panes' tabs (`slint/terminal.slint`, `src/terminal.ts`, a Bun PTY parsed by @xterm/headless) | 1 of 1 |

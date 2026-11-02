@@ -58,6 +58,7 @@ export interface AccountInfo {
   loggedIn: boolean | null;
   configDir: string | null;
   usage: UsageWindow[];
+  usageAt?: number | null;
 }
 
 /** How notices name an account: a Claude account by its own name, others by provider. */
@@ -240,6 +241,8 @@ export class Limits {
   stored = new Map<number, string[]>();
   /** Per account: the last quota seen in a turn. */
   quota = new Map<string, Quota[]>();
+  /** Per account: when that quota was seen (Unix time). */
+  quotaAt = new Map<string, number>();
   /** Chats whose running turn hit a limit (until it exits). */
   readonly hit = new Set<number>();
   /** Chats to move to another account once their limited turn has exited. */
@@ -260,14 +263,15 @@ export class Limits {
     const paused = [...this.paused].map(([id, p]) => `"${id}":{"account":${JSON.stringify(p.account)},"resume":${p.resume},"at":${p.at === null ? "null" : p.at},"timer":${p.timer === null ? "null" : p.timer}}`);
     const pending = [...this.stored].map(([id, q]) => `"${id}":${JSON.stringify(q)}`);
     const quota = [...this.quota].map(([a, w]) => `${JSON.stringify(a)}:[${w.map(([k, u, r]) => `[${JSON.stringify(k)},${f64Json(u)},${r}]`).join(",")}]`);
-    return `{"blocks":{${blocks.join(",")}},"paused":{${paused.join(",")}},"pending":{${pending.join(",")}},"quota":{${quota.join(",")}}}`;
+    const quotaAt = [...this.quotaAt].map(([a, t]) => `${JSON.stringify(a)}:${t}`);
+    return `{"blocks":{${blocks.join(",")}},"paused":{${paused.join(",")}},"pending":{${pending.join(",")}},"quota":{${quota.join(",")}},"quota_at":{${quotaAt.join(",")}}}`;
   }
 
   private save(): void {
     this.host.store.set("limits", this.toJson());
   }
 
-  private parse(raw: string): { blocks: Map<string, Block>; paused: Map<number, Paused>; pending: Map<number, string[]>; quota: Map<string, Quota[]> } | null {
+  private parse(raw: string): { blocks: Map<string, Block>; paused: Map<number, Paused>; pending: Map<number, string[]>; quota: Map<string, Quota[]>; quotaAt: Map<string, number> } | null {
     let v: unknown;
     try {
       v = JSON.parse(raw);
@@ -309,7 +313,14 @@ export class Limits {
         quota.set(k, list);
       }
     }
-    return { blocks, paused, pending, quota };
+    const quotaAt = new Map<string, number>();
+    if (rec(v.quota_at)) {
+      for (const [k, t] of Object.entries(v.quota_at)) {
+        if (typeof t !== "number") return null;
+        quotaAt.set(k, t);
+      }
+    }
+    return { blocks, paused, pending, quota, quotaAt };
   }
 
     load(): void {
@@ -320,6 +331,7 @@ export class Limits {
       this.paused = s.paused;
       this.stored = s.pending;
       this.quota = s.quota;
+      this.quotaAt = s.quotaAt;
     }
     const at = this.now();
     for (const [k, b] of this.blocks) if (b.until <= at - 24 * 3600) this.blocks.delete(k);
@@ -387,6 +399,7 @@ export class Limits {
     switch (ev.type) {
       case "quota":
         this.quota.set(account, ev.windows);
+        this.quotaAt.set(account, this.now());
         this.save();
         return true;
       case "limit": {
