@@ -1,0 +1,830 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, Trigger, VSep, RoundButton, StopButton, FileChip, PopoverFrame, TipArea, AccountMark, Variant, Spinner } from "widgets.slint";
+
+export struct MenuEntry {
+    icon: string,
+    tone: string,
+    label: string,
+    desc: string,
+    section: string,
+}
+
+export struct StripRow {
+    id: int,
+    name: string,
+    logo: image,
+    badge: string,
+    tip: string,
+}
+
+component WorkingDot {
+    in property <float> offset;
+    property <float> phase;
+    width: 22px;
+    height: 22px;
+    Timer {
+        interval: 80ms;
+        running: true;
+        triggered => {
+            root.phase = Math.mod(root.phase + 0.05, 1.0);
+        }
+    }
+    property <float> p: Math.mod(root.phase + root.offset, 1.0);
+    property <float> ease: 1 - (1 - p) * (1 - p) * (1 - p);
+    Rectangle {
+        width: 2 * 6px * (0.6 + 1.4 * root.ease);
+        height: self.width;
+        border-radius: self.width / 2;
+        border-width: 1.5px;
+        border-color: Theme.blue-900.with-alpha(0.5 * (1 - root.ease));
+    }
+    Rectangle {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: Theme.blue-900;
+    }
+}
+
+component AgentStrip inherits Rectangle {
+    in property <[StripRow]> rows;
+    in property <string> title;
+    in property <string> names;
+    in property <bool> header;
+    in property <bool> folded;
+    in property <bool> open;
+    in property <int> asking;
+    callback open-agent(int);
+    callback ask-stop(int);
+    callback stop(int);
+    callback cancel();
+    callback head-clicked();
+    callback stop-all();
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: 12px;
+    height: ((root.open ? root.rows.length : 0) + (root.header ? 1 : 0)) * 30px + 8px;
+    VerticalLayout {
+        padding: 4px;
+        if root.header: Rectangle {
+            height: 30px;
+            border-radius: 8px;
+            background: head-area.has-hover ? Theme.gray-100 : transparent;
+            head-area := TouchArea {
+                width: parent.width - 30px;
+                x: 0;
+                mouse-cursor: pointer;
+                clicked => {
+                    root.head-clicked();
+                }
+            }
+            HorizontalLayout {
+                x: 8px;
+                width: parent.width - 46px;
+                spacing: 8px;
+                Text {
+                    text: root.title;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: "·  " + root.names;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                if root.folded: Glyph {
+                    width: 12px;
+                    icon: root.open ? Icons.up : Icons.down;
+                    size: 12px;
+                    color: Theme.subtle;
+                }
+            }
+            Btn {
+                x: parent.width - 30px;
+                y: 1px;
+                icon: Icons.stop;
+                size: icon-xs;
+                variant: Variant.stop;
+                tip: "Stop all: every running sub-agent, and clear their queues";
+                clicked => {
+                    root.stop-all();
+                }
+            }
+        }
+        if root.open: VerticalLayout {
+            for r[nth] in root.rows: Rectangle {
+                height: 30px;
+                border-radius: 8px;
+                background: row-area.has-hover || root.asking == r.id ? Theme.gray-100 : transparent;
+                row-area := TipArea {
+                    tip: r.tip;
+                    clicked => {
+                        root.open-agent(r.id);
+                    }
+                }
+                AccountMark {
+                    x: 7px;
+                    y: 6px;
+                    width: 18px;
+                    height: 18px;
+                    logo: r.logo;
+                    badge: r.badge;
+                }
+                name := Text {
+                    x: 34px;
+                    width: min(self.preferred-width, parent.width - 34px - 140px);
+                    text: r.name;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                WorkingDot {
+                    x: 34px + name.width;
+                    y: 4px;
+                    offset: nth * 0.37;
+                }
+                if root.asking != r.id && row-area.has-hover: Btn {
+                    x: parent.width - 29px;
+                    y: 2px;
+                    icon: Icons.stop;
+                    size: icon-xs;
+                    variant: Variant.stop;
+                    tip: "Stop " + r.name;
+                    clicked => {
+                        root.ask-stop(r.id);
+                    }
+                }
+                if root.asking == r.id: HorizontalLayout {
+                    x: parent.width - self.preferred-width - 2px;
+                    height: 30px;
+                    spacing: 4px;
+                    Text {
+                        text: "Stop " + r.name + "?";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 4px;
+                    }
+                    Btn {
+                        y: 1px;
+                        text: "Cancel";
+                        size: xs;
+                        variant: ghost-muted;
+                        clicked => {
+                            root.cancel();
+                        }
+                    }
+                    Btn {
+                        y: 1px;
+                        icon: Icons.stop;
+                        text: "Stop";
+                        size: xs;
+                        variant: Variant.stop;
+                        clicked => {
+                            root.stop(r.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export struct MentionChip {
+    head: string,
+    snippet: string,
+    tip: string,
+    note: string,
+    hint: string,
+    focus: bool,
+}
+
+export struct FileItem {
+    name: string,
+    image: bool,
+}
+
+export struct ComposerState {
+    model: string,
+    model-tip: string,
+    badge: string,
+    has-effort: bool,
+    effort: string,
+    access: string,
+    access-icon: string,
+    device: string,
+    action: string,
+    action-tip: string,
+    hint: string,
+    typing: string,
+    notice: string,
+    remote: string,
+    error: string,
+    can-resume-reply: bool,
+}
+
+// slash.rs, tags.rs and chatmention.rs `row`: 32px rows; a command's source as a pill on the right.
+component ComposerMenu inherits PopoverFrame {
+    in property <[MenuEntry]> entries;
+    in property <int> selected;
+    callback pick(int);
+    callback hover(int);
+    height: min(entries.length * 32px, 288px) + 10px;
+    Flickable {
+        x: 5px;
+        y: 5px;
+        width: parent.width - 10px;
+        height: parent.height - 10px;
+        content-y: min(0px, max(-root.selected * 32px + self.height / 2 - 16px, self.height - root.entries.length * 32px));
+        VerticalLayout {
+            alignment: start;
+            for e[i] in root.entries: Rectangle {
+                property <bool> on: i == root.selected;
+                property <length> pill: e.section == "" ? 0px : pill-measure.preferred-width + 30px;
+                property <length> x0: e.section != "" ? 10px : 32px;
+                height: 32px;
+                background: self.on ? Theme.accent : transparent;
+                border-radius: Theme.radius-md;
+                pill-measure := Text {
+                    visible: false;
+                    text: e.section;
+                    font-size: 11.5px;
+                    font-weight: 500;
+                }
+                if e.section == "": Glyph {
+                    x: 11px;
+                    width: 14px;
+                    icon: e.icon;
+                    size: 14px;
+                    color: e.tone == "blue" ? Theme.blue-700 : e.tone == "amber" ? Theme.amber-700 : e.tone == "red" ? Theme.red-700 : e.tone == "green" ? Theme.green-700 : Theme.subtle;
+                }
+                name := Text {
+                    x: parent.x0;
+                    width: min(self.preferred-width, e.section != "" ? min(parent.width - parent.pill - 20px - parent.x0, parent.width * 0.45) : (parent.width - 10px - parent.x0) * 0.6);
+                    text: e.label;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                Text {
+                    x: name.x + name.width + 10px;
+                    width: max(0px, parent.width - self.x - (e.section != "" ? parent.pill + 20px : 10px));
+                    visible: self.width > 30px;
+                    text: e.desc;
+                    font-size: 12.5px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                if e.section != "": Rectangle {
+                    x: parent.width - 8px - self.width;
+                    width: parent.pill;
+                    height: 20px;
+                    border-radius: 10px;
+                    background: parent.on ? Theme.gray-300 : Theme.gray-200;
+                    Glyph {
+                        x: 7.5px;
+                        width: 11px;
+                        icon: e.icon;
+                        size: 11px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        x: 22px;
+                        text: e.section;
+                        font-size: 11.5px;
+                        font-weight: 500;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.pick(i);
+                    }
+                    changed has-hover => {
+                        if self.has-hover {
+                            root.hover(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Composer {
+    in-out property <string> text <=> field.text;
+    in property <ComposerState> state;
+    in property <image> logo;
+    in property <length> max-h: 280px;
+    in property <[FileItem]> files;
+    in property <[MenuEntry]> menu;
+    in property <int> menu-selected;
+    in property <bool> compact;
+    in property <bool> tiny;
+    in property <string> open-popup;
+    in property <string> voice;
+    in property <float> voice-level;
+    in property <string> voice-time;
+    in property <string> voice-note;
+    in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
+    out property <bool> focused: field.has-focus;
+    out property <int> cursor: field.cursor-position-byte-offset;
+    callback edited(string);
+    callback key(KeyEvent) -> bool;
+    callback send();
+    callback stop();
+    callback attach();
+    callback resume-reply();
+    callback mic();
+    callback remove-file(int);
+    callback menu-pick(int);
+    callback menu-hover(int);
+    callback popup(string, length, length);
+    in property <[StripRow]> strip-rows;
+    in property <string> strip-title;
+    in property <string> strip-names;
+    in property <bool> strip-header;
+    in property <bool> strip-folded;
+    in property <bool> strip-open;
+    in property <int> strip-asking;
+    callback strip-open-agent(int);
+    callback strip-ask-stop(int);
+    callback strip-stop(int);
+    callback strip-cancel();
+    callback strip-head();
+    callback strip-stop-all();
+    in property <bool> untrusted;
+    callback trust();
+    in property <[MentionChip]> mentions;
+    callback remove-mention(int);
+    callback note-edited(int, string);
+    callback note-done();
+    public function focus-text() {
+        field.focus();
+    }
+    public function set-cursor(at: int) {
+        field.set-selection-offsets(at, at);
+    }
+    public function copy-text(t: string) {
+        clip.text = t;
+        clip.select-all();
+        clip.copy();
+        clip.text = "";
+    }
+    property <length> line: 20px;
+    property <length> text-h: min(max(field.preferred-height, 3 * line + 2px), root.max-h);
+    VerticalLayout {
+        spacing: 8px;
+        if root.strip-rows.length > 0: AgentStrip {
+            rows: root.strip-rows;
+            title: root.strip-title;
+            names: root.strip-names;
+            header: root.strip-header;
+            folded: root.strip-folded;
+            open: root.strip-open;
+            asking: root.strip-asking;
+            open-agent(id) => {
+                root.strip-open-agent(id);
+            }
+            ask-stop(id) => {
+                root.strip-ask-stop(id);
+            }
+            stop(id) => {
+                root.strip-stop(id);
+            }
+            cancel => {
+                root.strip-cancel();
+            }
+            head-clicked => {
+                root.strip-head();
+            }
+            stop-all => {
+                root.strip-stop-all();
+            }
+        }
+        if root.untrusted: Rectangle {
+            background: Theme.bg200;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 12px;
+            min-height: trust-row.min-height;
+            preferred-height: trust-row.preferred-height;
+            trust-row := HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Cloned project: agents ignore its own agent settings and hooks until you trust it.";
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                Btn {
+                    text: "Trust project";
+                    size: xs;
+                    variant: primary;
+                    clicked => {
+                        root.trust();
+                    }
+                }
+            }
+        }
+        if root.state.error != "": HorizontalLayout {
+            padding-left: 6px;
+            Text {
+                text: root.state.error;
+                font-size: 12px;
+                color: Theme.red-900;
+                wrap: word-wrap;
+            }
+        }
+        if root.state.remote != "": HorizontalLayout {
+            padding-left: 6px;
+            Text {
+                text: root.state.remote;
+                font-size: 12px;
+                color: Theme.subtle;
+            }
+        }
+        if root.state.notice != "": Rectangle {
+            background: Theme.bg200;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 12px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                Text {
+                    text: root.state.notice;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        frame := Rectangle {
+            background: Theme.dark ? Theme.bg200 : Theme.bg100;
+            border-width: 1px;
+            border-color: field.has-focus ? Theme.gray-600 : Theme.border;
+            border-radius: 16px;
+            VerticalLayout {
+                padding-left: 18px;
+                padding-right: 14px;
+                padding-top: 17px;
+                padding-bottom: 14px;
+                spacing: 0px;
+                if root.state.typing != "": HorizontalLayout {
+                    alignment: end;
+                    padding-bottom: 4px;
+                    Text {
+                        text: root.state.typing;
+                        font-size: 12px;
+                        color: Theme.subtle;
+                    }
+                }
+                if root.mentions.length > 0: VerticalLayout {
+                    padding-bottom: 14px;
+                    spacing: 4px;
+                    // mentions.rs `draft`: the chip heads a card, its note box under it.
+                    for m[i] in root.mentions: Rectangle {
+                        background: Theme.gray-100;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        border-radius: Theme.radius-md;
+                        VerticalLayout {
+                            padding-bottom: 4px;
+                            Rectangle {
+                                height: 26px;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 2px;
+                                    spacing: 6px;
+                                    Glyph {
+                                        width: 13px;
+                                        icon: Icons.at-sign;
+                                        size: 13px;
+                                        color: Theme.subtle;
+                                    }
+                                    Text {
+                                        text: m.head;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        color: Theme.fg;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: m.snippet;
+                                        font-size: 13px;
+                                        color: Theme.subtle;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    Btn {
+                                        y: 1px;
+                                        icon: Icons.x;
+                                        size: icon-xs;
+                                        variant: ghost-muted;
+                                        tip: "Remove";
+                                        clicked => {
+                                            root.remove-mention(i);
+                                        }
+                                    }
+                                }
+                                TipArea {
+                                    width: parent.width - 32px;
+                                    x: 0;
+                                    tip: m.tip;
+                                    mouse-cursor: default;
+                                }
+                            }
+                            // egui's one-row TextEdit: its own 2px margin over the text, 15px under it.
+                            HorizontalLayout {
+                                padding-left: 22px;
+                                padding-right: 10px;
+                                padding-top: 2px;
+                                Rectangle {
+                                    min-height: note.preferred-height + 15px;
+                                    if note.text == "": Text {
+                                        x: 0;
+                                        y: 0;
+                                        text: m.hint;
+                                        font-size: 13px;
+                                        color: Theme.subtle;
+                                    }
+                                    note := TextInput {
+                                        x: 0;
+                                        y: 0;
+                                        width: parent.width;
+                                        font-size: 13px;
+                                        color: Theme.fg;
+                                        wrap: word-wrap;
+                                        single-line: false;
+                                        init => {
+                                            self.text = m.note;
+                                            if m.focus {
+                                                self.focus();
+                                            }
+                                        }
+                                        edited => {
+                                            root.note-edited(i, self.text);
+                                        }
+                                        key-pressed(e) => {
+                                            if e.text == "\n" && !e.modifiers.shift {
+                                                root.note-done();
+                                                return accept;
+                                            }
+                                            reject
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.files.length > 0: HorizontalLayout {
+                    padding-bottom: 6px;
+                    spacing: 8px;
+                    alignment: start;
+                    for f[i] in root.files: FileChip {
+                        name: f.name;
+                        image: f.image;
+                        remove => {
+                            root.remove-file(i);
+                        }
+                    }
+                }
+                Rectangle {
+                    height: root.text-h;
+                    if field.text == "": Text {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        text: root.state.hint;
+                        font-size: 14px;
+                        color: Theme.gray-900;
+                        wrap: word-wrap;
+                    }
+                    FocusScope {
+                        capture-key-pressed(e) => {
+                            if root.key(e) {
+                                return accept;
+                            }
+                            reject
+                        }
+                        field := TextInput {
+                            font-size: 14px;
+                            color: Theme.fg;
+                            single-line: false;
+                            wrap: word-wrap;
+                            selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+                            selection-foreground-color: Theme.fg;
+                            edited => {
+                                root.edited(self.text);
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 10px;
+                }
+                HorizontalLayout {
+                    height: 34px;
+                    spacing: 2px;
+                    model := Trigger {
+                        y: 2px;
+                        has-logo: true;
+                        logo: root.logo;
+                        badge: root.state.badge;
+                        label: root.tiny ? "" : root.state.model;
+                        tip: root.state.model-tip;
+                        open: root.open-popup == "model";
+                        clicked => {
+                            root.popup("model", self.absolute-position.x, self.absolute-position.y);
+                        }
+                    }
+                    if root.state.has-effort: VSep {
+                        y: 8px;
+                    }
+                    if root.state.has-effort: Trigger {
+                        y: 2px;
+                        icon: Icons.brain;
+                        label: root.compact ? "" : root.state.effort;
+                        tip: root.compact ? root.state.effort : "";
+                        open: root.open-popup == "effort";
+                        clicked => {
+                            root.popup("effort", self.absolute-position.x, self.absolute-position.y);
+                        }
+                    }
+                    VSep {
+                        y: 8px;
+                    }
+                    Trigger {
+                        y: 2px;
+                        icon: root.state.access-icon;
+                        label: root.compact ? "" : root.state.access;
+                        tip: root.compact ? root.state.access : "";
+                        open: root.open-popup == "access";
+                        clicked => {
+                            root.popup("access", self.absolute-position.x, self.absolute-position.y);
+                        }
+                    }
+                    VSep {
+                        y: 8px;
+                    }
+                    Trigger {
+                        y: 2px;
+                        icon: Icons.house;
+                        label: root.compact ? "" : root.state.device;
+                        tip: root.compact ? root.state.device : "";
+                        open: root.open-popup == "device";
+                        clicked => {
+                            root.popup("device", self.absolute-position.x, self.absolute-position.y);
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: end;
+                        // voice.rs `voice_button`: the mic; while recording the stop button, a level
+                        // meter and the time; while transcribing a spinner and what it waits for.
+                        if root.voice == "rec" && root.voice-note != "": Text {
+                            horizontal-stretch: 0;
+                            text: root.voice-note;
+                            font-size: 12.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if root.voice == "rec": Text {
+                            horizontal-stretch: 0;
+                            text: root.voice-time;
+                            font-family: "Geist Mono";
+                            font-size: 12.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if root.voice == "rec": Rectangle {
+                            width: 40px;
+                            for i in 5: Rectangle {
+                                property <float> shape: i == 2 ? 1.0 : i == 1 || i == 3 ? 0.8 : 0.55;
+                                property <float> v: min(root.voice-level * self.shape, 1.0);
+                                x: i * 40px / 5 + 40px / 9 / 2 - self.width / 2;
+                                y: (parent.height - self.height) / 2;
+                                width: 40px / 9;
+                                height: max(20px * (0.18 + 0.82 * self.v), 3px);
+                                background: root.voice-level * self.shape > 0.06 ? Theme.red-900 : Theme.gray-500;
+                            }
+                        }
+                        if root.voice == "rec": StopButton {
+                            tip: root.mic-tip;
+                            clicked => {
+                                root.mic();
+                            }
+                        }
+                        if root.voice == "busy": Rectangle {
+                            width: 18px;
+                            Spinner {
+                                radius: 6px;
+                                color: Theme.subtle;
+                            }
+                        }
+                        if root.voice == "busy": Text {
+                            horizontal-stretch: 0;
+                            text: root.voice-note;
+                            font-size: 12.5px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        if root.state.can-resume-reply && field.text == "" && root.files.length == 0: Btn {
+                            y: 1px;
+                            text: "Resume";
+                            icon: Icons.play;
+                            size: xs;
+                            variant: ghost-muted;
+                            tip: "Ask the agent to go on from where it stopped";
+                            clicked => {
+                                root.resume-reply();
+                            }
+                        }
+                        if root.voice == "": Btn {
+                            y: 1px;
+                            icon: Icons.mic;
+                            size: icon-sm;
+                            variant: ghost-muted;
+                            tip: root.mic-tip;
+                            clicked => {
+                                root.mic();
+                            }
+                        }
+                        Btn {
+                            y: 1px;
+                            icon: Icons.clip;
+                            size: icon-sm;
+                            variant: ghost-muted;
+                            tip: "Attach files or images (or drop them here)";
+                            clicked => {
+                                root.attach();
+                            }
+                        }
+                        if root.state.action == "stop": StopButton {
+                            tip: "Stop (Esc)";
+                            clicked => {
+                                root.stop();
+                            }
+                        }
+                        if root.state.action != "stop": RoundButton {
+                            icon: root.state.action == "steer" ? Icons.corner-up-right : root.state.action == "queue" ? Icons.list-plus : root.state.action == "update" ? Icons.check : root.state.action == "resume" ? Icons.play : Icons.arrow-up;
+                            enabled: root.state.action != "send" || field.text != "" || root.files.length > 0;
+                            tip: root.state.action-tip;
+                            clicked => {
+                                root.send();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.menu.length > 0: ComposerMenu {
+        x: 0px;
+        y: frame.y - self.height - 6px;
+        width: root.width - 4px;
+        entries: root.menu;
+        selected: root.menu-selected;
+        pick(i) => {
+            root.menu-pick(i);
+        }
+        hover(i) => {
+            root.menu-hover(i);
+        }
+    }
+    clip := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+    }
+}

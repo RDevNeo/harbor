@@ -1,0 +1,27 @@
+{
+  "name": "harbor-ts",
+  "version": "0.108.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "packageManager": "bun@1.4.3",
+  "engines": {
+    "bun": "1.4.3"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@xterm/headless": "6.0.0",
+    "sharp": "0.35.5",
+    "sherpa-onnx-node": "2.0.1",
+    "slint-ui": "1.18.1"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "typescript": "7.0.2"
+  }
+}

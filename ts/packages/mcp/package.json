@@ -1,0 +1,9 @@
+{
+  "name": "@harbor/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@harbor/agents": "workspace:*", "@harbor/net": "workspace:*", "@harbor/store": "workspace:*" }
+}

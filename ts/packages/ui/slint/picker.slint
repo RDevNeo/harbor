@@ -1,0 +1,302 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Glyph, TipArea, AccountMark, PopoverFrame, SearchField, KeyCap } from "widgets.slint";
+
+export struct RailItem {
+    id: string,
+    logo: image,
+    badge: string,
+    active: bool,
+    dim: bool,
+    tip: string,
+}
+
+export struct ModelRow {
+    label: string,
+    sub: string,
+    logo: image,
+    enabled: bool,
+    current: bool,
+    favorite: bool,
+}
+
+component StarFilled inherits Path {
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: "M 12 2 L 15.09 8.26 L 22 9.27 L 17 14.14 L 18.18 21.02 L 12 17.77 L 5.82 21.02 L 7 14.14 L 2 9.27 L 8.91 8.26 Z";
+}
+
+export component ModelPicker inherits PopoverFrame {
+    in property <[RailItem]> rail;
+    in property <bool> favorites-active;
+    in property <[ModelRow]> rows;
+    in-out property <int> hover;
+    in property <string> more-label;
+    in property <int> more-count;
+    in property <bool> in-more;
+    in property <string> empty;
+    in-out property <string> search <=> field.text;
+    callback rail-pick(string);
+    callback pick(int);
+    callback star(int);
+    callback more();
+    callback back();
+    callback searched(string);
+    callback key(KeyEvent) -> bool;
+    public function focus-search() {
+        field.focus-field();
+    }
+    width: 448px;
+    height: 310px;
+    TouchArea { }
+    Rectangle {
+        x: 4px;
+        y: 4px;
+        width: 52px;
+        height: 302px;
+        fav := Rectangle {
+            x: 4px;
+            y: 4px;
+            width: 40px;
+            height: 40px;
+            border-radius: Theme.radius-md;
+            background: root.favorites-active ? Theme.gray-200 : fav-area.has-hover ? Theme.gray-100 : transparent;
+            Glyph {
+                icon: Icons.star;
+                size: 18px;
+                color: Theme.amber-900;
+            }
+            fav-area := TipArea {
+                tip: "Favourites";
+                clicked => {
+                    root.rail-pick("");
+                }
+            }
+        }
+        Rectangle {
+            x: 10px;
+            y: 46px;
+            width: 32px;
+            height: 1px;
+            background: Theme.border;
+        }
+        for r[i] in root.rail: Rectangle {
+            x: 4px;
+            y: 53px + i * 44px;
+            width: 40px;
+            height: 40px;
+            border-radius: Theme.radius-md;
+            background: r.active ? Theme.gray-200 : tile-area.has-hover ? Theme.gray-100 : transparent;
+            opacity: r.dim ? 0.5 : 1;
+            AccountMark {
+                x: 8px;
+                y: 8px;
+                width: 24px;
+                height: 24px;
+                logo: r.logo;
+                badge: r.badge;
+            }
+            if r.active: Rectangle {
+                x: 49px;
+                y: 8px;
+                width: 3px;
+                height: 24px;
+                border-radius: 2px;
+                background: Theme.gray-1000;
+            }
+            tile-area := TipArea {
+                tip: r.tip;
+                clicked => {
+                    root.rail-pick(r.id);
+                }
+            }
+        }
+        Rectangle {
+            x: parent.width + 4px;
+            width: 1px;
+            background: Theme.border;
+        }
+    }
+    Rectangle {
+        x: 72px;
+        y: 4px;
+        width: parent.width - 76px;
+        height: 302px;
+        FocusScope {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: 32px;
+            capture-key-pressed(e) => {
+                if root.key(e) {
+                    return accept;
+                }
+                reject
+            }
+            field := SearchField {
+                width: parent.width;
+                height: 32px;
+                hint: "Search models...";
+                edited(t) => {
+                    root.searched(t);
+                }
+            }
+        }
+        Rectangle {
+            y: 35px;
+            height: 1px;
+            background: field.focused ? Theme.gray-700 : Theme.border;
+        }
+        Flickable {
+            y: 41px;
+            height: parent.height - 41px;
+            content-height: list.preferred-height;
+            list := VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                if root.in-more: Rectangle {
+                    height: 32px;
+                    border-radius: 4px;
+                    background: back-area.has-hover ? Theme.accent : transparent;
+                    Glyph {
+                        x: 8px;
+                        width: 16px;
+                        icon: Icons.left;
+                        size: 16px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        x: 32px;
+                        text: "Back";
+                        font-size: 14px;
+                        color: Theme.fg;
+                        vertical-alignment: center;
+                    }
+                    back-area := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.back();
+                        }
+                    }
+                }
+                if root.rows.length == 0: Text {
+                    height: 48px;
+                    text: root.empty;
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                for m[i] in root.rows: Rectangle {
+                    property <bool> lit: i == root.hover || m.current;
+                    height: 50px;
+                    border-radius: Theme.radius-lg;
+                    background: lit ? (m.current ? Theme.gray-200 : Theme.gray-100) : transparent;
+                    row-area := TouchArea {
+                        mouse-cursor: m.enabled ? pointer : default;
+                        changed has-hover => {
+                            if self.has-hover {
+                                root.hover = i;
+                            }
+                        }
+                        clicked => {
+                            if m.enabled {
+                                root.pick(i);
+                            }
+                        }
+                    }
+                    Text {
+                        x: 12px;
+                        y: 8px;
+                        text: m.label;
+                        font-size: 15px;
+                        color: Theme.fg.with-alpha(m.enabled ? 1 : 0.45);
+                    }
+                    AccountMark {
+                        x: 11px;
+                        y: 28px;
+                        width: 14px;
+                        height: 14px;
+                        logo: m.logo;
+                    }
+                    Text {
+                        x: 31px;
+                        y: 28px;
+                        height: 14px;
+                        text: m.sub;
+                        font-size: 13px;
+                        color: Theme.subtle.with-alpha(m.enabled ? 1 : 0.45);
+                        vertical-alignment: center;
+                    }
+                    if i < 9 && lit: KeyCap {
+                        x: parent.width - 33px - 10px - self.width;
+                        y: (parent.height - self.height) / 2;
+                        text: "Ctrl+" + (i + 1);
+                    }
+                    if i < 9 && !lit: Text {
+                        x: parent.width - 33px - 4px - self.preferred-width;
+                        text: "Ctrl+" + (i + 1);
+                        font-family: "Geist Mono";
+                        font-size: 12px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        x: parent.width - 33px;
+                        y: 12px;
+                        width: 26px;
+                        height: 26px;
+                        if m.favorite: StarFilled {
+                            width: 14px;
+                            height: 14px;
+                            fill: Theme.amber-900;
+                        }
+                        if !m.favorite: Glyph {
+                            icon: Icons.star;
+                            size: 15px;
+                            color: star-area.has-hover ? Theme.fg : Theme.subtle;
+                        }
+                        star-area := TipArea {
+                            tip: m.favorite ? "Unfavourite" : "Favourite";
+                            clicked => {
+                                root.star(i);
+                            }
+                        }
+                    }
+                }
+                if root.more-count > 0 && !root.in-more: Rectangle {
+                    height: 50px;
+                    border-radius: Theme.radius-lg;
+                    background: more-area.has-hover ? Theme.gray-100 : transparent;
+                    Text {
+                        x: 12px;
+                        y: 8px;
+                        text: root.more-label;
+                        font-size: 15px;
+                        color: Theme.fg;
+                    }
+                    Text {
+                        x: 12px;
+                        y: 28px;
+                        text: root.more-count + (root.more-count == 1 ? " model" : " models");
+                        font-size: 13px;
+                        color: Theme.subtle;
+                    }
+                    Glyph {
+                        x: parent.width - 28px;
+                        width: 16px;
+                        icon: Icons.right;
+                        size: 15px;
+                        color: Theme.subtle;
+                    }
+                    more-area := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.more();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

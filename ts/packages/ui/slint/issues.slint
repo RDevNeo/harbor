@@ -1,0 +1,1207 @@
+import "fonts/Geist-Regular.ttf";
+import "fonts/Geist-Medium.ttf";
+import "fonts/Geist-SemiBold.ttf";
+import "fonts/GeistMono-Regular.ttf";
+import "fonts/lucide.ttf";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, BtnSize, Empty, Glyph, MenuItem, PopoverFrame, Spinner, Separator, TipArea, TipLayer, Variant } from "widgets.slint";
+import { DetailHeader, DetailTab, Divider, PanelToggle, TabActKind } from "listdetail.slint";
+import { IssueDetail, IssueDetailData } from "issuedetail.slint";
+import { IssueAgent, IssueAvatar, IssueChip } from "issuedetail.slint";
+
+export struct IssueItem {
+    kind: string,
+    icon: string,
+    label: string,
+    count: string,
+    url: string,
+    number: string,
+    title: string,
+    state: string,
+    state-tip: string,
+    comments: string,
+    age: string,
+    author: string,
+    letter: string,
+    repo: string,
+    labels: [IssueChip],
+    accounts: string,
+    selected: bool,
+    fix-enabled: bool,
+    avatar: image,
+    has-avatar: bool,
+    h: length,
+}
+
+export struct IssueMenuEntry {
+    kind: string,
+    icon: string,
+    label: string,
+    value: string,
+    chevron: bool,
+    checked: bool,
+    current: bool,
+    kb: bool,
+    dot: color,
+    has-dot: bool,
+    avatar: image,
+    has-avatar: bool,
+    person: string,
+    letter: string,
+    logo: bool,
+    tip: string,
+    pick: int,
+}
+
+export struct IssueSubMenu {
+    open: bool,
+    width: length,
+    head: [IssueMenuEntry],
+    list: [IssueMenuEntry],
+    foot: [IssueMenuEntry],
+    top: length,
+}
+
+export struct IssueMenu {
+    name: string,
+    width: length,
+    rows: [IssueMenuEntry],
+    sub: IssueSubMenu,
+}
+
+global Colors {
+    // issues.rs `state_icon`
+    public pure function state(s: string) -> color {
+        return s == "open" ? Theme.green-900 : s == "done" ? (Theme.dark ? #c4b5fd : #7c3aed) : Theme.gray-800;
+    }
+    public pure function state-icon(s: string) -> string {
+        return s == "open" ? Icons.circle-dot : s == "done" ? Icons.circle-check : Icons.circle-slash;
+    }
+}
+
+component RowChip {
+    in property <string> name;
+    in property <color> dot;
+    in property <length> limit;
+    in property <int> index;
+    in property <int> total;
+    property <bool> fits: self.x + self.width <= limit;
+    property <bool> first-hidden: !fits && (index == 0 || self.x - 4px <= limit);
+    min-width: label.preferred-width + 22px;
+    max-width: label.preferred-width + 22px;
+    height: 18px;
+    if root.fits: Rectangle {
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 9px;
+    }
+    if root.fits: Rectangle {
+        x: 5px;
+        y: 5px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.dot;
+    }
+    label := Text {
+        x: 16px;
+        height: 18px;
+        text: root.name;
+        font-size: 12px;
+        color: root.fits ? Theme.fg : transparent;
+        vertical-alignment: center;
+    }
+    if root.first-hidden: Text {
+        x: 0px;
+        height: 18px;
+        text: "+" + (root.total - root.index);
+        font-size: 12px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+}
+
+// issues.rs `row`
+component IssueRow {
+    in property <IssueItem> item;
+    in property <string> fix-label;
+    callback open();
+    callback act(string);
+    height: 62px;
+    property <length> top: 21px;
+    property <length> line2: 44px;
+    property <length> right: root.width - 12px;
+    property <length> num-w: comments.visible ? comments.preferred-width : 0px;
+    property <length> cx: comments.visible ? root.right - num-w - 20px : root.right;
+    property <length> meta-end: item.accounts != "" ? chip.x - 8px : age.x - 10px;
+    property <length> limit: min(meta-end - 10px, root.right - 90px);
+    property <length> x0: 44px;
+    property <length> pop-x;
+    property <length> pop-y;
+    Rectangle {
+        y: 2px;
+        height: 58px;
+        border-radius: Theme.radius-md;
+        background: root.item.selected ? Theme.accent : area.has-hover ? Theme.accent.with-alpha(0.6) : transparent;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                root.pop-x = min(self.mouse-x, root.width - 230px);
+                root.pop-y = self.mouse-y;
+                menu.show();
+            }
+        }
+        clicked => {
+            root.open();
+        }
+    }
+    TipArea {
+        x: 26px - 9px;
+        y: 22px - 9px;
+        width: 18px;
+        height: 18px;
+        tip: root.item.state-tip;
+        Glyph {
+            icon: Colors.state-icon(root.item.state);
+            size: 16px;
+            color: Colors.state(root.item.state);
+        }
+    }
+    comments := Text {
+        visible: root.item.comments != "";
+        x: root.right - self.preferred-width;
+        y: root.top - 10px;
+        width: self.preferred-width;
+        height: 20px;
+        text: root.item.comments;
+        font-size: 13px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    if root.item.comments != "": Glyph {
+        x: root.right - root.num-w - 11px - 8px;
+        y: root.top - 8px;
+        width: 16px;
+        height: 16px;
+        icon: Icons.message;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    age := Text {
+        x: root.right - self.preferred-width;
+        y: root.line2 - 10px;
+        width: self.preferred-width;
+        height: 20px;
+        text: root.item.age;
+        font-size: 12.5px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    chip := Rectangle {
+        visible: root.item.accounts != "";
+        x: age.x - 10px - self.width;
+        y: root.line2 - 9px;
+        width: chip-text.preferred-width + 26px;
+        height: 18px;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: 9px;
+        Glyph {
+            x: 11px - 5.5px;
+            y: 9px - 5.5px;
+            width: 11px;
+            height: 11px;
+            icon: Icons.user-round;
+            size: 11px;
+            color: Theme.subtle;
+        }
+        chip-text := Text {
+            x: 20px;
+            height: 18px;
+            text: root.item.accounts;
+            font-size: 11.5px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        TipArea {
+            tip: "The GitHub accounts that see it";
+        }
+    }
+    num := Text {
+        x: root.x0;
+        y: root.top - 1px - 10px;
+        height: 20px;
+        text: root.item.number;
+        font-size: 13px;
+        color: Theme.gray-800;
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.x0 + num.preferred-width + 7px;
+        y: root.top - 10px;
+        width: max(root.cx - 24px - self.x, 40px);
+        height: 20px;
+        text: root.item.title;
+        font-size: 15px;
+        font-weight: 500;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    IssueAvatar {
+        x: root.x0;
+        y: root.line2 - 7px;
+        d: 14px;
+        letter: root.item.letter;
+        img: root.item.avatar;
+        has: root.item.has-avatar;
+    }
+    HorizontalLayout {
+        x: root.x0 + 19px;
+        y: root.line2 - 9px;
+        height: 18px;
+        spacing: 4px;
+        alignment: start;
+        Text {
+            text: root.item.author;
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 4px;
+        }
+        Text {
+            text: root.item.repo;
+            font-size: 13px;
+            color: Theme.gray-800;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 6px;
+        }
+        for l[i] in root.item.labels: RowChip {
+            name: l.name;
+            dot: l.color;
+            limit: root.limit - root.x0 - 19px;
+            index: i;
+            total: root.item.labels.length;
+        }
+    }
+    menu := PopupWindow {
+        x: root.pop-x;
+        y: root.pop-y;
+        width: 230px;
+        PopoverFrame {
+            VerticalLayout {
+                padding: 4px;
+                MenuItem {
+                    icon: Icons.panel-right;
+                    label: "Open in side panel";
+                    clicked => {
+                        root.act("open");
+                    }
+                }
+                MenuItem {
+                    icon: Icons.globe;
+                    label: "Open in Harbor's browser";
+                    clicked => {
+                        root.act("browse");
+                    }
+                }
+                MenuItem {
+                    icon: Icons.external;
+                    label: "Open on GitHub";
+                    clicked => {
+                        root.act("github");
+                    }
+                }
+                MenuItem {
+                    icon: Icons.copy;
+                    label: "Copy link";
+                    clicked => {
+                        root.act("copy");
+                    }
+                }
+                Rectangle {
+                    height: 9px;
+                    Separator {
+                        x: -4px;
+                        width: parent.width + 8px;
+                        y: 4px;
+                    }
+                }
+                MenuItem {
+                    icon: Icons.sparkles;
+                    label: root.fix-label;
+                    enabled: root.item.fix-enabled;
+                    clicked => {
+                        root.act("fix");
+                    }
+                }
+                MenuItem {
+                    icon: Icons.pen-line;
+                    label: "Fix with instructions…";
+                    enabled: root.item.fix-enabled;
+                    clicked => {
+                        root.act("fix-ask");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// prs.rs `section`
+component SectionHeader {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> count;
+    height: 34px;
+    Glyph {
+        x: 26px - 8px;
+        y: 17px - 8px;
+        width: 16px;
+        height: 16px;
+        icon: root.icon;
+        size: 16px;
+        color: Theme.gray-800;
+    }
+    name := Text {
+        x: 42px;
+        height: 34px;
+        text: root.label;
+        font-size: 14px;
+        color: Theme.gray-800;
+        vertical-alignment: center;
+    }
+    num := Text {
+        x: name.x + name.preferred-width + 10px;
+        height: 34px;
+        text: root.count;
+        font-size: 14px;
+        color: Theme.gray-700;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: num.x + num.preferred-width + 10px;
+        y: 17px;
+        width: max(0px, root.width - 12px - self.x);
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// prs.rs `tool_btn`
+component ToolBtn {
+    in property <string> icon;
+    in property <string> label;
+    in property <int> badge;
+    in property <bool> open;
+    in property <image> logo;
+    in property <bool> use-logo;
+    in property <bool> busy;
+    in property <string> tip;
+    callback clicked();
+    out property <length> w: label == "" ? 36px : 12px + 16px + 8px + name.preferred-width + (badge > 0 ? badge-text.preferred-width + 18px : 0px) + 14px;
+    width: w;
+    height: 36px;
+    Rectangle {
+        background: area.has-hover || root.open ? Theme.accent : Theme.bg100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md;
+    }
+    if root.label == "" && !root.use-logo && !root.busy: Glyph {
+        icon: root.icon;
+        size: 16px;
+        color: Theme.fg;
+    }
+    if root.use-logo: Image {
+        x: 9.5px;
+        y: 9.5px;
+        width: 17px;
+        height: 17px;
+        source: root.logo;
+    }
+    if root.busy: Spinner {
+        x: 18px - 6.5px;
+        y: 18px - 6.5px;
+        radius: 5.4px;
+    }
+    if root.label != "": Glyph {
+        x: 12px;
+        width: 16px;
+        icon: root.icon;
+        size: 16px;
+        color: Theme.fg;
+    }
+    name := Text {
+        x: 36px;
+        height: 36px;
+        text: root.label;
+        font-size: 14px;
+        font-weight: 500;
+        color: Theme.fg;
+        vertical-alignment: center;
+    }
+    if root.badge > 0: Rectangle {
+        x: 36px + name.preferred-width + 8px;
+        y: 9px;
+        width: badge-text.preferred-width + 12px;
+        height: 18px;
+        border-radius: 9px;
+        background: Theme.gray-200;
+    }
+    badge-text := Text {
+        visible: root.badge > 0;
+        x: 36px + name.preferred-width + 8px + 6px;
+        height: 36px;
+        text: root.badge;
+        font-family: "Geist Mono";
+        font-size: 12px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    area := TipArea {
+        tip: root.tip;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The search box: widgets.rs `search_field` in prs.rs `toolbar`'s frame.
+component SearchBox {
+    in-out property <string> text <=> field.text;
+    in property <string> hint;
+    out property <bool> focused: field.has-focus;
+    callback edited(string);
+    public function focus-field() {
+        field.focus();
+    }
+    public function blur() {
+        field.clear-focus();
+    }
+    height: 38px;
+    Rectangle {
+        background: Theme.bg100;
+        border-width: 1px;
+        border-color: field.has-focus ? Theme.gray-700 : Theme.border;
+        border-radius: Theme.radius-md;
+    }
+    Glyph {
+        x: 16px - 8px;
+        y: 19px - 8px;
+        width: 16px;
+        height: 16px;
+        icon: Icons.search;
+        size: 16px;
+        color: Theme.subtle;
+    }
+    if field.text == "": Text {
+        x: 31px;
+        height: 38px;
+        text: root.hint;
+        font-size: 14px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    field := TextInput {
+        x: 31px;
+        width: root.width - 31px - 9px;
+        height: 38px;
+        font-size: 14px;
+        color: Theme.fg;
+        vertical-alignment: center;
+        single-line: true;
+        selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+        selection-foreground-color: Theme.fg;
+        edited => {
+            root.edited(self.text);
+        }
+    }
+}
+
+// listdetail.rs `menu_row` through prs.rs: one row of a dropdown.
+component MenuRowView {
+    in property <IssueMenuEntry> e;
+    callback picked();
+    callback hovered();
+    height: 32px;
+    property <length> pad: e.icon != "" ? 26px : 0px;
+    property <length> end: root.width - 8px - (e.chevron ? 18px : e.checked ? 20px : 0px);
+    Rectangle {
+        background: area.has-hover || e.current || e.kb ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+    }
+    if e.icon != "" && !e.logo && e.person == "": Glyph {
+        x: 16px - 8px;
+        width: 16px;
+        icon: e.icon;
+        size: 16px;
+        color: Theme.subtle;
+    }
+    if e.logo: Image {
+        x: 16px - 7.5px;
+        y: 16px - 7.5px;
+        width: 15px;
+        height: 15px;
+        source: logo-image;
+    }
+    if e.person != "": IssueAvatar {
+        x: 16px - 8px;
+        y: 16px - 8px;
+        d: 16px;
+        letter: e.letter;
+        img: e.avatar;
+        has: e.has-avatar;
+    }
+    if e.has-dot: Rectangle {
+        x: 16px - 4px;
+        y: 16px - 4px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: e.dot;
+    }
+    if e.chevron: Glyph {
+        x: root.width - 8px - 6px - 7px;
+        width: 14px;
+        icon: Icons.right;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    if e.checked && !e.chevron: Glyph {
+        x: root.width - 8px - 7px - 7px;
+        width: 14px;
+        icon: Icons.check;
+        size: 14px;
+        color: Theme.fg;
+    }
+    value := Text {
+        visible: e.value != "";
+        x: root.end - self.width;
+        width: min(self.preferred-width, 110px);
+        text: e.value;
+        font-size: 13px;
+        color: Theme.subtle;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 8px + root.pad;
+        width: max(10px, root.end - (e.value != "" ? value.width + 8px : 0px) - self.x);
+        text: e.label;
+        font-size: 14px;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    area := TipArea {
+        tip: e.tip;
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
+        clicked => {
+            root.picked();
+            root.hovered();
+        }
+    }
+    in property <image> logo-image;
+}
+
+component MenuEntries {
+    in property <[IssueMenuEntry]> entries;
+    in property <image> logo;
+    callback picked(int);
+    callback hovered(int);
+    VerticalLayout {
+        spacing: 0px;
+        for e in root.entries: Rectangle {
+            height: e.kind == "row" ? 32px : e.kind == "sep" ? 9px : 26px;
+            if e.kind == "row": MenuRowView {
+                x: 0px;
+                width: parent.width;
+                e: e;
+                logo-image: root.logo;
+                picked => {
+                    root.picked(e.pick);
+                }
+                hovered => {
+                    root.hovered(e.pick);
+                }
+            }
+            if e.kind == "sep": Rectangle {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: 1px;
+                background: Theme.border;
+            }
+            if e.kind == "note": Text {
+                x: 10px;
+                y: 4px;
+                height: 16px;
+                text: e.label;
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// widgets.rs `popover_frame` around rows; `list` scrolls from 320 px.
+component MenuSurface inherits PopoverFrame {
+    in property <length> inner: 220px;
+    in property <[IssueMenuEntry]> head;
+    in property <[IssueMenuEntry]> list;
+    in property <[IssueMenuEntry]> foot;
+    in property <image> logo;
+    callback picked(int);
+    callback hovered(int);
+    width: inner + 10px;
+    height: col.preferred-height + 10px;
+    TouchArea { }
+    col := VerticalLayout {
+        x: 5px;
+        y: 5px;
+        width: root.inner;
+        spacing: 0px;
+        MenuEntries {
+            entries: root.head;
+            logo: root.logo;
+            picked(i) => {
+                root.picked(i);
+            }
+            hovered(i) => {
+                root.hovered(i);
+            }
+        }
+        if root.list.length > 0: Flickable {
+            height: min(scroller.preferred-height, 320px);
+            viewport-height: scroller.preferred-height;
+            scroller := MenuEntries {
+                width: root.inner;
+                entries: root.list;
+                logo: root.logo;
+                picked(i) => {
+                    root.picked(i);
+                }
+                hovered(i) => {
+                    root.hovered(i);
+                }
+            }
+        }
+        MenuEntries {
+            entries: root.foot;
+            logo: root.logo;
+        }
+    }
+}
+
+export component IssuesList inherits Rectangle {
+    in property <[IssueItem]> items;
+    in property <string> notes;
+    in property <string> body-kind;
+    in property <string> body-title;
+    in property <string> body-desc;
+    in property <string> body-icon;
+    in property <int> active;
+    in property <string> open-menu;
+    in property <bool> loading;
+    in property <bool> panel;
+    in property <bool> docked: true;
+    in property <bool> has-tabs;
+    in property <image> github;
+    in property <string> fix-label;
+    in-out property <string> search <=> box.text;
+    out property <length> sort-x: sort-btn.x;
+    out property <length> filters-x: filters-btn.x;
+    out property <length> provider-x: provider-btn.x;
+    out property <length> buttons-bottom: toolbar-y + (narrow ? 46px : 0px) + 36px;
+    out property <bool> search-focused: box.focused;
+    callback search-edited(string);
+    callback tool(string);
+    callback open(string);
+    callback row-act(string, string);
+    callback close();
+    callback toggle-panel();
+    public function focus-search() {
+        box.focus-field();
+    }
+    public function blur-search() {
+        box.blur();
+    }
+    property <length> toolbar-y: 63px;
+    property <length> side: max((root.width - 1180px) / 2, root.width < 520px ? 12px : 24px);
+    property <length> cw: root.width - 2 * side;
+    property <length> filt-w: 12px + 16px + 8px + 46px + (root.active > 0 ? 30px : 0px) + 14px;
+    property <length> rest: 84px + filt-w + 72px + 32px + 2px;
+    property <bool> narrow: cw - rest < 240px;
+    property <length> search-w: narrow ? cw - 2px : cw - rest;
+    property <length> list-y: narrow ? toolbar-y + 46px + 36px + 19px : toolbar-y + 36px + 19px;
+    Text {
+        x: root.docked ? 20px : 52px;
+        y: 10px;
+        height: 32px;
+        text: "Issues";
+        font-size: 15px;
+        font-weight: 500;
+        color: Theme.fg;
+        vertical-alignment: center;
+    }
+    if !root.panel: HorizontalLayout {
+        y: 10px;
+        height: 32px;
+        padding-right: 12px;
+        spacing: 6px;
+        alignment: end;
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            PanelToggle {
+                has-tabs: root.has-tabs;
+                toggle => {
+                    root.toggle-panel();
+                }
+            }
+        }
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            Btn {
+                icon: Icons.x;
+                variant: Variant.ghost-muted;
+                size: BtnSize.icon-xs;
+                tip: "Close";
+                clicked => {
+                    root.close();
+                }
+            }
+        }
+    }
+    box := SearchBox {
+        x: root.side;
+        y: root.toolbar-y - 1px;
+        width: root.search-w;
+        hint: "Search issues, or label:bug";
+        edited(t) => {
+            root.search-edited(t);
+        }
+    }
+    sort-btn := ToolBtn {
+        x: root.narrow ? root.side : root.side + root.search-w + 8px;
+        y: root.toolbar-y + (root.narrow ? 46px : 0px);
+        icon: Icons.arrow-down-up;
+        label: "Sort";
+        open: root.open-menu == "sort";
+        tip: "Sort the list";
+        clicked => {
+            root.tool("sort");
+        }
+    }
+    filters-btn := ToolBtn {
+        x: sort-btn.x + sort-btn.width + 8px;
+        y: sort-btn.y;
+        icon: Icons.filter;
+        label: "Filters";
+        badge: root.active;
+        open: root.open-menu == "filters";
+        clicked => {
+            root.tool("filters");
+        }
+    }
+    provider-btn := ToolBtn {
+        x: filters-btn.x + filters-btn.width + 8px;
+        y: sort-btn.y;
+        use-logo: true;
+        logo: root.github;
+        open: root.open-menu == "provider";
+        tip: "Filter by provider";
+        clicked => {
+            root.tool("provider");
+        }
+    }
+    ToolBtn {
+        x: provider-btn.x + provider-btn.width + 8px;
+        y: sort-btn.y;
+        icon: Icons.refresh;
+        busy: root.loading;
+        tip: "Refresh";
+        clicked => {
+            if !root.loading {
+                root.tool("refresh");
+            }
+        }
+    }
+    Flickable {
+        x: 0px;
+        y: root.list-y;
+        width: root.width;
+        height: root.height - root.list-y;
+        viewport-width: root.width;
+        viewport-height: max(self.height, content.preferred-height);
+        property <length> avail: root.width;
+        property <length> side: max((avail - 1180px) / 2, avail < 520px ? 12px : 24px);
+        content := VerticalLayout {
+            x: side;
+            width: avail - 2 * side;
+            spacing: 0px;
+            alignment: start;
+            if root.notes != "": Text {
+                height: 24px;
+                text: root.notes;
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.body-kind == "loading": HorizontalLayout {
+                padding-top: 24px;
+                padding-left: 16px;
+                spacing: 8px;
+                height: 24px + 20px;
+                alignment: start;
+                Spinner {
+                    width: 16px;
+                    height: 16px;
+                }
+                Text {
+                    text: "Loading issues…";
+                    font-size: 14px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+            }
+            if root.body-kind == "error" || root.body-kind == "empty": VerticalLayout {
+                padding-top: 64px;
+                Empty {
+                    icon: root.body-icon;
+                    title: root.body-title;
+                    desc: root.body-desc;
+                }
+            }
+            if root.body-kind == "rows": VerticalLayout {
+                spacing: 0px;
+                for it in root.items: Rectangle {
+                    height: it.h;
+                    if it.kind == "section": SectionHeader {
+                        x: 0px;
+                        width: parent.width;
+                        icon: it.icon;
+                        label: it.label;
+                        count: it.count;
+                    }
+                    if it.kind == "issue": IssueRow {
+                        x: 0px;
+                        width: parent.width;
+                        item: it;
+                        fix-label: root.fix-label;
+                        open => {
+                            root.open(it.url);
+                        }
+                        act(a) => {
+                            root.row-act(it.url, a);
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                height: 24px;
+            }
+        }
+    }
+}
+
+export global IssuesBus {
+    in-out property <bool> docked: true;
+    in property <[IssueItem]> items;
+    in property <string> notes;
+    in property <string> body-kind;
+    in property <string> body-title;
+    in property <string> body-desc;
+    in property <string> body-icon;
+    in property <int> active;
+    in property <bool> loading;
+    in property <image> github;
+    in property <string> fix-label;
+    in property <IssueMenu> menu;
+    in property <[DetailTab]> tabs;
+    in property <int> tab;
+    in property <bool> showing;
+    in property <bool> maxed;
+    in property <float> frac: 0.5;
+    in property <IssueDetailData> detail;
+    in property <[IssueAgent]> agents;
+    in-out property <string> search;
+    callback search-edited(string);
+    callback tool(string);
+    callback open(string);
+    callback row-act(string, string);
+    callback close-page();
+    callback tab-act(TabActKind, int);
+    callback divider(length, length);
+    callback detail-act(string);
+    callback menu-pick(bool, int);
+    callback menu-hover(int);
+    callback menu-close();
+    callback menu-key(string) -> bool;
+    callback shortcut(string, bool, bool, bool) -> bool;
+    callback esc-page(bool);
+    callback link(string);
+    callback copy-text(string);
+    in-out property <int> focus-tick;
+}
+
+export component IssuesPage inherits Rectangle {
+    in-out property <bool> docked <=> IssuesBus.docked;
+    in property <[IssueItem]> items <=> IssuesBus.items;
+    in property <string> notes <=> IssuesBus.notes;
+    in property <string> body-kind <=> IssuesBus.body-kind;
+    in property <string> body-title <=> IssuesBus.body-title;
+    in property <string> body-desc <=> IssuesBus.body-desc;
+    in property <string> body-icon <=> IssuesBus.body-icon;
+    in property <int> active <=> IssuesBus.active;
+    in property <bool> loading <=> IssuesBus.loading;
+    in property <image> github <=> IssuesBus.github;
+    in property <string> fix-label <=> IssuesBus.fix-label;
+    in property <IssueMenu> menu <=> IssuesBus.menu;
+    in property <[DetailTab]> tabs <=> IssuesBus.tabs;
+    in property <int> tab <=> IssuesBus.tab;
+    in property <bool> showing <=> IssuesBus.showing;
+    in property <bool> maxed <=> IssuesBus.maxed;
+    in property <float> frac <=> IssuesBus.frac;
+    in property <IssueDetailData> detail <=> IssuesBus.detail;
+    in property <[IssueAgent]> agents <=> IssuesBus.agents;
+    in-out property <string> search <=> IssuesBus.search;
+    callback search-edited <=> IssuesBus.search-edited;
+    callback tool <=> IssuesBus.tool;
+    callback open <=> IssuesBus.open;
+    callback row-act <=> IssuesBus.row-act;
+    callback close-page <=> IssuesBus.close-page;
+    callback tab-act <=> IssuesBus.tab-act;
+    callback divider <=> IssuesBus.divider;
+    callback detail-act <=> IssuesBus.detail-act;
+    callback menu-pick <=> IssuesBus.menu-pick;
+    callback menu-hover <=> IssuesBus.menu-hover;
+    callback menu-close <=> IssuesBus.menu-close;
+    callback menu-key <=> IssuesBus.menu-key;
+    callback shortcut <=> IssuesBus.shortcut;
+    callback esc-page <=> IssuesBus.esc-page;
+    callback link <=> IssuesBus.link;
+    callback copy-text <=> IssuesBus.copy-text;
+    in-out property <int> focus-tick <=> IssuesBus.focus-tick;
+    property <length> panel-w: min(max(root.width * root.frac, 340px), root.width - 340px);
+    property <bool> both: root.showing && !root.maxed && root.width >= 680px;
+    property <length> list-w: root.showing ? (root.both ? root.width - panel-w : 0px) : root.width;
+    property <bool> menu-open: root.menu.name != "";
+    property <length> menu-y: list.buttons-bottom + 6px;
+    property <length> menu-x: min(root.menu.name == "sort" ? list.sort-x : root.menu.name == "filters" ? list.filters-x : list.provider-x, root.width - (root.menu.width + 10px));
+    property <length> sub-w: root.menu.sub.width + 10px;
+    property <length> main-right: root.menu-x + 5px + root.menu.width;
+    property <bool> sub-left: root.main-right + 10px + root.sub-w + 4px > root.width;
+    property <length> sub-x: root.sub-left ? root.menu-x + 5px - 10px - root.sub-w - 4px : root.main-right + 10px;
+    public function focus-search() {
+        list.focus-search();
+    }
+    changed focus-tick => {
+        list.focus-search();
+    }
+    focus := FocusScope {
+        init => {
+            self.focus();
+        }
+        capture-key-pressed(e) => {
+            if root.menu-open {
+                if e.text == Key.UpArrow && root.menu-key("up") {
+                    return accept;
+                }
+                if e.text == Key.DownArrow && root.menu-key("down") {
+                    return accept;
+                }
+                if e.text == Key.Home && root.menu-key("home") {
+                    return accept;
+                }
+                if e.text == Key.End && root.menu-key("end") {
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") && root.menu-key("enter") {
+                    return accept;
+                }
+                if e.text == Key.RightArrow && root.menu-key("right") {
+                    return accept;
+                }
+                if e.text == Key.LeftArrow && root.menu-key("left") {
+                    return accept;
+                }
+                if e.text == Key.Escape {
+                    root.menu-close();
+                    return accept;
+                }
+            }
+            if e.text == Key.Escape {
+                root.esc-page(list.search-focused);
+                if list.search-focused {
+                    list.blur-search();
+                    focus.focus();
+                }
+                return accept;
+            }
+            if (e.modifiers.control || e.modifiers.meta) && root.shortcut(e.text, e.modifiers.control || e.modifiers.meta, e.modifiers.shift, e.modifiers.alt) {
+                return accept;
+            }
+            reject
+        }
+        list := IssuesList {
+            x: 0px;
+            width: root.showing ? (root.both ? root.list-w : 0px) : root.width;
+            height: root.height;
+            visible: root.list-w > 0px;
+            items: root.items;
+            notes: root.notes;
+            body-kind: root.body-kind;
+            body-title: root.body-title;
+            body-desc: root.body-desc;
+            body-icon: root.body-icon;
+            active: root.active;
+            open-menu: root.menu.name;
+            loading: root.loading;
+            panel: root.showing;
+            docked: root.docked;
+            has-tabs: root.tabs.length > 0;
+            github: root.github;
+            fix-label: root.fix-label;
+            search <=> root.search;
+            search-edited(t) => {
+                root.search-edited(t);
+            }
+            tool(k) => {
+                root.tool(k);
+            }
+            open(u) => {
+                root.open(u);
+            }
+            row-act(u, a) => {
+                root.row-act(u, a);
+            }
+            close => {
+                root.close-page();
+            }
+            toggle-panel => {
+                root.tab-act(TabActKind.toggle, -1);
+            }
+        }
+        if root.both: Divider {
+            x: root.list-w - 3px;
+            width: 7px;
+            height: root.height;
+            page-x: root.list-w - 3px;
+            dragged(x) => {
+                root.divider(x, root.width);
+            }
+        }
+        if root.showing: Rectangle {
+            x: root.both ? root.list-w + 1px : 0px;
+            width: root.both ? root.panel-w - 1px : root.width;
+            height: root.height;
+            clip: true;
+            DetailHeader {
+                x: 0px;
+                y: 10px;
+                width: parent.width;
+                tabs: root.tabs;
+                active: root.tab;
+                max: root.maxed;
+                close-hint: "Close";
+                act(k, i) => {
+                    root.tab-act(k, i);
+                }
+                close-page => {
+                    root.close-page();
+                }
+            }
+            IssueDetail {
+                x: 0px;
+                y: 49px;
+                width: parent.width;
+                height: parent.height - 49px;
+                data: root.detail;
+                agents: root.agents;
+                act(a) => {
+                    root.detail-act(a);
+                }
+                link(u) => {
+                    root.link(u);
+                }
+                copy-text(t) => {
+                    root.copy-text(t);
+                }
+            }
+        }
+        if root.menu-open: TouchArea {
+            clicked => {
+                root.menu-close();
+            }
+        }
+        if root.menu-open: MenuSurface {
+            x: root.menu-x;
+            y: root.menu-y;
+            inner: root.menu.width;
+            head: root.menu.rows;
+            logo: root.github;
+            picked(i) => {
+                root.menu-pick(false, i);
+            }
+            hovered(i) => {
+                root.menu-hover(i);
+            }
+        }
+        if root.menu-open && root.menu.sub.open: MenuSurface {
+            x: root.sub-x;
+            y: root.menu-y + root.menu.sub.top - 6px;
+            inner: root.menu.sub.width;
+            head: root.menu.sub.head;
+            list: root.menu.sub.list;
+            foot: root.menu.sub.foot;
+            logo: root.github;
+            picked(i) => {
+                root.menu-pick(true, i);
+            }
+        }
+    }
+}
+
+export component IssuesWindow inherits Window {
+    in-out property <bool> dark <=> Theme.dark;
+    width: 1400px;
+    height: 900px;
+    background: Theme.bg100;
+    default-font-family: "Geist";
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 256px;
+        height: root.height;
+        background: Theme.bg200;
+        Rectangle {
+            x: parent.width - 1px;
+            width: 1px;
+            background: Theme.border;
+        }
+    }
+    page := IssuesPage {
+        x: 256px;
+        width: root.width - 256px;
+        height: root.height;
+    }
+    TipLayer {
+        window-width: root.width;
+    }
+}

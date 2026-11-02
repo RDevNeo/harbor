@@ -1,0 +1,14 @@
+#!/bin/bash
+for a in "$@"; do
+  case "$a" in
+    http://127.0.0.1:* | http://localhost:*) exec /usr/bin/curl "$@" ;;
+  esac
+done
+printf '%s\n' "$*" >> "${RIG_CURL_LOG:?}"
+for a in "$@"; do
+  case "$a" in
+    */releases/latest) printf 'https://github.com/RDevNeo/harbor/releases/tag/v%s' "${RIG_LATEST:-0.109.0}"; exit 0 ;;
+  esac
+done
+echo "curl: (6) no network in this rig" >&2
+exit 6

@@ -1,0 +1,1138 @@
+import "fonts/Geist-Regular.ttf";
+import "fonts/Geist-Medium.ttf";
+import "fonts/Geist-SemiBold.ttf";
+import "fonts/GeistMono-Regular.ttf";
+import "fonts/lucide.ttf";
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, BtnSize, Empty, Glyph, MenuItem, PopoverFrame, SearchField, Separator, Spinner, TipArea, TipLayer, Variant } from "widgets.slint";
+import { DetailTab, Divider, PanelToggle, TabActKind } from "listdetail.slint";
+import { PrAvatar, PrChip, PrChipView, PrDetailPanel, PrEvent, PrHeader, PrLine, PrSummary, PrTone } from "prdetail.slint";
+
+export struct PrRow {
+    kind: string,
+    url: string,
+    height: length,
+    section-icon: string,
+    label: string,
+    count: string,
+    state-icon: string,
+    state-tone: string,
+    state-tip: string,
+    number: string,
+    title: string,
+    checks-icon: string,
+    checks-tone: string,
+    checks-tip: string,
+    review-icon: string,
+    review-tone: string,
+    review-tip: string,
+    adds: string,
+    dels: string,
+    age: string,
+    author: string,
+    letter: string,
+    repo: string,
+    chips: [PrChip],
+    more: string,
+    selected: bool,
+}
+
+export struct PrMenuRow {
+    kind: string,
+    icon: string,
+    label: string,
+    value: string,
+    chevron: bool,
+    checked: bool,
+    active: bool,
+    dot: color,
+    letter: string,
+    mark: string,
+    y: length,
+    height: length,
+}
+
+export struct PrAction {
+    id: string,
+    icon: string,
+    label: string,
+    enabled: bool,
+    tip: string,
+    sep: bool,
+}
+
+component ToolButton {
+    in property <string> icon;
+    in property <string> label;
+    in property <int> badge;
+    in property <bool> open;
+    in property <bool> spin;
+    in property <image> logo;
+    in property <string> tip;
+    callback clicked;
+    height: 36px;
+    width: label != "" ? 12px + 16px + 8px + text.preferred-width + (badge > 0 ? count-w.preferred-width + 12px + 8px + 10px : 0px) + 14px : 36px;
+    count-w := Text {
+        visible: false;
+        text: root.badge;
+        font-family: "Geist Mono";
+        font-size: 12px;
+    }
+    Rectangle {
+        background: root.open || area.has-hover ? Theme.accent : Theme.bg100;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md;
+    }
+    if root.label != "": Glyph {
+        x: 12px;
+        width: 16px;
+        icon: root.icon;
+        size: 16px;
+        color: Theme.fg;
+    }
+    text := Text {
+        x: 12px + 16px + 8px;
+        visible: root.label != "";
+        text: root.label;
+        font-size: 14px;
+        font-weight: 500;
+        color: Theme.fg;
+        vertical-alignment: center;
+    }
+    if root.label != "" && root.badge > 0: Rectangle {
+        x: 12px + 16px + 8px + text.preferred-width + 8px;
+        y: 9px;
+        width: count-w.preferred-width + 12px;
+        height: 18px;
+        border-radius: 9px;
+        background: Theme.gray-200;
+        count := Text {
+            text: root.badge;
+            font-family: "Geist Mono";
+            font-size: 12px;
+            color: Theme.subtle;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+    if root.label == "" && root.logo.width > 0 && root.icon == "": Image {
+        width: 17px;
+        height: 17px;
+        source: root.logo;
+    }
+    if root.label == "" && root.icon != "" && !root.spin: Glyph {
+        icon: root.icon;
+        size: 16px;
+        color: Theme.fg;
+    }
+    if root.spin: Spinner {
+        radius: 5.4px;
+    }
+    area := TipArea {
+        tip: root.tip;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Chips {
+    in property <[PrChip]> chips;
+    in property <string> more;
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        for c in root.chips: PrChipView {
+            chip: c;
+        }
+        if root.more != "": Text {
+            text: root.more;
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// A tooltip over a row's icon that still lets the row be clicked and right-clicked.
+component RowTip inherits TipArea {
+    callback context(length, length);
+    pointer-event(e) => {
+        if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+            root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+    }
+}
+
+// prs.rs `row`: state icon, #N, title and checks; author, repo and labels below; size and age on the right.
+component PrRowView {
+    in property <PrRow> d;
+    in property <length> w;
+    callback clicked;
+    callback context(length, length);
+    height: 62px;
+    Rectangle {
+        y: 2px;
+        height: 58px;
+        border-radius: Theme.radius-md;
+        background: root.d.selected ? Theme.accent : area.has-hover ? Theme.accent.with-alpha(0.6) : transparent;
+    }
+    Glyph {
+        x: 17px;
+        y: 13px;
+        width: 18px;
+        height: 18px;
+        icon: root.d.state-icon;
+        size: 16px;
+        color: PrTone.color(root.d.state-tone);
+        RowTip {
+            tip: root.d.state-tip;
+            clicked => {
+                root.clicked();
+            }
+            context(x, y) => {
+                root.context(x, y);
+            }
+        }
+    }
+    dels := Text {
+        x: root.w - 12px - self.preferred-width;
+        y: 11px;
+        height: 20px;
+        text: root.d.dels;
+        font-family: "Geist Mono";
+        font-size: 12.5px;
+        color: Theme.red-900;
+        vertical-alignment: center;
+    }
+    adds := Text {
+        x: dels.x - 6px - self.preferred-width;
+        y: 11px;
+        height: 20px;
+        text: root.d.adds;
+        font-family: "Geist Mono";
+        font-size: 12.5px;
+        color: Theme.green-900;
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.w - 12px - self.preferred-width;
+        y: 34px;
+        height: 20px;
+        text: root.d.age;
+        font-size: 12.5px;
+        color: Theme.subtle;
+        vertical-alignment: center;
+    }
+    num := Text {
+        x: 44px;
+        y: 9px;
+        height: 20px;
+        text: root.d.number;
+        font-size: 13px;
+        color: Theme.gray-800;
+        vertical-alignment: center;
+    }
+    property <length> title-x: 44px + num.preferred-width + 7px;
+    property <length> title-max: max(40px, adds.x - 40px - title-x);
+    property <length> title-w: min(title.preferred-width, title-max);
+    title := Text {
+        x: title-x;
+        y: 11px;
+        width: title-w;
+        height: 20px;
+        text: root.d.title;
+        font-size: 15px;
+        font-weight: 500;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    if root.d.checks-icon != "": Glyph {
+        x: title-x + title-w + 14px - 8px;
+        y: 13px;
+        width: 16px;
+        height: 16px;
+        icon: root.d.checks-icon;
+        size: 16px;
+        color: PrTone.color(root.d.checks-tone);
+        RowTip {
+            tip: root.d.checks-tip;
+            clicked => {
+                root.clicked();
+            }
+            context(x, y) => {
+                root.context(x, y);
+            }
+        }
+    }
+    if root.d.review-icon != "": Glyph {
+        x: title-x + title-w + 14px - 8px + (root.d.checks-icon != "" ? 20px : 0px);
+        y: 13px;
+        width: 16px;
+        height: 16px;
+        icon: root.d.review-icon;
+        size: 16px;
+        color: PrTone.color(root.d.review-tone);
+        RowTip {
+            tip: root.d.review-tip;
+            clicked => {
+                root.clicked();
+            }
+            context(x, y) => {
+                root.context(x, y);
+            }
+        }
+    }
+    HorizontalLayout {
+        x: 44px;
+        y: 35px;
+        height: 18px;
+        spacing: 0px;
+        alignment: start;
+        PrAvatar {
+            letter: root.d.letter;
+            r: 7px;
+        }
+        Rectangle {
+            width: 5px;
+        }
+        Text {
+            text: root.d.author;
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 8px;
+        }
+        Text {
+            text: root.d.repo;
+            font-size: 13px;
+            color: Theme.gray-800;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 10px;
+        }
+        Chips {
+            chips: root.d.chips;
+            more: root.d.more;
+        }
+    }
+    area := TouchArea {
+        z: -1;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+}
+
+component SectionView {
+    in property <PrRow> d;
+    in property <length> w;
+    height: 34px;
+    Glyph {
+        x: 18px;
+        y: 9px;
+        width: 16px;
+        height: 16px;
+        icon: root.d.section-icon;
+        size: 16px;
+        color: Theme.gray-800;
+    }
+    label := Text {
+        x: 42px;
+        height: 34px;
+        text: root.d.label;
+        font-size: 14px;
+        color: Theme.gray-800;
+        vertical-alignment: center;
+    }
+    count := Text {
+        x: label.x + label.preferred-width + 10px;
+        height: 34px;
+        text: root.d.count;
+        font-size: 14px;
+        color: Theme.gray-700;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        x: count.x + count.preferred-width + 10px;
+        y: 16px;
+        width: max(0px, root.w - 12px - self.x);
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// prs.rs `menu_row`: icon, label, then a muted value and a chevron (submenus) or a check.
+component MenuRowView {
+    in property <PrMenuRow> d;
+    in property <image> logo;
+    callback clicked;
+    callback hovered;
+    height: 32px;
+    property <bool> lead: d.icon != "" || d.letter != "" || d.dot.alpha > 0 || d.mark != "";
+    property <length> label-x: lead ? 8px + 26px : 8px;
+    property <length> trail: d.chevron ? 18px : d.checked ? 20px : 0px;
+    Rectangle {
+        background: root.d.active || area.has-hover ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+    }
+    if root.d.icon != "": Glyph {
+        x: 8px;
+        width: 16px;
+        icon: root.d.icon;
+        size: 16px;
+        color: Theme.subtle;
+    }
+    if root.d.letter != "": PrAvatar {
+        x: 8px;
+        y: 8px;
+        letter: root.d.letter;
+        r: 8px;
+    }
+    if root.d.dot.alpha > 0: Rectangle {
+        x: 12px;
+        y: 12px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.d.dot;
+    }
+    if root.d.mark == "github": Image {
+        x: 8.5px;
+        y: 8.5px;
+        width: 15px;
+        height: 15px;
+        source: root.logo;
+    }
+    if root.d.chevron: Glyph {
+        x: parent.width - 8px - 6px - 7px;
+        width: 14px;
+        icon: Icons.right;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    if root.d.checked && !root.d.chevron: Glyph {
+        x: parent.width - 8px - 7px - 7px;
+        width: 14px;
+        icon: Icons.check;
+        size: 14px;
+        color: Theme.fg;
+    }
+    value := Text {
+        x: parent.width - 8px - root.trail - self.width;
+        width: min(self.preferred-width, 110px);
+        visible: root.d.value != "";
+        text: root.d.value;
+        font-size: 13px;
+        color: Theme.subtle;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    Text {
+        x: root.label-x;
+        width: max(10px, parent.width - 8px - root.trail - (root.d.value != "" ? value.width + 8px : 0px) - root.label-x);
+        text: root.d.label;
+        font-size: 14px;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component MenuBody {
+    in property <[PrMenuRow]> rows;
+    in property <int> scroll-from: -1;
+    in property <length> scroll-h;
+    in property <int> hl: -1;
+    in property <image> logo;
+    callback picked(int);
+    callback hovered(int);
+    property <length> top: scroll-from >= 0 ? rows[scroll-from].y : 0px;
+    for r[i] in root.rows: Rectangle {
+        x: 0px;
+        y: r.y;
+        width: root.width;
+        height: r.height;
+        visible: root.scroll-from < 0 || i < root.scroll-from;
+        if r.kind == "row": MenuRowView {
+            x: 0px;
+            width: parent.width;
+            d: {
+                kind: r.kind, icon: r.icon, label: r.label, value: r.value, chevron: r.chevron, checked: r.checked, active: r.active || i == root.hl, dot: r.dot,
+                letter: r.letter, mark: r.mark, y: r.y, height: r.height,
+            };
+            logo: root.logo;
+            clicked => {
+                root.picked(i);
+            }
+            hovered => {
+                root.hovered(i);
+            }
+        }
+        if r.kind == "sep": Rectangle {
+            x: 4px;
+            y: 4px;
+            width: parent.width - 8px;
+            height: 1px;
+            background: Theme.border;
+        }
+        if r.kind == "note": Text {
+            x: 10px;
+            y: 4px;
+            text: r.label;
+            font-size: 13px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+    }
+    if root.scroll-from >= 0: ScrollView {
+        x: 0px;
+        y: root.top;
+        width: root.width;
+        height: root.scroll-h;
+        viewport-width: root.width;
+        viewport-height: bottom.y + bottom.height - root.top;
+        for r[i] in root.rows: Rectangle {
+            y: r.y - root.top;
+            x: 0px;
+            width: root.width;
+            height: r.height;
+            visible: i >= root.scroll-from;
+            if i >= root.scroll-from: MenuRowView {
+                x: 0px;
+                width: parent.width;
+                d: {
+                    kind: r.kind, icon: r.icon, label: r.label, value: r.value, chevron: r.chevron, checked: r.checked, active: r.active || i == root.hl, dot: r.dot,
+                    letter: r.letter, mark: r.mark, y: r.y, height: r.height,
+                };
+                logo: root.logo;
+                clicked => {
+                    root.picked(i);
+                }
+                hovered => {
+                    root.hovered(i);
+                }
+            }
+        }
+    }
+    bottom := Rectangle {
+        visible: false;
+        y: root.rows.length > 0 ? root.rows[root.rows.length - 1].y : 0px;
+        height: root.rows.length > 0 ? root.rows[root.rows.length - 1].height : 0px;
+    }
+}
+
+// egui's default menu: 40 px buttons "icon  label" in a frame with no padding of its own.
+component Popup {
+    in property <[PrAction]> items;
+    in property <length> menu-w: 220px;
+    in property <length> menu-h;
+    callback picked(int);
+    width: menu-w;
+    height: menu-h;
+    PopoverFrame {
+        VerticalLayout {
+            padding-top: 1px;
+            padding-bottom: 1px;
+            alignment: start;
+            for it[i] in root.items: VerticalLayout {
+                if it.sep: Rectangle {
+                    height: 14px;
+                    Rectangle {
+                        x: 4px;
+                        y: 7px;
+                        width: parent.width - 8px;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                Rectangle {
+                    height: 40px;
+                    opacity: it.enabled ? 1 : 0.5;
+                    Rectangle {
+                        x: 4px;
+                        width: parent.width - 8px;
+                        border-radius: 4px;
+                        background: area.has-hover && it.enabled ? Theme.accent : transparent;
+                    }
+                    Glyph {
+                        x: 5px;
+                        width: 16px;
+                        icon: it.icon;
+                        size: 16px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        x: 27px;
+                        width: parent.width - 35px;
+                        text: it.label;
+                        font-size: 14px;
+                        color: Theme.fg;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                    area := TipArea {
+                        tip: it.enabled ? "" : it.tip;
+                        mouse-cursor: it.enabled ? pointer : default;
+                        clicked => {
+                            if it.enabled {
+                                root.picked(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export global PrsBus {
+    in property <string> page-title: "Pull Requests";
+    in-out property <bool> docked: true;
+    in property <length> list-w;
+    in property <length> panel-w;
+    in property <bool> wrap;
+    in property <length> search-w;
+    in-out property <string> search;
+    in property <string> hint;
+    in property <int> active-filters;
+    in property <bool> loading;
+    in property <image> github;
+    in property <string> list-state: "loading";
+    in property <[PrRow]> rows;
+    in property <string> empty-icon;
+    in property <string> empty-title;
+    in property <string> empty-desc;
+    in property <bool> has-tabs;
+    in property <string> menu;
+    in property <[PrMenuRow]> menu-rows;
+    in property <length> menu-w;
+    in property <length> menu-h;
+    in property <int> menu-hl: -1;
+    in property <string> sub;
+    in property <[PrMenuRow]> sub-rows;
+    in property <length> sub-w;
+    in property <length> sub-h;
+    in property <length> sub-row-y;
+    in property <int> sub-scroll-from: -1;
+    in property <length> sub-scroll-h;
+    in property <int> sub-hl: -1;
+    in property <[PrAction]> popup-items;
+    in property <length> popup-w: 220px;
+    in property <length> popup-h;
+    in-out property <string> popup-kind;
+    in property <[DetailTab]> tabs;
+    in property <int> active-tab;
+    in property <bool> maxed;
+    in property <PrHeader> head;
+    in property <string> tab;
+    in property <PrSummary> summary;
+    in property <[PrEvent]> events;
+    in property <string> code-state;
+    in property <string> code-error;
+    in property <[PrLine]> lines;
+    in property <string> agent;
+    callback resized(length);
+    callback edited(string);
+    callback tool(string);
+    callback row-open(string);
+    callback row-menu(string);
+    callback close-page();
+    callback tab-act(TabActKind, int);
+    callback toggle-panel();
+    callback drag(length);
+    callback menu-key(string);
+    callback menu-hover(int);
+    callback menu-pick(int);
+    callback sub-hover(int);
+    callback sub-pick(int);
+    callback menu-close();
+    callback popup-open(string);
+    callback popup-pick(int);
+    callback detail-act(string);
+    callback pick-tab(string);
+    callback detail-toggle(string);
+    callback link(string);
+    callback copy(string);
+    callback open-check(string);
+}
+
+export component PrsPage inherits Rectangle {
+    in property <string> title <=> PrsBus.page-title;
+    in-out property <bool> docked <=> PrsBus.docked;
+    in property <length> list-w <=> PrsBus.list-w;
+    in property <length> panel-w <=> PrsBus.panel-w;
+    in property <bool> wrap <=> PrsBus.wrap;
+    in property <length> search-w <=> PrsBus.search-w;
+    in-out property <string> search <=> PrsBus.search;
+    in property <string> hint <=> PrsBus.hint;
+    in property <int> active-filters <=> PrsBus.active-filters;
+    in property <bool> loading <=> PrsBus.loading;
+    in property <image> github <=> PrsBus.github;
+    in property <string> list-state <=> PrsBus.list-state;
+    in property <[PrRow]> rows <=> PrsBus.rows;
+    in property <string> empty-icon <=> PrsBus.empty-icon;
+    in property <string> empty-title <=> PrsBus.empty-title;
+    in property <string> empty-desc <=> PrsBus.empty-desc;
+    in property <bool> has-tabs <=> PrsBus.has-tabs;
+    in property <string> menu <=> PrsBus.menu;
+    in property <[PrMenuRow]> menu-rows <=> PrsBus.menu-rows;
+    in property <length> menu-w <=> PrsBus.menu-w;
+    in property <length> menu-h <=> PrsBus.menu-h;
+    in property <int> menu-hl <=> PrsBus.menu-hl;
+    in property <string> sub <=> PrsBus.sub;
+    in property <[PrMenuRow]> sub-rows <=> PrsBus.sub-rows;
+    in property <length> sub-w <=> PrsBus.sub-w;
+    in property <length> sub-h <=> PrsBus.sub-h;
+    in property <length> sub-row-y <=> PrsBus.sub-row-y;
+    in property <int> sub-scroll-from <=> PrsBus.sub-scroll-from;
+    in property <length> sub-scroll-h <=> PrsBus.sub-scroll-h;
+    in property <int> sub-hl <=> PrsBus.sub-hl;
+    in property <[PrAction]> popup-items <=> PrsBus.popup-items;
+    in property <length> popup-w <=> PrsBus.popup-w;
+    in property <length> popup-h <=> PrsBus.popup-h;
+    in-out property <string> popup-kind <=> PrsBus.popup-kind;
+    in property <[DetailTab]> tabs <=> PrsBus.tabs;
+    in property <int> active-tab <=> PrsBus.active-tab;
+    in property <bool> maxed <=> PrsBus.maxed;
+    in property <PrHeader> head <=> PrsBus.head;
+    in property <string> tab <=> PrsBus.tab;
+    in property <PrSummary> summary <=> PrsBus.summary;
+    in property <[PrEvent]> events <=> PrsBus.events;
+    in property <string> code-state <=> PrsBus.code-state;
+    in property <string> code-error <=> PrsBus.code-error;
+    in property <[PrLine]> lines <=> PrsBus.lines;
+    in property <string> agent <=> PrsBus.agent;
+    callback resized <=> PrsBus.resized;
+    callback edited <=> PrsBus.edited;
+    callback tool <=> PrsBus.tool;
+    callback row-open <=> PrsBus.row-open;
+    callback row-menu <=> PrsBus.row-menu;
+    callback close-page <=> PrsBus.close-page;
+    callback tab-act <=> PrsBus.tab-act;
+    callback toggle-panel <=> PrsBus.toggle-panel;
+    callback drag <=> PrsBus.drag;
+    callback menu-key <=> PrsBus.menu-key;
+    callback menu-hover <=> PrsBus.menu-hover;
+    callback menu-pick <=> PrsBus.menu-pick;
+    callback sub-hover <=> PrsBus.sub-hover;
+    callback sub-pick <=> PrsBus.sub-pick;
+    callback menu-close <=> PrsBus.menu-close;
+    callback popup-open <=> PrsBus.popup-open;
+    callback popup-pick <=> PrsBus.popup-pick;
+    callback detail-act <=> PrsBus.detail-act;
+    callback pick-tab <=> PrsBus.pick-tab;
+    callback detail-toggle <=> PrsBus.detail-toggle;
+    callback link <=> PrsBus.link;
+    callback copy <=> PrsBus.copy;
+    callback open-check <=> PrsBus.open-check;
+    property <length> anchor-x;
+    property <length> anchor-y;
+    property <length> popup-x;
+    property <length> popup-y;
+    property <string> row-url;
+    property <bool> popup-right;
+    changed width => {
+        root.resized(root.width);
+    }
+    init => {
+        root.resized(root.width);
+    }
+    background: Theme.bg100;
+    // The column the list draws in: the centred 1180 px (chat.rs `centered`).
+    property <length> gutter: list-w < 520px ? 12px : 24px;
+    property <length> side: max((list-w - 1180px) / 2, gutter);
+    property <length> col-w: max(0px, list-w - side * 2);
+    property <length> list-top: 118px + (wrap ? 46px : 0px);
+
+    if root.list-w > 0: Rectangle {
+        x: 0;
+        width: root.list-w;
+        clip: true;
+        Text {
+            x: root.docked ? 20px : 52px;
+            y: 10px;
+            height: 32px;
+            text: root.title;
+            font-size: 15px;
+            font-weight: 500;
+            color: Theme.fg;
+            vertical-alignment: center;
+        }
+        if root.panel-w <= 0: HorizontalLayout {
+            x: root.list-w - 12px - self.preferred-width;
+            y: 12px;
+            height: 28px;
+            spacing: 6px;
+            PanelToggle {
+                has-tabs: root.has-tabs;
+                toggle => {
+                    root.toggle-panel();
+                }
+            }
+            Btn {
+                icon: Icons.x;
+                variant: Variant.ghost-muted;
+                size: BtnSize.icon-xs;
+                tip: "Close";
+                clicked => {
+                    root.close-page();
+                }
+            }
+        }
+        ScrollView {
+            x: 0;
+            y: root.list-top;
+            width: root.list-w;
+            height: root.height - root.list-top;
+            viewport-width: root.list-w;
+            viewport-height: content.preferred-height;
+            content := VerticalLayout {
+                x: 0px;
+                y: 0px;
+                width: root.list-w;
+                padding-left: root.side;
+                padding-right: root.side;
+                padding-bottom: 24px;
+                if root.list-state == "loading": VerticalLayout {
+                    padding-top: 24px;
+                    HorizontalLayout {
+                        height: 30px;
+                        padding-left: 16px;
+                        spacing: 9px;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            Spinner {
+                                radius: 12.5px;
+                            }
+                        }
+                        Text {
+                            text: "Loading pull requests…";
+                            font-size: 14px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                if root.list-state == "error" || root.list-state == "empty": VerticalLayout {
+                    padding-top: 64px;
+                    Empty {
+                        icon: root.empty-icon;
+                        title: root.empty-title;
+                        desc: root.empty-desc;
+                    }
+                }
+                if root.list-state == "list": VerticalLayout {
+                    for r in root.rows: Rectangle {
+                        height: r.height;
+                        if r.kind == "section": SectionView {
+                            x: 0px;
+                            width: parent.width;
+                            d: r;
+                            w: root.col-w;
+                        }
+                        if r.kind == "row": PrRowView {
+                            x: 0px;
+                            width: parent.width;
+                            d: r;
+                            w: root.col-w;
+                            clicked => {
+                                root.row-open(r.url);
+                            }
+                            context(x, y) => {
+                                root.row-url = r.url;
+                                root.popup-right = false;
+                                root.popup-x = x - root.absolute-position.x;
+                                root.popup-y = y - root.absolute-position.y;
+                                root.row-menu(r.url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if root.menu != "" || root.popup-kind != "": TouchArea {
+            y: 54px;
+            clicked => {
+                root.menu-close();
+            }
+        }
+        search-box := Rectangle {
+            x: root.side;
+            y: 62px;
+            width: root.search-w;
+            height: 38px;
+            background: Theme.bg100;
+            border-width: 1px;
+            border-color: field.focused ? Theme.gray-700 : Theme.border;
+            border-radius: Theme.radius-md;
+            field := SearchField {
+                x: 5px;
+                y: 3px;
+                width: parent.width - 10px;
+                hint: root.hint;
+                text <=> root.search;
+                edited(t) => {
+                    root.edited(t);
+                }
+            }
+        }
+        property <length> bx: root.wrap ? root.side : root.side + root.search-w + 8px;
+        property <length> by: root.wrap ? 109px : 63px;
+        sort-btn := ToolButton {
+            x: parent.bx;
+            y: parent.by;
+            icon: Icons.arrow-down-up;
+            label: "Sort";
+            open: root.menu == "sort";
+            tip: "Sort the list";
+            clicked => {
+                root.anchor-x = self.absolute-position.x - root.absolute-position.x;
+                root.anchor-y = self.absolute-position.y - root.absolute-position.y + self.height + 6px;
+                root.tool("sort");
+            }
+        }
+        filters-btn := ToolButton {
+            x: sort-btn.x + sort-btn.width + 8px;
+            y: parent.by;
+            icon: Icons.filter;
+            label: "Filters";
+            badge: root.active-filters;
+            open: root.menu == "filters";
+            clicked => {
+                root.anchor-x = self.absolute-position.x - root.absolute-position.x;
+                root.anchor-y = self.absolute-position.y - root.absolute-position.y + self.height + 6px;
+                root.tool("filters");
+            }
+        }
+        provider-btn := ToolButton {
+            x: filters-btn.x + filters-btn.width + 8px;
+            y: parent.by;
+            logo: root.github;
+            open: root.menu == "provider";
+            tip: "Filter by provider";
+            clicked => {
+                root.anchor-x = self.absolute-position.x - root.absolute-position.x;
+                root.anchor-y = self.absolute-position.y - root.absolute-position.y + self.height + 6px;
+                root.tool("provider");
+            }
+        }
+        ToolButton {
+            x: provider-btn.x + provider-btn.width + 8px;
+            y: parent.by;
+            icon: Icons.refresh;
+            spin: root.loading;
+            tip: "Refresh";
+            clicked => {
+                if !root.loading {
+                    root.tool("refresh");
+                }
+            }
+        }
+    }
+    if root.panel-w > 0: Rectangle {
+        x: root.list-w;
+        width: root.panel-w;
+        clip: true;
+        PrDetailPanel {
+            tabs: root.tabs;
+            active: root.active-tab;
+            max: root.maxed;
+            head: root.head;
+            tab: root.tab;
+            summary: root.summary;
+            events: root.events;
+            code-state: root.code-state;
+            code-error: root.code-error;
+            lines: root.lines;
+            agent: root.agent;
+            act(a) => {
+                root.detail-act(a);
+            }
+            tab-act(k, n) => {
+                root.tab-act(k, n);
+            }
+            close-page => {
+                root.close-page();
+            }
+            pick-tab(t) => {
+                root.pick-tab(t);
+            }
+            toggle(k) => {
+                root.detail-toggle(k);
+            }
+            link(u) => {
+                root.link(u);
+            }
+            copy(t) => {
+                root.copy(t);
+            }
+            open-check(u) => {
+                root.open-check(u);
+            }
+            popup(kind, x, y) => {
+                root.popup-right = kind != "link";
+                root.popup-x = x - root.absolute-position.x;
+                root.popup-y = y - root.absolute-position.y + 4px;
+                root.popup-open(kind);
+            }
+        }
+    }
+    if root.panel-w > 0 && root.list-w > 0: Divider {
+        x: root.list-w - 3px;
+        height: root.height;
+        page-x: root.absolute-position.x;
+        dragged(x) => {
+            root.drag(x);
+        }
+    }
+    // Menus come last: over everything.
+    if root.menu != "": PopoverFrame {
+        property <length> mx: min(root.anchor-x, root.width - (root.menu-w + 10px) - 2px);
+        x: mx;
+        y: root.anchor-y;
+        width: root.menu-w + 10px;
+        height: root.menu-h + 10px;
+        FocusScope {
+            init => {
+                self.focus();
+            }
+            key-pressed(e) => {
+                if e.text == Key.UpArrow {
+                    root.menu-key("up");
+                    return accept;
+                }
+                if e.text == Key.DownArrow {
+                    root.menu-key("down");
+                    return accept;
+                }
+                if e.text == Key.Home {
+                    root.menu-key("home");
+                    return accept;
+                }
+                if e.text == Key.End {
+                    root.menu-key("end");
+                    return accept;
+                }
+                if e.text == Key.Return {
+                    root.menu-key("enter");
+                    return accept;
+                }
+                if e.text == " " {
+                    root.menu-key("space");
+                    return accept;
+                }
+                if e.text == Key.RightArrow {
+                    root.menu-key("right");
+                    return accept;
+                }
+                if e.text == Key.LeftArrow {
+                    root.menu-key("left");
+                    return accept;
+                }
+                if e.text == Key.Escape {
+                    root.menu-key("esc");
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        MenuBody {
+            x: 5px;
+            y: 5px;
+            width: root.menu-w;
+            rows: root.menu-rows;
+            hl: root.menu-hl;
+            logo: root.github;
+            picked(i) => {
+                root.menu-pick(i);
+            }
+            hovered(i) => {
+                root.menu-hover(i);
+            }
+        }
+    }
+    if root.menu == "filters" && root.sub != "": PopoverFrame {
+        property <length> main-x: min(root.anchor-x, root.width - (root.menu-w + 10px) - 2px) + 5px;
+        property <length> right: main-x + root.menu-w;
+        x: right + 10px + root.sub-w + 14px > root.width ? main-x - 10px - (root.sub-w + 14px) : right + 10px;
+        y: root.anchor-y + 5px + root.sub-row-y - 6px;
+        width: root.sub-w + 10px;
+        height: root.sub-h + 10px;
+        MenuBody {
+            x: 5px;
+            y: 5px;
+            width: root.sub-w;
+            rows: root.sub-rows;
+            scroll-from: root.sub-scroll-from;
+            scroll-h: root.sub-scroll-h;
+            hl: root.sub-hl;
+            logo: root.github;
+            picked(i) => {
+                root.sub-pick(i);
+            }
+            hovered(i) => {
+                root.sub-hover(i);
+            }
+        }
+    }
+    if root.popup-kind != "": Popup {
+        x: max(4px, min(root.popup-right ? root.popup-x - root.popup-w : root.popup-x, root.width - self.width - 4px));
+        y: min(root.popup-y, root.height - self.height - 4px);
+        items: root.popup-items;
+        menu-w: root.popup-w;
+        menu-h: root.popup-h;
+        picked(i) => {
+            root.popup-pick(i);
+        }
+    }
+}
+
+export component PrsWindow inherits Window {
+    in-out property <bool> dark <=> Theme.dark;
+    width: 1400px;
+    height: 900px;
+    background: Theme.bg100;
+    default-font-family: "Geist";
+    Rectangle {
+        x: 0;
+        width: 256px;
+        height: root.height;
+        background: Theme.bg200;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+    PrsPage {
+        x: 256px;
+        width: root.width - 256px;
+        height: root.height;
+    }
+    TipLayer {
+        window-width: root.width;
+    }
+}

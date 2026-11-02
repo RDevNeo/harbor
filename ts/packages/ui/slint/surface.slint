@@ -1,0 +1,409 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, KeyCap, TipArea } from "widgets.slint";
+import { TerminalView, TermLine, TermKey } from "terminal.slint";
+import { DevicesView, DeviceRow, TransferRow } from "devices.slint";
+import { FilesView, FilesData, FileRow } from "files.slint";
+import { BrowserView, BrowserData } from "browser.slint";
+
+export struct SurfaceTab {
+    kind: string,
+    title: string,
+}
+
+export struct TermScreen {
+    lines: [TermLine],
+    cursor-row: int,
+    cursor-col: int,
+    cursor-text: string,
+    scrolled: string,
+}
+
+// surface.rs `tab`
+component PaneTab inherits TouchArea {
+    in property <SurfaceTab> tab;
+    in property <bool> active;
+    callback open();
+    callback close();
+    property <string> icon: tab.kind == "terminal" ? Icons.terminal : tab.kind == "browser" ? Icons.globe : tab.kind == "devices" ? Icons.smartphone : tab.kind == "files" ? Icons.folder : Icons.plus;
+    property <bool> lit: root.active || root.has-hover || x-area.has-hover;
+    width: label.preferred-width + 58px;
+    height: 28px;
+    mouse-cursor: pointer;
+    clicked => {
+        root.open();
+    }
+    Rectangle {
+        background: root.active ? Theme.gray-200 : root.lit ? Theme.gray-100 : transparent;
+        border-radius: Theme.radius-md;
+    }
+    Glyph {
+        x: 7px;
+        width: 14px;
+        icon: root.icon;
+        size: 14px;
+        color: root.active ? Theme.fg : Theme.subtle;
+    }
+    label := Text {
+        x: 28px;
+        text: root.tab.title;
+        font-size: 13px;
+        color: root.active ? Theme.fg : Theme.subtle;
+        vertical-alignment: center;
+    }
+    x-area := TouchArea {
+        x: parent.width - 24px;
+        y: 4px;
+        width: 20px;
+        height: 20px;
+        mouse-cursor: pointer;
+        clicked => {
+            root.close();
+        }
+        if root.lit: Rectangle {
+            background: x-area.has-hover ? Theme.gray-300 : transparent;
+            border-radius: 4px;
+            Glyph {
+                icon: Icons.x;
+                size: 14px;
+                color: Theme.subtle;
+            }
+        }
+    }
+}
+
+// surface.rs `chooser`
+component Chooser inherits Rectangle {
+    callback pick(string);
+    callback recent(length, length);
+    public function grab() {
+        keys.focus();
+    }
+    property <length> w: min(380px, root.width - 32px);
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.modifiers.control || e.modifiers.alt || e.modifiers.meta {
+                return reject;
+            }
+            if e.text == "b" || e.text == "B" {
+                root.pick("B");
+                return accept;
+            }
+            if e.text == "t" || e.text == "T" {
+                root.pick("T");
+                return accept;
+            }
+            if e.text == "m" || e.text == "M" {
+                root.pick("M");
+                return accept;
+            }
+            reject
+        }
+    }
+    VerticalLayout {
+        y: max(root.height * 0.4 - 90px, 16px);
+        height: self.preferred-height;
+        alignment: start;
+        spacing: 8px;
+        Text {
+            text: "Open a surface";
+            font-size: 14px;
+            color: Theme.subtle;
+            horizontal-alignment: center;
+        }
+        Rectangle {
+            height: 2px;
+        }
+        for row in [{ key: "B", label: "Browser" }, { key: "T", label: "Terminal" }, { key: "M", label: "Devices" }]: HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: root.w;
+                height: 38px;
+                property <string> icon: row.key == "B" ? Icons.globe : row.key == "T" ? Icons.terminal : Icons.smartphone;
+                Rectangle {
+                    background: area.has-hover ? Theme.gray-100 : transparent;
+                    border-radius: Theme.radius-md;
+                }
+                area := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.pick(row.key);
+                    }
+                }
+                Glyph {
+                    x: 10px;
+                    width: 16px;
+                    icon: parent.icon;
+                    size: 16px;
+                    color: Theme.fg;
+                }
+                Text {
+                    x: 38px;
+                    text: row.label;
+                    font-size: 14.5px;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                }
+                if row.key == "B": TipArea {
+                    x: parent.width - 59px;
+                    y: 6px;
+                    width: 26px;
+                    height: 26px;
+                    tip: "Dev servers and recent pages";
+                    clicked => {
+                        root.recent(self.absolute-position.x, self.absolute-position.y + self.height);
+                    }
+                    Rectangle {
+                        background: parent.has-hover ? Theme.gray-200 : transparent;
+                        border-radius: 4px;
+                    }
+                    Glyph {
+                        icon: Icons.down;
+                        size: 14px;
+                        color: Theme.subtle;
+                    }
+                }
+                KeyCap {
+                    x: parent.width - 4px - self.width;
+                    y: 8px;
+                    text: row.key;
+                }
+            }
+        }
+    }
+}
+
+export component SurfacePane inherits Rectangle {
+    in property <[SurfaceTab]> tabs;
+    in property <int> active;
+    in property <bool> maximized;
+    in property <TermScreen> screen;
+    callback add();
+    callback open(int);
+    callback close(int);
+    callback maximize();
+    callback hide();
+    callback pick(string);
+    callback recent(length, length);
+    callback term-key(TermKey, string, bool, bool, bool);
+    callback term-paste();
+    callback term-wheel(int);
+    callback term-resized(length, length);
+    in property <[DeviceRow]> devices;
+    in property <string> devices-summary;
+    in property <[TransferRow]> transfers;
+    in property <bool> transfers-clearable;
+    callback device-send(string, length, length);
+    callback device-files(string);
+    callback device-terminal(string);
+    callback device-settings();
+    callback transfers-clear();
+    in property <FilesData> files;
+    in property <[FileRow]> file-rows;
+    in property <[TransferRow]> file-transfers;
+    in property <bool> file-clearable;
+    callback files-act(string, int);
+    callback files-go(string);
+    in property <BrowserData> browser;
+    in property <[string]> servers;
+    callback browser-nav(string);
+    callback browser-go(string);
+    callback browser-missing();
+    callback browser-resized(float, float);
+    callback browser-pointer(string, float, float, int);
+    callback browser-wheel(float, float, float, float);
+    callback browser-key(string, bool, bool, bool, bool, bool);
+    public function focus-chooser() {
+        chooser.grab();
+    }
+    public function focus-terminal() {
+        term.focus-terminal();
+    }
+    out property <length> cell-w: term.cw;
+    out property <length> cell-h: term.rh;
+    property <string> kind: root.tabs[root.active].kind;
+    background: Theme.bg200;
+    // surface.rs `pane_ui`
+    header := HorizontalLayout {
+        x: 8px;
+        y: 6px;
+        width: parent.width - 16px;
+        height: 32px;
+        spacing: 2px;
+        Btn {
+            y: 2px;
+            icon: Icons.plus;
+            size: icon-xs;
+            variant: ghost-muted;
+            tip: "Open a surface";
+            clicked => {
+                root.add();
+            }
+        }
+        for t[i] in root.tabs: VerticalLayout {
+            alignment: center;
+            if !(t.kind == "chooser" && root.tabs.length == 1): PaneTab {
+                tab: t;
+                active: i == root.active;
+                open => {
+                    root.open(i);
+                }
+                close => {
+                    root.close(i);
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        HorizontalLayout {
+            spacing: 4px;
+            Btn {
+                y: 2px;
+                icon: root.maximized ? Icons.minimize : Icons.maximize;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: root.maximized ? "Restore" : "Maximize";
+                clicked => {
+                    root.maximize();
+                }
+            }
+            Btn {
+                y: 2px;
+                icon: Icons.x;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Close panel";
+                clicked => {
+                    root.hide();
+                }
+            }
+        }
+    }
+    // The header's 44px, then egui's 8px item spacing.
+    property <length> top: 52px;
+    chooser := Chooser {
+        y: root.top;
+        height: root.height - root.top;
+        visible: root.kind == "chooser";
+        pick(k) => {
+            root.pick(k);
+        }
+        recent(x, y) => {
+            root.recent(x, y);
+        }
+    }
+    term := TerminalView {
+        y: root.top;
+        height: root.height - root.top;
+        visible: root.kind == "terminal";
+        lines: root.screen.lines;
+        cursor-row: root.screen.cursor-row;
+        cursor-col: root.screen.cursor-col;
+        cursor-text: root.screen.cursor-text;
+        scrolled: root.screen.scrolled;
+        key(k, t, c, a, s) => {
+            root.term-key(k, t, c, a, s);
+        }
+        paste => {
+            root.term-paste();
+        }
+        wheel(n) => {
+            root.term-wheel(n);
+        }
+        resized(w, h) => {
+            root.term-resized(w, h);
+        }
+    }
+    if root.kind == "devices": DevicesView {
+        y: root.top;
+        height: root.height - self.y;
+        devices: root.devices;
+        summary: root.devices-summary;
+        transfers: root.transfers;
+        clearable: root.transfers-clearable;
+        send(k, x, y) => {
+            root.device-send(k, x, y);
+        }
+        files(k) => {
+            root.device-files(k);
+        }
+        terminal(k) => {
+            root.device-terminal(k);
+        }
+        settings => {
+            root.device-settings();
+        }
+        clear => {
+            root.transfers-clear();
+        }
+    }
+    if root.kind == "files": FilesView {
+        y: root.top;
+        height: root.height - self.y;
+        data: root.files;
+        entries: root.file-rows;
+        transfers: root.file-transfers;
+        clearable: root.file-clearable;
+        back => {
+            root.files-act("back", 0);
+        }
+        up => {
+            root.files-act("up", 0);
+        }
+        home => {
+            root.files-act("home", 0);
+        }
+        hidden => {
+            root.files-act("hidden", 0);
+        }
+        upload => {
+            root.files-act("upload", 0);
+        }
+        refresh => {
+            root.files-act("refresh", 0);
+        }
+        open(i) => {
+            root.files-act("open", i);
+        }
+        download(i) => {
+            root.files-act("download", i);
+        }
+        clear => {
+            root.files-act("clear", 0);
+        }
+        go(p) => {
+            root.files-go(p);
+        }
+    }
+    if root.kind == "browser": BrowserView {
+        y: root.top;
+        height: root.height - self.y;
+        data: root.browser;
+        servers: root.servers;
+        nav(a) => {
+            root.browser-nav(a);
+        }
+        go(u) => {
+            root.browser-go(u);
+        }
+        missing-act => {
+            root.browser-missing();
+        }
+        close => {
+            root.close(root.active);
+        }
+        page-resized(w, h) => {
+            root.browser-resized(w, h);
+        }
+        pointer(k, x, y, b) => {
+            root.browser-pointer(k, x, y, b);
+        }
+        wheel(x, y, dx, dy) => {
+            root.browser-wheel(x, y, dx, dy);
+        }
+        key(t, d, c, s, a, m) => {
+            root.browser-key(t, d, c, s, a, m);
+        }
+    }
+}

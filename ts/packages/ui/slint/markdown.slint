@@ -1,0 +1,294 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn } from "widgets.slint";
+
+export struct MdCol {
+    cells: [styled-text],
+}
+
+export struct MdBlock {
+    kind: string,
+    text: styled-text,
+    code: string,
+    level: int,
+    marker: string,
+    depth: int,
+    quote: int,
+    cols: [MdCol],
+    rows: int,
+    gap: length,
+    after: length,
+    bar-top: length,
+    bar-bottom: length,
+    trim: length,
+    plain: string,
+    key: string,
+}
+
+component Inline inherits StyledText {
+    in property <length> size: 16px;
+    in property <color> ink: Theme.fg;
+    default-font-size: size;
+    default-font-family: "Geist";
+    default-color: ink;
+    link-color: Theme.blue-900;
+}
+
+// egui_commonmark's sizes for a reply (theme.rs `reply_text`): headings from the 16px body up to 23px.
+export global MdSizes {
+    pure public function heading(level: int) -> length {
+        return level <= 1 ? 23px : level == 2 ? 21.845px : level == 3 ? 20.676px : level == 4 ? 19.507px : level == 5 ? 18.338px : 17.169px;
+    }
+}
+
+// A read-only TextInput holds the drawn words invisibly, for selecting; StyledText's link-clicked
+// never fires, so a click without a drag reports its offset to the shell.
+component Selectable inherits Rectangle {
+    in property <styled-text> text;
+    in property <string> plain;
+    in property <string> key;
+    in property <length> size: 16px;
+    in property <color> ink: Theme.fg;
+    callback link(string);
+    min-height: shown.min-height;
+    preferred-height: shown.preferred-height;
+    property <bool> chose: field.has-focus && field.anchor-position-byte-offset != field.cursor-position-byte-offset;
+    changed chose => {
+        if !self.chose && root.key != "" {
+            root.told = "";
+            root.link("sel:");
+        }
+    }
+    // A selection settles once it rests for a tick: then it can be mentioned, above the block's start
+    // (Slint doesn't say where the drag ended).
+    property <string> seen;
+    property <string> told;
+    Timer {
+        interval: 250ms;
+        running: root.chose;
+        triggered => {
+            let now = field.anchor-position-byte-offset + ":" + field.cursor-position-byte-offset;
+            if now == root.seen && now != root.told {
+                root.told = now;
+                root.link("sel:" + root.key + ":" + now + ":" + root.absolute-position.x / 1px + ":" + root.absolute-position.y / 1px);
+            }
+            root.seen = now;
+        }
+    }
+    shown := Inline {
+        width: parent.width;
+        text: root.text;
+        size: root.size;
+        ink: root.ink;
+    }
+    field := TextInput {
+        width: parent.width;
+        height: parent.height;
+        read-only: true;
+        text: root.plain;
+        font-size: root.size;
+        font-family: "Geist";
+        // Not fully transparent: Slint then skips drawing the selection too.
+        color: root.ink.with-alpha(0.01);
+        wrap: word-wrap;
+        // egui's selection colour, see-through: here it lies over the words.
+        selection-background-color: (Theme.dark ? #004287 : #90d1ff).with-alpha(0.6);
+        selection-foreground-color: transparent;
+        key-pressed(e) => {
+            if e.modifiers.control || e.modifiers.shift || e.modifiers.alt || e.modifiers.meta {
+                return reject;
+            }
+            if e.text == Key.PageUp || e.text == Key.PageDown || e.text == Key.Home || e.text == Key.End {
+                root.link("scroll:" + (e.text == Key.PageUp ? "up" : e.text == Key.PageDown ? "down" : e.text == Key.Home ? "home" : "end"));
+                return accept;
+            }
+            reject
+        }
+        changed cursor-position-byte-offset => {
+            if root.key != "" && self.has-focus && self.anchor-position-byte-offset == self.cursor-position-byte-offset {
+                root.link("at:" + root.key + ":" + self.cursor-position-byte-offset);
+            }
+
+        }
+    }
+}
+
+export component MdBlockView {
+    in property <MdBlock> block;
+    in property <length> size: 16px;
+    callback link(string);
+    callback copy(string);
+    property <length> indent: block.quote * 10px;
+    property <color> ink: block.quote > 0 ? Theme.subtle : Theme.fg;
+    property <length> box: block.depth * 16px;
+    // A reply's last line: egui's row ends at the text, Slint's line box a few pixels below it.
+    min-height: inner.min-height - root.block.trim;
+    preferred-height: inner.preferred-height - root.block.trim;
+    for q in root.block.quote: Rectangle {
+        x: q * 10px - 1px;
+        y: root.block.bar-top;
+        width: 3px;
+        height: max(0px, root.height - root.block.bar-top - root.block.bar-bottom);
+        background: Theme.gray-500;
+    }
+    // egui wraps a line that would reach the column's edge exactly; Slint keeps it.
+    inner := VerticalLayout {
+        padding-left: root.indent;
+        padding-right: 1px;
+        padding-top: root.block.gap;
+        padding-bottom: root.block.after;
+        if root.block.kind == "p": Selectable {
+            text: root.block.text;
+            plain: root.block.plain;
+            key: root.block.key;
+            size: root.size;
+            ink: root.ink;
+            link(u) => {
+                root.link(u);
+            }
+        }
+        if root.block.kind == "h": Selectable {
+            text: root.block.text;
+            plain: root.block.plain;
+            key: root.block.key;
+            size: MdSizes.heading(root.block.level);
+            ink: root.ink;
+            link(u) => {
+                root.link(u);
+            }
+        }
+        if root.block.kind == "li": Rectangle {
+            min-height: li-text.min-height;
+            preferred-height: li-text.preferred-height;
+            if root.block.marker == "•": Rectangle {
+                x: root.box + 4px;
+                y: 7px;
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: root.ink;
+            }
+            if root.block.marker == "◦": Rectangle {
+                x: root.box + 3.5px;
+                y: 6.5px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: root.ink;
+            }
+            if root.block.marker != "•" && root.block.marker != "◦": Text {
+                x: root.box;
+                y: 0;
+                width: 15px;
+                text: root.block.marker;
+                font-size: root.size;
+                color: root.ink;
+                horizontal-alignment: TextHorizontalAlignment.right;
+            }
+            li-text := VerticalLayout {
+                padding-left: root.box + 21px;
+                Selectable {
+                    text: root.block.text;
+                    plain: root.block.plain;
+                    key: root.block.key;
+                    size: root.size;
+                    ink: root.ink;
+                    link(u) => {
+                        root.link(u);
+                    }
+                }
+            }
+        }
+        // egui strokes the frame outside the code's rect: a pixel past it on every side.
+        if root.block.kind == "code": Rectangle {
+            min-height: box0.min-height;
+            preferred-height: box0.preferred-height;
+            Rectangle {
+                x: -1px;
+                y: -1px;
+                width: parent.width + 2px;
+                height: parent.height + 2px;
+                background: Theme.bg200;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-md;
+            }
+            box0 := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 7px;
+                padding-bottom: 6px;
+                Text {
+                    text: root.block.code;
+                    font-family: "Geist Mono";
+                    font-size: root.size - 1px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+            code-area := TouchArea { }
+            Btn {
+                x: parent.width - 32px;
+                y: 4px;
+                visible: code-area.has-hover || self.hovered;
+                icon: Icons.copy;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Copy";
+                clicked => {
+                    root.copy(root.block.code);
+                }
+            }
+        }
+        if root.block.kind == "hr": Rectangle {
+            height: 20px;
+            Rectangle {
+                y: 17px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+        if root.block.kind == "table": HorizontalLayout {
+            alignment: start;
+            Rectangle {
+                min-height: grid.min-height;
+                preferred-height: grid.preferred-height;
+                width: grid.preferred-width;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: 4px;
+                for i in root.block.rows: Rectangle {
+                    x: 6px;
+                    y: 5px + i * 26px;
+                    width: parent.width - 12px;
+                    height: 26px;
+                    background: Math.mod(i, 2) == 1 ? Theme.bg200 : transparent;
+                }
+                grid := HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 6px;
+                    padding-top: 5px;
+                    padding-bottom: 12px;
+                    spacing: 8px;
+                    for col in root.block.cols: VerticalLayout {
+                        for cell in col.cells: Rectangle {
+                            height: 26px;
+                            min-width: cell-text.preferred-width;
+                            cell-text := Inline {
+                                x: 0;
+                                y: 3px;
+                                text: cell;
+                                size: root.size;
+                                ink: root.ink;
+                                link-clicked(u) => {
+                                    root.link(u);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

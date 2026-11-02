@@ -1,0 +1,3 @@
+#!/bin/sh
+[ -n "${RIG_SWAY:-}" ] || { echo "swaymsg: RIG_SWAY is not set" >&2; exit 127; }
+LD_LIBRARY_PATH=$RIG_SWAY/lib exec "$RIG_SWAY/bin/swaymsg" "$@"

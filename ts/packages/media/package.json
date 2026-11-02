@@ -1,0 +1,21 @@
+{
+  "name": "@harbor/media",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harbor/store": "workspace:*",
+    "@types/mdast": "4.0.4",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-gfm-strikethrough": "2.0.1",
+    "mdast-util-gfm-table": "2.0.0",
+    "micromark-extension-gfm-strikethrough": "2.1.0",
+    "micromark-extension-gfm-table": "2.1.2",
+    "sharp": "0.35.5",
+    "sherpa-onnx-node": "2.0.1"
+  }
+}

@@ -1,0 +1,34 @@
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Store } from "@harbor/store";
+import { copyDb } from "../src/copydb.ts";
+
+test("the copy starts new sessions, drops outside connections and leaves the source as it was", () => {
+  const dir = mkdtempSync(join(tmpdir(), "copydb-"));
+  const src = join(dir, "harbor.db");
+  const s = Store.openAt(src);
+  const repo = s.addRepo("/home/user/p");
+  s.createChat({ id: 0, repoId: repo, title: "t", sessionId: "11111111-1111-4111-a111-111111111111", started: true, account: "claude", model: "m", effort: "", access: "full", settled: false, updated: 1, role: "lead", parent: null, name: "lead", device: "", gid: "", home: "", homeId: 0, retired: false });
+  s.set("mesh_enabled", "1");
+  s.set("account", "token");
+  s.set("default_model", "claude-haiku-5-5");
+  s.close();
+  const before = readFileSync(src);
+  const to = join(dir, "copy.db");
+  copyDb(src, to);
+  expect(readFileSync(src).equals(before)).toBe(true);
+  const db = new Database(to, { readonly: true });
+  const c = db.query("SELECT started, session_id FROM chats").get() as { started: number; session_id: string };
+  expect(c.started).toBe(0);
+  expect(c.session_id).not.toBe("11111111-1111-4111-a111-111111111111");
+  expect(c.session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
+  const keys = (db.query("SELECT k FROM kv ORDER BY k").all() as { k: string }[]).map((r) => r.k);
+  expect(keys).toContain("default_model");
+  expect(keys).not.toContain("mesh_enabled");
+  expect(keys).not.toContain("account");
+  db.close();
+  expect(() => copyDb(src, to)).toThrow();
+});

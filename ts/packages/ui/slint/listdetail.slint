@@ -1,0 +1,222 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, BtnSize, Glyph, MenuItem, PopoverFrame, Separator, Variant } from "widgets.slint";
+
+export enum TabActKind { activate, close, close-others, close-right, close-all, toggle, maximize }
+
+export struct DetailTab {
+    icon: string,
+    text: string,
+}
+
+component DetailTabButton {
+    in property <string> icon;
+    in property <string> text;
+    in property <bool> active;
+    in property <int> index;
+    in property <int> count;
+    callback act(TabActKind, int);
+    height: 28px;
+    width: 10px + 16px + 6px + min(label.preferred-width, 160px) + 6px + 18px + 6px;
+    Rectangle {
+        background: root.active ? Theme.accent : area.has-hover ? Theme.accent.with-alpha(0.5) : transparent;
+        border-radius: Theme.radius-md;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.middle {
+                root.act(TabActKind.close, root.index);
+            }
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                menu.show();
+            }
+        }
+        clicked => {
+            root.act(TabActKind.activate, root.index);
+        }
+    }
+    Glyph {
+        x: 10px;
+        width: 16px;
+        text: root.icon;
+        font-size: 14px;
+        color: Theme.subtle;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    label := Text {
+        x: 32px;
+        width: min(self.preferred-width, 160px);
+        text: root.text;
+        font-size: 13px;
+        font-weight: 500;
+        color: Theme.fg;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.active || area.has-hover: Rectangle {
+        x: parent.width - 6px - 18px;
+        y: 5px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: close.has-hover ? Theme.gray-300 : transparent;
+        Glyph {
+            text: Icons.x;
+            font-size: 14px;
+            color: Theme.subtle;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        close := TouchArea {
+            clicked => {
+                root.act(TabActKind.close, root.index);
+            }
+        }
+    }
+    menu := PopupWindow {
+        y: root.height + 2px;
+        width: 180px;
+        PopoverFrame {
+            VerticalLayout {
+                padding: 4px;
+                MenuItem {
+                    label: "Close";
+                    clicked => {
+                        root.act(TabActKind.close, root.index);
+                    }
+                }
+                MenuItem {
+                    label: "Close others";
+                    enabled: root.count > 1;
+                    clicked => {
+                        root.act(TabActKind.close-others, root.index);
+                    }
+                }
+                MenuItem {
+                    label: "Close to the right";
+                    enabled: root.index + 1 < root.count;
+                    clicked => {
+                        root.act(TabActKind.close-right, root.index);
+                    }
+                }
+                MenuItem {
+                    label: "Close all";
+                    clicked => {
+                        root.act(TabActKind.close-all, root.index);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// listdetail.rs `header`: the panel's tabs on the left; maximize, hide and (with `close-hint`) the page's close on the right.
+export component DetailHeader {
+    in property <[DetailTab]> tabs;
+    in property <int> active;
+    in property <bool> max;
+    in property <string> close-hint;
+    callback act(TabActKind, int);
+    callback close-page();
+    height: 39px;
+    HorizontalLayout {
+        y: 0px;
+        height: 32px;
+        padding-left: 10px;
+        padding-right: 12px;
+        spacing: 4px;
+        Flickable {
+            horizontal-stretch: 1;
+            viewport-width: strip.preferred-width;
+            strip := HorizontalLayout {
+                spacing: 2px;
+                alignment: start;
+                for t[i] in root.tabs: DetailTabButton {
+                    y: 2px;
+                    icon: t.icon;
+                    text: t.text;
+                    active: i == root.active;
+                    index: i;
+                    count: root.tabs.length;
+                    act(k, n) => {
+                        root.act(k, n);
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: end;
+            Btn {
+                icon: root.max ? Icons.minimize : Icons.maximize;
+                variant: Variant.ghost-muted;
+                size: BtnSize.icon-xs;
+                pressed: root.max;
+                tip: root.max ? "Show the list again" : "Maximize the panel";
+                clicked => {
+                    root.act(TabActKind.maximize, -1);
+                }
+            }
+            Btn {
+                icon: Icons.panel-right;
+                variant: Variant.ghost-muted;
+                size: BtnSize.icon-xs;
+                pressed: true;
+                tip: "Hide the panel (Ctrl+Alt+B)";
+                clicked => {
+                    root.act(TabActKind.toggle, -1);
+                }
+            }
+            if root.close-hint != "": Btn {
+                icon: Icons.x;
+                variant: Variant.ghost-muted;
+                size: BtnSize.icon-xs;
+                tip: root.close-hint;
+                clicked => {
+                    root.close-page();
+                }
+            }
+        }
+    }
+    Separator {
+        y: 38px;
+    }
+}
+
+// listdetail.rs `toggle_btn`: the list side's button for a hidden panel, off until something was opened.
+export component PanelToggle {
+    in property <bool> has-tabs;
+    callback toggle();
+    Btn {
+        icon: Icons.panel-right;
+        variant: Variant.ghost-muted;
+        size: BtnSize.icon-xs;
+        enabled: root.has-tabs;
+        tip: root.has-tabs ? "Show the panel (Ctrl+Alt+B)" : "Open an item first";
+        clicked => {
+            root.toggle();
+        }
+    }
+}
+
+// listdetail.rs `areas`' divider: a 1 px line with a 6 px grip; dragging reports the pointer's x in the page.
+export component Divider {
+    in property <length> page-x;
+    callback dragged(length);
+    width: 7px;
+    Rectangle {
+        x: 3px;
+        width: 1px;
+        background: area.has-hover || area.pressed ? Theme.gray-700 : Theme.border;
+    }
+    area := TouchArea {
+        mouse-cursor: ew-resize;
+        moved => {
+            if self.pressed {
+                root.dragged(root.page-x + self.mouse-x);
+            }
+        }
+    }
+}

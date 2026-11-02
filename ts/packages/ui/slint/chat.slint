@@ -1,0 +1,1215 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Glyph, Spinner, Btn, TipArea } from "widgets.slint";
+import { MdBlock, MdBlockView } from "markdown.slint";
+
+export struct MediaRow {
+    image: image,
+    caption: string,
+    large: bool,
+    w: length,
+    h: length,
+    path: string,
+    video: bool,
+    name: string,
+}
+
+export struct CardData {
+    kind: string,
+    seq: int,
+    blocks: [MdBlock],
+    text: string,
+    label: string,
+    icon: string,
+    tone: string,
+    detail: string,
+    result: string,
+    open: bool,
+    pending: bool,
+    expandable: bool,
+    sender: string,
+    files: [string],
+    steer: bool,
+    url: string,
+    actions: [string],
+    time: string,
+    media: [MediaRow],
+}
+
+component ToolCard {
+    in property <CardData> card;
+    callback toggle();
+    property <color> icon-color: card.tone == "red" ? Theme.red-900 : card.tone == "green" ? Theme.green-900 : Theme.gray-900;
+    min-height: inner.min-height;
+    preferred-height: inner.preferred-height;
+    Rectangle {
+        background: root.card.open ? Theme.bg200 : transparent;
+        border-radius: Theme.radius-md;
+    }
+    inner := VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 8px;
+            height: 32px;
+            Glyph {
+                width: 14px;
+                icon: root.card.icon;
+                size: 14px;
+                color: root.icon-color;
+            }
+            Text {
+                text: root.card.label;
+                font-size: 14px;
+                font-weight: 500;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.card.text;
+                font-family: "Geist Mono";
+                font-size: 12.5px;
+                color: Theme.subtle;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+        if root.card.open: Rectangle {
+            min-height: box0.min-height;
+            preferred-height: box0.preferred-height;
+            background: Theme.bg200;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius-lg;
+            box0 := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                Text {
+                    text: root.card.detail;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        if root.card.open && root.card.result != "": Rectangle {
+            min-height: box1.min-height;
+            preferred-height: box1.preferred-height;
+            background: Theme.bg200;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius-lg;
+            box1 := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                Text {
+                    text: root.card.result;
+                    font-family: "Geist Mono";
+                    font-size: 12px;
+                    color: root.card.tone == "red" ? Theme.red-900 : Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggle();
+        }
+    }
+}
+
+component UserBubble {
+    in property <CardData> card;
+    in property <length> avail;
+    callback link(string);
+    callback open-media(string);
+    property <length> hug: max(measure.preferred-width, from-measure.preferred-width);
+    measure := StyledText {
+        visible: false;
+        text: root.card.blocks[0].text;
+        default-font-size: 14px;
+        default-font-family: "Geist";
+    }
+    from-measure := Text {
+        visible: false;
+        text: root.card.sender != "" ? "from " + root.card.sender : "";
+        font-size: 12px;
+    }
+    // chat.rs: at least 220px with files, three thumbnails' width with images.
+    property <length> need: max(hug, root.card.files.length > 0 ? 220px : 0px, root.card.media.length > 0 ? min(3, root.card.media.length) * 140px - 8px : 0px);
+    property <length> w: max(min(need + 2px, avail * 0.8 - 28px), 40px) + 28px;
+    VerticalLayout {
+        spacing: 2px;
+        if root.card.steer: HorizontalLayout {
+            alignment: end;
+            height: 16px;
+            spacing: 4px;
+            Glyph {
+                width: 12px;
+                icon: Icons.redo-2;
+                size: 12px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: "Steer";
+                font-size: 11.5px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            Rectangle {
+                min-height: box2.min-height;
+                preferred-height: box2.preferred-height;
+                width: root.w;
+                background: Theme.gray-100;
+                border-radius: Theme.radius-lg;
+                box2 := VerticalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    padding-top: 10px;
+                    padding-bottom: 9px;
+                    spacing: Theme.compact ? 8px : 12px;
+                    if root.card.media.length > 0: HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        for m in root.card.media: Rectangle {
+                            width: 132px;
+                            height: 96px;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            clip: true;
+                            Image {
+                                width: parent.width;
+                                height: parent.height;
+                                source: m.image;
+                                image-fit: cover;
+                            }
+                            TipArea {
+                                tip: m.path;
+                                clicked => {
+                                    root.open-media(m.path);
+                                }
+                            }
+                        }
+                    }
+                    body := StyledText {
+                        text: root.card.blocks[0].text;
+                        default-font-size: 14px;
+                        default-font-family: "Geist";
+                        default-color: Theme.fg;
+                        link-color: Theme.blue-900;
+                        link-clicked(u) => {
+                            root.link(u);
+                        }
+                    }
+                    for f in root.card.files: Rectangle {
+                        min-height: file-name.min-height;
+                        preferred-height: file-name.preferred-height;
+                        Glyph {
+                            x: 0;
+                            y: 2px;
+                            width: 12px;
+                            height: 12px;
+                            icon: Icons.clip;
+                            size: 12px;
+                            color: Theme.subtle;
+                        }
+                        file-name := VerticalLayout {
+                            padding-left: 18px;
+                            Text {
+                                text: f;
+                                font-size: 12px;
+                                color: Theme.subtle;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    // chat.rs pulls "from …" 6px up.
+                    if root.card.sender != "": Rectangle {
+                        height: from-text.preferred-height - 6px;
+                        from-text := Text {
+                            y: -6px;
+                            text: "from " + root.card.sender;
+                            font-size: 12px;
+                            color: Theme.subtle;
+                            horizontal-alignment: right;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component NoticePill {
+    in property <CardData> card;
+    callback act();
+    min-height: inner.min-height;
+    preferred-height: inner.preferred-height;
+    inner := HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            min-height: box3.min-height;
+            preferred-height: box3.preferred-height;
+            background: Theme.gray-100;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: 14px;
+            box3 := HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                spacing: 6px;
+                Glyph {
+                    width: 13px;
+                    icon: root.card.icon;
+                    size: 13px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: root.card.text;
+                    font-size: 13px;
+                    color: Theme.fg;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                if root.card.expandable: Glyph {
+                    width: 12px;
+                    icon: root.card.open ? Icons.up : Icons.down;
+                    size: 12px;
+                    color: Theme.subtle;
+                }
+            }
+            TipArea {
+                tip: root.card.url != "" ? "Open in Harbor's browser" : "";
+                mouse-cursor: root.card.expandable || root.card.url != "" ? pointer : default;
+                clicked => {
+                    root.act();
+                }
+            }
+        }
+    }
+}
+
+export component CardView inherits TouchArea {
+    in property <CardData> card;
+    in property <length> avail;
+    in property <bool> running;
+    // The reply that streams draws its blocks from a model that lives across updates, so only its changed
+    // blocks are laid out again.
+    in property <[MdBlock]> live-blocks;
+    in property <int> live-seq: -1;
+    callback toggle(int);
+    callback link(string);
+    callback open-url(string);
+    callback act(int, string);
+    callback open-media(string);
+    callback copy-text(string);
+    property <bool> right: card.kind == "user";
+    min-height: inner.min-height;
+    preferred-height: inner.preferred-height;
+    inner := VerticalLayout {
+        padding-bottom: Theme.compact ? 8px : 12px;
+        if root.card.kind == "user": UserBubble {
+            card: root.card;
+            avail: root.avail;
+            link(u) => {
+                root.link(u);
+            }
+            open-media(p) => {
+                root.open-media(p);
+            }
+        }
+        if root.card.kind == "text": VerticalLayout {
+            spacing: 0px;
+            for b in root.card.seq == root.live-seq ? root.live-blocks : root.card.blocks: Rectangle {
+                // Sized from a property: Slint's interpreter otherwise measures every block again, at every
+                // level of the layouts above it, each time any of them changes.
+                property <length> h: block-view.preferred-height;
+                min-height: h;
+                max-height: h;
+                block-view := MdBlockView {
+                    y: 0;
+                    width: parent.width;
+                    height: h;
+                    block: b;
+                    size: 16px;
+                    link(u) => {
+                        root.link(u);
+                    }
+                    copy(t) => {
+                        root.copy-text(t);
+                    }
+                }
+            }
+        }
+        // egui's `ui.horizontal` is at least interact_size.y (32px) tall.
+        if root.card.kind == "group": HorizontalLayout {
+            height: 32px;
+            spacing: 6px;
+            alignment: start;
+            Glyph {
+                width: 12px;
+                icon: root.card.open ? Icons.down : Icons.right;
+                size: 12px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: root.card.label;
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.card.pending && root.running: Spinner {
+                y: 10px;
+                radius: 5px;
+            }
+            TouchArea {
+                width: 0px;
+            }
+        }
+        if root.card.kind == "tool": ToolCard {
+            card: root.card;
+            toggle => {
+                root.toggle(root.card.seq);
+            }
+        }
+        if root.card.kind == "thinking": VerticalLayout {
+            spacing: 4px;
+            // egui's CollapsingHeader: its filled triangle, then the label.
+            HorizontalLayout {
+                height: 32px;
+                spacing: 6px;
+                alignment: start;
+                Rectangle {
+                    width: 12px;
+                    Path {
+                        x: 6px;
+                        y: (parent.height - 6px) / 2;
+                        width: 6px;
+                        height: 6px;
+                        viewbox-width: 6;
+                        viewbox-height: 6;
+                        commands: root.card.open ? "M 0 0 L 6 0 L 3 6 Z" : "M 0 0 L 6 3 L 0 6 Z";
+                        fill: Theme.subtle;
+                    }
+                }
+                Glyph {
+                    width: 13px;
+                    icon: Icons.brain;
+                    size: 13px;
+                    color: Theme.subtle;
+                }
+                Text {
+                    text: "Thinking";
+                    font-size: 13px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+            }
+            if root.card.open: Text {
+                text: root.card.text;
+                font-size: 14px;
+                font-italic: true;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+        if root.card.kind == "notice": VerticalLayout {
+            spacing: 4px;
+            NoticePill {
+                card: root.card;
+                act => {
+                    if root.card.url != "" {
+                        root.open-url(root.card.url);
+                    } else if root.card.expandable {
+                        root.toggle(root.card.seq);
+                    }
+                }
+            }
+            if root.card.open: Rectangle {
+                min-height: box4.min-height;
+                preferred-height: box4.preferred-height;
+                background: Theme.bg200;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                box4 := VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+                    spacing: 5px;
+                    if root.card.blocks.length == 0: Text {
+                        text: root.card.detail;
+                        font-family: "Geist Mono";
+                        font-size: 12px;
+                        color: Theme.fg;
+                        wrap: word-wrap;
+                    }
+                    for b in root.card.blocks: MdBlockView {
+                        block: b;
+                        size: 14px;
+                        link(u) => {
+                            root.link(u);
+                        }
+                    }
+                }
+            }
+        }
+        if root.card.kind == "message": Rectangle {
+            min-height: box5.min-height;
+            preferred-height: box5.preferred-height;
+            background: Theme.blue-100;
+            border-width: 1px;
+            border-color: Theme.blue-400;
+            border-radius: Theme.radius-lg;
+            box5 := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Glyph {
+                        width: 13px;
+                        icon: Icons.message;
+                        size: 13px;
+                        color: Theme.blue-900;
+                    }
+                    Text {
+                        text: root.card.label;
+                        font-size: 14px;
+                        font-weight: 500;
+                        color: Theme.blue-900;
+                    }
+                }
+                Text {
+                    text: root.card.text;
+                    font-size: 14px;
+                    color: Theme.fg;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        if root.card.kind == "error": Rectangle {
+            min-height: box6.min-height;
+            preferred-height: box6.preferred-height;
+            background: Theme.red-100;
+            border-width: 1px;
+            border-color: Theme.red-400;
+            border-radius: Theme.radius-lg;
+            box6 := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 9px;
+                padding-bottom: 9px;
+                Text {
+                    text: root.card.text;
+                    font-family: "Geist Mono";
+                    font-size: 13px;
+                    color: Theme.red-900;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        if root.card.kind == "divider": HorizontalLayout {
+            height: 24px;
+            spacing: 10px;
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 1px;
+                y: 12px;
+                background: Theme.border;
+            }
+            Glyph {
+                width: 13px;
+                icon: root.card.icon;
+                size: 13px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: root.card.text;
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.card.label != "": Text {
+                text: root.card.label;
+                font-size: 12px;
+                color: Theme.blue-900;
+                vertical-alignment: center;
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.link(root.card.url);
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 1px;
+                y: 12px;
+                background: Theme.border;
+            }
+        }
+        for m in root.card.media: VerticalLayout {
+            padding-top: 4px;
+            padding-bottom: 4px;
+            padding-left: root.card.kind == "tool" ? 30px : 0px;
+            alignment: start;
+            if m.large: VerticalLayout {
+                spacing: 4px;
+                HorizontalLayout {
+                    alignment: root.card.kind == "user" ? LayoutAlignment.end : LayoutAlignment.start;
+                    Rectangle {
+                        width: m.w;
+                        height: m.h;
+                        border-radius: m.video ? Theme.radius-md : Theme.radius-lg;
+                        clip: true;
+                        background: m.video ? #181818 : transparent;
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: m.image;
+                            image-fit: m.video ? cover : contain;
+                        }
+                        if m.video: Rectangle {
+                            width: 48px;
+                            height: 48px;
+                            border-radius: 24px;
+                            background: black.with-alpha((play.has-hover ? 210 : 150) / 255);
+                            Glyph {
+                                x: 2px;
+                                width: parent.width;
+                                height: parent.height;
+                                icon: Icons.play;
+                                size: 22px;
+                                color: white;
+                            }
+                        }
+                        if m.video: Rectangle {
+                            x: 4px;
+                            y: parent.height - 7px - self.height;
+                            width: label.preferred-width + 12px;
+                            height: label.preferred-height + 6px;
+                            border-radius: 4px;
+                            background: black.with-alpha(150 / 255);
+                            label := Text {
+                                x: 6px;
+                                y: 3px;
+                                text: m.name;
+                                font-size: 12px;
+                                color: #e6e6e6;
+                            }
+                        }
+                        if m.video: Rectangle {
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: play.has-hover ? Theme.gray-600 : Theme.border;
+                        }
+                        play := TipArea {
+                            tip: m.video ? m.name + "\nPlay" : "";
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.open-media(m.path);
+                            }
+                        }
+                    }
+                }
+                if m.caption != "": Text {
+                    text: m.caption;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    horizontal-alignment: root.card.kind == "user" ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
+                }
+            }
+        }
+        if root.card.media.length > 0 && root.card.kind != "user": HorizontalLayout {
+            alignment: LayoutAlignment.start;
+            padding-left: root.card.kind == "tool" ? 30px : 0px;
+            spacing: 8px;
+            for m in root.card.media: Rectangle {
+                visible: !m.large;
+                width: m.large ? 0px : 132px;
+                height: m.large ? 0px : 96px;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: m.image;
+                    image-fit: cover;
+                }
+                TipArea {
+                    tip: m.path;
+                    clicked => {
+                        root.open-media(m.path);
+                    }
+                }
+            }
+        }
+        // egui's item spacing, then the 24px row of hover actions pulled 8px up (chat.rs `hover_actions`).
+        if root.card.actions.length > 0: Rectangle {
+            property <length> above: (Theme.compact ? 8px : 12px) - 8px;
+            height: self.above + 24px;
+            HorizontalLayout {
+                y: parent.above;
+                height: 24px;
+                alignment: root.right ? end : start;
+                spacing: 2px;
+                visible: root.has-hover;
+                if root.right && root.card.time != "": Text {
+                    text: root.card.time;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if root.right && root.card.time != "": Rectangle {
+                    width: 6px;
+                }
+                for a in root.card.actions: Btn {
+                    icon: a == "copy" ? Icons.copy : a == "quote" ? Icons.link : a == "fork" ? Icons.fork : Icons.at-sign;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: a == "copy" ? "Copy" : a == "quote" ? "Quote in reply" : a == "fork" ? "Fork from this response" : "Mention in your next message";
+                    clicked => {
+                        root.act(root.card.seq, a);
+                    }
+                }
+                if !root.right && root.card.time != "": Rectangle {
+                    width: 6px;
+                }
+                if !root.right && root.card.time != "": Text {
+                    text: root.card.time;
+                    font-size: 12px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    mention-btn := Btn {
+        x: parent.width - self.width;
+        y: 0px;
+        visible: (root.card.kind == "tool" || root.card.kind == "notice" || root.card.kind == "message") && (root.has-hover || self.hovered);
+        icon: Icons.at-sign;
+        size: icon-xs;
+        variant: ghost-muted;
+        tip: "Mention in your next message";
+        clicked => {
+            root.act(root.card.seq, "mention");
+        }
+    }
+    if root.card.kind == "group" || root.card.kind == "thinking": TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggle(root.card.seq);
+        }
+    }
+}
+
+// egui draws the waiting bubble dashed (4 on, 3 off); Slint borders are solid, so the gaps are painted over.
+component Dashed inherits Rectangle {
+    in property <color> line;
+    property <length> r: Theme.radius-lg;
+    property <int> nx: max(0, floor((self.width - 2 * self.r) / 7px));
+    property <int> ny: max(0, floor((self.height - 2 * self.r) / 7px));
+    border-width: 1px;
+    border-color: self.line;
+    border-radius: self.r;
+    for i in root.nx: Rectangle {
+        x: root.r + i * 7px + 4px;
+        y: 0;
+        width: 3px;
+        height: 1px;
+        background: Theme.bg100;
+    }
+    for i in root.nx: Rectangle {
+        x: root.r + i * 7px + 4px;
+        y: root.height - 1px;
+        width: 3px;
+        height: 1px;
+        background: Theme.bg100;
+    }
+    for i in root.ny: Rectangle {
+        x: 0;
+        y: root.r + i * 7px + 4px;
+        width: 1px;
+        height: 3px;
+        background: Theme.bg100;
+    }
+    for i in root.ny: Rectangle {
+        x: root.width - 1px;
+        y: root.r + i * 7px + 4px;
+        width: 1px;
+        height: 3px;
+        background: Theme.bg100;
+    }
+}
+
+component SteeringBubble {
+    in property <CardData> card;
+    in property <length> avail;
+    in property <length> gap;
+    min-height: col.min-height;
+    preferred-height: col.preferred-height;
+    measure := Text {
+        visible: false;
+        text: root.card.text;
+        font-size: 14px;
+    }
+    col := VerticalLayout {
+        spacing: root.gap;
+        padding-bottom: 6px + root.gap;
+        HorizontalLayout {
+            alignment: end;
+            height: 16px;
+            spacing: 4px;
+            Spinner {
+                y: 2.6px;
+                radius: 4.5px;
+                color: Theme.subtle;
+            }
+            Text {
+                text: "Steering…";
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            Rectangle {
+                width: min(measure.preferred-width + 2px, max(root.avail * 0.75, 200px) - 24px) + 24px;
+                min-height: inner.min-height;
+                preferred-height: inner.preferred-height;
+                background: Theme.gray-100;
+                border-width: 1px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                inner := VerticalLayout {
+                    padding: 8px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text {
+                        text: root.card.text;
+                        font-size: 14px;
+                        color: Theme.fg;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Queue cards reuse CardData's fields: `queueCards` in cards.ts says which is which.
+component QueuedBubble inherits TouchArea {
+    in property <CardData> card;
+    in property <length> avail;
+    in property <length> gap;
+    callback act(int, string);
+    callback move-menu(int, length, length);
+    property <bool> edited: root.card.tone != "";
+    property <bool> show: root.has-hover && root.mouse-x >= root.width - max(bubble.width, 200px) && !root.card.pending && !root.edited;
+    property <color> ink: root.card.tone == "mine" ? Theme.fg : Theme.subtle;
+    min-height: col.min-height;
+    preferred-height: col.preferred-height;
+    measure := Text {
+        visible: false;
+        text: root.card.text;
+        font-size: 14px;
+    }
+    col := VerticalLayout {
+        spacing: root.gap;
+        padding-bottom: 4px + root.gap;
+        HorizontalLayout {
+            alignment: end;
+            bubble := Rectangle {
+                width: min(measure.preferred-width + 2px, max(root.avail * 0.75, 200px) - 24px) + 24px;
+                min-height: inner.min-height;
+                preferred-height: inner.preferred-height;
+                background: root.card.pending ? Theme.gray-100 : transparent;
+                border-width: root.card.pending ? 1px : 0px;
+                border-color: Theme.border;
+                border-radius: Theme.radius-lg;
+                if !root.card.pending: Dashed {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    line: root.edited ? Theme.primary : Theme.subtle.with-alpha(0.6);
+                }
+                inner := VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: root.card.pending ? 7px : 8px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    if root.card.pending: Text {
+                        text: "Sending";
+                        font-size: 11.5px;
+                        color: Theme.subtle;
+                    }
+                    Text {
+                        text: root.card.text;
+                        font-size: 14px;
+                        color: root.ink;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+        if !root.card.pending: Rectangle {
+            height: 28px;
+            if root.card.result != "": Text {
+                x: parent.width - max(bubble.width, 200px);
+                text: root.card.result;
+                font-size: 11.5px;
+                color: Theme.destructive;
+                vertical-alignment: center;
+                height: parent.height;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 2px;
+                if root.edited: Text {
+                    text: root.card.tone == "mine" ? "Editing in the composer" : "Being edited on another device";
+                    font-size: 11.5px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if root.card.tone == "mine": Rectangle {
+                    width: 4px;
+                }
+                if root.card.tone == "mine": Btn {
+                    width: 60px;
+                    text: "Cancel";
+                    size: xs;
+                    variant: ghost-muted;
+                    tip: "Cancel the edit (Esc)";
+                    clicked => {
+                        root.act(root.card.seq, "q-cancel");
+                    }
+                }
+                if !root.show && !root.edited && root.card.detail != "": Text {
+                    text: root.card.detail;
+                    font-size: 11.5px;
+                    color: Theme.subtle;
+                    vertical-alignment: center;
+                }
+                if !root.show && !root.edited: Rectangle {
+                    width: 2px;
+                }
+                if root.show && root.card.open: Btn {
+                    icon: Icons.grip;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Click to move it up or down";
+                    clicked => {
+                        root.move-menu(root.card.seq, self.absolute-position.x, self.absolute-position.y + self.height);
+                    }
+                }
+                if root.show: Btn {
+                    icon: Icons.compose;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: root.card.icon;
+                    clicked => {
+                        root.act(root.card.seq, "q-edit");
+                    }
+                }
+                if root.show: Btn {
+                    icon: Icons.corner-up-right;
+                    text: root.card.label;
+                    size: xs;
+                    variant: ghost-muted;
+                    enabled: root.card.expandable;
+                    tip: root.card.url;
+                    clicked => {
+                        root.act(root.card.seq, "q-steer");
+                    }
+                }
+                if root.show: Btn {
+                    icon: Icons.x;
+                    size: icon-xs;
+                    variant: ghost-muted;
+                    tip: "Remove from queue";
+                    clicked => {
+                        root.act(root.card.seq, "q-remove");
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Transcript {
+    in property <[CardData]> cards;
+    in property <[MdBlock]> live-blocks;
+    in property <int> live-seq: -1;
+    in property <length> content-w: 760px;
+    in property <bool> running;
+    callback toggle(int);
+    callback link(string);
+    callback open-url(string);
+    callback act(int, string);
+    callback open-media(string);
+    callback copy-text(string);
+    callback queue-menu(int, length, length);
+    // Scrolled within a screen of the top while earlier cards wait: the shell builds a page more.
+    callback near-top();
+    out property <bool> at-end: -list.content-y + list.height >= list.content-height - 48px;
+    out property <length> content-height: col.preferred-height;
+    function check-top() {
+        if !root.follow && -list.content-y < list.height {
+            root.near-top();
+        }
+    }
+    // Cards were put above: the view keeps its distance from the content's end while their height (and
+    // their images') comes in, so it shows what it did. Off with `anchor-off`, a card toggled or the end.
+    property <bool> anchoring;
+    property <length> from-end;
+    public function grew-above(before: length) {
+        root.anchoring = true;
+        root.from-end = before + list.content-y;
+        root.apply-anchor();
+    }
+    public function anchor-off() {
+        root.anchoring = false;
+    }
+    function apply-anchor() {
+        list.content-y = max(min(0px, list.height - list.content-height), min(0px, root.from-end - list.content-height));
+    }
+    // A scroll while anchored moves the anchor with it.
+    function moved() {
+        if root.anchoring {
+            root.from-end = list.content-height + list.content-y;
+        }
+        root.check-top();
+    }
+    // Stuck to the end while it grows (egui's stick_to_bottom) until scrolled up.
+    in-out property <bool> follow: true;
+    public function scroll-to-end() {
+        root.follow = true;
+        root.anchoring = false;
+        list.content-y = min(0px, list.height - col.preferred-height);
+    }
+    public function scroll-by(dy: length) {
+        list.content-y = max(min(0px, list.height - list.content-height), min(0px, list.content-y + dy));
+        root.follow = root.at-end;
+        root.moved();
+    }
+    public function page(dir: int) {
+        root.scroll-by(dir * list.height * 0.9);
+    }
+    public function scroll-to-top() {
+        list.content-y = 0px;
+        root.follow = root.at-end;
+        root.moved();
+    }
+    // egui's item spacing in the transcript, between rows that aren't cards.
+    property <length> gap: Theme.compact ? 8px : 12px;
+    property <length> gutter: root.width < 520px ? 12px : 24px;
+    property <length> side: max((root.width - root.content-w) / 2, gutter);
+    property <length> column: max(0px, root.width - 2 * side);
+    list := Flickable {
+        interactive: false;
+        width: root.width;
+        height: root.height;
+        content-height: col.preferred-height;
+        changed content-height => {
+            if root.follow {
+                self.content-y = min(0px, self.height - self.content-height);
+            } else if root.anchoring {
+                root.apply-anchor();
+            }
+        }
+        changed height => {
+            if root.follow {
+                self.content-y = min(0px, self.height - self.content-height);
+            }
+        }
+        flicked => {
+            root.follow = root.at-end;
+            if root.follow {
+                root.anchoring = false;
+            }
+            root.moved();
+        }
+        col := VerticalLayout {
+            x: root.side;
+            width: root.column;
+            alignment: start;
+            for c in root.cards: Rectangle {
+                property <length> h: row.preferred-height;
+                min-height: h;
+                max-height: h;
+                // Every frame walks each drawn item: rows far off screen are left out.
+                visible: self.y + self.height + list.content-y > -list.height && self.y + list.content-y < 2 * list.height;
+                row := VerticalLayout {
+                    y: 0;
+                    width: parent.width;
+                    height: h;
+                    // chat.rs: 24px above and below the transcript, and egui's 8px scroll margin above it.
+                    if c.kind == "space": Rectangle {
+                        height: c.seq == -1 ? 32px : 24px;
+                    }
+                    if c.kind == "status": HorizontalLayout {
+                        height: 27px;
+                        padding-top: 3px;
+                        spacing: 8px;
+                        alignment: start;
+                        Rectangle {
+                            width: 16px;
+                            Spinner {
+                                y: (parent.height - self.height) / 2 + 2.5px;
+                                radius: 7px;
+                                color: Theme.fg;
+                            }
+                        }
+                        Text {
+                            text: c.text;
+                            font-size: 13px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if c.kind == "steering": SteeringBubble {
+                        card: c;
+                        avail: root.column;
+                        gap: root.gap;
+                    }
+                    // cards.ts "earlier": scrolling up loads them; the button is for keys and short windows.
+                    if c.kind == "earlier": HorizontalLayout {
+                        alignment: center;
+                        padding-bottom: root.gap;
+                        Btn {
+                            text: c.label;
+                            icon: Icons.up;
+                            size: xs;
+                            variant: ghost-muted;
+                            clicked => {
+                                root.toggle(c.seq);
+                            }
+                        }
+                    }
+                    if c.kind == "queue-head": HorizontalLayout {
+                        alignment: end;
+                        height: 22px + root.gap;
+                        padding-top: root.gap;
+                        spacing: 6px;
+                        Glyph {
+                            width: 13px;
+                            icon: Icons.list-ordered;
+                            size: 13px;
+                            color: Theme.subtle;
+                        }
+                        Text {
+                            text: c.label;
+                            font-size: 12px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                    }
+                    if c.kind == "queue-head": Rectangle {
+                        height: 2px + root.gap;
+                    }
+                    if c.kind == "queued": QueuedBubble {
+                        card: c;
+                        avail: root.column;
+                        gap: root.gap;
+                        act(seq, a) => {
+                            root.act(seq, a);
+                        }
+                        move-menu(seq, x, y) => {
+                            root.queue-menu(seq, x, y);
+                        }
+                    }
+                    if c.kind == "queue-more": HorizontalLayout {
+                        alignment: end;
+                        padding-bottom: 4px + root.gap;
+                        Btn {
+                            text: c.label;
+                            trailing: Icons.down;
+                            size: xs;
+                            variant: ghost-muted;
+                            clicked => {
+                                root.act(c.seq, "q-unfold");
+                            }
+                        }
+                    }
+                    if c.kind != "space" && c.kind != "status" && c.kind != "earlier" && c.kind != "steering" && c.kind != "queue-head" && c.kind != "queued" && c.kind != "queue-more": CardView {
+                        card: c;
+                        avail: root.column;
+                        running: root.running;
+                        live-blocks: root.live-blocks;
+                        live-seq: root.live-seq;
+                        act(seq, a) => {
+                            root.act(seq, a);
+                        }
+                        open-media(p) => {
+                            root.open-media(p);
+                        }
+                        copy-text(t) => {
+                            root.copy-text(t);
+                        }
+                        toggle(seq) => {
+                            root.anchoring = false;
+                            root.toggle(seq);
+                        }
+                        link(u) => {
+                            root.link(u);
+                        }
+                        open-url(u) => {
+                            root.open-url(u);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // chat.rs `scroll_to_bottom_button`: floats over the lower edge while reading back.
+    if !root.at-end: Rectangle {
+        x: (root.width - 34px) / 2;
+        y: root.height - 14px - 34px;
+        width: 34px;
+        height: 34px;
+        border-radius: 17px;
+        background: down-area.has-hover ? Theme.gray-200 : Theme.gray-100;
+        border-width: 1px;
+        border-color: Theme.border;
+        Glyph {
+            icon: Icons.down;
+            size: 16px;
+            color: Theme.fg;
+        }
+        down-area := TipArea {
+            tip: "Scroll to bottom";
+            clicked => {
+                root.scroll-to-end();
+            }
+        }
+    }
+}

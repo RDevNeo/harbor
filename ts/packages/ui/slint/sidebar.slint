@@ -1,0 +1,617 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Glyph, StatusData, StatusView, SearchField, Empty, Dot, TipArea } from "widgets.slint";
+
+export struct SideRow {
+    kind: string,
+    id: int,
+    title: string,
+    active: bool,
+    status: StatusData,
+    letter: string,
+    avatar: image,
+    has-avatar: bool,
+    settled: bool,
+    snoozed: bool,
+    worktree: string,
+    worktree-tip: string,
+    pr: string,
+    pr-tip: string,
+    tip: string,
+}
+
+component ThreadRow {
+    in property <SideRow> data;
+    callback open();
+    callback settle(bool);
+    // Under the clock button, in window coordinates.
+    callback snooze(length, length);
+    // At the pointer, in window coordinates.
+    callback menu(length, length);
+    property <bool> hovering: area.has-hover || settle-btn.hovered || snooze-btn.hovered;
+    property <bool> indented: data.kind == "thread";
+    height: Theme.row-h;
+    Rectangle {
+        x: root.indented ? 14px : 0px;
+        width: parent.width - self.x;
+        background: root.data.active || root.hovering ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+        area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.open();
+            }
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                    root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
+        if !root.indented: Glyph {
+            x: 8px;
+            width: 16px;
+            icon: Icons.message;
+            size: 14px;
+            color: root.data.active ? Theme.fg : Theme.subtle;
+        }
+        title := Text {
+            x: root.indented ? 8px : 32px;
+            property <length> room: parent.width - self.x - (root.hovering ? actions.preferred-width + 8px : status.preferred-width + 16px) - (root.data.worktree != "" ? 20px : 0px) - (root.data.pr != "" ? 20px : 0px);
+            width: min(self.preferred-width, max(self.room, 10px));
+            text: root.data.title;
+            font-size: 14px;
+            font-weight: root.data.active ? 500 : 400;
+            color: Theme.fg;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if root.data.worktree != "": TipArea {
+            x: title.x + title.width + 5px;
+            width: 16px;
+            tip: root.data.worktree-tip;
+            Glyph {
+                icon: Icons.folder-git;
+                size: 13px;
+                color: root.data.worktree == "gone" ? Theme.red-900 : root.data.active ? Theme.fg : Theme.subtle;
+            }
+        }
+        if root.data.pr != "": TipArea {
+            x: title.x + title.width + 5px + (root.data.worktree != "" ? 20px : 0px);
+            width: 16px;
+            tip: root.data.pr-tip;
+            Glyph {
+                icon: root.data.pr == "merged" ? Icons.git-merge : root.data.pr == "draft" ? Icons.pr-draft : root.data.pr == "closed" ? Icons.pr-closed : Icons.pr-open;
+                size: 13px;
+                color: root.data.pr == "open" ? Theme.green-900 : root.data.pr == "draft" ? Theme.gray-800 : root.data.pr == "closed" ? Theme.red-900 : Theme.dark ? #c4b5fd : #7c3aed;
+            }
+        }
+        status := StatusView {
+            visible: !root.hovering;
+            x: parent.width - 8px - self.width;
+            width: self.preferred-width;
+            status: root.data.status;
+        }
+        actions := HorizontalLayout {
+            visible: root.hovering;
+            x: parent.width - 2px - self.preferred-width;
+            y: (parent.height - 28px) / 2;
+            height: 28px;
+            spacing: 0px;
+            snooze-btn := Btn {
+                visible: !root.data.settled;
+                width: root.data.settled ? 0px : 28px;
+                icon: Icons.clock;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.data.snoozed;
+                tip: "Snooze";
+                clicked => {
+                    root.snooze(self.absolute-position.x, self.absolute-position.y + self.height);
+                }
+            }
+            settle-btn := Btn {
+                icon: root.data.settled ? Icons.unarchive : Icons.check;
+                text: root.data.settled ? "Unsettle" : "Settle";
+                size: xs;
+                variant: ghost-muted;
+                clicked => {
+                    root.settle(!root.data.settled);
+                }
+            }
+        }
+    }
+}
+
+component ProjectRow {
+    in property <SideRow> data;
+    callback open();
+    callback new-chat();
+    callback snooze(length, length);
+    callback menu(length, length);
+    in property <bool> grip;
+    // The project dragged across the sidebar (-1: none) and the pointer's window y.
+    in property <int> drag-id: -1;
+    in property <length> drag-y;
+    callback drag(length);
+    callback dropped();
+    property <bool> pointed: drag-y >= self.absolute-position.y && drag-y < self.absolute-position.y + self.height;
+    out property <bool> under: drag-id >= 0 && drag-id != data.id && pointed;
+    out property <bool> above: drag-y < self.absolute-position.y + self.height / 2;
+    property <bool> dragging: drag-id == data.id;
+    property <bool> far;
+    // While a drag runs the pressed handle keeps the hover, so the pointer's row shows it instead.
+    property <bool> hovering: drag-id >= 0 ? pointed : area.has-hover || handle.has-hover || plus.hovered || snooze.hovered;
+    height: Theme.row-h + 2px;
+    Rectangle {
+        background: root.data.active || root.hovering ? Theme.accent : transparent;
+        border-radius: Theme.radius-md;
+    }
+    // sidebar.rs: egui draws the drop line as a 2px stroke 1px outside the target row.
+    if root.under: Rectangle {
+        y: root.above ? -2px : parent.height;
+        height: 2px;
+        background: Theme.gray-1000;
+    }
+    area := TipArea {
+        tip: root.data.tip;
+        clicked => {
+            root.open();
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    handle := TouchArea {
+        x: 0;
+        width: 30px;
+        enabled: root.grip;
+        mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.far = false;
+            }
+            if e.kind == PointerEventKind.up && root.dragging {
+                root.dropped();
+            }
+        }
+        moved => {
+            // egui's click distance: further than 6px is a drag.
+            root.far = root.far || abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px;
+            if root.far {
+                root.drag(self.absolute-position.y + self.mouse-y);
+            }
+        }
+        clicked => {
+            if !root.far {
+                root.open();
+            }
+        }
+    }
+    if root.grip && (root.hovering || root.dragging): Glyph {
+        x: 8px;
+        width: 16px;
+        icon: Icons.grip;
+        size: 16px;
+        color: root.data.active ? Theme.fg : Theme.subtle;
+    }
+    if root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Image {
+        x: 8px;
+        width: 16px;
+        height: 16px;
+        source: root.data.avatar;
+    }
+    if !root.data.has-avatar && !(root.grip && (root.hovering || root.dragging)): Rectangle {
+        x: 8px;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        background: root.data.active || root.hovering ? Theme.gray-400 : Theme.gray-300;
+        Text {
+            text: root.data.letter;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: Theme.fg;
+        }
+    }
+    Text {
+        x: 32px;
+        width: parent.width - 32px - (root.hovering ? 64px : status.preferred-width + 16px);
+        text: root.data.title;
+        font-size: 14px;
+        font-weight: root.data.active ? 500 : 400;
+        color: Theme.fg;
+        overflow: elide;
+        vertical-alignment: center;
+    }
+    status := StatusView {
+        visible: !root.hovering;
+        x: parent.width - 8px - self.width;
+        width: self.preferred-width;
+        status: root.data.status;
+    }
+    HorizontalLayout {
+        visible: root.hovering;
+        x: parent.width - 2px - self.preferred-width;
+        y: (parent.height - 28px) / 2;
+        height: 28px;
+        spacing: 4px;
+        plus := Btn {
+            icon: Icons.plus;
+            size: icon-xs;
+            variant: ghost-muted;
+            tip: "New chat in this project";
+            clicked => {
+                root.new-chat();
+            }
+        }
+        snooze := Btn {
+            icon: Icons.clock;
+            size: icon-xs;
+            variant: ghost-muted;
+            pressed: root.data.snoozed;
+            tip: "Snooze";
+            clicked => {
+                root.snooze(self.absolute-position.x, self.absolute-position.y + self.height);
+            }
+        }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <[SideRow]> rows;
+    in property <[SideRow]> settled;
+    in property <int> settled-count;
+    in-out property <bool> settled-open;
+    in-out property <string> search <=> search-field.text;
+    in property <int> running;
+    in property <string> empty-kind;
+    in property <string> empty-desc;
+    in property <bool> workspaces;
+    in property <bool> ws-on;
+    in property <string> ws-tip;
+    in property <string> pop-id;
+    in property <bool> pages-back;
+    callback open-chat(int);
+    callback open-project(int);
+    callback new-chat(int);
+    callback new-thread();
+    callback add-project();
+    callback settle(int, bool);
+    callback snooze(string, length, length);
+    callback chat-menu(int, length, length);
+    callback project-menu(int, length, length);
+    callback searched(string);
+    callback hide();
+    callback palette();
+    callback filter(length, length);
+    callback ws-filter(length, length);
+    callback ws-all();
+    in property <bool> can-drag;
+    callback reorder(int, int, bool);
+    in-out property <int> drag-id: -1;
+    in-out property <length> drag-y;
+    property <int> drop-id: -1;
+    property <bool> drop-above;
+    callback settings();
+    callback prs();
+    callback issues();
+    callback back();
+    callback refresh();
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 11px;
+        padding-top: 13px;
+        spacing: 2px;
+        HorizontalLayout {
+            height: 28px;
+            spacing: 6px;
+            Btn {
+                icon: Icons.panel-left-close;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Hide sidebar (Ctrl+B)";
+                clicked => {
+                    root.hide();
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: "Harbor";
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.search;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Search everything (Ctrl+K)";
+                clicked => {
+                    root.palette();
+                }
+            }
+        }
+        Rectangle {
+            height: 3px;
+        }
+        HorizontalLayout {
+            height: 32px;
+            spacing: 2px;
+            search-field := SearchField {
+                horizontal-stretch: 1;
+                hint: "Search";
+                edited(t) => {
+                    root.searched(t);
+                }
+            }
+            if root.workspaces: Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.users;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.pop-id == "workspace" || root.ws-on;
+                tip: root.ws-tip;
+                clicked => {
+                    root.ws-filter(self.absolute-position.x, self.absolute-position.y + self.height);
+                }
+            }
+            filter-btn := Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.filter;
+                size: icon-xs;
+                variant: ghost-muted;
+                pressed: root.pop-id == "filter";
+                tip: "Order and view";
+                clicked => {
+                    root.filter(self.absolute-position.x, self.absolute-position.y + self.height);
+                }
+            }
+            Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.folder-plus;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Add project";
+                clicked => {
+                    root.add-project();
+                }
+            }
+            Btn {
+                y: (parent.height - self.height) / 2;
+                icon: Icons.compose;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "New thread (Ctrl+N)";
+                clicked => {
+                    root.new-thread();
+                }
+            }
+        }
+        Rectangle {
+            height: 7px;
+        }
+        list := Flickable {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                if root.empty-kind != "": VerticalLayout {
+                    padding-top: 24px;
+                    Empty {
+                        icon: root.empty-kind == "search" ? Icons.search : root.empty-kind == "ws" ? Icons.users : Icons.folder-plus;
+                        title: root.empty-kind == "search" ? "No match" : root.empty-kind == "ws" ? "Nothing here" : "No projects yet";
+                        desc: root.empty-desc;
+                        action: root.empty-kind == "search" ? "" : root.empty-kind == "ws" ? "Show all" : "Add project";
+                        act => {
+                            if root.empty-kind == "ws" {
+                                root.ws-all();
+                            } else {
+                                root.add-project();
+                            }
+                        }
+                    }
+                }
+                for r in root.rows: VerticalLayout {
+                    if r.kind == "project": VerticalLayout {
+                        padding-bottom: 2px;
+                        ProjectRow {
+                            data: r;
+                            grip: root.can-drag;
+                            drag-id: root.drag-id;
+                            drag-y: root.drag-y;
+                            drag(y) => {
+                                root.drag-id = r.id;
+                                root.drag-y = y;
+                            }
+                            dropped => {
+                                if root.drop-id >= 0 {
+                                    root.reorder(r.id, root.drop-id, root.drop-above);
+                                }
+                                root.drag-id = -1;
+                                root.drop-id = -1;
+                            }
+                            changed under => {
+                                if self.under {
+                                    root.drop-id = r.id;
+                                    root.drop-above = self.above;
+                                } else if root.drop-id == r.id {
+                                    root.drop-id = -1;
+                                }
+                            }
+                            changed above => {
+                                if self.under {
+                                    root.drop-above = self.above;
+                                }
+                            }
+                            open => {
+                                root.open-project(r.id);
+                            }
+                            new-chat => {
+                                root.new-chat(r.id);
+                            }
+                            snooze(x, y) => {
+                                root.snooze("r" + r.id, x, y);
+                            }
+                            menu(x, y) => {
+                                root.project-menu(r.id, x, y);
+                            }
+                        }
+                    }
+                    if r.kind == "thread" || r.kind == "loose": ThreadRow {
+                        data: r;
+                        open => {
+                            root.open-chat(r.id);
+                        }
+                        settle(on) => {
+                            root.settle(r.id, on);
+                        }
+                        snooze(x, y) => {
+                            root.snooze("c" + r.id, x, y);
+                        }
+                        menu(x, y) => {
+                            root.chat-menu(r.id, x, y);
+                        }
+                    }
+                    if r.kind == "label": VerticalLayout {
+                        padding-top: 6px;
+                        Text {
+                            height: 16px;
+                            text: "  Threads";
+                            font-size: 12px;
+                            color: Theme.subtle;
+                        }
+                    }
+                }
+            }
+        }
+        if root.settled-count > 0: Rectangle {
+            height: Theme.row-h;
+            background: settled-area.has-hover ? Theme.accent : transparent;
+            border-radius: Theme.radius-md;
+            settled-label := Text {
+                x: 8px;
+                text: "Settled";
+                font-size: 12px;
+                font-weight: 500;
+                color: settled-area.has-hover ? Theme.fg : Theme.fg.with-alpha(0.7);
+                vertical-alignment: center;
+            }
+            Rectangle {
+                x: 8px + settled-label.preferred-width + 6px;
+                width: max(count.preferred-width, 8px) + 12px;
+                height: 20px;
+                border-radius: Theme.radius-md;
+                background: Theme.gray-200;
+                count := Text {
+                    text: root.settled-count;
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: Theme.subtle;
+                }
+            }
+            Glyph {
+                x: parent.width - 21px;
+                width: 14px;
+                icon: root.settled-open ? Icons.down : Icons.up;
+                size: 14px;
+                color: settled-label.color;
+            }
+            settled-area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settled-open = !root.settled-open;
+                }
+            }
+        }
+        if root.settled-count > 0 && root.settled-open: Flickable {
+            height: min(root.settled-count * 34px, 220px);
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                for r in root.settled: ThreadRow {
+                    data: r;
+                    open => {
+                        root.open-chat(r.id);
+                    }
+                    settle(on) => {
+                        root.settle(r.id, on);
+                    }
+                    menu(x, y) => {
+                        root.chat-menu(r.id, x, y);
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            height: 40px;
+            padding-top: 9px;
+            padding-bottom: 3px;
+            spacing: 4px;
+            if root.pages-back: Btn {
+                icon: Icons.arrow-left;
+                text: "Back";
+                size: xs;
+                variant: ghost-muted;
+                tip: "Back (Esc)";
+                clicked => {
+                    root.back();
+                }
+            }
+            if !root.pages-back: Btn {
+                icon: Icons.settings;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Settings (Ctrl+,)";
+                clicked => {
+                    root.settings();
+                }
+            }
+            if !root.pages-back: Btn {
+                icon: Icons.pull;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Pull requests";
+                clicked => {
+                    root.prs();
+                }
+            }
+            if !root.pages-back: Btn {
+                icon: Icons.circle-dot;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Issues";
+                clicked => {
+                    root.issues();
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if root.running > 0: Dot {
+                y: (parent.height - self.height) / 2;
+                color: Theme.blue-700;
+            }
+            if root.running > 0: Text {
+                text: root.running + " running";
+                font-size: 12px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            Btn {
+                icon: Icons.refresh;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Refresh providers, projects and git";
+                clicked => {
+                    root.refresh();
+                }
+            }
+        }
+    }
+}

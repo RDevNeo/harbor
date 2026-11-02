@@ -1,0 +1,289 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Empty, Glyph, Meter, Separator, Spinner, TipArea } from "widgets.slint";
+
+export struct DeviceRow {
+    key: string,
+    name: string,
+    phone: bool,
+    online: bool,
+    details: string,
+    can-send: bool,
+}
+
+export enum TransferState { run, wait, done, error }
+
+export struct TransferRow {
+    label: string,
+    state: TransferState,
+    line: string,
+    frac: float,
+}
+
+component DeviceAction {
+    in property <string> icon;
+    in property <string> tip;
+    callback clicked(length, length);
+    width: 28px;
+    height: 28px;
+    Rectangle {
+        background: area.has-hover ? Theme.gray-300 : transparent;
+        border-radius: Theme.radius-md;
+    }
+    Glyph {
+        icon: root.icon;
+        size: 16px;
+        color: area.has-hover ? Theme.fg : Theme.subtle;
+    }
+    area := TipArea {
+        tip: root.tip;
+        clicked => {
+            root.clicked(self.absolute-position.x, self.absolute-position.y + self.height);
+        }
+    }
+}
+
+// devices.rs `device_row`: a 32px disc with the status dot, name and details, the actions on hover.
+component Device {
+    in property <DeviceRow> d;
+    callback send(length, length);
+    callback files();
+    callback terminal();
+    height: 56px;
+    property <color> ink: d.online ? Theme.fg : Theme.subtle;
+    property <bool> acts: area.has-hover && d.can-send;
+    area := TouchArea {
+        if area.has-hover: Rectangle {
+            y: 2px;
+            height: parent.height - 4px;
+            background: Theme.accent.with-alpha(0.6);
+            border-radius: Theme.radius-md;
+        }
+        Rectangle {
+            x: 10px;
+            width: 32px;
+            height: 32px;
+            border-radius: 16px;
+            background: Theme.gray-200;
+            Glyph {
+                icon: root.d.phone ? Icons.smartphone : Icons.monitor;
+                size: 16px;
+                color: root.ink;
+            }
+            Rectangle {
+                x: 16px + 11px - 4px;
+                y: 16px + 11px - 4px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.d.online ? Theme.green-800 : Theme.gray-600;
+                border-width: 1.5px;
+                border-color: Theme.gray-200;
+            }
+        }
+        Text {
+            x: 54px;
+            y: root.height / 2 - 17px;
+            width: root.width - self.x - 8px - 8px - (root.acts ? (root.d.phone ? 32px : 96px) : 0px);
+            text: root.d.name;
+            font-size: 14px;
+            font-weight: 500;
+            color: root.ink;
+            overflow: elide;
+        }
+        Text {
+            x: 54px;
+            y: root.height / 2 + 2px;
+            width: root.width - self.x - 8px - 8px - (root.acts ? (root.d.phone ? 32px : 96px) : 0px);
+            text: root.d.details;
+            font-size: 12.5px;
+            color: Theme.subtle;
+            overflow: elide;
+        }
+        if root.acts: HorizontalLayout {
+            x: root.width - 8px - self.preferred-width;
+            y: (root.height - 28px) / 2;
+            height: 28px;
+            spacing: 4px;
+            if !root.d.phone: DeviceAction {
+                icon: Icons.terminal;
+                tip: "Terminal";
+                clicked => {
+                    root.terminal();
+                }
+            }
+            if !root.d.phone: DeviceAction {
+                icon: Icons.folder;
+                tip: "Files";
+                clicked => {
+                    root.files();
+                }
+            }
+            DeviceAction {
+                icon: Icons.send;
+                tip: "Send";
+                clicked(x, y) => {
+                    root.send(x, y);
+                }
+            }
+        }
+    }
+}
+
+// devices.rs `transfers_ui`: under the list, and under a PC's file browser.
+export component TransferList inherits VerticalLayout {
+    in property <[TransferRow]> transfers;
+    in property <bool> clearable;
+    callback clear();
+    spacing: 8px;
+    HorizontalLayout {
+        height: 22px;
+        Text {
+            text: "Transfers";
+            font-size: 12px;
+            color: Theme.subtle;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        if root.clearable: Btn {
+            text: "Clear";
+            size: xs;
+            variant: ghost;
+            clicked => {
+                root.clear();
+            }
+        }
+    }
+    for x in root.transfers: HorizontalLayout {
+        spacing: 8px;
+        padding-bottom: 6px;
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            y: 0;
+            if x.state == TransferState.done || x.state == TransferState.error: Glyph {
+                icon: x.state == TransferState.error ? Icons.circle-x : Icons.circle-check;
+                size: 14px;
+                color: x.state == TransferState.error ? Theme.red-900 : Theme.green-900;
+            }
+            if x.state == TransferState.run || x.state == TransferState.wait: Spinner {
+                radius: 6px;
+                color: Theme.subtle;
+            }
+        }
+        VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: x.label;
+                font-size: 13px;
+                color: Theme.fg;
+                overflow: elide;
+            }
+            if x.state == TransferState.run: Meter {
+                max-width: 320px;
+                frac: x.frac;
+            }
+            Text {
+                text: x.line;
+                font-size: 12px;
+                color: x.state == TransferState.error ? Theme.red-900 : Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+export component DevicesView inherits Rectangle {
+    in property <[DeviceRow]> devices;
+    in property <string> summary;
+    in property <[TransferRow]> transfers;
+    in property <bool> clearable;
+    callback send(string, length, length);
+    callback files(string);
+    callback terminal(string);
+    callback settings();
+    callback clear();
+    Flickable {
+        interactive: false;
+        VerticalLayout {
+            alignment: start;
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 14px;
+            padding-bottom: 14px;
+            Text {
+                height: 24px;
+                text: "Devices";
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                height: 8px;
+            }
+            Text {
+                height: 16px;
+                text: root.devices.length == 0 ? "Nothing paired yet" : root.summary;
+                font-size: 13px;
+                color: Theme.subtle;
+                vertical-alignment: center;
+            }
+            if root.devices.length == 0: VerticalLayout {
+                padding-top: 8px + 12px + 24px;
+                Empty {
+                    icon: Icons.monitor;
+                    title: "Nothing paired yet";
+                    desc: "Your PCs show up here once they're paired in Settings › Devices, and your phones once Harbor for Android is paired in Settings › Phones.";
+                    action: "Open Settings › Devices";
+                    act => {
+                        root.settings();
+                    }
+                }
+            }
+            if root.devices.length > 0: VerticalLayout {
+                padding-top: 8px + 12px;
+                Rectangle {
+                    background: Theme.bg100;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    border-radius: Theme.radius-lg;
+                    // egui strokes a frame outside its 4px margin.
+                    VerticalLayout {
+                        padding: 5px;
+                        for d[i] in root.devices: VerticalLayout {
+                            if i > 0: VerticalLayout {
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+                                Separator { }
+                            }
+                            Device {
+                                d: d;
+                                send(x, y) => {
+                                    root.send(d.key, x, y);
+                                }
+                                files => {
+                                    root.files(d.key);
+                                }
+                                terminal => {
+                                    root.terminal(d.key);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if root.transfers.length > 0: TransferList {
+                padding-top: 8px + 14px;
+                transfers: root.transfers;
+                clearable: root.clearable;
+                clear => {
+                    root.clear();
+                }
+            }
+        }
+    }
+}

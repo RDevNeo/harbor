@@ -1,0 +1,17 @@
+{
+  "name": "@harbor/net",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harbor/store": "workspace:*",
+    "markdown-it": "15.0.3"
+  },
+  "devDependencies": {
+    "@harbor/agents": "workspace:*"
+  }
+}

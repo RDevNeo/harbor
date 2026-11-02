@@ -18,3 +18,12 @@ binding = "DB"
 database_name = "harbor-accounts"
 database_id = "e2c5b9ac-4f42-4d02-b694-459c666ab61f"
 migrations_dir = "migrations"
+
+# Release news (src/release.js): one object holds every PC's long-poll. The class is new, so it needs this migration.
+[[durable_objects.bindings]]
+name = "RELEASES"
+class_name = "ReleaseHub"
+
+[[migrations]]
+tag = "v1-release-hub"
+new_sqlite_classes = ["ReleaseHub"]

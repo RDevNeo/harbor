@@ -1,0 +1,167 @@
+import "fonts/Geist-Regular.ttf";
+import "fonts/GeistMono-Regular.ttf";
+import { Theme } from "theme.slint";
+
+export struct TermRun {
+    col: int,
+    n: int,
+    text: string,
+    fg: color,
+    bg: color,
+    has-bg: bool,
+    underline: bool,
+}
+
+export enum TermKey { none, enter, backspace, tab, backtab, esc, up, down, right, left, home, end, pageup, pagedown, delete, insert }
+
+export struct TermLine {
+    runs: [TermRun],
+}
+
+// terminal.rs `Terminal::ui`: a monospace grid on bg200 with a 4 px side and 2 px top margin.
+export component TerminalView inherits Rectangle {
+    in property <[TermLine]> lines;
+    in property <int> cursor-row: -1;
+    in property <int> cursor-col: -1;
+    in property <string> cursor-text;
+    in property <string> scrolled;
+    out property <length> cw: probe.preferred-width;
+    out property <length> rh: probe.preferred-height;
+    out property <bool> focused: scope.has-focus;
+    callback key(TermKey, string, bool, bool, bool);
+    callback paste();
+    callback wheel(int);
+    callback resized(length, length);
+    public function focus-terminal() {
+        scope.focus();
+    }
+    background: Theme.bg200;
+    clip: true;
+    changed width => {
+        root.resized(self.width, self.height);
+    }
+    changed height => {
+        root.resized(self.width, self.height);
+    }
+    probe := Text {
+        visible: false;
+        text: "M";
+        font-family: "Geist Mono";
+        font-size: 13px;
+    }
+    TouchArea {
+        mouse-cursor: text;
+        clicked => {
+            scope.focus();
+        }
+        scroll-event(e) => {
+            root.wheel(round(e.delta-y / root.rh));
+            accept
+        }
+    }
+    for l[r] in root.lines: Rectangle {
+        x: 4px;
+        y: 2px + r * root.rh;
+        width: root.width - 4px;
+        height: root.rh;
+        for run in l.runs: Rectangle {
+            x: run.col * root.cw;
+            width: run.n * root.cw;
+            background: run.has-bg ? run.bg : transparent;
+            Text {
+                x: 0;
+                text: run.text;
+                font-family: "Geist Mono";
+                font-size: 13px;
+                color: run.fg;
+                vertical-alignment: center;
+            }
+            if run.underline: Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: run.fg;
+            }
+        }
+    }
+    if root.cursor-row >= 0: Rectangle {
+        x: 4px + root.cursor-col * root.cw;
+        y: 2px + root.cursor-row * root.rh;
+        width: root.cw;
+        height: root.rh;
+        background: scope.has-focus ? Theme.fg.with-alpha(0.7) : transparent;
+        border-width: scope.has-focus ? 0 : 1px;
+        border-color: Theme.fg.with-alpha(0.6);
+        if scope.has-focus: Text {
+            x: 0;
+            text: root.cursor-text;
+            font-family: "Geist Mono";
+            font-size: 13px;
+            color: Theme.bg200;
+            vertical-alignment: center;
+        }
+    }
+    if root.scrolled != "": Text {
+        x: root.width - self.width - 10px;
+        y: 6px;
+        text: root.scrolled;
+        font-size: 12px;
+        color: Theme.subtle;
+    }
+    scope := FocusScope {
+        key-pressed(e) => {
+            if e.modifiers.control && (e.text == "v" || e.text == "V") {
+                root.paste();
+                return accept;
+            }
+            root.key(
+                e.text == Key.Return ? TermKey.enter : e.text == Key.Backspace ? TermKey.backspace : e.text == Key.Tab ? TermKey.tab : e.text == Key.Backtab ? TermKey.backtab
+                : e.text == Key.Escape ? TermKey.esc : e.text == Key.UpArrow ? TermKey.up : e.text == Key.DownArrow ? TermKey.down : e.text == Key.RightArrow ? TermKey.right
+                : e.text == Key.LeftArrow ? TermKey.left : e.text == Key.Home ? TermKey.home : e.text == Key.End ? TermKey.end : e.text == Key.PageUp ? TermKey.pageup
+                : e.text == Key.PageDown ? TermKey.pagedown : e.text == Key.Delete ? TermKey.delete : e.text == Key.Insert ? TermKey.insert : TermKey.none,
+                e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift);
+            accept
+        }
+    }
+}
+
+export component TerminalWindow inherits Window {
+    in-out property <bool> dark <=> Theme.dark;
+    in property <[TermLine]> lines;
+    in property <int> cursor-row: -1;
+    in property <int> cursor-col: -1;
+    in property <string> cursor-text;
+    in property <string> scrolled;
+    out property <length> cw: view.cw;
+    out property <length> rh: view.rh;
+    out property <length> vw: view.width;
+    out property <length> vh: view.height;
+    callback key(TermKey, string, bool, bool, bool);
+    callback paste();
+    callback wheel(int);
+    callback resized(length, length);
+    width: 900px;
+    height: 520px;
+    default-font-family: "Geist";
+    view := TerminalView {
+        lines: root.lines;
+        cursor-row: root.cursor-row;
+        cursor-col: root.cursor-col;
+        cursor-text: root.cursor-text;
+        scrolled: root.scrolled;
+        key(k, t, c, a, s) => {
+            root.key(k, t, c, a, s);
+        }
+        paste => {
+            root.paste();
+        }
+        wheel(n) => {
+            root.wheel(n);
+        }
+        resized(w, h) => {
+            root.resized(w, h);
+        }
+    }
+    init => {
+        view.focus-terminal();
+    }
+}

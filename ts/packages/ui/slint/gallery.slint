@@ -1,0 +1,106 @@
+import "fonts/Geist-Regular.ttf";
+import "fonts/Geist-Medium.ttf";
+import "fonts/Geist-SemiBold.ttf";
+import "fonts/GeistMono-Regular.ttf";
+import "fonts/lucide.ttf";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Variant, BtnSize, Badge, Tone, MenuRow, StatusView, RoundButton, StopButton, Input, SearchField, MenuItem, PopoverFrame, MenuLabel, MenuSeparator, Tabs, Empty, Toggle, KbdCombo, FileChip, Meter, Trigger, TipLayer, Spinner } from "widgets.slint";
+
+export component Gallery inherits Window {
+    in-out property <bool> dark <=> Theme.dark;
+    width: 1000px;
+    height: 760px;
+    background: Theme.bg100;
+    default-font-family: "Geist";
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Btn { text: "Primary"; variant: primary; }
+            Btn { text: "Secondary"; variant: secondary; }
+            Btn { text: "Outline"; }
+            Btn { text: "Ghost"; variant: ghost; }
+            Btn { text: "Muted"; variant: ghost-muted; }
+            Btn { text: "Destructive"; variant: destructive; }
+            Btn { text: "Delete"; variant: ghost-destructive; }
+            Btn { text: "Stop"; variant: stop; }
+            Btn { text: "Off"; enabled: false; variant: primary; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Btn { text: "Small"; size: sm; }
+            Btn { icon: Icons.check; text: "Settle"; size: xs; variant: ghost-muted; }
+            Btn { icon: Icons.search; size: icon-xs; variant: ghost-muted; }
+            Btn { icon: Icons.settings; size: icon-sm; variant: ghost-muted; pressed: true; }
+            Btn { icon: Icons.compose; size: icon; }
+            RoundButton { icon: Icons.arrow-up; }
+            RoundButton { icon: Icons.arrow-up; enabled: false; }
+            StopButton { }
+            Spinner { color: Theme.blue-900; }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Badge { text: "Gray"; }
+            Badge { text: "Blue"; tone: blue; }
+            Badge { text: "Green"; tone: green; }
+            Badge { text: "3 changed"; tone: amber; }
+            Badge { text: "Red"; tone: red; }
+            Badge { text: "Muted"; tone: muted; }
+            Badge { text: "Solid"; tone: blue-solid; }
+            Toggle { on: true; }
+            Toggle { }
+            KbdCombo { caps: ["Ctrl", "Shift", "F"]; }
+            FileChip { name: "notes.txt"; }
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            VerticalLayout {
+                width: 236px;
+                spacing: 2px;
+                MenuRow { label: "Sly mbpmyqlti tlwfoy vpkib?"; right: "38m"; }
+                MenuRow { label: "Active row"; active: true; icon: Icons.message; }
+                StatusView { height: 32px; status: { kind: "working", text: "8m" }; }
+                StatusView { height: 32px; status: { kind: "done" }; }
+                StatusView { height: 32px; status: { kind: "failed" }; }
+                StatusView { height: 32px; status: { kind: "text", text: "1d", color: Theme.gray-800 }; }
+                SearchField { }
+            }
+            VerticalLayout {
+                width: 260px;
+                spacing: 10px;
+                Input { hint: "Custom: 5h, 2d, 18:00"; }
+                Input { hint: "sk-…"; mono: true; }
+                Meter { frac: 0.7; }
+                Tabs { labels: ["General", "Usage", "Keys"]; }
+                HorizontalLayout {
+                    alignment: start;
+                    Trigger { icon: Icons.brain; label: "Medium"; }
+                    Trigger { icon: Icons.lock-open; label: "Full access"; }
+                }
+            }
+            PopoverFrame {
+                width: 240px;
+                height: 160px;
+                VerticalLayout {
+                    padding: 4px;
+                    MenuLabel { text: "Move to project"; }
+                    MenuItem { icon: Icons.message; label: "No project"; desc: "Home folder"; checked: true; }
+                    MenuSeparator { }
+                    MenuItem { icon: Icons.folder; label: "project3"; }
+                }
+            }
+        }
+        Empty {
+            icon: Icons.folder-plus;
+            title: "No projects yet";
+            desc: "Add a folder or clone a repository to start.";
+            action: "Add project";
+        }
+    }
+    TipLayer { x: 0; y: 0; width: root.width; height: root.height; window-width: root.width; }
+}

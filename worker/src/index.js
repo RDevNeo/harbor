@@ -1,6 +1,10 @@
 // Harbor accounts API: Clerk (Google sign-in, organizations) behind a small
 // Worker that issues offline-verifiable Harbor tokens. Wire format: android/PROTOCOL.md.
 
+import { releasePing, releaseWait } from './release.js';
+
+export { ReleaseHub } from './release.js';
+
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const SKEW = 600;
@@ -760,6 +764,8 @@ async function route(req, env) {
     const k = await signing(env);
     return json({ keys: [{ kid: env.HARBOR_KID || 'k1', alg: 'EdDSA', x: k.x }] });
   }
+  if (m === 'POST' && path === '/v1/release') return releasePing(req, env);
+  if (m === 'GET' && path === '/v1/release/wait') return releaseWait(req, env);
   if (m === 'POST' && path === '/v1/session') return session(req, env);
   if (m === 'POST' && path === '/v1/session/google') return googleSession(req, env);
   if (m === 'POST' && path === '/v1/session/refresh') return refreshSession(req, env);

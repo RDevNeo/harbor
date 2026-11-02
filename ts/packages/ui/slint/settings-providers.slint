@@ -1,0 +1,235 @@
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { AccountMark, Badge, Btn, Card, Meter, Separator, SettingRow } from "widgets.slint";
+
+export struct ProviderMeter {
+    label: string,
+    frac: float,
+    pct: string,
+}
+
+export struct ProviderRow {
+    id: string,
+    logo: image,
+    badge: string,
+    name: string,
+    sub: string,
+    plan: string,
+    email: string,
+    meters: [ProviderMeter],
+    installed: bool,
+    state: string,
+    action: string,
+    primary: bool,
+    is-default: bool,
+}
+
+export struct ProvidersData {
+    rows: [ProviderRow],
+    update-show: bool,
+    update-title: string,
+    update-desc: string,
+    update-enabled: bool,
+}
+
+component Centered {
+    VerticalLayout {
+        alignment: center;
+        @children
+    }
+}
+
+export component ProvidersTab {
+    in property <ProvidersData> data;
+    callback act(string, string);
+    VerticalLayout {
+        alignment: start;
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: stretch;
+            Text {
+                horizontal-stretch: 1;
+                text: "Every agent CLI on this machine is a provider. Claude Code adds one per account.";
+                font-size: 14px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+                vertical-alignment: top;
+            }
+            VerticalLayout {
+                alignment: start;
+                Btn {
+                    icon: Icons.plus;
+                    text: "Add Claude account";
+                    size: sm;
+                    clicked => {
+                        root.act("", "add");
+                    }
+                }
+            }
+        }
+        Rectangle {
+            height: 16px;
+        }
+        if root.data.update-show: VerticalLayout {
+            Card {
+                height: upd.preferred-height + 2px;
+                upd := SettingRow {
+                    width: parent.width;
+                    title: root.data.update-title;
+                    desc: root.data.update-desc;
+                    Btn {
+                        text: "Update";
+                        size: sm;
+                        variant: primary;
+                        enabled: root.data.update-enabled;
+                        clicked => {
+                            root.act("", "update");
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                height: 8px;
+            }
+        }
+        Card {
+            VerticalLayout {
+                for r[i] in root.data.rows: VerticalLayout {
+                    if i > 0: Separator { }
+                    HorizontalLayout {
+                        padding-left: 17px;
+                        padding-right: 17px;
+                        padding-top: (i == 0 ? 13px : 12px) + (r.installed ? 0px : 8px);
+                        padding-bottom: 20px;
+                        spacing: 14px;
+                        VerticalLayout {
+                            width: 32px;
+                            alignment: start;
+                            AccountMark {
+                                height: 32px;
+                                logo: r.logo;
+                                badge: r.badge;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: start;
+                            spacing: 1px;
+                            HorizontalLayout {
+                                height: 30px;
+                                spacing: 7px;
+                                alignment: start;
+                                Text {
+                                    text: r.name;
+                                    font-size: 14px;
+                                    font-weight: 500;
+                                    color: Theme.fg;
+                                    vertical-alignment: center;
+                                }
+                                if r.sub != "": Text {
+                                    text: r.sub;
+                                    font-size: 13px;
+                                    color: Theme.subtle;
+                                    vertical-alignment: center;
+                                }
+                                if r.plan != "": Badge {
+                                    text: r.plan;
+                                }
+                            }
+                            if r.email != "": Text {
+                                height: 18px;
+                                vertical-alignment: center;
+                                text: r.email;
+                                font-size: 13px;
+                                color: Theme.subtle;
+                            }
+                            if r.meters.length > 0: HorizontalLayout {
+                                height: 30px;
+                                alignment: start;
+                                for m in r.meters: HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: m.label;
+                                        font-size: 12px;
+                                        color: Theme.subtle;
+                                        vertical-alignment: center;
+                                    }
+                                    Centered {
+                                        width: 70px;
+                                        Meter {
+                                            frac: m.frac;
+                                        }
+                                    }
+                                    Text {
+                                        text: m.pct;
+                                        font-size: 12px;
+                                        font-family: "GeistMono";
+                                        color: Theme.subtle;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle {
+                                        width: 2px;
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: end;
+                            Centered {
+                                if !r.installed: Badge {
+                                    text: "Not installed";
+                                }
+                                if r.installed && r.state == "signed-out": Badge {
+                                    text: "Signed out";
+                                    tone: amber;
+                                }
+                                if r.installed && r.state == "ready": Badge {
+                                    text: "Ready";
+                                    tone: green;
+                                }
+                                if r.installed && r.state == "installed": Badge {
+                                    text: "Installed";
+                                    tone: green;
+                                }
+                            }
+                            if r.installed: Centered {
+                                if r.is-default: Badge {
+                                    text: "Default";
+                                    tone: blue;
+                                }
+                                if !r.is-default: Btn {
+                                    text: "Make default";
+                                    size: sm;
+                                    variant: ghost;
+                                    clicked => {
+                                        root.act(r.id, "default");
+                                    }
+                                }
+                            }
+                            Centered {
+                                Btn {
+                                    text: r.action;
+                                    size: sm;
+                                    variant: r.primary ? primary : r.installed ? ghost : outline;
+                                    clicked => {
+                                        root.act(r.id, "login");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            height: 8px;
+        }
+        Text {
+            text: "Sign-in runs the provider's own login in Harbor's terminal. Press Refresh in the sidebar afterwards.";
+            font-size: 12px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+    }
+}

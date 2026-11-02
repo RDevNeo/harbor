@@ -1,0 +1,438 @@
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Store } from "@harbor/store";
+import { LibmpvUnavailable } from "../src/libmpv.ts";
+import * as v from "../src/video.ts";
+
+const dirs: string[] = [];
+const prevData = process.env.XDG_DATA_HOME;
+const MP4 = Buffer.from("\0\0\0\x18ftypmp42\0\0\0\0", "latin1");
+
+function tmp(name: string): string {
+  const d = mkdtempSync(join(tmpdir(), `hvideo-${name}-`));
+  dirs.push(d);
+  return d;
+}
+
+beforeEach(() => {
+  process.env.XDG_DATA_HOME = tmp("data");
+});
+
+afterEach(() => {
+  if (prevData === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = prevData;
+});
+
+afterAll(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+test("the_player_uses_only_what_the_system_has", () => {
+  expect(v.audioOutputs(true, true, true)).toBe("pipewire,pulse,alsa,null");
+  expect(v.audioOutputs(false, true, false)).toBe("pulse,null");
+  expect(v.audioOutputs(false, false, false)).toBe("null");
+  expect(v.versionOf("0.3.65")).toEqual([0, 3, 65]);
+  const newer = v.versionOf("1.6.9");
+  const older = v.versionOf("0.3.48");
+  expect(newer !== null && v.versionAtLeast(newer, v.PIPEWIRE_MIN)).toBe(true);
+  expect(older !== null && v.versionAtLeast(older, v.PIPEWIRE_MIN)).toBe(false);
+  expect(v.versionOf("1.0")).toBeNull();
+  expect(v.versionOf("1.x.3")).toBeNull();
+});
+
+test("the_clock_reads_like_a_player", () => {
+  expect([v.clock(0), v.clock(9.9), v.clock(65), v.clock(3725), v.clock(-1), v.clock(Number.NaN)]).toEqual(["0:00", "0:09", "1:05", "1:02:05", "0:00", "0:00"]);
+});
+
+test("only_the_last_seek_of_a_drag_is_kept", () => {
+  const q: v.Cmd[] = [];
+  v.push(q, { kind: "seek", to: 1, exact: false });
+  v.push(q, { kind: "pause", on: true });
+  v.push(q, { kind: "seek", to: 2, exact: false });
+  v.push(q, { kind: "seek", to: 3, exact: true });
+  expect(q).toEqual([
+    { kind: "pause", on: true },
+    { kind: "seek", to: 3, exact: true },
+  ]);
+});
+
+test("a_window_out_of_sight_pauses_a_playing_video_only", () => {
+  expect(v.outOfSight(true, v.HIDDEN_MS + 1)).toBe(true);
+  expect(v.outOfSight(true, v.HIDDEN_MS / 2)).toBe(false);
+  expect(v.outOfSight(false, v.HIDDEN_MS * 10)).toBe(false);
+});
+
+test("the_player_reads_nothing_but_the_file", () => {
+  for (const name of ["config", "load-scripts", "ytdl", "access-references", "ordered-chapters", "sub-auto", "audio-file-auto", "autoload-files", "resume-playback", "input-default-bindings"]) {
+    expect(v.optionValue(name)).toBe("no");
+  }
+  expect(v.optionValue("vo")).toBe("libmpv");
+});
+
+test("plays_only_what_media_allows_as_an_absolute_path", () => {
+  const d = tmp("playable");
+  mkdirSync(join(d, ".ssh"));
+  writeFileSync(join(d, "clip.mp4"), MP4);
+  writeFileSync(join(d, "--script=x.mp4"), MP4);
+  writeFileSync(join(d, ".ssh/key.mp4"), MP4);
+  writeFileSync(join(d, "fake.mp4"), "not a video at all");
+  writeFileSync(join(d, "pic.png"), Buffer.from("\x89PNG\r\n\x1a\n", "latin1"));
+  const ok = v.playable(join(d, "clip.mp4"));
+  expect(ok.ok && ok.file).toBe(realpathSync(join(d, "clip.mp4")));
+  const odd = v.playable(join(d, "--script=x.mp4"));
+  expect(odd.ok && odd.file.startsWith("/")).toBe(true);
+  for (const bad of [join(d, ".ssh/key.mp4"), join(d, "fake.mp4"), join(d, "pic.png"), join(d, "missing.mp4"), "clip.mp4", "https://example.com/a.mp4"]) {
+    expect(v.playable(bad).ok).toBe(false);
+  }
+});
+
+test("a_video_of_another_pc_is_saved_here_before_it_plays", async () => {
+  const key = `/home-pc/${process.pid}-run.mp4`;
+  let asked = 0;
+  const fetch = async (): Promise<Uint8Array | null> => {
+    asked += 1;
+    return MP4;
+  };
+  const got = await v.fileOf(key, fetch);
+  expect(got.ok).toBe(true);
+  if (!got.ok) return;
+  expect(got.file.startsWith("/") && got.file.endsWith(".mp4")).toBe(true);
+  expect(asked).toBe(1);
+  rmSync(got.file);
+  const off = await v.fileOf(key, async () => null);
+  expect(!off.ok && off.error.includes("off")).toBe(true);
+});
+
+test("watched properties are mirrored, the position alone asks for no repaint", () => {
+  const st = v.freshState(true);
+  expect(v.changed(st, 0, { format: 5, value: 12.5 })).toBe(false);
+  expect(st.pos).toBe(12.5);
+  expect(v.changed(st, 1, { format: 5, value: 60 })).toBe(true);
+  expect(v.changed(st, 2, { format: 3, value: false })).toBe(true);
+  expect(st.paused).toBe(false);
+  expect(v.changed(st, 3, { format: 3, value: true })).toBe(true);
+  expect(st.ended).toBe(true);
+  expect(v.changed(st, 4, { format: 4, value: 1920 })).toBe(true);
+  expect(st.hasVideo).toBe(true);
+  expect(v.changed(st, 4, { format: 0, value: null })).toBe(true);
+  expect(st.hasVideo).toBe(false);
+  expect(v.changed(st, 5, { format: 3, value: true })).toBe(true);
+  expect(st.stopped).toBe(true);
+  expect(v.changed(st, 101, { format: 1, value: "h264" })).toBe(false);
+  expect(st.stats[1]).toBe("h264");
+});
+
+test("the core's options follow the player and the mode", () => {
+  const plain = v.coreOptions({ paused: true, volume: 40, blind: false, own: null, log: null });
+  expect(plain.at(-2)).toEqual(["volume", "40"]);
+  expect(plain.at(-1)).toEqual(["pause", "yes"]);
+  const own = v.coreOptions({ paused: false, volume: 100, blind: false, own: { ao: "pulse,null", va: true }, log: "/x/log" });
+  expect(own).toContainEqual(["ao", "pulse,null"]);
+  expect(own).toContainEqual(["hwdec", "no"]);
+  expect(own.at(-1)).toEqual(["log-file", "/x/log.mpv"]);
+  const blind = v.coreOptions({ paused: false, volume: 0, blind: true, own: null, log: null });
+  expect(blind).toContainEqual(["vo", "null"]);
+  expect(blind).toContainEqual(["untimed", "yes"]);
+});
+
+interface Log {
+  frames: v.Frame[];
+  repaints: number;
+  external: string[];
+  toasts: string[];
+  shut: number;
+  full: boolean;
+  fullCalls: boolean[];
+}
+
+function host(): { log: Log; host: v.Host } {
+  const log: Log = { frames: [], repaints: 0, external: [], toasts: [], shut: 0, full: false, fullCalls: [] };
+  return {
+    log,
+    host: {
+      repaint: () => void log.repaints++,
+      frame: (f) => void log.frames.push({ width: f.width, height: f.height, data: f.data.slice() }),
+      fullscreen: () => log.full,
+      setFullscreen: (on) => {
+        log.full = on;
+        log.fullCalls.push(on);
+      },
+      openExternally: (f) => void log.external.push(f),
+      toast: (m) => void log.toasts.push(m),
+      shut: () => void log.shut++,
+    },
+  };
+}
+
+const waiting: v.PlayerSource = { library: () => null, coming: () => true, ask: () => {} };
+
+async function until(what: string, ok: () => boolean, ms = 8000, tick?: () => void): Promise<void> {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    tick?.();
+    await Bun.sleep(10);
+  }
+}
+
+function waitingViewer(): { viewer: v.Viewer; log: Log; clip: string } {
+  const d = tmp("keys");
+  const clip = join(d, "clip.mp4");
+  writeFileSync(clip, MP4);
+  const h = host();
+  return { viewer: new v.Viewer({ host: h.host, source: waiting }), log: h.log, clip };
+}
+
+test("a video waits in the preparing stage until the player is here", async () => {
+  const { viewer, clip } = waitingViewer();
+  viewer.open(clip, undefined, true);
+  expect(viewer.isOpen()).toBe(true);
+  await until("preparing", () => viewer.snapshot()?.stage.kind === "preparing");
+  viewer.shutdown();
+  expect(viewer.snapshot()).toBeNull();
+});
+
+test("keys: space, arrows, m and f drive the player and the rest is left to the viewer", async () => {
+  const { viewer, log, clip } = waitingViewer();
+  viewer.open(clip, undefined, true);
+  await until("preparing", () => viewer.snapshot()?.stage.kind === "preparing");
+  expect(viewer.takeKeys(["pageUp"])).toEqual({ previous: true, next: false, close: false });
+  expect(viewer.takeKeys(["pageDown"])).toEqual({ previous: false, next: true, close: false });
+  expect(viewer.queued()).toEqual([]);
+  viewer.takeKeys(["space", "left", "right"]);
+  viewer.takeKeys(["up"]);
+  viewer.takeKeys(["down", "down", "down"]);
+  expect(viewer.queued()).toEqual([
+    { kind: "pause", on: true },
+    { kind: "nudge", by: -5 },
+    { kind: "nudge", by: 5 },
+    { kind: "volume", percent: 100 },
+    { kind: "volume", percent: 95 },
+  ]);
+  expect(viewer.volume()).toBe(95);
+  expect(viewer.takeVolume()).toBe(95);
+  expect(viewer.takeVolume()).toBeNull();
+  viewer.takeKeys(["m"]);
+  expect(viewer.snapshot()?.muted).toBe(true);
+  viewer.takeKeys(["up"]);
+  expect(viewer.snapshot()?.muted).toBe(false);
+  expect(viewer.queued().slice(-3)).toEqual([
+    { kind: "mute", on: true },
+    { kind: "volume", percent: 100 },
+    { kind: "mute", on: false },
+  ]);
+  viewer.takeKeys(["f"]);
+  expect(log.fullCalls).toEqual([true]);
+  viewer.shutdown();
+});
+
+test("esc_closes_a_video_in_full_screen_too", async () => {
+  const { viewer, log, clip } = waitingViewer();
+  viewer.open(clip, undefined, true);
+  await until("preparing", () => viewer.snapshot()?.stage.kind === "preparing");
+  viewer.takeKeys(["f"]);
+  expect(log.fullCalls).toEqual([true]);
+  expect(viewer.takeKeys(["escape"])).toEqual({ previous: false, next: false, close: true });
+  viewer.close();
+  expect(log.fullCalls).toEqual([true, false]);
+  viewer.shutdown();
+});
+
+test("a held seek bar sends coarse seeks and the exact one on release; an ended video plays again", async () => {
+  const { viewer, clip } = waitingViewer();
+  viewer.open(clip, undefined, true);
+  await until("preparing", () => viewer.snapshot()?.stage.kind === "preparing");
+  viewer.holdSeek(3);
+  viewer.holdSeek(4);
+  viewer.holdSeek(4);
+  expect(viewer.snapshot()?.drag).toBe(4);
+  expect(viewer.controlsVisible(false)).toBe(true);
+  viewer.releaseSeek();
+  expect(viewer.snapshot()?.drag).toBeNull();
+  expect(viewer.queued()).toEqual([{ kind: "seek", to: 4, exact: true }]);
+  viewer.toggle();
+  expect(viewer.queued().at(-1)).toEqual({ kind: "pause", on: true });
+  viewer.shutdown();
+});
+
+test("the volume is kept under video_volume", async () => {
+  const store = Store.openTemp();
+  try {
+    const { viewer } = waitingViewer();
+    expect(viewer.persistVolume(store)).toBe(false);
+    store.set("video_volume", "35");
+    viewer.restoreVolume(store);
+    expect(viewer.volume()).toBe(35);
+    store.set("video_volume", "250");
+    viewer.restoreVolume(store);
+    expect(viewer.volume()).toBe(100);
+    store.set("video_volume", "loud");
+    viewer.restoreVolume(store);
+    expect(viewer.volume()).toBe(100);
+    viewer.setVolume(20);
+    expect(viewer.persistVolume(store)).toBe(false);
+    const { viewer: v2, clip } = waitingViewer();
+    v2.open(clip, undefined, true);
+    await until("preparing", () => v2.snapshot()?.stage.kind === "preparing");
+    v2.takeKeys(["down"]);
+    expect(v2.persistVolume(store)).toBe(true);
+    expect(store.get("video_volume")).toBe("95");
+    v2.shutdown();
+  } finally {
+    store.close();
+  }
+});
+
+test("without libmpv the file opens in the system's player", async () => {
+  const d = tmp("nompv");
+  const clip = join(d, "clip.mp4");
+  writeFileSync(clip, MP4);
+  const h = host();
+  const viewer = new v.Viewer({
+    host: h.host,
+    loadEngine: () => {
+      throw new LibmpvUnavailable(["libmpv.so.2"]);
+    },
+  });
+  viewer.open(clip, undefined, true);
+  await until("external", () => h.log.external.length > 0);
+  expect(h.log.external[0]?.endsWith("clip.mp4")).toBe(true);
+  expect(h.log.toasts).toEqual([v.WARN_NO_MPV]);
+  expect(h.log.shut).toBe(1);
+  expect(viewer.isOpen()).toBe(false);
+});
+
+test("a file that is not a video fails with a reason", async () => {
+  const d = tmp("notvideo");
+  const clip = join(d, "fake.mp4");
+  writeFileSync(clip, "nothing");
+  const h = host();
+  const viewer = new v.Viewer({ host: h.host });
+  viewer.open(clip, undefined, true);
+  await until("failure", () => viewer.snapshot()?.stage.kind === "failed");
+  const stage = viewer.snapshot()?.stage;
+  expect(stage?.kind === "failed" && stage.why).toContain("contents");
+  viewer.shutdown();
+});
+
+const live = { dir: "", clip: "" };
+
+async function ffmpeg(args: string[]): Promise<void> {
+  const p = Bun.spawn(["ffmpeg", "-v", "error", "-y", ...args], { stderr: "pipe" });
+  const code = await p.exited;
+  if (code !== 0) throw new Error(`ffmpeg failed: ${await new Response(p.stderr).text()}`);
+}
+
+beforeAll(async () => {
+  live.dir = tmp("live");
+  live.clip = join(live.dir, "clip.mp4");
+  await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", live.clip]);
+});
+
+async function playing(): Promise<{ viewer: v.Viewer; log: Log }> {
+  const h = host();
+  const viewer = new v.Viewer({ host: h.host });
+  viewer.resize(320, 240);
+  viewer.open(live.clip, undefined, true);
+  await until("frames", () => h.log.frames.length >= 3, 10_000, () => viewer.seen());
+  return { viewer, log: h.log };
+}
+
+test("libmpv draws frames into RGBA buffers: size, opaque picture, moving content", async () => {
+  const { viewer, log } = await playing();
+  const first = log.frames[0]!;
+  expect([first.width, first.height]).toEqual([320, 240]);
+  expect(first.data.length).toBe(320 * 240 * 4);
+  const mid = (160 + 120 * 320) * 4;
+  expect(first.data[mid + 3]).toBe(255);
+  const last = log.frames.at(-1)!;
+  expect(Buffer.compare(Buffer.from(first.data), Buffer.from(last.data))).not.toBe(0);
+  const snap = viewer.snapshot();
+  expect(snap?.picture).toBe(true);
+  expect(snap?.dur).toBeGreaterThan(1.5);
+  viewer.shutdown();
+});
+
+test("pause, seek, mute and volume reach the core and its position", async () => {
+  const { viewer } = await playing();
+  viewer.toggle();
+  await until("paused", () => viewer.snapshot()?.paused === true);
+  const at = viewer.snapshot()!.pos;
+  await Bun.sleep(300);
+  expect(viewer.snapshot()!.pos).toBe(at);
+  viewer.holdSeek(1.5);
+  viewer.releaseSeek();
+  await until("seek", () => Math.abs(viewer.snapshot()!.pos - 1.5) < 0.2, 5000, () => viewer.seen());
+  viewer.takeKeys(["left"]);
+  await until("nudge back past the start", () => viewer.snapshot()!.pos < 0.2, 5000, () => viewer.seen());
+  viewer.takeKeys(["m", "down"]);
+  expect(viewer.volume()).toBe(95);
+  viewer.shutdown();
+});
+
+test("a video that reaches its end stays on the last frame, and Space plays it again", async () => {
+  const { viewer } = await playing();
+  await until("end", () => viewer.snapshot()?.ended === true, 10_000, () => viewer.seen());
+  expect(viewer.snapshot()?.picture).toBe(true);
+  viewer.toggle();
+  await until("restart", () => viewer.snapshot()?.ended === false && viewer.snapshot()!.pos < 1, 5000, () => viewer.seen());
+  viewer.shutdown();
+});
+
+test("a window out of sight pauses the video by itself", async () => {
+  const h = host();
+  let t = 0;
+  const viewer = new v.Viewer({ host: h.host, now: () => t });
+  viewer.resize(320, 240);
+  viewer.open(live.clip, undefined, true);
+  await until("playing", () => viewer.snapshot()?.stage.kind === "playing", 10_000);
+  t += v.HIDDEN_MS + 100;
+  viewer.toggleMute();
+  await until("auto pause", () => viewer.snapshot()?.paused === true, 5000);
+  viewer.shutdown();
+});
+
+test("closing lets go of the video and opening another one starts after it", async () => {
+  const { viewer } = await playing();
+  const other = join(live.dir, "other.mp4");
+  writeFileSync(other, readFileSync(live.clip));
+  viewer.open(other, undefined, false);
+  expect(viewer.isOpen()).toBe(true);
+  await until("second video", () => viewer.snapshot()?.key === other && viewer.snapshot()?.stage.kind === "playing", 10_000);
+  expect(viewer.snapshot()?.paused).toBe(true);
+  viewer.close();
+  expect(viewer.isOpen()).toBe(false);
+  await until("closed", () => viewer.snapshot() === null, 5000);
+  viewer.shutdown();
+});
+
+test("a file mpv can not decode ends in the failed stage", async () => {
+  const bad = join(live.dir, "bad.mp4");
+  writeFileSync(bad, Buffer.concat([MP4, Buffer.alloc(2000, 7)]));
+  const h = host();
+  const viewer = new v.Viewer({ host: h.host });
+  viewer.open(bad, undefined, true);
+  await until("failure", () => viewer.snapshot()?.stage.kind === "failed", 10_000, () => viewer.seen());
+  viewer.shutdown();
+});
+
+test("--check-video loads the player, checks it is locked down and plays files through", () => {
+  const out = v.checkVideo([live.clip, join(live.dir, "missing.mp4")]);
+  expect(out.lines[0]).toBe("player: the system's libmpv");
+  expect(out.lines).toContain("options/config=no");
+  expect(out.lines.some((l) => l.startsWith("a URL is refused"))).toBe(true);
+  expect(out.lines.some((l) => l.startsWith(`${live.clip}: H.264`))).toBe(true);
+  expect(out.lines.some((l) => l.includes("missing.mp4: can't play it"))).toBe(true);
+  expect(out.code).toBe(1);
+  expect(existsSync(live.clip)).toBe(true);
+});
+
+test("--check-video says so when there is no libmpv", () => {
+  const out = v.checkVideo([], null, () => {
+    throw new LibmpvUnavailable(["libmpv.so.2"]);
+  });
+  expect(out.code).toBe(1);
+  expect(out.lines[0]).toContain("no video player");
+});

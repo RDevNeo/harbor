@@ -1,0 +1,235 @@
+import { Theme } from "theme.slint";
+import { Btn, Card, Input, Separator, SettingRow, Tabs, Toggle } from "widgets.slint";
+
+export struct VoiceButton {
+    key: string,
+    label: string,
+    enabled: bool,
+}
+
+export struct VoiceRow {
+    kind: string,
+    key: string,
+    title: string,
+    desc: string,
+    text: string,
+    tone: string,
+    options: [string],
+    selected: int,
+    buttons: [VoiceButton],
+    on: bool,
+    progress: float,
+    progress-text: string,
+    term: string,
+    sounds: string,
+}
+
+export struct VoiceSection {
+    title: string,
+    before: float,
+    rows: [VoiceRow],
+    note: string,
+}
+
+export struct VoiceView {
+    sections: [VoiceSection],
+    footer: string,
+}
+
+component Bar inherits Rectangle {
+    in property <float> frac;
+    in property <string> text;
+    width: 140px;
+    height: 24px;
+    background: Theme.gray-200;
+    border-radius: 12px;
+    Rectangle {
+        x: 0;
+        width: parent.width * max(0, min(1, root.frac));
+        background: Theme.gray-400;
+        border-radius: 12px;
+    }
+    Text {
+        text: root.text;
+        font-size: 12px;
+        color: Theme.fg;
+    }
+}
+
+// A row like SettingRow, but its text stays at the top while two fields stand beside it.
+component AddRow inherits HorizontalLayout {
+    in property <VoiceRow> data;
+    callback edited(string, string);
+    callback pressed(string);
+    property <length> inner: root.width - 32px;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: Theme.compact ? 8px : 12px;
+    padding-bottom: Theme.compact ? 8px : 12px;
+    spacing: 12px;
+    VerticalLayout {
+        width: min(max(root.inner * 0.6, root.inner - 260px), root.inner - 60px);
+        alignment: start;
+        spacing: 2px;
+        Text {
+            text: root.data.title;
+            font-size: 14px;
+            font-weight: 500;
+            color: Theme.fg;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.data.desc;
+            font-size: 13px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+    }
+    HorizontalLayout {
+        horizontal-stretch: 1;
+        spacing: 6px;
+        VerticalLayout {
+            width: 150px;
+            alignment: start;
+            spacing: 4px;
+            term-in := Input {
+                hint: "Word or name";
+                text: root.data.term;
+                edited(t) => {
+                    root.edited("voice:term", t);
+                }
+                accepted(t) => {
+                    root.pressed("voice:dict:save");
+                }
+            }
+            Input {
+                hint: "Sounds like";
+                text: root.data.sounds;
+                edited(t) => {
+                    root.edited("voice:sounds", t);
+                }
+                accepted(t) => {
+                    root.pressed("voice:dict:save");
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        VerticalLayout {
+            alignment: start;
+            for b in root.data.buttons: Btn {
+                text: b.label;
+                size: sm;
+                enabled: term-in.text != "";
+                clicked => {
+                    root.pressed(b.key);
+                }
+            }
+        }
+    }
+}
+
+export component VoiceTab inherits VerticalLayout {
+    in property <VoiceView> view;
+    callback toggled(string, bool);
+    callback chose(string, int);
+    callback pressed(string);
+    callback edited(string, string);
+    alignment: start;
+    // SettingRow keeps 60% of the row (or all but 260px) for the text and 12px before the controls.
+    property <length> inner: root.width - 32px;
+    property <length> slot: max(0px, root.inner - min(max(root.inner * 0.6, root.inner - 260px), root.inner - 60px) - 12px);
+    for s[i] in root.view.sections: VerticalLayout {
+        VerticalLayout {
+            padding-top: i == 0 ? 11px : 19px + s.before * 1px;
+            padding-bottom: 15px;
+            Text {
+                text: s.title;
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+            }
+        }
+        Card {
+            VerticalLayout {
+                for r[j] in s.rows: VerticalLayout {
+                    if j > 0: Separator { }
+                    if r.kind == "add": AddRow {
+                        data: r;
+                        edited(k, t) => {
+                            root.edited(k, t);
+                        }
+                        pressed(k) => {
+                            root.pressed(k);
+                        }
+                    }
+                    if r.kind != "add": SettingRow {
+                        title: r.title;
+                        desc: r.desc;
+                        if r.kind == "status": Text {
+                            text: r.text;
+                            font-size: 14px;
+                            color: r.tone == "green" ? Theme.green-900 : Theme.red-900;
+                            horizontal-alignment: right;
+                        }
+                        if r.kind == "toggle": Toggle {
+                            on: r.on;
+                            toggled(v) => {
+                                root.toggled(r.key, v);
+                            }
+                        }
+                        if r.kind == "choice": Rectangle {
+                            width: root.slot;
+                            height: 36px;
+                            Tabs {
+                                x: parent.width - self.preferred-width;
+                                width: self.preferred-width;
+                                labels: r.options;
+                                selected: r.selected;
+                                picked(n) => {
+                                    root.chose(r.key, n);
+                                }
+                            }
+                        }
+                        if r.kind == "buttons": HorizontalLayout {
+                            spacing: 6px;
+                            alignment: end;
+                            if r.progress-text != "": Bar {
+                                frac: r.progress;
+                                text: r.progress-text;
+                            }
+                            for b in r.buttons: Btn {
+                                text: b.label;
+                                size: sm;
+                                enabled: b.enabled;
+                                clicked => {
+                                    root.pressed(b.key);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if s.note != "": VerticalLayout {
+            padding-top: 8px;
+            Text {
+                text: s.note;
+                font-size: 12px;
+                color: Theme.subtle;
+                wrap: word-wrap;
+            }
+        }
+    }
+    VerticalLayout {
+        padding-top: 20px;
+        Text {
+            text: root.view.footer;
+            font-size: 12px;
+            color: Theme.subtle;
+            wrap: word-wrap;
+        }
+    }
+}

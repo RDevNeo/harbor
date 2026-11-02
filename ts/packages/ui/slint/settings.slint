@@ -1,0 +1,408 @@
+import "fonts/Geist-Regular.ttf";
+import "fonts/Geist-Medium.ttf";
+import "fonts/Geist-SemiBold.ttf";
+import "fonts/GeistMono-Regular.ttf";
+import "fonts/lucide.ttf";
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Card, Glyph, MenuRow, SearchField, Separator, SettingRow, Tabs, Toggle } from "widgets.slint";
+import { VoiceTab, VoiceView } from "settings-voice.slint";
+import { KeybindingsTab, KeysView } from "settings-keybindings.slint";
+import { Block, BlocksTab } from "settings-blocks.slint";
+import { NotificationsTab, NotifySection } from "settings-notifications.slint";
+import { ProvidersData, ProvidersTab } from "settings-providers.slint";
+import { UsageData, UsageTab } from "settings-usage.slint";
+import { IntegrationsTab, IntData } from "settings-integrations.slint";
+import { WebhooksTab, WhData } from "settings-webhooks.slint";
+import { AppearanceTab, AppearanceView } from "settings-appearance.slint";
+
+export struct SettingsTab {
+    slug: string,
+    label: string,
+    icon: string,
+}
+
+export enum SettingKind { toggle, choice, button, value, text }
+
+export struct SettingItem {
+    kind: SettingKind,
+    key: string,
+    title: string,
+    desc: string,
+    on: bool,
+    options: [string],
+    selected: int,
+    label: string,
+    enabled: bool,
+}
+
+export struct SettingSection {
+    title: string,
+    rows: [SettingItem],
+}
+
+component SettingsNav inherits Rectangle {
+    in property <[SettingsTab]> tabs;
+    in property <string> tab;
+    in-out property <string> search <=> field.text;
+    callback pick(string);
+    callback searched(string);
+    callback back();
+    callback hide();
+    background: Theme.bg200;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 11px;
+        padding-top: 13px;
+        spacing: 2px;
+        HorizontalLayout {
+            height: 28px;
+            spacing: 6px;
+            Btn {
+                icon: Icons.panel-left-close;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Hide sidebar (Ctrl+B)";
+                clicked => {
+                    root.hide();
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: "Settings";
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 3px;
+        }
+        field := SearchField {
+            hint: "Search settings";
+            edited(t) => {
+                root.searched(t);
+            }
+        }
+        Rectangle {
+            height: 7px;
+        }
+        for t in root.tabs: MenuRow {
+            active: t.slug == root.tab;
+            icon: t.icon;
+            label: t.label;
+            clicked => {
+                root.pick(t.slug);
+            }
+        }
+        if root.tabs.length == 0: Text {
+            text: "  Nothing matches.";
+            font-size: 13px;
+            color: Theme.subtle;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+        }
+        MenuRow {
+            icon: Icons.arrow-left;
+            label: "Back";
+            clicked => {
+                root.back();
+            }
+        }
+    }
+}
+
+component SettingCard inherits Card {
+    in property <[SettingItem]> rows;
+    callback toggled(string, bool);
+    callback chose(string, int);
+    callback pressed(string);
+    VerticalLayout {
+        for r[i] in root.rows: VerticalLayout {
+            if i > 0: Separator { }
+            SettingRow {
+                title: r.title;
+                desc: r.desc;
+                if r.kind == SettingKind.toggle: Toggle {
+                    on: r.on;
+                    enabled: r.enabled;
+                    toggled(v) => {
+                        root.toggled(r.key, v);
+                    }
+                }
+                if r.kind == SettingKind.choice: Tabs {
+                    labels: r.options;
+                    selected: r.selected;
+                    picked(n) => {
+                        root.chose(r.key, n);
+                    }
+                }
+                if r.kind == SettingKind.button: Btn {
+                    text: r.label;
+                    size: sm;
+                    enabled: r.enabled;
+                    clicked => {
+                        root.pressed(r.key);
+                    }
+                }
+                if r.kind == SettingKind.value: Text {
+                    text: r.label;
+                    font-size: 14px;
+                    color: Theme.subtle;
+                    horizontal-alignment: right;
+                }
+            }
+        }
+    }
+}
+
+export global SettingsBus {
+    in property <[SettingsTab]> tabs;
+    in property <string> tab;
+    in property <string> tab-label;
+    in property <string> desc;
+    in property <[SettingSection]> sections;
+    in property <bool> nav-open: true;
+    in property <[Block]> blocks;
+    callback blocks-pressed(string);
+    callback blocks-toggled(string, bool);
+    callback blocks-edited(string, string);
+    callback blocks-submitted(string, string, string, string) -> string;
+    in-out property <string> search;
+    in property <AppearanceView> appearance;
+    in property <ProvidersData> providers;
+    in property <[NotifySection]> notifications;
+    in property <KeysView> keybindings;
+    in property <VoiceView> voice;
+    callback providers-act(string, string);
+    in property <UsageData> usage;
+    callback usage-act(string, string, int);
+    callback usage-settled();
+    in property <IntData> integrations;
+    callback integrations-act(string, string, string, string);
+    in property <WhData> webhooks;
+    callback webhooks-act(string, string);
+    pure callback integrations-valid(string, string) -> bool;
+    callback notify-edited(string, string);
+    callback keys-act(string, string);
+    callback keys-key(string, bool, bool, bool);
+    callback voice-edited(string, string);
+    callback pick(string);
+    callback searched(string);
+    callback back();
+    callback hide-nav();
+    callback show-nav();
+    callback toggled(string, bool);
+    callback chose(string, int);
+    callback pressed(string);
+}
+
+export component SettingsPage inherits Rectangle {
+    in property <[SettingsTab]> tabs <=> SettingsBus.tabs;
+    in property <string> tab <=> SettingsBus.tab;
+    in property <string> tab-label <=> SettingsBus.tab-label;
+    in property <string> desc <=> SettingsBus.desc;
+    in property <[SettingSection]> sections <=> SettingsBus.sections;
+    in property <bool> nav-open <=> SettingsBus.nav-open;
+    in property <[Block]> blocks <=> SettingsBus.blocks;
+    callback blocks-pressed <=> SettingsBus.blocks-pressed;
+    callback blocks-toggled <=> SettingsBus.blocks-toggled;
+    callback blocks-edited <=> SettingsBus.blocks-edited;
+    callback blocks-submitted <=> SettingsBus.blocks-submitted;
+    in-out property <string> search <=> SettingsBus.search;
+    in property <AppearanceView> appearance <=> SettingsBus.appearance;
+    in property <ProvidersData> providers <=> SettingsBus.providers;
+    in property <[NotifySection]> notifications <=> SettingsBus.notifications;
+    in property <KeysView> keybindings <=> SettingsBus.keybindings;
+    in property <VoiceView> voice <=> SettingsBus.voice;
+    callback providers-act <=> SettingsBus.providers-act;
+    in property <UsageData> usage <=> SettingsBus.usage;
+    callback usage-act <=> SettingsBus.usage-act;
+    callback usage-settled <=> SettingsBus.usage-settled;
+    in property <IntData> integrations <=> SettingsBus.integrations;
+    callback integrations-act <=> SettingsBus.integrations-act;
+    in property <WhData> webhooks <=> SettingsBus.webhooks;
+    callback webhooks-act <=> SettingsBus.webhooks-act;
+    pure callback integrations-valid <=> SettingsBus.integrations-valid;
+    callback notify-edited <=> SettingsBus.notify-edited;
+    callback keys-act <=> SettingsBus.keys-act;
+    callback keys-key <=> SettingsBus.keys-key;
+    callback voice-edited <=> SettingsBus.voice-edited;
+    callback pick <=> SettingsBus.pick;
+    callback searched <=> SettingsBus.searched;
+    callback back <=> SettingsBus.back;
+    callback hide-nav <=> SettingsBus.hide-nav;
+    callback show-nav <=> SettingsBus.show-nav;
+    callback toggled <=> SettingsBus.toggled;
+    callback chose <=> SettingsBus.chose;
+    callback pressed <=> SettingsBus.pressed;
+    background: Theme.bg100;
+    if root.nav-open: SettingsNav {
+        x: 0;
+        y: 0;
+        width: 256px;
+        height: root.height;
+        tabs: root.tabs;
+        tab: root.tab;
+        search <=> root.search;
+        pick(s) => {
+            root.pick(s);
+        }
+        searched(t) => {
+            root.searched(t);
+        }
+        back => {
+            root.back();
+        }
+        hide => {
+            root.hide-nav();
+        }
+    }
+    main := VerticalLayout {
+        x: root.nav-open ? 256px : 0px;
+        y: 0;
+        width: root.width - self.x;
+        height: root.height;
+        HorizontalLayout {
+            height: 46px;
+            padding-left: 18px;
+            padding-right: 10px;
+            spacing: 6px;
+            if !root.nav-open: Btn {
+                icon: Icons.panel-left;
+                size: icon-xs;
+                variant: ghost-muted;
+                tip: "Show sidebar (Ctrl+B)";
+                clicked => {
+                    root.show-nav();
+                }
+            }
+            home := TouchArea {
+                width: crumb.preferred-width;
+                mouse-cursor: pointer;
+                clicked => {
+                    root.pick("general");
+                }
+                crumb := HorizontalLayout {
+                    spacing: 6px;
+                    Glyph {
+                        text: Icons.settings;
+                        font-size: 14px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "Settings";
+                        font-size: 14px;
+                        font-weight: 500;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Text {
+                text: "/";
+                font-size: 14px;
+                font-weight: 500;
+                color: Theme.gray-600;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.tab-label;
+                font-size: 14px;
+                font-weight: 500;
+                color: Theme.fg;
+                vertical-alignment: center;
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            HorizontalLayout {
+                alignment: center;
+                VerticalLayout {
+                    width: min(760px, main.width - 48px);
+                    padding-top: 20px;
+                    padding-bottom: 40px;
+                    alignment: start;
+                    Text {
+                        height: 32px;
+                        vertical-alignment: center;
+                        text: root.tab-label;
+                        font-size: 24px;
+                        font-weight: 600;
+                        letter-spacing: -0.96px;
+                        color: Theme.fg;
+                    }
+                    if root.desc != "": VerticalLayout {
+                        padding-top: 10px;
+                        Text {
+                            text: root.desc;
+                            font-size: 14px;
+                            color: Theme.subtle;
+                            wrap: word-wrap;
+                        }
+                    }
+                    Rectangle {
+                        height: 28px;
+                    }
+                    if root.tab == "voice": VoiceTab { view: root.voice; toggled(k, v) => { root.toggled(k, v); } chose(k, n) => { root.chose(k, n); } pressed(k) => { root.pressed(k); } edited(k, t) => { root.voice-edited(k, t); } }
+                    if root.tab == "keybindings": KeybindingsTab { view: root.keybindings; act(w, a) => { root.keys-act(w, a); } key(k, c, s, a) => { root.keys-key(k, c, s, a); } }
+                    if root.tab == "account" || root.tab == "secrets" || root.tab == "devices" || root.tab == "phones": BlocksTab { blocks: root.blocks; pressed(k) => { root.blocks-pressed(k); } toggled(k, v) => { root.blocks-toggled(k, v); } edited(k, t) => { root.blocks-edited(k, t); } submitted(k, a, b, c) => { return root.blocks-submitted(k, a, b, c); } }
+                    if root.tab == "notifications": NotificationsTab { sections: root.notifications; toggled(k, v) => { root.toggled(k, v); } edited(k, t) => { root.notify-edited(k, t); } pressed(k) => { root.pressed(k); } }
+                    if root.tab == "providers": ProvidersTab { data: root.providers; act(i, w) => { root.providers-act(i, w); } }
+                    if root.tab == "usage": UsageTab { data: root.usage; act(w, a, n) => { root.usage-act(w, a, n); } settled => { root.usage-settled(); } }
+                    if root.tab == "integrations": IntegrationsTab { data: root.integrations; act(w, i, a, b) => { root.integrations-act(w, i, a, b); } valid(c, k) => { return root.integrations-valid(c, k); } }
+                    if root.tab == "webhooks": WebhooksTab { data: root.webhooks; act(w, a) => { root.webhooks-act(w, a); } }
+                    if root.tab == "appearance": AppearanceTab { view: root.appearance; mode-picked(n) => { root.chose("theme", n); } density-picked(n) => { root.chose("density", n); } }
+                    for s[i] in root.sections: VerticalLayout {
+                        if i > 0: Rectangle {
+                            height: 12px;
+                        }
+                        if s.title != "": VerticalLayout {
+                            padding-top: 17px;
+                            padding-bottom: 15px;
+                            Text {
+                                text: s.title;
+                                font-size: 16px;
+                                font-weight: 600;
+                                letter-spacing: -0.32px;
+                                color: Theme.fg;
+                            }
+                        }
+                        SettingCard {
+                            rows: s.rows;
+                            toggled(k, v) => {
+                                root.toggled(k, v);
+                            }
+                            chose(k, n) => {
+                                root.chose(k, n);
+                            }
+                            pressed(k) => {
+                                root.pressed(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    in-out property <bool> dark <=> Theme.dark;
+    in-out property <bool> compact <=> Theme.compact;
+    width: 1400px;
+    height: 900px;
+    background: Theme.bg100;
+    default-font-family: "Geist";
+    SettingsPage {
+        width: root.width;
+        height: root.height;
+    }
+}

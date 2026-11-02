@@ -1,0 +1,3 @@
+#!/bin/bash
+. ~/.cache/hts/tmp-p0/rig/env.sh
+LD_LIBRARY_PATH=$LD_SWAY exec $SWAY/bin/swaymsg -t subscribe -m '["window"]'

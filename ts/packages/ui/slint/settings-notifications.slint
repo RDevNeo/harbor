@@ -1,0 +1,89 @@
+import { Theme } from "theme.slint";
+import { Btn, Card, Input, Separator, SettingRow, Toggle } from "widgets.slint";
+
+export struct NotifyRow {
+    kind: string,
+    key: string,
+    title: string,
+    desc: string,
+    on: bool,
+    from: string,
+    to: string,
+    label: string,
+}
+
+export struct NotifySection {
+    title: string,
+    rows: [NotifyRow],
+}
+
+export component NotificationsTab inherits VerticalLayout {
+    in property <[NotifySection]> sections;
+    callback toggled(string, bool);
+    callback edited(string, string);
+    callback pressed(string);
+    alignment: start;
+    for s[i] in root.sections: VerticalLayout {
+        VerticalLayout {
+            padding-top: i == 0 ? 11px : 19px;
+            padding-bottom: 15px;
+            Text {
+                text: s.title;
+                font-size: 16px;
+                font-weight: 600;
+                letter-spacing: -0.32px;
+                color: Theme.fg;
+            }
+        }
+        Card {
+            VerticalLayout {
+                for r[j] in s.rows: VerticalLayout {
+                    if j > 0: Separator { }
+                    SettingRow {
+                        title: r.title;
+                        desc: r.desc;
+                        if r.kind == "toggle": Toggle {
+                            on: r.on;
+                            toggled(v) => {
+                                root.toggled(r.key, v);
+                            }
+                        }
+                        if r.kind == "button": Btn {
+                            text: r.label;
+                            size: sm;
+                            clicked => {
+                                root.pressed(r.key);
+                            }
+                        }
+                        if r.kind == "range": HorizontalLayout {
+                            spacing: 8px;
+                            alignment: end;
+                            Input {
+                                width: 56px;
+                                height: 28px;
+                                text: r.from;
+                                edited(t) => {
+                                    root.edited("quiet_from", t);
+                                }
+                            }
+                            Text {
+                                text: "to";
+                                font-size: 13px;
+                                color: Theme.subtle;
+                                vertical-alignment: center;
+                            }
+                            Input {
+                                width: 56px;
+                                height: 28px;
+                                text: r.to;
+                                edited(t) => {
+                                    root.edited("quiet_to", t);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
