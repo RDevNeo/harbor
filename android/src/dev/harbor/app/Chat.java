@@ -160,7 +160,8 @@ public class Chat extends Base implements Images.Gallery {
         work = new WorkBar(this, hub);
         work.chat = chatId;
         LinearLayout below = Ui.col(this);
-        below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 0, 8, -4));
+        // Clear of the agents strip above and the composer below; its pills start under the strip's edge.
+        below.addView(comp.badges, Ui.margins(Ui.wrap(), 8, 4, 8, 4));
         below.addView(comp.view, Ui.fill());
         below.addView(work.view, Ui.fill());
         root.addView(below, Ui.margins(Ui.fill(), 12, 0, 12, 12));
@@ -585,7 +586,7 @@ public class Chat extends Base implements Images.Gallery {
         box.setPadding(Ui.dp(2), Ui.dp(2), Ui.dp(2), Ui.dp(2));
         if (Labels.header(n, s.optBoolean("header", folded))) {
             LinearLayout h = Ui.row(this);
-            h.setPadding(Ui.dp(10), 0, Ui.dp(4), 0);
+            h.setPadding(Ui.dp(10), 0, 0, 0);
             h.setMinimumHeight(Ui.dp(44));
             LinearLayout marks = Ui.row(this);
             for (int i = 0; i < Math.min(n, 4); i++) {
@@ -609,8 +610,8 @@ public class Chat extends Base implements Images.Gallery {
                 h.addView(Ui.icon(this, open ? Ui.I_UP_CHEVRON : Ui.I_DOWN, 13, Ui.G700), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
                 h.setOnClickListener(v -> { stripOpen = !open; drawBars(); });
             } else h.setOnClickListener(v -> openRight());
-            // `POST stop_all`, which asks first.
-            if (Labels.stopAll(n)) h.addView(stripChip("Stop all", true, () -> stopAll(n)), Ui.margins(Ui.wrap(), 8, 0, 4, 0));
+            // `POST stop_all`, which asks first. Its right edge lines up with the rows' stop discs.
+            if (Labels.stopAll(n)) h.addView(stripChip("Stop all", true, () -> stopAll(n)), Ui.margins(Ui.wrap(), 8, 0, STOP_INSET, 0));
             box.addView(h, Ui.fill());
         }
         if (open) for (int i = 0; i < n; i++) {
@@ -649,7 +650,7 @@ public class Chat extends Base implements Images.Gallery {
         ask.addView(stripChip("Stop", true, () -> {
             stripAsk("");
             Ui.bg(this, () -> hub.call("POST", "/v1/chats/" + id + "/stop", null), x -> load(false));
-        }), Ui.margins(Ui.wrap(), 6, 0, 6, 0));
+        }), Ui.margins(Ui.wrap(), 6, 0, STOP_INSET, 0));
         row.addView(ask, Ui.margins(Ui.weight(), 8, 0, 0, 0));
         stripRows.put(id, new View[]{idle, ask});
         // Touching another row answers an open "Stop api?" with Cancel.
@@ -673,6 +674,10 @@ public class Chat extends Base implements Images.Gallery {
         return row;
     }
 
+    /** Where the strip's red stops end, from its inner right edge (dp): a row's 30 dp disc sits
+     *  centred in its 44 dp target, which keeps 2 dp from the edge; Stop all and Stop line up. */
+    private static final int STOP_INSET = 2 + (44 - 30) / 2;
+
     /** A row's stop: the composer's red disc, small, in a 44 dp tap target. */
     private View stripStop(String description, Runnable on) {
         FrameLayout f = new FrameLayout(this);
@@ -690,9 +695,10 @@ public class Chat extends Base implements Images.Gallery {
         TextView t = Ui.bold(this, label, 13, stop ? Ui.ON_STOP : Ui.FG);
         t.setSingleLine(true);
         t.setGravity(Gravity.CENTER);
-        t.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
         t.setMinHeight(Ui.dp(44));
+        // Background first: an InsetDrawable brings its own padding, which would replace ours.
         t.setBackground(new android.graphics.drawable.InsetDrawable(stop ? Ui.press(Ui.STOP, 0, 14) : Ui.press(Ui.CARD, Ui.LINE, 14), 0, Ui.dp(8), 0, Ui.dp(8)));
+        t.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
         t.setOnClickListener(v -> on.run());
         return t;
     }

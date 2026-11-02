@@ -159,16 +159,17 @@ final class Composer {
         badges = Ui.row(a);
         badges.setBaselineAligned(false);
         modelBadge = Ui.row(a);
-        modelBadge.setPadding(Ui.dp(10), 0, Ui.dp(12), 0);
+        // Background first: its InsetDrawable brings padding of its own, which would replace ours.
         modelBadge.setBackground(badgeBackground());
+        modelBadge.setPadding(Ui.dp(10), 0, Ui.dp(12), 0);
         modelBadge.setOnClickListener(v -> { if (onModel != null) onModel.run(); });
         modelText = Ui.subtitle(Ui.text(a, "", 13, Ui.FG));
         modelBadge.addView(modelText, Ui.margins(new LinearLayout.LayoutParams(-2, -2, 1), 6, 0, 0, 0));
         badges.addView(modelBadge, new LinearLayout.LayoutParams(-2, Ui.dp(44), 1));
         effortBadge = Ui.subtitle(Ui.text(a, "", 13, Ui.FG));
         effortBadge.setGravity(Gravity.CENTER);
-        effortBadge.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
         effortBadge.setBackground(badgeBackground());
+        effortBadge.setPadding(Ui.dp(12), 0, Ui.dp(12), 0);
         effortBadge.setOnClickListener(v -> { if (onEffort != null) onEffort.run(); });
         badges.addView(effortBadge, Ui.margins(new LinearLayout.LayoutParams(-2, Ui.dp(44)), 6, 0, 0, 0));
         // Landscape with the keyboard up leaves no room for them; on a phone upright they stay.
