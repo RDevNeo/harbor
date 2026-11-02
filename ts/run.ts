@@ -159,7 +159,7 @@ export async function runApp(o: RunOptions): Promise<number> {
       checkUpdates: async () => (await updater.check(), updater.info().status),
       player: { library: () => updater.videoLib(), coming: () => updater.videoInstalling(), ask: () => void updater.autoExtras("video", true) },
     };
-    await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; }, busyIn: (f) => run.setBusyIn(f) });
+    await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; }, busyIn: (f) => run.setBusyIn(f), projects: (p) => run.setWindowProjects(p) });
     tray?.stop();
     if (!quitting && run.store.get("bg_keep") !== "0") {
       const note = ui.stillRunning(run.store, tray !== null);

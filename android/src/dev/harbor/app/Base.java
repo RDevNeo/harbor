@@ -131,6 +131,32 @@ abstract class Base extends Activity {
     /** Fetch /v1/state again and redraw (after a rename, settle, delete from a menu). */
     void refresh() { }
 
+    // ---- one image picked for a caller (a project's icon, ProjectMenu) ----
+
+    static final int PICK_IMAGE = 0x7a1;
+
+    interface Picked { void on(android.net.Uri uri); }
+
+    private Picked picked;
+
+    /** The system photo picker (Android 13+), else any image picker; `then` gets the image. */
+    void pickImage(Picked then) {
+        picked = then;
+        Intent i = Build.VERSION.SDK_INT >= 33
+                ? new Intent(android.provider.MediaStore.ACTION_PICK_IMAGES)
+                : new Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);
+        try { startActivityForResult(i, PICK_IMAGE); } catch (Exception e) { picked = null; Ui.toast(this, "No app to pick images with"); }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != PICK_IMAGE) return;
+        Picked p = picked;
+        picked = null;
+        if (p != null && res == RESULT_OK && data != null && data.getData() != null) p.on(data.getData());
+    }
+
     // ---- the side panels (Chat, NewChat): the chat list slides in from the left, a chat's
     // team (Team) from the right ----
 

@@ -47,6 +47,9 @@ public class GhList extends Base {
         if (noHub()) return;
         kind = ISSUES.equals(getIntent().getStringExtra("kind")) ? ISSUES : PRS;
         try { f = new JSONObject(prefs().getString("picks", "{}")); } catch (Exception e) { f = new JSONObject(); }
+        // From a project's sheet (the desktop's project menu): that project's only.
+        String only = getIntent().getStringExtra("project");
+        if (only != null && !only.isEmpty()) put("project", only);
         LinearLayout root = frame(prs() ? "Pull requests" : "Issues", menuButton(), true);
         action(Ui.I_REFRESH, v -> load(true)).setContentDescription("Refresh");
         action(Ui.I_SORT, v -> pickSort()).setContentDescription("Sort");

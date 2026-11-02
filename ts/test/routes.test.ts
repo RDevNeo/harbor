@@ -174,3 +174,20 @@ test("a_phone_creates_a_project_on_the_pc_and_starts_its_main_chat", async () =>
   expect((state.projects as { id: unknown; path: string }[]).find((p) => p.path === dir)?.id).toBe(made.id);
   expect((await json("POST", "/v1/projects", { act: { kind: "create", name: "fresh", git: false } }))[1]).toEqual({ error: "~/Projects/fresh already exists" });
 });
+
+test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
+  const [, made] = await json("POST", "/v1/projects", { act: { kind: "create", name: "menued", git: false } });
+  const pid = made.id as number;
+  const c = h.store.createChat(blankChat({ title: "The main one", account: "claude", role: "lead", name: "lead", repoId: pid }));
+  h.store.setMainChat(pid, c.id);
+  h.engine.reload();
+  const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
+  expect(st).toBe(200);
+  expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Remove from Harbor"]);
+  const [gone] = await json("POST", "/v1/projects/do", { project: pid, act: "remove" });
+  expect(gone).toBe(200);
+  const [, state] = await json("GET", "/v1/state");
+  expect((state.projects as { id: unknown }[]).some((p) => p.id === pid)).toBe(false);
+  expect((await json("POST", "/v1/projects/menu", { project: pid }))[0]).toBe(404);
+});

@@ -24,16 +24,46 @@ final class Snooze {
     /** This phone's zone, seconds east of UTC (the hub's `off`). */
     static int off() { return TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000; }
 
-    static void sheet(Base a, Hub hub, JSONObject c, Runnable after) {
-        String id = c.optString("id");
-        Ui.bg(a, () -> hub.call("GET", "/v1/snooze?off=" + off() + "&chat=" + Uri.encode(id), null), r -> show(a, hub, id, r, after));
+    /** What is snoozed: a chat, or a project (the desktop project row's clock). */
+    interface Target {
+        JSONObject set(JSONObject body) throws Exception;
+        JSONObject wake() throws Exception;
     }
 
-    private static void show(Base a, Hub hub, String id, JSONObject r, Runnable after) {
+    static void sheet(Base a, Hub hub, JSONObject c, Runnable after) {
+        String id = c.optString("id");
+        Target t = new Target() {
+            @Override public JSONObject set(JSONObject body) throws Exception { return hub.call("POST", "/v1/chats/" + Uri.encode(id) + "/snooze", body); }
+            @Override public JSONObject wake() throws Exception { return hub.call("DELETE", "/v1/chats/" + Uri.encode(id) + "/snooze", null); }
+        };
+        Ui.bg(a, () -> hub.call("GET", "/v1/snooze?off=" + off() + "&chat=" + Uri.encode(id), null),
+                r -> show(a, hub, t, r, "It leaves the list here and on the PC until then, and comes back unread.", after));
+    }
+
+    /** Project `pid` (its id as the phone has it), snoozed `now` ("until …", or null) as the
+     *  hub's project menu said (`POST /v1/projects/do` act snooze). */
+    static void project(Base a, Hub hub, String pid, String now, Runnable after) {
+        Target t = new Target() {
+            @Override public JSONObject set(JSONObject body) throws Exception {
+                body.put("project", pid).put("act", "snooze");
+                return hub.call("POST", "/v1/projects/do", body);
+            }
+            @Override public JSONObject wake() throws Exception {
+                return hub.call("POST", "/v1/projects/do", put("project", pid, "act", "snooze", "wake", true));
+            }
+        };
+        Ui.bg(a, () -> {
+            JSONObject r = hub.call("GET", "/v1/snooze?off=" + off(), null);
+            r.put("snoozed", now == null || now.isEmpty() ? JSONObject.NULL : now);
+            return r;
+        }, r -> show(a, hub, t, r, "The project and its chats leave the list here and on the PC until then.", after));
+    }
+
+    private static void show(Base a, Hub hub, Target target, JSONObject r, String what, Runnable after) {
         Sheet s = new Sheet(a, "Snooze until");
         String now = r.isNull("snoozed") ? "" : r.optString("snoozed");
         TextView note = Ui.text(a, now.isEmpty()
-                ? "It leaves the list here and on the PC until then, and comes back unread."
+                ? what
                 : "Snoozed " + now + ". Pick another time, or wake it now.", 14, Ui.G700);
         note.setPadding(Ui.dp(6), 0, Ui.dp(6), Ui.dp(10));
         s.body.addView(note);
@@ -46,7 +76,7 @@ final class Snooze {
             if (presets.getChildCount() > 0) presets.addView(Ui.gap(a));
             long until = p.optLong("until_ms");
             presets.addView(Ui.cardRow(a, Ui.I_CLOCK, p.optString("label"), null, Ui.FG,
-                    v -> apply(a, hub, s, id, put("until_ms", until), after)), Ui.fill());
+                    v -> apply(a, s, target, put("until_ms", until), after)), Ui.fill());
         }
 
         // A time of your own, as the desktop menu's field: Enter or Snooze applies it.
@@ -58,7 +88,7 @@ final class Snooze {
         row.addView(e, new LinearLayout.LayoutParams(0, -2, 1));
         Runnable go = () -> {
             String t = e.getText().toString().trim();
-            if (!t.isEmpty()) apply(a, hub, s, id, put("text", t, "off", off()), after);
+            if (!t.isEmpty()) apply(a, s, target, put("text", t, "off", off()), after);
         };
         TextView btn = Ui.button(a, "Snooze", true, v -> go.run());
         row.addView(btn, Ui.margins(Ui.wrap(), 10, 0, 0, 0));
@@ -98,15 +128,15 @@ final class Snooze {
         if (!now.isEmpty()) {
             LinearLayout wake = s.card();
             wake.addView(Ui.cardRow(a, Ui.I_X, "Unsnooze", null, Ui.FG, v -> Ui.bg(a,
-                    () -> hub.call("DELETE", "/v1/chats/" + Uri.encode(id) + "/snooze", null),
+                    target::wake,
                     x -> { s.dismiss(); after.run(); })), Ui.fill());
         }
         if (s.dialog.getWindow() != null) s.dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         s.show();
     }
 
-    private static void apply(Base a, Hub hub, Sheet s, String id, JSONObject body, Runnable after) {
-        Ui.bg(a, () -> hub.call("POST", "/v1/chats/" + Uri.encode(id) + "/snooze", body), r -> {
+    private static void apply(Base a, Sheet s, Target target, JSONObject body, Runnable after) {
+        Ui.bg(a, () -> target.set(body), r -> {
             s.dismiss();
             Ui.toast(a, "Snoozed until " + r.optString("snoozed_label"));
             after.run();

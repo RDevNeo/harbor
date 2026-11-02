@@ -1071,6 +1071,27 @@ a bad name or act. Hubs before 0.112 answer `404 no such call`.
 - Once made, the app opens the project's main chat as `Main chat` above describes (none yet: the
   new-chat screen with `main: true`).
 
+### Project menu (0.112.2): `POST /v1/projects/menu`, `POST /v1/projects/do`
+
+The desktop's project row as a sheet: a long press on a project in the drawer, or its `⋯`. Both
+take `{pc?, project}` (`project`: the project's id as `/v1/state` gives it, its path for
+`X-Harbor-Ids: global`; `pc` forwards to another PC as Add project does); `404 {error}` when the
+project is gone.
+
+- `menu` answers `{id, name, path, pc, pc_name, remote, github, main, snoozed, row, items}`.
+  `remote`: the project's web page (null without an origin); `github`: its `owner/name` (null when
+  not on GitHub; the app opens `GET /v1/prs|issues` with `project` = it); `main`: `{id, title}` of
+  its main chat, or null; `snoozed`: `"until …"` or null. `row` is the row's own buttons (`act`
+  new_chat, snooze), `items` the right-click menu, built by the desktop's own list
+  (logic/projectmenu.ts): `[{act, label, icon, desc, sep, enabled}]`, `sep`: a line above it,
+  `icon` terminal, pr, circle-dot, external or "". Open terminal (`terminal`) is the window's and
+  comes `enabled: false`.
+- The app runs prs, issues, remote, rename_main and settle_main itself (`PATCH /v1/chats/{main}`);
+  the rest go to `do` with `act`: `refresh_icon`, `website_icon`, `choose_icon` (with `upload`, the
+  id `POST /v1/upload` gave the picked image), `remove` (as the desktop's Remove from Harbor:
+  chats out of Harbor, nothing on disk), `snooze` (`until_ms`, or `text` + `off` as a chat's
+  snooze, or `wake: true`). `200 {ok}`; `400`/`409 {error}` says why.
+
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 
 Dictation from the app's mic. Since 0.55 the phone records itself (no Android `SpeechRecognizer`),

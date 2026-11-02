@@ -175,3 +175,91 @@ test("another_pc_makes_the_project_and_it_is_listed_here_too", async () => {
   const down = api({ forward: async () => err(503, "laptop is off or unreachable: the chat is read-only until it's back") }).api;
   expect(body(await down.route(call("v1/projects/rows", { pc: "pc:laptop" }))).error).toBe("laptop is off or unreachable");
 });
+
+test("the_phones_project_sheet_lists_what_the_desktops_project_menu_does", async () => {
+  const dir = join(home, "Projects", "menu-gh");
+  mkdirSync(dir, { recursive: true });
+  const id = store.addRepo(dir);
+  store.setRepoRemote(id, "git@github.com:sam/menu-gh.git");
+  const { api: a } = api({ mainChat: (repo, global) => (repo === id ? { id: global ? "pc:desk/41" : 41, title: "Main work" } : null), customIcon: () => true });
+  const m = body(await a.route(call("v1/projects/menu", { project: dir })));
+  expect(m).toMatchObject({ id: dir, path: dir, remote: "https://github.com/sam/menu-gh", github: "sam/menu-gh", main: { id: "pc:desk/41", title: "Main work" }, snoozed: null });
+  expect((m.row as { act: string; label: string }[]).map((r) => r.label)).toEqual(["New chat in this project", "Snooze"]);
+  const items = m.items as { act: string; label: string; icon: string; sep: boolean; enabled: boolean; desc: string }[];
+  expect(items.map((i) => [i.label, i.icon, i.sep, i.enabled])).toEqual([
+    ["Open terminal", "terminal", false, false],
+    ["Pull requests", "pr", false, true],
+    ["Issues", "circle-dot", false, true],
+    ["Open remote", "external", false, true],
+    ["Rename main chat", "", true, true],
+    ["Settle main chat", "", false, true],
+    ["Refresh icon", "", true, true],
+    ["Choose icon…", "", false, true],
+    ["Use website icon", "", false, true],
+    ["Remove from Harbor", "", true, true],
+  ]);
+  expect(items[0]?.desc).toBe("It opens in Harbor's window on desk");
+  // By number too (a phone without global ids).
+  expect(body(await a.route(call("v1/projects/menu", { project: id }, false))).id).toBe(id);
+  expect((await a.route(call("v1/projects/menu", { project: "/nowhere" })))?.status).toBe(404);
+});
+
+test("a_chat_less_project_without_a_remote_still_has_its_menu", async () => {
+  const dir = join(home, "Projects", "menu-plain");
+  mkdirSync(dir, { recursive: true });
+  store.addRepo(dir);
+  const { api: a } = api();
+  const m = body(await a.route(call("v1/projects/menu", { project: dir })));
+  expect(m.main).toBeNull();
+  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Remove from Harbor"]);
+});
+
+test("the_project_sheets_acts_run_on_the_pc", async () => {
+  const dir = join(home, "Projects", "menu-acts");
+  mkdirSync(dir, { recursive: true });
+  const id = store.addRepo(dir);
+  const icons: unknown[] = [];
+  const removed: number[] = [];
+  const { api: a, touched } = api({
+    setIcon: async (repo, how) => (icons.push([repo, how]), null),
+    remove: (repo) => {
+      removed.push(repo);
+      store.removeRepo(repo);
+    },
+    uploadPath: (u) => (u === "ab/icon.png" ? "/tmp/up/icon.png" : null),
+  });
+  const run = (b: Record<string, unknown>) => a.route(call("v1/projects/do", { project: dir, ...b }));
+  expect((await run({ act: "refresh_icon" }))?.status).toBe(200);
+  expect((await run({ act: "website_icon" }))?.status).toBe(200);
+  expect((await run({ act: "choose_icon", upload: "nope" }))?.status).toBe(400);
+  expect((await run({ act: "choose_icon", upload: "ab/icon.png" }))?.status).toBe(200);
+  expect(icons).toEqual([[id, "refresh"], [id, "website"], [id, { file: "/tmp/up/icon.png" }]]);
+
+  const before = touched();
+  const s = await run({ act: "snooze", text: "5h", off: 0 });
+  expect(s?.status).toBe(200);
+  expect(typeof body(s).snoozed_label).toBe("string");
+  expect(touched()).toBeGreaterThan(before);
+  expect(JSON.parse(store.get("snoozed") ?? "{}")[`r${id}`]).toBeGreaterThan(Date.now() / 1000);
+  expect(String(body(await a.route(call("v1/projects/menu", { project: dir }))).snoozed)).toStartWith("until ");
+  expect(body(await run({ act: "snooze", text: "soon" })).error).toBe("Try 5h, 1h30m, 2d or 18:00");
+  expect((await run({ act: "snooze", wake: true }))?.status).toBe(200);
+  expect(JSON.parse(store.get("snoozed") ?? "{}")[`r${id}`]).toBeUndefined();
+
+  expect((await run({ act: "prs" }))?.status).toBe(400);
+  expect((await run({ act: "remove" }))?.status).toBe(200);
+  expect(removed).toEqual([id]);
+  expect(store.repos().some((r) => r.id === id)).toBe(false);
+  expect((await run({ act: "remove" }))?.status).toBe(404);
+});
+
+test("a_project_menu_on_another_pc_goes_there", async () => {
+  const { api: a, forwarded } = api({ forward: async (peer, path, b) => (forwarded.push({ peer, path, body: b }), ok({ id: "/home/sam/x", path: "/home/sam/x", items: [] })) });
+  const r = await a.route(call("v1/projects/menu", { pc: "pc:laptop", project: "/home/sam/x" }));
+  expect(r?.status).toBe(200);
+  expect(forwarded.at(-1)).toEqual({ peer: "pc:laptop", path: ["v1", "projects", "menu"], body: { project: "/home/sam/x" } });
+  // Not added here as a new project: it's only a menu.
+  expect(store.repos().some((x) => x.path === "/home/sam/x")).toBe(false);
+  const old = api({ forward: async () => err(404, "no such call") }).api;
+  expect(body(await old.route(call("v1/projects/do", { pc: "pc:laptop", project: "/x", act: "remove" }))).error).toBe("laptop runs an older Harbor that can't change its projects from a phone: update it there first");
+});

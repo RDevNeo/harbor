@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Phone: a project in the drawer has the desktop's project options. A long press on it (or its new
+  `⋯`) did nothing for a project without chats, and for one with a main chat showed only that
+  chat's menu. It now opens the project's sheet, the same list the desktop's project row offers in
+  the same order: New chat in this project, Snooze, then Open terminal (greyed: it's the PC
+  window's), Pull requests and Issues of that repo, Open remote, Rename and Settle main chat,
+  Refresh icon, Choose icon… (an image from the phone), Use website icon and Remove from Harbor.
+  A tap still opens the main chat (or starts it). The desktop's menu and the phone's sheet now come
+  from one list.
+
 ## [0.112.1] - 2026-11-02
 
 ### Fixed

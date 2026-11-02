@@ -1,0 +1,9 @@
+import { expect, test } from "bun:test";
+import { projectMenu } from "../packages/ui/src/logic/projectmenu.ts";
+
+test("project_menu_matches_sidebar_rs_order", () => {
+  const labels = (remote: string | null, main: boolean, customIcon: boolean) => projectMenu({ remote, main, customIcon }).map((i) => (i.sep ? `— ${i.label}` : i.label));
+  expect(labels("https://github.com/sam/x", true, true)).toEqual(["Open terminal", "Pull requests", "Issues", "Open remote", "— Rename main chat", "Settle main chat", "— Refresh icon", "Choose icon…", "Use website icon", "— Remove from Harbor"]);
+  expect(labels("https://gitlab.com/sam/x", false, false)).toEqual(["Open terminal", "Open remote", "— Refresh icon", "Choose icon…", "— Remove from Harbor"]);
+  expect(labels(null, false, false)).toEqual(["Open terminal", "— Refresh icon", "Choose icon…", "— Remove from Harbor"]);
+});

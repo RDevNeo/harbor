@@ -2,10 +2,15 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { statSync } from "node:fs";
 import { type Call, err, type Json, ok, type Reply } from "./packages/net/src/index.ts";
-import { repoDir, type Store } from "./packages/store/src/index.ts";
+import { type Repo, repoDir, type Store } from "./packages/store/src/index.ts";
 import { ICONS } from "./packages/ui/src/icons.ts";
 import { type Act, AddProject, type Disk, type GhList, nameProblem, type Row, STEP_LABEL, type Step, untrustedKey } from "./packages/ui/src/logic/addproject.ts";
 import { cloneProject, createProject, ghRepos, localClones, realDisk } from "./packages/ui/src/addproject.ts";
+import { type ProjectAct, projectMenu } from "./packages/ui/src/logic/projectmenu.ts";
+import { parseSnooze } from "./packages/ui/src/logic/sidebar.ts";
+import { sidebartree } from "./packages/store/src/index.ts";
+import { webUrl } from "./packages/agents/src/git.ts";
+import { githubRepo } from "./packages/agents/src/worktree.ts";
 
 /**
  * "Add project" from a phone (`/v1/projects*`): the desktop's own palette (logic/addproject.ts)
@@ -29,6 +34,16 @@ export interface ProjectsHost {
   github?: () => Promise<GhList>;
   clone?: (url: string, dir: string, github: boolean, projectsDir: string) => Promise<string | null>;
   origin?: (dir: string) => string;
+  /** Project `repo`'s main chat, by the id the caller asks (`global`: its gid). */
+  mainChat?: (repo: number, global: boolean) => { id: Json; title: string } | null;
+  /** An image of the user's own is the project's icon. */
+  customIcon?: (repo: number) => boolean;
+  /** The project's icon: looked up again, the website's again, or the image at `file`; an error to show, or null. */
+  setIcon?: (repo: number, how: "refresh" | "website" | { file: string }) => Promise<string | null>;
+  /** Removes the project from Harbor, as the window's Remove from Harbor. */
+  remove?: (repo: number) => void;
+  /** The file a phone uploaded (`POST /v1/upload`'s id), or null. */
+  uploadPath?: (id: string) => string | null;
 }
 
 const STEPS: readonly Step[] = ["sources", "new", "local", "url", "github"];
@@ -46,6 +61,18 @@ const ICON_NAMES = new Map<string, string>([
 ]);
 
 type Job = { state: "cloning"; text: string; at: number } | { state: "done"; project: Record<string, Json>; at: number } | { state: "failed"; error: string; at: number };
+
+/** The desktop's glyphs by the names the phone draws them with (projectMenu's). */
+const MENU_ICONS = new Map<string, string>([
+  [ICONS.TERMINAL, "terminal"],
+  [ICONS.PULL, "pr"],
+  [ICONS.CIRCLE_DOT, "circle-dot"],
+  [ICONS.EXTERNAL, "external"],
+]);
+
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "remove"];
+const now = (): number => Math.floor(Date.now() / 1000);
+const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
 const obj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -99,11 +126,16 @@ export class ProjectsApi {
     const p = call.path;
     if (p[0] !== "v1" || p[1] !== "projects" || call.method !== "POST" || p.length > 3) return null;
     const sub = p[2] ?? "";
-    if (!["", "rows", "job"].includes(sub)) return null;
+    if (!["", "rows", "job", "menu", "do"].includes(sub)) return null;
     const b = obj(call.body);
     const pc = str(b.pc);
     if (pc !== "" && pc !== this.h.me().id) return this.onPeer(pc, sub, b, call);
     if (sub === "rows") return ok(this.rows(b));
+    if (sub === "menu" || sub === "do") {
+      const r = this.repoOf(b.project);
+      if (r === null) return err(404, "that project isn't on this PC any more");
+      return sub === "menu" ? ok(this.menu(r, call.global)) : this.run(r, b);
+    }
     if (sub === "job") return this.job(str(b.job), call.global);
     return this.act(b, call.global);
   }
@@ -256,6 +288,129 @@ export class ProjectsApi {
     return { ok: true, id: global ? path : id, name: r?.name ?? "", path, remote: r?.remote ?? remote, existing: known !== undefined, git: isDir(join(dir, ".git")), pc: this.h.me().id, pc_name: this.pcName() };
   }
 
+  /** The sidebar's snoozes (kv `snoozed`, "r<project>" and "c<chat>" to seconds), as phoneroutes.ts reads them. */
+  private snoozes(): Map<string, number> {
+    try {
+      const v: unknown = JSON.parse(this.h.store.get("snoozed") ?? "{}");
+      return new Map(Object.entries(typeof v === "object" && v !== null ? v : {}).filter((e): e is [string, number] => typeof e[1] === "number"));
+    } catch {
+      return new Map();
+    }
+  }
+
+  private snoozeOf(key: string): number | null {
+    const t = this.snoozes().get(key);
+    return t !== undefined && t > now() ? t : null;
+  }
+
+  private setSnooze(key: string, until: number | null): void {
+    const all = this.snoozes();
+    if (until === null) all.delete(key);
+    else all.set(key, until);
+    this.h.store.set("snoozed", JSON.stringify(Object.fromEntries(all)));
+    this.h.touch();
+  }
+
+  /** A project by the id the phone has for it: its number, or its folder (global ids). */
+  private repoOf(v: unknown): Repo | null {
+    const repos = this.h.store.repos();
+    if (typeof v === "number") return repos.find((r) => r.id === v) ?? null;
+    if (typeof v !== "string" || v === "") return null;
+    if (/^\d+$/.test(v)) return repos.find((r) => r.id === Number(v)) ?? null;
+    return repos.find((r) => r.path === v) ?? repos.find((r) => repoDir(r) === v) ?? null;
+  }
+
+  /** A project's page on the web, from its stored origin (null without one). */
+  private remoteOf(r: Repo): string | null {
+    const o = r.remote !== "" ? r.remote : (this.h.origin ?? gitOrigin)(repoDir(r));
+    return o === "" ? null : webUrl(o);
+  }
+
+  /**
+   * What the desktop's project row offers (logic/projectmenu.ts), for the phone's project sheet:
+   * its own buttons (`row`: New chat, Snooze) then its menu in the same order and words. Open
+   * terminal is the window's own: greyed here, with why.
+   */
+  menu(r: Repo, global: boolean): Json {
+    const remote = this.remoteOf(r);
+    const main = this.h.mainChat?.(r.id, global) ?? null;
+    const until = this.snoozeOf(`r${r.id}`);
+    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false }).map((it): Json => {
+      const off = it.act === "terminal";
+      return {
+        act: it.act,
+        label: it.label,
+        icon: MENU_ICONS.get(it.icon) ?? "",
+        desc: off ? `It opens in Harbor's window on ${this.pcName()}` : it.desc,
+        sep: it.sep,
+        enabled: !off,
+      };
+    });
+    return {
+      id: global ? r.path : r.id,
+      name: r.name,
+      path: r.path,
+      pc: this.h.me().id,
+      pc_name: this.pcName(),
+      remote,
+      github: remote === null ? null : githubRepo(remote),
+      main,
+      snoozed: until === null ? null : `until ${sidebartree.snoozeLabel(until, now(), zone(now()))}`,
+      row: [
+        { act: "new_chat", label: "New chat in this project", icon: "plus" },
+        { act: "snooze", label: "Snooze", icon: "clock" },
+      ],
+      items,
+    };
+  }
+
+  /** One of the project sheet's acts that runs on the PC: icons, Snooze, Remove from Harbor. */
+  private async run(r: Repo, b: Record<string, unknown>): Promise<Reply> {
+    const act = str(b.act);
+    switch (act) {
+      case "refresh_icon":
+      case "website_icon":
+      case "choose_icon": {
+        if (!this.h.setIcon) return err(409, "project icons are the window's: this PC runs without one");
+        let how: "refresh" | "website" | { file: string } = act === "refresh_icon" ? "refresh" : "website";
+        if (act === "choose_icon") {
+          const file = this.h.uploadPath?.(str(b.upload)) ?? null;
+          if (file === null) return err(400, "send the image first (POST /v1/upload), then its id as upload");
+          how = { file };
+        }
+        const bad = await this.h.setIcon(r.id, how);
+        return bad === null ? ok({ ok: true }) : err(409, bad);
+      }
+      case "remove":
+        if (!this.h.remove) return err(409, "can't remove projects here");
+        this.h.remove(r.id);
+        this.h.touch();
+        return ok({ ok: true });
+      case "snooze": {
+        const key = `r${r.id}`;
+        if (b.wake === true) {
+          this.setSnooze(key, null);
+          return ok({ ok: true, snoozed_until_ms: null, snoozed_label: null });
+        }
+        const at = now();
+        const off = typeof b.off === "number" && Number.isInteger(b.off) ? b.off : zone(at);
+        let until: number;
+        if (typeof b.until_ms === "number" && Number.isInteger(b.until_ms)) {
+          until = Math.trunc(b.until_ms / 1000);
+          if (!(until > at && until <= at + 366 * 86400)) return err(400, "pick a time within the next year");
+        } else if (typeof b.text === "string") {
+          const u = parseSnooze(b.text, at, off);
+          if (u === null) return err(400, "Try 5h, 1h30m, 2d or 18:00");
+          until = u;
+        } else return err(400, "until_ms, text or wake");
+        this.setSnooze(key, until);
+        return ok({ ok: true, snoozed_until_ms: until * 1000, snoozed_label: sidebartree.snoozeLabel(until, at, off) });
+      }
+      default:
+        return err(400, PROJECT_ACTS.includes(act as ProjectAct) ? `${act} runs on the phone itself` : "act: refresh_icon, website_icon, choose_icon, snooze or remove");
+    }
+  }
+
   /** The same call on PC `pc`; a project made there is listed here too. */
   private async onPeer(pc: string, sub: string, b: Record<string, unknown>, call: Call): Promise<Reply> {
     const peer = this.h.peer(pc);
@@ -266,8 +421,9 @@ export class ProjectsApi {
     const r = await this.h.forward(peer.id, path, rest, this.h.sender(call));
     const rb = obj(r.body);
     if (r.status === 503) return err(503, `${peer.name} is off or unreachable`);
-    if (r.status === 404 && sub !== "job" && ["no such call", "unknown call", "not found"].includes(str(rb.error))) return err(409, `${peer.name} runs an older Harbor that can't add projects from a phone: update it there first`);
-    if (r.status !== 200 || typeof rb.path !== "string" || rb.path === "" || sub === "rows") return r;
+    if (r.status === 404 && sub !== "job" && ["no such call", "unknown call", "not found"].includes(str(rb.error)))
+      return err(409, `${peer.name} runs an older Harbor that can't ${sub === "menu" || sub === "do" ? "change its projects" : "add projects"} from a phone: update it there first`);
+    if (r.status !== 200 || typeof rb.path !== "string" || rb.path === "" || sub === "rows" || sub === "menu" || sub === "do") return r;
     // A project there: listed here as well, by the folder it has there.
     const repos = this.h.store.repos();
     const remote = str(rb.remote);

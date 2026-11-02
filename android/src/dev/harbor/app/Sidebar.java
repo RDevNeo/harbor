@@ -530,12 +530,38 @@ final class Sidebar {
         if (mains) {
             h.setContentDescription((name == null ? "Project" : name) + (main != null ? ", main chat" : ", start its main chat"));
             h.setOnClickListener(v -> { if (main != null) open(mainId); else newChat(key, true); });
-            if (main != null) h.setOnLongClickListener(v -> { Chats.menu(a, a.hub, main, a::refresh, a::refresh); return true; });
+            // The desktop row's buttons and right-click menu: a long press, or the ⋯.
+            h.setOnLongClickListener(v -> { projectMenu(key, name, main); return true; });
+            TextView more = Ui.bold(a, "⋯", 18, Ui.G600);
+            more.setGravity(android.view.Gravity.CENTER);
+            more.setBackground(Ui.press(0, 0, 14));
+            more.setOnClickListener(v -> projectMenu(key, name, main));
+            more.setContentDescription("Project options");
+            h.addView(more, toggle == h || toggle == null ? h.getChildCount() : h.indexOfChild(toggle),
+                    Ui.margins(new LinearLayout.LayoutParams(Ui.dp(32), Ui.dp(28)), 4, 0, 0, 0));
         } else {
             h.setContentDescription((name == null ? "Project" : name) + ", " + cs.size() + (fold ? " chats, folded" : " chats"));
         }
         list.addView(h, Ui.inset());
         if (!fold) for (JSONObject c : cs) list.addView(chatRow(c, you), Ui.inset());
+    }
+
+    /** Project `key`'s sheet (ProjectMenu): the desktop project row's options (an older hub
+     *  says to update it). */
+    private void projectMenu(String key, String name, JSONObject main) {
+        Runnable removed = () -> {
+            // Out of a chat of that project (it's gone with it), else the list again.
+            String of = null;
+            JSONArray cs = st == null ? null : st.optJSONArray("chats");
+            for (int i = 0; current != null && cs != null && i < cs.length(); i++) {
+                JSONObject c = cs.optJSONObject(i);
+                if (c != null && current.equals(c.optString("id"))) of = c.isNull("project_id") ? null : c.optString("project_id");
+            }
+            Ui.toast(a, "Removed “" + (name == null ? "Project" : name) + "” from Harbor");
+            if (key.equals(of) && a instanceof Chat) a.finish();
+            else a.refresh();
+        };
+        ProjectMenu.show(a, a.hub, key, name, () -> newChat(key, false), a::refresh, removed);
     }
 
     /** A chat's status at the end of its row (or its project's header, for a main chat): who's

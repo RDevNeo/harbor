@@ -4,10 +4,11 @@ import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
 import { ProjectClones } from "./projectclones.ts";
 import { ProjectsApi } from "./projectsapi.ts";
+import { resolveUpload } from "./packages/net/src/hub.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
-import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
+import { clipboard, dictate, dictwords, favicon, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
@@ -146,6 +147,8 @@ export interface RunningHub {
   account: AccountService;
   /** What else holds a worktree folder's rename back: the window's terminals open in it. */
   setBusyIn(f: (dir: string) => string | null): void;
+  /** What the window does when a phone changes a project's icon or removes it. */
+  setWindowProjects(p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void }): void;
   /** Devices: what is paired, and the versionCode of the phone app this PC serves. */
   devices(): { list: PairedDevice[]; served: number };
   deviceEnv: DeviceSendEnv;
@@ -269,7 +272,33 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       return p ? mesh.forward(dest(p), p.name, "POST", path, body, [], [sender, ""], null) : Promise.resolve(err(404, "that PC isn't one of this mesh's"));
     },
     sender: (call) => (call.from ? call.from.sender || call.from.name : hub.callerLabel(call.token, call.device)),
+    mainChat: (repo, global) => {
+      const id = engine?.mainChat(repo) ?? null;
+      const c = id === null ? undefined : store.chat(id);
+      return c ? { id: global ? c.gid : c.id, title: c.title } : null;
+    },
+    customIcon: (repo) => existsSync(favicon.customPath(repo)),
+    setIcon: async (repo, how) => {
+      if (how === "website") favicon.clearCustom(repo);
+      else if (how !== "refresh") {
+        if ((await favicon.decode(how.file).catch(() => null)) === null) return "Harbor can't read that image: pick a PNG, JPEG, WebP or GIF";
+        if (!favicon.setCustom(repo, how.file)) return "Couldn't save the icon on this PC";
+      }
+      if (windowProjects) windowProjects.icon(repo, how === "refresh");
+      else if (how === "refresh") {
+        const r = store.repos().find((x) => x.id === repo);
+        if (r) await favicon.resolve(repo, repoDir(r), r.name, true).catch(() => null);
+      }
+      return null;
+    },
+    remove: (repo) => {
+      store.removeRepo(repo);
+      engine?.reload();
+      windowProjects?.removed(repo);
+    },
+    uploadPath: (id) => resolveUpload(uploadsDir, id),
   });
+  let windowProjects: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void } | null = null;
   let busyIn: (dir: string) => string | null = () => null;
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
@@ -806,6 +835,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     windowMesh,
     setBusyIn: (f) => {
       busyIn = f;
+    },
+    setWindowProjects: (p) => {
+      windowProjects = p;
     },
     funnel,
     prs,

@@ -31,6 +31,7 @@ import { type Dock, listeningPorts, Surfaces, tabTitle } from "./surface.ts";
 import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
+import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
 import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -2331,32 +2332,44 @@ export class Shell {
     this.surfaces.openTerminal(basename(dir), dir);
   }
 
-  /** sidebar.rs's project row menu, egui's own context menu. */
+  /** sidebar.rs's project row menu, egui's own context menu (logic/projectmenu.ts: the phone's sheet lists the same). */
   private projectMenu(id: number, x: number, y: number): void {
     const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, extra), kind: "native" as const });
     const stored = this.data.repo(id)?.remote ?? "";
     const remote = this.gitStatus.get(id)?.remote ?? (stored === "" ? null : git.webUrl(stored));
-    const github = remote !== null && /^https:\/\/github\.com\//.test(remote);
-    const items: (PopItem & { act?: () => void })[] = [native("Open terminal", () => this.projectTerminal(id), { icon: ICONS.TERMINAL })];
-    if (github) items.push(native("Pull requests", () => this.pages.openPrs(id), { icon: ICONS.PULL }), native("Issues", () => this.pages.openIssues(id), { icon: ICONS.CIRCLE_DOT }));
-    if (remote) items.push(native("Open remote", () => this.openExternal(remote), { icon: ICONS.EXTERNAL }));
     const main = this.data.mainChat(id);
-    if (main !== null) {
-      items.push(this.separator(), native("Rename main chat", () => this.renameDialog(main)), native("Settle main chat", () => this.setSettled(main, true), { desc: "It goes to Settled; the project's next message starts a new main chat" }));
+    const custom = this.media !== null && existsSync(this.media.favicon.customPath(id));
+    const acts: Record<ProjectAct, () => void> = {
+      terminal: () => this.projectTerminal(id),
+      prs: () => this.pages.openPrs(id),
+      issues: () => this.pages.openIssues(id),
+      remote: () => remote !== null && this.openExternal(remote),
+      rename_main: () => main !== null && this.renameDialog(main),
+      settle_main: () => main !== null && this.setSettled(main, true),
+      refresh_icon: () => this.loadIcon(id, true),
+      choose_icon: () => void this.pickIcon(id),
+      website_icon: () => {
+        void import("@harbor/media").then(({ favicon }) => {
+          favicon.clearCustom(id);
+          this.loadIcon(id, false);
+        });
+      },
+      remove: () => this.removeRepoDialog(id),
+    };
+    const items: (PopItem & { act?: () => void })[] = [];
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom })) {
+      if (it.sep) items.push(this.separator());
+      const extra: Partial<PopItem> = {};
+      if (it.icon !== "") extra.icon = it.icon;
+      if (it.desc !== "") extra.desc = it.desc;
+      items.push(native(it.label, acts[it.act], extra));
     }
-    items.push(this.separator(), native("Refresh icon", () => this.loadIcon(id, true)), native("Choose icon…", () => void this.pickIcon(id)));
-    if (this.media !== null && existsSync(this.media.favicon.customPath(id))) {
-      items.push(
-        native("Use website icon", () => {
-          void import("@harbor/media").then(({ favicon }) => {
-            favicon.clearCustom(id);
-            this.loadIcon(id, false);
-          });
-        }),
-      );
-    }
-    items.push(this.separator(), native("Remove from Harbor", () => this.removeRepoDialog(id)));
     this.popup("project-row", x, y, items, 260, false, true);
+  }
+
+  /** The window's icon of project `repo` again (a phone changed it). */
+  reloadIcon(repo: number, refresh: boolean): void {
+    this.loadIcon(repo, refresh);
   }
 
   /** sidebar.rs `snooze_menu`: presets, a time typed by hand with its preview, Unsnooze. */
@@ -2726,14 +2739,20 @@ export class Shell {
   private removeRepoDialog(id: number): void {
     const r = this.data.repo(id);
     if (!r) return;
-    this.dialog("Remove project?", "Its chats are removed from Harbor. Nothing on disk is touched.", "Remove", true, null, (ok) => {
+    this.dialog(REMOVE_PROJECT.title, REMOVE_PROJECT.text, REMOVE_PROJECT.ok, true, null, (ok) => {
       if (!ok) return;
       this.data.removeRepo(id);
-      if (this.draftRepo === id) this.draftRepo = null;
-      const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
-      if (this.view === "chat" && !c) this.newDraft(null);
-      else this.refreshAll();
+      this.projectRemoved(id);
     });
+  }
+
+  /** After project `id` left Harbor (here, or from a phone): off the draft, out of a chat of it. */
+  projectRemoved(id: number): void {
+    this.avatars.delete(id);
+    if (this.draftRepo === id) this.draftRepo = null;
+    const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    if (this.view === "chat" && !c) this.newDraft(null);
+    else this.refreshAll();
   }
 
   private addProject(): void {
@@ -3032,6 +3051,8 @@ export interface ShellHooks {
   toaster?: (toast: (text: string) => void) => void;
   /** Gets why a folder can't be renamed now as far as the window knows (a terminal open in it). */
   busyIn?: (busy: (dir: string) => string | null) => void;
+  /** Gets what the window does when a phone changes a project's icon or removes it. */
+  projects?: (p: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void }) => void;
 }
 
 export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Promise<void> {
@@ -3057,6 +3078,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   hooks.closer?.(() => win.hide());
   hooks.toaster?.((t) => shell.toast(t));
   hooks.busyIn?.((dir) => (shell.terminalIn(dir) ? "a terminal is open in it" : null));
+  hooks.projects?.({ icon: (repo, refresh) => shell.reloadIcon(repo, refresh), removed: (repo) => shell.projectRemoved(repo) });
   win.show();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
