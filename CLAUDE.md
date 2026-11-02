@@ -16,15 +16,22 @@ a clean sandbox and builds the release executable. Everything else keeps the boa
 Any change to what the user sees (`ts/packages/ui/**`, `*.slint`, cards, icons, text in the window)
 ends with a screenshot of each screen it touches, before you report done:
 
-- `scripts/shot` runs the working tree from source on a private headless sway, with no network, on
-  a copy of harbor.db (`--empty` for no data at all), and prints the PNG paths last (under
-  `~/.cache/harbor-shots/`). Seconds per shot; it fails loudly when the window didn't draw.
+- `scripts/shot` runs the working tree from source (no build: Bun runs the TS, Slint compiles the
+  .slint at start) on a private headless sway, with no network, on a copy of harbor.db (`--empty`
+  for no data at all), and prints the PNG paths last (under `~/.cache/harbor-shots/`). About 3 s a
+  shot: it shoots as soon as the page is up and still, and fails loudly when the window didn't draw.
   `--view chat|chat:ID|settings:TAB|prs|issues|draft` picks the screen, `--steps` clicks and types
-  first (x,y in the PNG's pixels), `--wait 2,6` shots at several times, `--size`, `--help`.
+  first (x,y in the PNG's pixels), `--wait 2,6` shots at fixed times, `--size`, `--help`. With
+  `--empty`, settings pages come from their own runner (`settingsrun.ts`, checked pixel for pixel
+  against the window), a little faster.
+- While iterating, `scripts/shot --watch [same options]` (start it with Harbor's start_process, not
+  Bash) keeps the rig up and prints a new PNG path on every save under `ts/packages/ui`, 1.5-3 s
+  after the save; `scripts/shot --stop` ends it, and it ends by itself after 30 idle minutes (`--idle`).
 - Look at the PNG yourself (Read it), then put it in your final reply as `![caption](/absolute/path.png)`
   next to the sentence it illustrates. A subagent puts the paths in its report; the lead puts them
   in its reply to the user: a subagent's images reach the user only that way.
-- Shots of real chats may be shown in chat but never committed: they hold personal data.
+- Shots of real chats may be shown in chat but never committed: they hold personal data (even
+  `--empty` ones show this PC's home path on some pages).
 - To try it live on the user's own window: `scripts/preview --note "what changed"` builds the app
   bundle here and switches this PC's Harbor to it (only where the owner turned previews on, which
   isn't yours to do; the restart can end your Bash call, so it's your last step);

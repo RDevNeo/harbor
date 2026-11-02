@@ -426,12 +426,12 @@ export class Shell {
       const fb = this.filesOf(d === "right" ? "right" : "bottom");
       if (fb && p.trim() !== "") fb.go(p.trim());
     };
-    w.device_settings = () => this.pages.openSettings("devices");
+    w.device_settings = () => void this.pages.openSettings("devices");
     w.transfers_clear = () => {
       this.transfers = clearDeviceTransfers(this.transfers);
       this.refreshDevices();
     };
-    w.settings = () => this.pages.openSettings();
+    w.settings = () => void this.pages.openSettings();
     w.prs = () => this.pages.openPrs();
     w.issues = () => this.pages.openIssues();
     w.leave_page = () => this.leavePage();
@@ -705,16 +705,19 @@ export class Shell {
     }
   }
 
-  /** HARBOR_VIEW, for screenshots: `chat[:id]` (the last chat), `settings[:tab]` or a tab's slug, `prs`, `issues`. */
+  /** HARBOR_VIEW, for screenshots: `chat[:id]` (the last chat), `settings[:tab]` or a tab's slug, `prs`, `issues`.
+   * "harbor-view shown" on stderr once the page is up: scripts/shot waits for it. */
   devView(v: string, last: number): void {
     const [name = "", arg = ""] = v.split(":");
     const tab = tabFromSlug(name === "settings" ? arg || "general" : name);
     const id = Number(arg || last);
+    let shown: Promise<void> = Promise.resolve();
     if (name === "chat" && this.data.chat(id)) this.openChat(id);
-    else if (tab !== null) this.pages.openSettings(tab);
+    else if (tab !== null) shown = this.pages.openSettings(tab);
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
     else if (name !== "draft") console.error(`HARBOR_VIEW: no view ${v}`);
+    void shown.then(() => console.error("harbor-view shown"));
   }
 
   openChat(id: number): void {
@@ -2354,7 +2357,7 @@ export class Shell {
     const rows = this.hub.runOnRows(chat, current, kind).map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));
     const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Runs on"), kind: "caption" }, ...rows];
     if (rows.length === 1) items.push(this.label("No other PCs yet: pair one in Settings › Devices, or add one by SSH."));
-    items.push(this.separator(), this.item("Manage devices…", () => this.pages.openSettings("devices"), { icon: ICONS.SETTINGS }));
+    items.push(this.separator(), this.item("Manage devices…", () => void this.pages.openSettings("devices"), { icon: ICONS.SETTINGS }));
     this.popup("device", x, y, items, 300, true);
   }
 
@@ -2987,7 +2990,7 @@ export class Shell {
         this.pages.openIssues();
         break;
       case "settings":
-        this.pages.openSettings(a.tab);
+        void this.pages.openSettings(a.tab);
         break;
       case "settle":
         this.setSettled(a.id, a.on);

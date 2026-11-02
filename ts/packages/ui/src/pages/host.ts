@@ -78,7 +78,8 @@ export class PageHost {
 
   constructor(private readonly s: PageShell) {}
 
-  openSettings(tab: Tab = "general"): void {
+  /** Settled once the page shows `tab` (or failed to open). */
+  openSettings(tab: Tab = "general"): Promise<void> {
     this.s.show("settings");
     const store = this.s.data.store;
     if (this.settings === null) {
@@ -105,7 +106,7 @@ export class PageHost {
         tab,
       ));
     }
-    this.settings.then(
+    return this.settings.then(
       (h) => h.show(tab),
       (e: unknown) => {
         this.settings = null;

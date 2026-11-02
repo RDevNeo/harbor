@@ -1,36 +1,46 @@
 #!/bin/bash
 # Screenshots of Harbor's desktop window, from this working tree (uncommitted changes included).
-# The app runs from source with Bun on a private headless sway, inside `unshare` with no network,
-# on a copy of harbor.db (or no data at all): the PC's screen, its real data and the network are
-# never touched. The PNG paths come last on stdout, one per line; everything else goes to stderr.
+# The app runs from source with Bun (no build) on a private headless sway, inside `unshare` with no
+# network, on a copy of harbor.db (or no data at all): the PC's screen, its real data and the network
+# are never touched. The PNG paths come last on stdout, one per line; everything else goes to stderr.
 set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/shot [options]
+Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
+       scripts/shot --watch [options] a new PNG on every save under ts/packages/ui (run it with start_process)
+       scripts/shot --stop            ends this tree's --watch
   --view V      what's on screen (repeatable: one run each): chat (the last chat), chat:ID,
                 settings, settings:TAB (or the tab alone: usage, appearance, devices...), prs,
                 issues, draft. Default: chat, or draft with --empty.
   --chat ID     the chat to show (same as --view chat:ID)
   --steps SPEC  HARBOR_POINTER steps before the shot: "x,y[,action[,secs]];..." with action
                 click|rclick|down|up|wheel|wheel-down|type:text|key:Return|ctrl:k; secs count
-                from the window's start; x,y are the PNG's pixels (see ts/packages/ui/src/script.ts)
-  --wait S      seconds after the window drew to take the shot (default 3); "2,6" takes one
-                shot at each time
+                from the app's start; x,y are the PNG's pixels (see ts/packages/ui/src/script.ts)
+  --wait S      shot S seconds after the window came up; "2,6" takes one at each time. Default:
+                as soon as it has drawn and stopped changing (after the last step)
   --size WxH    the window's size (default 1400x900)
   --out DIR     where the PNGs go (default ~/.cache/harbor-shots/<time>)
   --empty       fresh empty data instead of a copy of harbor.db (no personal content)
-  --keep        keep the scratch folder (logs, the data copy) for debugging
+  --fresh       copy harbor.db again (a cleaned copy is otherwise reused for 10 minutes)
+  --idle MIN    --watch stops by itself after MIN minutes without a save (default 30)
+  --trace       log every frame while waiting; --keep keeps the scratch folder
 Examples:
   scripts/shot                                 the last chat
   scripts/shot --view settings:usage --empty   Settings › Usage with no personal data
-  scripts/shot --view chat --steps "700,860,click;700,860,type:hello,2" --wait 2
+  scripts/shot --view chat --steps "120,272,click,2.5"
 EOF
   exit 2
 }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 ts=$root/ts
+base=${HOME}/.cache/harbor-shots
+watchpid=$base/.watch-$(printf %s "$root" | md5sum | cut -c1-12).pid
+# Ends a rig: unshare ignores SIGTERM and the namespace's first process takes only SIGKILL from outside,
+# which takes everything in the namespace with it.
+endrig() { local c; for c in $(cat "/proc/$1/task/$1/children" 2>/dev/null || true); do
+  if tr '\0' ' ' < "/proc/$c/cmdline" 2>/dev/null | grep -q -- "^[^ ]*bash [^ ]*shot --inner"; then kill -9 "$c" 2>/dev/null || true; else endrig "$c"; fi; done; }
 
 if [ "${1:-}" = --inner ]; then
   # Inside the namespaces: nothing below may reach the PC's own screen or network.
@@ -39,82 +49,96 @@ if [ "${1:-}" = --inner ]; then
   ip link set lo up 2>/dev/null || true
   for c in /dev/dri/card*; do [ -e "$c" ] || continue; mount --bind /dev/null "$c" || { echo "shot: refused: can't hide $c" >&2; exit 99; }; done
   T=$SHOT_TMP SW=$SHOT_SWAY
+  now() { date +%s.%N; }
+  secs() { python3 -I -c "print(f'{$2-$1:.1f}')"; }
+  t=$(now)
   mkdir -p "$T/sway"; chmod 700 "$T/sway"
   printf 'output HEADLESS-1 resolution %s\ndefault_border none\ndefault_floating_border none\nfont pango:monospace 1\nseat * hide_cursor 0\n' "$SHOT_SIZE" > "$T/sway.conf"
   env -i HOME="$T" XDG_RUNTIME_DIR="$T/sway" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 LD_LIBRARY_PATH="$SW/lib" "$SW/bin/sway" -c "$T/sway.conf" > "$T/sway.log" 2>&1 &
-  for _ in $(seq 100); do [ -S "$T/sway/wayland-1" ] && break; sleep 0.1; done
+  for _ in $(seq 200); do [ -S "$T/sway/wayland-1" ] && ls "$T"/sway/sway-ipc.*.sock > /dev/null 2>&1 && break; sleep 0.05; done
   [ -S "$T/sway/wayland-1" ] || { echo "shot: the headless sway didn't start:" >&2; tail -20 "$T/sway.log" >&2; exit 1; }
-  swaymsg() { LD_LIBRARY_PATH=$SW/lib SWAYSOCK=$(ls "$T"/sway/sway-ipc.*.sock | head -1) "$SW/bin/swaymsg" "$@"; }
-  grab() { env XDG_RUNTIME_DIR="$T/sway" WAYLAND_DISPLAY=wayland-1 "$SHOT_GRIM" -t ppm "$1"; }
-  rect() { swaymsg -t get_tree | python3 -I -c 'import json,sys
-def walk(n):
-    yield n
-    for c in n.get("nodes",[])+n.get("floating_nodes",[]): yield from walk(c)
-for n in walk(json.load(sys.stdin)):
-    if n.get("pid")==int(sys.argv[1]) and n.get("visible"): r=n["rect"]; print(r["x"],r["y"],r["width"],r["height"]); break' "$1"; }
-  # Distinct colours in a rectangle of a P6 ppm; with a second path, that rectangle is also written there as a PNG.
-  colours() { python3 -I -c 'import sys,zlib,struct
-d=open(sys.argv[1],"rb").read(); parts=d.split(maxsplit=4); w,h=int(parts[1]),int(parts[2]); px=parts[4]
-x,y,rw,rh=map(int,sys.argv[2:6]); rw=min(rw,w-x); rh=min(rh,h-y); seen=set()
-for j in range(y,y+rh,3):
-    row=px[(j*w)*3:(j*w+w)*3]
-    for i in range(x,x+rw,3): seen.add(row[i*3:i*3+3])
-print(len(seen))
-if len(sys.argv)>6:
-    raw=b"".join(b"\0"+px[(j*w+x)*3:(j*w+x+rw)*3] for j in range(y,y+rh))
-    def chunk(t,b): return struct.pack(">I",len(b))+t+b+struct.pack(">I",zlib.crc32(t+b))
-    open(sys.argv[6],"wb").write(b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",rw,rh,8,2,0,0,0))+chunk(b"IDAT",zlib.compress(raw,6))+chunk(b"IEND",b""))' "$@"; }
+  export SWAYSOCK=$(ls "$T"/sway/sway-ipc.*.sock | head -1) SHOT_SWAYMSG=$SW/bin/swaymsg XDG_RUNTIME_DIR=$T/sway WAYLAND_DISPLAY=wayland-1 LD_LIBRARY_PATH=$SW/lib
+  echo "shot: sway up in $(secs "$t" "$(now)") s" >&2
   # The app's processes, by the runtime folder each one has; stopped until none is left.
   apps() { local p; for p in /proc/[0-9]*; do tr '\0' '\n' 2>/dev/null < "$p/environ" | grep -q "^XDG_RUNTIME_DIR=$T/pc" && echo "${p#/proc/}"; done 2>/dev/null; true; }
   stopapp() { local left; kill $(apps) 2>/dev/null || true
     for _ in $(seq 50); do left=$(apps); [ -z "$left" ] && return; sleep 0.1; done
     kill -9 $left 2>/dev/null || true; sleep 0.2; }
-  grab "$T/empty.ppm"
-  IFS=, read -r -a waits <<< "$SHOT_WAIT"
-  n=0 fail=0
-  for view in $SHOT_VIEWS; do
-    n=$((n + 1)); h=$T/pc$n; log=$T/app-$n.log
-    mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache"; chmod 700 "$h/run"
-    start=$(date +%s.%N)
+  # One run of the app on view $1, shots under the prefix $2; the PNG paths are added to $T/shots.
+  shoot() {
+    local view=$1 prefix=$2 h=$T/pc log=$T/app.log start pid rc=0 earliest out ready
+    local entry=(harbor.ts); ready=$([ -n "$SHOT_HOOK" ] && echo "$log" || true)
+    # With no data, no steps and the default size, a settings page comes 0.6 s sooner from its own runner
+    # (packages/ui/src/settingsrun.ts): every tab was checked pixel for pixel against the real window.
+    if [ -n "$SHOT_RUNNER" ] && [[ $view =~ ^settings(:(account|general|notifications|appearance|keybindings|voice|providers|usage|limits|integrations|secrets|devices|phones|webhooks))?$ ]]; then
+      entry=(packages/ui/src/settingsrun.ts "${BASH_REMATCH[2]:-general}"); ready=""
+    fi
+    rm -rf "$h" "$T/data"; mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache" "$T/data/harbor"; chmod 700 "$h/run"
+    [ -f "$SHOT_DB" ] && cp --reflink=auto "$SHOT_DB" "$T/data/harbor/harbor.db"
+    start=$(now)
     (cd "$ts" && exec env -i HOME="$h/home" XDG_DATA_HOME="$T/data" XDG_STATE_HOME="$h/state" XDG_CONFIG_HOME="$h/cfg" XDG_CACHE_HOME="$h/cache" \
       XDG_RUNTIME_DIR="$h/run" WAYLAND_DISPLAY="$T/sway/wayland-1" HARBOR_SOCK="$h/h.sock" HARBOR_OFFLINE=1 HARBOR_LISTEN=127.0.0.1 \
       HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent PATH=/usr/bin:/bin TZ="$SHOT_TZ" LANG=C.UTF-8 \
-      BUN_RUNTIME_TRANSPILER_CACHE_PATH="$SHOT_BUNCACHE" HARBOR_VIEW="$view" HARBOR_POINTER="$SHOT_STEPS" "$SHOT_BUN" harbor.ts) > "$log" 2>&1 &
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH="$SHOT_BUNCACHE" HARBOR_VIEW="$view" HARBOR_POINTER="$SHOT_STEPS" "$SHOT_BUN" "${entry[@]}") > "$log" 2>&1 &
     pid=$!
-    r=""
-    for _ in $(seq 300); do r=$(rect $pid); [ -n "$r" ] && break; kill -0 $pid 2>/dev/null || break; sleep 0.1; done
-    if [ -z "$r" ]; then
-      echo "shot: FAILED: Harbor's window never mapped for --view $view$(kill -0 $pid 2>/dev/null || echo ' (the app exited)'). Its log:" >&2
-      grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2; fail=1; stopapp; continue
-    fi
-    if grep -q '^HARBOR_VIEW: ' "$log"; then echo "shot: FAILED: $(grep -m1 '^HARBOR_VIEW: ' "$log")" >&2; fail=1; stopapp; continue; fi
-    mapped=$(date +%s.%N)
-    echo "shot: --view $view: window up in $(python3 -I -c "print(round($mapped-$start,1))") s ($r)" >&2
-    slept=0
-    for w in "${waits[@]}"; do
-      python3 -I -c "import time; time.sleep(max(0,$w-$slept))"; slept=$w
-      if ! kill -0 $pid 2>/dev/null; then
-        echo "shot: FAILED: Harbor exited before the shot at $w s (--view $view). Its log:" >&2
-        grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2; fail=1; break
-      fi
-      name=$(printf %s "$view" | tr -c 'A-Za-z0-9_-' -)
-      [ "$n" -gt 1 ] && name="$n-$name"
-      [ "${#waits[@]}" -gt 1 ] && name="$name-${w}s"
-      png=$SHOT_OUT/$name.png
-      grab "$T/shot.ppm"
-      c=$(colours "$T/shot.ppm" $r "$png"); e=$(colours "$T/empty.ppm" $r)
-      if [ "${c:-0}" -lt 40 ] || [ "${e:-9}" -gt 4 ]; then
-        echo "shot: FAILED: the window drew nothing at $w s (--view $view): $c colours where the empty desktop has $e. Its log:" >&2
-        grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2; fail=1; rm -f "$png"; continue
-      fi
-      echo "$png" >> "$T/shots"
-    done
+    earliest=$(python3 -I -c "print($start + $SHOT_LASTSTEP + (0.4 if $SHOT_LASTSTEP else 0))")
+    out=$(SHOT_READYLOG=$ready python3 -I "$SHOT_SETTLE" $pid "$start" "$SHOT_WAIT" "$earliest" "$prefix" "$SHOT_TRACE") || rc=$?
+    if grep -q '^HARBOR_VIEW: ' "$log"; then echo "shot: FAILED: $(grep -m1 '^HARBOR_VIEW: ' "$log")" >&2; rc=5; fi
+    case $rc in
+      0) printf '%s\n' "$out" | sed -n 's/^png //p' >> "$T/shots"
+         set -- $(printf '%s\n' "$out" | sed -n 's/^times //p')
+         echo "shot: --view $view: window up ${1:-?} s after the start, shot at ${2:-?} s" >&2 ;;
+      2) echo "shot: FAILED: Harbor's window never mapped for --view $view. Its log:" >&2 ;;
+      3) echo "shot: FAILED: the window drew nothing for --view $view. Its log:" >&2 ;;
+      4) echo "shot: FAILED: Harbor exited (--view $view). Its log:" >&2 ;;
+    esac
+    [ $rc != 5 ] || printf '%s\n' "$out" | sed -n 's/^png //p' | xargs -r rm -f
+    [ $rc = 0 ] || [ $rc = 5 ] || grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2 || true
     stopapp
+    return $rc
+  }
+  name() { printf %s "$1" | tr -c 'A-Za-z0-9_-' -; }
+
+  if [ -z "${SHOT_WATCH:-}" ]; then
+    n=0 fail=0
+    for view in $SHOT_VIEWS; do
+      n=$((n + 1)); p=$SHOT_OUT/$(name "$view"); [ $n -gt 1 ] && p=$SHOT_OUT/$n-$(name "$view")
+      shoot "$view" "$p" || fail=1
+    done
+    exit $fail
+  fi
+
+  # --watch: the first view again on every save under ts/packages/ui, until SHOT_IDLE minutes pass without one.
+  view=${SHOT_VIEWS%% *} n=0
+  # Saves made while a shot runs wait in the pipe.
+  exec 3< <(inotifywait -m -q -r -e close_write,moved_to,create,delete --include '\.(ts|slint)$' --format '%w%f' "$ts/packages/ui" 2>/dev/null)
+  while :; do
+    n=$((n + 1)); saved=${saved:-$(now)}
+    if shoot "$view" "$SHOT_OUT/$(printf %03d $n)-$(name "$view")"; then
+      png=$(tail -1 "$T/shots"); cp "$png" "$SHOT_OUT/latest.png"
+      echo "shot: $(secs "$saved" "$(now)") s from the save to the PNG" >&2
+      echo "$png"
+    fi
+    echo "shot: watching ts/packages/ui (stops after $SHOT_IDLE idle minutes, or scripts/shot --stop)" >&2
+    read -r -t $((SHOT_IDLE * 60)) changed <&3 || { echo "shot: $SHOT_IDLE minutes without a save: stopped" >&2; exit 0; }
+    saved=$(now)
+    # A save often comes as a few events (an editor's temp file, then the rename): they settle first.
+    while read -r -t 0.2 more <&3; do changed=$more; done
+    echo "shot: ${changed#"$ts"/} changed" >&2
   done
-  exit $fail
 fi
 
-views=() steps="" wait=3 size=1400x900 out="" empty=0 keep=0
+if [ "${1:-}" = --stop ]; then
+  p=$(cat "$watchpid" 2>/dev/null || true)
+  if [ -n "$p" ] && [ -d "/proc/$p" ]; then
+    endrig "$p"; rm -f "$watchpid"; echo "shot: stopped the watch of $root" >&2
+  else
+    rm -f "$watchpid"; echo "shot: no watch running for $root" >&2
+  fi
+  exit 0
+fi
+
+views=() steps="" wait=auto size=1400x900 out="" empty=0 keep=0 fresh=0 watch=0 idle=30 trace=0
 while [ $# -gt 0 ]; do
   case $1 in
     --view) views+=("${2:?--view needs a value}"); shift 2 ;;
@@ -123,63 +147,96 @@ while [ $# -gt 0 ]; do
     --wait) wait=${2:?}; shift 2 ;;
     --size) size=${2:?}; shift 2 ;;
     --out) out=${2:?}; shift 2 ;;
+    --idle) idle=${2:?}; shift 2 ;;
     --empty) empty=1; shift ;;
+    --fresh) fresh=1; shift ;;
+    --watch) watch=1; shift ;;
     --keep) keep=1; shift ;;
+    --trace) trace=1; shift ;;
     -h|--help) usage ;;
     *) echo "shot: unknown option $1" >&2; usage ;;
   esac
 done
 [[ $size =~ ^[0-9]+x[0-9]+$ ]] || { echo "shot: --size wants WxH, like 1400x900" >&2; exit 2; }
-[[ $wait =~ ^[0-9.]+(,[0-9.]+)*$ ]] || { echo "shot: --wait wants seconds, like 3 or 2,6" >&2; exit 2; }
+[[ $wait =~ ^(auto|[0-9.]+(,[0-9.]+)*)$ ]] || { echo "shot: --wait wants seconds, like 3 or 2,6" >&2; exit 2; }
+[[ $idle =~ ^[0-9]+$ ]] || { echo "shot: --idle wants minutes" >&2; exit 2; }
 for v in "${views[@]}"; do [[ $v =~ ^[a-z]+(:[A-Za-z0-9_-]+)?$ ]] || { echo "shot: bad --view $v" >&2; exit 2; }; done
 [ ${#views[@]} -gt 0 ] || { [ $empty = 1 ] && views=(draft) || views=(chat); }
 
 bun=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
 sway=$(command -v sway || true) grim=$(command -v grim || true)
-for need in "$bun:Bun (bun.sh)" "$sway:sway" "$grim:grim" "$(command -v unshare || true):unshare (util-linux)" "$(command -v python3 || true):python3"; do
+for need in "$bun:Bun (bun.sh)" "$sway:sway" "$grim:grim" "$(command -v unshare || true):unshare (util-linux)" "$(command -v python3 || true):python3" \
+  "$([ $watch = 0 ] && echo /bin/true || command -v inotifywait || true):inotifywait (inotify-tools) for --watch"; do
   [ -x "${need%%:*}" ] || { echo "shot: needs ${need#*:}, not found" >&2; exit 1; }
 done
 sw=${SWAY:-$(dirname "$(dirname "$(readlink -f "$sway")")")}
+if [ $watch = 1 ] && [ -n "$(cat "$watchpid" 2>/dev/null)" ] && [ -d "/proc/$(cat "$watchpid")" ]; then
+  echo "shot: a watch of this tree runs already (scripts/shot --stop ends it)" >&2; exit 1
+fi
 
-base=${HOME}/.cache/harbor-shots
-[ -n "$out" ] || out=$base/$(date +%Y%m%d-%H%M%S)-$$
-mkdir -p "$out" "$base/.bun"; out=$(cd "$out" && pwd)
+[ -n "$out" ] || out=$base/$(date +%Y%m%d-%H%M%S)-$$$([ $watch = 1 ] && echo -watch || true)
+mkdir -p "$out" "$base/.bun"; chmod 700 "$base"; out=$(cd "$out" && pwd)
 tmp=$(mktemp -d "$base/.rig.XXXXXX"); chmod 700 "$tmp"
-cleanup() { [ $keep = 1 ] && echo "shot: scratch kept in $tmp" >&2 || rm -rf "$tmp"; }
+cleanup() { [ $keep = 1 ] && echo "shot: scratch kept in $tmp" >&2 || rm -rf "$tmp"; [ $watch = 0 ] || rm -f "$watchpid"; }
 trap cleanup EXIT
+now() { date +%s.%N; }
+secs() { python3 -I -c "print(f'{$2-$1:.1f}')"; }
+t0=$(now)
 
-t0=$(date +%s.%N)
-(cd "$ts" && "$bun" install --frozen-lockfile > "$tmp/install.log" 2>&1) || { cat "$tmp/install.log" >&2; echo "shot: bun install failed" >&2; exit 1; }
-mkdir -p "$tmp/data/harbor"
+# bun install only when the lockfile changed since the last shot of this tree.
+stamp=$base/.installed-$(printf %s "$root" | md5sum | cut -c1-12)
+lock=$(cat "$ts/bun.lock" "$ts/package.json" | md5sum | cut -c1-32)
+if [ ! -d "$ts/node_modules" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$lock" ]; then
+  (cd "$ts" && "$bun" install --frozen-lockfile > "$tmp/install.log" 2>&1) || { cat "$tmp/install.log" >&2; echo "shot: bun install failed" >&2; exit 1; }
+  echo "$lock" > "$stamp"
+fi
+
+# The data: a cleaned copy of harbor.db (copydb.ts), kept for 10 minutes or while the real one is unchanged.
+db=""
 real="${XDG_DATA_HOME:-$HOME/.local/share}/harbor/harbor.db"
 if [ $empty = 0 ] && [ -f "$real" ]; then
-  (cd "$ts" && "$bun" packages/ui/src/copydb.ts "$real" "$tmp/data/harbor/harbor.db")
+  db=$base/.db/harbor.db
+  key="$(stat -c '%Y %s' "$real" "$real-wal" 2>/dev/null | tr '\n' ' ')"
+  if [ $fresh = 1 ] || [ ! -f "$db" ] || { [ "$(cat "$base/.db/key" 2>/dev/null)" != "$key" ] && [ -n "$(find "$db" -mmin +10)" ]; }; then
+    mkdir -p "$base/.db"; chmod 700 "$base/.db"; rm -f "$db.new"
+    (cd "$ts" && "$bun" packages/ui/src/copydb.ts "$real" "$db.new") && mv "$db.new" "$db" && echo "$key" > "$base/.db/key"
+    echo "shot: copied harbor.db in $(secs "$t0" "$(now)") s" >&2
+  fi
 elif [ $empty = 0 ]; then
   echo "shot: no harbor.db on this PC: starting empty" >&2
 fi
 
 # HARBOR_POINTER takes the window's logical pixels; the PNG is scaled by the UI zoom (Ctrl+=) the data holds.
-db=$tmp/data/harbor/harbor.db zoom=1
-[ -f "$db" ] && zoom=$(cd "$ts" && "$bun" -e 'import { Database } from "bun:sqlite";
+zoom=1 last=0
+[ -n "$db" ] && zoom=$(cd "$ts" && "$bun" -e 'import { Database } from "bun:sqlite";
 const r = new Database(process.argv.at(-1), { readonly: true }).query("SELECT v FROM kv WHERE k=?1").get("ui_zoom") as { v: string } | null;
 console.log(Number(r?.v) > 0 ? Number(r?.v) : 1);' "$db")
-if [ -n "$steps" ] && [ "$zoom" != 1 ]; then
-  steps=$(python3 -I -c 'import sys
-z=float(sys.argv[2]); out=[]
+if [ -n "$steps" ]; then
+  read -r steps last < <(python3 -I -c 'import sys
+z=float(sys.argv[2]); out=[]; last=0.0
 for s in sys.argv[1].split(";"):
     p=s.split(",")
-    try: p[0],p[1]=str(round(float(p[0])/z,1)),str(round(float(p[1])/z,1))
+    try:
+        p[0],p[1]=str(round(float(p[0])/z,1)),str(round(float(p[1])/z,1))
+        last=max(last,float(p[3]) if len(p)>3 else 1.0)
     except (ValueError,IndexError): pass
     out.append(",".join(p))
-print(";".join(out))' "$steps" "$zoom")
-  echo "shot: UI zoom $zoom: steps sent as $steps" >&2
+print(";".join(out), last)' "$steps" "$zoom")
+  [ "$zoom" = 1 ] || echo "shot: UI zoom $zoom: steps sent as $steps" >&2
 fi
 
 rc=0
-SHOT_TMP=$tmp SHOT_SWAY=$sw SHOT_GRIM=$grim SHOT_BUN=$bun SHOT_SIZE=$size SHOT_WAIT=$wait SHOT_STEPS=$steps SHOT_OUT=$out \
-  SHOT_VIEWS="${views[*]}" SHOT_BUNCACHE=$base/.bun SHOT_TZ=${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)} \
-  unshare -Urnm --pid --fork --mount-proc --kill-child "$0" --inner || rc=$?
+export SHOT_TMP=$tmp SHOT_SWAY=$sw SHOT_GRIM=$grim SHOT_BUN=$bun SHOT_SIZE=$size SHOT_WAIT=$wait SHOT_STEPS=$steps SHOT_LASTSTEP=$last \
+  SHOT_OUT=$out SHOT_VIEWS="${views[*]}" SHOT_BUNCACHE=$base/.bun SHOT_DB=$db SHOT_SETTLE=$root/scripts/shot-settle.py SHOT_TRACE=$trace \
+  SHOT_IDLE=$idle SHOT_RUNNER=$([ $empty = 1 ] && [ -z "$steps" ] && [ "$size" = 1400x900 ] && [ -f "$ts/packages/ui/src/settingsrun.ts" ] && echo 1 || true) SHOT_HOOK=$(grep -q 'harbor-view shown' "$ts/packages/ui/src/shell.ts" && echo 1 || true) SHOT_WATCH=$([ $watch = 1 ] && echo 1 || true) SHOT_TZ=${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}
+# (The braces keep bash's "Killed" note to itself when --stop ends the rig; the rig's own stderr goes through 3.)
+(exec 3>&2; { unshare -Urnm --pid --fork --mount-proc --kill-child "$0" --inner 2>&3; } 2>/dev/null; exit $?) &
+child=$!
+[ $watch = 0 ] || echo $child > "$watchpid"
+trap 'endrig $child' TERM INT HUP
+wait $child || rc=$?
 [ $rc != 99 ] || exit 99
-echo "shot: done in $(python3 -I -c "import time; print(round(time.time()-$t0,1))") s" >&2
+[ $watch = 1 ] && exit $([ $rc = 137 ] && echo 0 || echo $rc)
+echo "shot: done in $(secs "$t0" "$(now)") s" >&2
 [ -f "$tmp/shots" ] && cat "$tmp/shots"
 [ $rc = 0 ] || { echo "shot: FAILED (see above)" >&2; exit 1; }
