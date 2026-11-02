@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hasPrevious, install, onDisk, rollback, rolledBack, runtimeOnDisk, skipped } from "../src/install.ts";
 import { FakeHost, bundleSource, cleanup, configFor, makeInstall, makeKey } from "./support.ts";
@@ -45,6 +45,28 @@ test("a bundle that needs a newer runtime fetches the runtime first, from the re
   expect(order.indexOf("harbor-runtime-x86_64")).toBeLessThan(order.indexOf("harbor-app.js"));
   expect(text(inst.dir, ".previous/harbor")).toContain("FAKE_RUNTIME_VERSION=1.0.0");
   expect(text(inst.dir, "harbor")).toContain("FAKE_RUNTIME_VERSION=1.1.0");
+});
+
+test("the runtime and the bundle are in place before VERSION changes, which a running Harbor reloads on", async () => {
+  const key = await makeKey();
+  const host = new FakeHost();
+  const inst = makeInstall();
+  await host.publishTs(key, "1.2.0", { minRuntime: "1.1.0", runtime: "1.1.0", runtimeFrom: "1.1.0" });
+  // The kernel's own order of the files going into place (inotify, as a running Harbor would see it).
+  const seen: string[] = [];
+  const w = watch(inst.dir, (_e, f) => {
+    if (f !== null && !seen.includes(f)) seen.push(f);
+  });
+  try {
+    await install(host.config(inst, key), "1.2.0");
+    await Bun.sleep(100);
+  } finally {
+    w.close();
+  }
+  expect(seen.indexOf("harbor")).toBeGreaterThan(-1);
+  expect(seen.indexOf("harbor")).toBeLessThan(seen.indexOf("VERSION"));
+  expect(seen.indexOf("harbor-app.js")).toBeLessThan(seen.indexOf("VERSION"));
+  expect(seen.indexOf("harbor-app.js")).toBeGreaterThan(-1);
 });
 
 test("a runtime that is new enough is not fetched again", async () => {

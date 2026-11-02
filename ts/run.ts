@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview } from "./packages/net/src/index.ts";
 import { dataDir, single, Store } from "./packages/store/src/index.ts";
@@ -110,7 +111,11 @@ export async function runApp(o: RunOptions): Promise<number> {
   });
 
   const bundle = runtimeInfo()?.bundle;
-  if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([cfg.exe, bundle], () => void reloader?.now());
+  // Files put in place by something else (install.sh, another Harbor's updater): VERSION is written
+  // last, once the runtime and the bundle are both there. Watching the executable reloaded a PC into
+  // a new runtime while its bundle was still downloading (0.110.0), and the failed start rolled it
+  // back to do it all again.
+  if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
   if (!offline) updater.start();
 
   const restore = offline ? null : takeSnapshot(run.store);

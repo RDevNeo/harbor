@@ -109,17 +109,20 @@ export async function install(cfg: UpdateConfig, version: string): Promise<Insta
     writeFileSync(join(prev, "VERSION"), current(cfg));
     writeFileSync(join(prev, "RUNTIME"), runtimeOnDisk(cfg));
     if (isFile(join(dir, "manifest.json"))) copyFileSync(join(dir, "manifest.json"), join(prev, "manifest.json"));
+    // The extras first: they can take minutes, and nothing that runs Harbor itself has changed yet.
+    for (const job of pendingExtras(cfg, dir, manifest, prev)) {
+      await job.run().catch((e: Error) => cfg.log(`${job.name} not updated: ${e.message}`));
+    }
+    // Then runtime and bundle back to back, and VERSION last: a running Harbor reloads when VERSION
+    // changes (run.ts), so it never starts a new runtime beside the old bundle or the other way round.
     if (runtimeStaged !== null) {
       replace(runtimeStaged, join(dir, RUNTIME_FILE), prev);
       writeAtomic(join(dir, "RUNTIME"), manifest.runtime);
     }
-    for (const job of pendingExtras(cfg, dir, manifest, prev)) {
-      await job.run().catch((e: Error) => cfg.log(`${job.name} not updated: ${e.message}`));
-    }
-    writeAtomic(join(dir, "manifest.json"), JSON.stringify(manifest));
-    writeAtomic(join(dir, "VERSION"), version);
-    remove(join(dir, SKIP));
     replace(bundle, join(dir, BUNDLE_FILE), prev);
+    writeAtomic(join(dir, "manifest.json"), JSON.stringify(manifest));
+    remove(join(dir, SKIP));
+    writeAtomic(join(dir, "VERSION"), version);
     return { version, runtimeUpdated: runtimeStaged !== null, manifest };
   } finally {
     remove(stage);
