@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.110.2] - 2026-11-02
+
+### Fixed
+- Phone: the agents strip's "Stop all" has its padding back and lines up with the agents' stop
+  buttons, and the model and effort badges above the composer have room around them.
+
 ## [0.110.1] - 2026-11-02
 
 ### Fixed
