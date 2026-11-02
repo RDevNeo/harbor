@@ -29,6 +29,7 @@ const DESC: Record<string, string> = {
   agent: "Each sub-agent's turn. Off by default: the lead tells you.",
   ci: "Checks fail on one of your open pull requests (looked at every 10 minutes).",
   limit: "An account hits its usage limit or your cap, or comes back.",
+  discord: "The Discord app needs you: a captcha to solve, a session Discord ended, tools a repair couldn't fix.",
 };
 const DESC_PC = "Another PC of your mesh stops answering, or answers again.";
 

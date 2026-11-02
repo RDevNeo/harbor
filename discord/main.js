@@ -26,13 +26,39 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(3);
 }
 Menu.setApplicationMenu(null);
-// Harbor's captcha view, off unless the user turned it on. hCaptcha's frame is another site, and
+// Harbor's captcha view (on unless the user turned it off). hCaptcha's frame is another site, and
 // an offscreen page doesn't route input past its top frame into another site's process, so the
-// view needs site isolation off: that weakens the signed-in session against every page and frame
-// it loads for as long as this client runs. Off, site isolation stays and captchas are for the
-// user's own Discord app.
+// view needs site isolation off. What makes that safe enough: the page may only ever hold frames
+// from Discord and hCaptcha (`frameAllowed` below), so the only other site sharing the session's
+// process is hCaptcha, which Discord itself embeds for its captchas.
 const captchaView = cfg.mode === "run" && cfg.captchaView === true;
 if (captchaView) app.commandLine.appendSwitch("disable-site-isolation-trials");
+
+/** Where the page itself may go: Discord's own app (and a rig's fake one). */
+const DISCORD_HOSTS = ["discord.com", "discordapp.com"];
+/** What may be framed inside it besides Discord: hCaptcha (Discord's captchas, newassets.hcaptcha.com). */
+const FRAME_HOSTS = [...DISCORD_HOSTS, "hcaptcha.com"];
+const ownOrigin = (() => { try { return cfg.url ? new URL(cfg.url).origin : null; } catch { return null; } })();
+const extraFrames = new Set((cfg.frames ?? []).map(String));
+const hostIn = (host, list) => list.some(h => host === h || host.endsWith("." + h));
+/** For the log: which site, never the rest of the address. */
+const siteOf = url => { try { return new URL(url).host || new URL(url).protocol; } catch { return "?"; } };
+function pageAllowed(url) {
+    try {
+        const u = new URL(url);
+        if (u.origin === ownOrigin) return true;
+        return u.protocol === "https:" && hostIn(u.hostname, DISCORD_HOSTS);
+    } catch { return false; }
+}
+function frameAllowed(url) {
+    if (url === "about:blank" || url === "about:srcdoc") return true;
+    try {
+        const u = new URL(url);
+        if (u.protocol === "blob:") return frameAllowed(new URL(u.pathname).origin);
+        if (u.origin === ownOrigin || extraFrames.has(u.origin)) return true;
+        return u.protocol === "https:" && hostIn(u.hostname, FRAME_HOSTS);
+    } catch { return false; }
+}
 
 const vencordFile = f => fs.readFileSync(path.join(cfg.vencord, f), "utf8");
 const watchQr = cfg.mode !== "run";
@@ -70,6 +96,17 @@ function open(offscreen) {
     }
     w.webContents.setUserAgent(UA);
     w.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // The page stays on Discord, and its frames on Discord and hCaptcha (the request filter in
+    // whenReady catches the same frames by their requests, redirects included).
+    const guard = what => (e, url, _inPlace, main) => {
+        const u = e.url ?? url, top = e.isMainFrame ?? main ?? true;
+        if (top ? pageAllowed(u) : frameAllowed(u)) return;
+        log("blocked " + what + ": " + siteOf(u));
+        e.preventDefault();
+    };
+    w.webContents.on("will-navigate", guard("a navigation"));
+    w.webContents.on("will-frame-navigate", guard("a frame"));
+    w.webContents.on("will-redirect", guard("a redirect"));
     const wc = w.webContents;
     wc.on("did-finish-load", () => { if (w === win) loaded(); });
     wc.on("did-fail-load", (_e, code, desc, _url, main) => {
@@ -330,6 +367,13 @@ async function handle(m) {
 
 app.on("window-all-closed", () => {});
 app.whenReady().then(() => {
+    // Every frame request (a frame's page, or a redirect of one) is checked against the list.
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (d, done) => {
+        const frame = d.resourceType === "subFrame" || d.resourceType === "mainFrame";
+        const ok = !frame || (d.resourceType === "mainFrame" ? pageAllowed(d.url) : frameAllowed(d.url));
+        if (!ok) log("blocked a frame request: " + siteOf(d.url));
+        done({ cancel: !ok });
+    });
     process.env.VENCORD_USER_DATA_DIR = cfg.data;
     if (cfg.vencord) require(path.join(cfg.vencord, "vencordDesktopMain.js"));
     session.defaultSession.setUserAgent(UA);

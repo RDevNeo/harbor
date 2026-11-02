@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { loadPrefs, MemKv, prefsOn } from "@harbor/net";
 import { editNotifications, notificationsSections, notifyPressed, setNotifications } from "../src/logic/settings-notifications.ts";
 
-test("notifications list the six kinds, sub-agents off, and no quiet range by default", () => {
+test("notifications list the seven kinds, sub-agents off, and no quiet range by default", () => {
   const s = notificationsSections(new MemKv());
   expect(s.map((x) => x.title)).toEqual(["Notify me when", "When", "Phones"]);
   expect(s[0]?.rows.map((r) => [r.key, r.title, r.on])).toEqual([
@@ -12,6 +12,7 @@ test("notifications list the six kinds, sub-agents off, and no quiet range by de
     ["kind:ci", "CI or PR checks failed", true],
     ["kind:limit", "Usage limit hit or back", true],
     ["kind:pc", "Another PC went offline", true],
+    ["kind:discord", "Discord: a captcha, a sign-out, a repair", true],
   ]);
   expect(s[1]?.rows.map((r) => [r.key, r.on])).toEqual([
     ["away_only", false],
@@ -36,7 +37,7 @@ test("notifications write kv notify with every kind as shown", () => {
   const kv = new MemKv();
   expect(setNotifications(kv, "kind:agent", true)).toBe(true);
   const p = loadPrefs(kv);
-  expect(p.kinds).toEqual({ input: true, done: true, agent: true, ci: true, limit: true, pc: true });
+  expect(p.kinds).toEqual({ input: true, done: true, agent: true, ci: true, limit: true, pc: true, discord: true });
   expect(setNotifications(kv, "kind:done", false)).toBe(true);
   expect(prefsOn(loadPrefs(kv), "done")).toBe(false);
   expect(prefsOn(loadPrefs(kv), "agent")).toBe(true);

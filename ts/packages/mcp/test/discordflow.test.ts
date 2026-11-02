@@ -81,22 +81,6 @@ test("joining is paced: the second join is refused with the reason", async () =>
   expect(JSON.parse(await call("discord_join", { invite: "z" }))).toEqual({ joined: true });
 });
 
-test("by default a join behind a captcha is the user's to make in their own Discord app", async () => {
-  await quiet();
-  writeFileSync(join(r.root, "pace.json"), "[]");
-  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "5", name: "Big Server" } } }, captcha: { showing: true, joined: false } });
-  const v = JSON.parse(await call("discord_join", { invite: "big", apply: true })) as Record<string, unknown>;
-  expect(v.captchaRequired).toBe(true);
-  expect(String(v.note)).toContain("their own Discord app");
-  const st = h.host.status() as Record<string, unknown>;
-  expect(st.captcha).toBeNull();
-  expect(fakeLog(r.root).filter((l) => l.started === "run").every((l) => (l.cfg as Record<string, unknown>).captchaView === false)).toBe(true);
-  await until(() => ops("captcha_end").length === 1);
-  expect(await captchaFrame()).toBeUndefined();
-  expect(existsSync(join(r.root, "notices.jsonl")) ? readFileSync(join(r.root, "notices.jsonl"), "utf8") : "").not.toContain("captcha");
-  plan(r.root, { calls: { discord_join: { joined: true } } });
-});
-
 test("a screenshot comes back as an image, or goes to a file", async () => {
   const res = (await client.rpc("tools/call", { name: "discord_screenshot", arguments: { selector: ".chat" } })).result as { content: { type: string; data?: string; mimeType?: string; text?: string }[] };
   expect(res.content[0]).toEqual({ type: "image", data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png" });
@@ -193,6 +177,21 @@ test("without swap an idle client quits and the next call starts it again", asyn
   h.swap.on = true;
 });
 
+test("with swap but no cgroup, an idle client isn't left stopped by signals: it quits later, as without swap", async () => {
+  h.host.signalsRest = false;
+  try {
+    await quiet();
+    // The fake shell has no cgroup, and earlier freezes here could only stop it with signals: idle
+    // quits instead (the kit's quit idle is 0), as without swap.
+    await h.host.tick();
+    expect(h.host.phase()).toBe("stopped");
+    expect(((await status()) as Record<string, unknown>).held).toBe("");
+  } finally {
+    await call("discord_view", {});
+    h.host.signalsRest = true;
+  }
+});
+
 test("a client that died is noticed", async () => {
   expect(h.host.phase()).toBe("ready");
   plan(r.root, {});
@@ -226,6 +225,26 @@ test("tools whose lookups are missing say what changed", async () => {
   expect(res.content[0]?.text).toContain("Discord changed MessageActions");
   expect(res.content[0]?.text).toContain("Discord tools need attention.");
   expect(await statusText()).toContain("Signed in as ana.");
+});
+
+test("with the captcha view turned off, a join behind a captcha is the user's to make in their own Discord app", async () => {
+  process.env.HARBOR_DISCORD_CAPTCHA_VIEW = "0";
+  await h.host.handle({ op: "stop" });
+  await call("discord_view", {});
+  await quiet();
+  writeFileSync(join(r.root, "pace.json"), "[]");
+  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "5", name: "Big Server" } } }, captcha: { showing: true, joined: false } });
+  const v = JSON.parse(await call("discord_join", { invite: "big", apply: true })) as Record<string, unknown>;
+  expect(v.captchaRequired).toBe(true);
+  expect(String(v.note)).toContain("their own Discord app");
+  const st = h.host.status() as Record<string, unknown>;
+  expect(st.captcha).toBeNull();
+  expect((fakeLog(r.root).filter((l) => l.started === "run").at(-1)?.cfg as Record<string, unknown>).captchaView).toBe(false);
+  await until(() => ops("captcha_end").length === 1);
+  expect(await captchaFrame()).toBeUndefined();
+  expect(existsSync(join(r.root, "notices.jsonl")) ? readFileSync(join(r.root, "notices.jsonl"), "utf8") : "").not.toContain("captcha");
+  plan(r.root, { calls: { discord_join: { joined: true } } });
+  delete process.env.HARBOR_DISCORD_CAPTCHA_VIEW;
 });
 
 test("the chat's lookups are judged only with a chat on the page, and a tool that finds one gone has them judged", async () => {
@@ -263,9 +282,8 @@ test("the chat's lookups are judged only with a chat on the page, and a tool tha
   plan(r.root, {});
 }, 20_000);
 
-test("with the captcha view on, a join that needs a captcha holds the client awake for a person, and says how it ended", async () => {
+test("with the captcha view on (the default), a join that needs a captcha holds the client awake for a person, and says how it ended", async () => {
   // The view only takes effect when the client starts.
-  process.env.HARBOR_DISCORD_CAPTCHA_VIEW = "1";
   await h.host.handle({ op: "stop" });
   await call("discord_view", {});
   expect((fakeLog(r.root).filter((l) => l.started === "run").at(-1)?.cfg as Record<string, unknown>).captchaView).toBe(true);
@@ -309,6 +327,5 @@ test("with the captcha view on, a join that needs a captcha holds the client awa
   expect(st().captcha_end).toMatchObject({ outcome: "closed" });
   expect(readFileSync(join(r.root, "pace.json"), "utf8")).toBe("[]");
   plan(r.root, { calls: { discord_join: { joined: true } } });
-  delete process.env.HARBOR_DISCORD_CAPTCHA_VIEW;
   await h.host.handle({ op: "stop" });
 }, 30_000);

@@ -22,6 +22,20 @@ export function qrPixels(size: number, modules: Uint8Array, quiet = 4, scale = 6
 
 const blank = (): BlockImage => ({ width: 1, height: 1, data: new Uint8Array(4).fill(255) });
 
+/** A QR code as rows of "0"/"1" (1 dark), for a phone to draw: the hub sends Discord's login code this way. Undefined: the text doesn't fit. */
+export async function qrRows(text: string): Promise<{ size: number; rows: string[] } | undefined> {
+  const { default: QRCode } = await import("qrcode");
+  try {
+    const q = QRCode.create(text, { errorCorrectionLevel: "M" });
+    const size = q.modules.size;
+    const rows: string[] = [];
+    for (let y = 0; y < size; y++) rows.push(Array.from(q.modules.data.subarray(y * size, (y + 1) * size), (m) => (m === 1 ? "1" : "0")).join(""));
+    return { size, rows };
+  } catch {
+    return undefined;
+  }
+}
+
 /** The QR encoder: the `qrcode` package, loaded when a code is first drawn. A text that doesn't fit gives a white pixel, as in Rust. */
 export async function loadQr(): Promise<(text: string) => BlockImage> {
   const { default: QRCode } = await import("qrcode");

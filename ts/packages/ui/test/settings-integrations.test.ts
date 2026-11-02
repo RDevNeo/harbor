@@ -1,3 +1,4 @@
+import { discord } from "@harbor/mcp";
 import { expect, test } from "bun:test";
 import type { Tile } from "../src/applogos.ts";
 import { type AppsApi, type AppsView, type Form, integrationsAct, integrationsData, type IntApp, type IntHost } from "../src/logic/settings-integrations.ts";
@@ -14,7 +15,7 @@ function view(over: Partial<AppsView> = {}): AppsView {
     googleBuiltin: () => false,
     googleClient: () => ({ id: "", secret: "" }),
     googleAccounts: () => [],
-    trouble: () => undefined,
+    discordLine: (about: string) => ({ text: about, tone: 0 }),
     locals: () => [
       { id: "discord", label: "Discord", found: false },
       { id: "playwright", label: "Playwright", found: true },
@@ -89,8 +90,20 @@ test("integrations shows Discord's login code, and its window button until the w
 });
 
 test("integrations shows Discord's trouble in amber", () => {
-  const d = find(data(view({ trouble: () => "Repairing the tools for a new Discord\u{2026}" })), "discord");
+  const d = find(data(view({ discordLine: () => ({ text: "Repairing the tools for a new Discord\u{2026}", tone: 2 }) })), "discord");
   expect([d?.sub, d?.sub_tone]).toEqual(["Repairing the tools for a new Discord\u{2026}", 2]);
+});
+
+test("the Discord card's line, which the phone shows too", () => {
+  const about = "About";
+  const base = { phase: "frozen", account: { id: "1", username: "ana", name: "Ana" }, attention: "", failing: [], repairing: false, signin: { active: false }, captcha: null };
+  expect(discord.cardLine(base, about)).toEqual({ text: "Signed in as Ana · Frozen while idle", tone: 0 });
+  expect(discord.cardLine({ ...base, phase: "ready" }, about).text).toBe("Signed in as Ana · Running");
+  expect(discord.cardLine({ ...base, account: null }, about)).toEqual({ text: "About", tone: 0 });
+  expect(discord.cardLine({ ...base, failing: ["ReactionActions"] }, about)).toEqual({ text: "Signed in as Ana · Discord changed: some tools can't work", tone: 2 });
+  expect(discord.cardLine({ ...base, attention: "Discord tools need attention" }, about)).toEqual({ text: "Discord tools need attention", tone: 2 });
+  expect(discord.cardLine({ ...base, captcha: { guild: "G" } }, about)).toEqual({ text: "Signed in as Ana · A captcha waits for you", tone: 1 });
+  expect(discord.cardLine({ ...base, signin: { active: true, note: "Scan with the Discord app" } }, about)).toEqual({ text: "Scan with the Discord app", tone: 1 });
 });
 
 test("integrations lists errors and the local servers with what a click does", () => {

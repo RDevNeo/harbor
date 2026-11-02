@@ -549,14 +549,13 @@ export type Account = {
 export const accountPath = (): string => join(root(), "account.json");
 
 /**
- * Harbor's captcha view, off unless someone turns it on (a file `captcha-view` here; the rigs set
- * HARBOR_DISCORD_CAPTCHA_VIEW=1). It needs the signed-in page without site isolation, which
- * weakens that session against every page and frame it loads for as long as it runs, so it only
- * takes effect when the client next starts. Off, a join behind a captcha is for the user's own
- * Discord app.
+ * Harbor's captcha view: on unless turned off (a file `no-captcha-view` here; the rigs set
+ * HARBOR_DISCORD_CAPTCHA_VIEW=0). It needs the signed-in page without site isolation; the shell
+ * then lets the page hold frames from Discord and hCaptcha only. It takes effect when the client
+ * next starts. Off, a join behind a captcha is for the user's own Discord app.
  */
 export function captchaView(): boolean {
-  return process.env.HARBOR_DISCORD_CAPTCHA_VIEW === "1" || existsSync(join(root(), "captcha-view"));
+  return process.env.HARBOR_DISCORD_CAPTCHA_VIEW !== "0" && !existsSync(join(root(), "no-captcha-view"));
 }
 
 export function account(): Account | undefined {
@@ -570,9 +569,10 @@ export function account(): Account | undefined {
 }
 
 /** A note for Harbor's notifications: the running app picks these up (discord.ts `watch`). */
-export function notice(title: string, body: string): void {
+/** `key`: notifications with the same key replace each other; the phone opens the captcha for `discord-captcha`. */
+export function notice(title: string, body: string, key?: string): void {
   try {
-    appendFileSync(join(root(), "notices.jsonl"), `${JSON.stringify({ title, body, at: now() })}\n`);
+    appendFileSync(join(root(), "notices.jsonl"), `${JSON.stringify({ title, body, at: now(), ...(key !== undefined ? { key } : {}) })}\n`);
   } catch {
     // a note nobody can read is not worth failing for
   }

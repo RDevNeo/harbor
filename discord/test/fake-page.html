@@ -155,6 +155,13 @@
         rest,
     };
     if (loggedIn) setTimeout(() => emit("CONNECTION_OPEN"), 100);
+    // A page that frames another site (an embed, an ad): the shell must block it.
+    fetch(rig + "/rig/stranger").then(r => r.text()).then(u => {
+        const f = document.createElement("iframe");
+        f.src = u + "/embed";
+        f.style.cssText = "position:fixed;left:0;top:0;width:10px;height:10px;border:0";
+        document.body.append(f);
+    }).catch(() => {});
     if (loggedIn) window.GLOBAL_ENV = { VERSION_HASH: new URLSearchParams(location.search).get("build") ?? "build1" };
     else setTimeout(() => { if (location.search.includes("autologin")) location.href = "/app"; }, 1500);
     // Messages the rig sends: what the gateway would do.

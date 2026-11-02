@@ -34,6 +34,7 @@ const server = http.createServer((req, res) => {
         return;
     }
     if (u.pathname === "/rig/history") return res.end(JSON.stringify(history));
+    if (u.pathname === "/rig/stranger") return res.end(strangerSite);
     if (u.pathname === "/rig/thaw") return res.end(JSON.stringify(thaw));
     if (u.pathname.startsWith("/rig/")) {
         let b = "";
@@ -60,11 +61,18 @@ const server = http.createServer((req, res) => {
 await new Promise(r => server.listen(0, "127.0.0.1", r));
 const port = server.address().port;
 const site = `http://127.0.0.1:${port}`;
+// Another site the page tries to frame: the shell must never load it.
+const strangers = [];
+const stranger = http.createServer((req, res) => { strangers.push(req.url); res.setHeader("content-type", "text/html"); res.end("<p>stranger</p>"); });
+await new Promise(r => stranger.listen(0, "127.0.0.1", r));
+const strangerSite = `http://localhost:${stranger.address().port}`;
 
 const env = {
     HOME: home, PATH: root + "/bin:" + process.env.PATH, XDG_DATA_HOME: data, HARBOR_DISCORD_FAKE_DIR: root,
     HARBOR_DISCORD_SHELL: path.dirname(here), HARBOR_DISCORD_ELECTRON: electron,
     HARBOR_DISCORD_URL: site + "/app", HARBOR_DISCORD_SCRATCH_URL: site + "/login", HARBOR_DISCORD_VENCORD_URL: site + "/vencord", HARBOR_DISCORD_IDLE: "2",
+    // The fake hCaptcha's site: the only other one the page may frame.
+    HARBOR_DISCORD_FRAME_ORIGINS: `http://localhost:${port}`,
 };
 
 // ---------------------------------------------------------------- talking to Harbor
@@ -257,8 +265,20 @@ await scenario("react-gone", async () => {
     write("state.json", t);
 });
 
+await scenario("frames", async () => {
+    account();
+    strangers.length = 0;
+    const r = await mcp.tool("discord_dms");
+    check(!r.isError, "the page works", r.text);
+    await sleep(1500);
+    check(strangers.length === 0, "a frame from another site never loads", JSON.stringify(strangers));
+    check(fs.readFileSync(app + "/shell.log", "utf8").includes("blocked a frame"), "the shell says it blocked one");
+});
+
 await scenario("captcha-off", async () => {
     account();
+    // The captcha view turned off; it takes effect as the client starts.
+    write("no-captcha-view", "off");
     write("pace.json", "[]");
     if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
     const r = await mcp.tool("discord_join", { invite: "captcha0", apply: true });
@@ -271,12 +291,12 @@ await scenario("captcha-off", async () => {
     const f = await hostOp({ op: "captcha_frame" });
     check(f?.result?.showing === false && !f.result.data, "no frames to show");
     check(!fs.existsSync(app + "/notices.jsonl") || !fs.readFileSync(app + "/notices.jsonl", "utf8").includes("captcha"), "no notice");
+    fs.rmSync(app + "/no-captcha-view");
 });
 
 await scenario("captcha", async () => {
     account();
-    // Harbor's captcha view, off by default; it takes effect as the client starts.
-    write("captcha-view", "on");
+    // Harbor's captcha view, on by default.
     write("pace.json", "[]");
     if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
     let r = await mcp.tool("discord_join", { invite: "captcha1", apply: true });
@@ -314,7 +334,6 @@ await scenario("captcha", async () => {
     check(s.captcha_end?.outcome === "closed", "Don't join closes it, unjoined", JSON.stringify(s.captcha_end));
     r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000009" });
     check(JSON.parse(r.text).alreadyAbsent === true, "and the server it was for isn't joined", r.text);
-    fs.rmSync(app + "/captcha-view");
 });
 
 await scenario("pacing", async () => {
@@ -551,17 +570,22 @@ await scenario("no-cgroups", async () => {
     await hostOp({ op: "stop" }).catch(() => {});
     await until(() => !fs.existsSync(app + "/h.sock"), 15000, "host exit");
     env.HARBOR_DISCORD_NO_CGROUP = "1";
+    env.HARBOR_DISCORD_QUIT_IDLE = "8";
     const m = new Mcp();
     await m.rpc("initialize", {});
     await m.tool("discord_dms");
-    await frozenNow();
     const pid = shellPid();
-    check((await status()).held === "signals" && heldBy(pid) === "signals", "without cgroups it falls back to SIGSTOP", (await status()).held);
-    thaw = { mode: "resume", delay: 200, nickname: "After SIGCONT" };
+    // Past the freeze idle: a SIGSTOP would keep all its memory, so it isn't left stopped.
+    await sleep(4500);
+    const s = await status();
+    check(s.phase === "ready" && !heldBy(pid), "without cgroups it isn't left stopped by signals", s.phase + " " + heldBy(pid));
+    await until(() => !shellUp(), 20000, "the idle quit");
+    check(true, "it quits when idle instead, as without swap");
     const r = await m.tool("discord_dms");
-    check(r.text.includes("After SIGCONT") && !heldBy(pid), "and wakes the same way", r.text);
+    check(!r.isError && shellUp(), "and the next call starts it again", r.text);
     m.close();
     delete env.HARBOR_DISCORD_NO_CGROUP;
+    delete env.HARBOR_DISCORD_QUIT_IDLE;
 });
 
 function hostOp(req) {

@@ -24,7 +24,7 @@
 
 <main class="doc wrap">
   <h1>Privacy policy</h1>
-  <p class="meta">Effective 28 October 2026</p>
+  <p class="meta">Effective 2 November 2026</p>
 
   <p>Harbor is a desktop app for Linux and a companion Android app for working with AI coding agents such as Claude Code and Codex. It is free, open-source software made by the Harbor open-source project. All of its code is public at <a href="https://github.com/RDevNeo/harbor">github.com/RDevNeo/harbor</a>, so you can check everything this page says.</p>
 
@@ -32,7 +32,7 @@
   <ul>
     <li>Harbor runs on your own devices. <b>The Harbor project runs no server that receives your data</b>: no accounts, no analytics, no telemetry, no crash reporting, no ads.</li>
     <li>Your chats, settings and sign-ins are stored on your own computer. They go to your other devices only when you pair them with each other.</li>
-    <li>When you use a service through Harbor, such as an AI provider, GitHub or Gmail, Harbor talks to that service directly from your device, with your own account. That service's own privacy policy then applies.</li>
+    <li>When you use a service through Harbor, such as an AI provider, GitHub, Gmail or Discord, Harbor talks to that service directly from your device, with your own account. That service's own privacy policy then applies.</li>
     <li>Google user data is used only to do what you ask your AI agent to do with your mail. It is never sold, used for ads or used to train AI models.</li>
   </ul>
 
@@ -52,7 +52,7 @@
     <li><b>Updates.</b> Harbor checks GitHub for new releases of itself and downloads them from GitHub, verifying their signature. Phones get their updates from your own PC. Harbor also asks the npm registry for the latest version number of each agent program you installed.</li>
     <li><b>Reaching your PCs from outside.</b> To let your phone reach your PC away from home, Harbor can ask your home router to open its port (UPnP/NAT-PMP/PCP). It can also look up your public IP address with api.ipify.org or icanhazip.com. Only devices you paired get an answer on that port.</li>
     <li><b>Webhooks (off unless you turn them on).</b> If you turn on public webhooks, Harbor gets a TLS certificate from Let's Encrypt. Its default name is an sslip.io name made from your public IP address.</li>
-    <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex and Gmail are used only after you sign in to them in Harbor. They are reached directly with your own sign-in.</li>
+    <li><b>Apps you sign in to.</b> GitHub, Vercel, Linear, Sentry, Supabase, Context7, Convex, Gmail and Discord are used only after you sign in to them in Harbor. They are reached directly with your own sign-in. For Discord, see <a href="#discord">below</a>.</li>
     <li><b>Project icons.</b> To show a project's icon, Harbor may fetch the favicon from that project's own website.</li>
     <li><b>The optional browser panel</b> loads the pages you open in it, like any browser.</li>
   </ul>
@@ -92,6 +92,27 @@
     <li>You can also revoke access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
     <li>Mail that agents read stays in your chat histories until you delete those chats. Downloaded attachments stay until you delete the files. Uninstalling Harbor and deleting its data folders removes everything Harbor stored.</li>
     <li>What your AI provider keeps is governed by that provider's own terms and settings.</li>
+  </ul>
+
+  <h2 id="discord">Discord app</h2>
+  <p>Harbor has an optional Discord app. It lets the AI agents you run in Harbor read and send Discord messages as you, when you ask them to. It is off until you sign in to Discord under Settings › Integrations › Apps on the desktop, after a warning: Discord's terms don't allow automating a personal account, and Discord may suspend accounts that do.</p>
+  <h3>What Harbor stores</h3>
+  <ul>
+    <li>Signing in creates a <b>Discord session on your PC</b>: a private browser profile in Harbor's data folder (owner-only permissions) with Discord's sign-in, like the one a browser keeps. Harbor never reads or copies your password or Discord's token out of it, and it never leaves the PC. Phones you pair don't get it: they only see whether it's signed in, and can sign it out.</li>
+    <li>Harbor keeps a small file of notes agents save about your Discord world (when they use the notes tool), the days' sign-in and pacing counts, and the parts it downloaded to run Discord (see below).</li>
+    <li>Messages agents read become part of the chat, like anything else an agent reads, and go to the AI provider you chose, as described above.</li>
+  </ul>
+  <h3>What Discord gets</h3>
+  <ul>
+    <li>Harbor runs Discord's own web app (with the open-source Vencord client mod) in a hidden window on your PC. Discord sees a normal Discord web client: your session, your IP address, a desktop browser's user agent, whatever its own app sends (including its own usage data), and the actions agents take: the messages they read, send, edit or react to, searches, joins and so on. Discord's <a href="https://discord.com/privacy">privacy policy</a> applies.</li>
+    <li>When Discord asks for a captcha (for example to join a server), the hCaptcha frame Discord shows loads from hCaptcha, which gets what its widget collects under <a href="https://www.hcaptcha.com/privacy">hCaptcha's privacy policy</a>. Harbor shows it to you on your desktop or phone so that you can solve it; Harbor never solves it. The hidden window may only show frames from Discord and hCaptcha: anything else a message embeds is blocked.</li>
+    <li>To run Discord, Harbor downloads Electron, Vencord and its own small Discord shell from GitHub. Electron and the shell are checked against hashes built into Harbor; Vencord comes from its official releases and updates from there.</li>
+    <li>If Discord changes and some tools stop working, Harbor may ask your own Claude account to fix how it finds Discord's internals. It does that on a separate, signed-out Discord page: Discord's public app code goes to Anthropic, never your messages or account.</li>
+  </ul>
+  <h3>Signing out</h3>
+  <ul>
+    <li><b>Sign out</b> on the Discord card (on the desktop, or in the Android app's Settings) ends the session at Discord and deletes the session's profile folder from your PC. Downloaded parts and agents' notes stay until you delete Harbor's data folders.</li>
+    <li>Messages agents read stay in your chat histories until you delete those chats.</li>
   </ul>
 
   <h2 id="security">Security</h2>

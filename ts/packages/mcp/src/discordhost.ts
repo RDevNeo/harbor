@@ -79,6 +79,8 @@ export interface Engine {
   reclaim(stop: StopFlag): Promise<void>;
   /** The running client was started for Harbor's captcha view (see `setup.captchaView`). */
   captchaView?(): boolean;
+  /** Freezing can give its memory back (a cgroup); false once a freeze could only stop it with signals. */
+  canFreeze?(): boolean;
 }
 
 /** What an engine tells the host that wasn't an answer: the shell's events. */
@@ -101,6 +103,8 @@ export class Electron implements Engine {
   private run = 0;
   private held: Held | undefined;
   private view = false;
+  /** A cgroup freeze worked here, or hasn't been tried. */
+  private freezable = true;
 
   constructor(
     private readonly data: string,
@@ -119,6 +123,8 @@ export class Electron implements Engine {
       // A rig's fake Discord; the shell's default is the real one.
       url: process.env[mode === "scratch" ? "HARBOR_DISCORD_SCRATCH_URL" : "HARBOR_DISCORD_URL"] ?? null,
       captchaView: mode === "run" && setup.captchaView(),
+      // A rig's fake hCaptcha; the shell's own list is Discord's and hCaptcha's.
+      frames: (process.env.HARBOR_DISCORD_FRAME_ORIGINS ?? "").split(",").filter((o) => o !== ""),
     };
     this.view = cfg.captchaView;
     const unit = await inScope(mode);
@@ -278,7 +284,13 @@ export class Electron implements Engine {
     if (leader === undefined) throw new Error("Discord isn't running.");
     const h = await freezeTree(leader);
     this.held = h;
-    return heldWord(h);
+    const word = heldWord(h);
+    if (word === "signals") this.freezable = false;
+    return word;
+  }
+
+  canFreeze(): boolean {
+    return this.freezable;
   }
 
   resume(): void {
@@ -823,6 +835,12 @@ export class Host {
     } catch {
       how = undefined;
     }
+    // Stopped by signals only, it keeps all its memory: no better than running. Without cgroups,
+    // idle quits instead, as without swap (`resting`).
+    if (how === "signals" && !this.signalsRest && this.engine.canFreeze?.() === false) {
+      this.engine.resume();
+      how = undefined;
+    }
     const stop: StopFlag = { stopped: false };
     const at = now();
     this.set((st) => {
@@ -1195,7 +1213,7 @@ export class Host {
       st.captchaEnd = null;
       st.busy += 1;
     });
-    setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. Open Harbor on this PC to solve it; it's given up in ${CAPTCHA_WAIT / 60} minutes.`);
+    setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. Solve it in Harbor, on this PC or your phone; it's given up in ${CAPTCHA_WAIT / 60} minutes.`, "discord-captcha");
     background(() => this.captchaFollow(c));
   }
 
@@ -1233,16 +1251,16 @@ export class Host {
     switch (outcome) {
       case "joined":
         paceNote("join");
-        setup.notice("Discord: joined", `The captcha was solved: Discord joined ${g}.`);
+        setup.notice("Discord: joined", `The captcha was solved: Discord joined ${g}.`, "discord-captcha");
         break;
       case "closed":
-        setup.notice("Discord: not joined", `The captcha was closed, so Discord didn't join ${g}.`);
+        setup.notice("Discord: not joined", `The captcha was closed, so Discord didn't join ${g}.`, "discord-captcha");
         break;
       case "timeout":
-        setup.notice("Discord: not joined", `Nobody solved the captcha in ${CAPTCHA_WAIT / 60} minutes, so Discord didn't join ${g}.`);
+        setup.notice("Discord: not joined", `Nobody solved the captcha in ${CAPTCHA_WAIT / 60} minutes, so Discord didn't join ${g}.`, "discord-captcha");
         break;
       case "stopped":
-        setup.notice("Discord: not joined", `Discord stopped before the captcha was solved, so it didn't join ${g}.`);
+        setup.notice("Discord: not joined", `Discord stopped before the captcha was solved, so it didn't join ${g}.`, "discord-captcha");
         break;
     }
   }
@@ -1460,6 +1478,14 @@ export class Host {
     return statusJson(this.st, this.st.saved);
   }
 
+  /** Idle may freeze: there's swap to push it to, and a cgroup to freeze it in. */
+  private resting(): boolean {
+    return this.swap() && (this.signalsRest || this.engine.canFreeze?.() !== false);
+  }
+
+  /** Tests: a SIGSTOP counts as a freeze (the fake shell has no cgroup of its own). */
+  signalsRest = false;
+
   /** One request from the socket. */
   async handle(req: Json): Promise<Json> {
     const op = str(get(req, "op")) ?? "";
@@ -1519,7 +1545,7 @@ export class Host {
   async tick(): Promise<boolean> {
     const at = now();
     const { phase, lastUse: last, busy, repairing, signinAt } = this.st;
-    const wait = this.swap() ? this.policy.idle : this.policy.quitIdle;
+    const wait = this.resting() ? this.policy.idle : this.policy.quitIdle;
     if (phase === "ready" && !repairing && busy === 0 && at - last >= wait) await this.idle(at, last);
     if (phase === "signin" && at - signinAt > SIGNIN_WAIT) await this.cancel();
     // Frozen children keep the pipe open, so a dead client doesn't look like one by itself.
@@ -1546,7 +1572,7 @@ export class Host {
       await this.stopPage();
       return;
     }
-    switch (this.policy.rest(at, last, 0, this.st.saved.logins, this.swap())) {
+    switch (this.policy.rest(at, last, 0, this.st.saved.logins, this.resting())) {
       case "freeze":
         await this.freeze();
         break;

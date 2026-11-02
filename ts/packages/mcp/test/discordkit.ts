@@ -137,6 +137,7 @@ export async function startHost(policy = new Policy(0, 20, 0, 8)): Promise<Start
   };
   host = new Host({ engine: new Electron(setup.profile(), sink), scratch: new Electron(join(setup.root(), "scratch"), sink), policy, swap: () => swap.on });
   host.chatDelay = 50;
+  host.signalsRest = true;
   const running = await listen(host, 3_600_000);
   if (running === undefined) throw new Error("the host's lock is taken");
   return { host, running, events, swap };

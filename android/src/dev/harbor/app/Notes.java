@@ -27,12 +27,12 @@ final class Notes {
     private Notes() { }
 
     /** The kinds, their labels and their Android channels' importance. */
-    static final String[] KINDS = { "input", "done", "agent", "ci", "limit", "pc" };
+    static final String[] KINDS = { "input", "done", "agent", "ci", "limit", "pc", "discord" };
     static final String[] LABELS = { "An agent needs you", "A lead chat finished", "A sub-agent finished",
-            "CI or PR checks failed", "Usage limit hit or back", "Another PC went offline" };
+            "CI or PR checks failed", "Usage limit hit or back", "Another PC went offline", "Discord" };
     private static final int[] IMPORTANCE = { NotificationManager.IMPORTANCE_HIGH, NotificationManager.IMPORTANCE_DEFAULT,
             NotificationManager.IMPORTANCE_LOW, NotificationManager.IMPORTANCE_DEFAULT, NotificationManager.IMPORTANCE_DEFAULT,
-            NotificationManager.IMPORTANCE_LOW };
+            NotificationManager.IMPORTANCE_LOW, NotificationManager.IMPORTANCE_DEFAULT };
 
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("notify", Context.MODE_PRIVATE); }
 
@@ -82,7 +82,7 @@ final class Notes {
             if (n == null) continue;
             String kind = n.optString("kind");
             if (!on(c, kind) || (quiet && !"test".equals(kind)) || (away && !n.optBoolean("away") && !"test".equals(kind))) continue;
-            try { show(c, h, n); } catch (Exception ignored) { }
+            try { show(c, h, v, n); } catch (Exception ignored) { }
         }
     }
 
@@ -97,7 +97,8 @@ final class Notes {
     /** The notification's tag: one per pairing and key (chat, project, account, PC). */
     static String tag(Hub h, String key) { return h.id + "|" + key; }
 
-    static void show(Context c, Hub h, JSONObject n) {
+    /** v: the PC the note was taken from. */
+    static void show(Context c, Hub h, String v, JSONObject n) {
         NotificationManager nm = c.getSystemService(NotificationManager.class);
         if (nm == null) return;
         channels(nm);
@@ -110,6 +111,10 @@ final class Notes {
         Intent open;
         if (!chat.isEmpty()) open = new Intent(c, Chat.class).putExtra("hub", h.id).putExtra("chat", chat);
         else if (!url.isEmpty()) open = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        // A Discord join waiting on a captcha: the captcha, on the PC it's on; other Discord
+        // notes: its Discord sheet.
+        else if ("discord".equals(kind) && "discord-captcha".equals(key)) open = new Intent(c, DiscordCaptcha.class).putExtra("hub", h.id).putExtra("pc", pcOf(h, v, from));
+        else if ("discord".equals(kind)) open = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("discord", true);
         else open = new Intent(c, Hubs.class);
         open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pi = PendingIntent.getActivity(c, code, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
@@ -127,6 +132,14 @@ final class Notes {
         if ("continue".equals(n.optString("act")) && !chat.isEmpty())
             b.addAction(new Notification.Action.Builder(null, "Continue", act(c, h, chat, tag, NoteAction.CONTINUE, code + 2, false)).build());
         nm.notify(tag, 1, b.build());
+    }
+
+    /** The PC a note happened on: `from` (another PC of the mesh, by name) when one of h's has
+     *  that name, else v, the PC it was taken from. */
+    static String pcOf(Hub h, String v, String from) {
+        if (from == null || from.isEmpty()) return v;
+        for (String x : h.endpoints()) if (from.equals(h.labelOn(x))) return x;
+        return v;
     }
 
     /** Reply: typed in the notification, sent into the chat. Android unlocks the phone first

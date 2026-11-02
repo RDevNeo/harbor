@@ -81,8 +81,8 @@ export interface AppsView {
   googleBuiltin(): boolean;
   googleClient(id: string): { id: string; secret: string };
   googleAccounts(id: string): string[];
-  /** Discord's trouble word when it is signed in and something is wrong. */
-  trouble(): string | undefined;
+  /** The Discord card's line (discord.ts `cardLine`, which the phone shows too). */
+  discordLine(about: string): { text: string; tone: number };
   locals(): { id: string; label: string; found: boolean }[];
   isOff(id: string): boolean;
 }
@@ -106,7 +106,7 @@ function card(a: mcp.App, i: IntInput): IntApp {
   const discord = a.auth.kind === "discord";
   const builtin = google && view.googleBuiltin() && view.googleClient(a.id).id === "";
   const accounts = google ? view.googleAccounts(a.id) : [];
-  const trouble = discord ? view.trouble() : undefined;
+  const line = discord ? view.discordLine(a.about) : undefined;
 
   let action: IntegrationAction = "signin";
   let actionText = "Sign in";
@@ -128,7 +128,7 @@ function card(a: mcp.App, i: IntInput): IntApp {
   else if (form?.kind === "google") sub = "Add your Google OAuth client below";
   else if (form) sub = "Paste an API key below";
   else if (accounts.length > 1) sub = `${accounts.length} accounts`;
-  else if (trouble !== undefined) [sub, tone] = [trouble, 2];
+  else if (line !== undefined && (signed || line.tone === 2)) [sub, tone] = [line.text, line.tone === 2 ? 2 : line.tone === 1 ? 1 : 0];
   else if (signed) sub = view.account(a.id) !== undefined ? `Signed in as ${view.account(a.id)}` : a.about;
 
   let open: IntegrationForm = "";
@@ -191,7 +191,7 @@ export function realView(): AppsView {
     googleBuiltin: mcp.googleBuiltin,
     googleClient: mcp.googleClient,
     googleAccounts: mcp.googleAccounts,
-    trouble: () => discord.trouble(),
+    discordLine: (about) => discord.card(about),
     locals: () => mcp.locals().map((l) => ({ id: l.local.id, label: l.local.label, found: l.def !== undefined })),
     isOff: mcp.isOff,
   };

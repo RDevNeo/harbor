@@ -19,6 +19,7 @@ import { commits } from "./packages/agents/src/index.ts";
 import { ghapi, prdetail } from "./packages/mcp/src/index.ts";
 import { repoDir } from "./packages/store/src/index.ts";
 import { discord, mcp } from "./packages/mcp/src/index.ts";
+import { qrRows } from "./packages/ui/src/qr.ts";
 import { googleDesktopClient, googlePhoneCode, googlePhoneFinish, googlePhoneStart, googleWebClientId } from "./packages/mcp/src/signin.ts";
 import * as limits from "./packages/store/src/limits.ts";
 
@@ -291,7 +292,27 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     return ok({ ...done, ...gmailInfo() });
   };
 
+  /** Discord's status as the phone shows it: the desktop card's line, and the sign-in's QR drawn as rows. */
+  const discordInfo = async (): Promise<Json> => {
+    const raw = await discord.status();
+    const s = plain(raw) as Record<string, Json>;
+    const url = (s.signin as Record<string, Json> | null)?.qr;
+    const qr = typeof url === "string" && url !== "" ? ((await qrRows(url)) ?? null) : null;
+    return { ...s, qr, card: discord.cardLine(raw, mcp.app("discord")?.about ?? "") };
+  };
+
+  const discordCaptcha = async (action: string, b: Record<string, unknown>): Promise<Reply> => {
+    if (action === "captcha_cancel") await discord.captchaCancel();
+    else {
+      const kind = b.kind;
+      if ((kind !== "down" && kind !== "up" && kind !== "move") || typeof b.x !== "number" || typeof b.y !== "number") return err(400, "kind (down, up or move), x and y");
+      await discord.captchaInput(kind, b.x, b.y);
+    }
+    return ok({});
+  };
+
   const discordCall = async (action: string, b: Record<string, unknown>): Promise<Reply> => {
+    if (action === "captcha_input" || action === "captcha_cancel") return discordCaptcha(action, b);
     try {
       switch (action) {
         case "signin":
@@ -313,7 +334,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     } catch (x) {
       return err(409, x instanceof Error ? x.message : String(x));
     }
-    return ok(plain(await discord.status()));
+    return ok(await discordInfo());
   };
 
   const commit = async (c: Chat, sha: string, withDiff: boolean): Promise<Reply> => {
@@ -530,7 +551,11 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
     }
     if (p[1] === "apps" && p.length === 3 && m === "GET") {
       if (p[2] === "gmail") return ok(gmailInfo());
-      if (p[2] === "discord") return ok(plain(await discord.status()));
+      if (p[2] === "discord") return ok(await discordInfo());
+    }
+    if (p[1] === "apps" && p[2] === "discord" && p[3] === "captcha" && p.length === 4 && m === "GET") {
+      const f = await discord.captchaFrame();
+      return f === undefined ? err(404, "No captcha is waiting.") : ok(plain(f));
     }
     if (p[1] === "apps" && p.length === 4 && m === "POST") {
       if (p[2] === "gmail") return gmail(p[3] ?? "", body(call));

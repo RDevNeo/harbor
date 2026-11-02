@@ -19,8 +19,9 @@ import org.json.JSONObject;
  *  app and its update, the PC's address and version, the account and the workspace's people
  *  (owners invite by email), color mode, sign out. */
 public class Settings extends Base {
-    private TextView updateNote, hubVersion, badge, gmailSub;
-    private LinearLayout gmailCard;
+    private TextView updateNote, hubVersion, badge, gmailSub, discordSub;
+    private LinearLayout gmailCard, gmailRowBox, discordBox;
+    private View discordGap;
     private View updateBtn;
     private LinearLayout autoRow, whyRow;
     private long available;
@@ -137,7 +138,27 @@ public class Settings extends Base {
         apps.addView(Ui.label(this, "Apps"), Ui.fill());
         apps.addView(gm, Ui.fill());
         gmailSub = (TextView) ((LinearLayout) gm.getChildAt(1)).getChildAt(1);
+        gmailRowBox = gm;
+        gm.setVisibility(View.GONE);
         gmailCard = apps;
+        // Discord (GET /v1/apps/discord; hidden on hubs without it): the desktop card's line.
+        discordBox = Ui.col(this);
+        discordBox.setVisibility(View.GONE);
+        LinearLayout dc = Ui.cardRow(this, Ui.I_PLUG, "Discord", "…", Ui.FG, v -> {
+            Discord.changed = this::discordRow;
+            Discord.show(this, hub, hub.via());
+        });
+        dc.addView(Ui.chevron(this));
+        Ui.wrapSub(dc, 3);
+        discordGap = Ui.gap(this);
+        discordBox.addView(discordGap);
+        discordBox.addView(dc, Ui.fill());
+        apps.addView(discordBox, Ui.fill());
+        discordSub = (TextView) ((LinearLayout) dc.getChildAt(1)).getChildAt(1);
+        if (getIntent().getBooleanExtra("discord", false)) {
+            Discord.changed = this::discordRow;
+            Discord.show(this, hub, hub.via());
+        }
 
         LinearLayout look = card(col);
         LinearLayout cm = Ui.cardRow(this, Ui.I_MOON, "Color mode", Ui.modeLabel(this), Ui.FG, v -> colorMode());
@@ -872,6 +893,7 @@ public class Settings extends Base {
         autoRows(); // back from Android's "Install unknown apps"
         checkUpdates();
         gmailRow(); // back from Google's page or the account sheet
+        discordRow();
         // An install that fails after its download (Android or Play Protect refused it).
         Update.changed = () -> { if (!isFinishing()) { autoRows(); checkUpdates(); } };
     }
@@ -890,6 +912,27 @@ public class Settings extends Base {
                 JSONObject r = hub.get("/v1/apps/gmail");
                 runOnUiThread(() -> {
                     gmailSub.setText(Gmail.summary(r));
+                    gmailRowBox.setVisibility(View.VISIBLE);
+                    gmailCard.setVisibility(View.VISIBLE);
+                    discordGap.setVisibility(View.VISIBLE);
+                });
+            } catch (Exception e) { /* an older hub: no such call */ }
+        });
+    }
+
+    /** The Apps card's Discord row: `card.text` as the desktop shows it, coloured by its tone;
+     *  hidden on hubs without the Discord app. */
+    private void discordRow() {
+        if (discordBox == null) return;
+        String pc = hub.via();
+        Ui.pool.execute(() -> {
+            try {
+                JSONObject r = hub.callOn(pc, "GET", "/v1/apps/discord", null);
+                runOnUiThread(() -> {
+                    discordSub.setText(Discord.summary(r));
+                    discordSub.setTextColor(Discord.toneColor(Discord.tone(r)));
+                    discordGap.setVisibility(gmailRowBox.getVisibility() == View.VISIBLE ? View.VISIBLE : View.GONE);
+                    discordBox.setVisibility(View.VISIBLE);
                     gmailCard.setVisibility(View.VISIBLE);
                 });
             } catch (Exception e) { /* an older hub: no such call */ }

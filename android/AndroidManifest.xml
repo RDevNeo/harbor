@@ -65,6 +65,10 @@
         <activity android:name=".Palette" android:exported="false" android:windowSoftInputMode="adjustResize|stateVisible" />
         <activity android:name=".NewProject" android:exported="false" android:windowSoftInputMode="adjustResize|stateVisible" />
         <activity android:name=".Settings" android:exported="false" />
+        <!-- A Discord captcha for a person to solve (Settings › Apps › Discord, or its notification);
+             turning the phone just lays the frame out again -->
+        <activity android:name=".DiscordCaptcha" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
         <activity android:name=".GhList" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".GhItem" android:exported="false" />
         <!-- The install's result; and MY_PACKAGE_REPLACED, after an update: jobs and Listen again -->

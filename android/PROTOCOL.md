@@ -234,6 +234,7 @@ short list of notes (a day, 200 at most; `src/notify.rs`) for what matters:
 | `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` |
 | `limit` | an account hits its usage limit or cap, or a limit resets and work continues | `limit:<account>` |
 | `pc` | another PC of the mesh stops answering, or answers again | `pc:<id>` |
+| `discord` | the Discord app: a join waits on a captcha a person must solve (opens the phone's captcha screen for that PC), or something else about it (opens Settings › Apps › Discord) | `discord-captcha`, else `discord:<…>` |
 | `test` | Settings › Notifications › Send a test on the PC | `test` |
 
 A note: `{id, at, kind, key, title, body, chat?, url?, act?, count, away, reply, from?}`.
@@ -1657,6 +1658,59 @@ The PC exchanges it with the PKCE verifier it kept.
 `POST /v1/apps/gmail/default` `{"email"}` makes an account the default; `POST /v1/apps/gmail/signout`
 `{"email"}` signs one out (Google revokes the grant). An unknown account, a failed exchange or an
 expired start: `409 {"error": "…"}`.
+
+### Discord: `GET /v1/apps/discord`, `POST /v1/apps/discord/{signout,cancel,captcha_input,captcha_cancel}`, `GET /v1/apps/discord/captcha`
+
+The Discord app on this PC (packages/mcp discord*.ts): agents running here use the user's Discord
+account through a hidden client on the PC. The account and its sign-in live on the PC: the phone
+shows them, signs out, cancels a sign-in the PC runs, and solves captchas; it never signs in.
+Hubs without it answer `404`; the phone then hides the Discord row of Settings › Apps. These are
+calls to one PC (`callOn`): the PC Settings shows, or the one a captcha note came from.
+
+`GET /v1/apps/discord`, and the answer of `signout` and `cancel`:
+
+`{"phase": "ready", "account": {"id": "…", "username": "…", "name": "…"} | null, "attention": "", "failing": [], "repairing": false, "signin": {"active": false, "qr": null, "scanned": false, "captcha": false, "window": false, "note": "", "error": null}, "qr": null, "captcha": null, "captcha_end": null, "card": {"text": "…", "tone": 0}}`
+
+- `phase`: `stopped`, `setup`, `starting`, `ready`, `moving`, `frozen` or `signin`.
+- `account`: who agents act as; null: nobody is signed in. `attention`: what needs the user (empty:
+  nothing); `failing`: tools that fail; `repairing`: the tools are being fixed for a new Discord.
+- `signin`: a sign-in running on the PC. `active` while it runs; `qr` the URL Discord's QR stands
+  for (null when there's none), `scanned` once a phone scanned it, `captcha` / `window` when it
+  needs a captcha or the PC's window, `note` the line to show, `error` what went wrong (or null).
+- `qr`: null, or `{"size": 41, "rows": ["1111111001…", …]}`, the code of `signin.qr` as `size`
+  rows of `'0'`/`'1'` modules. Draw it black on white, a 4-module quiet zone around it, whole
+  pixels a module (no smoothing). It changes every few seconds: the phone's sheet asks again every
+  2 s while it's open, and stops when it closes.
+- `captcha`: a join waiting on a captcha, `{"guild": "…", "guildId": "…", "since": …}`, or null.
+- `captcha_end`: how the last one ended, `{"outcome": "joined" | "closed" | "timeout" | "stopped", "guild": "…", "at": …}`, or null.
+- `card`: `{"text", "tone"}`, the exact line the desktop's Discord card shows: the phone shows it
+  verbatim (Settings › Apps row and sheet). `tone` 0 plain, 1 the accent (blue), 2 a warning (amber).
+  Hubs of 0.114 answer without `card` and `qr` (and `404` for the captcha calls): the phone says
+  who is signed in there instead.
+
+The phone's sheet: `card.text`; with an `account`, its name and Sign out (asked first: "Sign out
+of Discord on <PC>? Agents there can't use Discord until someone signs in again on the PC.") →
+`POST /v1/apps/discord/signout` `{}`. Without one and no sign-in running: "Sign in on the PC:
+Settings › Integrations › Apps › Discord." While `signin.active`: `signin.note`, the QR with "Scan
+with the Discord app on another phone", and Cancel → `POST /v1/apps/discord/cancel` `{}`. With a
+`captcha`: "Solve the captcha", the captcha screen.
+
+`GET /v1/apps/discord/captcha`: the hidden page while a captcha waits,
+`{"guild": "…", "width": 1280, "height": 720, "rect": {"x", "y", "width", "height"} | null, "data": "<base64 JPEG>"}`
+(`data` may be missing between frames: keep the last one). `404 {"error": "No captcha is
+waiting."}` when none does. The phone's captcha screen (`DiscordCaptcha.java`), as the desktop's
+overlay: "Discord needs a captcha", "To join <guild, or a server>, Discord wants a person to solve
+this. Only the captcha takes your taps; Harbor never answers it for you.", the frame as wide as
+the screen with its shape kept, the page outside `rect` 35% black. It asks about every 300 ms,
+one request at a time, while it's in front. A tap on the captcha: the point in the page's pixels
+(`x * width / view width`, the same for y), `POST /v1/apps/discord/captcha_input`
+`{"kind": "down" | "move" | "up", "x": …, "y": …}` → `{}`, in order (moves only the newest, while
+pressed; an `up` always follows a `down`, at the captcha's edge if the finger left it). The PC
+drops anything outside the captcha. "Don't join" → `POST /v1/apps/discord/captcha_cancel` `{}` →
+`{}`; Back leaves the screen and the captcha keeps waiting. At the `404` the screen closes and says
+`captcha_end.outcome`: joined "Discord joined <guild>", closed "Not joined: the captcha was
+closed", timeout "Not joined: nobody solved the captcha in time", stopped "Not joined: Discord
+stopped".
 
 ### `GET /v1/app`
 

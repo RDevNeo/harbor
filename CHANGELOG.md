@@ -5,6 +5,39 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Discord: when joining a server needs a captcha, Harbor shows it to you to solve, on the desktop
+  (over the window, with Hide and Don't join) and on the phone (a notification opens it; taps go
+  through). Only the captcha itself takes your clicks or taps, and Harbor never answers it for you.
+  You hear how it ended (joined, closed, or given up after 10 minutes), and so does the agent.
+  To make it work, the hidden Discord page runs without site isolation, and in exchange it may only
+  hold frames from Discord and hCaptcha: anything else a message embeds is blocked. It can be
+  turned off with a `no-captcha-view` file in the app's folder; then a captcha is for your own
+  Discord app, as before.
+- Phone: Discord in Settings › Apps, as on the desktop card: who's signed in, how the client is
+  (running, frozen while idle, Discord changed), Sign out, and the sign-in QR code with Cancel while
+  someone signs in on the PC.
+- Discord: `discord_find_user` finds people by username, display name or nickname among those the
+  account already knows. It sends nothing, so it never adds anyone or sends a friend request.
+- Notifications: a Discord kind (a captcha, a session Discord ended, tools a repair couldn't fix).
+
+### Fixed
+- Discord: `discord_open` and `discord_dm_open` really go to the channel (they only moved a store),
+  and say whether its messages are showing. `discord_unread` uses the real read marker and counts
+  unread messages Discord hasn't loaded, saying "unknown" where it can't.
+- Discord: `discord_mute_guild` read a store that says "not muted" for every server; it now reads the
+  server settings, sends nothing when the server is already that way, and reports a change only when
+  Discord shows it.
+- Discord: `discord_react` failed with "Reaction actions module not found". Discord loads that code
+  with a chat, which a send doesn't show, so the self-test never judged it: it now tries again until
+  a chat was on the page, react opens the chat first, and a tool that finds something gone runs the
+  self-test at once so repair can start.
+- Discord: `discord_dm_open` called an old DM new (and paced it) when it was closed in the sidebar.
+- Discord: its notices (a session Discord ended, a repair that failed) never reached you, and repair
+  never had a Claude account to run on.
+- Discord on a PC with swap but no cgroups: an idle client quits after 30 minutes (at most 8 logins a
+  day), as without swap, instead of being stopped with signals, which kept all its memory.
+
 ## [0.115.1] - 2026-11-02
 
 ### Fixed

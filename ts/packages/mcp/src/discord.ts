@@ -119,21 +119,44 @@ export function troubleWord(s: Json): string | undefined {
   return get(s, "repairing") === true ? "Repairing the tools for a new Discord…" : undefined;
 }
 
-let lastTrouble: { at: number; word: string | undefined } | undefined;
+export type CardLine = { text: string; tone: 0 | 1 | 2 };
+
+const PHASES: Record<string, string> = { ready: "Running", frozen: "Frozen while idle", stopped: "Not running", starting: "Starting", setup: "Starting", moving: "Stopping", signin: "Signing in" };
 
 /**
- * What's wrong with the signed-in app, for the card; read off the UI thread every few seconds:
- * this answers from the last look and starts the next one in the background.
+ * The line the Discord card shows, on the desktop and the phone alike (the hub sends it): who's
+ * signed in and how the client is, or what's wrong. Tone 1: something in progress, 2: trouble.
+ * `about`: what shows when nobody is signed in.
  */
-export function trouble(changed: () => void = () => {}): string | undefined {
-  if (lastTrouble === undefined || Date.now() - lastTrouble.at > 4000) {
-    lastTrouble = { at: Date.now(), word: lastTrouble?.word };
+export function cardLine(s: Json, about: string): CardLine {
+  const si = get(s, "signin");
+  if (get(si, "active") === true) return { text: str(get(si, "note")) || "Signing in…", tone: 1 };
+  const trouble = troubleWord(s);
+  if (trouble !== undefined) return { text: trouble, tone: 2 };
+  const a = get(s, "account");
+  if (!isObj(a)) return { text: about, tone: 0 };
+  const who = `Signed in as ${str(get(a, "name")) || str(get(a, "username")) || "someone"}`;
+  if (items(get(s, "failing")).length > 0) return { text: `${who} · Discord changed: some tools can't work`, tone: 2 };
+  if (isObj(get(s, "captcha"))) return { text: `${who} · A captcha waits for you`, tone: 1 };
+  const phase = PHASES[str(get(s, "phase")) ?? ""];
+  return { text: phase !== undefined ? `${who} · ${phase}` : who, tone: 0 };
+}
+
+let lastCard: { at: number; s: Json | undefined } | undefined;
+
+/**
+ * The card's line, read off the UI thread every few seconds: this answers from the last look and
+ * starts the next one in the background.
+ */
+export function card(about: string, changed: () => void = () => {}): CardLine {
+  if (lastCard === undefined || Date.now() - lastCard.at > 4000) {
+    lastCard = { at: Date.now(), s: lastCard?.s };
     void status().then((s) => {
-      lastTrouble = { at: lastTrouble?.at ?? Date.now(), word: troubleWord(s) };
+      lastCard = { at: lastCard?.at ?? Date.now(), s };
       changed();
     });
   }
-  return lastTrouble.word;
+  return lastCard.s === undefined ? { text: about, tone: 0 } : cardLine(lastCard.s, about);
 }
 
 export const signedIn = (): boolean => setup.account() !== undefined;
@@ -206,7 +229,7 @@ export function watch(notify: Notify, everyMs = 5000): () => void {
     for (const line of text.split("\n")) {
       const n = parse(line);
       if (!isObj(n)) continue;
-      notify({ kind: "discord", key: `discord:${JSON.stringify(n.at ?? null)}`, title: str(n.title) ?? "Discord", body: str(n.body) ?? "" });
+      notify({ kind: "discord", key: str(n.key) ?? `discord:${JSON.stringify(n.at ?? null)}`, title: str(n.title) ?? "Discord", body: str(n.body) ?? "" });
     }
   }, everyMs);
   return () => clearInterval(timer);
