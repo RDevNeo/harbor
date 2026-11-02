@@ -573,6 +573,10 @@ export interface AppWindow extends slint.ComponentHandle {
   dialog_done: (id: string, ok: boolean) => void;
 
   global_key: (e: KeyEvent) => boolean;
+  /** Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken. */
+  nav_key: (e: KeyEvent) => boolean;
+  /** The sidebar row Alt+Up / Alt+Down last opened ("kind:id"): the sidebar scrolls it into view. */
+  side_reveal: string;
   readonly at_end: boolean;
   /** The transcript's content height (px), for `transcript_grew_above`. */
   readonly transcript_height: number;

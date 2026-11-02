@@ -109,6 +109,28 @@ export function sidebarList<C extends SidebarChat>(t: Tree, chats: readonly C[],
   return { projects, loose: [...all(t.threads), ...homeless].filter(matches), settled: all(t.settled), settledProjects };
 }
 
+/** A sidebar row as Alt+Up / Alt+Down walk them: `kind` is SideRow's ("project", "thread", "loose", "label", "settled-project"). */
+export interface StepRow {
+  kind: string;
+  id: number;
+  active: boolean;
+}
+
+/** Row kinds that open something when clicked: a project's main chat (or its page) or a chat. */
+const OPENABLE: ReadonlySet<string> = new Set(["project", "thread", "loose", "settled-project"]);
+
+/**
+ * The row Alt+Up (`dir` -1) or Alt+Down (1) opens: the next openable row from the open one, in the sidebar's order
+ * (pass the Settled rows after the others only while that section is open). Null at either end (no wrap-around).
+ * With no row open (a new chat, Settings), Down goes to the first row and Up to the last.
+ */
+export function stepRow<R extends StepRow>(rows: readonly R[], dir: 1 | -1): R | null {
+  const list = rows.filter((r) => OPENABLE.has(r.kind));
+  const at = list.findIndex((r) => r.active);
+  if (at < 0) return (dir > 0 ? list[0] : list.at(-1)) ?? null;
+  return list[at + dir] ?? null;
+}
+
 /** Whether projects can be dragged into another order: by hand, with every one of them listed. */
 export function canReorder(byActivity: boolean, query: string, shownWorkspaces: readonly string[]): boolean {
   return !byActivity && query.trim() === "" && shownWorkspaces.length === 0;

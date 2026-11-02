@@ -273,6 +273,8 @@ export component Sidebar inherits Rectangle {
     in property <string> ws-tip;
     in property <string> pop-id;
     in property <bool> pages-back;
+    // The row Alt+Up / Alt+Down opened ("kind:id"): scrolled into view.
+    in property <string> reveal;
     callback open-chat(int);
     callback open-project(int);
     callback new-chat(int);
@@ -419,6 +421,12 @@ export component Sidebar inherits Rectangle {
                     }
                 }
                 for r in root.rows: VerticalLayout {
+                    property <bool> revealed: root.reveal == r.kind + ":" + r.id;
+                    changed revealed => {
+                        if self.revealed {
+                            list.viewport-y = max(min(list.viewport-y, list.height - self.y - self.height), -self.y);
+                        }
+                    }
                     if r.kind == "project": VerticalLayout {
                         padding-bottom: 2px;
                         ProjectRow {
@@ -530,13 +538,19 @@ export component Sidebar inherits Rectangle {
                 }
             }
         }
-        if root.settled-count > 0 && root.settled-open: Flickable {
+        if root.settled-count > 0 && root.settled-open: settled-list := Flickable {
             height: min(root.settled-count * 34px, 220px);
             VerticalLayout {
                 alignment: start;
                 spacing: 2px;
                 for r in root.settled: ThreadRow {
                     data: r;
+                    property <bool> revealed: root.reveal == r.kind + ":" + r.id;
+                    changed revealed => {
+                        if self.revealed {
+                            settled-list.viewport-y = max(min(settled-list.viewport-y, settled-list.height - self.y - self.height), -self.y);
+                        }
+                    }
                     open => {
                         if r.kind == "settled-project" {
                             root.open-project(r.id);

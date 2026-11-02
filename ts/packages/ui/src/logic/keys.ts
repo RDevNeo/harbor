@@ -43,6 +43,8 @@ export const ACTIONS: readonly Action[] = [
   a("shortcuts", "Show the keyboard shortcuts", "Navigation", "Ctrl+Slash", ""),
   fixed("shortcuts_q", "Show the keyboard shortcuts (outside a text field)", "Navigation", "Shift+Questionmark", "!textFocus"),
   a("toggle_sidebar", "Show or hide the sidebar", "Navigation", "Ctrl+B", ""),
+  a("chat_prev", "Previous chat in the sidebar", "Navigation", "Alt+Up", ""),
+  a("chat_next", "Next chat in the sidebar", "Navigation", "Alt+Down", ""),
   fixed("zoom_in", "Zoom in (also Ctrl+Plus)", "Navigation", "Ctrl+Equals", ""),
   fixed("zoom_out", "Zoom out", "Navigation", "Ctrl+Minus", ""),
   fixed("zoom_reset", "Zoom back to 100%", "Navigation", "Ctrl+0", ""),
@@ -224,8 +226,12 @@ export function isChar(key: string): boolean {
 
 const ESC_ACTIONS: readonly string[] = ["stop_turn", "close_drawer", "lightbox_close", "list_back"];
 
+// Alt+Up edits the latest queued message when there is one and the caret is at the composer's start, else moves up a chat.
+const SHARED: readonly (readonly [string, string])[] = [["edit_queued", "chat_prev"]];
+
 // Esc stops a turn, closes a drawer or the image viewer, or leaves a list page: Harbor picks by context.
 function sameOnPurpose(x: string, y: string): boolean {
+  if (SHARED.some(([a, b]) => (a === x && b === y) || (a === y && b === x))) return true;
   return x !== y && ESC_ACTIONS.includes(x) && ESC_ACTIONS.includes(y);
 }
 

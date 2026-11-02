@@ -16,6 +16,7 @@ import {
   snoozePreview,
   toggled,
   tree,
+  stepRow,
 } from "../src/logic/sidebar.ts";
 
 interface TestChat extends SidebarChat {
@@ -332,4 +333,32 @@ test("a_settled_project_and_every_chat_of_it_are_under_settled", () => {
   const list = sidebarList(t, chats, [{ id: 6, name: "alpha", path: "/a" }, { id: 7, name: "beta", path: "/b" }] as never, "");
   expect(list.settledProjects.map((r: { name: string }) => r.name)).toEqual(["alpha"]);
   expect(sidebarList(t, chats, [{ id: 6, name: "alpha", path: "/a" }] as never, "zzz").settledProjects).toEqual([]);
+});
+
+test("alt_up_down_step_through_the_sidebar_rows_in_order", () => {
+  const row = (kind: string, id: number, active = false) => ({ kind, id, active });
+  const rows = [row("project", 1), row("thread", 10), row("thread", 11), row("project", 2), row("label", 0), row("loose", 20), row("loose", 21)];
+  const at = (i: number) => rows.map((r, j) => ({ ...r, active: j === i }));
+  const step = (i: number, dir: 1 | -1) => {
+    const r = stepRow(at(i), dir);
+    return r === null ? null : `${r.kind}:${r.id}`;
+  };
+  // Down and up one row at a time, project rows (their main chat) included, the "Threads" label skipped.
+  expect(step(0, 1)).toBe("thread:10");
+  expect(step(2, 1)).toBe("project:2");
+  expect(step(3, 1)).toBe("loose:20");
+  expect(step(5, -1)).toBe("project:2");
+  expect(step(1, -1)).toBe("project:1");
+  // No wrap-around at either end.
+  expect(step(0, -1)).toBeNull();
+  expect(step(6, 1)).toBeNull();
+  // Nothing open (a new chat, Settings): Down goes to the first row, Up to the last.
+  expect(stepRow(rows, 1)?.id).toBe(1);
+  expect(stepRow(rows, -1)?.id).toBe(21);
+  // Settled rows, passed only while that section is open, come after the others.
+  const withSettled = [...at(6), row("settled-project", 3), row("loose", 30)];
+  expect(stepRow(withSettled, 1)?.kind).toBe("settled-project");
+  expect(stepRow([...rows, row("loose", 30, true)], -1)?.id).toBe(21);
+  expect(stepRow([], 1)).toBeNull();
+  expect(stepRow([row("label", 0)], -1)).toBeNull();
 });

@@ -583,6 +583,10 @@ export component AppWindow inherits Window {
     callback dialog-done(string, bool);
 
     callback global-key(KeyEvent) -> bool;
+    // Alt+Up / Alt+Down (previous / next chat), before any widget sees the key; true = taken.
+    callback nav-key(KeyEvent) -> bool;
+    // The sidebar row Alt+Up / Alt+Down last opened ("kind:id"), scrolled into view.
+    in property <string> side-reveal;
 
     public function focus-composer() {
         composer-el.focus-text();
@@ -681,6 +685,9 @@ export component AppWindow inherits Window {
         focus-on-click: false;
         focus-on-tab-navigation: false;
         capture-key-pressed(e) => {
+            if (e.modifiers.alt || e.modifiers.control) && root.nav-key(e) {
+                return accept;
+            }
             if e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta {
                 if e.text == "=" || e.text == "+" {
                     root.zoom(1);
@@ -712,6 +719,7 @@ export component AppWindow inherits Window {
                     width: 256px;
                     height: root.height;
                     rows: root.side-rows;
+                    reveal: root.side-reveal;
                     settled: root.side-settled;
                     settled-count: root.settled-count;
                     settled-open <=> root.settled-open;

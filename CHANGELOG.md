@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Alt+Up and Alt+Down open the previous and next chat in the desktop sidebar, one row at a time
+  in the order it shows them (project rows open their main chat; Settled only while it's open),
+  as a click would, and scroll the sidebar to keep it in view. They stop at either end; from a
+  page that isn't a chat, Alt+Down opens the first and Alt+Up the last. They work from the
+  composer too without typing anything; Alt+Up still edits the latest queued message when there
+  is one and the caret is at the start. Both are in Settings › Keybindings.
+
 ## [0.114.3] - 2026-11-02
 
 ### Fixed

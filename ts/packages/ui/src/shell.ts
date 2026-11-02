@@ -34,7 +34,7 @@ import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
-import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { defuse, dropFile, erase, imageCount, images, imagesFollow, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
@@ -580,6 +580,7 @@ export class Shell {
       act?.(ok, input);
     };
     w.global_key = (e) => this.globalKey(e);
+    w.nav_key = (e) => this.navKey(e, true);
     w.zoom = (step) => this.zoomer.key(step);
     w.scale_changed = (scale) => this.zoomer.scaleChanged(scale);
     w.picker_rail_pick = (id) => {
@@ -1442,8 +1443,29 @@ export class Shell {
     return e.text === "\u{1b}" && (this.images?.heldEsc(e.repeat) ?? false);
   }
 
+  /**
+   * Alt+Up / Alt+Down: the previous / next chat in the sidebar, as a click on its row opens it. Called before any
+   * widget sees the key (`yield` then leaves Alt+Up to the composer while it would edit a queued message), and again
+   * by the window's own keys for what nothing else took.
+   */
+  private navKey(e: KeyEvent, yieldQueued: boolean): boolean {
+    if (this.keys.capture !== null || this.win.lb_open || this.win.vid_open || this.menu.length > 0) return false;
+    const p = pressOf(e.text, e.modifiers);
+    const dir = this.keys.matches("chat_prev", p) ? -1 : this.keys.matches("chat_next", p) ? 1 : 0;
+    if (dir === 0) return false;
+    if (yieldQueued && this.keys.matches("edit_queued", p) && this.view === "chat" && this.win.cursor === 0 && this.engine.queued(this.chatId).some((q) => !q.written && q.intent === "")) return false;
+    const rows = [...this.rows, ...(this.win.settled_open ? this.settledRows : [])];
+    const to = stepRow(rows, dir);
+    if (to === null) return true;
+    if (to.kind === "project" || to.kind === "settled-project") this.openProject(to.id);
+    else this.openChat(to.id);
+    this.win.side_reveal = `${to.kind}:${to.id}`;
+    return true;
+  }
+
   private globalKey(e: KeyEvent): boolean {
     if (this.escOfViewer(e)) return true;
+    if (this.navKey(e, false)) return true;
     const p = pressOf(e.text, e.modifiers);
     const w = this.win;
     if (w.vid_open && this.videoPane && this.images && !p.ctrl && !p.alt) {
