@@ -63,6 +63,7 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden" />
         <activity android:name=".NewChat" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".Palette" android:exported="false" android:windowSoftInputMode="adjustResize|stateVisible" />
+        <activity android:name=".NewProject" android:exported="false" android:windowSoftInputMode="adjustResize|stateVisible" />
         <activity android:name=".Settings" android:exported="false" />
         <activity android:name=".GhList" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".GhItem" android:exported="false" />

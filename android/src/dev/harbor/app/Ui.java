@@ -75,7 +75,7 @@ final class Ui {
             I_SORT = "\ue046", I_MILESTONE = "\ue298", I_USERS = "\ue1a4",
             I_FILE_CODE = "\ue0c3", I_FILE_BRACES = "\ue36b", I_FILE_TEXT = "\ue0cc", I_COMMIT = "\ue0e3",
             I_FOLDER_GIT = "\ue40a", I_LIST_PLUS = "\ue23f", I_STEER = "\ue0a8", I_LIST_ORDERED = "\ue1d1",
-            I_REDO = "\ue2a0", I_GRIP = "\ue0eb";
+            I_REDO = "\ue2a0", I_GRIP = "\ue0eb", I_FOLDER_PLUS = "\ue0d9";
 
     static Typeface sans, semi, mono, icons, serif, serifBold;
     static final Handler main = new Handler(Looper.getMainLooper());

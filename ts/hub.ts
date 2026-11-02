@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
 import { ProjectClones } from "./projectclones.ts";
+import { ProjectsApi } from "./projectsapi.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
 import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
@@ -257,6 +258,18 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   };
   const projectClones = new ProjectClones({ store, engine: () => eng(), hub, mesh: () => mesh, phone: () => phone, touch: () => hub.touch(null, true) });
   const clones = projectClones.state;
+  const projects = new ProjectsApi({
+    store,
+    reload: () => engine?.reload(),
+    touch: () => hub.touch(null, true),
+    me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name }),
+    peer: (id) => (hub.mesh.on ? hub.mesh.peer(id) : null),
+    forward: (id, path, body, sender) => {
+      const p = hub.mesh.peer(id);
+      return p ? mesh.forward(dest(p), p.name, "POST", path, body, [], [sender, ""], null) : Promise.resolve(err(404, "that PC isn't one of this mesh's"));
+    },
+    sender: (call) => (call.from ? call.from.sender || call.from.name : hub.callerLabel(call.token, call.device)),
+  });
   let busyIn: (dir: string) => string | null = () => null;
   const worktrees = new Worktrees({ store, engine: () => eng(), touch: () => hub.touch(null, true), wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS), busyIn: (dir) => busyIn(dir) });
   const profileEnv = profileNodeEnv(() => mcp.githubUser() ?? null);
@@ -513,7 +526,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       },
     },
     openedFrom: (chat, gid, title) => eng().notice(chat, "chat", openchat.openedBy(title), `${openchat.LINK}${gid}`),
-    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
+    more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
     profileCheck: profileCheckNow,
     bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),

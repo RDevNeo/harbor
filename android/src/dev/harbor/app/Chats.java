@@ -150,7 +150,10 @@ public class Chats extends Base {
     /** A project picked on this phone (the search's project rows): its main chat opens, or its
      *  page (New chat starting the main chat) while it has none, as the desktop's project row.
      *  An older hub, which names no main chats, gets the new-chat screen there as before. */
-    static void openProject(Base a, Hub hub, String pid) {
+    static void openProject(Base a, Hub hub, String pid) { openProject(a, hub, pid, null); }
+
+    /** `device`: the PC the new chat runs on (a project just made on another PC of the mesh). */
+    static void openProject(Base a, Hub hub, String pid, String device) {
         Ui.bg(a, hub::state, st -> {
             JSONObject tree = st.optJSONObject("tree");
             JSONArray tp = tree == null ? null : tree.optJSONArray("projects");
@@ -159,15 +162,19 @@ public class Chats extends Base {
                 JSONObject p = tp.optJSONObject(i);
                 mains |= p != null && p.has("main");
             }
-            if (mains) { openMain(a, hub, st, pid, null); return; }
-            a.startActivity(new Intent(a, NewChat.class).putExtra("hub", hub.id).putExtra("project", pid));
-            if (a instanceof Palette) a.finish();
+            if (mains) { openMain(a, hub, st, pid, null, device); return; }
+            Intent i = new Intent(a, NewChat.class).putExtra("hub", hub.id).putExtra("project", pid);
+            if (device != null && !device.isEmpty()) i.putExtra("device", device);
+            a.startActivity(i);
+            if (a instanceof Palette || a instanceof NewProject) a.finish();
         });
     }
 
     /** Opens project `pid`'s main chat as `st` names it (never chat `not`), else its page; ""
      *  (no project): New chat. A chat screen or the search under it closes. */
-    private static void openMain(Base a, Hub hub, JSONObject st, String pid, String not) {
+    private static void openMain(Base a, Hub hub, JSONObject st, String pid, String not) { openMain(a, hub, st, pid, not, null); }
+
+    private static void openMain(Base a, Hub hub, JSONObject st, String pid, String not, String device) {
         String main = null;
         JSONObject tree = st.optJSONObject("tree");
         JSONArray tp = tree == null ? null : tree.optJSONArray("projects");
@@ -179,9 +186,10 @@ public class Chats extends Base {
         else {
             Intent i = new Intent(a, NewChat.class).putExtra("hub", hub.id);
             if (!pid.isEmpty()) i.putExtra("project", pid).putExtra("main", true);
+            if (device != null && !device.isEmpty()) i.putExtra("device", device);
             a.startActivity(i);
         }
-        if (a instanceof Chat || a instanceof Palette) a.finish();
+        if (a instanceof Chat || a instanceof Palette || a instanceof NewProject) a.finish();
         else a.closeDrawer();
     }
 

@@ -229,6 +229,15 @@ export function repoName(url: string): string {
   return last.replace(/(\.git)+$/, "");
 }
 
+/** Why `name` can't be a new project's folder name, or null when it can. */
+export function nameProblem(name: string): string | null {
+  const t = name.trim();
+  if (t === "") return "Type a name for the project";
+  if (t.includes("/") || t.includes("\\") || t.includes("\0")) return "A project's name can't hold / or \\";
+  if (t === "." || t === "..") return `“${t}” can't be a project's name`;
+  return null;
+}
+
 /** The setting that marks a project folder as not trusted. */
 export function untrustedKey(dir: string): string {
   return `untrusted:${dir}`;

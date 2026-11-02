@@ -138,6 +138,9 @@ public class NewChat extends Base {
         String asked = getIntent().getStringExtra("project");
         if (asked != null) run.project = asked;
         if (asked != null && getIntent().getBooleanExtra("main", false)) mainOf = asked;
+        // A project just made on another PC of the mesh (NewProject): its chats run there.
+        String on = getIntent().getStringExtra("device");
+        if (on != null) run.device = on;
         run.normalize();
         show();
     }
@@ -224,6 +227,8 @@ public class NewChat extends Base {
         show();
     }
 
+    private static final String ADD = "\u0000add";
+
     private void pickProject() {
         java.util.List<Sheet.Option> o = new java.util.ArrayList<>();
         o.add(new Sheet.Option("", "No project", "runs in your home folder on the PC", true));
@@ -232,7 +237,8 @@ public class NewChat extends Base {
             JSONObject j = p.optJSONObject(i);
             if (j != null) o.add(new Sheet.Option(j.optString("id"), j.optString("name"), j.optString("path"), true));
         }
-        Sheet.pick(this, "Project", null, o, run.project, id -> change("project", id));
+        o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
+        Sheet.pick(this, "Project", null, o, run.project, id -> { if (ADD.equals(id)) NewProject.open(this, hub); else change("project", id); });
     }
 
     private void start() {

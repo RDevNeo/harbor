@@ -11,6 +11,7 @@ import { composerRoutes } from "./phonecomposer.ts";
 import { basename } from "node:path";
 import { worktree as wt } from "./packages/agents/src/index.ts";
 import type { ProjectClones } from "./projectclones.ts";
+import type { ProjectsApi } from "./projectsapi.ts";
 import type { Target, Worktrees } from "./worktrees.ts";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -34,6 +35,7 @@ export interface RouteHost {
   republish(): void;
   worktrees: Worktrees;
   projectClones: ProjectClones;
+  projects: ProjectsApi;
   wantPr(chat: number): void;
 }
 
@@ -534,6 +536,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       if (p[2] === "gmail") return gmail(p[3] ?? "", body(call));
       if (p[2] === "discord") return discordCall(p[3] ?? "", body(call));
     }
+    if (p[1] === "projects") return h.projects.route(call);
     if (p.length !== 2) return null;
     if (m === "GET" && p[1] === "workspace") return workspaceInfo(call);
     if (m === "GET" && p[1] === "branches") return branchList(call);

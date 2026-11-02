@@ -159,3 +159,18 @@ test("a_phone_reads_a_message_to_mention_and_a_team_of_agents", async () => {
   const [, versions] = await json("GET", "/v1/versions");
   expect(versions.pcs).toHaveLength(1);
 });
+
+test("a_phone_creates_a_project_on_the_pc_and_starts_its_main_chat", async () => {
+  const [, rows] = await json("POST", "/v1/projects/rows", { step: "new", query: "fresh" });
+  expect((rows.rows as { act: unknown }[]).map((r) => r.act)).toEqual([
+    { kind: "create", name: "fresh", git: true },
+    { kind: "create", name: "fresh", git: false },
+  ]);
+  const [st, made] = await json("POST", "/v1/projects", { act: { kind: "create", name: "fresh", git: false } });
+  expect(st).toBe(200);
+  const dir = join(root, "home", "Projects", "fresh");
+  expect(made).toMatchObject({ ok: true, path: dir, name: "fresh", git: false });
+  const [, state] = await json("GET", "/v1/state");
+  expect((state.projects as { id: unknown; path: string }[]).find((p) => p.path === dir)?.id).toBe(made.id);
+  expect((await json("POST", "/v1/projects", { act: { kind: "create", name: "fresh", git: false } }))[1]).toEqual({ error: "~/Projects/fresh already exists" });
+});

@@ -60,6 +60,11 @@ final class Sidebar {
         wsBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
         wsBtn.setVisibility(View.GONE);
         head.addView(wsBtn);
+        // Add project (the desktop sidebar's folder-plus beside its filters).
+        TextView addBtn = Ui.iconButton(a, Ui.I_FOLDER_PLUS, Ui.FG, v -> addProject());
+        addBtn.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 20);
+        addBtn.setContentDescription("Add project");
+        head.addView(addBtn);
         // Search everything (the desktop's Ctrl+K palette); a long press filters this list instead.
         TextView find = Ui.iconButton(a, Ui.I_SEARCH, Ui.FG, v -> palette());
         find.setOnLongClickListener(v -> { toggleSearch(); return true; });
@@ -136,6 +141,11 @@ final class Sidebar {
         if (a instanceof GhList && kind.equals(((GhList) a).kind)) { a.closeDrawer(); return; }
         a.startActivity(new Intent(a, GhList.class).putExtra("hub", a.hub.id).putExtra("kind", kind));
         if (a instanceof GhList) a.finish(); else a.closeDrawer();
+    }
+
+    private void addProject() {
+        NewProject.open(a, a.hub);
+        a.closeDrawer();
     }
 
     private void newChat() { newChat(null, false); }
@@ -226,8 +236,15 @@ final class Sidebar {
         String nothing = !q.isEmpty() ? "No chat matches “" + q + "”."
                 : scope.active() ? "No chats of " + (shown.size() == 1 ? workspaces.get(shown.get(0)) : "these workspaces") + " reach this PC."
                 : "No chats yet. Start one with New session.";
-        if (byId.isEmpty()) {
-            none(nothing);
+        // No projects at all: the desktop's empty list, with its Add project.
+        if (byId.isEmpty() && projects.isEmpty() && q.isEmpty() && !scope.active()) {
+            TextView t = Ui.bold(a, "No projects yet", 15, Ui.FG);
+            t.setPadding(Ui.dp(20), Ui.dp(16), Ui.dp(20), Ui.dp(2));
+            list.addView(t, Ui.fill());
+            TextView d = Ui.text(a, "Add a folder or clone a repository to start.", 14, Ui.G700);
+            d.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(10));
+            list.addView(d, Ui.fill());
+            list.addView(Ui.button(a, "Add project", false, v -> addProject()), Ui.margins(Ui.wrap(), 20, 0, 20, 8));
             return;
         }
         // By project, in the desktop sidebar's order, newest first in each; chats without a
@@ -279,7 +296,11 @@ final class Sidebar {
         boolean first = true;
         for (Map.Entry<String, List<JSONObject>> g : groups.entrySet()) {
             JSONObject main = mains.get(g.getKey());
-            if (!scope.showsProject(g.getKey()) || (g.getValue().isEmpty() && main == null)) continue;
+            // A project without chats yet shows too (hubs from 0.88: its header starts the main
+            // chat), as the desktop's sidebar lists it; a search shows it when its name matches.
+            boolean bare = g.getValue().isEmpty() && main == null;
+            if (!scope.showsProject(g.getKey()) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
+                    && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
             if (!first) divider();
             first = false;
             group(g.getKey(), projects.get(g.getKey()), g.getValue(), you, q.isEmpty(), main, withMains.contains(g.getKey()));
@@ -296,8 +317,8 @@ final class Sidebar {
             h.setOnClickListener(v -> { showSettled = !showSettled; render(st); });
             list.addView(h, Ui.fill());
             if (showSettled) for (JSONObject c : settled) list.addView(chatRow(c, you), Ui.inset());
-        } else if (first && scope.active()) {
-            none(nothing); // only main chats of projects the filter left out
+        } else if (first) {
+            none(nothing); // nothing to show, or only main chats of projects the filter left out
         }
     }
 
@@ -656,13 +677,17 @@ final class Sidebar {
         return r;
     }
 
+    private static final String ADD = "\u0000add";
+
     private void pickProject(Map<String, String> projects) {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("", "All projects", "", true));
         for (Map.Entry<String, String> p : projects.entrySet()) {
             if (scope.showsProject(p.getKey())) o.add(new Sheet.Option(p.getKey(), p.getValue(), "", true));
         }
+        o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
         Sheet.pick(a, "Projects", null, o, filter, id -> {
+            if (ADD.equals(id)) { addProject(); return; }
             filter = id;
             Ui.prefs(a).edit().putString("filter-" + a.hub.id, id).apply();
             if (st != null) render(st);

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { join } from "node:path";
 import { git } from "@harbor/agents";
 import { home, repoDir, type Store } from "@harbor/store";
-import { type Act, AddProject, cloneCommand, cloneError, type Disk, githubSlug, type PaletteKey, parseGhList, type Row, STEP_LABEL, type StatusTone, untrustedKey } from "./logic/addproject.ts";
+import { type Act, AddProject, cloneCommand, cloneError, type Disk, githubSlug, nameProblem, type PaletteKey, parseGhList, type Row, STEP_LABEL, type StatusTone, untrustedKey } from "./logic/addproject.ts";
 import type { Pixels } from "./logos.ts";
 
 /** The overlay's properties and callbacks (addproject.slint `AddProjectOverlay`). */
@@ -49,7 +49,7 @@ function isDir(p: string): boolean {
 }
 
 /** Your repositories and your organisations' ones, via `gh`. */
-async function ghRepos(): Promise<{ ok: [string, string][] } | { err: string }> {
+export async function ghRepos(): Promise<{ ok: [string, string][] } | { err: string }> {
   const run = async (args: string[]) => {
     const p = Bun.spawn(["gh", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
@@ -70,11 +70,8 @@ async function ghRepos(): Promise<{ ok: [string, string][] } | { err: string }> 
   }
 }
 
-/**
- * Drives the "Add project" palette in `view`: `added` gets each folder added as a project,
- * `done` closes it, `openUrl` shows a folder in the file manager.
- */
-export function attachAddProject(view: AddProjectView, store: Store, github: Pixels, hooks: { added(id: number): void; done(): void; openUrl(u: string): void }, disk = realDisk()) {
+/** "owner/repo" (lowercase) of each discovered repository's GitHub origin → its folder. */
+export function localClones(): Map<string, string> {
   const clones = new Map<string, string>();
   for (const p of git.discover()) {
     try {
@@ -82,7 +79,37 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
       if (s !== null) clones.set(s, p);
     } catch {}
   }
-  const ap = new AddProject(disk, clones);
+  return clones;
+}
+
+/** New project `name` in `projectsDir`: its folder, with `git init` when `git`. Throws why it can't. */
+export function createProject(projectsDir: string, name: string, git: boolean, tilde: (p: string) => string): string {
+  const bad = nameProblem(name);
+  if (bad !== null) throw new Error(bad);
+  const dir = join(projectsDir, name.trim());
+  if (existsSync(dir)) throw new Error(`${tilde(dir)} already exists`);
+  mkdirSync(dir, { recursive: true });
+  if (git) {
+    const r = Bun.spawnSync(["git", "init", "-q", dir], { stdio: ["ignore", "ignore", "pipe"] });
+    if (r.exitCode !== 0) throw new Error(`git init failed: ${cloneError(r.stderr.toString())}`);
+  }
+  return dir;
+}
+
+/** Clones `url` into `dir` (`gh` for a GitHub owner/repo): null when it worked, else the error. */
+export async function cloneProject(url: string, dir: string, github: boolean, projectsDir: string): Promise<string | null> {
+  mkdirSync(projectsDir, { recursive: true });
+  const p = Bun.spawn(cloneCommand(url, dir, github), { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+  const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+  return code === 0 ? null : cloneError(err);
+}
+
+/**
+ * Drives the "Add project" palette in `view`: `added` gets each folder added as a project,
+ * `done` closes it, `openUrl` shows a folder in the file manager.
+ */
+export function attachAddProject(view: AddProjectView, store: Store, github: Pixels, hooks: { added(id: number): void; done(): void; openUrl(u: string): void }, disk = realDisk()) {
+  const ap = new AddProject(disk, localClones());
   let rows: Row[] = [];
   const known = () => new Set(store.repos().flatMap((r) => [r.path, repoDir(r)]));
 
@@ -129,20 +156,13 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
       case "add":
         if (addPath(act.dir)) return;
         break;
-      case "create": {
-        const dir = join(ap.projectsDir(), act.name);
-        if (existsSync(dir)) ap.error = `${ap.tilde(dir)} already exists`;
-        else {
-          try {
-            mkdirSync(dir, { recursive: true });
-            if (act.git && Bun.spawnSync(["git", "init", "-q", dir], { stdio: ["ignore", "ignore", "ignore"] }).exitCode !== 0) throw new Error("git init failed");
-            if (addPath(dir)) return;
-          } catch (e) {
-            ap.error = e instanceof Error ? e.message : String(e);
-          }
+      case "create":
+        try {
+          if (addPath(createProject(ap.projectsDir(), act.name, act.git, (p) => ap.tilde(p)))) return;
+        } catch (e) {
+          ap.error = e instanceof Error ? e.message : String(e);
         }
         break;
-      }
       case "clone": {
         const dir = join(ap.projectsDir(), act.name);
         if (existsSync(dir)) {
@@ -150,14 +170,12 @@ export function attachAddProject(view: AddProjectView, store: Store, github: Pix
           break;
         }
         ap.busy = `Cloning ${act.url}…`;
-        mkdirSync(ap.projectsDir(), { recursive: true });
-        const p = Bun.spawn(cloneCommand(act.url, dir, ap.step === "github"), { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-        void Promise.all([new Response(p.stderr).text(), p.exited]).then(([err, code]) => {
+        void cloneProject(act.url, dir, ap.step === "github", ap.projectsDir()).then((e) => {
           ap.busy = null;
-          if (code === 0) {
+          if (e === null) {
             store.set(untrustedKey(dir), "1");
             if (addPath(dir)) return;
-          } else ap.error = cloneError(err);
+          } else ap.error = e;
           show();
         });
         break;

@@ -1033,6 +1033,34 @@ settled one is unsettled first, a snoozed one woken). `409 {"error"}` when it ca
 project, a sub-agent). Offer "Make main chat" on unsettled-or-settled leads with a project when
 the chat has `main: false`.
 
+### Add project (0.112): `POST /v1/projects/rows`, `POST /v1/projects`, `POST /v1/projects/job`
+
+The desktop's Add project palette (`logic/addproject.ts`), served row by row; every call is a POST
+with a JSON body so it can go on to another PC. `pc` (optional, an id of `hubs` in `/v1/state`)
+picks the PC that gets the project; without it (or with this PC's id) it's this one. The call goes
+on to that PC over the mesh; a project made there is listed here as well (by the folder it has
+there, as a copy of one of its chats would list it), so `POST /v1/chats` with that `project_id`
+and `device` = that PC starts its chats there. Errors are `{error}` with the reason to show:
+`404` that PC isn't in the mesh, `409` it's off, it runs an older Harbor (`404 no such call` from
+it), or the act failed (the folder exists, isn't a folder, `git init` or the clone failed), `400`
+a bad name or act. Hubs before 0.112 answer `404 no such call`.
+
+- `rows` `{pc?, step: sources|new|local|url|github, query, dir?}` → `{pc, pc_name, step, label,
+  hint, dir, dir_label, projects_dir, loading, rows: [{icon, title, detail, act}], statuses: [{text,
+  tone: subtle|error|warn}]}`. `icon` is folder, folder-git, folder-plus, link, up or github. `dir`
+  (local step: absolute or `~/…`) is the folder browsed, the PC's home by default. `loading`: the
+  GitHub list is still coming (`gh repo list` on the PC): ask again in a second.
+- `act` is what a row carries: `{kind: step, step}` and `{kind: enter, dir}` only move the list
+  (ask `rows` again); `{kind: add, dir}` (a folder, `~/…` allowed), `{kind: create, name, git}` (a
+  new folder in `~/Projects`, `git init` when `git`), `{kind: clone, url, name, github?}` (into
+  `~/Projects/<name>`; `github`: `gh repo clone` of owner/repo) go to `POST /v1/projects` `{pc?,
+  act}`. Add and create answer `200 {ok, id, name, path, remote, existing, git, pc, pc_name}` (`id`
+  as the other ids: the path for `X-Harbor-Ids: global`); `existing`: it was a project already.
+  A clone answers `202 {ok, job, text, into}` at once; `POST /v1/projects/job` `{pc?, job}` answers
+  `202` while it runs, then the same `200` as create, or `409 {error}` (git's last line).
+- Once made, the app opens the project's main chat as `Main chat` above describes (none yet: the
+  new-chat screen with `main: true`).
+
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 
 Dictation from the app's mic. Since 0.55 the phone records itself (no Android `SpeechRecognizer`),

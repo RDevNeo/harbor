@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Phone: Add project, as on the desktop. The folder-plus button over the chat list (and Add
+  project… in the Projects and new-chat project pickers) makes a new project with or without Git,
+  adds a folder on the PC (browsed from the phone), or clones a Git URL or one of your GitHub
+  repositories. With several PCs, pick which one gets it. Then the project's main chat opens; its
+  first message starts it. Errors (the folder exists, the clone failed, the PC is off or runs an
+  older Harbor) are shown on the screen.
+- Phone: projects without chats show in the chat list, as on the desktop; tapping one starts its
+  main chat.
+
 ## [0.111.1] - 2026-11-02
 
 ### Fixed
