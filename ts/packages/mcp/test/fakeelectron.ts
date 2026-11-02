@@ -15,6 +15,8 @@ type Plan = {
   failFlush?: boolean;
   eventGapMs?: number;
   breakable?: boolean;
+  /** Tools whose call fails, with the page's error. */
+  throws?: Record<string, string>;
   /** A captcha on the page: whether it shows, and whether the join it held has landed. */
   captcha?: { showing: boolean; joined: boolean };
 };
@@ -42,7 +44,11 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
     const needs: Record<string, string> = { MessageActions: !plan().breakable || script().includes('"sendMessage", "updateMessage"') ? "ok" : "missing", UserStore: "ok" };
     return plan().calls?.selftest ?? { vencord: true, build: "build-1", needs, tools: {} };
   },
-  call: (m) => JSON.stringify(plan().calls?.[String(m.name)] ?? { ran: m.name, args: m.args }),
+  call: (m) => {
+    const err = plan().throws?.[String(m.name)];
+    if (err !== undefined) throw new Error(err);
+    return JSON.stringify(plan().calls?.[String(m.name)] ?? { ran: m.name, args: m.args });
+  },
   thawed: () => plan().thawed ?? { path: "/channels/@me" },
   flush: () => {
     if (plan().failFlush) throw new Error("flush failed");

@@ -1340,7 +1340,12 @@ async function bridgeReact(args) {
     // Discord builds, so we can't rely on findByProps("addReaction", …). Locate the
     // module by the dispatch type strings its functions emit, then identify add vs
     // remove by which dispatch type appears in each function's source.
-    const reactionMod = need("ReactionActions");
+    // Discord loads its reaction code with the chat view: open the channel first if it isn't loaded.
+    let reactionMod = need("ReactionActions");
+    if (!reactionMod) {
+        await navigate(channelId, channel.guild_id ?? null);
+        reactionMod = need("ReactionActions");
+    }
     if (!reactionMod) throw new Error(
         "Reaction actions module not found — webpack module shape may have changed.");
 
@@ -2037,6 +2042,9 @@ async function bridgeDmOpen(args) {
         ? (ch.name || recipients.map((r) => r.nickname || r.name || r.username).filter(Boolean).join(", ") || "(group)")
         : (recipients[0]?.nickname || recipients[0]?.name || recipients[0]?.username || "(unknown)");
 
+    // Discord answers with the DM it already has; one this client hasn't loaded (closed in the
+    // sidebar) still has its messages.
+    const created = !existing && !ch.last_message_id;
     return {
         channelId: ch.id,
         kind: isGroup ? "group" : "dm",
@@ -2044,7 +2052,8 @@ async function bridgeDmOpen(args) {
         memberCount: isGroup ? recipients.length : undefined,
         recipients,
         rendered,
-        created: !existing,
+        created,
+        ...(created ? {} : { existed: true }),
     };
 }
 

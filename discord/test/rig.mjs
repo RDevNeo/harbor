@@ -217,6 +217,46 @@ await scenario("tools", async () => {
     check(r.text.includes('"a"'), "discord_notes", r.text);
 });
 
+await scenario("react-lazy", async () => {
+    account();
+    // A send doesn't put a chat on the page: the self-test can't judge the chat's lookups yet.
+    let r = await mcp.tool("discord_send", { content: "hi", channelId: "200000000000000001" });
+    check(!r.isError, "a send", r.text);
+    await until(async () => (await status()).untested?.includes("ReactionActions"), 10000, "a self-test without a chat");
+    r = await mcp.tool("discord_react", { channelId: "200000000000000001", messageId: "400000000000000001", emoji: "👍" });
+    await sleep(300);
+    check(!r.isError && seen.react.length > 0, "react opens the chat and finds Discord's reaction code", r.text);
+    // The next chat tool judges them with the chat now on the page.
+    await mcp.tool("discord_view");
+    await until(async () => { const s = await status(); return s.untested?.length === 0 && s.busy === 0; }, 10000, "the chat's lookups judged");
+    check((await status()).failing.length === 0, "and they pass");
+    // dm_open: a DM this client hasn't loaded still existed.
+    r = await mcp.tool("discord_dm_open", { userId: "100000000000000003" });
+    let d = JSON.parse(r.text);
+    check(d.created === false && d.existed === true, "an old DM closed in the sidebar isn't called new", r.text);
+    check(!JSON.parse(fs.existsSync(app + "/pace.json") ? fs.readFileSync(app + "/pace.json", "utf8") : "[]").some(p => p[0] === "dm"), "and isn't paced as one");
+});
+
+await scenario("react-gone", async () => {
+    account();
+    // A Discord build without the reaction code (the fake agent can't fix it).
+    pageQuery = "?noreact=1&build=build9";
+    if (fs.existsSync(root + "/claude.plan")) fs.rmSync(root + "/claude.plan");
+    if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
+    const r = await mcp.tool("discord_react", { channelId: "200000000000000001", messageId: "400000000000000001", emoji: "👍" });
+    check(r.isError && r.text.includes("may have changed"), "react says Discord changed", r.text);
+    await until(async () => (await status()).failing?.includes("ReactionActions"), 15000, "the self-test to catch it");
+    check(true, "the self-test catches it, with the chat react opened");
+    await until(async () => { const st = await status(); return st.repairing === false && st.attention !== ""; }, 90000, "repair to run");
+    check(fs.readFileSync(app + "/notices.jsonl", "utf8").includes("need attention"), "repair ran, and the user is told when it can't fix it");
+    pageQuery = "";
+    const t = state();
+    t.attempts = {};
+    t.attention = "";
+    t.failing = [];
+    write("state.json", t);
+});
+
 await scenario("captcha-off", async () => {
     account();
     write("pace.json", "[]");

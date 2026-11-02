@@ -563,6 +563,8 @@ interface St {
   restart: boolean;
   /** The chat view's internals have been judged in this page. */
   chatTested: boolean;
+  /** What the last self-test couldn't judge without a chat on the page. */
+  untested: string[];
   repairing: boolean;
   signinAt: number;
   /** The desktop the sign-in started from. */
@@ -590,6 +592,7 @@ function newSt(): St {
     opens: 0,
     restart: false,
     chatTested: false,
+    untested: [],
     repairing: false,
     captcha: null,
     captchaEnd: null,
@@ -624,6 +627,8 @@ class Signal {
 /** What the page's self-test said. */
 export interface Test {
   missing: string[];
+  /** Lookups only a chat on the page can judge, and none was there: not judged yet. */
+  later: string[];
   tools: Map<string, string[]>;
   build: string;
   /** Names and statuses, safe to show repair: nothing else of the page's comes through. */
@@ -969,6 +974,7 @@ export class Host {
     this.set((st) => {
       st.broken = new Map(t.tools);
       st.saved.failing = [...t.missing];
+      st.untested = [...t.later];
       st.saved.tested = now();
       st.saved.build = t.build;
     });
@@ -1011,6 +1017,8 @@ export class Host {
       }
       this.set((st) => {
         st.busy -= 1;
+        // No chat was on the page after all (a send doesn't show one): the next chat tool tries again.
+        if (t === undefined || t.later.length > 0) st.chatTested = false;
       });
       if (t !== undefined) await this.judgeRunning(t);
     });
@@ -1093,6 +1101,14 @@ export class Host {
     let v: Json;
     try {
       v = await this.runTool(name, a);
+    } catch (e) {
+      // A tool found one of Discord's internals gone: the self-test, with the chat the tool just
+      // opened, says what, and repair starts from there.
+      if (/may have changed/.test(message(e))) {
+        this.st.chatTested = false;
+        this.testChatView();
+      }
+      throw e;
     } finally {
       this.leave();
     }
@@ -1573,11 +1589,13 @@ export function readTest(r: Json, base: string): Test {
   const known = (k: string): boolean => base.includes(`${k}:`) || base.includes(`"${k}":`);
   const needs: [string, string][] = [];
   const missing: string[] = [];
+  const later: string[] = [];
   const raw = get(r, "needs");
   for (const [k, v] of Object.entries(isObj(raw) ? raw : {})) {
     const s = str(v) ?? "";
     if (!known(k) || !["ok", "missing", "optional", "later"].includes(s)) continue;
     if (s === "missing") missing.push(k);
+    if (s === "later") later.push(k);
     needs.push([k, s]);
   }
   // A page without Vencord has none of it, whatever the table above could say.
@@ -1591,7 +1609,7 @@ export function readTest(r: Json, base: string): Test {
   }
   const build = [...(str(get(r, "build")) ?? "")].filter((c) => /^[A-Za-z0-9]$/.test(c)).slice(0, 64).join("");
   const report: Json = { needs: Object.fromEntries(needs), missing, tools: Object.fromEntries(tools), build };
-  return { missing, tools, build, report };
+  return { missing, later: later.sort(), tools, build, report };
 }
 
 /** The status the card and the hub show; `st` undefined: the host isn't running. */
@@ -1606,6 +1624,7 @@ function statusJson(st: St | undefined, saved: Saved): Json {
     account: a ?? null,
     attention: saved.attention,
     failing: saved.failing,
+    untested: st?.untested ?? [],
     repairing: st?.repairing ?? false,
     busy: st?.busy ?? 0,
     held: st?.held ?? "",

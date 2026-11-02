@@ -228,6 +228,41 @@ test("tools whose lookups are missing say what changed", async () => {
   expect(await statusText()).toContain("Signed in as ana.");
 });
 
+test("the chat's lookups are judged only with a chat on the page, and a tool that finds one gone has them judged", async () => {
+  await quiet();
+  const tests = (): number => ops("selftest").length;
+  const later = { vencord: true, build: "build-1", needs: { MessageActions: "ok", UserStore: "ok", ReactionActions: "later" }, tools: {} };
+  plan(r.root, { calls: { selftest: later } });
+  // A page that reloaded by itself is tested again: that's where the chat check starts over.
+  await h.host.handle({ op: "stop" });
+  await call("discord_view", {});
+  await quiet();
+  const n = tests();
+  await call("discord_send", { content: "a", channelId: "c" });
+  await quiet();
+  expect(tests()).toBe(n + 1);
+  expect((h.host.status() as Record<string, unknown>).untested).toEqual(["ReactionActions"]);
+  // Still no chat on the page: the next chat tool tries again.
+  await call("discord_send", { content: "b", channelId: "c" });
+  await quiet();
+  expect(tests()).toBe(n + 2);
+  plan(r.root, { calls: { selftest: { ...later, needs: { ...later.needs, ReactionActions: "ok" } } } });
+  await call("discord_send", { content: "c", channelId: "c" });
+  await quiet();
+  expect(tests()).toBe(n + 3);
+  expect((h.host.status() as Record<string, unknown>).untested).toEqual([]);
+  await call("discord_send", { content: "d", channelId: "c" });
+  await quiet();
+  expect(tests()).toBe(n + 3);
+  // A tool that says Discord changed: the self-test runs again at once.
+  const ok = { ...later, needs: { ...later.needs, ReactionActions: "ok" } };
+  plan(r.root, { calls: { selftest: ok }, throws: { discord_react: "Reaction actions module not found — webpack module shape may have changed." } });
+  expect(await call("discord_react", { messageId: "1", emoji: "x" })).toContain("may have changed");
+  await quiet();
+  expect(tests()).toBe(n + 4);
+  plan(r.root, {});
+}, 20_000);
+
 test("with the captcha view on, a join that needs a captcha holds the client awake for a person, and says how it ended", async () => {
   // The view only takes effect when the client starts.
   process.env.HARBOR_DISCORD_CAPTCHA_VIEW = "1";

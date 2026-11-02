@@ -25,7 +25,8 @@
     let selected = null, memberOf = { [guild.id]: guild, [stubborn.id]: stubborn };
     const subs = {};
     const emit = (type, extra) => { for (const f of subs[type] ?? []) f({ type, ...extra }); };
-    let nickname = null, established = true;
+    let nickname = null, established = true, chatLoaded = false;
+    const noReact = new URLSearchParams(location.search).has("noreact");
     // The connection after a thaw, as the rig asks: what Discord's socket would do.
     const socket = {
         lastHeartbeatAckTime: 0,
@@ -121,12 +122,20 @@
         history.pushState({}, "", path);
         selected = id;
         setTimeout(() => {
+            // As on Discord: the reaction code comes with the chat view (and never, on a build that lost it).
+            if (id === channel.id && !noReact) chatLoaded = true;
             document.getElementById("app").innerHTML = id === channel.id ? `<div data-list-id="chat-messages"><div id="chat-messages-${channel.id}-${messages[0].id}">hello</div></div>` : "";
         }, 400);
     }
     const rest = async (method, path, q, init) => {
         if (path.endsWith("/auth/logout")) { report("logout"); return {}; }
-        if (path.endsWith("/users/@me/channels")) { report("dm", JSON.parse(init.body)); return { id: channel.id, type: 1, recipients: [friend] }; }
+        if (path.endsWith("/users/@me/channels")) {
+            const body = JSON.parse(init.body);
+            report("dm", body);
+            // An old DM closed in the sidebar: this client hasn't loaded it, Discord still has it.
+            if (body.recipient_id === member.id) return { id: "200000000000000003", type: 1, recipients: [member], last_message_id: "400000000000000007" };
+            return { id: channel.id, type: 1, recipients: [friend], last_message_id: body.recipient_id === friend.id ? messages.at(-1).id : null };
+        }
         if (path.includes("/messages")) {
             const after = q.get("after");
             const more = (await (await fetch(rig + "/rig/history")).json()).map(m => msg(m.id, m.content));
@@ -140,7 +149,7 @@
             ChannelRouter: { transitionToChannel: id => go(`/channels/${channels[id]?.guild_id ?? "@me"}/${id}`) },
             NavigationRouter: { transitionTo: go },
         },
-        mods: [...Object.values(stores), MessageActions],
+        get mods() { return [...Object.values(stores).filter(m => m !== stores.Reactions || chatLoaded), MessageActions]; },
         sources: { 1: () => "chat-messages messagesWrapper optionButtonWrapper" },
         CloudUpload: class {},
         rest,
