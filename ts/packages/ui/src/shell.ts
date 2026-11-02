@@ -15,6 +15,7 @@ import { updateToast } from "./logic/hubseam.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
 import { type Page, type PageHub, PageHost } from "./pages/host.ts";
+import { tabFromSlug } from "./logic/pages.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
 import { Keys, label as keyLabel } from "./logic/keys.ts";
@@ -699,6 +700,18 @@ export class Shell {
       const repo = typeof s.draft_repo === "number" && this.data.repo(s.draft_repo) ? s.draft_repo : null;
       this.newDraft(repo, s.draft_main === true);
     }
+  }
+
+  /** HARBOR_VIEW, for screenshots: `chat[:id]` (the last chat), `settings[:tab]` or a tab's slug, `prs`, `issues`. */
+  devView(v: string, last: number): void {
+    const [name = "", arg = ""] = v.split(":");
+    const tab = tabFromSlug(name === "settings" ? arg || "general" : name);
+    const id = Number(arg || last);
+    if (name === "chat" && this.data.chat(id)) this.openChat(id);
+    else if (tab !== null) this.pages.openSettings(tab);
+    else if (name === "prs") this.pages.openPrs();
+    else if (name === "issues") this.pages.openIssues();
+    else if (name !== "draft") console.error(`HARBOR_VIEW: no view ${v}`);
   }
 
   openChat(id: number): void {
@@ -3188,7 +3201,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   });
   const last = Number(data.store.get("last_chat") ?? 0);
   shell.newDraft(null);
-  if (process.env.HARBOR_VIEW === "chat" && data.chat(last)) shell.openChat(last);
+  if (process.env.HARBOR_VIEW) shell.devView(process.env.HARBOR_VIEW, last);
   if (hooks.restore) shell.restore(hooks.restore);
   hooks.snapshotWith?.(() => shell.snapshot());
   shell.onQuit = hooks.quit ?? null;

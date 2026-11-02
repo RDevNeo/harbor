@@ -11,6 +11,27 @@ The phone app is Java (`android/`); the built-in browser's engine is Servo, a Ru
 Bun (`cd ts && bun install && bunx tsc --noEmit && bun test`). `scripts/boat/check` runs the same on
 a clean sandbox and builds the release executable. Everything else keeps the boat.dev rule below.
 
+## Show UI changes
+
+Any change to what the user sees (`ts/packages/ui/**`, `*.slint`, cards, icons, text in the window)
+ends with a screenshot of each screen it touches, before you report done:
+
+- `scripts/shot` runs the working tree from source on a private headless sway, with no network, on
+  a copy of harbor.db (`--empty` for no data at all), and prints the PNG paths last (under
+  `~/.cache/harbor-shots/`). Seconds per shot; it fails loudly when the window didn't draw.
+  `--view chat|chat:ID|settings:TAB|prs|issues|draft` picks the screen, `--steps` clicks and types
+  first (x,y in the PNG's pixels), `--wait 2,6` shots at several times, `--size`, `--help`.
+- Look at the PNG yourself (Read it), then put it in your final reply as `![caption](/absolute/path.png)`
+  next to the sentence it illustrates. A subagent puts the paths in its report; the lead puts them
+  in its reply to the user: a subagent's images reach the user only that way.
+- Shots of real chats may be shown in chat but never committed: they hold personal data.
+- To try it live on the user's own window: `scripts/preview --note "what changed"` builds the app
+  bundle here and switches this PC's Harbor to it (only where the owner turned previews on, which
+  isn't yours to do; the restart can end your Bash call, so it's your last step);
+  `scripts/preview back` returns to the release.
+- Phone UI (`android/`) isn't covered yet: the APK comes from `scripts/boat/android --out DIR`;
+  say the change is unseen rather than describing it as shown.
+
 ## Compute runs on boat.dev
 
 Every build, test, benchmark or other compute-heavy job runs on a boat.dev sandbox: not on the PCs

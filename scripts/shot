@@ -1,0 +1,185 @@
+#!/bin/bash
+# Screenshots of Harbor's desktop window, from this working tree (uncommitted changes included).
+# The app runs from source with Bun on a private headless sway, inside `unshare` with no network,
+# on a copy of harbor.db (or no data at all): the PC's screen, its real data and the network are
+# never touched. The PNG paths come last on stdout, one per line; everything else goes to stderr.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: scripts/shot [options]
+  --view V      what's on screen (repeatable: one run each): chat (the last chat), chat:ID,
+                settings, settings:TAB (or the tab alone: usage, appearance, devices...), prs,
+                issues, draft. Default: chat, or draft with --empty.
+  --chat ID     the chat to show (same as --view chat:ID)
+  --steps SPEC  HARBOR_POINTER steps before the shot: "x,y[,action[,secs]];..." with action
+                click|rclick|down|up|wheel|wheel-down|type:text|key:Return|ctrl:k; secs count
+                from the window's start; x,y are the PNG's pixels (see ts/packages/ui/src/script.ts)
+  --wait S      seconds after the window drew to take the shot (default 3); "2,6" takes one
+                shot at each time
+  --size WxH    the window's size (default 1400x900)
+  --out DIR     where the PNGs go (default ~/.cache/harbor-shots/<time>)
+  --empty       fresh empty data instead of a copy of harbor.db (no personal content)
+  --keep        keep the scratch folder (logs, the data copy) for debugging
+Examples:
+  scripts/shot                                 the last chat
+  scripts/shot --view settings:usage --empty   Settings › Usage with no personal data
+  scripts/shot --view chat --steps "700,860,click;700,860,type:hello,2" --wait 2
+EOF
+  exit 2
+}
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+ts=$root/ts
+
+if [ "${1:-}" = --inner ]; then
+  # Inside the namespaces: nothing below may reach the PC's own screen or network.
+  mount -t sysfs sysfs /sys 2>/dev/null || true
+  [ "$(ls /sys/class/net)" = lo ] || { echo "shot: refused: not in a network namespace with only lo" >&2; exit 99; }
+  ip link set lo up 2>/dev/null || true
+  for c in /dev/dri/card*; do [ -e "$c" ] || continue; mount --bind /dev/null "$c" || { echo "shot: refused: can't hide $c" >&2; exit 99; }; done
+  T=$SHOT_TMP SW=$SHOT_SWAY
+  mkdir -p "$T/sway"; chmod 700 "$T/sway"
+  printf 'output HEADLESS-1 resolution %s\ndefault_border none\ndefault_floating_border none\nfont pango:monospace 1\nseat * hide_cursor 0\n' "$SHOT_SIZE" > "$T/sway.conf"
+  env -i HOME="$T" XDG_RUNTIME_DIR="$T/sway" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 LD_LIBRARY_PATH="$SW/lib" "$SW/bin/sway" -c "$T/sway.conf" > "$T/sway.log" 2>&1 &
+  for _ in $(seq 100); do [ -S "$T/sway/wayland-1" ] && break; sleep 0.1; done
+  [ -S "$T/sway/wayland-1" ] || { echo "shot: the headless sway didn't start:" >&2; tail -20 "$T/sway.log" >&2; exit 1; }
+  swaymsg() { LD_LIBRARY_PATH=$SW/lib SWAYSOCK=$(ls "$T"/sway/sway-ipc.*.sock | head -1) "$SW/bin/swaymsg" "$@"; }
+  grab() { env XDG_RUNTIME_DIR="$T/sway" WAYLAND_DISPLAY=wayland-1 "$SHOT_GRIM" -t ppm "$1"; }
+  rect() { swaymsg -t get_tree | python3 -I -c 'import json,sys
+def walk(n):
+    yield n
+    for c in n.get("nodes",[])+n.get("floating_nodes",[]): yield from walk(c)
+for n in walk(json.load(sys.stdin)):
+    if n.get("pid")==int(sys.argv[1]) and n.get("visible"): r=n["rect"]; print(r["x"],r["y"],r["width"],r["height"]); break' "$1"; }
+  # Distinct colours in a rectangle of a P6 ppm; with a second path, that rectangle is also written there as a PNG.
+  colours() { python3 -I -c 'import sys,zlib,struct
+d=open(sys.argv[1],"rb").read(); parts=d.split(maxsplit=4); w,h=int(parts[1]),int(parts[2]); px=parts[4]
+x,y,rw,rh=map(int,sys.argv[2:6]); rw=min(rw,w-x); rh=min(rh,h-y); seen=set()
+for j in range(y,y+rh,3):
+    row=px[(j*w)*3:(j*w+w)*3]
+    for i in range(x,x+rw,3): seen.add(row[i*3:i*3+3])
+print(len(seen))
+if len(sys.argv)>6:
+    raw=b"".join(b"\0"+px[(j*w+x)*3:(j*w+x+rw)*3] for j in range(y,y+rh))
+    def chunk(t,b): return struct.pack(">I",len(b))+t+b+struct.pack(">I",zlib.crc32(t+b))
+    open(sys.argv[6],"wb").write(b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",rw,rh,8,2,0,0,0))+chunk(b"IDAT",zlib.compress(raw,6))+chunk(b"IEND",b""))' "$@"; }
+  # The app's processes, by the runtime folder each one has; stopped until none is left.
+  apps() { local p; for p in /proc/[0-9]*; do tr '\0' '\n' 2>/dev/null < "$p/environ" | grep -q "^XDG_RUNTIME_DIR=$T/pc" && echo "${p#/proc/}"; done 2>/dev/null; true; }
+  stopapp() { local left; kill $(apps) 2>/dev/null || true
+    for _ in $(seq 50); do left=$(apps); [ -z "$left" ] && return; sleep 0.1; done
+    kill -9 $left 2>/dev/null || true; sleep 0.2; }
+  grab "$T/empty.ppm"
+  IFS=, read -r -a waits <<< "$SHOT_WAIT"
+  n=0 fail=0
+  for view in $SHOT_VIEWS; do
+    n=$((n + 1)); h=$T/pc$n; log=$T/app-$n.log
+    mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache"; chmod 700 "$h/run"
+    start=$(date +%s.%N)
+    (cd "$ts" && exec env -i HOME="$h/home" XDG_DATA_HOME="$T/data" XDG_STATE_HOME="$h/state" XDG_CONFIG_HOME="$h/cfg" XDG_CACHE_HOME="$h/cache" \
+      XDG_RUNTIME_DIR="$h/run" WAYLAND_DISPLAY="$T/sway/wayland-1" HARBOR_SOCK="$h/h.sock" HARBOR_OFFLINE=1 HARBOR_LISTEN=127.0.0.1 \
+      HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent PATH=/usr/bin:/bin TZ="$SHOT_TZ" LANG=C.UTF-8 \
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH="$SHOT_BUNCACHE" HARBOR_VIEW="$view" HARBOR_POINTER="$SHOT_STEPS" "$SHOT_BUN" harbor.ts) > "$log" 2>&1 &
+    pid=$!
+    r=""
+    for _ in $(seq 300); do r=$(rect $pid); [ -n "$r" ] && break; kill -0 $pid 2>/dev/null || break; sleep 0.1; done
+    if [ -z "$r" ]; then
+      echo "shot: FAILED: Harbor's window never mapped for --view $view$(kill -0 $pid 2>/dev/null || echo ' (the app exited)'). Its log:" >&2
+      grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2; fail=1; stopapp; continue
+    fi
+    if grep -q '^HARBOR_VIEW: ' "$log"; then echo "shot: FAILED: $(grep -m1 '^HARBOR_VIEW: ' "$log")" >&2; fail=1; stopapp; continue; fi
+    mapped=$(date +%s.%N)
+    echo "shot: --view $view: window up in $(python3 -I -c "print(round($mapped-$start,1))") s ($r)" >&2
+    slept=0
+    for w in "${waits[@]}"; do
+      python3 -I -c "import time; time.sleep(max(0,$w-$slept))"; slept=$w
+      if ! kill -0 $pid 2>/dev/null; then
+        echo "shot: FAILED: Harbor exited before the shot at $w s (--view $view). Its log:" >&2
+        grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2; fail=1; break
+      fi
+      name=$(printf %s "$view" | tr -c 'A-Za-z0-9_-' -)
+      [ "$n" -gt 1 ] && name="$n-$name"
+      [ "${#waits[@]}" -gt 1 ] && name="$name-${w}s"
+      png=$SHOT_OUT/$name.png
+      grab "$T/shot.ppm"
+      c=$(colours "$T/shot.ppm" $r "$png"); e=$(colours "$T/empty.ppm" $r)
+      if [ "${c:-0}" -lt 40 ] || [ "${e:-9}" -gt 4 ]; then
+        echo "shot: FAILED: the window drew nothing at $w s (--view $view): $c colours where the empty desktop has $e. Its log:" >&2
+        grep -v '^Warning: \[object Object\]$' "$log" | tail -25 >&2; fail=1; rm -f "$png"; continue
+      fi
+      echo "$png" >> "$T/shots"
+    done
+    stopapp
+  done
+  exit $fail
+fi
+
+views=() steps="" wait=3 size=1400x900 out="" empty=0 keep=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    --view) views+=("${2:?--view needs a value}"); shift 2 ;;
+    --chat) views+=("chat:${2:?--chat needs an id}"); shift 2 ;;
+    --steps) steps=${2?}; shift 2 ;;
+    --wait) wait=${2:?}; shift 2 ;;
+    --size) size=${2:?}; shift 2 ;;
+    --out) out=${2:?}; shift 2 ;;
+    --empty) empty=1; shift ;;
+    --keep) keep=1; shift ;;
+    -h|--help) usage ;;
+    *) echo "shot: unknown option $1" >&2; usage ;;
+  esac
+done
+[[ $size =~ ^[0-9]+x[0-9]+$ ]] || { echo "shot: --size wants WxH, like 1400x900" >&2; exit 2; }
+[[ $wait =~ ^[0-9.]+(,[0-9.]+)*$ ]] || { echo "shot: --wait wants seconds, like 3 or 2,6" >&2; exit 2; }
+for v in "${views[@]}"; do [[ $v =~ ^[a-z]+(:[A-Za-z0-9_-]+)?$ ]] || { echo "shot: bad --view $v" >&2; exit 2; }; done
+[ ${#views[@]} -gt 0 ] || { [ $empty = 1 ] && views=(draft) || views=(chat); }
+
+bun=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
+sway=$(command -v sway || true) grim=$(command -v grim || true)
+for need in "$bun:Bun (bun.sh)" "$sway:sway" "$grim:grim" "$(command -v unshare || true):unshare (util-linux)" "$(command -v python3 || true):python3"; do
+  [ -x "${need%%:*}" ] || { echo "shot: needs ${need#*:}, not found" >&2; exit 1; }
+done
+sw=${SWAY:-$(dirname "$(dirname "$(readlink -f "$sway")")")}
+
+base=${HOME}/.cache/harbor-shots
+[ -n "$out" ] || out=$base/$(date +%Y%m%d-%H%M%S)-$$
+mkdir -p "$out" "$base/.bun"; out=$(cd "$out" && pwd)
+tmp=$(mktemp -d "$base/.rig.XXXXXX"); chmod 700 "$tmp"
+cleanup() { [ $keep = 1 ] && echo "shot: scratch kept in $tmp" >&2 || rm -rf "$tmp"; }
+trap cleanup EXIT
+
+t0=$(date +%s.%N)
+(cd "$ts" && "$bun" install --frozen-lockfile > "$tmp/install.log" 2>&1) || { cat "$tmp/install.log" >&2; echo "shot: bun install failed" >&2; exit 1; }
+mkdir -p "$tmp/data/harbor"
+real="${XDG_DATA_HOME:-$HOME/.local/share}/harbor/harbor.db"
+if [ $empty = 0 ] && [ -f "$real" ]; then
+  (cd "$ts" && "$bun" packages/ui/src/copydb.ts "$real" "$tmp/data/harbor/harbor.db")
+elif [ $empty = 0 ]; then
+  echo "shot: no harbor.db on this PC: starting empty" >&2
+fi
+
+# HARBOR_POINTER takes the window's logical pixels; the PNG is scaled by the UI zoom (Ctrl+=) the data holds.
+db=$tmp/data/harbor/harbor.db zoom=1
+[ -f "$db" ] && zoom=$(cd "$ts" && "$bun" -e 'import { Database } from "bun:sqlite";
+const r = new Database(process.argv.at(-1), { readonly: true }).query("SELECT v FROM kv WHERE k=?1").get("ui_zoom") as { v: string } | null;
+console.log(Number(r?.v) > 0 ? Number(r?.v) : 1);' "$db")
+if [ -n "$steps" ] && [ "$zoom" != 1 ]; then
+  steps=$(python3 -I -c 'import sys
+z=float(sys.argv[2]); out=[]
+for s in sys.argv[1].split(";"):
+    p=s.split(",")
+    try: p[0],p[1]=str(round(float(p[0])/z,1)),str(round(float(p[1])/z,1))
+    except (ValueError,IndexError): pass
+    out.append(",".join(p))
+print(";".join(out))' "$steps" "$zoom")
+  echo "shot: UI zoom $zoom: steps sent as $steps" >&2
+fi
+
+rc=0
+SHOT_TMP=$tmp SHOT_SWAY=$sw SHOT_GRIM=$grim SHOT_BUN=$bun SHOT_SIZE=$size SHOT_WAIT=$wait SHOT_STEPS=$steps SHOT_OUT=$out \
+  SHOT_VIEWS="${views[*]}" SHOT_BUNCACHE=$base/.bun SHOT_TZ=${TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)} \
+  unshare -Urnm --pid --fork --mount-proc --kill-child "$0" --inner || rc=$?
+[ $rc != 99 ] || exit 99
+echo "shot: done in $(python3 -I -c "import time; print(round(time.time()-$t0,1))") s" >&2
+[ -f "$tmp/shots" ] && cat "$tmp/shots"
+[ $rc = 0 ] || { echo "shot: FAILED (see above)" >&2; exit 1; }

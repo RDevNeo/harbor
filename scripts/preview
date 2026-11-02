@@ -1,0 +1,94 @@
+#!/bin/bash
+# Puts this working tree (uncommitted changes included) on this PC's own Harbor window as a live
+# preview: builds harbor-app.js here with Bun (seconds) and hands it to the running Harbor, which
+# restarts into it. Previews must be on (`harbor preview on`): that's the owner's choice, this
+# script never turns them on. `scripts/preview back` returns to the release.
+#
+# The restart ends long Bash calls of agents running under Harbor: the push is this script's last
+# step and it doesn't wait for the restart unless asked (--wait). `scripts/preview status` says how it went.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: scripts/preview [--note TEXT] [--wait] [--build-only DIR]
+       scripts/preview back      return this PC's window to the release
+       scripts/preview status    what this PC's window runs now
+  --note TEXT       what changed, shown with the preview (default: the last commit's subject)
+  --wait            wait until the new window is on screen (the restart may end the caller)
+  --build-only DIR  build DIR/harbor-app.js and stop (no push)
+EOF
+  exit 2
+}
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+ts=$root/ts
+harbor=$(command -v harbor || true)
+[ -n "$harbor" ] || [ "${1:-}" = --build-only ] || { echo "preview: no harbor command: Harbor isn't installed on this PC" >&2; exit 1; }
+
+case ${1:-} in
+  back) exec "$harbor" preview back ;;
+  status) exec "$harbor" preview status ;;
+esac
+
+note="" wait=0 only=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --note) note=${2?--note needs text}; shift 2 ;;
+    --wait) wait=1; shift ;;
+    --build-only) only=${2:?--build-only needs a folder}; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "preview: unknown option $1" >&2; usage ;;
+  esac
+done
+
+bun=${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}
+[ -x "$bun" ] || { echo "preview: Bun not found (bun.sh, or BUN=/path/to/bun)" >&2; exit 1; }
+
+version=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ts/package.json" | head -1)
+release="" runtime="" lib=""
+if [ -n "$harbor" ]; then
+  lib=$(dirname "$(readlink -f "$harbor")")
+  runtime=$(cat "$lib/RUNTIME" 2>/dev/null || true)
+fi
+if [ -z "$only" ]; then
+  st=$("$harbor" preview status --json)
+  case $st in
+    *'"managed":false'*) echo "preview: this Harbor wasn't installed by install.sh: it can't take previews" >&2; exit 1 ;;
+    *'"on":true'*) ;;
+    *) echo "preview: previews are off on this PC. Turning them on is the owner's choice (harbor preview on); not done. Show the change with scripts/shot instead." >&2; exit 3 ;;
+  esac
+  release=$(cat "$lib/VERSION" 2>/dev/null || "$harbor" --version | awk '{print $2}')
+  older=$("$bun" -e 'const p = (v: string) => v.replace(/^v/, "").split("-")[0]!.split(".").map(Number);
+const [a, b] = [p(process.argv.at(-2)!), p(process.argv.at(-1)!)];
+let d = 0; for (let i = 0; i < 3 && d === 0; i++) d = (a[i] ?? 0) - (b[i] ?? 0);
+console.log(d < 0 ? "yes" : "no");' "$version" "$release")
+  if [ "$older" = yes ]; then
+    echo "preview: this tree is $version, older than the release installed here ($release): Harbor refuses it." >&2
+    echo "preview: rebase on origin/main (or work in a worktree of it) first." >&2
+    exit 1
+  fi
+fi
+
+sha=$(git -C "$root" rev-parse --short=7 HEAD)
+dirty=$([ -n "$(git -C "$root" status --porcelain -- ts 2>/dev/null)" ] && echo "+" || true)
+id="$sha$dirty-$(date +%m%d-%H%M%S)"
+[ -n "$note" ] || note=$(git -C "$root" log -1 --format=%s)$([ -n "$dirty" ] && echo " (+ uncommitted changes)")
+out=${only:-$HOME/.cache/harbor-previews/$id}
+mkdir -p "$out"; out=$(cd "$out" && pwd)
+
+t0=$(date +%s.%N)
+(cd "$ts" && "$bun" install --frozen-lockfile > /dev/null && "$bun" scripts/build.ts app "$out/harbor-app.js" --version "$version" --min-runtime "${runtime:-$version}" --sha "$sha" > "$out/build.log" 2>&1) ||
+  { tail -30 "$out/build.log" >&2; echo "preview: the build failed" >&2; exit 1; }
+echo "preview: built $out/harbor-app.js ($version, $id) in $(python3 -I -c "import time; print(round(time.time()-$t0,1))") s" >&2
+# The installed runtime loads it the way Harbor will before switching to it.
+if [ -x "$lib/harbor" ]; then
+  said=$(timeout 30 "$lib/harbor" smoke-bundle "$out/harbor-app.js" 2>&1) || { echo "preview: this PC's Harbor can't run that build: $said" >&2; exit 1; }
+fi
+[ -z "$only" ] || exit 0
+
+# Old builds go; the newest few stay for `harbor preview push` by hand.
+ls -1dt "$HOME"/.cache/harbor-previews/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+echo "preview: pushing $id to this PC's window: it restarts into it now. Back to the release: scripts/preview back" >&2
+args=(preview push "$out/harbor-app.js" --id "$id" --note "${note:0:120}")
+[ $wait = 0 ] || args+=(--wait)
+exec "$harbor" "${args[@]}"

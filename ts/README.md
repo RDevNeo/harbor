@@ -39,7 +39,8 @@ clicked.
 - `bunx tsc --noEmit && bun test [args]` here, on the PC (see `CLAUDE.md`); `scripts/boat/check` runs
   the same on a clean sandbox and builds the release executable.
 - `bun harbor.ts` with no command opens the window on whatever `XDG_DATA_HOME` points at.
-  `HARBOR_VIEW=chat` opens the last chat, `HARBOR_POINTER` scripts clicks and keys (see
-  `packages/ui/src/script.ts`), as in the Rust app.
+  `HARBOR_VIEW=chat` opens the last chat (`chat:ID`, `settings:TAB`, `prs`, `issues` too),
+  `HARBOR_POINTER` scripts clicks and keys (see `packages/ui/src/script.ts`), as in the Rust app;
+  `scripts/shot` uses both for screenshots.
 - `bun packages/ui/src/gallery.ts [light]` shows every widget of the design layer.
 - `bun packages/ui/src/gen.ts` regenerates `slint/theme.slint` and `slint/icons.slint`.
