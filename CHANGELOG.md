@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.112.1] - 2026-11-02
+
 ### Fixed
 - Phone: a message you send shows in the chat at once. It used to appear only after the PC had
   answered and the chat had been read again, which took about 10 seconds when the way to the PC
