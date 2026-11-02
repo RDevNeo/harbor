@@ -1,5 +1,7 @@
 import pkg from "./package.json";
-import { DEV_VERSION, RUNTIME_VERSION, VERSION, updateCommands, versionLabel } from "./packages/update/src/index.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, updateCommands, versionLabel } from "./packages/update/src/index.ts";
 
 declare const HARBOR_MIN_RUNTIME: string | undefined;
 
@@ -35,7 +37,10 @@ const commands: Record<string, Command> = {
   },
   "--check-video": async (args) => {
     const { video } = await import("./packages/media/src/index.ts");
-    const r = video.checkVideo(args);
+    // Harbor's own player, where install.sh and the updater put it (the window asks the updater the same).
+    const dir = defaultConfig().dir;
+    const own = dir !== null && existsSync(join(dir, VIDEO_LIB)) ? join(dir, VIDEO_LIB) : null;
+    const r = video.checkVideo(args, own);
     for (const line of r.lines) console.log(line);
     return r.code;
   },
