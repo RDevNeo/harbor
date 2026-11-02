@@ -90,11 +90,12 @@ jobs:
           else
             lane=runtime
           fi
-          # The phone app is rebuilt only when android/ changed since the latest release (or a new
-          # runtime goes out): otherwise that release's signed APK is attached again and the
-          # manifest keeps naming it, so phones aren't asked to update to the same app.
+          # The phone app is rebuilt only when android/ or browser/ (its Servo engine is inside the
+          # APK) changed since the latest release, or a new runtime goes out: otherwise that
+          # release's signed APK is attached again and the manifest keeps naming it, so phones
+          # aren't asked to update to the same app.
           apk=build apkcode=()
-          if [ "$lane" = bundle ] && git diff --quiet "$tag" HEAD -- android/; then
+          if [ "$lane" = bundle ] && git diff --quiet "$tag" HEAD -- android/ browser/; then
             apk=keep
           else
             IFS=.- read -r ma mi pa _ <<< "$ver"
