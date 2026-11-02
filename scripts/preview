@@ -72,7 +72,7 @@ fi
 sha=$(git -C "$root" rev-parse --short=7 HEAD)
 dirty=$([ -n "$(git -C "$root" status --porcelain -- ts 2>/dev/null)" ] && echo "+" || true)
 id="$sha$dirty-$(date +%m%d-%H%M%S)"
-[ -n "$note" ] || note=$(git -C "$root" log -1 --format=%s)$([ -n "$dirty" ] && echo " (+ uncommitted changes)")
+[ -n "$note" ] || note=$(git -C "$root" log -1 --format=%s)${dirty:+ (+ uncommitted changes)}
 out=${only:-$HOME/.cache/harbor-previews/$id}
 mkdir -p "$out"; out=$(cd "$out" && pwd)
 
