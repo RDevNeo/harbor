@@ -16,7 +16,8 @@ case "$ID" in
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     # libgl1-mesa-dri: llvmpipe. The X11 libraries are the ones winit loads at runtime; libinput,
-    # gbm, fontconfig and xkbcommon are what Slint's native module links (every desktop has them).
+    # gbm, fontconfig and xkbcommon are what Slint's native module links, and the window needs one
+    # system font (every desktop has them; Arch's bare image has no font at all).
     pkgs="ca-certificates curl xvfb xauth libgl1 libegl1 libgl1-mesa-dri libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libx11-xcb1 libinput10 libgbm1 libfontconfig1 libxkbcommon0"
     # Once more: dpkg now and then fails under qemu (0.101.0's ubuntu aarch64), which says nothing about Harbor.
     apt-get install -y -qq --no-install-recommends $pkgs >/dev/null \
@@ -27,7 +28,7 @@ case "$ID" in
       util-linux shadow-utils findutils >/dev/null ;;
   arch)
     pacman -Syu --noconfirm --needed curl xorg-server-xvfb mesa libglvnd libxkbcommon-x11 \
-      libxcursor libxrandr libxi libinput fontconfig libxkbcommon >/dev/null ;;
+      libxcursor libxrandr libxi libinput fontconfig libxkbcommon ttf-dejavu >/dev/null ;;
   *) fail "unknown distro $ID" ;;
 esac
 end
