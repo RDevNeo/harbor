@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.110.0] - 2026-11-02
+
 ### Changed
 - Harbor is rewritten in TypeScript: it runs on Bun, compiled into one executable, with a native
   Slint window (still no Electron or WebView). Your chats, settings, pairings and phones carry over
