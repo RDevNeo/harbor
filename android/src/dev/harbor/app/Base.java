@@ -344,13 +344,6 @@ abstract class Base extends Activity {
         refresh();
     }
 
-    /** Calls now go to another PC of the mesh (the one before stopped answering). */
-    void onMoved() {
-        String n = hub.viaName();
-        String w = hub.movedWhy;
-        Ui.toast(this, (w != null ? w + ". " : "") + "Connected through " + (n.isEmpty() ? hub.label() : n));
-    }
-
     @Override
     protected void onResume() {
         super.onResume();
@@ -379,13 +372,16 @@ abstract class Base extends Activity {
         final Hub h = hub;
         Ui.pool.execute(() -> {
             int fails = 0;
-            boolean first = true;
+            boolean first = true, shown = false;
             while (my == gen) {
                 boolean connected = false;
+                String pc = null;
                 try {
-                    // since=-1 (first call) answers at once with the current revision.
-                    Net.Http c = h.open("GET", "/v1/events?since=" + Math.max(rev, 0), Hub.TIMEOUT);
+                    // since=-1 (first call) answers at once with the current revision. Only the
+                    // PC in use (stick): each counts its own revisions.
+                    Net.Http c = h.open("GET", "/v1/events?since=" + Math.max(rev, 0), Hub.POLL_TIMEOUT, true, true);
                     connected = true;
+                    pc = c.pc;
                     polling = c;
                     JSONObject r;
                     try {
@@ -399,8 +395,9 @@ abstract class Base extends Activity {
                     }
                     if (my != gen) return;
                     long nrev = r.optLong("rev", 0);
-                    // Another PC answered (the one used before stopped): its revisions are its own.
-                    String now = h.via();
+                    // Another PC answered (the one used before stopped): its revisions are its own,
+                    // so everything is asked again (quietly: the screen just refreshes).
+                    String now = pc;
                     boolean moved = lastVia != null && !now.equals(lastVia);
                     lastVia = now;
                     boolean reconnect = fails > 0 || moved || (rev >= 0 && nrev < rev);
@@ -414,12 +411,12 @@ abstract class Base extends Activity {
                     boolean sc = r.optBoolean("state_changed");
                     // Something one of the PCs sent this phone waits there (Devices › Send).
                     if (r.optInt("inbox") > 0) Inbox.poke(h, now);
-                    if (fails > 0) Ui.main.post(() -> { if (my == gen) { offline = false; offlineError = null; onOffline(false, null); } });
+                    if (shown) Ui.main.post(() -> { if (my == gen) { offline = false; offlineError = null; onOffline(false, null); } });
+                    shown = false;
                     lastWhy = null;
                     fails = 0;
                     // The first answer only tells the revision; the screen loaded on resume already,
                     // unless it missed something while paused (rev moved on).
-                    if (moved) Ui.main.post(() -> { if (my == gen) onMoved(); });
                     boolean news = !changed.isEmpty() || sc || reconnect;
                     if (wasFirst) news = old >= 0 && nrev != old;
                     if (news) {
@@ -432,20 +429,28 @@ abstract class Base extends Activity {
                     // when Clerk won't renew it either, back to the sign-in screen.
                     if (e instanceof Hub.ApiError && ((Hub.ApiError) e).signin && Account.needsSignIn(this))
                         Ui.main.post(() -> { if (my == gen) signInAgain(); });
-                    // The hub answers a long-poll within 20 s: no answer in 25 means it's gone (or the
-                    // way to it). The next try goes to another PC of the mesh first.
-                    if (!(e instanceof Hub.ApiError)) h.failed();
-                    if (connected && e instanceof java.net.SocketTimeoutException && fails == 0) { fails = 0; continue; }
+                    // The hub answers a long-poll within 20 s: no answer in 40 means the connection
+                    // died on the way (or the PC). One such is a blip: Route keeps the PC in use
+                    // until it fails again (open() counts the connections it couldn't make).
+                    if (connected) h.failed(pc, e);
+                    if (connected && e instanceof java.net.SocketTimeoutException && fails == 0) continue;
                     fails++;
+                    // An answer from the PC (an error, a sign-in refused) is said at once; the
+                    // network only once it keeps failing.
+                    if (!Route.showsOffline(e instanceof Hub.ApiError || e instanceof Net.Refused, fails)) {
+                        try { Thread.sleep(Route.retryDelay(fails)); } catch (InterruptedException ignored) { }
+                        continue;
+                    }
                     // Said again when it changes (the connection dropped, then the PC refuses:
                     // Harbor was quit there).
                     final String why = h.whyDown(e);
                     final Throwable err = e;
-                    if (fails == 1 || !why.equals(lastWhy)) {
+                    if (!shown || !why.equals(lastWhy)) {
+                        shown = true;
                         lastWhy = why;
                         Ui.main.post(() -> { if (my == gen) { offline = true; offlineError = err; onOffline(true, why); } });
                     }
-                    try { Thread.sleep(Math.min(10_000, 1000L * fails)); } catch (InterruptedException ignored) { }
+                    try { Thread.sleep(Route.retryDelay(fails)); } catch (InterruptedException ignored) { }
                 }
             }
         });

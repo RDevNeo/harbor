@@ -42,7 +42,10 @@ import javax.crypto.spec.GCMParameterSpec;
  *  used last; when it doesn't answer, the next one that does takes over. Chats are named by
  *  their gid, the same on every PC (X-Harbor-Ids: global). */
 final class Hub {
-    static final int TIMEOUT = 25_000; // whole-request ceiling, events long-poll included
+    static final int TIMEOUT = 25_000; // whole-request ceiling
+    /** The events long-poll's: the PC answers within 20 s; a slow network or a busy PC may take
+     *  a few more, which isn't a reason to drop the connection and call it a failure. */
+    static final int POLL_TIMEOUT = 40_000;
     static final int MAX_REPLY = 16 << 20; // biggest answer read into memory (a long transcript is far below)
 
     final String id;
@@ -82,29 +85,29 @@ final class Hub {
         if (!fresh.pid.isEmpty()) pid = fresh.pid;
     }
 
-    /** Per hub: the endpoint calls go to now ("" = the paired PC). Shared by every screen. */
-    private static final Map<String, String> via = new HashMap<>();
+    /** Per hub: which PC calls go to, and when that changes (Route). Shared by every screen. */
+    private static final Map<String, Route> routes = new HashMap<>();
     private static final Map<String, Long> askedHubs = new HashMap<>();
-    /** hub/endpoint → when it last failed mid-call: tried last for a while. */
-    private static final Map<String, Long> bad = new HashMap<>();
-    private static final long BAD_FOR = 30_000;
 
-    /** The PC calls go to failed after connecting (it closed the connection, stopped
-     *  answering): the next call tries the others first. */
-    void failed() {
-        if (eps.isEmpty()) return;
-        synchronized (bad) { bad.put(id + "/" + via(), System.currentTimeMillis()); }
-    }
-
-    private boolean isBad(String v) {
-        synchronized (bad) {
-            Long t = bad.get(id + "/" + v);
-            return t != null && System.currentTimeMillis() - t < BAD_FOR;
+    private Route route() {
+        synchronized (routes) {
+            Route r = routes.get(id);
+            if (r == null) {
+                r = new Route(Ui.app == null ? "" : prefs(Ui.app).getString("via-" + id, ""), System.currentTimeMillis());
+                routes.put(id, r);
+            }
+            return r;
         }
     }
 
+    /** PC v failed a call after it connected (it closed the connection, stopped answering).
+     *  Once is a blip: calls stay with it until it fails again (Route). */
+    void failed(String v, Throwable e) {
+        if (e instanceof ApiError) return; // it answered
+        route().failed(v == null ? via() : v, "harbor".equals(down(e)), System.currentTimeMillis());
+    }
+
     private void good(String v) {
-        synchronized (bad) { bad.remove(id + "/" + v); }
         answered(id);
     }
 
@@ -185,13 +188,14 @@ final class Hub {
 
     /** The PC calls go to now: "" for the paired one, else its mesh id. */
     String via() {
-        synchronized (via) {
-            String v = via.get(id);
-            if (v == null) v = Ui.app == null ? "" : prefs(Ui.app).getString("via-" + id, "");
-            if (!v.isEmpty() && ep(v) == null) v = "";
-            via.put(id, v);
-            return v;
+        Route r = route();
+        String v = r.current();
+        if (!v.isEmpty() && ep(v) == null) {
+            r.reset("");
+            saveVia("");
+            v = "";
         }
+        return v;
     }
 
     /** The name of the PC calls go to now, when it isn't the paired one ("" otherwise). */
@@ -206,11 +210,7 @@ final class Hub {
         return null;
     }
 
-    private void setVia(String v) {
-        synchronized (via) {
-            if (v.equals(via.get(id))) return;
-            via.put(id, v);
-        }
+    private void saveVia(String v) {
         if (Ui.app != null) prefs(Ui.app).edit().putString("via-" + id, v).apply();
     }
 
@@ -412,17 +412,26 @@ final class Hub {
     /** A connection to PC v ("" = the paired one): its addresses in order, each pinned to its
      *  key. No headers yet. */
     private Net.Http connect(String v, String method, String path, int readTimeout, int connect) throws IOException {
+        return connect(v, method, path, readTimeout, connect, connect);
+    }
+
+    /** As above; first: the connect timeout for the address that answered last (a lost SYN on
+     *  a mobile network is resent after 1 s, then 3: 3 s gave up on the second loss). */
+    private Net.Http connect(String v, String method, String path, int readTimeout, int first, int connect) throws IOException {
         Ep e = ep(v);
         String pin = e == null ? fp : e.fp;
         int p = e == null ? port : e.port;
         IOException last = null;
         boolean noV6 = false;
+        int timeout = first;
         for (String addr : candidates(v, e)) {
+            int to = timeout;
+            timeout = connect;
             try {
                 Object[] hp = Addr.hostPort(addr, p);
                 // Only ever pinned: a PC without a key in the directory isn't reached.
                 if (pin == null || pin.isEmpty()) throw new IOException("This PC has no key in your workspace's directory.");
-                Net.Http c = Net.open((String) hp[0], (Integer) hp[1], pin, method, path, readTimeout, connect);
+                Net.Http c = Net.open((String) hp[0], (Integer) hp[1], pin, method, path, readTimeout, to);
                 synchronized (goodAddr) { goodAddr.put(id + "/" + v, addr); }
                 return c;
             } catch (Net.Refused x) {
@@ -443,44 +452,50 @@ final class Hub {
     }
 
     /** auth false: no token (GET /app.apk needs none on the PC's network). Only ever through
-     *  Net: TLS to the PC's pinned key. The PC used last first; when it can't be reached the
-     *  others are tried, and the first that answers is used from then on. Nothing was sent to a
-     *  PC that couldn't be reached (or answered with another key), so this is safe for every call. */
+     *  Net: TLS to the PC's pinned key. The PC in use first; when it can't be reached the
+     *  others are tried (Route decides the order, and when the PC in use changes). Nothing was
+     *  sent to a PC that couldn't be reached (or answered with another key), so this is safe
+     *  for every call. The connection's pc says which PC took it. */
     Net.Http open(String method, String path, int readTimeout, boolean auth) throws IOException {
+        return open(method, path, readTimeout, auth, false);
+    }
+
+    /** stick: only the PC in use, unless Route is leaving it (the events long-poll). */
+    Net.Http open(String method, String path, int readTimeout, boolean auth, boolean stick) throws IOException {
         sync();
+        Route r = route();
         String cur = via();
-        List<String> order = new ArrayList<>();
-        // Talking through another PC: once a minute the paired PC (whose chats these are) is
-        // tried first again, so the phone goes back to it as soon as it answers; a relay may
-        // run an older Harbor and miss things.
-        if (!cur.isEmpty() && backHome()) order.add("");
-        order.add(cur);
-        if (!cur.isEmpty() && !order.contains("")) order.add("");
-        for (Ep e : eps) if (!e.pid.equals(cur) && !e.pid.equals(pid)) order.add(e.pid);
-        // PCs that just failed go last (stable: the preference stays among the rest).
-        List<String> ok = new ArrayList<>(), later = new ArrayList<>();
-        for (String v : order) (isBad(v) ? later : ok).add(v);
-        order = ok;
-        order.addAll(later);
+        probeHome(r);
+        // The first PC is "": not again under its mesh id, should the directory list it twice.
+        List<String> all = endpoints();
+        all.removeIf(v -> !v.isEmpty() && v.equals(pid) && !v.equals(cur));
+        List<String> order = r.order(all, stick, System.currentTimeMillis());
         IOException last = null;
         boolean noV6 = false; // an IPv6 address was unreachable from this phone's network
         for (String v : order) {
-            int connect = order.size() > 1 || candidates(v, ep(v)).size() > 1 ? 3_000 : 8_000;
+            boolean several = order.size() > 1 || candidates(v, ep(v)).size() > 1;
+            int connect = several ? 3_000 : 8_000;
+            // The PC in use, at the address that answered last: the most likely to answer, so
+            // it gets the time a slow network needs.
+            int first = v.equals(cur) ? Math.max(connect, 6_000) : connect;
             try {
-                Net.Http c = connect(v, method, path, readTimeout, connect);
+                Net.Http c = connect(v, method, path, readTimeout, first, connect);
                 if (auth) {
                     authorize(c);
                     c.header("X-Harbor-Ids", "global");
                 }
                 c.header("Accept", "application/json");
+                c.pc = v;
                 if (v.equals(cur)) movedWhy = null;
-                setVia(v);
+                if (r.reached(v, System.currentTimeMillis())) saveVia(v);
                 return c;
             } catch (NoV6 x) {
                 noV6 = true;
                 last = (IOException) x.getCause();
+                r.failed(v, false, System.currentTimeMillis());
             } catch (IOException x) {
                 last = x;
+                r.failed(v, "harbor".equals(down(x)), System.currentTimeMillis());
                 if (v.equals(cur)) movedWhy = downNote(v, x);
             }
         }
@@ -489,18 +504,26 @@ final class Hub {
         throw last != null ? last : new IOException("no address");
     }
 
-    private static final Map<String, Long> homeTried = new HashMap<>();
-    private static final long HOME_EVERY = 60_000;
-
-    /** True at most once a minute per hub: time to try its own PC first again. */
-    private boolean backHome() {
-        long now = System.currentTimeMillis();
-        synchronized (homeTried) {
-            Long t = homeTried.get(id);
-            if (t != null && now - t < HOME_EVERY) return false;
-            homeTried.put(id, now);
-            return true;
-        }
+    /** Away from the workspace's first PC: now and then (Route.probeDue) a quiet call to it in
+     *  the background, never in the way of the user's; calls go back once it answers reliably. */
+    private void probeHome(Route r) {
+        if (!r.probeDue(System.currentTimeMillis())) return;
+        Ui.pool.execute(() -> {
+            boolean answered;
+            try {
+                Net.Http c = connect("", "GET", "/v1/app", 10_000, 6_000, 3_000);
+                try {
+                    authorize(c);
+                    c.header("Accept", "application/json");
+                    answered = c.code() > 0; // any answer: Harbor runs there and the way works
+                } finally {
+                    c.close();
+                }
+            } catch (IOException e) {
+                answered = false;
+            }
+            if (r.probed(answered, System.currentTimeMillis())) saveVia("");
+        });
     }
 
     /** The headers that say who calls: the account's Harbor token (every PC of the workspace
@@ -700,16 +723,17 @@ final class Hub {
         } catch (ApiError e) {
             throw e;
         } catch (IOException e) {
-            failed();
-            // A read can go to the next PC at once; a write may have reached the PC, so not.
-            if (!"GET".equals(method) || eps.isEmpty()) throw e;
+            // A read is asked again (a blip on the way is the usual cause; Route sends it to
+            // another PC when the one in use keeps failing); a write may have reached the PC, so not.
+            if (!"GET".equals(method)) throw e;
+            try { Thread.sleep(300); } catch (InterruptedException x) { throw e; }
             return call1(method, path, body, readTimeout);
         }
     }
 
     private JSONObject call1(String method, String path, JSONObject body, int readTimeout) throws IOException {
         Net.Http c = open(method, path, readTimeout);
-        String v = via();
+        String v = c.pc;
         try {
             if (body != null) {
                 byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
@@ -719,6 +743,9 @@ final class Hub {
             JSONObject r = reply(c);
             good(v);
             return r;
+        } catch (IOException e) {
+            failed(v, e); // dropped after connecting (an ApiError is an answer)
+            throw e;
         } finally {
             c.close();
         }

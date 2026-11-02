@@ -165,7 +165,25 @@ final class Images {
         });
     }
 
+    /** Images downloading at once. Each is its own connection, and a PC takes only so many from
+     *  one phone (8 from the internet): a chat full of screenshots used to go past that, the PC
+     *  shut the rest, and the phone took it for gone and moved to another PC. */
+    private static final java.util.concurrent.Semaphore fetching = new java.util.concurrent.Semaphore(4);
+
     private static Bitmap fetch(Hub hub, String url) {
+        try {
+            fetching.acquire();
+        } catch (InterruptedException e) {
+            return null;
+        }
+        try {
+            return fetch1(hub, url);
+        } finally {
+            fetching.release();
+        }
+    }
+
+    private static Bitmap fetch1(Hub hub, String url) {
         Net.Http c = null;
         try {
             c = hub.open("GET", url, 20_000);

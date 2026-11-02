@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Phone: no more "Connected through <PC>" on a flaky network. The phone moved to another PC of
+  the workspace after a single failure (a long-poll that took a few seconds too long, one
+  connection the PC turned away while a chat's images loaded) and went back a minute later, with
+  a toast each way. Now the PC in use stays until it fails twice in a row (or refuses: Harbor
+  isn't running there), a single call it can't take goes to another PC that once, the way back
+  to the workspace's first PC is tested quietly in the background (and less often when it keeps
+  dropping out), images download four at a time, and a blip no longer flashes the offline card.
+
 ## [0.111.0] - 2026-11-02
 
 ### Removed

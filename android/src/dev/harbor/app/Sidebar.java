@@ -186,9 +186,9 @@ final class Sidebar {
         list.addView(nav(Ui.I_PR_OPEN, "Pull requests", null, Ui.FG, v -> github(GhList.PRS)), Ui.inset());
         list.addView(nav(Ui.I_CIRCLE_DOT, "Issues", null, Ui.FG, v -> github(GhList.ISSUES)), Ui.inset());
         if (Engine.available(a)) list.addView(nav(Ui.I_GLOBE, "Browser", null, Ui.FG, v -> Browser.open(a, "")), Ui.inset());
-        // Which PC answers: worth a word with several paired, or when another of the mesh does.
-        String via = a.hub.viaName();
-        String pc = !via.isEmpty() ? a.hub.label() + " · via " + via : Hub.all(a).size() > 1 ? a.hub.label() : null;
+        // Which workspace, with several. Which of its PCs answers isn't said here: any of them
+        // does, and the line would come and go with the network (PCs › shows it).
+        String pc = Hub.all(a).size() > 1 ? a.hub.label() : null;
         list.addView(nav(Ui.I_MONITOR, "PCs", pc, Ui.FG, v -> pcs()), Ui.inset());
         // The PC answering runs an older Harbor than this app (often a relay while the phone's
         // own PC is out of reach): newer things won't show until it's updated.

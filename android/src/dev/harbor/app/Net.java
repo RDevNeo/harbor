@@ -260,6 +260,8 @@ final class Net {
         private final StringBuilder head;
         /** The hub's fingerprint as its TLS handshake showed it (null: plain loopback). */
         final String seen;
+        /** Which PC of the workspace took it (Hub.open: "" the first one, else its mesh id). */
+        volatile String pc = "";
         private OutputStream out;
         private InputStream in;
         private int code = -1;
