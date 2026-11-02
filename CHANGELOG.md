@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.110.1] - 2026-11-02
+
+### Fixed
+- An update that brings a new runtime no longer restarts Harbor halfway through: it fetched the
+  browser engine, video player and phone app after putting the new runtime in place, and Harbor
+  restarted into it before the app bundle was there, failed, rolled back and tried again.
+
 ## [0.110.0] - 2026-11-02
 
 ### Changed
