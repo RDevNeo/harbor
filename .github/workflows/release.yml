@@ -266,7 +266,8 @@ jobs:
           rt=$(jq -r .runtime art/harbor-manifest/harbor-app.json)
           gh release download "v$rt" -p harbor-runtime-x86_64 -D /tmp/rt
           chmod +x /tmp/rt/harbor-runtime-x86_64
-          said=$(/tmp/rt/harbor-runtime-x86_64 smoke-bundle art/harbor-x86_64/harbor-app.js)
+          # An absolute path: the runtime resolves a relative one inside its own embedded files.
+          said=$(/tmp/rt/harbor-runtime-x86_64 smoke-bundle "$PWD/art/harbor-x86_64/harbor-app.js")
           [ "$said" = "harbor ${{ needs.plan.outputs.version }}" ] || { echo "::error::the bundle on runtime $rt says: $said"; exit 1; }
       # Runs by hand without the signing secrets sign with a throwaway key, only to prove it signs.
       - name: Sign the APK
