@@ -12,6 +12,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ### Fixed
 - Usage limits: a turn's report no longer beats the usage monitor's newer numbers.
+- A chat or sub-agent that runs on another PC of the mesh shows as working on the desktop again,
+  with how long it has been running: in the Agents panel, the agent strip above the composer, the
+  sidebar, the "Working…" line and the status bars, as the phone already showed it. It read
+  "idle" while it worked.
 
 ## [0.117.0] - 2026-11-02
 
@@ -111,7 +115,6 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   images into their links for a moment: the picture stays while a sharper (or smaller) copy is
   made for the new size, and swaps in when it's ready. Zoomed out, inline images also keep their
   size instead of shrinking twice.
-
 ## [0.114.1] - 2026-11-02
 
 ### Changed

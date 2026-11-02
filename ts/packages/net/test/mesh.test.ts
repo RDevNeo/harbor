@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { Engine } from "@harbor/agents";
 import { blankChat, Store, type Item } from "@harbor/store";
 import { Api } from "../src/api.ts";
 import { http, httpPart, setHello } from "../src/client.ts";
@@ -10,7 +11,7 @@ import { err, type Request } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
 import { forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, parseWhois, partOf, showCode, startsTurn, statusNode } from "../src/mesh.ts";
-import { StoreReplica, sameRemote } from "../src/meshstore.ts";
+import { StoreReplica, type StoreReplicaOptions, sameRemote } from "../src/meshstore.ts";
 import { relayServe } from "../src/relay.ts";
 import { admit, allowedKey, cleanAddrs, downOf, label, loadAllowed, peerId, type Allowed, type Node } from "../src/shared.ts";
 import { generateIdentity, type Identity } from "../src/tls.ts";
@@ -234,14 +235,14 @@ interface Pc {
   heard: (number | null)[];
 }
 
-async function pc(name: string): Promise<Pc> {
+async function pc(name: string, live?: StoreReplicaOptions["live"]): Promise<Pc> {
   const id = generateIdentity();
   const store = Store.openAt(join(tmp, `${name}.db`));
   const hub = new Hub([], 0);
   hub.mesh.me = { id: `pc:${name}`, name };
   store.set("mesh_enabled", "1");
   const heard: (number | null)[] = [];
-  const replica = new StoreReplica({ store, hub, version: "0.0.0-test", copied: (chat) => void heard.push(chat) });
+  const replica = new StoreReplica({ store, hub, version: "0.0.0-test", copied: (chat) => void heard.push(chat), ...(live ? { live } : {}) });
   let api: Api | null = null;
   const mesh = new Mesh({
     hub,
@@ -327,5 +328,39 @@ describe("two TypeScript PCs", () => {
       ["pc:beta", true],
       ["pc:alpha", true],
     ]);
+  }, 30_000);
+
+  test("a sub-agent working on its home PC reads as working on the other, and idle once it ends", async () => {
+    const turns = new Map<number, number>();
+    const a = await pc("gamma", (chat) => {
+      const at = turns.get(chat);
+      return at === undefined ? null : { running: true, sinceMs: at, queued: 0, status: null };
+    });
+    const b = await pc("delta");
+    const lead = a.store.createChat(blankChat({ title: "Lead", role: "lead", name: "lead" }));
+    const sub = a.store.createChat(blankChat({ title: "Usage", role: "sub", name: "usage-ts", parent: lead.id }));
+    const code = showCode(b.store);
+    setHello("pc:gamma", "gamma", a.id);
+    await a.mesh.pairJoin(`127.0.0.1:${b.port}`, code.code.toLowerCase());
+    a.replica.reload();
+    a.mesh.start();
+    b.mesh.start();
+    const e = new Engine({ store: b.store, accounts: () => [], changed: () => {}, isForeign: (id) => b.hub.mesh.foreign.has(id), copyTurn: (id) => b.replica.remote.get(id) ?? null });
+    const copyOf = (hid: number) => b.store.chats().find((c) => c.home === "pc:gamma" && c.homeId === hid);
+    expect(await until(() => copyOf(sub.id) !== undefined && copyOf(lead.id) !== undefined)).toBe(true);
+    e.reload();
+    const [cl, cs] = [copyOf(lead.id)?.id ?? -1, copyOf(sub.id)?.id ?? -1];
+    expect(e.liveSubs(cl)).toEqual([]);
+    const at = Date.now() - 180_000;
+    turns.set(sub.id, at);
+    a.replica.touch(sub.id);
+    expect(await until(() => e.liveSince(cs) === at)).toBe(true);
+    expect(e.liveSubs(cl).map(([c]) => c.id)).toEqual([cs]);
+    expect(e.teamStarted(cl)).toBe(at);
+    expect(e.running(cs)).toBe(false);
+    turns.delete(sub.id);
+    a.replica.touch(sub.id);
+    expect(await until(() => !e.live(cs))).toBe(true);
+    expect(e.teamStarted(cl)).toBeNull();
   }, 30_000);
 });

@@ -101,7 +101,7 @@ import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/s
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt">;
 
 export interface HubOptions {
   version: string;
@@ -613,6 +613,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       hub.touch(chat, true);
     },
     isForeign: (chat) => hub.mesh.foreign.has(chat),
+    copyTurn: (chat) => replica.remote.get(chat) ?? null,
     hostname: () => hub.mesh.me.name,
     chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
     remoteSpec,

@@ -2,7 +2,7 @@
 // net's phone and mesh routes call into it.
 import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type Chat, type Item, limits, type Mention, type Repo, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
+import { type Chat, type CopyTurn, type Item, limits, liveSince, type Mention, type Repo, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
 import { parse as parseJson } from "./json.ts";
 import type { Event, RemoteSpec, Turn } from "./agent.ts";
@@ -34,6 +34,8 @@ export interface EngineHost {
   changed(chatId: number | null): void;
   /** A chat whose home is another PC: its turns run there (net). */
   isForeign?(chatId: number): boolean;
+  /** Without it, every copy reads as idle. */
+  copyTurn?(chatId: number): CopyTurn | null;
   /** The chat is being handed to another PC (net's movepcrun.ts): its turns and queue wait. */
   moving?(chatId: number): boolean;
   /** A message sent to a moving chat is kept by the host, which sends it where the chat ends up; true when kept. */
@@ -364,6 +366,7 @@ export class Engine {
     return !r || this.store.get(`untrusted:${r.local ?? r.path}`) !== "1";
   }
 
+  /** A turn on this PC: one this Harbor can stop, steer or wait for. A copy's turn is `live`. */
   running(id: number): boolean {
     return this.turns.has(id);
   }
@@ -372,9 +375,23 @@ export class Engine {
     return this.turns.get(id)?.at ?? null;
   }
 
-  /** When the chat's or one of its subagents' turns started, the earliest; null while none runs. */
+  /** The chat's turn wherever it runs: this PC's, or a copy's at its home PC. For what's shown. */
+  liveSince(id: number): number | null {
+    return liveSince(this.runningSince(id), this.foreign(id) ? this.host.copyTurn?.(id) : null);
+  }
+
+  live(id: number): boolean {
+    return this.liveSince(id) !== null;
+  }
+
+  /** Turns running on this PC and copies' turns running at their home PCs. */
+  liveCount(): number {
+    return this.turns.size + this.chats.filter((c) => !this.turns.has(c.id) && this.foreign(c.id) && this.live(c.id)).length;
+  }
+
+  /** When the chat's or one of its subagents' turns started (wherever they run), the earliest; null while none runs. */
   teamStarted(id: number): number | null {
-    const at = this.chats.filter((c) => c.id === id || (c.role === "sub" && c.parent === id)).flatMap((c) => this.runningSince(c.id) ?? []);
+    const at = this.chats.filter((c) => c.id === id || (c.role === "sub" && c.parent === id)).flatMap((c) => this.liveSince(c.id) ?? []);
     return at.length === 0 ? null : Math.min(...at);
   }
 
@@ -1490,11 +1507,20 @@ export class Engine {
     return a || b;
   }
 
-  /** The lead's subagents with a turn running now, longest running first, with seconds running. */
+  /** The lead's subagents with a turn running on this PC, longest running first, with seconds running. */
   runningSubs(lead: number): [Chat, number][] {
+    return this.subsSince(lead, (id) => this.runningSince(id));
+  }
+
+  /** `runningSubs` wherever they run, for what's shown. */
+  liveSubs(lead: number): [Chat, number][] {
+    return this.subsSince(lead, (id) => this.liveSince(id));
+  }
+
+  private subsSince(lead: number, since: (id: number) => number | null): [Chat, number][] {
     return this.subsOf(lead)
       .flatMap((c): [Chat, number][] => {
-        const at = this.runningSince(c.id);
+        const at = since(c.id);
         return at === null ? [] : [[c, Math.floor((Date.now() - at) / 1000)]];
       })
       .sort((a, b) => b[1] - a[1]);

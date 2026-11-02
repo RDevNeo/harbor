@@ -26,7 +26,7 @@ export function stripRows(h: BarsHost, lead: number): Row[] {
   if (!c || c.role !== "lead") return [];
   const repo = h.engine.repo(c.repoId);
   const root = repo ? repoDir(repo) : "";
-  return h.engine.runningSubs(lead).map(([s, secs]) => {
+  return h.engine.liveSubs(lead).map(([s, secs]) => {
     const acc = h.engine.account(s.account);
     const items = h.engine.transcripts.get(s.id)?.items ?? [];
     const usage = cost.ofItems(items);
@@ -63,8 +63,8 @@ function folder(h: BarsHost, c: Chat): Json {
 export function statusBars(h: BarsHost, id: number, nowMs: number): Record<string, Json> {
   const c = h.engine.chat(id);
   const lead = c?.role === "lead";
-  const subs = lead ? h.engine.runningSubs(id) : [];
-  const since = h.engine.runningSince(id);
+  const subs = lead ? h.engine.liveSubs(id) : [];
+  const since = h.engine.liveSince(id);
   const working = since === null ? null : { since_ms: since, subagents: subs.length, text: `Working…${subsRunning(subs.length)}` };
   const waiting =
     working === null && subs.length > 0

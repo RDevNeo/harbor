@@ -244,8 +244,8 @@ export function toolProject(e: Engine, me: Chat, a: unknown): number | null {
 
 export function statusWords(e: Engine, c: Chat): string {
   if (c.retired) return "retired";
-  if (e.turns.has(c.id) || e.subsOf(c.id).some((s) => e.turns.has(s.id))) {
-    const since = e.runningSince(c.id);
+  if (e.live(c.id) || e.subsOf(c.id).some((s) => e.live(s.id))) {
+    const since = e.liveSince(c.id);
     return `working${since === null ? "" : ` ${elapsed(Math.floor((Date.now() - since) / 1000))}`}`;
   }
   if ((e.pending.get(c.id)?.length ?? 0) > 0) return "queued";

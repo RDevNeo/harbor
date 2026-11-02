@@ -651,11 +651,17 @@ export class Shell {
     };
     w.strip_stop_all = () => {
       const lead = this.chatId;
-      const n = this.engine.runningSubs(lead).length;
+      const n = this.engine.liveSubs(lead).length;
       const subs = n === 1 ? "1 running sub-agent" : `${n} running sub-agents`;
-      const title = this.engine.running(lead) ? `Stop the main agent and ${subs}?` : `Stop ${subs}?`;
+      const title = this.engine.live(lead) ? `Stop the main agent and ${subs}?` : `Stop ${subs}?`;
       this.dialog(title, "Sub-agent queues are cleared; your queued messages wait until you resume. Finished work and transcripts stay.", "Stop all", true, null, (ok) => {
-        if (ok) this.engine.stopAll(lead);
+        if (!ok) return;
+        // A copy's team runs at its home PC: each of its turns is stopped there.
+        const copy = this.data.chat(lead);
+        if (this.meshChat.foreign(copy)) {
+          for (const [c] of this.engine.liveSubs(lead)) this.meshChat.stop(c);
+          if (this.engine.live(lead)) this.meshChat.stop(copy);
+        } else this.engine.stopAll(lead);
       });
       this.win.dialog_stop = true;
     };
@@ -804,7 +810,7 @@ export class Shell {
   /** The running subagents over a lead's composer (agentstrip.rs `agent_strip`). */
   private refreshStrip(): void {
     const lead = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
-    const subs = lead?.role === "lead" ? this.engine.runningSubs(lead.id) : [];
+    const subs = lead?.role === "lead" ? this.engine.liveSubs(lead.id) : [];
     const queued = lead ? this.engine.subsOf(lead.id).reduce((n, c) => n + (this.engine.pending.get(c.id)?.length ?? 0), 0) : 0;
     const v = stripView(subs.length, queued, lead ? (this.stripFold.get(lead.id) ?? null) : null);
     sync(
@@ -854,11 +860,11 @@ export class Shell {
     const t = now();
     const off = utcOffset();
     const marks = loadMarks(this.data.store.get("agent_settle"));
-    const busy = (id: number) => ({ running: this.engine.running(id), pending: this.engine.pending.get(id)?.length ?? 0, queued: this.engine.queued(id).length, paused: this.engine.paused.has(id) });
+    const busy = (id: number) => ({ running: this.engine.live(id), pending: this.engine.pending.get(id)?.length ?? 0, queued: this.engine.queued(id).length, paused: this.engine.paused.has(id) });
     const subs = this.engine.subsOf(lead.id);
-    const { active, settled } = teamAgents(subs, (id) => this.engine.running(id), (c) => agentSettled(busy(c.id), marks, c, t));
+    const { active, settled } = teamAgents(subs, (id) => this.engine.live(id), (c) => agentSettled(busy(c.id), marks, c, t));
     const row = (c: (typeof subs)[number], isSettled: boolean): AgentRow => {
-      const since = this.engine.runningSince(c.id);
+      const since = this.engine.liveSince(c.id);
       const card = agentCard({ running: since === null ? null : Math.floor((Date.now() - since) / 1000), queued: this.engine.pending.get(c.id)?.length ?? 0, paused: this.engine.paused.has(c.id) ? { at: null } : null, updated: c.updated }, isSettled, false, t, off);
       const acc = this.account(c.account);
       const kind = acc?.kind ?? kindOfAccount(c.account);
@@ -988,8 +994,8 @@ export class Shell {
     const chat = this.data.chat(this.chatId);
     if (!chat) return;
     const follow = this.win.at_end;
-    const since = this.engine.runningSince(chat.id);
-    const subs = chat.role === "lead" ? this.engine.runningSubs(chat.id).length : 0;
+    const since = this.engine.liveSince(chat.id);
+    const subs = chat.role === "lead" ? this.engine.liveSubs(chat.id).length : 0;
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
@@ -1021,7 +1027,7 @@ export class Shell {
   }
 
   private chatStatus(c: Chat, idle: Status): Status {
-    const since = this.engine.teamStarted(c.id) ?? this.engine.runningSince(c.id);
+    const since = this.engine.teamStarted(c.id) ?? this.engine.liveSince(c.id);
     const t = now();
     return ownStatus(
       { working: since !== null ? Math.floor((Date.now() - since) / 1000) : null, paused: this.engine.paused.has(c.id) ? { at: null } : null, typing: false, viewed: false, failed: this.engine.failed.has(c.id), unread: this.engine.unread.has(c.id) },
@@ -1116,7 +1122,7 @@ export class Shell {
     sync(this.settledRows, settledRows, sameSideRow);
     const w = this.win;
     w.settled_count = settledRows.length;
-    w.running = this.engine.turns.size;
+    w.running = this.engine.liveCount();
     const names = ws.all.filter((x) => shown.includes(x.id)).map((x) => x.name);
     const q = this.query.trim();
     w.side_ws = ws.all.length > 0;
@@ -1308,7 +1314,7 @@ export class Shell {
         sub: c.role === "sub",
         settled: c.settled,
         updated: c.updated,
-        running: this.engine.running(c.id),
+        running: this.engine.live(c.id),
         project: c.repoId === null ? "" : (this.data.repo(c.repoId)?.name ?? ""),
         pc: c.home === "" ? "This PC" : c.home,
       })),
@@ -1895,7 +1901,7 @@ export class Shell {
 
   private spin(): void {
     const g = busOf<{ driven: boolean; tick: number }>(this.win, "Spin");
-    if (this.engine.turns.size > 0) {
+    if (this.engine.liveCount() > 0) {
       if (this.spinTimer !== null) return;
       g.driven = true;
       let n = 0;
@@ -1913,8 +1919,8 @@ export class Shell {
   private spinTimer: ReturnType<typeof setInterval> | null = null;
 
   private refreshRunning(): void {
-    if (this.engine.turns.size === 0) return;
-    if (this.view === "chat" && this.engine.running(this.chatId)) this.refreshCards();
+    if (this.engine.liveCount() === 0) return;
+    if (this.view === "chat" && this.engine.live(this.chatId)) this.refreshCards();
     this.refreshSidebar();
     this.refreshTeam();
     this.refreshStrip();

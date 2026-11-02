@@ -617,3 +617,31 @@ test("a copy written into the store from its home PC shows: the chat list and it
   expect(e.transcript(c.id).items).toEqual([{ kind: "text", text: "from the laptop", at: 1 }]);
   expect(changed).toEqual([null, c.id]);
 });
+
+test("a copy's turns read as live from its home PC's word, never as this PC's", () => {
+  process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
+  const store = Store.openTemp();
+  const copies = new Map<number, { running: boolean; sinceMs: number | null }>();
+  const e = new Engine({ store, accounts: () => [account], changed: () => {}, copyTurn: (id) => copies.get(id) ?? null });
+  const lead = newChat(store, { role: "lead", name: "lead", home: "pc2", homeId: 7 });
+  const sub = newChat(store, { role: "sub", name: "usage-ts", parent: lead.id, home: "pc2", homeId: 8 });
+  const mine = newChat(store);
+  e.reload();
+  expect(e.live(sub.id)).toBe(false);
+  expect(e.teamStarted(lead.id)).toBeNull();
+  const at = Date.now() - 180_000;
+  copies.set(sub.id, { running: true, sinceMs: at });
+  // Stale word about a chat of this PC's is ignored.
+  copies.set(mine.id, { running: true, sinceMs: at });
+  expect(e.liveSince(sub.id)).toBe(at);
+  expect(e.running(sub.id)).toBe(false);
+  expect(e.runningSubs(lead.id)).toEqual([]);
+  expect(e.liveSubs(lead.id).map(([c, secs]) => [c.id, secs >= 180])).toEqual([[sub.id, true]]);
+  expect(e.teamStarted(lead.id)).toBe(at);
+  expect(e.live(mine.id)).toBe(false);
+  expect(e.liveCount()).toBe(1);
+  copies.set(sub.id, { running: false, sinceMs: null });
+  expect(e.liveSubs(lead.id)).toEqual([]);
+  expect(e.liveCount()).toBe(0);
+  store.close();
+});

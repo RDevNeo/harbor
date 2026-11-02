@@ -1,6 +1,6 @@
 import { allowedAccounts, checkRun, isRunError } from "./runsettings.ts";
 import type { providers, SentBy } from "@harbor/agents";
-import { blankChat, itemHash, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type SentVia, type Store } from "@harbor/store";
+import { blankChat, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
@@ -357,10 +357,7 @@ export class PhoneRoutes {
   }
 
   since(id: number): number | null {
-    const own = this.d.engine?.runningSince(id) ?? null;
-    if (own !== null) return own;
-    const r = this.d.replica.remote.get(id);
-    return r?.running ? (r.sinceMs ?? Date.now()) : null;
+    return liveSince(this.d.engine?.runningSince(id) ?? null, this.d.replica.remote.get(id));
   }
 
   /** api.rs `team_working`: a lead works while a sub-agent runs or has work queued. */
