@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.111.1] - 2026-11-02
+
 ### Fixed
 - Phone: no more "Connected through <PC>" on a flaky network. The phone moved to another PC of
   the workspace after a single failure (a long-poll that took a few seconds too long, one
