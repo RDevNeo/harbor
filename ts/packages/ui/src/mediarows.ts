@@ -19,12 +19,24 @@ export function fitIn(w: number, h: number, box: [number, number]): [number, num
   return [Math.round(w * k), Math.round(h * k)];
 }
 
+/** A decoded image and the size of its file (the decode may be smaller: it's capped at what drawing it needs). */
+interface Got {
+  image: Pixels;
+  dims: [number, number];
+}
+
 /** Decoded images by path and size class; a card shows an image once it's decoded. Only the images of the
- * cards last built are kept (`sweep`): a large one is a few MB, and a long chat has many. */
+ * cards last built are kept (`sweep`): a large one is a few MB, and a long chat has many.
+ *
+ * A large image's size class follows the screen's scale (zoom, another display), so a new scale asks for a new
+ * decode. Until it's there the card keeps the image it has (`shown`): an image on the screen never goes blank or
+ * back to its link while it's decoded again. One the file's own size already fits isn't decoded again at all. */
 export class MediaRows {
-  private got = new Map<string, Pixels | null>();
+  private got = new Map<string, Got | null>();
   private failed = new Set<string>();
   private used = new Set<string>();
+  /** The last key decoded for a path's large image or video poster (`l:` or `v:` and the path). */
+  private shown = new Map<string, string>();
 
   constructor(
     private pkg: MediaPkg,
@@ -42,57 +54,71 @@ export class MediaRows {
         continue;
       }
       const large = m.shown;
-      const key = large ? `l${cap}:${m.path}` : `t:${m.path}`;
-      this.used.add(key);
-      const img = this.got.get(key);
-      if (img === undefined) {
-        this.got.set(key, null);
-        this.pkg.images
-          .decode(m.path, null, large ? cap : this.pkg.images.THUMB_PX)
-          .then(({ image }) => {
-            if (this.got.get(key) !== null) return;
-            this.got.set(key, this.native(image));
-            this.loaded();
-          })
-          .catch(() => {});
-        continue;
-      }
-      if (img === null) continue;
-      const [w, h] = large ? fitIn(img.width, img.height, this.pkg.images.inlineSize(column)) : THUMB;
-      out.push({ image: img, caption: m.caption, large, w, h, path: m.path, video: false, name: "" });
+      const got = large ? this.take(`l:${m.path}`, `l${cap}:${m.path}`, m.path, cap) : this.take(null, `t:${m.path}`, m.path, this.pkg.images.THUMB_PX);
+      if (!got) continue;
+      const [w, h] = large ? fitIn(got.dims[0], got.dims[1], this.pkg.images.inlineSize(column)) : THUMB;
+      out.push({ image: got.image, caption: m.caption, large, w, h, path: m.path, video: false, name: "" });
     }
     return out;
+  }
+
+  /** `key`'s image, decoded to `cap` if it isn't yet. Meanwhile the one decoded last under `slot` (another scale's),
+   * kept until the new one is there. */
+  private take(slot: string | null, key: string, path: string, cap: number): Got | null {
+    this.used.add(key);
+    const img = this.got.get(key);
+    if (img) return img;
+    const prev = slot === null ? undefined : this.shown.get(slot);
+    const old = prev !== undefined && prev !== key ? this.got.get(prev) : undefined;
+    // The file is no larger than either size: the new decode would be the same pixels.
+    if (old && slot !== null && old.image.width === old.dims[0] && old.image.height === old.dims[1] && Math.max(old.dims[0], old.dims[1]) <= cap) {
+      this.got.set(key, old);
+      this.shown.set(slot, key);
+      return old;
+    }
+    if (img === undefined) {
+      this.got.set(key, null);
+      this.pkg.images
+        .decode(path, null, cap)
+        .then(({ image, dims }) => {
+          if (this.got.get(key) !== null) return;
+          this.got.set(key, { image: this.native(image), dims });
+          if (slot !== null) this.shown.set(slot, key);
+          this.loaded();
+        })
+        .catch(() => {
+          if (slot === null) return;
+          this.failed.add(key);
+          this.loaded();
+        });
+    }
+    if (!old || prev === undefined || slot === null) return null;
+    if (this.failed.has(key)) {
+      // The new size can't be decoded: the old one stays.
+      this.got.set(key, old);
+      this.shown.set(slot, key);
+      return old;
+    }
+    this.used.add(prev);
+    return old;
   }
 
   /** images.rs `video`: its poster (a dark card until then, or without ffmpeg) under a play button. */
   private video(path: string, column: number, cap: number): MediaRow {
     const key = `v${cap}:${path}`;
-    this.used.add(key);
     const max = this.pkg.images.inlineSize(column);
-    const img = this.got.get(key);
-    if (img === undefined) {
-      this.got.set(key, null);
-      this.pkg.images
-        .decode(path, null, cap)
-        .then(({ image }) => {
-          if (this.got.get(key) !== null) return;
-          this.got.set(key, this.native(image));
-          this.loaded();
-        })
-        .catch(() => {
-          this.failed.add(key);
-          this.loaded();
-        });
-    }
+    const got = this.take(`v:${path}`, key, path, cap);
     const name = this.pkg.images.imageName(path);
     const wide = Math.min(max[0], 360);
-    const [w, h] = img ? fitIn(img.width, img.height, max) : [wide, Math.round(wide * 0.5625)];
-    return { image: img ?? noPixels, caption: "", large: true, w: Math.max(w, 160), h: Math.max(h, 90), path, video: true, name };
+    const [w, h] = got ? fitIn(got.dims[0], got.dims[1], max) : [wide, Math.round(wide * 0.5625)];
+    return { image: got?.image ?? noPixels, caption: "", large: true, w: Math.max(w, 160), h: Math.max(h, 90), path, video: true, name };
   }
 
   /** After a build: images no card asked for since the last sweep are let go (decoded again if shown again). */
   sweep(): void {
     for (const k of this.got.keys()) if (!this.used.has(k)) this.got.delete(k);
+    for (const k of this.failed) if (!this.used.has(k)) this.failed.delete(k);
+    for (const [slot, k] of this.shown) if (!this.used.has(k)) this.shown.delete(slot);
     this.used.clear();
   }
 }

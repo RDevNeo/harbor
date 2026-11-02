@@ -73,3 +73,46 @@ test("a large image is decoded to the width it's drawn at, in the screen's pixel
   expect(inlineCap(300, 1, 1280)).toBe(300);
   expect(inlineCap(760, Number.NaN, 1280)).toBe(960);
 });
+
+test("a zoom or a new display scale never blanks a shown image: the old decode stays until the new one is there", async () => {
+  const sharp = (await import("sharp")).default;
+  const big = join(dir, "wide.png");
+  const small = join(dir, "tiny.png");
+  writeFileSync(big, await sharp({ create: { width: 2000, height: 1000, channels: 4, background: "#3a6" } }).png().toBuffer());
+  writeFileSync(small, await sharp({ create: { width: 200, height: 100, channels: 4, background: "#a36" } }).png().toBuffer());
+  const rows = new MediaRows(media, () => {});
+  const card = { kind: "text" as const, text: `![a](${big}) ![b](${small})`, at: 1, forkable: false };
+  // Every build (and its sweep) is checked: both images, each at its one logical size, never an empty image.
+  const build = (scale: number) => {
+    const r = rows.rows(card, dir, 760, scale);
+    rows.sweep();
+    return r;
+  };
+  const shown = (scale: number) => {
+    const r = build(scale);
+    expect(r.map((m) => [m.path, m.w, m.h])).toEqual([
+      [big, 480, 240],
+      [small, 200, 100],
+    ]);
+    for (const m of r) expect(m.image.width).toBeGreaterThan(1);
+    return r.map((m) => m.image.width);
+  };
+  const until = async (scale: number, widths: number[]) => {
+    for (let i = 0; i < 300; i++) {
+      if (build(scale).length === 2 && shown(scale).join() === widths.join()) return;
+      await Bun.sleep(10);
+    }
+    expect(shown(scale)).toEqual(widths);
+  };
+  for (let i = 0; i < 300 && build(1).length < 2; i++) await Bun.sleep(10);
+  expect(shown(1)).toEqual([480, 200]);
+  // Zoom keys in a row, each build while the sharper decodes run: the 480 px decode stays on the screen.
+  for (const scale of [1.25, 1.5, 2]) expect(shown(scale)).toEqual([480, 200]);
+  await until(2, [960, 200]);
+  // Zoomed out to 50%: the sharper one shows until the smaller decode is there, drawn at the same size.
+  expect(shown(0.5)).toEqual([960, 200]);
+  await until(0.5, [240, 200]);
+  // Back: the image shown at each step is never let go before its successor.
+  for (const scale of [0.5, 1, 0.5, 1, 1.25]) shown(scale);
+  await until(1.25, [600, 200]);
+});
