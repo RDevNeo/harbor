@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.114.3] - 2026-11-02
+
 ### Fixed
 - Removing an image from the desktop composer (the × on its chip) also takes its "[Image #N]" out
   of the text, and the later images' numbers move down to match what's sent. Erasing the token
