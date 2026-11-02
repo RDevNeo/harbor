@@ -108,6 +108,9 @@ if ((kind !== "app" && kind !== "runtime" && kind !== "single") || outfile === u
 }
 
 const version = opt("--version");
+// Harbor's Google OAuth clients (packages/mcp/src/apps.ts), from the build's environment when set:
+// release.yml passes its secrets by name, so the values never show on a command line.
+const google: Array<[string, string | undefined]> = ["HARBOR_GOOGLE_CLIENT_ID", "HARBOR_GOOGLE_CLIENT_SECRET", "HARBOR_GOOGLE_WEB_CLIENT_ID", "HARBOR_GOOGLE_WEB_CLIENT_SECRET"].map((k) => [k, process.env[k] || undefined]);
 
 const r =
   kind === "app"
@@ -118,7 +121,7 @@ const r =
         minify: true,
         outdir: dirname(outfile),
         naming: basename(outfile),
-        define: defines([["HARBOR_VERSION", opt("--version")], ["HARBOR_MIN_RUNTIME", opt("--min-runtime")], ["HARBOR_GIT_SHA", opt("--sha")]]),
+        define: defines([["HARBOR_VERSION", opt("--version")], ["HARBOR_MIN_RUNTIME", opt("--min-runtime")], ["HARBOR_GIT_SHA", opt("--sha")], ...google]),
       })
     : kind === "single"
       ? await Bun.build({
@@ -127,7 +130,7 @@ const r =
           compile: { outfile },
           minify: !rest.includes("--debug"),
           sourcemap: "none",
-          define: defines([["HARBOR_VERSION", version], ["HARBOR_RUNTIME_VERSION", version], ["HARBOR_MIN_RUNTIME", version], ["HARBOR_GIT_SHA", opt("--sha")]]),
+          define: defines([["HARBOR_VERSION", version], ["HARBOR_RUNTIME_VERSION", version], ["HARBOR_MIN_RUNTIME", version], ["HARBOR_GIT_SHA", opt("--sha")], ...google]),
         })
       : await Bun.build({
           entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],

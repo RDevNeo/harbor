@@ -58,6 +58,8 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       lane: ${{ steps.plan.outputs.lane }}
       min: ${{ steps.plan.outputs.min }}
+      apk: ${{ steps.plan.outputs.apk }}
+      previous: ${{ steps.plan.outputs.previous }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,11 +90,21 @@ jobs:
           else
             lane=runtime
           fi
-          IFS=.- read -r ma mi pa _ <<< "$ver"
+          # The phone app is rebuilt only when android/ changed since the latest release (or a new
+          # runtime goes out): otherwise that release's signed APK is attached again and the
+          # manifest keeps naming it, so phones aren't asked to update to the same app.
+          apk=build apkcode=()
+          if [ "$lane" = bundle ] && git diff --quiet "$tag" HEAD -- android/; then
+            apk=keep
+          else
+            IFS=.- read -r ma mi pa _ <<< "$ver"
+            apkcode=(--apk-code $((ma * 1000000 + mi * 1000 + pa)))
+          fi
           bun ts/scripts/release.ts manifest --version "$ver" --lane "$lane" --out manifest/harbor-app.json $prev \
-            --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" --apk-code $((ma * 1000000 + mi * 1000 + pa))
+            --browser-id "$(git rev-parse HEAD:browser)" --video-id "$(git rev-parse HEAD:video)" "${apkcode[@]}"
           cat manifest/harbor-app.json
-          { echo "version=$ver"; echo "lane=$lane"; echo "min=$(jq -r .minRuntime manifest/harbor-app.json)"; } >> "$GITHUB_OUTPUT"
+          { echo "version=$ver"; echo "lane=$lane"; echo "min=$(jq -r .minRuntime manifest/harbor-app.json)"
+            echo "apk=$apk"; echo "previous=$tag"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
           name: harbor-manifest
@@ -113,12 +125,17 @@ jobs:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
       - name: Build (on boat)
-        # Harbor's Google Cloud Web client id: the phone's own Google account picker (the APK). A
-        # repository secret, not a variable: GitHub prints a step's env in its log, masking only
-        # secrets. Missing: picker off.
+        # Harbor's Google OAuth clients: the Desktop one for the Gmail app's one-click sign-in and the
+        # Web one phones get Gmail codes for, baked into the app (scripts/build.ts); the Web client id
+        # is also the phone's own Google account picker (the APK). Repository secrets, not
+        # variables: GitHub prints a step's env in its log, masking only secrets. Missing (forks):
+        # each user brings their own client, and the picker is off.
         env:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" bash .github/boat/build.sh x86_64 licences android
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh x86_64 licences ${{ needs.plan.outputs.apk == 'build' && 'android' || '' }}
       - name: Fetch the results
         run: |
           set -eu
@@ -132,6 +149,7 @@ jobs:
           name: harbor-x86_64
           path: out/harbor-x86_64/
       - uses: actions/upload-artifact@v7
+        if: needs.plan.outputs.apk == 'build'
         with:
           name: harbor-android-unsigned
           path: out/harbor-android/harbor-android-unsigned.apk
@@ -154,7 +172,12 @@ jobs:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
       - name: Build (on boat)
-        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" bash .github/boat/build.sh aarch64
+        env:
+          HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          HARBOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          HARBOR_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_SECRET }}
+        run: .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- env HARBOR_GIT_SHA="$GITHUB_SHA" HARBOR_VERSION="${{ needs.plan.outputs.version }}" HARBOR_MIN_RUNTIME="${{ needs.plan.outputs.min }}" HARBOR_GOOGLE_WEB_CLIENT_ID="$HARBOR_GOOGLE_WEB_CLIENT_ID" HARBOR_GOOGLE_CLIENT_ID="$HARBOR_GOOGLE_CLIENT_ID" HARBOR_GOOGLE_CLIENT_SECRET="$HARBOR_GOOGLE_CLIENT_SECRET" HARBOR_GOOGLE_WEB_CLIENT_SECRET="$HARBOR_GOOGLE_WEB_CLIENT_SECRET" bash .github/boat/build.sh aarch64
       - name: Fetch the results
         run: |
           set -eu
@@ -222,8 +245,31 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: art
+      # The phone app didn't change since the latest release (plan): that release's signed APK again.
+      - name: The latest release's APK
+        if: needs.plan.outputs.apk == 'keep'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p art/harbor-android
+          gh release download "${{ needs.plan.outputs.previous }}" -p harbor-android.apk -D art/harbor-android
+      # A bundle-only release: the runtime PCs have now must load the new bundle (the build already
+      # checked it on the new runtime).
+      - name: The bundle starts on the runtime PCs have now
+        if: needs.plan.outputs.lane == 'bundle'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          rt=$(jq -r .runtime art/harbor-manifest/harbor-app.json)
+          gh release download "v$rt" -p harbor-runtime-x86_64 -D /tmp/rt
+          chmod +x /tmp/rt/harbor-runtime-x86_64
+          said=$(/tmp/rt/harbor-runtime-x86_64 smoke-bundle art/harbor-x86_64/harbor-app.js)
+          [ "$said" = "harbor ${{ needs.plan.outputs.version }}" ] || { echo "::error::the bundle on runtime $rt says: $said"; exit 1; }
       # Runs by hand without the signing secrets sign with a throwaway key, only to prove it signs.
       - name: Sign the APK
+        if: needs.plan.outputs.apk == 'build'
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
@@ -404,8 +450,12 @@ jobs:
           path: dist/
           compression-level: 0
 
+  # The install tests run when the runtime or the packaging changed (the runtime lane: packaging/
+  # counts as runtime, ts/packages/update/src/lane.ts). A bundle-only release changes neither, and
+  # package checks its bundle on the runtime PCs have.
   smoke:
-    needs: package
+    needs: [plan, package]
+    if: needs.plan.outputs.lane == 'runtime'
     uses: ./.github/workflows/smoke.yml
     secrets: inherit
     with:
@@ -415,7 +465,8 @@ jobs:
   # Holds nothing back: publish doesn't need it. A failure shows as this run's failure, after the
   # release is out.
   smoke-aarch64:
-    needs: package
+    needs: [plan, package]
+    if: needs.plan.outputs.lane == 'runtime'
     uses: ./.github/workflows/smoke.yml
     secrets: inherit
     with:
@@ -424,7 +475,7 @@ jobs:
 
   publish:
     needs: [package, smoke]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !cancelled() && !failure() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

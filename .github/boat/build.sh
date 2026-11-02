@@ -16,6 +16,10 @@ sha=${HARBOR_GIT_SHA:-}
 sha=${sha:0:7}
 min=${HARBOR_MIN_RUNTIME:-$ver}
 
+# Harbor's Google OAuth clients (scripts/build.ts bakes them in), when release.yml passes them: by
+# name only, so the values never show on a command line.
+google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOGLE_WEB_CLIENT_ID -e HARBOR_GOOGLE_WEB_CLIENT_SECRET)
+
 # Builds the three files from a tree at /src (bun on PATH), into /out/harbor-$ARCH.
 # --frozen-lockfile: what bun.lock says, as the tests ran it.
 build_ts='
@@ -32,7 +36,7 @@ build_ts='
 
 x86_64() {
   local b; b=$(bun_get "$core" x64)
-  run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e BUN_INSTALL_CACHE_DIR=/c/bun-cache -e ARCH=x86_64 \
+  run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e BUN_INSTALL_CACHE_DIR=/c/bun-cache -e ARCH=x86_64 "${google[@]}" \
     -e V="$ver" -e SHA="$sha" -e MIN="$min" -- bash -euo pipefail -c "$build_ts"
   ldd "$HOME/out/harbor-x86_64/harbor"
   npm_notices
@@ -46,7 +50,7 @@ aarch64() {
   rm -rf "$src" && mkdir -p "$src"
   tar -C "$PWD" --exclude=node_modules --exclude=target --exclude=.git -cf - . | tar -C "$src" -xf -
   docker run --rm --platform linux/arm64 -u "$(id -u):$(id -g)" -e HOME=/tmp -e PATH="$b:/usr/bin:/bin" \
-    -e BUN_INSTALL_CACHE_DIR=/c/bun-cache-aarch64 -e ARCH=aarch64 -e V="$ver" -e SHA="$sha" -e MIN="$min" \
+    -e BUN_INSTALL_CACHE_DIR=/c/bun-cache-aarch64 -e ARCH=aarch64 "${google[@]}" -e V="$ver" -e SHA="$sha" -e MIN="$min" \
     -v "$src:/src" -v "$cache:/c" -v "$HOME/out:/out" \
     ubuntu:22.04 bash -euo pipefail -c "$build_ts"
 }

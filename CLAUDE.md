@@ -42,7 +42,9 @@ the browser engine, the video player and releases build on boat).
     (Bun under qemu), the licence reports and the unsigned APK (release.yml, each target on its own
     sandbox). Each architecture gives the single executable `harbor` (the archives) and the runtime
     alone; x86_64 also the app bundle `harbor-app.js`. Installed copies update from the bundle, the
-    runtime only when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A
+    runtime only when release.yml's plan job finds it changed (`ts/scripts/release.ts lane`). A bundle-only
+    release skips the install tests (package checks the bundle on the runtime PCs have) and, when
+    `android/` didn't change, reattaches the latest release's signed APK instead of building one. A
     release is the `v*` tag alone: a push to main builds nothing, and running release.yml by hand
     on main is the dry run (signs and publishes nothing, saves the snapshot).
   - `.github/boat/browser.sh`: the Servo engine for x86_64, or (`browser.sh aarch64`) cross-compiled

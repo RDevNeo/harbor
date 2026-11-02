@@ -320,15 +320,30 @@ export interface Client {
 
 export type Builtin = Client | undefined;
 
-export function googleBuiltinFromEnv(env: Record<string, string | undefined> = process.env): Builtin {
-  const id = env.HARBOR_GOOGLE_CLIENT_ID;
-  const secret = env.HARBOR_GOOGLE_CLIENT_SECRET;
+// Harbor's own Google OAuth clients, baked into a release build (scripts/build.ts defines them from
+// the build's environment, as release.yml passes its secrets): the Desktop one for the Gmail app's
+// one-click sign-in, the Web one a phone gets its codes for. The environment at run time still wins.
+declare const HARBOR_GOOGLE_CLIENT_ID: string | undefined;
+declare const HARBOR_GOOGLE_CLIENT_SECRET: string | undefined;
+declare const HARBOR_GOOGLE_WEB_CLIENT_ID: string | undefined;
+declare const HARBOR_GOOGLE_WEB_CLIENT_SECRET: string | undefined;
+const baked = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
+export const BAKED_GOOGLE = {
+  id: typeof HARBOR_GOOGLE_CLIENT_ID === "undefined" ? undefined : baked(HARBOR_GOOGLE_CLIENT_ID),
+  secret: typeof HARBOR_GOOGLE_CLIENT_SECRET === "undefined" ? undefined : baked(HARBOR_GOOGLE_CLIENT_SECRET),
+  webId: typeof HARBOR_GOOGLE_WEB_CLIENT_ID === "undefined" ? undefined : baked(HARBOR_GOOGLE_WEB_CLIENT_ID),
+  webSecret: typeof HARBOR_GOOGLE_WEB_CLIENT_SECRET === "undefined" ? undefined : baked(HARBOR_GOOGLE_WEB_CLIENT_SECRET),
+};
+
+export function googleBuiltinFromEnv(env: Record<string, string | undefined> = process.env, built: Partial<typeof BAKED_GOOGLE> = BAKED_GOOGLE): Builtin {
+  const id = env.HARBOR_GOOGLE_CLIENT_ID || built.id;
+  const secret = env.HARBOR_GOOGLE_CLIENT_SECRET || built.secret;
   return id && secret ? { id, secret } : undefined;
 }
 
-export function googleWebFromEnv(env: Record<string, string | undefined> = process.env): Builtin {
-  const id = env.HARBOR_GOOGLE_WEB_CLIENT_ID;
-  const secret = env.HARBOR_GOOGLE_WEB_CLIENT_SECRET;
+export function googleWebFromEnv(env: Record<string, string | undefined> = process.env, built: Partial<typeof BAKED_GOOGLE> = BAKED_GOOGLE): Builtin {
+  const id = env.HARBOR_GOOGLE_WEB_CLIENT_ID || built.webId;
+  const secret = env.HARBOR_GOOGLE_WEB_CLIENT_SECRET || built.webSecret;
   return id && secret ? { id, secret } : undefined;
 }
 
