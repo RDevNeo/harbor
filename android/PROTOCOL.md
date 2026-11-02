@@ -698,6 +698,16 @@ queue, as older apps expect): `steer` reaches the running turn now (`steering: t
 (`can_steer`), else it queues; `queue` waits for the turn to end (`queued: true`). A message to an
 idle chat starts a turn, and resumes a queue a Stop held (it runs after this one).
 
+Optional `client_id` (0.112.1: 8 to 80 letters, digits, `-`, `_`; the app sends a UUID): a send
+the phone repeats with the same id (its answer got lost, it timed out, it asked another PC of the
+workspace) runs once; every copy gets the first one's answer, also while that one still runs.
+Only an accepted send (2xx) is remembered, for 10 minutes, so a failed one may be tried again with
+the same id. A copy of another PC's chat forwards the id to the chat's home PC, which does the
+same, so a retry through another PC is caught there. The app shows the message the moment Send is
+pressed (a faint bubble under the transcript, "Sending…" after 1.5 s, "Not sent · Tap to try
+again" with Edit and Delete when it fails), keeps it on disk until the chat has it, and tries a
+dropped send again itself (three tries, 15 s read timeout each).
+
 `[Image #N]` in the text (0.108) names the Nth image of `files`, counting only the images the hub
 takes as such (png, jpg, jpeg, gif, webp): the agent is told which file each number is. The
 composer writes the token at the cursor for each image added, and keeps tokens and images together

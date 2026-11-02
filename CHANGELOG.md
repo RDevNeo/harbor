@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Phone: a message you send shows in the chat at once. It used to appear only after the PC had
+  answered and the chat had been read again, which took about 10 seconds when the way to the PC
+  stalled: each address of the PC was tried in turn, and an address that no longer works (the
+  Wi-Fi's after the phone moved to mobile data) cost its whole 3-6 s timeout before the next was
+  tried; a chat read that hung on a dropped connection also held back every later one. Now a PC's
+  addresses are tried side by side (the next after 0.7 s), a send that doesn't get its answer is
+  sent again with the same id (the PC runs it once, also through another PC), a message that
+  can't be sent stays in the chat with "Tap to try again", Edit and Delete, and a stalled read
+  no longer blocks the next.
+
 ## [0.112.0] - 2026-11-02
 
 ### Added

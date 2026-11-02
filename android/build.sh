@@ -179,6 +179,11 @@ java -cp "$W/classes:$W/test" dev.harbor.app.WsFilterTest
 # And which PC the calls go to on a flaky network (Route).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/RouteTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.RouteTest
+# And messages shown the moment they're sent (Echo), a PC's addresses tried staggered (Race).
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/EchoTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.EchoTest
+javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/RaceTest.java"
+java -cp "$W/classes:$W/test" dev.harbor.app.RaceTest
 # And the model badges' names and the agent strip's stops (Labels).
 javac -source 11 -target 11 -encoding UTF-8 -nowarn -Xlint:-options -classpath "$W/classes" -d "$W/test" "$HERE/test/LabelsTest.java"
 java -cp "$W/classes:$W/test" dev.harbor.app.LabelsTest

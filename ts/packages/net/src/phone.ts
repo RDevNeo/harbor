@@ -6,6 +6,7 @@ import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { forHome, startsTurn, type Mesh } from "./mesh.ts";
+import { Once, sendKey } from "./once.ts";
 import { sameRemote } from "./meshstore.ts";
 import type { StoreReplica } from "./meshstore.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -321,6 +322,8 @@ const obj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v
 
 export class PhoneRoutes {
   private revs = new Map<number, [bigint, number][]>();
+  /** A phone's send repeated with the same client id (its retry) runs once (Once). */
+  private sends = new Once<Reply>();
 
 
   constructor(readonly d: PhoneDeps) {}
@@ -641,6 +644,13 @@ export class PhoneRoutes {
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by);
     const c = this.chatOf(p[2] ?? "");
     if (!c) return err(404, "no such chat");
+    // A send the phone repeats (it never got the answer) is answered, not run again; a copy's
+    // send goes on to its home PC with the same client id, which does the same there.
+    if (m === "POST" && p.length === 4 && p[3] === "send") {
+      const key = sendKey(c.gid === "" ? String(c.id) : c.gid, body);
+      const run = () => (c.home !== "" ? this.forward(c, m, p, body, sender, call.global) : this.send(c, body, sender, device, by));
+      if (key !== null) return this.sends.run(key, run);
+    }
     if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global);
     if (m === "GET" && p.length === 4 && p[3] === "items") {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");

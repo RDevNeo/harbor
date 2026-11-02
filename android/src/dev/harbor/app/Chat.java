@@ -76,7 +76,8 @@ public class Chat extends Base implements Images.Gallery {
     private TextView earlier; // "Show earlier" on top
     private int from = -1;          // first seq drawn (-1: not known yet)
     private long rev;
-    private boolean loading, again, loaded, sending, gone; // gone: deleted, keep no draft
+    private boolean loading, again, loaded, gone; // gone: deleted, keep no draft
+    private long loadingAt; // when the load in flight started
     private TextView offNote;
 
     @Override
@@ -147,6 +148,9 @@ public class Chat extends Base implements Images.Gallery {
         comp.edit.backOpen = () -> slash.open() || tags.open();
         comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
+        echoKey = draftKey(hub, chatId);
+        echo = echoOf(hub, chatId, echoKey);
+        showing.put(echoKey, this);
         comp.onSend = this::send;
         comp.onStop = this::stop;
         comp.onResume = this::resume;
@@ -198,6 +202,12 @@ public class Chat extends Base implements Images.Gallery {
         String d = composer.getText().toString();
         if (d.trim().isEmpty()) drafts(this).edit().remove(draftKey(hub, chatId)).apply();
         else drafts(this).edit().putString(draftKey(hub, chatId), d).apply();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (echoKey != null && showing.get(echoKey) == this) showing.remove(echoKey);
     }
 
     @Override
@@ -315,15 +325,21 @@ public class Chat extends Base implements Images.Gallery {
     // ---- transcript ----
 
     private void load(boolean full) {
-        if (loading) { again = true; return; }
+        // One at a time, unless the one in flight stalled (a connection dropped on the way
+        // holds it until its timeout): then this one goes beside it, so a reply or a message
+        // just sent doesn't wait for it.
+        if (loading && System.currentTimeMillis() - loadingAt < 4_000) { again = true; return; }
         loading = true;
+        loadingAt = System.currentTimeMillis();
         final long since = full ? 0 : rev;
         Ui.pool.execute(() -> {
             JSONObject r = null;
             String err = null;
             int code = 0;
             try {
-                r = hub.get("/v1/chats/" + chatId + "/items?since=" + since);
+                // What changed since the last read is small: 10 s without a byte means the
+                // connection died (and call() asks again).
+                r = hub.call("GET", "/v1/chats/" + chatId + "/items?since=" + since, null, since > 0 ? 10_000 : Hub.TIMEOUT);
             } catch (Exception e) {
                 err = Hub.why(e);
                 if (e instanceof Hub.ApiError) code = ((Hub.ApiError) e).code;
@@ -385,6 +401,7 @@ public class Chat extends Base implements Images.Gallery {
         if (r.has("typing")) comp.who(Sidebar.typingWho(r, you()));
         applyDraft(r.optJSONObject("draft"));
         bars = r.optJSONObject("status");
+        if (echo != null && !echo.isEmpty() && echo.settle(seen(), System.currentTimeMillis())) saveEcho(echoKey, echo);
         drawBars();
         if (atBottom) toEnd();
     }
@@ -480,6 +497,8 @@ public class Chat extends Base implements Images.Gallery {
     private void drawBars() {
         status.removeAllViews();
         workingText = null;
+        // Messages sent from here that the chat doesn't show yet: the user's bubbles, at once.
+        if (echo != null) for (Echo.Msg m : echo.shown()) status.addView(echoView(m), Ui.margins(Ui.fill(), 36, 4, 0, 4));
         JSONObject b = bars == null ? new JSONObject() : bars;
         // Steers on their way in sit with the turn; "Up next" comes after the bars (drawQueue).
         List<JSONObject> waitingQ = new ArrayList<>();
@@ -1990,41 +2009,204 @@ public class Chat extends Base implements Images.Gallery {
     }
 
     /** `mode`: "steer" or "queue" while the agent works (ignored by an idle chat, and by hubs
-     *  before 0.71, which queue). */
+     *  before 0.71, which queue). The message shows at once (Echo) and the composer empties; it
+     *  goes to the PC in the background, with a client id that makes a repeat harmless. */
     private void send(String mode) {
-        if (sending) return;
         String text = composer.getText().toString().trim();
         if (text.isEmpty() && !attach.any() && mentions.length() == 0) return;
         if (attach.busy()) { Ui.toast(this, "Still uploading…"); return; }
-        sending = true;
-        comp.busy(true);
         typing(false, false);
         JSONArray files = attach.ids();
         JSONArray ms = kept(text);
-        Ui.pool.execute(() -> {
+        String cid = java.util.UUID.randomUUID().toString();
+        JSONObject body;
+        try {
+            body = new JSONObject().put("text", text).put("files", files).put("mentions", ms).put("mode", mode).put("client_id", cid);
+        } catch (org.json.JSONException e) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Echo.Msg m = echo.add(cid, text.isEmpty() && files.length() > 0 ? "" : text, body.toString(), now, items.isEmpty() ? 0 : items.lastKey() + 1);
+        saveEcho(echoKey, echo);
+        // The hub empties the draft everywhere once it has the message; this composer now.
+        applying = true;
+        composer.setText("");
+        attach.clear();
+        mentions = new JSONArray();
+        drawMentions();
+        applying = false;
+        drafts(this).edit().remove(draftKey(hub, chatId)).apply();
+        drawBars();
+        toEnd();
+        deliver(hub, chatId, echoKey, m);
+        // Still on its way after a moment: the bubble says so.
+        Ui.main.postDelayed(() -> { if (!isFinishing()) drawBars(); }, SLOW + 100);
+    }
+
+    // ---- messages on their way (Echo) ----
+
+    /** A send this slow says "Sending…" under its bubble (quicker ones don't flash it). */
+    private static final long SLOW = 1_500;
+
+    /** Per chat ("<hub id>/<chat id>"): its messages on their way, shared by its screens (a
+     *  send outlives the screen it was made on), and the screen showing it now. */
+    private static final Map<String, Echo> echoes = new java.util.HashMap<>();
+    private static final Map<String, Chat> showing = new java.util.HashMap<>();
+    /** Per chat: its sends go one at a time, in the order they were made. */
+    private static final Map<String, java.util.concurrent.ExecutorService> lanes = new java.util.HashMap<>();
+    private Echo echo;
+    private String echoKey;
+
+    /** The chat's messages on their way; read from disk the first time in this process, where
+     *  a send that was under way goes again (the PC runs it once however often it comes). */
+    private static Echo echoOf(Hub hub, String chat, String key) {
+        Echo e = echoes.get(key);
+        if (e != null) return e;
+        e = new Echo();
+        echoes.put(key, e);
+        List<Echo.Msg> saved = new ArrayList<>();
+        try {
+            JSONArray a = new JSONArray(echoPrefs().getString(key, "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.optJSONObject(i);
+                if (o == null) continue;
+                Echo.Msg m = new Echo.Msg(o.optString("cid"), o.optString("text"), o.optString("body"), o.optLong("at"), o.optInt("seq"), o.optInt("state"));
+                m.why = o.optString("why");
+                if (!m.cid.isEmpty() && !m.body.isEmpty()) saved.add(m);
+            }
+        } catch (org.json.JSONException ignored) { }
+        for (Echo.Msg m : e.restore(saved, System.currentTimeMillis())) deliver(hub, chat, key, m);
+        saveEcho(key, e);
+        return e;
+    }
+
+    private static SharedPreferences echoPrefs() { return Ui.app.getSharedPreferences("echoes", MODE_PRIVATE); }
+
+    private static void saveEcho(String key, Echo e) {
+        JSONArray a = new JSONArray();
+        for (Echo.Msg m : e.shown()) {
+            try {
+                a.put(new JSONObject().put("cid", m.cid).put("text", m.text).put("body", m.body).put("at", m.at).put("seq", m.seq).put("state", m.state).put("why", m.why));
+            } catch (org.json.JSONException ignored) { }
+        }
+        if (a.length() == 0) echoPrefs().edit().remove(key).apply();
+        else echoPrefs().edit().putString(key, a.toString()).apply();
+    }
+
+    /** Sends m in the background (Hub.send: tried again on a dropped way); the answer lands on
+     *  the main thread, in the chat's Echo and on the screen showing it. */
+    private static void deliver(Hub hub, String chat, String key, Echo.Msg m) {
+        java.util.concurrent.ExecutorService lane;
+        synchronized (lanes) {
+            lane = lanes.get(key);
+            if (lane == null) {
+                java.util.concurrent.ThreadPoolExecutor t = new java.util.concurrent.ThreadPoolExecutor(1, 1, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.LinkedBlockingQueue<>());
+                t.allowCoreThreadTimeOut(true);
+                lane = t;
+                lanes.put(key, lane);
+            }
+        }
+        lane.execute(() -> {
             String err = null;
             try {
-                hub.call("POST", "/v1/chats/" + chatId + "/send", new JSONObject().put("text", text).put("files", files).put("mentions", ms).put("mode", mode));
-            } catch (Exception e) {
-                err = Hub.why(e);
+                hub.send(chat, new JSONObject(m.body));
+            } catch (Exception x) {
+                err = Hub.why(x);
             }
             final String fe = err;
             Ui.main.post(() -> {
-                sending = false;
-                comp.busy(false);
-                if (isFinishing()) return;
-                if (fe != null) { Ui.toast(this, fe); return; }
-                // Sent: the hub empties the draft everywhere; this composer too (not an edit).
-                applying = true;
-                composer.setText("");
-                attach.clear();
-                mentions = new JSONArray();
-                drawMentions();
-                applying = false;
-                drafts(this).edit().remove(draftKey(hub, chatId)).apply();
-                toEnd();
-                load(false);
+                Echo e = echoes.get(key);
+                if (e == null) return;
+                boolean there = fe == null ? e.sent(m.cid, System.currentTimeMillis()) : e.failed(m.cid, fe);
+                if (!there) return; // its card came first
+                saveEcho(key, e);
+                Chat c = showing.get(key);
+                if (c != null && !c.isFinishing()) c.echoed(fe == null);
             });
+        });
+    }
+
+    /** The PC answered a send: the bubble shows it; once accepted, the chat is read at once
+     *  (and again shortly, for a copy of another PC's chat, whose card comes from there). */
+    private void echoed(boolean accepted) {
+        drawBars();
+        if (!accepted) return;
+        load(false);
+        for (long d : new long[] { 1_500, 4_000 }) Ui.main.postDelayed(() -> { if (!isFinishing() && echo.waiting()) load(false); }, d);
+        Ui.main.postDelayed(() -> {
+            if (!isFinishing() && echo.settle(seen(), System.currentTimeMillis())) { saveEcho(echoKey, echo); drawBars(); }
+        }, Echo.SENT_FOR + 200);
+    }
+
+    /** The user cards and queued messages the chat shows now (Echo.settle). */
+    private List<Echo.Seen> seen() {
+        List<Echo.Seen> out = new ArrayList<>();
+        for (Map.Entry<Integer, JSONObject> e : items.entrySet())
+            if ("user".equals(e.getValue().optString("kind"))) out.add(new Echo.Seen(e.getKey(), e.getValue().optString("text")));
+        JSONArray q = bars == null ? null : bars.optJSONArray("queue");
+        if (q != null) for (int i = 0; i < q.length(); i++) {
+            JSONObject m = q.optJSONObject(i);
+            if (m != null) out.add(new Echo.Seen(-1, m.optString("text")));
+        }
+        return out;
+    }
+
+    /** A message on its way, drawn as the user's bubble: faint while it goes, "Sending…" when
+     *  that takes a while; not sent: a red line, a tap tries again, a long press offers more. */
+    private View echoView(Echo.Msg m) {
+        LinearLayout w = Ui.col(this);
+        w.setGravity(Gravity.END);
+        String shown = m.text.isEmpty() ? "\uD83D\uDCCE " + filesOf(m) : m.text;
+        TextView t = Ui.text(this, shown, 16, Ui.FG);
+        t.setBackground(Ui.round(Ui.G100, 0, 20));
+        t.setPadding(Ui.dp(16), Ui.dp(11), Ui.dp(16), Ui.dp(11));
+        t.setMaxWidth(maxBubble());
+        if (m.state == Echo.SENDING) t.setAlpha(0.6f);
+        w.addView(t, Ui.wrap());
+        long now = System.currentTimeMillis();
+        if (m.state == Echo.SENDING && now - m.at >= SLOW) w.addView(Ui.text(this, "Sending…", 12, Ui.G700), Ui.margins(Ui.wrap(), 0, 3, 4, 0));
+        if (m.state == Echo.FAILED) {
+            TextView no = Ui.text(this, "Not sent · Tap to try again", 12, Ui.RED);
+            w.addView(no, Ui.margins(Ui.wrap(), 0, 3, 4, 0));
+            w.setOnClickListener(v -> retryEcho(m));
+            w.setOnLongClickListener(v -> { echoMenu(m); return true; });
+        }
+        return w;
+    }
+
+    private static String filesOf(Echo.Msg m) {
+        try {
+            int n = new JSONObject(m.body).optJSONArray("files") == null ? 0 : new JSONObject(m.body).optJSONArray("files").length();
+            return n == 1 ? "1 file" : n + " files";
+        } catch (org.json.JSONException e) {
+            return "files";
+        }
+    }
+
+    private void retryEcho(Echo.Msg m) {
+        if (!echo.retry(m.cid)) return;
+        saveEcho(echoKey, echo);
+        drawBars();
+        deliver(hub, chatId, echoKey, m);
+    }
+
+    /** A message that wasn't sent: try again (the same message: sent once even if the first
+     *  try did arrive), back to the composer to change it, or away. */
+    private void echoMenu(Echo.Msg m) {
+        List<Sheet.Option> o = new ArrayList<>();
+        o.add(new Sheet.Option("retry", "Try again", m.why.isEmpty() ? null : m.why, true));
+        o.add(new Sheet.Option("edit", "Edit", "Back to the composer", true));
+        o.add(new Sheet.Option("delete", "Delete", "Don't send it", true));
+        Sheet.pick(this, "Not sent", null, o, null, id -> {
+            if ("retry".equals(id)) { retryEcho(m); return; }
+            if ("edit".equals(id)) {
+                String now = composer.getText().toString();
+                composer.setText(now.trim().isEmpty() ? m.text : now + "\n" + m.text);
+                composer.setSelection(composer.length());
+            }
+            echo.remove(m.cid);
+            saveEcho(echoKey, echo);
+            drawBars();
         });
     }
 

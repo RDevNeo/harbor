@@ -421,35 +421,45 @@ final class Hub {
         Ep e = ep(v);
         String pin = e == null ? fp : e.fp;
         int p = e == null ? port : e.port;
-        IOException last = null;
-        boolean noV6 = false;
-        int timeout = first;
-        for (String addr : candidates(v, e)) {
-            int to = timeout;
-            timeout = connect;
-            try {
+        // Only ever pinned: a PC without a key in the directory isn't reached.
+        if (pin == null || pin.isEmpty()) throw new IOException("This PC has no key in your workspace's directory.");
+        List<String> all = candidates(v, e);
+        final boolean[] noV6 = { false };
+        Object[] got;
+        try {
+            // Its addresses staggered (Race): one that doesn't answer doesn't hold up the next.
+            got = Race.first(all.size(), STAGGER, Ui.pool, i -> {
+                String addr = all.get(i);
                 Object[] hp = Addr.hostPort(addr, p);
-                // Only ever pinned: a PC without a key in the directory isn't reached.
-                if (pin == null || pin.isEmpty()) throw new IOException("This PC has no key in your workspace's directory.");
-                Net.Http c = Net.open((String) hp[0], (Integer) hp[1], pin, method, path, readTimeout, to);
-                synchronized (goodAddr) { goodAddr.put(id + "/" + v, addr); }
-                return c;
-            } catch (Net.Refused x) {
-                throw x; // another address of the same PC can't change this
-            } catch (Net.WrongKey x) {
-                // Another device answers there now (a stale address): nothing was sent to it,
-                // the PC's other addresses are still worth a try.
-                last = x;
-            } catch (IOException x) {
-                last = x;
-                String m = String.valueOf(x.getMessage());
-                if (((String) Addr.hostPort(addr, p)[0]).contains(":") && (m.contains("ENETUNREACH") || m.contains("unreachable"))) noV6 = true;
-            }
+                try {
+                    return new Object[] { Net.open((String) hp[0], (Integer) hp[1], pin, method, path, readTimeout, i == 0 ? first : connect), addr };
+                } catch (Net.Refused | Net.WrongKey x) {
+                    // Refused: no other address can change it. WrongKey: another device answers
+                    // there now (a stale address): nothing was sent to it.
+                    throw x;
+                } catch (IOException x) {
+                    String m = String.valueOf(x.getMessage());
+                    if (((String) hp[0]).contains(":") && (m.contains("ENETUNREACH") || m.contains("unreachable"))) {
+                        synchronized (noV6) { noV6[0] = true; }
+                    }
+                    throw x;
+                }
+            }, w -> ((Net.Http) w[0]).close());
+        } catch (Race.Lost lost) {
+            IOException last = lost.errors.isEmpty() ? new IOException("no address") : lost.errors.get(lost.errors.size() - 1);
+            for (IOException x : lost.errors) if (x instanceof Net.Refused) throw x;
+            boolean v6;
+            synchronized (noV6) { v6 = noV6[0]; }
+            if (v6 && !(last instanceof Net.WrongKey)) throw new NoV6(last);
+            throw last;
         }
-        if (last == null) last = new IOException("no address");
-        if (noV6 && !(last instanceof Net.WrongKey)) throw new NoV6(last);
-        throw last;
+        synchronized (goodAddr) { goodAddr.put(id + "/" + v, (String) got[1]); }
+        return (Net.Http) got[0];
     }
+
+    /** How long an address gets to connect before the next one is tried beside it: a PC on the
+     *  same network answers in a few ms, one over the internet well within this. */
+    private static final long STAGGER = 700;
 
     /** auth false: no token (GET /app.apk needs none on the PC's network). Only ever through
      *  Net: TLS to the PC's pinned key. The PC in use first; when it can't be reached the
@@ -729,6 +739,31 @@ final class Hub {
             try { Thread.sleep(300); } catch (InterruptedException x) { throw e; }
             return call1(method, path, body, readTimeout);
         }
+    }
+
+    /** Tries a send makes before it says it failed. */
+    static final int SEND_TRIES = 3;
+
+    /** POST /v1/chats/{chat}/send with a body that carries its `client_id`: the PC runs a
+     *  repeat of it once (ts once.ts), so a send whose answer didn't come back is simply sent
+     *  again, and Route may take it to another PC of the workspace when the one in use keeps
+     *  failing. The PC answers a send at once (a copy's home PC within seconds): 15 s without an
+     *  answer means the way dropped it. An answer from the PC (an error) isn't tried again. */
+    JSONObject send(String chat, JSONObject body) throws IOException {
+        IOException last = null;
+        for (int i = 0; i < SEND_TRIES; i++) {
+            if (i > 0) {
+                try { Thread.sleep(400L * i); } catch (InterruptedException x) { break; }
+            }
+            try {
+                return call1("POST", "/v1/chats/" + chat + "/send", body, 15_000);
+            } catch (ApiError e) {
+                throw e;
+            } catch (IOException e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new IOException("not sent");
     }
 
     private JSONObject call1(String method, String path, JSONObject body, int readTimeout) throws IOException {
