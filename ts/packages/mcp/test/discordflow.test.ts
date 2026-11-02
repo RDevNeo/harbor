@@ -81,47 +81,21 @@ test("joining is paced: the second join is refused with the reason", async () =>
   expect(JSON.parse(await call("discord_join", { invite: "z" }))).toEqual({ joined: true });
 });
 
-test("a join that needs a captcha holds the client awake for a person, and says how it ended", async () => {
+test("by default a join behind a captcha is the user's to make in their own Discord app", async () => {
   await quiet();
   writeFileSync(join(r.root, "pace.json"), "[]");
   plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "5", name: "Big Server" } } }, captcha: { showing: true, joined: false } });
   const v = JSON.parse(await call("discord_join", { invite: "big", apply: true })) as Record<string, unknown>;
   expect(v.captchaRequired).toBe(true);
-  const st = (): Record<string, unknown> => h.host.status() as Record<string, unknown>;
-  expect(st().captcha).toMatchObject({ guild: "Big Server", guildId: "5" });
-  expect(st().busy).toBe(1);
-  expect(readFileSync(join(r.root, "notices.jsonl"), "utf8")).toContain("Discord needs a captcha");
-  expect(await statusText()).toContain("A captcha to join Big Server is waiting");
-  // Another join waits for this one.
-  expect(JSON.parse(await call("discord_join", { invite: "other", apply: true }))).toMatchObject({ captchaPending: true });
-  const frame = await captchaFrame();
-  expect(frame).toMatchObject({ guild: "Big Server", width: 1280, height: 720, rect: { x: 400, y: 200, width: 300, height: 200 } });
-  await captchaInput("down", 450, 250);
-  expect(ops("captcha_input").at(-1)).toMatchObject({ kind: "down", x: 450, y: 250 });
-  // Solved: the join lands, the hold goes, the join is paced like any other.
-  plan(r.root, { captcha: { showing: false, joined: true } });
-  await until(() => st().captcha === null, 5000);
-  expect(st().captcha_end).toMatchObject({ outcome: "joined", guild: "Big Server" });
-  await quiet();
-  expect(ops("captcha_end").length).toBe(1);
-  expect(readFileSync(join(r.root, "notices.jsonl"), "utf8")).toContain("Discord joined Big Server");
-  expect((JSON.parse(readFileSync(join(r.root, "pace.json"), "utf8")) as [string, number][]).map((p) => p[0])).toEqual(["join"]);
-  expect(await statusText()).toContain("solved, and the server was joined");
+  expect(String(v.note)).toContain("their own Discord app");
+  const st = h.host.status() as Record<string, unknown>;
+  expect(st.captcha).toBeNull();
+  expect(fakeLog(r.root).filter((l) => l.started === "run").every((l) => (l.cfg as Record<string, unknown>).captchaView === false)).toBe(true);
+  await until(() => ops("captcha_end").length === 1);
   expect(await captchaFrame()).toBeUndefined();
-  await expect(h.host.handle({ op: "captcha_input", kind: "down", x: 1, y: 1 })).resolves.toMatchObject({ ok: false, error: "No captcha is waiting." });
-
-  // Closed: no join, and nothing paced.
-  writeFileSync(join(r.root, "pace.json"), "[]");
-  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "6", name: "Other" } } }, captcha: { showing: true, joined: false } });
-  await call("discord_join", { invite: "o", apply: true });
-  await captchaCancel();
-  expect(ops("captcha_cancel").length).toBe(1);
-  plan(r.root, { captcha: { showing: false, joined: false } });
-  await until(() => st().captcha === null, 8000);
-  expect(st().captcha_end).toMatchObject({ outcome: "closed" });
-  expect(readFileSync(join(r.root, "pace.json"), "utf8")).toBe("[]");
+  expect(existsSync(join(r.root, "notices.jsonl")) ? readFileSync(join(r.root, "notices.jsonl"), "utf8") : "").not.toContain("captcha");
   plan(r.root, { calls: { discord_join: { joined: true } } });
-}, 30_000);
+});
 
 test("a screenshot comes back as an image, or goes to a file", async () => {
   const res = (await client.rpc("tools/call", { name: "discord_screenshot", arguments: { selector: ".chat" } })).result as { content: { type: string; data?: string; mimeType?: string; text?: string }[] };
@@ -253,3 +227,53 @@ test("tools whose lookups are missing say what changed", async () => {
   expect(res.content[0]?.text).toContain("Discord tools need attention.");
   expect(await statusText()).toContain("Signed in as ana.");
 });
+
+test("with the captcha view on, a join that needs a captcha holds the client awake for a person, and says how it ended", async () => {
+  // The view only takes effect when the client starts.
+  process.env.HARBOR_DISCORD_CAPTCHA_VIEW = "1";
+  await h.host.handle({ op: "stop" });
+  await call("discord_view", {});
+  expect((fakeLog(r.root).filter((l) => l.started === "run").at(-1)?.cfg as Record<string, unknown>).captchaView).toBe(true);
+  await quiet();
+  const ended = ops("captcha_end").length;
+  writeFileSync(join(r.root, "pace.json"), "[]");
+  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "5", name: "Big Server" } } }, captcha: { showing: true, joined: false } });
+  const v = JSON.parse(await call("discord_join", { invite: "big", apply: true })) as Record<string, unknown>;
+  expect(v.captchaRequired).toBe(true);
+  const st = (): Record<string, unknown> => h.host.status() as Record<string, unknown>;
+  expect(st().captcha).toMatchObject({ guild: "Big Server", guildId: "5" });
+  expect(st().busy).toBe(1);
+  expect(readFileSync(join(r.root, "notices.jsonl"), "utf8")).toContain("Discord needs a captcha");
+  expect(await statusText()).toContain("A captcha to join Big Server is waiting");
+  // Another join waits for this one.
+  expect(JSON.parse(await call("discord_join", { invite: "other", apply: true }))).toMatchObject({ captchaPending: true });
+  const frame = await captchaFrame();
+  expect(frame).toMatchObject({ guild: "Big Server", width: 1280, height: 720, rect: { x: 400, y: 200, width: 300, height: 200 } });
+  await captchaInput("down", 450, 250);
+  expect(ops("captcha_input").at(-1)).toMatchObject({ kind: "down", x: 450, y: 250 });
+  // Solved: the join lands, the hold goes, the join is paced like any other.
+  plan(r.root, { captcha: { showing: false, joined: true } });
+  await until(() => st().captcha === null, 5000);
+  expect(st().captcha_end).toMatchObject({ outcome: "joined", guild: "Big Server" });
+  await quiet();
+  expect(ops("captcha_end").length).toBe(ended + 1);
+  expect(readFileSync(join(r.root, "notices.jsonl"), "utf8")).toContain("Discord joined Big Server");
+  expect((JSON.parse(readFileSync(join(r.root, "pace.json"), "utf8")) as [string, number][]).map((p) => p[0])).toEqual(["join"]);
+  expect(await statusText()).toContain("solved, and the server was joined");
+  expect(await captchaFrame()).toBeUndefined();
+  await expect(h.host.handle({ op: "captcha_input", kind: "down", x: 1, y: 1 })).resolves.toMatchObject({ ok: false, error: "No captcha is waiting." });
+
+  // Closed: no join, and nothing paced.
+  writeFileSync(join(r.root, "pace.json"), "[]");
+  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "6", name: "Other" } } }, captcha: { showing: true, joined: false } });
+  await call("discord_join", { invite: "o", apply: true });
+  await captchaCancel();
+  expect(ops("captcha_cancel").length).toBe(1);
+  plan(r.root, { captcha: { showing: false, joined: false } });
+  await until(() => st().captcha === null, 8000);
+  expect(st().captcha_end).toMatchObject({ outcome: "closed" });
+  expect(readFileSync(join(r.root, "pace.json"), "utf8")).toBe("[]");
+  plan(r.root, { calls: { discord_join: { joined: true } } });
+  delete process.env.HARBOR_DISCORD_CAPTCHA_VIEW;
+  await h.host.handle({ op: "stop" });
+}, 30_000);

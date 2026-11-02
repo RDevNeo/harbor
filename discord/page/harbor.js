@@ -2435,7 +2435,8 @@ async function bridgeJoinInvite(args) {
 
     if (memberNow) return { joined: true, ...preview };
     if (captchaUp) {
-        // The join waits on the captcha: Harbor shows it to the user and follows it from here.
+        // The join waits on the captcha. Harbor's captcha view (off unless turned on) shows it to the
+        // user and follows it from here; otherwise the host lets it go.
         const pending = { code, guildId: targetId ?? null, guildName: guild?.name ?? null, since: Date.now(), done: false, error: null };
         accepting.then(() => { pending.done = true; }, (e) => { pending.error = String(e?.message || e); });
         window.$harborCaptcha = pending;
@@ -2443,9 +2444,8 @@ async function bridgeJoinInvite(args) {
             joined: false,
             captchaRequired: true,
             ...preview,
-            note: "Discord wants a captcha for this join, and only a person may solve it. Harbor has asked the " +
-                "user to solve it in Harbor and will tell them how it went; don't retry. discord_status says " +
-                "whether it's still waiting; discord_guilds shows the server once joined.",
+            note: "Discord wants a captcha for this join, and a person has to solve it. Ask the user to " +
+                "join this server from their own Discord app; don't retry.",
         };
     }
     if (acceptError) return { joined: false, error: acceptError, ...preview };

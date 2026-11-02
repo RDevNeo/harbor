@@ -343,6 +343,9 @@ const CAPTCHA_ENDS: Record<string, string> = {
   stopped: "Discord stopped before it was solved",
 };
 
+/** Harbor's captcha view is turned on (off by default; see `setup.captchaView`). */
+export const captchaViewOn = (): boolean => setup.captchaView();
+
 /** A captcha waiting for a person, for Harbor's window; undefined: none. Doesn't start anything. */
 export interface CaptchaFrame {
   guild: string | null;

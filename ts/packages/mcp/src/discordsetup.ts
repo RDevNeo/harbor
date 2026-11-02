@@ -548,6 +548,17 @@ export type Account = {
 
 export const accountPath = (): string => join(root(), "account.json");
 
+/**
+ * Harbor's captcha view, off unless someone turns it on (a file `captcha-view` here; the rigs set
+ * HARBOR_DISCORD_CAPTCHA_VIEW=1). It needs the signed-in page without site isolation, which
+ * weakens that session against every page and frame it loads for as long as it runs, so it only
+ * takes effect when the client next starts. Off, a join behind a captcha is for the user's own
+ * Discord app.
+ */
+export function captchaView(): boolean {
+  return process.env.HARBOR_DISCORD_CAPTCHA_VIEW === "1" || existsSync(join(root(), "captcha-view"));
+}
+
 export function account(): Account | undefined {
   try {
     const a: unknown = JSON.parse(readFileSync(accountPath(), "utf8"));

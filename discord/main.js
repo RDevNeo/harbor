@@ -26,10 +26,13 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(3);
 }
 Menu.setApplicationMenu(null);
-// hCaptcha's frame is another site. With each site in a process of its own, an offscreen page
-// doesn't route input past its top frame, so a person couldn't click a captcha at all. The signed-in
-// page keeps the frames it embeds in its own sandboxed renderer instead (fewer processes, too).
-if (cfg.mode === "run") app.commandLine.appendSwitch("disable-site-isolation-trials");
+// Harbor's captcha view, off unless the user turned it on. hCaptcha's frame is another site, and
+// an offscreen page doesn't route input past its top frame into another site's process, so the
+// view needs site isolation off: that weakens the signed-in session against every page and frame
+// it loads for as long as this client runs. Off, site isolation stays and captchas are for the
+// user's own Discord app.
+const captchaView = cfg.mode === "run" && cfg.captchaView === true;
+if (captchaView) app.commandLine.appendSwitch("disable-site-isolation-trials");
 
 const vencordFile = f => fs.readFileSync(path.join(cfg.vencord, f), "utf8");
 const watchQr = cfg.mode !== "run";
@@ -153,9 +156,13 @@ async function captchaLook() {
     return s;
 }
 const inside = (r, x, y) => !!r && x >= r.x && y >= r.y && x < r.x + r.width && y < r.y + r.height;
+const viewOnly = f => async m => {
+    if (!captchaView) throw new Error("Harbor's captcha view is off.");
+    return f(m);
+};
 const captchaOps = {
     captcha: captchaLook,
-    captcha_frame: async () => {
+    captcha_frame: viewOnly(async () => {
         const s = await captchaLook();
         if (!s.showing) return s;
         solving = true;
@@ -164,8 +171,8 @@ const captchaOps = {
         const { width, height } = img.getSize();
         if (width < 1 || height < 1) throw new Error("capturePage returned an empty image");
         return { ...s, width, height, mimeType: "image/jpeg", data: img.toJPEG(80).toString("base64") };
-    },
-    captcha_input: async m => {
+    }),
+    captcha_input: viewOnly(async m => {
         const x = Math.round(Number(m.x)), y = Math.round(Number(m.y));
         if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("no position");
         // The captcha moves (its challenge opens beside the checkbox): a look that's old is looked again.
@@ -181,12 +188,12 @@ const captchaOps = {
             default: throw new Error("no such input: " + m.kind);
         }
         return { taken: true };
-    },
+    }),
     // Discord's own way out of its captcha dialog; the join it held fails.
-    captcha_cancel: () => {
+    captcha_cancel: viewOnly(async () => {
         win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
         win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
-    },
+    }),
     captcha_end: async () => {
         solving = false;
         solveRect = null;

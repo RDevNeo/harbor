@@ -77,6 +77,8 @@ export interface Engine {
   resume(): void;
   /** Gives up a suspended client's memory, until `stop`. */
   reclaim(stop: StopFlag): Promise<void>;
+  /** The running client was started for Harbor's captcha view (see `setup.captchaView`). */
+  captchaView?(): boolean;
 }
 
 /** What an engine tells the host that wasn't an answer: the shell's events. */
@@ -98,6 +100,7 @@ export class Electron implements Engine {
   /** Which start this is: what's left of an earlier one can't touch the current one's state. */
   private run = 0;
   private held: Held | undefined;
+  private view = false;
 
   constructor(
     private readonly data: string,
@@ -115,7 +118,9 @@ export class Electron implements Engine {
       vencord: setup.vencordDir(v.current),
       // A rig's fake Discord; the shell's default is the real one.
       url: process.env[mode === "scratch" ? "HARBOR_DISCORD_SCRATCH_URL" : "HARBOR_DISCORD_URL"] ?? null,
+      captchaView: mode === "run" && setup.captchaView(),
     };
+    this.view = cfg.captchaView;
     const unit = await inScope(mode);
     const args = [setup.shellDir()];
     // A window can only open on a real desktop, and only sign-in has one. The rest has no tie to
@@ -200,6 +205,10 @@ export class Electron implements Engine {
 
   ready(): boolean {
     return this.isReady;
+  }
+
+  captchaView(): boolean {
+    return this.view && this.child !== undefined;
   }
 
   alive(): boolean {
@@ -1090,7 +1099,7 @@ export class Host {
     switch (name) {
       case "discord_join":
         if (get(v, "joined") === true) paceNote("join");
-        else if (get(v, "captchaRequired") === true) this.captchaStart(v);
+        else if (get(v, "captchaRequired") === true) v = this.captchaFound(v);
         break;
       case "discord_leave":
         if (get(v, "left") === true) paceNote("leave");
@@ -1140,6 +1149,22 @@ export class Host {
     return typeof r === "string" ? (parse(r) ?? null) : null;
   }
 
+
+  /** What the agent hears about a join behind a captcha, and whether Harbor shows it. */
+  private captchaFound(v: Json): Json {
+    const o: Obj = isObj(v) ? { ...v } : {};
+    if (this.engine.captchaView?.() === true) {
+      this.captchaStart(v);
+      o.note = "Discord wants a captcha for this join, and only a person may solve it. Harbor has asked the user to solve it in Harbor and will tell them how it went; don't retry. discord_status says whether it's still waiting; discord_guilds shows the server once joined.";
+      return o;
+    }
+    // The view is off: the join is the user's to make in their own Discord app.
+    background(async () => {
+      await this.engine.ask({ op: "captcha_end" }, 5000).catch(() => {});
+    });
+    o.note = "Discord wants a captcha for this join, and a person has to solve it. Ask the user to join this server from their own Discord app; don't retry.";
+    return o;
+  }
 
   /**
    * A join is waiting on a captcha: the client stays awake and unfrozen while a person solves it

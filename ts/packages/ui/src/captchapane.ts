@@ -20,7 +20,8 @@ export interface CaptchaApi {
 }
 
 const real: CaptchaApi = {
-  signedIn: discord.signedIn,
+  // Nothing to look for unless the captcha view is on.
+  signedIn: () => discord.captchaViewOn() && discord.signedIn(),
   frame: discord.captchaFrame,
   input: discord.captchaInput,
   cancel: discord.captchaCancel,

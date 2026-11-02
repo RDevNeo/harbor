@@ -90,6 +90,12 @@ const shellPid = () => { // the shell: an Electron main process of ours
     return 0;
 };
 const shellUp = () => !!shellPid();
+// Our client's page processes, read from outside: with site isolation, the captcha's frame (another
+// site) gets one of its own.
+const renderers = () => fs.readdirSync("/proc").filter(p => {
+    if (!/^\d+$/.test(p)) return false;
+    try { const c = fs.readFileSync(`/proc/${p}/cmdline`, "utf8"); return c.startsWith(electron) && c.includes("--type=renderer"); } catch { return false; }
+}).length;
 // Whether the kernel holds it, whichever way: read from outside, not from what Harbor says.
 const heldBy = pid => {
     const cg = "/sys/fs/cgroup" + fs.readFileSync(`/proc/${pid}/cgroup`, "utf8").trim().split("::")[1];
@@ -211,13 +217,33 @@ await scenario("tools", async () => {
     check(r.text.includes('"a"'), "discord_notes", r.text);
 });
 
+await scenario("captcha-off", async () => {
+    account();
+    write("pace.json", "[]");
+    if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
+    const r = await mcp.tool("discord_join", { invite: "captcha0", apply: true });
+    const j = JSON.parse(r.text);
+    check(j.captchaRequired === true && j.note.includes("their own Discord app"), "by default a captcha is for the user's own Discord app", r.text);
+    const off = renderers();
+    check(off === 2, "and the client keeps site isolation: the captcha's frame has a process of its own", off);
+    const s = await status();
+    check(s.captcha === null, "nothing waits on the captcha", JSON.stringify(s.captcha));
+    const f = await hostOp({ op: "captcha_frame" });
+    check(f?.result?.showing === false && !f.result.data, "no frames to show");
+    check(!fs.existsSync(app + "/notices.jsonl") || !fs.readFileSync(app + "/notices.jsonl", "utf8").includes("captcha"), "no notice");
+});
+
 await scenario("captcha", async () => {
     account();
+    // Harbor's captcha view, off by default; it takes effect as the client starts.
+    write("captcha-view", "on");
     write("pace.json", "[]");
     if (fs.existsSync(app + "/notices.jsonl")) fs.rmSync(app + "/notices.jsonl");
     let r = await mcp.tool("discord_join", { invite: "captcha1", apply: true });
     let j = JSON.parse(r.text);
-    check(j.captchaRequired === true && j.joined === false, "a join behind a captcha says so", r.text);
+    check(j.captchaRequired === true && j.joined === false && j.note.includes("solve it in Harbor"), "a join behind a captcha says so", r.text);
+    const on = renderers();
+    check(on === 1, "the view runs the client without site isolation: one page process", on);
     let s = await status();
     check(s.captcha?.guild === "Joined captcha1" || s.captcha !== null, "the host holds the captcha", JSON.stringify(s.captcha));
     check(fs.readFileSync(app + "/notices.jsonl", "utf8").includes("Discord needs a captcha"), "and asks the user");
@@ -248,6 +274,7 @@ await scenario("captcha", async () => {
     check(s.captcha_end?.outcome === "closed", "Don't join closes it, unjoined", JSON.stringify(s.captcha_end));
     r = await mcp.tool("discord_mute_guild", { guildId: "300000000000000009" });
     check(JSON.parse(r.text).alreadyAbsent === true, "and the server it was for isn't joined", r.text);
+    fs.rmSync(app + "/captcha-view");
 });
 
 await scenario("pacing", async () => {
