@@ -18,6 +18,7 @@ import { type Page, type PageHub, PageHost } from "./pages/host.ts";
 import { type SettingsView } from "./pages/settings.ts";
 import { isImage } from "./logic/images.ts";
 import { Keys, label as keyLabel } from "./logic/keys.ts";
+import { Zoom } from "./logic/zoom.ts";
 import { headerClick, shortElapsed as stripElapsed, stripView } from "./logic/agentstrip.ts";
 import { localHm, until } from "./logic/team.ts";
 import { agentCard, agentSettled, earlierChats, loadMarks, mark, saveMarks, teamAgents, webhookCard } from "./logic/teamui.ts";
@@ -198,6 +199,8 @@ export class Shell {
   private images: import("@harbor/media").images.Images | null = null;
   private voiceTimer: ReturnType<typeof setInterval> | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private zoomer!: Zoom;
+  private zoomCards: ReturnType<typeof setTimeout> | null = null;
   private readonly surfaces = new Surfaces<Terminal>({
     spawn: (title, cwd, argv) => {
       try {
@@ -290,6 +293,30 @@ export class Shell {
     win.picker_rows = this.modelRows;
     this.favorites = new Favorites(data.store);
     this.keys = Keys.load(data.store);
+    this.zoomer = new Zoom(
+      {
+        scale: () => win.scale_factor,
+        setScale: (scale) => {
+          // Slint takes the new scale as if the display had changed it, then the same pixels as a new logical size.
+          const w = win.window;
+          w.dispatchEvent({ type: "scale-factor-changed", scaleFactor: scale });
+          const p = w.physicalSize;
+          if (p.width > 0 && p.height > 0) w.dispatchEvent({ type: "resized", size: { width: p.width / scale, height: p.height / scale } });
+          w.requestRedraw();
+        },
+        level: (l) => (win.zoom_level = l),
+        badge: (t) => (win.zoom_badge = t),
+        changed: () => {
+          // Images were decoded for the old scale: decode them again once the keys stop.
+          if (this.zoomCards !== null) clearTimeout(this.zoomCards);
+          this.zoomCards = setTimeout(() => {
+            this.zoomCards = null;
+            this.refreshCards();
+          }, 300);
+        },
+      },
+      data.store,
+    );
     this.pages = new PageHost({
       win,
       data,
@@ -539,6 +566,8 @@ export class Shell {
       act?.(ok, input);
     };
     w.global_key = (e) => this.globalKey(e);
+    w.zoom = (step) => this.zoomer.key(step);
+    w.scale_changed = (scale) => this.zoomer.scaleChanged(scale);
     w.picker_rail_pick = (id) => {
       this.picker = { ...this.picker, rail: id === "" ? null : id, more: false, hover: 0 };
       this.refreshPicker();
@@ -2016,8 +2045,15 @@ export class Shell {
   }
 
   /** Saves what runs, so the next Harbor finds it, and stops following the turns (they go on). */
+  /** The window is on the screen: this PC's zoom applies. */
+  shown(): void {
+    this.zoomer.shown();
+  }
+
   shutdown(): void {
     if (this.spinTimer !== null) clearInterval(this.spinTimer);
+    this.zoomer.stop();
+    if (this.zoomCards !== null) clearTimeout(this.zoomCards);
     this.surfaces.dispose();
     this.videoPane?.shutdown();
     for (const [id, run] of this.engine.turns) {
@@ -3080,6 +3116,7 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   hooks.busyIn?.((dir) => (shell.terminalIn(dir) ? "a terminal is open in it" : null));
   hooks.projects?.({ icon: (repo, refresh) => shell.reloadIcon(repo, refresh), removed: (repo) => shell.projectRemoved(repo) });
   win.show();
+  shell.shown();
   win.focus_composer();
   scripted(win.window, process.env.HARBOR_POINTER);
   hooks.shown?.(win.window);

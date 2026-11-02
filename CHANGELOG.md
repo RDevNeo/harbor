@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Desktop: browser-style zoom. Ctrl+= or Ctrl++ (keypad + too) zooms the whole window in, Ctrl+-
+  out, Ctrl+0 back to 100%, on Chrome's steps (50% to 300%); a small "110%" shows for a moment in
+  the corner. Text, icons and images are drawn again at the new size (nothing is stretched) and
+  the layout reflows to the window, like a page in a browser. The keys work wherever the focus is
+  (the composer, a terminal, a dialog) and type nothing. Each PC keeps its own level across
+  restarts; it isn't synced to the account.
+
 ## [0.112.2] - 2026-11-02
 
 ### Fixed

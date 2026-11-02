@@ -74,6 +74,7 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["move_pc", D],
   ["sidebar_open", D],
   ["video_volume", D],
+  ["ui_zoom", D],
   ["show_team", D],
   ["collapsed", D],
   ["agents_settled_open", D],
