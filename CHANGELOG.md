@@ -5,6 +5,16 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.111.0] - 2026-11-02
+
+### Removed
+- Cursor, Grok, Gemini, Meta (Muse) and OpenCode: Harbor drives Claude Code and Codex only. Chats
+  and settings from them stay readable; a default saved on one opens with Claude's defaults, and
+  sending to such a chat asks you to switch it to a Claude or Codex account.
+- The provider update offers ("Updates available: N providers" on the phone, the Update card in
+  Settings > Providers). They couldn't update a CLI installed through mise, Homebrew or a
+  distribution package, so the offer never went away; Claude Code updates itself.
+
 ## [0.110.2] - 2026-11-02
 
 ### Fixed
