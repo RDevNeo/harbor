@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.116.1] - 2026-11-02
+
+### Fixed
+- The composer's footer no longer pushes the send button out of its frame at some window widths
+  and zoom levels: the model, effort, access and device chips shorten their names (the device's
+  first), then show just their icons, and the frame's right edge has the same room as its left.
+- A chat that runs on another PC no longer says "This PC" on its device chip: it names that PC.
+
 ## [0.116.0] - 2026-11-02
 
 ### Added
