@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.116.0] - 2026-11-02
+
 ### Added
 - Discord: when joining a server needs a captcha, Harbor shows it to you to solve, on the desktop
   (over the window, with Hide and Don't join) and on the phone (a notification opens it; taps go
