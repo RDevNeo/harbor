@@ -107,6 +107,8 @@ test("a copy that its home PC answers says where it runs, its running turn and w
   expect(mc.readOnly(copy)).toBeNull();
   expect(mc.runsOn(copy)).toBe("Runs on laptop");
   expect(mc.runsOn(own)).toBe("");
+  // The composer's device chip names the PC the copy runs on, not "This PC".
+  expect(mc.homeName(copy)).toBe("laptop");
   expect(mc.running(copy)).toBe(true);
   expect(mc.running(own)).toBe(false);
   expect(mc.queued(copy)).toBe(2);

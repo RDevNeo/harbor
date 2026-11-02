@@ -58,6 +58,11 @@ export class MeshChat {
     return `${name} is off. This chat runs there, so it's read-only until ${name} is back; then it catches up.`;
   }
 
+  /** The PC a chat of another PC runs on, by name (its id while unknown). */
+  homeName(c: Chat): string {
+    return this.m.home(c)?.name ?? c.home;
+  }
+
   runsOn(c: Chat | undefined): string {
     if (!this.foreign(c) || !this.writable(c)) return "";
     return `Runs on ${this.m.home(c)?.name ?? c.home}`;

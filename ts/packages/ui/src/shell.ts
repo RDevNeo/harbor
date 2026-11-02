@@ -2337,6 +2337,9 @@ export class Shell {
 
   private deviceLabel(kind: string): string {
     const [chat, current] = this.deviceOf();
+    // Another PC's chat: its device is that PC's ("" is that PC itself, not this one).
+    const open = chat === null ? undefined : this.data.chat(chat);
+    if (this.meshChat.foreign(open)) return this.meshChat.homeName(open);
     if (current === "") return "This PC";
     return this.hub.runOnRows(chat, current, kind).find((r) => r.id === current)?.name ?? "Missing device";
   }
@@ -2344,6 +2347,13 @@ export class Shell {
   /** remoteui.rs `device_menu`: where the chat runs; a started chat moves where it's picked, its sessions with it. */
   private runOnMenu(kind: string, x: number, y: number): void {
     const [chat, current] = this.deviceOf();
+    const open = chat === null ? undefined : this.data.chat(chat);
+    if (this.meshChat.foreign(open)) {
+      // Another PC's chat runs there: that PC is the place, not this one's list.
+      const home = this.meshChat.homeName(open);
+      this.popup("device", x, y, [{ ...this.label("Runs on"), kind: "caption" }, this.item(home, () => {}, { icon: ICONS.HOUSE, desc: "This chat's PC: it runs there", checked: true })], 300, true);
+      return;
+    }
     const started = chat !== null && this.data.chat(chat)?.started === true;
     const pick = (id: string) => () => {
       if (id === current) return;

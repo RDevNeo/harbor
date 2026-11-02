@@ -640,11 +640,13 @@ export component Trigger {
     in property <string> label;
     in property <bool> open;
     in property <string> tip;
+    // The most the label may take; a longer one elides (the composer's footer shrinks it when short of room).
+    in property <length> label-max: 100000px;
     callback clicked;
     property <bool> hover: area.has-hover || open;
     property <color> fg: hover ? Theme.fg : Theme.subtle;
     height: 30px;
-    width: 8px + 18px + 6px + (label != "" ? text.preferred-width + 4px : 0px) + 14px + 6px;
+    width: 8px + 18px + 6px + (label != "" ? text.width + 4px : 0px) + 14px + 6px;
     Rectangle {
         background: root.hover ? Theme.accent : transparent;
         border-radius: Theme.radius-md;
@@ -666,13 +668,15 @@ export component Trigger {
     }
     text := Text {
         x: 31px;
+        width: min(self.preferred-width, root.label-max);
         text: root.label;
         font-size: 14px;
         color: root.fg;
         vertical-alignment: center;
+        overflow: elide;
     }
     Glyph {
-        x: 31px + (root.label != "" ? text.preferred-width + 4px : 0px);
+        x: 31px + (root.label != "" ? text.width + 4px : 0px);
         y: 1px;
         height: parent.height;
         width: 14px;

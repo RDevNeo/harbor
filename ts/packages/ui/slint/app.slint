@@ -995,8 +995,6 @@ export component AppWindow inherits Window {
                                 menu-selected: root.menu-selected;
                                 open-popup: root.pop-id;
                                 max-h: min(14 * 20px, root.height * 0.45);
-                                compact: body.column - 32px < 560px;
-                                tiny: body.column - 32px < 460px;
                                 edited(t) => {
                                     root.edited(t);
                                 }

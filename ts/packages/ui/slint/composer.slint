@@ -335,8 +335,6 @@ export component Composer {
     in property <[FileItem]> files;
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
-    in property <bool> compact;
-    in property <bool> tiny;
     in property <string> open-popup;
     in property <string> voice;
     in property <float> voice-level;
@@ -492,7 +490,7 @@ export component Composer {
             border-radius: 16px;
             VerticalLayout {
                 padding-left: 18px;
-                padding-right: 14px;
+                padding-right: 18px;
                 padding-top: 17px;
                 padding-bottom: 14px;
                 spacing: 0px;
@@ -653,62 +651,129 @@ export component Composer {
                 }
                 HorizontalLayout {
                     height: 34px;
-                    spacing: 2px;
-                    model := Trigger {
-                        y: 2px;
-                        has-logo: true;
-                        logo: root.logo;
-                        badge: root.state.badge;
-                        label: root.tiny ? "" : root.state.model;
-                        tip: root.state.model-tip;
-                        open: root.open-popup == "model";
-                        clicked => {
-                            root.popup("model", self.absolute-position.x, self.absolute-position.y);
-                        }
-                    }
-                    if root.state.has-effort: VSep {
-                        y: 8px;
-                    }
-                    if root.state.has-effort: Trigger {
-                        y: 2px;
-                        icon: Icons.brain;
-                        label: root.compact ? "" : root.state.effort;
-                        tip: root.compact ? root.state.effort : "";
-                        open: root.open-popup == "effort";
-                        clicked => {
-                            root.popup("effort", self.absolute-position.x, self.absolute-position.y);
-                        }
-                    }
-                    VSep {
-                        y: 8px;
-                    }
-                    Trigger {
-                        y: 2px;
-                        icon: root.state.access-icon;
-                        label: root.compact ? "" : root.state.access;
-                        tip: root.compact ? root.state.access : "";
-                        open: root.open-popup == "access";
-                        clicked => {
-                            root.popup("access", self.absolute-position.x, self.absolute-position.y);
-                        }
-                    }
-                    VSep {
-                        y: 8px;
-                    }
-                    Trigger {
-                        y: 2px;
-                        icon: Icons.house;
-                        label: root.compact ? "" : root.state.device;
-                        tip: root.compact ? root.state.device : "";
-                        open: root.open-popup == "device";
-                        clicked => {
-                            root.popup("device", self.absolute-position.x, self.absolute-position.y);
-                        }
-                    }
-                    Rectangle {
+                    spacing: 8px;
+                    // The chips take what the buttons on the right leave (never pushing them out of the frame):
+                    // labels elide, the least needed first (device, access, effort, model), and drop to the icon
+                    // alone (its name in the tip) once even a short one doesn't fit.
+                    chips := Rectangle {
+                        min-width: 0px;
+                        preferred-width: 0px;
+                        max-width: 100000px;
                         horizontal-stretch: 1;
+                        clip: true;
+                        property <length> chip: 52px;
+                        property <length> sep: 9px;
+                        property <length> gap: 2px;
+                        property <int> n: root.state.has-effort ? 4 : 3;
+                        property <length> base: self.n * self.chip + (self.n - 1) * (self.sep + 2 * self.gap);
+                        property <length> room: max(0px, self.width - self.base);
+                        property <length> pm: root.state.model == "" ? 0px : m-model.preferred-width;
+                        property <length> pe: !root.state.has-effort || root.state.effort == "" ? 0px : m-effort.preferred-width;
+                        property <length> pa: root.state.access == "" ? 0px : m-access.preferred-width;
+                        property <length> pd: root.state.device == "" ? 0px : m-device.preferred-width;
+                        // A label's least room: up to 56px of text, plus the 4px before the chevron.
+                        property <length> lm: self.pm == 0 ? 0px : min(self.pm, 56px) + 4px;
+                        property <length> le: self.pe == 0 ? 0px : min(self.pe, 56px) + 4px;
+                        property <length> la: self.pa == 0 ? 0px : min(self.pa, 56px) + 4px;
+                        property <length> ld: self.pd == 0 ? 0px : min(self.pd, 56px) + 4px;
+                        property <bool> show-m: self.pm > 0 && self.lm <= self.room;
+                        property <bool> show-e: self.pe > 0 && self.show-m && self.lm + self.le <= self.room;
+                        property <bool> show-a: self.pa > 0 && self.show-m && (self.show-e || self.pe == 0) && self.lm + (self.show-e ? self.le : 0px) + self.la <= self.room;
+                        property <bool> show-d: self.pd > 0 && self.show-a && self.lm + (self.show-e ? self.le : 0px) + self.la + self.ld <= self.room;
+                        // What's left past the least rooms goes to the labels in the same order, each up to its full width.
+                        property <length> spare: self.room - (self.show-m ? self.lm : 0px) - (self.show-e ? self.le : 0px) - (self.show-a ? self.la : 0px) - (self.show-d ? self.ld : 0px);
+                        property <length> gm: !self.show-m ? 0px : min(self.pm + 4px - self.lm, self.spare);
+                        property <length> ge: !self.show-e ? 0px : min(self.pe + 4px - self.le, self.spare - self.gm);
+                        property <length> ga: !self.show-a ? 0px : min(self.pa + 4px - self.la, self.spare - self.gm - self.ge);
+                        // Where the effort chip ends (the model chip's end without one); the chips' VSeps sit between.
+                        property <length> after-e: root.state.has-effort ? model.width + 2 * self.gap + self.sep + self.e-width : model.width;
+                        property <length> e-width: !root.state.has-effort ? 0px : 52px + (self.show-e ? min(self.pe, self.le + self.ge - 4px) + 4px : 0px);
+                        property <length> gd: !self.show-d ? 0px : min(self.pd + 4px - self.ld, self.spare - self.gm - self.ge - self.ga);
+                        m-model := Text {
+                            visible: false;
+                            text: root.state.model;
+                            font-size: 14px;
+                        }
+                        m-effort := Text {
+                            visible: false;
+                            text: root.state.effort;
+                            font-size: 14px;
+                        }
+                        m-access := Text {
+                            visible: false;
+                            text: root.state.access;
+                            font-size: 14px;
+                        }
+                        m-device := Text {
+                            visible: false;
+                            text: root.state.device;
+                            font-size: 14px;
+                        }
+                        model := Trigger {
+                            x: 0px;
+                            y: 2px;
+                            has-logo: true;
+                            logo: root.logo;
+                            badge: root.state.badge;
+                            label: chips.show-m ? root.state.model : "";
+                            label-max: chips.lm + chips.gm - 4px;
+                            tip: chips.show-m ? root.state.model-tip : root.state.model + " · " + root.state.model-tip;
+                            open: root.open-popup == "model";
+                            clicked => {
+                                root.popup("model", self.absolute-position.x, self.absolute-position.y);
+                            }
+                        }
+                        if root.state.has-effort: VSep {
+                            x: model.x + model.width + chips.gap;
+                            y: 8px;
+                        }
+                        if root.state.has-effort: Trigger {
+                            x: model.x + model.width + chips.sep + 2 * chips.gap;
+                            y: 2px;
+                            icon: Icons.brain;
+                            label: chips.show-e ? root.state.effort : "";
+                            label-max: chips.le + chips.ge - 4px;
+                            tip: chips.show-e && chips.ge >= chips.pe + 4px - chips.le ? "" : root.state.effort;
+                            open: root.open-popup == "effort";
+                            clicked => {
+                                root.popup("effort", self.absolute-position.x, self.absolute-position.y);
+                            }
+                        }
+                        VSep {
+                            x: chips.after-e + chips.gap;
+                            y: 8px;
+                        }
+                        access := Trigger {
+                            x: chips.after-e + chips.sep + 2 * chips.gap;
+                            y: 2px;
+                            icon: root.state.access-icon;
+                            label: chips.show-a ? root.state.access : "";
+                            label-max: chips.la + chips.ga - 4px;
+                            tip: chips.show-a && chips.ga >= chips.pa + 4px - chips.la ? "" : root.state.access;
+                            open: root.open-popup == "access";
+                            clicked => {
+                                root.popup("access", self.absolute-position.x, self.absolute-position.y);
+                            }
+                        }
+                        VSep {
+                            x: access.x + access.width + chips.gap;
+                            y: 8px;
+                        }
+                        Trigger {
+                            x: access.x + access.width + chips.sep + 2 * chips.gap;
+                            y: 2px;
+                            icon: Icons.house;
+                            label: chips.show-d ? root.state.device : "";
+                            label-max: chips.ld + chips.gd - 4px;
+                            tip: chips.show-d && chips.gd >= chips.pd + 4px - chips.ld ? "" : root.state.device;
+                            open: root.open-popup == "device";
+                            clicked => {
+                                root.popup("device", self.absolute-position.x, self.absolute-position.y);
+                            }
+                        }
                     }
                     HorizontalLayout {
+                        horizontal-stretch: 0;
                         spacing: 6px;
                         alignment: end;
                         // voice.rs `voice_button`: the mic; while recording the stop button, a level
