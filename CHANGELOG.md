@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.114.0] - 2026-11-02
+
 ### Added
 - Settle project, on the desktop and the phone: the project menu (right-click on the desktop, the
   project's sheet on the phone) settles a project with all its chats. It leaves the list for
