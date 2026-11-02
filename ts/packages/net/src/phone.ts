@@ -106,7 +106,7 @@ export interface PhoneDeps {
   catalog?: Catalog;
   /** `voice` in `/v1/state`: whether this PC transcribes a phone's recording, and in which language. */
   voice?: () => { transcribe: boolean; why: string | null; lang: string };
-  updates?: () => { hub_update: Json; provider_updates: Json };
+  updates?: () => { hub_update: Json };
   /** The media a text names or shows (media.rs `find`); none without the media package. */
   find?: (text: string, chat: Chat) => Media[];
   /** The app's version code and url (`GET /v1/app`). */
@@ -552,7 +552,7 @@ export class PhoneRoutes {
         usage: a.usage.map((u) => ({ label: u.label, percent: new F64(Math.round(u.percent * 1000) / 10) })),
       }));
     const sel = cat?.defaults() ?? { account: "", model: "", effort: "", access: "full", device: "" };
-    const updates = this.d.updates?.() ?? { hub_update: null, provider_updates: null };
+    const updates = this.d.updates?.() ?? { hub_update: null };
     const me = hub.mesh.me;
     const peers = hub.mesh.on ? [...hub.mesh.peers.values()].sort((x, y) => Number(y.online) - Number(x.online) || Buffer.compare(Buffer.from(x.name), Buffer.from(y.name))) : [];
     const devices: Record<string, Json>[] = [{ id: "", label: me.name === "" ? hostname() : me.name, icon: "monitor", online: true }];
@@ -588,7 +588,6 @@ export class PhoneRoutes {
       defaults: { ...sel, project_id: null },
       app: this.d.app?.() ?? { version_code: 0, url: "/app.apk" },
       hub_update: updates.hub_update,
-      provider_updates: updates.provider_updates,
       profile_check: this.d.profileCheck?.() ?? null,
       voice: this.d.voice?.() ?? { transcribe: false, why: "voice isn't in this build yet", lang: "auto" },
     };
@@ -956,7 +955,9 @@ export class PhoneRoutes {
 
 /** The new-chat composer's picks as the Rust app reads them at start (app.rs `Sel`), Claude's old High default moved to Medium once. */
 export function composerDefaults(kv: { get(k: string): string | null; set(k: string, v: string): void }, accounts: CatalogAccount[], claudeDefault: string): { account: string; model: string; effort: string; access: string; device: string } {
-  const get = (k: string, d: string) => kv.get(k) ?? d;
+  // A default saved on a provider Harbor dropped (Cursor, Gemini, …) reads as Claude's defaults.
+  const dropped = !/^claude\+?\d*$/.test(kv.get("default_account") ?? "claude") && kv.get("default_account") !== "codex";
+  const get = (k: string, d: string) => (dropped ? d : (kv.get(k) ?? d));
   const aliases: Record<string, string> = { opus: "claude-opus-5-5", "": "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
   const m = get("default_model", "claude-opus-5-5");
   let effort = get("default_effort", "");

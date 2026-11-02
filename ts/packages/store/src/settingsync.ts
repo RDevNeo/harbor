@@ -88,7 +88,6 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["bg_explained", D],
   ["bg_update_noticed", D],
   ["update_toast_dismissed", D],
-  ["provider_updates_dismissed", D],
   ["owner_toast_dismissed", D],
   ["agent_settle", D],
   ["chat_prs", D],

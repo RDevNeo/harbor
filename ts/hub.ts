@@ -5,7 +5,7 @@ import { RunOn } from "./runon.ts";
 import { ProjectClones } from "./projectclones.ts";
 import { Worktrees } from "./worktrees.ts";
 import { statusBars } from "./statusbars.ts";
-import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, provupdate, recap, worktree } from "./packages/agents/src/index.ts";
+import { type Account, agent, chatpr, commits, openchat, Engine, type EngineHost, oauth, providers, recap, worktree } from "./packages/agents/src/index.ts";
 import { clipboard, dictate, dictwords, media, parakeet, voice } from "./packages/media/src/index.ts";
 import { Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
@@ -156,18 +156,6 @@ export interface RunningHub {
 
 function catalogAccount(a: providers.Account): CatalogAccount {
   return { id: a.id, kind: a.kind, name: a.name, badge: a.badge, bin: a.bin, loggedIn: a.loggedIn, usage: a.usage.map((u) => ({ label: u.label, percent: u.percent })) };
-}
-
-/** The phones' banner for provider CLIs that are behind (api.rs `updates_json`); null when there's nothing to say. */
-export function providerUpdates(st: provupdate.Status = provupdate.status()): Json {
-  if (st.items.length === 0 && !st.updating && st.error === null) return null;
-  return {
-    items: st.items.map((p) => ({ kind: p.kind.toLowerCase(), label: p.kind, logo: provupdate.logoFile(p.kind), current: p.current, latest: p.latest })),
-    names: provupdate.names(st.items),
-    key: provupdate.key(st.items),
-    updating: st.updating,
-    error: st.error,
-  };
 }
 
 /** Where phones should try this PC: the network's IPv4 first, the router's public address, then IPv6 and Tailscale's (api.rs `phone_addrs`). */
@@ -531,7 +519,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     bars: (chat, nowMs) => statusBars({ engine: eng(), clones, homeName }, chat, nowMs),
     engine: null,
     uploadsDir,
-    updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null, provider_updates: providerUpdates() }),
+    updates: () => ({ hub_update: o.updater ? asJson(notices.hubUpdate(o.updater.info(), o.updater.state(), o.updater.asked())) : null }),
     catalog,
     voice: () => ({ transcribe: true, why: null, lang: voice.config()[0] }),
     // Relative paths start where the chat works; another PC's chat has its files there.
@@ -718,10 +706,6 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       const b = typeof call.body === "object" && call.body !== null && !Array.isArray(call.body) ? (call.body as Record<string, unknown>) : {};
       return ok({ text: await dictate.cleanupText(typeof b.text === "string" ? b.text : "") });
     }
-    if (at === "POST v1/providers/update") {
-      const started = provupdate.updateAll(accounts);
-      return started === false ? err(409, "no provider update to install") : ok({ ok: true });
-    }
     return (await services?.routePhone(call)) ?? phone.route(call);
   };
   phoneRoute = route;
@@ -793,11 +777,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     replica.reload();
     if (o.updater) for (const p of hub.mesh.peers.values()) o.updater.peerNews(p.update);
   }, 10_000);
-  const stopProviderNews = provupdate.onChange(() => hub.touch(null, true));
   const refresh = setInterval(() => {
     accounts = providers.discover();
     mirrorDictation();
-    if (!offline) provupdate.tick(accounts);
   }, 60_000);
   return {
     store,
@@ -839,7 +821,6 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         r.turn?.release();
       }
       clearInterval(refresh);
-      stopProviderNews();
       services?.stop();
       mesh.stop();
       disc?.stop();

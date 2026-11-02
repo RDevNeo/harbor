@@ -330,7 +330,7 @@ export function spawnAgent(e: Engine, me: Chat, leadId: number, a: unknown): str
   const model = arg(a, "model") || (acc.kind === "Claude" ? me.model : "");
   const access = team.subAccess(me.access, acc.kind);
   if (access === null) throw new Error(`${acc.kind} has no ${accessLabel("Claude", me.access)} access; pick another account`);
-  const pre = acc.kind === "Claude" || acc.kind === "Grok" || acc.kind === "Meta";
+  const pre = acc.kind === "Claude";
   const title = [...(arg(a, "title") || (task.split("\n")[0] ?? ""))].slice(0, 80).join("");
   const chat = e.store.createChat({
     id: 0,

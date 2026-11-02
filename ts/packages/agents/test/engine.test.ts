@@ -494,9 +494,8 @@ describe("team.rs", () => {
   test("subagents_keep_the_leads_access", () => {
     expect(team.subAccess("plan", "Codex")).toBe("plan");
     expect(team.subAccess("edits", "Claude")).toBe("edits");
-    expect(team.subAccess("full", "OpenCode")).toBe("full");
-    expect(team.subAccess("plan", "OpenCode")).toBeNull();
-    expect(team.subAccess("edits", "Cursor")).toBeNull();
+    expect(team.subAccess("full", "Codex")).toBe("full");
+    expect(team.subAccess("ask", "Codex")).toBeNull();
   });
 
   test("retires_only_the_leads_own_subagents", () => {

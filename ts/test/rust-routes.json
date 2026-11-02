@@ -101,7 +101,6 @@
  "POST /v1/issues/fix",
  "POST /v1/issues/reopen",
  "POST /v1/palette/run",
- "POST /v1/providers/update",
  "POST /v1/prs/merge",
  "POST /v1/prs/ready",
  "POST /v1/transcribe",

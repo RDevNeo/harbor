@@ -12,7 +12,7 @@ import { forkable, forkJsonl, forksKey, preambleKey } from "./fork.ts";
 import { home, newUuid, now } from "./paths.ts";
 import { alive as aliveNow } from "./procfs.ts";
 import * as procs from "./procs.ts";
-import { type Account, accountEnv, binStr, type Kind, short, staticModels } from "./providers.ts";
+import { type Account, accountEnv, binStr, type Kind, knownAccount, short, staticModels } from "./providers.ts";
 import * as team from "./team.ts";
 import * as tools from "./tools.ts";
 import { type Intent, NOT_LANDED, PROMOTED, QueueState, type Queued, queuedItem, queuedPrompt, sentFrom, STEER, steering, type Mode } from "./queue.ts";
@@ -419,7 +419,14 @@ export class Engine {
     const chat = this.chat(id);
     if (!chat) return;
     const account = this.account(chat.account);
-    if (!account) return;
+    if (!account) {
+      if (knownAccount(chat.account)) return;
+      // A chat on a provider Harbor dropped (Cursor, Gemini, …) says so instead of doing nothing.
+      const tr = this.transcript(id);
+      tr.items.push({ kind: "error", text: `Harbor no longer runs ${chat.account}: switch this chat to a Claude or Codex account.` });
+      this.persist(id);
+      return;
+    }
     const tr = this.transcript(id);
     let remote: RemoteSpec | null = null;
     try {
@@ -1056,7 +1063,7 @@ export class Engine {
     const items = all.slice(0, upto + 1);
     const acc = this.account(src.account);
     const claude = acc?.kind === "Claude";
-    const sessionId = claude || acc?.kind === "Grok" || acc?.kind === "Meta" ? newUuid() : "";
+    const sessionId = claude ? newUuid() : "";
     let forked = false;
     if (claude && src.started) {
       const f = sessionCopies(acc?.configDir ?? null, src.sessionId)[0];

@@ -1,4 +1,4 @@
-import { providers, provupdate } from "@harbor/agents";
+import { providers } from "@harbor/agents";
 import type { Pixels } from "../logos.ts";
 import type { Kv } from "./settings.ts";
 
@@ -32,14 +32,10 @@ export interface ProviderRow {
 
 export interface ProvidersData {
   rows: ProviderRow[];
-  update_show: boolean;
-  update_title: string;
-  update_desc: string;
-  update_enabled: boolean;
 }
 
-/** pages.rs `providers_tab`: every account with its state, and the provider CLI updates. */
-export function providersData(accounts: readonly providers.Account[], defaultAccount: string, update: provupdate.Status, logo: (kind: providers.Kind) => Pixels): ProvidersData {
+/** pages.rs `providers_tab`: every account with its state. */
+export function providersData(accounts: readonly providers.Account[], defaultAccount: string, logo: (kind: providers.Kind) => Pixels): ProvidersData {
   const rows = accounts.map((a): ProviderRow => {
     const installed = providers.installed(a);
     const signedOut = a.loggedIn === false;
@@ -59,14 +55,7 @@ export function providersData(accounts: readonly providers.Account[], defaultAcc
       is_default: a.id === defaultAccount,
     };
   });
-  const list = update.items.map((p) => `${p.kind} ${p.current} \u{2192} ${p.latest}`).join(", ");
-  return {
-    rows,
-    update_show: update.items.length > 0 || update.updating || update.error !== null,
-    update_title: update.updating ? "Updating providers\u{2026}" : "Updates available",
-    update_desc: update.error !== null ? `The last update failed: ${update.error}` : list,
-    update_enabled: !update.busy && update.items.length > 0,
-  };
+  return { rows };
 }
 
 /** What "Add Claude account" runs in the terminal: the first free ~/.claudeN from 2 on (app.rs `add_claude_account`). */

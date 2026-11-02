@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { git, providers, provupdate, type Account, type Work } from "@harbor/agents";
+import { git, providers, type Account, type Work } from "@harbor/agents";
 import { type voiceCtl } from "@harbor/media";
 import { Desktop, hostname, spawnNotifySend, testNote } from "@harbor/net";
 import { control, discord, type Funnel, hookcert, type ghapi, prs as ghprs } from "@harbor/mcp";
@@ -93,7 +93,7 @@ export class PageHost {
           speech: s.dictation() ?? settingsSpeech(store),
           theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
           back: () => s.leave(),
-          providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), updateAll: (accounts) => void provupdate.updateAll(accounts) },
+          providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount() },
           integrations: { discordWindow: () => void discord.window().catch(() => {}) },
           webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => this.s.hub().funnel.check(), disableFunnel: () => this.s.hub().funnel.forget(), kick: () => hookcert.kick() },
           funnel: () => this.s.hub().funnel,

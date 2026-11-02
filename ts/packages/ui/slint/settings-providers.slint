@@ -26,10 +26,6 @@ export struct ProviderRow {
 
 export struct ProvidersData {
     rows: [ProviderRow],
-    update-show: bool,
-    update-title: string,
-    update-desc: string,
-    update-enabled: bool,
 }
 
 component Centered {
@@ -69,28 +65,6 @@ export component ProvidersTab {
         }
         Rectangle {
             height: 16px;
-        }
-        if root.data.update-show: VerticalLayout {
-            Card {
-                height: upd.preferred-height + 2px;
-                upd := SettingRow {
-                    width: parent.width;
-                    title: root.data.update-title;
-                    desc: root.data.update-desc;
-                    Btn {
-                        text: "Update";
-                        size: sm;
-                        variant: primary;
-                        enabled: root.data.update-enabled;
-                        clicked => {
-                            root.act("", "update");
-                        }
-                    }
-                }
-            }
-            Rectangle {
-                height: 8px;
-            }
         }
         Card {
             VerticalLayout {

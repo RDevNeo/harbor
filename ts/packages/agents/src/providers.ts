@@ -3,21 +3,22 @@ import { join } from "node:path";
 import { arr, at, f64, i64, optStr, parse, str } from "./json.ts";
 import { home } from "./paths.ts";
 
-export const KINDS = ["Claude", "Codex", "Cursor", "Grok", "Gemini", "Meta", "OpenCode"] as const;
+export const KINDS = ["Claude", "Codex"] as const;
 export type Kind = (typeof KINDS)[number];
 
 export function kindOf(label: string): Kind | undefined {
   return KINDS.find((k) => k === label);
 }
 
+/** An account id Harbor still drives ("claude", "claude2", "codex"): settings saved by older versions may name
+ *  providers that were dropped (Cursor, Grok, Gemini, Meta, OpenCode), which read as Claude's defaults. */
+export function knownAccount(id: string): boolean {
+  return /^claude\+?\d*$/.test(id) || id === "codex";
+}
+
 const BIN: Record<Kind, string> = {
   Claude: "claude",
   Codex: "codex",
-  Cursor: "cursor-agent",
-  Grok: "grok",
-  Gemini: "gemini",
-  Meta: "muse",
-  OpenCode: "opencode",
 };
 
 export function bin(k: Kind): string {
@@ -26,16 +27,7 @@ export function bin(k: Kind): string {
 
 /** Interactive command that signs the CLI in; it runs in the built-in terminal. */
 export function loginCmd(k: Kind): readonly string[] {
-  switch (k) {
-    case "Claude":
-      return ["/login"];
-    case "Gemini":
-      return [];
-    case "OpenCode":
-      return ["auth", "login"];
-    default:
-      return ["login"];
-  }
+  return k === "Claude" ? ["/login"] : ["login"];
 }
 
 export function installHint(k: Kind): string {
@@ -44,16 +36,6 @@ export function installHint(k: Kind): string {
       return "curl -fsSL https://claude.ai/install.sh | bash";
     case "Codex":
       return "npm i -g @openai/codex";
-    case "Cursor":
-      return "curl https://cursor.com/install -fsS | bash";
-    case "Grok":
-      return "npm i -g @xai-official/grok";
-    case "Gemini":
-      return "npm i -g @google/gemini-cli";
-    case "Meta":
-      return "curl -fsSL https://dev.meta.ai/install.sh | bash";
-    case "OpenCode":
-      return "curl -fsSL https://opencode.ai/install | bash";
   }
 }
 
@@ -80,7 +62,7 @@ export interface Window {
 }
 
 export interface Account {
-  /** Stable id stored on chats: "claude", "claude2", "codex", "cursor", … */
+  /** Stable id stored on chats: "claude", "claude2", "codex" */
   id: string;
   kind: Kind;
   name: string;
@@ -129,7 +111,7 @@ function m(id: string, label: string, more: boolean): Model {
 export function childPath(): string {
   const h = home();
   const dirs = (process.env.PATH ?? "").split(":");
-  for (const extra of [".local/bin", ".local/share/mise/shims", ".cargo/bin", ".bun/bin", ".opencode/bin", ".npm-global/bin"]) {
+  for (const extra of [".local/bin", ".local/share/mise/shims", ".cargo/bin", ".bun/bin", ".npm-global/bin"]) {
     const p = join(h, extra);
     if (!dirs.includes(p)) dirs.push(p);
   }
@@ -213,14 +195,7 @@ export function discover(): Account[] {
   }
   extra.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   for (const [n, dir] of extra) out.push(claudeAccount(`claude${n}`, dir, join(dir, ".claude.json"), n));
-  for (const kind of KINDS.slice(1)) {
-    let loggedIn: boolean | null = null;
-    if (kind === "Codex") loggedIn = existsSync(join(h, ".codex/auth.json"));
-    if (kind === "Meta") loggedIn = existsSync(join(h, ".config/muse/auth.json"));
-    if (kind === "Gemini") loggedIn = existsSync(join(h, ".gemini/oauth_creds.json")) || process.env.GEMINI_API_KEY !== undefined;
-    if (kind === "Grok") loggedIn = existsSync(join(h, ".grok/auth.json")) || process.env.XAI_API_KEY !== undefined;
-    out.push({ id: kind.toLowerCase(), kind, name: kind, email: "", badge: "", plan: "", configDir: null, bin: which(bin(kind)), loggedIn, usage: [] });
-  }
+  out.push({ id: "codex", kind: "Codex", name: "Codex", email: "", badge: "", plan: "", configDir: null, bin: which(bin("Codex")), loggedIn: existsSync(join(h, ".codex/auth.json")), usage: [] });
   applyUsage(out);
   return out;
 }
@@ -275,38 +250,9 @@ export function codexModels(cache: unknown = readJson(join(home(), ".codex/model
   });
 }
 
-/** Cursor: parsed from `cursor-agent models` (run off the UI thread). */
-export function cursorModels(cursorBin: string): Model[] {
-  let text = "";
-  try {
-    const r = Bun.spawnSync([cursorBin, "models"], { env: { ...process.env, PATH: childPath() }, stdout: "pipe", stderr: "ignore" });
-    text = r.stdout.toString();
-  } catch {
-    // cursor-agent didn't run: its list is the default
-  }
-  return parseCursorModels(text);
-}
-
-export function parseCursorModels(text: string): Model[] {
-  const v: Model[] = [];
-  for (const l of text.split("\n")) {
-    const i = l.indexOf(" - ");
-    if (i < 0) continue;
-    const id = l.slice(0, i).trim();
-    if (id.includes(" ")) continue;
-    const label = l.slice(i + 3).replaceAll("(current, default)", "").replaceAll("(current)", "").replaceAll("(default)", "");
-    v.push(m(id, label.trim(), false));
-  }
-  v.forEach((x, i) => (x.more = i >= 4));
-  if (v.length === 0) v.push(m("auto", "Auto", false));
-  return v;
-}
-
 export function staticModels(k: Kind): Model[] {
   if (k === "Claude") return claudeModels();
-  if (k === "Codex") return codexModels();
-  if (k === "Cursor") return [m("auto", "Auto", false)];
-  return [m("", "Default", false)];
+  return codexModels();
 }
 
 export type Choice = readonly [key: string, label: string, detail: string];
@@ -332,16 +278,6 @@ export function efforts(k: Kind): readonly Choice[] {
         ["max", "Max", ""],
         ["ultra", "Ultra", "Maximum reasoning with automatic task delegation"],
       ];
-    case "Meta":
-      return [
-        ["minimal", "Minimal", ""],
-        ["low", "Low", ""],
-        ["medium", "Medium", ""],
-        ["high", "High", ""],
-        ["max", "Max", ""],
-      ];
-    default:
-      return [];
   }
 }
 
@@ -350,8 +286,6 @@ let codexEffort: string | undefined;
 /** Claude gets Harbor's own default whatever Claude Code's effortLevel says; the others their CLI's setting. */
 export function defaultEffort(k: Kind): string {
   if (k === "Claude") return "medium";
-  if (k === "Meta") return "high";
-  if (k !== "Codex") return "";
   if (codexEffort === undefined) {
     let text = "";
     try {
@@ -372,27 +306,16 @@ export function effortLabel(k: Kind, e: string): string {
 }
 
 /** Providers with a fast tier: Claude Code's fastMode, Codex's priority service tier. */
-export function hasFast(k: Kind): boolean {
-  return k === "Claude" || k === "Codex";
+export function hasFast(_k: Kind): boolean {
+  return true;
 }
 
 const FULL: Choice = ["full", "Full access", "Runs commands and edits files without asking"];
 const EDITS: Choice = ["edits", "Auto-edit", "Edits files; risky commands are refused"];
 const PLAN: Choice = ["plan", "Read only", "Reads and plans, changes nothing"];
 
-export function access(k: Kind): readonly Choice[] {
-  switch (k) {
-    case "Claude":
-    case "Codex":
-    case "Grok":
-    case "Gemini":
-      return [FULL, EDITS, PLAN];
-    case "Cursor":
-    case "Meta":
-      return [FULL, ["ask", "Default", "The CLI's own approval rules"]];
-    case "OpenCode":
-      return [FULL];
-  }
+export function access(_k: Kind): readonly Choice[] {
+  return [FULL, EDITS, PLAN];
 }
 
 export function accessLabel(k: Kind, a: string): string {

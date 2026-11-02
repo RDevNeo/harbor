@@ -9,7 +9,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -355,44 +354,6 @@ final class Sidebar {
                     () -> { pr.edit().putString("prof-" + a.hub.id, pk).apply(); a.startActivity(new Intent(a, Settings.class).putExtra("hub", a.hub.id).putExtra("people", true)); },
                     () -> { pr.edit().putString("prof-" + a.hub.id, pk).apply(); render(this.st); }), Ui.inset());
         }
-        JSONObject pu = st.optJSONObject("provider_updates");
-        if (pu == null) return;
-        JSONArray items = pu.optJSONArray("items");
-        int n = items == null ? 0 : items.length();
-        String key = pu.optString("key");
-        boolean updating = pu.optBoolean("updating");
-        String error = pu.isNull("error") ? "" : pu.optString("error");
-        boolean offered = n > 0 && !key.equals(pr.getString("upd-prov-" + a.hub.id, ""));
-        if (!updating && error.isEmpty() && !offered) return;
-        String names = pu.optString("names");
-        String title, body, primary;
-        if (updating) { title = "Updating providers…"; body = "Updating " + names + " on " + a.hub.label() + ". Chats keep running."; primary = "Updating…"; }
-        else if (!error.isEmpty()) { title = "A provider update failed"; body = error; primary = n > 0 ? "Try again" : null; }
-        else { title = "Updates available: " + n + " provider" + (n == 1 ? "" : "s"); body = names + " can be updated on " + a.hub.label() + "."; primary = "Update"; }
-        // The providers' logos, overlapping a little (at most three).
-        FrameLayout icon = new FrameLayout(a);
-        icon.setBackground(Ui.round(Ui.G200, 0, 10));
-        int shown = Math.min(n, 3);
-        for (int i = 0; i < shown; i++) {
-            android.graphics.Bitmap b = Ui.logo(a, items.optJSONObject(i).optString("logo"));
-            if (b == null) continue;
-            ImageView iv = new ImageView(a);
-            iv.setImageBitmap(b);
-            int size = shown == 1 ? 22 : 18;
-            iv.setTranslationX(Ui.dp((i - (shown - 1) / 2f) * 7));
-            icon.addView(iv, new FrameLayout.LayoutParams(Ui.dp(size), Ui.dp(size), Gravity.CENTER));
-        }
-        if (icon.getChildCount() == 0) icon.addView(Ui.icon(a, Ui.I_BOT, 18, Ui.G700), new FrameLayout.LayoutParams(-1, -1));
-        StringBuilder details = new StringBuilder();
-        for (int i = 0; i < n; i++) {
-            JSONObject it = items.optJSONObject(i);
-            details.append(it.optString("label")).append("  ").append(it.optString("current")).append(" → ").append(it.optString("latest")).append('\n');
-        }
-        list.addView(banner(icon, title, body, primary, !updating && n > 0,
-                () -> Ui.bg(a, () -> a.hub.call("POST", "/v1/providers/update", new JSONObject()), r -> { }),
-                n > 0 ? "Details" : null,
-                () -> Ui.dialog(a).setTitle("Provider updates on " + a.hub.label()).setMessage(details.toString().trim()).setPositiveButton("OK", null).show(),
-                () -> { pr.edit().putString("upd-prov-" + a.hub.id, key).apply(); render(this.st); }), Ui.inset());
     }
 
     /** One banner card: an icon tile, a title and a line, a black pill and a quiet text button,

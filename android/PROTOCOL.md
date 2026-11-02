@@ -298,8 +298,8 @@ refetch everything.
   "accounts": [{"id": "claude", "label": "Claude · AB", "name": "…", "kind": "claude",
                 "signed_in": true, "can_start": true, "usage": [{"label": "5h", "percent": 42.0}]}],
   "models":  {"claude": [{"id": "claude-opus-5-5", "label": "Opus 5.5", "more": false}], "codex": […]},
-  "efforts": {"claude": [{"id": "high", "label": "High", "desc": ""}], "cursor": []},
-  "default_efforts": {"claude": "high", "cursor": ""},
+  "efforts": {"claude": [{"id": "high", "label": "High", "desc": ""}], "codex": […]},
+  "default_efforts": {"claude": "high", "codex": "medium"},
   "access":  {"claude": [{"id": "full", "label": "Full access", "desc": "…"}]},
   "devices": [{"id": "", "label": "desk", "icon": "monitor", "online": true},
               {"id": "ts:laptop", "label": "laptop", "icon": "laptop", "online": false}],
@@ -308,11 +308,7 @@ refetch everything.
                "device": "", "project_id": null},
   "app": {"version_code": 7000, "url": "/app.apk"},
   "hub_update": {"version": "0.29.0", "current": "0.28.0", "installing": false,
-                 "notes_url": "https://github.com/RDevNeo/harbor/releases/tag/v0.29.0"},
-  "provider_updates": {"items": [{"kind": "codex", "label": "Codex", "logo": "p-openai.a8", "current": "0.46.0", "latest": "0.47.0"},
-                                 {"kind": "claude", "label": "Claude", "logo": "p-claude-color.rgba", "current": "2.0.14", "latest": "2.0.15"}],
-                       "names": "Codex and Claude", "key": "codex=0.47.0,claude=2.0.15",
-                       "updating": false, "error": null}
+                 "notes_url": "https://github.com/RDevNeo/harbor/releases/tag/v0.29.0"}
 }
 ```
 
@@ -323,8 +319,8 @@ refetch everything.
 - `projects` come in the desktop sidebar's order (by hand, or by last activity when it's set so).
   Projects never settle, only chats do. Older hubs sent a project `settled`; clients ignore it,
   and current hubs no longer send it.
-- `models`, `efforts`, `access` are keyed by account `kind` (claude, codex, cursor, grok,
-  gemini, meta, opencode). The phone draws the chat's model and effort as two small badges right
+- `models`, `efforts`, `access` are keyed by account `kind` (claude, codex; hubs before 0.111
+  also sent cursor, grok, gemini, meta and opencode). The phone draws the chat's model and effort as two small badges right
   over the composer (the provider's logo and the model's `label`; the effort's `label`, no badge
   with an empty effort list), each opening its picker. An account the hub doesn't list (another
   PC's chat, on an account only that PC has): the provider is the kind whose `models` hold the
@@ -370,11 +366,11 @@ refetch everything.
 - `profile_check` (optional, from 0.47; null or missing: nothing to ask): `{key, title, body}`,
   "Is this you?" while this PC's owner is a detection nobody confirmed (the desktop's pop-up).
   Confirm sends `PATCH /v1/people {"op": "confirm"}`; closing remembers `key` on the phone.
-- `provider_updates` (optional, null or missing: none): the hub's provider CLIs that are behind,
-  as the separate "Updates available: N providers" banner ("<names> can be updated"), with
-  Update (`POST /v1/providers/update`). `updating`: the hub is running the updaters; `error`:
-  the last update failed (text). Dismissing either banner remembers its version (`version`, or
-  `key` for providers), so it shows again for the next one. Older hubs send neither field.
+- `provider_updates`: gone from 0.111. Older hubs sent the provider CLIs that were behind (a
+  "Updates available: N providers" banner with `POST /v1/providers/update`); the check offered
+  updates its updater couldn't install (CLIs from mise, Homebrew or a distribution package), and
+  Claude Code updates itself. Current phones ignore the field; current hubs neither send it nor
+  answer `POST /v1/providers/update`.
 - `hub_fp`, `hub_addrs`, `hub_port`: this hub's key and where it answers (keep the entry's
   address list up to date with them).
 - `hub_id`: this hub's id in the mesh; `mesh`: chats are shared with the user's other PCs; `hubs`:
@@ -1526,14 +1522,13 @@ gives an item's bytes (`application/octet-stream`, `404` when it's gone). `POST 
 with `{}`, or `{"error": "<why>"}` when the phone couldn't take it, removes the item, and the PC
 shows the item as delivered or failed.
 
-### `POST /v1/providers/update`, `POST /v1/hub/update`
+### `POST /v1/hub/update`
 
-`{}`. The two update banners' buttons: update the hub's provider CLIs (each with its own updater:
-`claude update`, `opencode upgrade`, `npm i -g …@latest`), or install the Harbor release on offer
-and reload into it (running agents keep going). `{"ok": true}` when started; `409` when there's
+`{}`. The update banner's button: install the Harbor release on offer and reload into it (running
+agents keep going). (`POST /v1/providers/update`, the provider CLIs' updater, is gone from 0.111.) `{"ok": true}` when started; `409` when there's
 nothing to update. A hub with a newer version already on disk answers `{"ok": true}` and
-restarts into it about a second later (the reply goes out first). Progress shows in `/v1/state` (`provider_updates.updating`,
-`hub_update.installing`; `state_changed` fires).
+restarts into it about a second later (the reply goes out first). Progress shows in `/v1/state` (`hub_update.installing`;
+`state_changed` fires).
 
 From 0.51 `POST /v1/hub/update` works without an offer too: a hub only learns of a release from
 its own check (20 s after it starts, then every 4 h), so with none known it checks now and

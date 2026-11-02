@@ -7,7 +7,6 @@ export * as agent from "./agent.ts";
 export { integrate, Turn, type Event, type Integrations, type Steering, type TurnSpec } from "./agent.ts";
 export * as git from "./git.ts";
 export * as procs from "./procs.ts";
-export * as provupdate from "./provupdate.ts";
 export * as worktree from "./worktree.ts";
 export * as recap from "./recap.ts";
 export * as team from "./team.ts";

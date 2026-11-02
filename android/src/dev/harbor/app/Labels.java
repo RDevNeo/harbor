@@ -33,11 +33,6 @@ final class Labels {
         switch (kind) {
             case "claude": return "p-claude-color.rgba";
             case "codex": return "p-openai.a8";
-            case "cursor": return "p-cursor.a8";
-            case "grok": return "p-grok.a8";
-            case "gemini": return "p-gemini-color.rgba";
-            case "meta": return "p-meta-color.rgba";
-            case "opencode": return "p-opencode.a8";
             default: return "";
         }
     }

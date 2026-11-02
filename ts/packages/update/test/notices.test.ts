@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test";
 import type { State, UpdateInfo } from "../src/delivery.ts";
 import {
-  DONE_FOR_MS,
   HARBOR_DISMISSED,
-  PROVIDERS_DISMISSED,
   dismiss,
   dismissed,
   harborOffer,
@@ -11,9 +9,7 @@ import {
   hubUpdate,
   inviteToast,
   notesUrl,
-  providerToast,
   rollbackToast,
-  type ProviderStatus,
 } from "../src/notices.ts";
 
 const idle: State = { t: "idle" };
@@ -62,22 +58,6 @@ test("a start that was undone is said once per version", () => {
   expect(rollbackToast({ ...r, restored: "" }, null)?.body).toContain("the previous version");
 });
 
-const providers = (over: Partial<ProviderStatus> = {}): ProviderStatus => ({ items: [{ kind: "claude" }, { kind: "codex" }], updating: false, error: null, done: null, key: "claude:1|codex:2", names: "Claude Code and Codex", ...over });
-
-test("the provider pop-up: offered, updating, failed, done", () => {
-  expect(providerToast(providers({ items: [] }), null, 0)).toBeNull();
-  const offered = providerToast(providers(), null, 0);
-  expect(offered).toMatchObject({ title: "Updates available: 2 providers", body: "Claude Code and Codex can be updated.", primary: { label: "Update", enabled: true }, secondary: "Settings", icon: "providers" });
-  expect(providerToast(providers({ items: [{ kind: "claude" }] }), null, 0)?.title).toBe("Updates available: 1 provider");
-  expect(providerToast(providers(), "claude:1|codex:2", 0)).toBeNull();
-  expect(providerToast(providers({ updating: true }), "claude:1|codex:2", 0)).toMatchObject({ title: "Updating providers…", primary: { enabled: false } });
-  expect(providerToast(providers({ error: "network" }), null, 0)).toMatchObject({ title: "A provider update failed", body: "network", primary: { label: "Try again" } });
-  expect(providerToast(providers({ error: "network", items: [] }), null, 0)?.primary).toBeNull();
-  const done = { message: "Codex is up to date", at: 1000 };
-  expect(providerToast(providers({ items: [], done }), null, 1000 + DONE_FOR_MS - 1)).toMatchObject({ title: "Codex is up to date", primary: null, icon: "bot" });
-  expect(providerToast(providers({ items: [], done }), null, 1000 + DONE_FOR_MS)).toBeNull();
-});
-
 test("a workspace invitation, until it is closed", () => {
   const inv = { id: "i1", ws_name: "Team", inviter_name: "Sam", email: "a@example.org" };
   const t = inviteToast([inv], [], false);
@@ -96,10 +76,8 @@ test("dismissals are remembered in the settings store", () => {
   const kv = { get: (k: string) => data.get(k) ?? null, set: (k: string, v: string) => void data.set(k, v) };
   expect(dismissed(kv, HARBOR_DISMISSED)).toBeNull();
   dismiss(kv, HARBOR_DISMISSED, "2.0.0");
-  dismiss(kv, PROVIDERS_DISMISSED, "k");
   expect(dismissed(kv, HARBOR_DISMISSED)).toBe("2.0.0");
   expect(HARBOR_DISMISSED).toBe("update_toast_dismissed");
-  expect(PROVIDERS_DISMISSED).toBe("provider_updates_dismissed");
   data.set(HARBOR_DISMISSED, "");
   expect(dismissed(kv, HARBOR_DISMISSED)).toBeNull();
 });

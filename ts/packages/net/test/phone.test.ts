@@ -14,7 +14,7 @@ import { MemKv } from "../src/kv.ts";
 import { Mesh } from "../src/mesh.ts";
 import { newPeer } from "../src/shared.ts";
 import { StoreReplica } from "../src/meshstore.ts";
-import { cardJson, catalogOf, clock, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
+import { cardJson, catalogOf, clock, composerDefaults, nothingToSend, PhoneRoutes, type CatalogAccount, type PhoneEngine } from "../src/phone.ts";
 import { providers } from "@harbor/agents";
 import { connect, generateIdentity } from "../src/tls.ts";
 import { actions, project } from "../src/view.ts";
@@ -192,7 +192,7 @@ describe("the phone API's chats (api.rs App side)", () => {
     const hub = new Hub([], 0);
     const replica = new StoreReplica({ store, hub, version: "t" });
     const acct = (id: string, kind: string, bin: string | null): CatalogAccount => ({ id, kind, name: id, badge: "AB", bin, loggedIn: true, usage: [{ label: "5h", percent: 0.4213 }] });
-    const accounts = [acct("claude", "Claude", "/bin/true"), acct("claude2", "Claude", "/bin/true"), acct("codex", "Codex", "/bin/true"), acct("gemini", "Gemini", null)];
+    const accounts = [acct("claude", "Claude", "/bin/true"), acct("claude2", "Claude", "/bin/true"), acct("codex", "Codex", "/bin/true"), acct("claude3", "Claude", null)];
     store.set("default_effort", "high");
     const catalog = catalogOf(providers, () => accounts, store);
     const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, catalog });
@@ -558,4 +558,18 @@ describe("phone: a copy's calls at its home PC (mesh.rs mesh_proxy)", () => {
     expect(sent[2]?.ctx).toBeNull();
     store.close();
   });
+});
+
+test("a default saved on a provider Harbor dropped reads as Claude's defaults", () => {
+  const kv = new Map<string, string>([
+    ["default_account", "cursor"],
+    ["default_model", "auto"],
+    ["default_effort", "minimal"],
+    ["default_access", "ask"],
+    ["effort_default_medium", "1"],
+  ]);
+  const store = { get: (k: string) => kv.get(k) ?? null, set: (k: string, v: string) => void kv.set(k, v) };
+  expect(composerDefaults(store, [], "medium")).toEqual({ account: "claude", model: "claude-opus-5-5", effort: "", access: "full", device: "" });
+  kv.set("default_account", "codex");
+  expect(composerDefaults(store, [], "medium")).toMatchObject({ account: "codex", model: "auto", effort: "minimal" });
 });

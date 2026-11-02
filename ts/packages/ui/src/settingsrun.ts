@@ -45,7 +45,7 @@ await mountSettings(
       },
     },
     back: () => {},
-    providers: { login: () => {}, addClaudeAccount: () => {}, updateAll: () => {} },
+    providers: { login: () => {}, addClaudeAccount: () => {} },
     integrations: { discordWindow: () => {} },
     webhooks: { terminal: () => {}, checkFunnel: () => Promise.resolve(), disableFunnel: () => {}, kick: () => {} },
     funnel: () => ({ base: null, stale: null }),

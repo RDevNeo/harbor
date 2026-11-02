@@ -3,9 +3,9 @@ import type { Item } from "./item.ts";
 import { charCount, takeChars, trim, trimEnd, trimEndChars, trimStartChars } from "./text.ts";
 
 /** A provider (providers.rs `Kind`). */
-export type Provider = "claude" | "codex" | "cursor" | "grok" | "gemini" | "meta" | "opencode";
+export type Provider = "claude" | "codex";
 
-export const PROVIDERS: readonly Provider[] = ["claude", "codex", "cursor", "grok", "gemini", "meta", "opencode"];
+export const PROVIDERS: readonly Provider[] = ["claude", "codex"];
 
 /** From this many running agents on, the strip starts folded into "3 agents working". */
 export const FOLD_AT = 3;
@@ -52,16 +52,6 @@ export function logo(kind: Provider): [string, boolean] {
       return ["p-claude-color.rgba", false];
     case "codex":
       return ["p-openai.a8", true];
-    case "cursor":
-      return ["p-cursor.a8", true];
-    case "grok":
-      return ["p-grok.a8", true];
-    case "gemini":
-      return ["p-gemini-color.rgba", false];
-    case "meta":
-      return ["p-meta-color.rgba", false];
-    case "opencode":
-      return ["p-opencode.a8", true];
   }
 }
 

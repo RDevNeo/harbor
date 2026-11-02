@@ -7,7 +7,7 @@ import * as p from "../src/providers.ts";
 const base = mkdtempSync(join(tmpdir(), "hts-prov-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-test("accounts from a home folder: one per Claude profile, then every other CLI", () => {
+test("accounts from a home folder: one per Claude profile, then Codex", () => {
   const h = join(base, "home");
   const bin = join(h, ".local/bin");
   mkdirSync(join(h, ".claude"), { recursive: true });
@@ -26,13 +26,12 @@ test("accounts from a home folder: one per Claude profile, then every other CLI"
   process.env.PATH = "/nonexistent";
   try {
     const all = p.discover();
-    expect(all.map((a) => a.id)).toEqual(["claude", "claude2", "claude10", "codex", "cursor", "grok", "gemini", "meta", "opencode"]);
+    expect(all.map((a) => a.id)).toEqual(["claude", "claude2", "claude10", "codex"]);
     const [one, two, ten] = all;
     expect(one).toMatchObject({ name: "Claude", badge: "AB", configDir: null, loggedIn: true, bin: join(bin, "claude") });
     expect(two).toMatchObject({ name: "Work", badge: "C2", configDir: join(h, ".claude2"), loggedIn: true });
     expect(ten).toMatchObject({ name: "Claude 10", loggedIn: false });
     expect(all.find((a) => a.id === "codex")?.loggedIn).toBe(true);
-    expect(all.find((a) => a.id === "cursor")?.loggedIn).toBeNull();
     expect(p.short(two as p.Account)).toBe("Claude · C2");
     expect(p.accountEnv(two as p.Account)).toEqual([
       ["PATH", p.childPath()],
@@ -64,27 +63,16 @@ test("codex lists the newest of each family from the newest generation", () => {
   expect(p.codexModels(undefined)).toEqual([{ id: "", label: "Default", more: false }]);
 });
 
-test("cursor models from its list, the first four up front", () => {
-  const text = "Available models\n\nauto - Auto (current, default)\ngpt-5 - GPT-5\nsonnet-4 - Sonnet 4\nopus - Opus (current)\ngrok - Grok\nnot a model - x\n";
-  const v = p.parseCursorModels(text);
-  expect(v.map((m) => [m.id, m.label, m.more])).toEqual([
-    ["auto", "Auto", false],
-    ["gpt-5", "GPT-5", false],
-    ["sonnet-4", "Sonnet 4", false],
-    ["opus", "Opus", false],
-    ["grok", "Grok", true],
-  ]);
-  expect(p.parseCursorModels("")).toEqual([{ id: "auto", label: "Auto", more: false }]);
-});
-
 test("efforts, access and their labels", () => {
   expect(p.defaultEffort("Claude")).toBe("medium");
   expect(p.effortLabel("Claude", "")).toBe("Medium");
-  expect(p.effortLabel("Meta", "")).toBe("High");
-  expect(p.effortLabel("Cursor", "")).toBe("Default");
-  expect(p.accessLabel("OpenCode", "plan")).toBe("Full access");
-  expect(p.access("Cursor").map((a) => a[0])).toEqual(["full", "ask"]);
-  expect(p.hasFast("Codex") && !p.hasFast("Gemini")).toBe(true);
-  expect(p.loginCmd("OpenCode")).toEqual(["auth", "login"]);
+  expect(p.effortLabel("Claude", "nope")).toBe("Default");
+  expect(p.accessLabel("Codex", "plan")).toBe("Read only");
+  expect(p.accessLabel("Codex", "ask")).toBe("Full access");
+  expect(p.access("Codex").map((a) => a[0])).toEqual(["full", "edits", "plan"]);
+  expect(p.hasFast("Codex") && p.hasFast("Claude")).toBe(true);
+  expect(p.loginCmd("Codex")).toEqual(["login"]);
   expect(p.badgeFrom("9z@x", "C1")).toBe("C1");
+  expect(["claude", "claude2", "claude+3", "codex"].every(p.knownAccount)).toBe(true);
+  expect(["cursor", "grok", "gemini", "meta", "opencode", ""].some(p.knownAccount)).toBe(false);
 });

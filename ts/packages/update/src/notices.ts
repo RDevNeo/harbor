@@ -3,7 +3,6 @@ import type { State, UpdateInfo } from "./delivery.ts";
 import type { RolledBack } from "./install.ts";
 
 export const HARBOR_DISMISSED = "update_toast_dismissed";
-export const PROVIDERS_DISMISSED = "provider_updates_dismissed";
 export const ROLLBACK_DISMISSED = "rollback_toast_dismissed";
 
 export const DONE_FOR_MS = 6000;
@@ -13,7 +12,7 @@ export const notesUrl = (v: string): string => `https://github.com/RDevNeo/harbo
 export type Icon = "sparkles" | "users" | "bot" | "providers" | "undo";
 
 export interface Toast {
-  id: "harbor-update-toast" | "provider-update-toast" | "invite-toast" | "rollback-toast";
+  id: "harbor-update-toast" | "invite-toast" | "rollback-toast";
   icon: Icon;
   title: string;
   body: string;
@@ -62,47 +61,6 @@ export function rollbackToast(r: RolledBack | null, dismissed: string | null): T
     primary: null,
     secondary: "What's new",
   };
-}
-
-export interface ProviderUpdate {
-  kind: string;
-}
-
-export interface ProviderStatus {
-  items: ProviderUpdate[];
-  updating: boolean;
-  error: string | null;
-  done: { message: string; at: number } | null;
-  key: string;
-  names: string;
-}
-
-export function providerToast(st: ProviderStatus, dismissed: string | null, now: number): Toast | null {
-  const done = st.done !== null && now - st.done.at < DONE_FOR_MS ? st.done.message : null;
-  const offered = st.items.length > 0 && dismissed !== st.key;
-  if (!st.updating && st.error === null && done === null && !offered) return null;
-  const n = st.items.length;
-  let title: string;
-  let body: string;
-  let primary: Toast["primary"];
-  if (st.updating) {
-    title = "Updating providers…";
-    body = `Updating ${st.names}. Chats keep running.`;
-    primary = { label: "Updating…", enabled: false };
-  } else if (st.error !== null) {
-    title = "A provider update failed";
-    body = st.error;
-    primary = n > 0 ? { label: "Try again", enabled: true } : null;
-  } else if (offered) {
-    title = `Updates available: ${n} provider${n === 1 ? "" : "s"}`;
-    body = `${st.names} can be updated.`;
-    primary = { label: "Update", enabled: true };
-  } else {
-    title = done ?? "";
-    body = "Their new versions are in use from the next turn.";
-    primary = null;
-  }
-  return { id: "provider-update-toast", icon: n === 0 ? "bot" : "providers", title, body, primary, secondary: "Settings" };
 }
 
 export interface Invite {

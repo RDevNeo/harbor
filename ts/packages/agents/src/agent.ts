@@ -332,9 +332,8 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
   const sv = integrations.servers;
 
   switch (a.kind) {
-    case "Claude":
-    case "Grok": {
-      if (a.kind === "Claude") {
+    case "Claude": {
+      {
         args.push("-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages");
         args.push("--permission-mode", spec.access === "edits" ? "acceptEdits" : spec.access === "plan" ? "plan" : "bypassPermissions");
         const lead = spec.team?.role === "lead";
@@ -386,12 +385,6 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
         if (e !== null) args.push("--effort", e);
         if (spec.fast) args.push("--settings", '{"fastMode":true}');
         stdin = claudeMessage(userPrompt, spec.files);
-      } else {
-        args.push("--output-format", "streaming-messages-json", "--include-partial-messages");
-        if (spec.access === "edits") args.push("--permission-mode", "acceptEdits");
-        else if (spec.access === "plan") args.push("--permission-mode", "plan");
-        else args.push("--always-approve");
-        args.push("-p", promptWithPaths(spec.prompt, all));
       }
       if (model !== null) args.push("--model", model);
       if (spec.resume) args.push("--resume", spec.sessionId);
@@ -418,39 +411,6 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
       for (const img of images) args.push("-i", img);
       if (spec.resume) args.push(spec.sessionId);
       args.push(promptWithPaths(spec.prompt, others));
-      break;
-    }
-    case "Cursor": {
-      args.push("-p", "--output-format", "stream-json", "--stream-partial-output");
-      if (spec.trusted) args.push("--trust");
-      if (spec.access === "full") args.push("--force");
-      args.push("--model", model ?? "auto");
-      if (spec.resume) args.push("--resume", spec.sessionId);
-      args.push(promptWithPaths(spec.prompt, all));
-      break;
-    }
-    case "Gemini": {
-      args.push("-o", "stream-json");
-      args.push("--approval-mode", spec.access === "edits" ? "auto_edit" : spec.access === "plan" ? "plan" : "yolo");
-      if (model !== null) args.push("-m", model);
-      if (spec.resume) args.push("--resume", spec.sessionId);
-      args.push("-p", promptWithPaths(spec.prompt, all));
-      break;
-    }
-    case "Meta": {
-      args.push("exec", "--json", "--session-id", spec.sessionId);
-      if (spec.access === "full") args.push("--disable-approval");
-      if (model !== null) args.push("--model", model);
-      if (effort !== null) args.push("--reasoning-effort", effort);
-      for (const img of images) args.push("--image", img);
-      args.push(promptWithPaths(spec.prompt, others));
-      break;
-    }
-    case "OpenCode": {
-      args.push("run", "--format", "json");
-      if (model !== null) args.push("--model", model);
-      if (spec.resume) args.push("--session", spec.sessionId);
-      args.push(promptWithPaths(spec.prompt, all));
       break;
     }
   }
@@ -566,21 +526,11 @@ export function reattach(dir: string, meta: detach.Meta, sink: Sink, wake: (ende
 
 /** The events of one line of a provider's output. */
 export function parser(kind: Kind): (v: unknown) => Event[] {
-  const st: ParseState = { sessionSent: false };
   switch (kind) {
     case "Claude":
-    case "Grok":
       return parseClaude;
     case "Codex":
       return parseCodex;
-    case "Cursor":
-      return parseCursor;
-    case "Gemini":
-      return parseGemini;
-    case "Meta":
-      return (v) => parseMuse(v, st);
-    case "OpenCode":
-      return (v) => parseOpencode(v, st);
   }
 }
 
@@ -634,10 +584,6 @@ function followTurn(dir: string, meta: detach.Meta, sink: Sink, wake: (ended: bo
   });
 }
 
-interface ParseState {
-  sessionSent: boolean;
-}
-
 export function toolSummary(input: unknown): string {
   for (const k of ["command", "file_path", "filePath", "path", "pattern", "url", "query", "description", "prompt"]) {
     const t = optStr(at(input, k));
@@ -672,7 +618,7 @@ const positive = (v: unknown): number | null => {
   return c !== undefined && c > 0 ? c : null;
 };
 
-/** Claude Code stream-json (Grok's headless format is the same shape). */
+/** Claude Code stream-json. */
 export function parseClaude(v: unknown): Event[] {
   if (!isNull(at(v, "parent_tool_use_id"))) return [];
   const ty = str(at(v, "type"));
@@ -809,163 +755,3 @@ const has = (v: unknown, k: string): boolean => {
   return o !== undefined && Object.prototype.hasOwnProperty.call(o, k);
 };
 
-/** `cursor-agent -p --output-format stream-json --stream-partial-output`. */
-export function parseCursor(v: unknown): Event[] {
-  const ty = str(at(v, "type"));
-  if (ty === "system" && at(v, "subtype") === "init") return [{ type: "session", id: str(at(v, "session_id")) }];
-  if (ty === "thinking") {
-    const s = optStr(at(v, "subtype"));
-    if (s === "delta") return [{ type: "thinkingDelta", text: str(at(v, "text")) }];
-    if (s === "completed") return [{ type: "thinkingFinal", text: null }];
-    return [];
-  }
-  if (ty === "assistant") {
-    const text = textOf(at(v, "message", "content"));
-    // Partial chunks carry a timestamp; the block summary carries a model_call_id or none.
-    const fin = has(v, "model_call_id") || !has(v, "timestamp_ms");
-    return [fin ? { type: "textFinal", text } : { type: "textDelta", text }];
-  }
-  if (ty === "tool_call") {
-    // The object also carries metadata keys; the call itself is the `*ToolCall` one.
-    const entries = Object.entries(obj(at(v, "tool_call")) ?? {}).sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0])));
-    const found = entries.find(([k]) => k.endsWith("ToolCall"));
-    if (!found) return [];
-    const [key, call] = found;
-    const base = key.replace(/(ToolCall)+$/, "");
-    const first = [...base][0] ?? "";
-    const name = first.toUpperCase() + base.slice(first.length);
-    const done = at(v, "subtype") === "completed";
-    const r = at(call, "result");
-    let result: string | null = null;
-    let isError = false;
-    if (done) {
-      if (has(r, "success")) {
-        const ok = at(r, "success");
-        let out: string | undefined;
-        for (const k of ["interleavedOutput", "stdout", "content", "output"]) {
-          out = optStr(at(ok, k));
-          if (out !== undefined) break;
-        }
-        result = out ?? pretty(ok);
-        const code = i64(at(ok, "exitCode"));
-        isError = code !== undefined && code !== 0;
-      } else {
-        result = textOf(at(r, "error")).replace(/^"+|"+$/g, "");
-        isError = true;
-      }
-    }
-    return [{ type: "tool", id: str(at(v, "call_id")), name, summary: toolSummary(at(call, "args")), input: pretty(at(call, "args")), result, isError }];
-  }
-  if (ty === "result") {
-    const u = at(v, "usage");
-    const e: Event[] = [];
-    if (at(v, "is_error") === true) e.push({ type: "error", text: str(at(v, "result")) });
-    e.push({
-      type: "result",
-      costUsd: null,
-      durationMs: n0(at(v, "duration_ms")),
-      turns: 1,
-      inputTokens: n0(at(u, "inputTokens")) + n0(at(u, "cacheReadTokens")),
-      outputTokens: n0(at(u, "outputTokens")),
-      cached: n0(at(u, "cacheReadTokens")),
-    });
-    return e;
-  }
-  return [];
-}
-
-/** `gemini -o stream-json`: init/message/tool_use/tool_result/result. */
-export function parseGemini(v: unknown): Event[] {
-  const ty = str(at(v, "type"));
-  if (ty === "init") return [{ type: "session", id: str(at(v, "session_id")) }];
-  if (ty === "message" && at(v, "role") === "assistant") {
-    const t = textOf(at(v, "content"));
-    return [at(v, "delta") === true ? { type: "textDelta", text: t } : { type: "textFinal", text: t }];
-  }
-  if (ty === "tool_use")
-    return [{ type: "tool", id: str(at(v, "tool_id")), name: str(at(v, "tool_name")), summary: toolSummary(at(v, "parameters")), input: pretty(at(v, "parameters")), result: null, isError: false }];
-  if (ty === "tool_result") return [toolResult(str(at(v, "tool_id")), optStr(at(v, "output")) ?? str(at(v, "error", "message")), at(v, "status") === "error")];
-  if (ty === "error") return [{ type: "error", text: str(at(v, "message")) }];
-  if (ty === "result") {
-    const st = at(v, "stats");
-    const e: Event[] = [];
-    if (at(v, "status") === "error") e.push({ type: "error", text: str(at(v, "error", "message")) });
-    e.push({ type: "result", costUsd: null, durationMs: n0(at(st, "duration_ms")), turns: 1, inputTokens: n0(at(st, "input_tokens")), outputTokens: n0(at(st, "output_tokens")), cached: n0(at(st, "cached")) });
-    return e;
-  }
-  return [];
-}
-
-/** `muse exec --json`: MSP records; text arrives as run.output.delta. */
-function parseMuse(v: unknown, st: ParseState): Event[] {
-  const p = at(v, "payload");
-  const ty = str(at(v, "payload_type"));
-  const e: Event[] = [];
-  if (!st.sessionSent && at(v, "stream", "kind") === "session") {
-    st.sessionSent = true;
-    e.push({ type: "session", id: str(at(v, "stream", "id")) });
-  }
-  if (ty === "run.output.delta") e.push({ type: "textDelta", text: str(at(p, "text")) });
-  else if (ty === "run.terminal.completed") {
-    const t = optStr(at(p, "text"));
-    if (t !== undefined) e.push({ type: "textFinal", text: t });
-    const r = optStr(at(p, "reason"));
-    if (r !== undefined) e.push({ type: "error", text: r });
-  } else if (ty === "task.lifecycle.failed") e.push({ type: "error", text: str(at(p, "event", "reason")) });
-  else if (ty === "run.usage") {
-    let i = 0;
-    let o = 0;
-    for (const m of arr(at(p, "models"))) {
-      i += n0(at(m, "input_tokens"));
-      o += n0(at(m, "output_tokens"));
-    }
-    e.push({ type: "result", costUsd: null, durationMs: 0, turns: u64(at(p, "calls")) ?? 1, inputTokens: i, outputTokens: o, cached: 0 });
-  } else if (ty.startsWith("tool.") || ty.includes(".tool.")) {
-    const id = optStr(at(p, "call_id")) ?? optStr(at(p, "tool_call_id")) ?? optStr(at(p, "id")) ?? "";
-    const name = optStr(at(p, "name")) ?? optStr(at(p, "tool_name")) ?? optStr(at(p, "tool")) ?? "Tool";
-    const args = isNull(at(p, "arguments")) ? at(p, "input") : at(p, "arguments");
-    const done = ty.endsWith("completed") || ty.endsWith("result") || ty.endsWith("finished");
-    e.push({
-      type: "tool",
-      id,
-      name,
-      summary: toolSummary(args),
-      input: pretty(args),
-      result: done ? textOf(isNull(at(p, "output")) ? at(p, "result") : at(p, "output")) : null,
-      isError: ty.endsWith("failed"),
-    });
-  }
-  return e;
-}
-
-/** `opencode run --format json`: events with a `part` and a `sessionID`. */
-function parseOpencode(v: unknown, st: ParseState): Event[] {
-  const e: Event[] = [];
-  const sid = optStr(at(v, "sessionID")) ?? optStr(at(v, "part", "sessionID"));
-  if (!st.sessionSent && sid !== undefined) {
-    st.sessionSent = true;
-    e.push({ type: "session", id: sid });
-  }
-  const part = at(v, "part");
-  const ty = str(at(v, "type"));
-  if (ty === "text") e.push({ type: "textFinal", text: str(at(part, "text")) });
-  else if (ty === "reasoning") e.push({ type: "thinkingFinal", text: str(at(part, "text")) });
-  else if (ty === "tool_use" || ty === "tool") {
-    const state = at(part, "state");
-    const status = at(state, "status");
-    const done = status === "completed" || status === "error";
-    e.push({ type: "tool", id: str(at(part, "callID")), name: str(at(part, "tool")), summary: toolSummary(at(state, "input")), input: pretty(at(state, "input")), result: done ? textOf(at(state, "output")) : null, isError: status === "error" });
-  } else if (ty === "step_finish") {
-    const t = at(part, "tokens");
-    e.push({
-      type: "result",
-      costUsd: positive(at(part, "cost")),
-      durationMs: 0,
-      turns: 1,
-      inputTokens: n0(at(t, "input")) + n0(at(t, "cache", "read")),
-      outputTokens: n0(at(t, "output")),
-      cached: n0(at(t, "cache", "read")),
-    });
-  } else if (ty === "error") e.push({ type: "error", text: optStr(at(v, "error", "data", "message")) ?? optStr(at(v, "error", "message")) ?? "error" });
-  return e;
-}

@@ -222,15 +222,6 @@ describe("command lines per provider", () => {
     expect(v[v.length - 1]).toBe("sys\n\n---\n\nhi");
     expect(v).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
-
-  test("Cursor, Gemini, Meta, OpenCode, Grok", async () => {
-    const k = async (kind: Account["kind"], over: Partial<agent.TurnSpec> = {}): Promise<string[]> => (await agent.build(spec({ account: claude({ kind, id: kind.toLowerCase() }), ...over }))).cmd.args;
-    expect(await k("Cursor")).toEqual(["-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force", "--model", "auto", "hi"]);
-    expect(await k("Gemini", { access: "plan", resume: true })).toEqual(["-o", "stream-json", "--approval-mode", "plan", "--resume", "abc", "-p", "hi"]);
-    expect(await k("Meta", { effort: "low", files: ["/i.webp"] })).toEqual(["exec", "--json", "--session-id", "abc", "--disable-approval", "--reasoning-effort", "low", "--image", "/i.webp", "hi"]);
-    expect(await k("OpenCode", { model: "m", resume: true })).toEqual(["run", "--format", "json", "--model", "m", "--session", "abc", "hi"]);
-    expect(await k("Grok", { access: "edits" })).toEqual(["--output-format", "streaming-messages-json", "--include-partial-messages", "--permission-mode", "acceptEdits", "-p", "hi", "--session-id", "abc"]);
-  });
 });
 
 describe("event streams", () => {
@@ -273,34 +264,6 @@ describe("event streams", () => {
       { type: "result", costUsd: null, durationMs: 0, turns: 1, inputTokens: 10, outputTokens: 2, cached: 4 },
     ]);
     expect(agent.parseCodex({ type: "turn.failed", error: { message: "boom" } })).toEqual([{ type: "error", text: "boom" }]);
-  });
-
-  test("Cursor", () => {
-    expect(agent.parseCursor({ type: "assistant", timestamp_ms: 1, message: { content: [{ type: "text", text: "pa" }] } })).toEqual([{ type: "textDelta", text: "pa" }]);
-    expect(agent.parseCursor({ type: "assistant", model_call_id: "m", timestamp_ms: 1, message: { content: "all" } })).toEqual([{ type: "textFinal", text: "all" }]);
-    expect(agent.parseCursor({ type: "tool_call", subtype: "completed", call_id: "c", tool_call: { shellToolCall: { args: { command: "pwd" }, result: { success: { stdout: "/w", exitCode: 0 } } } } })).toEqual([
-      { type: "tool", id: "c", name: "Shell", summary: "pwd", input: '{\n  "command": "pwd"\n}', result: "/w", isError: false },
-    ]);
-    expect(agent.parseCursor({ type: "tool_call", subtype: "completed", call_id: "c", tool_call: { readToolCall: { args: {}, result: { error: "nope" } } } })[0]).toMatchObject({ name: "Read", result: "nope", isError: true, summary: "" });
-  });
-
-  test("Gemini, Meta, OpenCode", () => {
-    expect(agent.parseGemini({ type: "message", role: "assistant", content: "x", delta: true })).toEqual([{ type: "textDelta", text: "x" }]);
-    expect(agent.parseGemini({ type: "tool_result", tool_id: "t", status: "error", error: { message: "bad" } })).toEqual([{ type: "tool", id: "t", name: "", summary: "", input: "", result: "bad", isError: true }]);
-    const muse = agent.parser("Meta");
-    expect(muse({ stream: { kind: "session", id: "ms" }, payload_type: "run.output.delta", payload: { text: "a" } })).toEqual([
-      { type: "session", id: "ms" },
-      { type: "textDelta", text: "a" },
-    ]);
-    expect(muse({ stream: { kind: "session", id: "ms" }, payload_type: "run.usage", payload: { calls: 2, models: [{ input_tokens: 1, output_tokens: 2 }, { input_tokens: 3 }] } })).toEqual([
-      { type: "result", costUsd: null, durationMs: 0, turns: 2, inputTokens: 4, outputTokens: 2, cached: 0 },
-    ]);
-    const oc = agent.parser("OpenCode");
-    expect(oc({ type: "step_finish", sessionID: "o", part: { cost: 0.5, tokens: { input: 1, output: 2, cache: { read: 3 } } } })).toEqual([
-      { type: "session", id: "o" },
-      { type: "result", costUsd: 0.5, durationMs: 0, turns: 1, inputTokens: 4, outputTokens: 2, cached: 3 },
-    ]);
-    expect(oc({ type: "error", error: { data: { message: "m" } } })).toEqual([{ type: "error", text: "m" }]);
   });
 
   test("tool summaries", () => {

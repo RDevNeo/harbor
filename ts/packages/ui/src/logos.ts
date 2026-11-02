@@ -1,15 +1,10 @@
 // Provider and app logos (logos.rs): 48×48 alpha masks (.a8) drawn white and tinted by Slint's
 // `colorize`, or full-colour RGBA (.rgba).
 import claudeColor from "../../../../assets/logos/p-claude-color.rgba" with { type: "file" };
-import cursor from "../../../../assets/logos/p-cursor.a8" with { type: "file" };
 import github from "../../../../assets/logos/github.a8" with { type: "file" };
-import geminiColor from "../../../../assets/logos/p-gemini-color.rgba" with { type: "file" };
-import grok from "../../../../assets/logos/p-grok.a8" with { type: "file" };
-import metaColor from "../../../../assets/logos/p-meta-color.rgba" with { type: "file" };
 import openai from "../../../../assets/logos/p-openai.a8" with { type: "file" };
-import opencode from "../../../../assets/logos/p-opencode.a8" with { type: "file" };
 
-export type ProviderKind = "Claude" | "Codex" | "Cursor" | "Grok" | "Gemini" | "Meta" | "OpenCode";
+export type ProviderKind = "Claude" | "Codex";
 
 export interface Pixels {
   width: number;
@@ -36,11 +31,6 @@ export function pixels(bytes: Uint8Array, tint: [number, number, number] = [255,
 const FILES: Record<ProviderKind, [string, boolean]> = {
   Claude: [claudeColor, false],
   Codex: [openai, true],
-  Cursor: [cursor, true],
-  Grok: [grok, true],
-  Gemini: [geminiColor, false],
-  Meta: [metaColor, false],
-  OpenCode: [opencode, true],
 };
 
 const cache = new Map<string, Pixels>();
@@ -65,11 +55,6 @@ export async function providerLogo(kind: ProviderKind, fg: string): Promise<Pixe
 export function kindOfAccount(id: string): ProviderKind {
   const s = id.toLowerCase();
   if (s.startsWith("codex")) return "Codex";
-  if (s.startsWith("cursor")) return "Cursor";
-  if (s.startsWith("grok")) return "Grok";
-  if (s.startsWith("gemini")) return "Gemini";
-  if (s.startsWith("meta")) return "Meta";
-  if (s.startsWith("opencode")) return "OpenCode";
   return "Claude";
 }
 

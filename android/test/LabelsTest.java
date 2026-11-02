@@ -38,7 +38,7 @@ public class LabelsTest {
 
         same(Labels.logo("claude"), "p-claude-color.rgba", "claude's logo");
         same(Labels.logo("codex"), "p-openai.a8", "codex's logo");
-        same(Labels.logo("opencode"), "p-opencode.a8", "opencode's logo");
+        same(Labels.logo("opencode"), "", "a provider Harbor dropped");
         same(Labels.logo(""), "", "an unknown provider");
 
         same(stops(1, false, null), 1, "one agent: one stop");

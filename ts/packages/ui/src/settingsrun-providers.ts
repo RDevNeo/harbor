@@ -1,19 +1,18 @@
-import { providers, provupdate } from "@harbor/agents";
+import { providers } from "@harbor/agents";
 import { type Pixels, providerLogo } from "./logos.ts";
 import { firstModel, makeDefault, providersData, type ProvidersData } from "./logic/settings-providers.ts";
 import type { Kv } from "./logic/settings.ts";
 import { pick } from "./logic/text.ts";
 import { token } from "./theme.ts";
 
-/** What the Providers tab asks of the shell: the terminal for sign-in and Claude accounts, and the CLI updater. */
+/** What the Providers tab asks of the shell: the terminal for sign-in and Claude accounts. */
 export interface ProvidersHost {
   login(id: string): void;
   addClaudeAccount(): void;
-  updateAll(accounts: readonly providers.Account[]): void;
   modelsFor(kind: providers.Kind): providers.Model[];
 }
 
-const ACTS = ["add", "update", "login", "default"] as const;
+const ACTS = ["add", "login", "default"] as const;
 
 /** Every provider's logo in both themes, loaded once. */
 export async function providerLogos(): Promise<(kind: providers.Kind, dark: boolean) => Pixels> {
@@ -29,13 +28,12 @@ export async function providersFeed(kv: Kv, host: ProvidersHost, logos?: Awaited
   return {
     view(dark: boolean): ProvidersData {
       accounts = providers.discover();
-      return providersData(accounts, kv.get("default_account") ?? "claude", provupdate.status(), (k) => logoOf(k, dark));
+      return providersData(accounts, kv.get("default_account") ?? "claude", (k) => logoOf(k, dark));
     },
     act(id: string, what: string): void {
       const a = accounts.find((x) => x.id === id);
       const act = pick(what, ACTS);
       if (act === "add") host.addClaudeAccount();
-      else if (act === "update") host.updateAll(accounts);
       else if (act === "login" && a) host.login(a.id);
       else if (act === "default" && a) makeDefault(kv, a, firstModel(host.modelsFor(a.kind)));
     },

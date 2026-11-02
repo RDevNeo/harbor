@@ -64,7 +64,7 @@ export function generalSections(kv: Kv, env: GeneralEnv): SettingSection[] {
         choice(
           "follow_up",
           "While the agent works, Enter…",
-          "Steer: your message reaches the agent right away, changing what it's working on. Queue: it waits and runs after the current turn. Ctrl+Enter does the other for one message. Agents that can't be steered (Cursor, Gemini, Grok, OpenCode, Meta) always queue.",
+          "Steer: your message reaches the agent right away, changing what it's working on. Queue: it waits and runs after the current turn. Ctrl+Enter does the other for one message.",
           ["Queue", "Steer"],
           steer ? 1 : 0,
         ),
