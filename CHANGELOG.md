@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.114.2] - 2026-11-02
+
 ### Fixed
 - Zooming the desktop, or moving the window to a screen with another scale, no longer turns a chat's
   images into their links for a moment: the picture stays while a sharper (or smaller) copy is
