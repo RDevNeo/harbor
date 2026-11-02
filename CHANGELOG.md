@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.112.0] - 2026-11-02
+
 ### Added
 - Phone: Add project, as on the desktop. The folder-plus button over the chat list (and Add
   project… in the Projects and new-chat project pickers) makes a new project with or without Git,
