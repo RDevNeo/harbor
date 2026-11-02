@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.114.1] - 2026-11-02
+
 ### Changed
 - Zooming the desktop (Ctrl+=, Ctrl+-, Ctrl+0) no longer shows the brief "110%" bubble under
   the header: the zoom itself works as before.
