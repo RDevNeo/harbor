@@ -8,6 +8,7 @@ import {
   imagesFollow,
   display,
   erase,
+  eraseSpans,
   forgetImage,
   imageCount,
   imageNumbers,
@@ -252,4 +253,16 @@ test("erasing_an_image_token_takes_its_image", () => {
   expect(imagesFollow("[Image #7]", "", files, 0)).toBeNull();
   // Images attached without a token stay; the numbers after the one that went move down.
   expect(imagesFollow("[Image #2] [Image #3]", "[Image #3]", files, 0)).toEqual({ text: "[Image #2]", files: ["/a.png", "/c.png"], cursor: 0 });
+});
+
+test("the_composer_erases_picked_tokens_chat_titles_and_images_whole", () => {
+  const text = "ask @src/a.rs about Fix login [Image #1] /review then @src/a.rsx";
+  const sp = eraseSpans(text, ["@src/a.rs", "/review"], [["Fix login", "7"]]);
+  expect(sp.map(([a, z]) => text.slice(a, z))).toEqual(["@src/a.rs", "Fix login", "[Image #1]", "/review"]);
+  const back = (word: string) => erase(text, text.indexOf(word) + word.length, true, sp)?.[0];
+  expect(back("@src/a.rs ")).toBe("ask about Fix login [Image #1] /review then @src/a.rsx");
+  expect(back("Fix login")).toBe("ask @src/a.rs about [Image #1] /review then @src/a.rsx");
+  expect(back("/review")).toBe("ask @src/a.rs about Fix login [Image #1] then @src/a.rsx");
+  // Typed by hand, not picked: one character at a time.
+  expect(erase(text, text.length, true, sp)).toBeNull();
 });

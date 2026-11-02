@@ -35,7 +35,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
 import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
-import { defuse, dropFile, erase, imageCount, images, imagesFollow, shiftImages, writeImage } from "./logic/usertext.ts";
+import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { VideoPane } from "./videopane.ts";
@@ -142,6 +142,8 @@ export class Shell {
   private cards = new slint.ArrayModel<CardData>([]);
   private liveBlocks = new slint.ArrayModel<MdBlockData>([]);
   private bare = new WeakMap<CardData, CardData>();
+  /** Per draft: tokens picked from the composer's menus, which Backspace and Delete erase whole (usertext `whole`). */
+  private pickedTokens = new Map<number, string[]>();
   private files = new slint.ArrayModel<{ name: string; image: boolean }>([]);
   private menu = new slint.ArrayModel<MenuEntry>([]);
   private popItems = new slint.ArrayModel<PopItem>([]);
@@ -1321,6 +1323,7 @@ export class Shell {
     this.drafts.set(this.key(), r.text);
     this.win.set_cursor(r.cursor);
     this.win.focus_composer();
+    if (r.token !== "") this.pickedTokens.set(this.key(), withPicked(this.pickedTokens.get(this.key()) ?? [], r.token));
     const p = r.picked;
     if (p.kind === "mention") {
       const list = this.mentions.get(this.key()) ?? [];
@@ -1382,9 +1385,10 @@ export class Shell {
     const scroll = transcriptKey(e.text, m);
     if (scroll === "up" || scroll === "down") return true;
     if ((p.key === "Backspace" || p.key === "Delete") && !p.ctrl && !p.alt && !p.shift && this.win.cursor === this.win.cursor_anchor) {
-      // An image's token goes whole, its image with it (usertext `erase`, as picked tokens did in 0.96).
+      // Picked tokens (@file, #ref, /command), mentioned chats' titles and image tokens go whole; an image's goes with its image.
       const d = this.win.draft;
-      const gone = erase(d, utf16At(d, this.win.cursor), p.key === "Backspace", images(d).map(([a, z]) => [a, z] as const));
+      const spans = eraseSpans(d, this.pickedTokens.get(this.key()) ?? [], chatTitles(this.mentions.get(this.key()) ?? []));
+      const gone = erase(d, utf16At(d, this.win.cursor), p.key === "Backspace", spans);
       if (gone) {
         this.drafts.set(this.key(), gone[0]);
         if (!this.followImages(d, gone[0], gone[1])) this.composerText(gone[0], gone[1]);
@@ -1616,6 +1620,7 @@ export class Shell {
     const mentions = (this.mentions.get(from) ?? []).filter((m) => !isChat(m) || text.includes(m.title));
     const clear = (): void => {
       this.mentions.delete(from);
+      this.pickedTokens.delete(from);
       this.drafts.delete(from);
       this.attached.delete(from);
       this.win.draft = "";
@@ -1649,6 +1654,7 @@ export class Shell {
       this.data.store.set("last_chat", String(id));
     }
     this.mentions.delete(from);
+    this.pickedTokens.delete(from);
     this.drafts.delete(from);
     this.attached.delete(from);
     this.win.draft = "";

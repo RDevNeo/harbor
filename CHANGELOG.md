@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- The desktop composer erases picked tokens whole again, as the phone does: an `@file`, `#12` or
+  `/command` picked from the composer's menu, or a mentioned chat's title, goes in one Backspace or
+  Delete (lost in the TypeScript rewrite). Tokens typed by hand still erase one character at a time.
+
 ## [0.115.0] - 2026-11-02
 
 ### Added

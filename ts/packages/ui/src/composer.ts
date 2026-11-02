@@ -121,8 +121,8 @@ export class ComposerMenus {
     return r;
   }
 
-  /** Row `i` picked in `text`: the new text, the cursor (bytes) and what else it does. */
-  pick(text: string, i: number): { text: string; cursor: number; picked: Picked } | null {
+  /** Row `i` picked in `text`: the new text, the cursor (bytes), the token written (erased whole later; "" for none) and what else it does. */
+  pick(text: string, i: number): { text: string; cursor: number; token: string; picked: Picked } | null {
     const o = this.open;
     if (!o) return null;
     menuPicked(this.state);
@@ -132,19 +132,19 @@ export class ComposerMenus {
         const e = o.rows[i];
         if (!e) return null;
         const r = slash.accept(text, o.word, e);
-        return { text: r.text, cursor: byteAt(r.text, r.cursor), picked: r.command === null ? { kind: "text" } : { kind: "command", command: r.command } };
+        return { text: r.text, cursor: byteAt(r.text, r.cursor), token: r.token, picked: r.command === null ? { kind: "text" } : { kind: "command", command: r.command } };
       }
       case "tag": {
         const row = o.rows[i];
         if (!row) return null;
         const r = tags.accept(text, o.word, row);
-        return { text: r.text, cursor: byteAt(r.text, r.cursor), picked: { kind: "text" } };
+        return { text: r.text, cursor: byteAt(r.text, r.cursor), token: r.token, picked: { kind: "text" } };
       }
       case "chat": {
         const c = o.rows[i];
         if (!c) return null;
         const r = chatmention.accept(text, o.word, c);
-        return { text: r.text, cursor: byteAt(r.text, r.cursor), picked: { kind: "mention", mention: r.mention } };
+        return { text: r.text, cursor: byteAt(r.text, r.cursor), token: r.mention.title, picked: { kind: "mention", mention: r.mention } };
       }
     }
   }
