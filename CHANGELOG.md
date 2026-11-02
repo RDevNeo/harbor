@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.115.0] - 2026-11-02
+
 ### Added
 - Alt+Up and Alt+Down open the previous and next chat in the desktop sidebar, one row at a time
   in the order it shows them (project rows open their main chat; Settled only while it's open),
