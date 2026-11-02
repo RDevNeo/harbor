@@ -247,6 +247,35 @@ export function forgetImage(text: string, n: number, cursor: number): [string, n
   return [out, c];
 }
 
+/** `files` without its `n`th image (counting images only). */
+function withoutImage(files: readonly string[], n: number): string[] {
+  let k = 0;
+  return files.filter((f) => !(isImage(f) && ++k === n));
+}
+
+/** The composer's file `i` was removed: the files left, and the text without its token (later images a number lower) and the cursor. */
+export function dropFile(text: string, files: readonly string[], i: number, cursor: number): { text: string; files: string[]; cursor: number } {
+  const f = files[i];
+  const left = files.filter((_, k) => k !== i);
+  if (f === undefined || !isImage(f)) return { text, files: left, cursor };
+  const [t, c] = forgetImage(text, files.slice(0, i).filter(isImage).length + 1, cursor);
+  return { text: t, files: left, cursor: c };
+}
+
+/** The composer's text went from `before` to `text`: an image whose every token was erased leaves `files` and the later numbers move down; null when nothing left. */
+export function imagesFollow(before: string, text: string, files: readonly string[], cursor: number): { text: string; files: string[]; cursor: number } | null {
+  const now = new Set(imageNumbers(text));
+  const count = imageCount(files);
+  const gone = imageNumbers(before).filter((n) => n <= count && !now.has(n)).reverse();
+  if (gone.length === 0) return null;
+  let out = { text, files: [...files], cursor };
+  for (const n of gone) {
+    const [t, c] = forgetImage(out.text, n, out.cursor);
+    out = { text: t, files: withoutImage(out.files, n), cursor: c };
+  }
+  return out;
+}
+
 /** `text` with each image number through `f`, in the order written; null: the token only reads as one (`[Image 3]`). */
 export function mapImages(text: string, f: (n: number) => number | null): string {
   const mapped = images(text).map(([a, z, n]) => [a, z, n, f(n)] as const);

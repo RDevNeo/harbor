@@ -4,6 +4,8 @@ import { tokens } from "../src/tagsyntax.ts";
 import {
   commands,
   defuse,
+  dropFile,
+  imagesFollow,
   display,
   erase,
   forgetImage,
@@ -217,4 +219,37 @@ test("whole_tokens_stand_apart", () => {
   // After the pick: "token " with the cursor after the space, the text ending there.
   expect(erase("hi @a ", 6, true, whole("hi @a ", toks))).toEqual(["hi ", 3]);
   expect(erase("é @a", 4, true, whole("é @a", toks))).toEqual(["é ", 2]);
+});
+
+test("removing_an_attached_image_takes_its_token_and_renumbers", () => {
+  const files = ["/up/a.png", "/up/notes.txt", "/up/b.jpg", "/up/c.png"];
+  const text = "see [Image #1] then [Image #2] and [Image #3]";
+  // The second image is file 2 (a text file sits between): its token goes, #3 becomes #2.
+  const r = dropFile(text, files, 2, text.length);
+  expect(r.files).toEqual(["/up/a.png", "/up/notes.txt", "/up/c.png"]);
+  expect(r.text).toBe("see [Image #1] then and [Image #2]");
+  expect(r.cursor).toBe(r.text.length);
+  expect(imagesPrompt(r.text, r.files)).toBe("\n\n[Images in this message, in the order attached:\n- Image #1: /up/a.png\n- Image #2: /up/c.png]");
+  // At the start: no space left in front.
+  expect(dropFile("[Image #1] look", ["/a.png"], 0, 0)).toEqual({ text: "look", files: [], cursor: 0 });
+  // A file that isn't an image leaves the text alone.
+  expect(dropFile(text, files, 1, 3)).toEqual({ text, files: ["/up/a.png", "/up/b.jpg", "/up/c.png"], cursor: 3 });
+});
+
+test("erasing_an_image_token_takes_its_image", () => {
+  const files = ["/a.png", "/b.png", "/c.png"];
+  const before = "x [Image #1] y [Image #2] z [Image #3]";
+  const after = "x [Image #1] y z [Image #3]";
+  const r = imagesFollow(before, after, files, 4);
+  expect(r).toEqual({ text: "x [Image #1] y z [Image #2]", files: ["/a.png", "/c.png"], cursor: 4 });
+  // Everything erased: every named image goes.
+  expect(imagesFollow(before, "", files, 0)).toEqual({ text: "", files: [], cursor: 0 });
+  // A token half erased by hand no longer names its image.
+  expect(imagesFollow("[Image #1] hi", "[Image #1 hi", ["/a.png"], 9)?.files).toEqual([]);
+  // Still written elsewhere, typing around tokens, or a number no file has: nothing changes.
+  expect(imagesFollow("[Image #1] [Image #1]", "[Image #1]", files, 0)).toBeNull();
+  expect(imagesFollow("[Image #1]", "[Image #1] ok", files, 0)).toBeNull();
+  expect(imagesFollow("[Image #7]", "", files, 0)).toBeNull();
+  // Images attached without a token stay; the numbers after the one that went move down.
+  expect(imagesFollow("[Image #2] [Image #3]", "[Image #3]", files, 0)).toEqual({ text: "[Image #2]", files: ["/a.png", "/c.png"], cursor: 0 });
 });

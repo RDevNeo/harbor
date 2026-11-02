@@ -471,6 +471,7 @@ export component AppWindow inherits Window {
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
     out property <int> cursor: composer-el.cursor;
+    out property <int> cursor-anchor: composer-el.anchor;
     callback edited(string);
     callback key(KeyEvent) -> bool;
     callback send();

@@ -34,7 +34,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
 import { chatIdle, inWorkspaces, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, toggled, tree, type Workspace } from "./logic/sidebar.ts";
-import { defuse, imageCount, shiftImages, writeImage } from "./logic/usertext.ts";
+import { defuse, dropFile, erase, imageCount, images, imagesFollow, shiftImages, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
 import { VideoPane } from "./videopane.ts";
@@ -540,7 +540,9 @@ export class Shell {
       if (key) void this.media?.clipboard.copyTextNoticed(key);
     };
     w.edited = (t) => {
+      const before = this.drafts.get(this.key()) ?? "";
       this.drafts.set(this.key(), t);
+      if (this.followImages(before, t)) return;
       if (this.view === "chat") this.meshChat.typed(this.chatId, t.trim() !== "" || (this.mentions.get(this.chatId) ?? []).length > 0, { text: t, mentions: this.mentions.get(this.chatId) ?? [] });
       setTimeout(() => this.refreshMenu(), 0);
     };
@@ -551,8 +553,10 @@ export class Shell {
     w.attach = () => void this.attach();
     w.mic = () => this.mic();
     w.remove_file = (i) => {
-      const list = this.attached.get(this.key()) ?? [];
-      list.splice(i, 1);
+      const key = this.key();
+      const r = dropFile(this.win.draft, this.attached.get(key) ?? [], i, utf16At(this.win.draft, this.win.cursor));
+      this.attached.set(key, r.files);
+      if (r.text !== this.win.draft) this.composerText(r.text, r.cursor);
       this.refreshFiles();
     };
     w.menu_pick = (i) => this.pickMenu(i);
@@ -1363,6 +1367,16 @@ export class Shell {
     const chat = this.view === "chat" ? this.chatId : null;
     const scroll = transcriptKey(e.text, m);
     if (scroll === "up" || scroll === "down") return true;
+    if ((p.key === "Backspace" || p.key === "Delete") && !p.ctrl && !p.alt && !p.shift && this.win.cursor === this.win.cursor_anchor) {
+      // An image's token goes whole, its image with it (usertext `erase`, as picked tokens did in 0.96).
+      const d = this.win.draft;
+      const gone = erase(d, utf16At(d, this.win.cursor), p.key === "Backspace", images(d).map(([a, z]) => [a, z] as const));
+      if (gone) {
+        this.drafts.set(this.key(), gone[0]);
+        if (!this.followImages(d, gone[0], gone[1])) this.composerText(gone[0], gone[1]);
+        return true;
+      }
+    }
     if ((p.ctrl && !p.alt && !p.shift && p.key.toLowerCase() === "v") || (p.shift && p.key === "Insert")) void this.pasteImage();
     if (this.keys.matches("voice", p) && this.win.pop_id === "") {
       this.mic();
@@ -1508,6 +1522,29 @@ export class Shell {
     this.drafts.set(key, text);
     this.win.set_cursor(byteAt(text, cursor));
     this.refreshFiles();
+  }
+
+  /** The composer's text went from `before` to `text` (the cursor at `cursor`, UTF-16, or where it is): images whose tokens
+   * were erased leave the message and the later numbers move down. False when nothing changed. */
+  private followImages(before: string, text: string, cursor?: number): boolean {
+    const key = this.key();
+    const r = imagesFollow(before, text, this.attached.get(key) ?? [], cursor ?? utf16At(text, this.win.cursor));
+    if (!r) return false;
+    this.attached.set(key, r.files);
+    this.composerText(r.text, r.cursor);
+    this.refreshFiles();
+    return true;
+  }
+
+  /** The composer shows `text` with the cursor at UTF-16 index `cursor`, and the draft (shared with the chat's other devices) follows. */
+  private composerText(text: string, cursor: number): void {
+    const key = this.key();
+    this.win.draft = text;
+    this.drafts.set(key, text);
+    this.win.set_cursor(Buffer.byteLength(text.slice(0, cursor)));
+    if (this.view === "chat") this.meshChat.typed(this.chatId, text.trim() !== "" || (this.mentions.get(this.chatId) ?? []).length > 0, { text, mentions: this.mentions.get(this.chatId) ?? [] });
+    this.refreshComposer();
+    setTimeout(() => this.refreshMenu(), 0);
   }
 
   private async attach(): Promise<void> {
@@ -3171,3 +3208,8 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
 }
 
 export type { Item };
+
+/** The UTF-16 index of UTF-8 byte offset `byte` of `text` (the composer's cursor). */
+function utf16At(text: string, byte: number): number {
+  return Buffer.from(text).subarray(0, byte).toString().length;
+}

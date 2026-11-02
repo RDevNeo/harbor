@@ -468,6 +468,7 @@ export interface AppWindow extends slint.ComponentHandle {
   menu: slint.Model<MenuEntry>;
   menu_selected: number;
   readonly cursor: number;
+  readonly cursor_anchor: number;
   edited: (text: string) => void;
   key: (e: KeyEvent) => boolean;
   send: () => void;

@@ -5,6 +5,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Removing an image from the desktop composer (the × on its chip) also takes its "[Image #N]" out
+  of the text, and the later images' numbers move down to match what's sent. Erasing the token
+  takes its image along, and Backspace or Delete erases an image's token whole, as on the phone.
+
 ## [0.114.2] - 2026-11-02
 
 ### Fixed

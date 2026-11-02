@@ -345,6 +345,7 @@ export component Composer {
     in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
     out property <bool> focused: field.has-focus;
     out property <int> cursor: field.cursor-position-byte-offset;
+    out property <int> anchor: field.anchor-position-byte-offset;
     callback edited(string);
     callback key(KeyEvent) -> bool;
     callback send();
