@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.5] - 2026-11-03
+
+### Changed
+- The ▸ rows of a chat's or project's menu ("Move to project…", "Move to PC…", "Move to
+  workspace…") open their options as soon as you hover them, in a submenu beside the menu
+  instead of on top of it: to the right of the row, or to the left at the window's edge, and
+  kept inside the window at its bottom. Moving the pointer across to it keeps it open; hovering
+  another row closes it.
+
 ## [0.121.4] - 2026-11-03
 
 ### Fixed
