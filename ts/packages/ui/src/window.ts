@@ -249,6 +249,15 @@ export interface FilesData {
   hidden: boolean;
 }
 
+/** composer.slint `FileItem`: an attachment over the composer's text. */
+export interface FileItem {
+  name: string;
+  image: boolean;
+  tile: boolean;
+  thumb: Pixels;
+  number: number;
+}
+
 export interface FileRow {
   name: string;
   dir: boolean;
@@ -507,7 +516,7 @@ export interface AppWindow extends slint.ComponentHandle {
   composer: ComposerState;
   model_logo: Pixels;
   image_scratch: Pixels;
-  files: slint.Model<{ name: string; image: boolean }>;
+  files: slint.Model<FileItem>;
   menu: slint.Model<MenuEntry>;
   menu_selected: number;
   readonly cursor: number;
@@ -519,6 +528,7 @@ export interface AppWindow extends slint.ComponentHandle {
   attach: () => void;
   mic: () => void;
   remove_file: (i: number) => void;
+  open_file: (i: number) => void;
   menu_pick: (i: number) => void;
   menu_hover: (i: number) => void;
   popup: (id: string, x: number, y: number) => void;

@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- An image pasted or attached in the desktop composer shows as a small picture above the text
+  instead of its file name, like on the phone: cropped square and rounded, with its number (the
+  `[Image #N]` of the text) and a remove button on its corner. Click it to open the image viewer.
+  Other files keep their chips.
+
+
 ## [0.124.3] - 2026-11-03
 
 ### Changed

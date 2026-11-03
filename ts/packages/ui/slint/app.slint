@@ -501,6 +501,7 @@ export component AppWindow inherits Window {
     callback resume-reply();
     callback mic();
     callback remove-file(int);
+    callback open-file(int);
     callback menu-pick(int);
     callback menu-hover(int);
     callback popup(string, length, length);
@@ -1081,6 +1082,9 @@ export component AppWindow inherits Window {
                                 }
                                 remove-file(i) => {
                                     root.remove-file(i);
+                                }
+                                open-file(i) => {
+                                    root.open-file(i);
                                 }
                                 menu-pick(i) => {
                                     root.menu-pick(i);

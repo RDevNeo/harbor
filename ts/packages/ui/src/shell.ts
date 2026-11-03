@@ -43,6 +43,7 @@ import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from 
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
 import { MediaRows } from "./mediarows.ts";
+import { AttachThumbs, sameFile } from "./attachthumbs.ts";
 import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
 import { ChatCaptcha, FRAME_W, hereCaptcha, noChatCaptcha } from "./chatcaptcha.ts";
@@ -51,7 +52,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type BrowserData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData } from "./window.ts";
 
 /** How long the reader stays at a chat's end before the earlier pages they scrolled up to are let go. */
 const TRIM_MS = 30_000;
@@ -162,7 +163,13 @@ export class Shell {
   private bare = new WeakMap<CardData, CardData>();
   /** Per draft: tokens picked from the composer's menus, which Backspace and Delete erase whole (usertext `whole`). */
   private pickedTokens = new Map<number, string[]>();
-  private files = new slint.ArrayModel<{ name: string; image: boolean }>([]);
+  private files = new slint.ArrayModel<FileItem>([]);
+  /** The attached images' pictures over the composer's text. */
+  private readonly attachThumbs = new AttachThumbs(
+    (p, cap) => (this.media ? this.media.images.decode(p, null, cap).then((r) => r.image) : null),
+    () => sync(this.files, this.fileItems(), sameFile),
+    (p) => this.nativeImage(p),
+  );
   private menu = new slint.ArrayModel<MenuEntry>([]);
   private popItems = new slint.ArrayModel<PopItem>([]);
   private readonly popEsc = new EscHold();
@@ -216,6 +223,7 @@ export class Shell {
     this.voice.load();
     this.refreshVoice();
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId), (p) => this.nativeImage(p));
+    sync(this.files, this.fileItems(), sameFile);
     // A Discord join that waits on a captcha comes up over the window for the person to solve.
     this.captcha = new CaptchaPane(this.win, async (b) => (await pkg.images.decodeBytes(b, 1280)).image);
     this.captcha.start();
@@ -658,6 +666,7 @@ export class Shell {
       if (r.text !== this.win.draft) this.composerText(r.text, r.cursor);
       this.refreshFiles();
     };
+    w.open_file = (i) => this.openAttached(i);
     w.menu_pick = (i) => this.pickMenu(i);
     w.menu_hover = (i) => {
       this.menus.hover(i);
@@ -837,6 +846,12 @@ export class Shell {
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
     else if (name !== "draft") console.error(`HARBOR_VIEW: no view ${v}`);
+    // HARBOR_FAKE_ATTACH=a.png,b.txt (scripts/shot --env): files in the composer as if pasted or attached.
+    for (const p of process.env.HARBOR_FAKE_ATTACH?.split(",") ?? []) {
+      if (isImage(p)) this.attachImage(this.key(), p);
+      else if (p !== "") this.attached.set(this.key(), [...(this.attached.get(this.key()) ?? []), p]);
+    }
+    this.refreshFiles();
     void shown.then(() => console.error("harbor-view shown"));
   }
 
@@ -881,11 +896,20 @@ export class Shell {
   refreshAll(): void {
     this.refreshSidebar();
     this.refreshView();
-    sync(this.files, this.fileItems(), sameJson);
+    sync(this.files, this.fileItems(), sameFile);
   }
 
-  private fileItems(): { name: string; image: boolean }[] {
-    return (this.attached.get(this.key()) ?? []).map((p) => ({ name: p.slice(p.lastIndexOf("/") + 1), image: isImage(p) }));
+  private fileItems(): FileItem[] {
+    this.attachThumbs.keep(this.attached.values());
+    return this.attachThumbs.items(this.attached.get(this.key()) ?? []);
+  }
+
+  /** A tile over the composer was clicked: the lightbox, browsing the message's images. */
+  private openAttached(i: number): void {
+    const list = this.attached.get(this.key()) ?? [];
+    const path = list[i];
+    if (path === undefined || !isImage(path)) return;
+    this.images?.openClicked(path, list.filter(isImage));
   }
 
   private refreshView(): void {
@@ -1716,6 +1740,11 @@ export class Shell {
     const png = clip.bytes[0] === 0x89 && clip.bytes[1] === 0x50;
     const path = join(dir, `pasted-${Date.now()}.${png ? "png" : "jpg"}`);
     writeFileSync(path, clip.bytes);
+    this.attachImage(key, path);
+  }
+
+  /** `path` joins draft `key`'s message, its `[Image #N]` written at the cursor. */
+  private attachImage(key: number, path: string): void {
     const list = this.attached.get(key) ?? [];
     list.push(path);
     this.attached.set(key, list);
@@ -1760,7 +1789,7 @@ export class Shell {
   }
 
   private refreshFiles(): void {
-    sync(this.files, this.fileItems(), sameJson);
+    sync(this.files, this.fileItems(), sameFile);
     this.refreshComposer();
   }
 

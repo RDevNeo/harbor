@@ -213,6 +213,84 @@ export struct MentionChip {
 export struct FileItem {
     name: string,
     image: bool,
+    // An image shown as its picture (`thumb` once decoded; a blank tile until then). False: the chip.
+    tile: bool,
+    thumb: image,
+    // Its number among the message's images: `[Image #N]` in the text.
+    number: int,
+}
+
+// An attached image above the text (the phone's Attach `tile`): the picture cropped square and rounded,
+// its number on it, the remove button over its top-right corner.
+component ImageTile {
+    in property <image> thumb;
+    in property <string> name;
+    in property <int> number;
+    callback remove();
+    callback open();
+    width: 70px;
+    height: 70px;
+    Rectangle {
+        x: 0;
+        y: 6px;
+        width: 64px;
+        height: 64px;
+        border-radius: 12px;
+        background: Theme.gray-100;
+        clip: true;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.thumb;
+            image-fit: cover;
+        }
+        Rectangle {
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border;
+        }
+        if root.number > 0: Rectangle {
+            x: 4px;
+            y: parent.height - 4px - self.height;
+            width: num.preferred-width + 10px;
+            height: 16px;
+            border-radius: 6px;
+            background: #000000b4;
+            num := Text {
+                text: "#" + root.number;
+                font-size: 11px;
+                color: #ffffff;
+                vertical-alignment: center;
+            }
+        }
+        TipArea {
+            tip: root.name;
+            clicked => {
+                root.open();
+            }
+        }
+    }
+    Rectangle {
+        x: parent.width - 21px;
+        y: 0;
+        width: 21px;
+        height: 21px;
+        border-radius: 10.5px;
+        background: x-area.has-hover ? Theme.gray-800 : Theme.fg;
+        border-width: 1.5px;
+        border-color: Theme.dark ? Theme.bg200 : Theme.bg100;
+        Glyph {
+            icon: Icons.x;
+            size: 11px;
+            color: Theme.dark ? Theme.bg200 : Theme.bg100;
+        }
+        x-area := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.remove();
+            }
+        }
+    }
 }
 
 export struct ComposerState {
@@ -354,6 +432,7 @@ export component Composer {
     callback resume-reply();
     callback mic();
     callback remove-file(int);
+    callback open-file(int);
     callback menu-pick(int);
     callback menu-hover(int);
     callback popup(string, length, length);
@@ -610,11 +689,32 @@ export component Composer {
                     padding-bottom: 6px;
                     spacing: 8px;
                     alignment: start;
-                    for f[i] in root.files: FileChip {
-                        name: f.name;
-                        image: f.image;
-                        remove => {
-                            root.remove-file(i);
+                    // Chips sit on the tiles' bottom line.
+                    for f[i] in root.files: Rectangle {
+                        width: f.tile ? 70px : chip.width;
+                        min-height: f.tile ? 70px : 26px;
+                        if f.tile: ImageTile {
+                            x: 0;
+                            y: 0;
+                            thumb: f.thumb;
+                            name: f.name;
+                            number: f.number;
+                            remove => {
+                                root.remove-file(i);
+                            }
+                            open => {
+                                root.open-file(i);
+                            }
+                        }
+                        chip := FileChip {
+                            x: 0;
+                            y: parent.height - 26px;
+                            visible: !f.tile;
+                            name: f.name;
+                            image: f.image;
+                            remove => {
+                                root.remove-file(i);
+                            }
                         }
                     }
                 }
