@@ -241,14 +241,36 @@ function text(s: string, isError: boolean): Json {
   return { content: [{ type: "text", text: cut }], isError };
 }
 
-async function tools(): Promise<Json[]> {
-  // A new Harbor comes with a new shell, and a list with no tools would never start it.
-  await setup.ensureShell(() => {}).catch(() => {});
+/** Why Harbor has no Discord shell, when it couldn't get one; undefined: it has it. */
+export async function shellProblem(): Promise<string | undefined> {
   try {
-    const t = parse(readFileSync(join(setup.shellDir(), "tools.json"), "utf8"));
-    return items(t);
+    await setup.ensureShell(() => {});
+  } catch (e) {
+    return message(e);
+  }
+  return existsSync(join(setup.shellDir(), "tools.json")) ? undefined : "Harbor's Discord shell has no tool list.";
+}
+
+/** Without the shell there's only discord_status, which says why: never an empty list, which reads as "no Discord here". */
+const statusOnly = (why: string): Json => ({
+  name: "discord_status",
+  description: `Harbor couldn't get its Discord tools, so this is the only one: ${why} Call it for the details, and tell the user.`,
+  inputSchema: { type: "object", properties: {} },
+});
+
+export async function tools(): Promise<Json[]> {
+  // A new Harbor comes with a new shell, and a list with no tools would never start it.
+  const why = await shellProblem();
+  if (why !== undefined) return [statusOnly(why)];
+  const list = items(parse(safeRead(join(setup.shellDir(), "tools.json"))));
+  return list.length > 0 ? list : [statusOnly("Harbor's Discord shell has an unreadable tool list.")];
+}
+
+function safeRead(p: string): string {
+  try {
+    return readFileSync(p, "utf8");
   } catch {
-    return [];
+    return "";
   }
 }
 
@@ -323,6 +345,8 @@ export async function call(name: string, args: Json): Promise<Json> {
 }
 
 export async function statusText(): Promise<string> {
+  const problem = await shellProblem();
+  if (problem !== undefined) return `Discord's tools aren't available on this PC: ${problem}`;
   const s = await status();
   const name = accountName();
   const who = name !== undefined ? `Signed in as ${name}.` : "Not signed in.";

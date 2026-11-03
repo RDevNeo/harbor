@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Discord: installed copies listed no Discord tools at all. The app fetched its Discord shell at the
+  runtime's version (which can be older than the app, and isn't a release tag), got nothing, and
+  showed agents an empty list. It now fetches the shell at the commit the app was built from. If the
+  shell still can't be fetched, agents get `discord_status`, which says why, and half-finished
+  downloads are cleaned up.
+
 ## [0.116.1] - 2026-11-02
 
 ### Fixed

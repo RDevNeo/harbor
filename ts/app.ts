@@ -1,7 +1,7 @@
 import pkg from "./package.json";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, updateCommands, versionLabel } from "./packages/update/src/index.ts";
+import { DEV_VERSION, RUNTIME_VERSION, VERSION, VIDEO_LIB, defaultConfig, repoRef, updateCommands, versionLabel } from "./packages/update/src/index.ts";
 
 declare const HARBOR_MIN_RUNTIME: string | undefined;
 
@@ -59,7 +59,8 @@ const commands: Record<string, Command> = {
     await mcpshim.run(args, { version });
     return 0;
   },
-  app: async (args) => (await import("./packages/mcp/src/index.ts")).serve.serve(args),
+  // The app bundle's own version and commit: the runtime may be older than the bundle.
+  app: async (args) => (await import("./packages/mcp/src/index.ts")).serve.serve(args, { version, shellRef: repoRef() }),
   net: async (args) => {
     const { lanPortmapNet, Portmap } = await import("./packages/net/src/index.ts");
     return new Portmap({ kv: await store(), net: lanPortmapNet() }).cli(args, { log: io.out, err: io.err });

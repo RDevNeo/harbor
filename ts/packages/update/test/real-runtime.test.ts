@@ -14,6 +14,8 @@ function folder(prefix: string): string {
   return d;
 }
 let dir = "";
+/** A whole commit, as release.yml passes it. */
+const SHA = "abcdef0123456789abcdef0123456789abcdef01";
 
 async function run(args: string[], isolated = true, extra: Record<string, string> = {}): Promise<{ out: string; err: string; code: number }> {
   const p = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", env: isolated ? { ...process.env, HOME: dir, XDG_RUNTIME_DIR: dir, ...extra } : process.env });
@@ -26,7 +28,7 @@ beforeAll(async () => {
   writeFileSync(join(dir, ".managed"), "");
   writeFileSync(join(dir, "VERSION"), "0.2.0");
   expect((await run([process.execPath, script, "runtime", join(dir, "harbor"), "--version", "0.1.0"], false)).code).toBe(0);
-  expect((await run([process.execPath, script, "app", join(dir, "harbor-app.js"), "--version", "0.2.0", "--min-runtime", "0.1.0", "--sha", "abcdef0123"], false)).code).toBe(0);
+  expect((await run([process.execPath, script, "app", join(dir, "harbor-app.js"), "--version", "0.2.0", "--min-runtime", "0.1.0", "--sha", SHA], false)).code).toBe(0);
 }, 120_000);
 
 afterAll(() => {
@@ -130,3 +132,60 @@ test("harbor --speech-worker starts from the compiled binary with sherpa's libra
   expect(lines[0]?.error).toBeDefined();
   expect(lines[0]?.error).not.toMatch(/libonnxruntime|libsherpa|Could not load|cannot open shared object/);
 });
+
+/** `harbor app discord` as an agent starts it: initialize, then the tool list. */
+async function discordTools(env: Record<string, string>): Promise<{ tools: { name: string; description: string }[]; err: string }> {
+  // As installed: no rig's HARBOR_DISCORD_* from the environment the tests run in.
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("HARBOR_DISCORD_")));
+  const p = Bun.spawn([join(dir, "harbor"), "app", "discord"], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...base, HOME: dir, XDG_RUNTIME_DIR: dir, XDG_DATA_HOME: join(dir, "data"), ...env } });
+  p.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+  await p.stdin.flush();
+  let out = "";
+  const reader = p.stdout.getReader();
+  const until = Date.now() + 60_000;
+  while (!out.includes('"id":2') && Date.now() < until) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    out += new TextDecoder().decode(value);
+  }
+  p.kill();
+  const err = await new Response(p.stderr).text();
+  const line = out.split("\n").find((l) => l.includes('"id":2')) ?? "{}";
+  return { tools: (JSON.parse(line) as { result?: { tools?: { name: string; description: string }[] } }).result?.tools ?? [], err };
+}
+
+test("the bundle fetches its Discord shell at its own commit, never the runtime's version", async () => {
+  const repoDiscord = resolve(here, "..", "..", "..", "..", "discord");
+  const asked: string[] = [];
+  let serve = false;
+  const github = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      asked.push(path);
+      const prefix = `/RDevNeo/harbor/${SHA}/discord/`;
+      if (serve && path.startsWith(prefix)) return new Response(Bun.file(join(repoDiscord, path.slice(prefix.length))));
+      return new Response("404: Not Found", { status: 404 });
+    },
+  });
+  try {
+    const env: Record<string, string> = { HARBOR_DISCORD_SHELL_ORIGIN: `http://127.0.0.1:${github.port}` };
+    // GitHub doesn't have it: the agent still gets discord_status, which says why, and nothing is left half done.
+    const failed = await discordTools(env);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((p) => p.startsWith(`/RDevNeo/harbor/${SHA}/discord/`))).toBe(true);
+    expect(asked.some((p) => p.includes("0.1.0") || p.includes("0.2.0") || p.includes("0.109.0"))).toBe(false);
+    expect(failed.tools.map((t) => t.name)).toEqual(["discord_status"]);
+    expect(failed.tools[0]?.description).toContain("couldn't download its Discord shell");
+    const app = join(dir, "data", "harbor", "apps", "discord");
+    expect(readdirSync(app).filter((n) => n.startsWith("shell-"))).toEqual([]);
+    // Now it does: every tool.
+    serve = true;
+    const ok = await discordTools(env);
+    expect(ok.tools.length).toBeGreaterThan(20);
+    expect(ok.tools.map((t) => t.name)).toContain("discord_send");
+    expect(readdirSync(app).filter((n) => n.startsWith("shell-") && n.includes(".tmp"))).toEqual([]);
+  } finally {
+    github.stop(true);
+  }
+}, 120_000);

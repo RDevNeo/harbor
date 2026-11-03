@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { newer, parse, parseGlibc, tagged, versionCode } from "../src/version.ts";
+import { newer, parse, parseGlibc, tagged, versionCode, repoRef } from "../src/version.ts";
 
 test("versions compare as releases: 0.2.0 > 0.2.0-rc.1 > 0.1.9", () => {
   expect(newer("0.2.0", "0.1.9")).toBe(true);
@@ -38,4 +38,11 @@ test("glibc versions parse", () => {
   expect(parseGlibc("2.39")).toEqual([2, 39]);
   expect(parseGlibc("2.35\n")).toEqual([2, 35]);
   expect(parseGlibc("junk")).toBeNull();
+});
+
+test("the repository ref a build fetches its own files at: its commit, else its release tag, never a runtime's label", () => {
+  expect(repoRef("abcdef0123456789abcdef0123456789abcdef01", "0.2.0")).toBe("abcdef0123456789abcdef0123456789abcdef01");
+  expect(repoRef(null, "0.116.1")).toBe("v0.116.1");
+  expect(repoRef(null, "0.109.0.ts")).toBeUndefined();
+  expect(repoRef(null, "0.0.0-dev")).toBeUndefined();
 });

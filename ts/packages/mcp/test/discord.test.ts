@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { decode, fromDiscord, notes } from "../src/discord.ts";
+import { decode, fromDiscord, notes, statusText, tools } from "../src/discord.ts";
+import * as setup from "../src/discordsetup.ts";
 import { sandbox } from "./discordkit.ts";
 
 let box: ReturnType<typeof sandbox>;
@@ -52,4 +53,23 @@ test("low_level_tools_arent_on_the_agents_list: low-level tools aren't on the ag
   }
   expect(names).toContain("discord_send");
   expect(names).toContain("discord_waitForMessage");
+});
+
+test("without its shell, Discord offers discord_status saying why, never an empty tool list", async () => {
+  // A build that doesn't know its commit can't fetch the shell (installed ones always do).
+  setup.configure({ shellRef: () => undefined });
+  const list = (await tools()) as { name: string; description: string }[];
+  expect(list.map((t) => t.name)).toEqual(["discord_status"]);
+  expect(list[0]?.description).toContain("built from source without its commit");
+  expect(await statusText()).toStartWith("Discord's tools aren't available on this PC: This Harbor was built from source");
+  // One that does: the download is tried at that commit, and its failure is the reason.
+  process.env.HARBOR_DISCORD_SHELL_ORIGIN = "http://127.0.0.1:9";
+  setup.configure({ shellRef: () => "0123456789abcdef0123456789abcdef01234567" });
+  try {
+    expect(await statusText()).toContain("couldn't download its Discord shell (main.js from http://127.0.0.1:9/RDevNeo/harbor/0123456789abcdef0123456789abcdef01234567/discord)");
+    expect(readdirSync(setup.root()).filter((n) => n.includes(".tmp"))).toEqual([]);
+  } finally {
+    delete process.env.HARBOR_DISCORD_SHELL_ORIGIN;
+    setup.configure({ shellRef: () => undefined });
+  }
 });

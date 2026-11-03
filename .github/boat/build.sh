@@ -12,8 +12,8 @@
 core=$(image harbor-builder .github/boat/Dockerfile)
 apk=$(image harbor-android .github/boat/Dockerfile.android)
 ver=${HARBOR_VERSION:-$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' ts/package.json | head -1)}
+# The whole commit: the version label shows 7 characters, and the Discord app fetches its shell at it.
 sha=${HARBOR_GIT_SHA:-}
-sha=${sha:0:7}
 min=${HARBOR_MIN_RUNTIME:-$ver}
 
 # Harbor's Google OAuth clients (scripts/build.ts bakes them in), when release.yml passes them: by

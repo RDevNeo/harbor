@@ -15,11 +15,12 @@ export function repairAccount(): discordsetup.ClaudeAccount | undefined {
 }
 
 /** `harbor app <name>`: serves one of Harbor's own app servers on stdio. */
-export async function serve(args: string[]): Promise<number> {
-  discordsetup.configure({ version: harborVersion, claude: repairAccount });
+export async function serve(args: string[], build: { version?: string; shellRef?: string | undefined } = {}): Promise<number> {
+  const v = build.version;
+  discordsetup.configure({ version: v !== undefined ? () => v : harborVersion, shellRef: () => build.shellRef, claude: repairAccount });
   switch (args[0]) {
     case gmail.NAME:
-      await gmail.run({ auth: gmail.harborAuth(), version: harborVersion() });
+      await gmail.run({ auth: gmail.harborAuth(), version: v ?? harborVersion() });
       return 0;
     case discord.NAME:
       await discord.run();

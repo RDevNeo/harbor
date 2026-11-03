@@ -38,6 +38,8 @@ export interface Ports {
   /** The command that runs Harbor itself: `[...selfCommand, "app", "discord-host"]` starts the host. */
   selfCommand(): string[] | undefined;
   version(): string;
+  /** The repository ref (commit or release tag) whose `discord/` goes with this build; undefined: a build from source. */
+  shellRef(): string | undefined;
   /** A Claude Code login on this PC that repair may run; none: no account to use. */
   claude(): ClaudeAccount | undefined;
 }
@@ -47,7 +49,7 @@ function defaultCommand(): string[] {
   return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
 }
 
-let ports: Ports = { selfCommand: defaultCommand, version: () => "0.0.0", claude: () => undefined };
+let ports: Ports = { selfCommand: defaultCommand, version: () => "0.0.0", shellRef: () => undefined, claude: () => undefined };
 
 export function configure(p: Partial<Ports>): void {
   ports = { ...ports, ...p };
@@ -270,9 +272,30 @@ export function shellFiles(): [string, string][] {
   return out;
 }
 
-/** The commit (or tag) of this repository whose `discord/` this build goes with. */
-function shellRef(): string {
-  return process.env.HARBOR_DISCORD_REF ?? process.env.HARBOR_GIT_SHA ?? `v${ports.version()}`;
+/** The commit (or tag) of this repository whose `discord/` this build goes with: the build's own, never a version guessed at run time. */
+export function shellRef(): string {
+  const r = process.env.HARBOR_DISCORD_REF ?? ports.shellRef();
+  if (r === undefined || r === "") throw new Error("This Harbor was built from source without its commit, so it can't fetch its Discord shell (a rig sets HARBOR_DISCORD_SHELL).");
+  return r;
+}
+
+/** Where the shell's files come from. */
+export function shellBase(): string {
+  // HARBOR_DISCORD_SHELL_ORIGIN: a test's stand-in for GitHub, with the same paths.
+  return process.env.HARBOR_DISCORD_SHELL_URL ?? `${process.env.HARBOR_DISCORD_SHELL_ORIGIN ?? "https://raw.githubusercontent.com"}/RDevNeo/harbor/${shellRef()}/discord`;
+}
+
+/** Downloads that a process left half done (`shell-….tmp-<pid>`, or an older Harbor's `shell-….tmp`). */
+function staleTmp(name: string): boolean {
+  const m = /^shell-.*\.tmp(?:-(\d+))?$/.exec(name);
+  if (m === null) return false;
+  if (m[1] === undefined) return true;
+  try {
+    process.kill(Number(m[1]), 0);
+    return Number(m[1]) === process.pid;
+  } catch {
+    return true;
+  }
 }
 
 /** The installed shell; `HARBOR_DISCORD_SHELL` points a test rig at a checkout's `discord/`. */
@@ -283,26 +306,38 @@ export function shellDir(): string {
 /** Fetches the shell once, for this version of Harbor. */
 export async function ensureShell(say: Say): Promise<void> {
   const target = shellDir();
+  for (const name of readdirSync(root())) if (staleTmp(name)) rmSync(join(root(), name), { recursive: true, force: true });
   if (existsSync(join(target, "main.js"))) return;
   say("Downloading Harbor's Discord shell…");
-  const tmp = `${target}.tmp`;
-  rmSync(tmp, { recursive: true, force: true });
-  const base = process.env.HARBOR_DISCORD_SHELL_URL ?? `https://raw.githubusercontent.com/RDevNeo/harbor/${shellRef()}/discord`;
-  for (const [want, rel] of shellFiles()) {
-    const to = join(tmp, rel);
-    mkdirSync(dirname(to), { recursive: true });
-    await download(`${base}/${rel}`, to);
-    if ((await fileSha256(to)) !== want) {
-      rmSync(tmp, { recursive: true, force: true });
-      throw new Error(`Harbor's Discord shell (${rel}) doesn't match this version of Harbor.`);
+  // Its own folder: another of Harbor's processes may be fetching the same shell right now.
+  const tmp = `${target}.tmp-${process.pid}`;
+  try {
+    const base = shellBase();
+    for (const [want, rel] of shellFiles()) {
+      const to = join(tmp, rel);
+      mkdirSync(dirname(to), { recursive: true });
+      try {
+        await download(`${base}/${rel}`, to);
+      } catch (e) {
+        throw new Error(`Harbor couldn't download its Discord shell (${rel} from ${base}): ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if ((await fileSha256(to)) !== want) throw new Error(`Harbor's Discord shell (${rel}) doesn't match this version of Harbor.`);
     }
+    if (existsSync(join(target, "main.js"))) return;
+    // Earlier Harbors' shells: this one replaces them (not what other processes are still fetching).
+    for (const name of readdirSync(root())) {
+      const p = join(root(), name);
+      if (name.startsWith("shell-") && p !== tmp && !/\.tmp-\d+$/.test(name)) rmSync(p, { recursive: true, force: true });
+    }
+    try {
+      renameSync(tmp, target);
+    } catch (e) {
+      // Another process got there first with the same files.
+      if (!existsSync(join(target, "main.js"))) throw e;
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
-  // Earlier Harbors' shells: this one replaces them.
-  for (const name of readdirSync(root())) {
-    const p = join(root(), name);
-    if (name.startsWith("shell-") && p !== tmp) rmSync(p, { recursive: true, force: true });
-  }
-  renameSync(tmp, target);
 }
 
 
