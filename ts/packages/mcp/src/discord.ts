@@ -283,6 +283,10 @@ export function serve(input: Readable, output: Writable): Promise<void> {
     output.write(`${JSON.stringify({ jsonrpc: "2.0", ...body })}\n`);
   };
   const lines = createInterface({ input });
+  // A tool list still coming (the first one may download the shell) is answered even after the
+  // input ends: `printf … | harbor app discord` gets it. Calls aren't waited for: a waitForMessage
+  // could hold the process for minutes after the agent left.
+  const listing = new Set<Promise<void>>();
   lines.on("line", (line) => {
     const req = parse(line);
     if (!isObj(req) || !("id" in req)) return; // notifications need no answer
@@ -300,9 +304,12 @@ export function serve(input: Readable, output: Writable): Promise<void> {
           },
         });
         break;
-      case "tools/list":
-        void tools().then((t) => reply({ id, result: { tools: t } }));
+      case "tools/list": {
+        const p = tools().then((t) => reply({ id, result: { tools: t } }));
+        listing.add(p);
+        void p.finally(() => listing.delete(p));
         break;
+      }
       case "tools/call":
         void call(str(get(params, "name")) ?? "", get(params, "arguments")).then((r) => reply({ id, result: r }));
         break;
@@ -313,7 +320,7 @@ export function serve(input: Readable, output: Writable): Promise<void> {
         reply({ id, error: { code: -32601, message: "unknown method" } });
     }
   });
-  return new Promise((resolve) => lines.once("close", resolve));
+  return new Promise((resolve) => lines.once("close", () => void Promise.allSettled([...listing]).then(() => resolve())));
 }
 
 /** `harbor app discord`. */

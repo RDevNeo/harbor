@@ -5,6 +5,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- `harbor app discord` answers a tool list it's still preparing (the first one downloads Discord's
+  shell) even when its input has already ended, as with `printf … | harbor app discord`.
+
 ## [0.116.2] - 2026-11-02
 
 ### Fixed

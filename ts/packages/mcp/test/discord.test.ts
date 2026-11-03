@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { decode, fromDiscord, notes, statusText, tools } from "../src/discord.ts";
+import { PassThrough } from "node:stream";
+import { decode, fromDiscord, notes, serve, statusText, tools } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
 import { sandbox } from "./discordkit.ts";
 
@@ -71,5 +72,27 @@ test("without its shell, Discord offers discord_status saying why, never an empt
   } finally {
     delete process.env.HARBOR_DISCORD_SHELL_ORIGIN;
     setup.configure({ shellRef: () => undefined });
+  }
+});
+
+test("a tool list still coming when the input ends is answered before the server goes", async () => {
+  // A slow GitHub: the first list waits for the shell's download.
+  const slow = Bun.serve({ port: 0, fetch: async () => { await Bun.sleep(400); return new Response("404: Not Found", { status: 404 }); } });
+  process.env.HARBOR_DISCORD_SHELL_ORIGIN = `http://127.0.0.1:${slow.port}`;
+  setup.configure({ shellRef: () => "0123456789abcdef0123456789abcdef01234567" });
+  try {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let out = "";
+    output.on("data", (d: Buffer) => (out += d.toString()));
+    const done = serve(input, output);
+    input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+    await done;
+    const reply = JSON.parse(out.split("\n").find((l) => l.includes('"id":2')) ?? "{}") as { result?: { tools?: { name: string }[] } };
+    expect(reply.result?.tools?.map((t) => t.name)).toEqual(["discord_status"]);
+  } finally {
+    delete process.env.HARBOR_DISCORD_SHELL_ORIGIN;
+    setup.configure({ shellRef: () => undefined });
+    slow.stop(true);
   }
 });
