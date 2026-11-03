@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import type { Chat } from "@harbor/store";
+import { type Chat, usageCtl } from "@harbor/store";
 import type { Engine } from "./engine.ts";
 import * as oc from "./openchat.ts";
 import { newUuid, now, randomHex } from "./paths.ts";
 import * as procs from "./procs.ts";
-import { accessLabel, short, staticModels } from "./providers.ts";
+import { accessLabel, applyUsage, short, staticModels, usable } from "./providers.ts";
 import * as team from "./team.ts";
 import { elapsed } from "./team.ts";
 
@@ -162,10 +162,12 @@ export async function teamTool(e: Engine, me: Chat, tool: string, a: unknown): P
     }
     case "list_models": {
       const out: string[] = [];
-      for (const acc of e.host.accounts().filter((x) => x.bin !== null && x.loggedIn !== false)) {
-        const usage = acc.usage.map((w) => `${w.label} ${Math.round(w.percent * 100)}% used`);
+      e.host.rediscover?.();
+      applyUsage(e.host.accounts());
+      for (const acc of e.host.accounts().filter(usable)) {
+        const usage = usageCtl.quotaText(acc.plan, e.limits.ctl.windows(acc.id), now());
         const tools = acc.kind === "Claude" || acc.kind === "Codex" ? "" : " (no team tools: cannot message others)";
-        out.push(`account '${acc.id}' — ${short(acc)}${acc.email === "" ? "" : ` <${acc.email}>`}${usage.length === 0 ? "" : ` — ${usage.join(", ")}`}${tools}`);
+        out.push(`account '${acc.id}' — ${short(acc)}${acc.email === "" ? "" : ` <${acc.email}>`}${usage === "" ? "" : ` — ${usage}`}${tools}`);
         for (const m of staticModels(acc.kind)) if (m.id !== "") out.push(`    model '${m.id}' (${m.label})${m.more ? " legacy" : ""}`);
       }
       return out.join("\n");

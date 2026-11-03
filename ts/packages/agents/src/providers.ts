@@ -82,6 +82,31 @@ export function installed(a: Account): boolean {
   return a.bin !== null;
 }
 
+/** Installed and not known to be signed out: an account Harbor can run turns as, and lists as such (a profile
+ *  folder that was never signed in only shows where Harbor offers the sign-in). */
+export function usable(a: Account): boolean {
+  return a.bin !== null && a.loggedIn !== false;
+}
+
+/** The plan as Anthropic names it since 2026-10-30: "Max 20x" is Ultra, "Max 5x" plain Max (the rate-limit tiers,
+ *  default_claude_max_20x and default_claude_max_5x, kept their names). Other plans as given. */
+export function planName(plan: string): string {
+  const m = /max[ _-]?(\d+)x/i.exec(plan);
+  if (m === null) return plan;
+  return m[1] === "20" ? "Ultra" : m[1] === "5" ? "Max" : `Max ${m[1]}x`;
+}
+
+/** A Claude login's plan from its credentials: the rate-limit tier, else the subscription ("pro" is Pro); "" when
+ *  neither says (a bare "max" could be either Max plan). */
+export function claudePlan(login: unknown): string {
+  const tier = planName(str(at(login, "rateLimitTier")));
+  if (tier !== str(at(login, "rateLimitTier"))) return tier;
+  const sub = str(at(login, "subscriptionType")).toLowerCase();
+  if (sub === "" || sub === "max") return "";
+  const named = planName(sub);
+  return named !== sub ? named : sub.slice(0, 1).toUpperCase() + sub.slice(1);
+}
+
 export function binStr(a: Account): string {
   return a.bin ?? bin(a.kind);
 }
@@ -163,13 +188,15 @@ function claudeAccount(id: string, dir: string, json: string, n: number): Accoun
   const email = str(at(oauth, "emailAddress"));
   const display = str(at(oauth, "displayName"));
   const name = display !== "" ? display : n === 1 ? "Claude" : `Claude ${n}`;
+  const creds = readJson(join(dir, ".credentials.json"));
+  const login = at(creds, "claudeAiOauth");
   return {
     id,
     kind: "Claude",
     name,
     badge: badgeFrom(email, `C${n}`),
     email,
-    plan: "",
+    plan: claudePlan(login),
     configDir: n > 1 ? dir : null,
     bin: which("claude"),
     loggedIn: existsSync(join(dir, ".credentials.json")) || oauth !== null,
@@ -177,7 +204,8 @@ function claudeAccount(id: string, dir: string, json: string, n: number): Accoun
   };
 }
 
-/** Only reads files and PATH: it never runs a CLI. */
+/** Only reads files and PATH: it never runs a CLI. A ~/.claudeN folder that was removed is simply not found: callers
+ *  keep no list of their own (the hub reads again every minute and when usage is asked for). */
 export function discover(): Account[] {
   const h = home();
   const out = [claudeAccount("claude", join(h, ".claude"), join(h, ".claude.json"), 1)];
@@ -202,7 +230,7 @@ export function discover(): Account[] {
   return out;
 }
 
-/** Plan and 5-hour/weekly windows from the agents-usage-monitor cache, if present. The monitor writes that file by
+/** Plan and usage windows (only those the provider reports: an Ultra account has no 5-hour one) from the agents-usage-monitor cache, if present. The monitor writes that file by
  *  itself; Harbor reads it at start, on Refresh and when usage is asked for. */
 export function applyUsage(accounts: readonly Account[]): void {
   const p = join(home(), ".local/state/omarchy/agents-usage-monitor/usage.json");
@@ -219,7 +247,8 @@ export function applyUsage(accounts: readonly Account[]): void {
     const id = str(at(prov, "id"));
     const a = accounts.find((x) => x.id === id);
     if (!a) continue;
-    a.plan = str(at(prov, "plan"));
+    const plan = planName(str(at(prov, "plan")));
+    if (plan !== "") a.plan = plan;
     a.usageAt = written;
     a.usage = arr(at(prov, "windows")).map((x) => {
       const t = optStr(at(x, "resetsAt"));

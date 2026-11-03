@@ -84,7 +84,7 @@ beforeAll(async () => {
   store.set("chat_prs", JSON.stringify({ [lead.id]: { number: 7, state: "open", url: "https://github.com/o/r/pull/7", title: "Add it", branch: "add-it" } }));
   const account: providers.Account = { id: "claude", kind: "Claude", name: "Claude", email: "", badge: "C1", plan: "", configDir: null, bin, loggedIn: true, usage: [] };
   const second: providers.Account = { ...account, id: "claude2", name: "Claude 2", email: "two@example.com", badge: "C2", configDir: join(root, "home", ".claude2") };
-  h = await startHub({ version: "9.9.9", hookPort: await freePort(), store, engine: (host) => new Engine({ store, accounts: () => [account, second], ...host }) });
+  h = await startHub({ version: "9.9.9", hookPort: await freePort(), store, engine: (host) => new Engine({ ...host, store, accounts: () => [account, second] }) });
 });
 
 afterAll(async () => {

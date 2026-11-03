@@ -849,3 +849,43 @@ test("a copy's turns read as live from its home PC's word, never as this PC's", 
   expect(e.liveCount()).toBe(0);
   store.close();
 });
+
+describe("list_models", () => {
+  test("names each signed-in account's plan and only the windows it has: an Ultra account has no 5-hour one", async () => {
+    const h = join(base, "models-home");
+    const dir = join(h, ".local/state/omarchy/agents-usage-monitor");
+    mkdirSync(dir, { recursive: true });
+    const resets = new Date((Math.floor(Date.now() / 1000) + 3 * 86400 + 1800) * 1000).toISOString();
+    writeFileSync(
+      join(dir, "usage.json"),
+      JSON.stringify({
+        providers: [
+          { id: "claude", plan: "Max 20x", windows: [{ label: "Weekly", percent: 1, resetsAt: resets }] },
+          { id: "claude3", plan: "Max 5x", windows: [{ label: "5-hour", percent: 0, resetsAt: "" }, { label: "Weekly", percent: 0.01, resetsAt: "" }] },
+        ],
+      }),
+    );
+    const was = process.env.HOME;
+    process.env.HOME = h;
+    process.env.XDG_DATA_HOME = join(base, `data-${n++}`);
+    const store = Store.openTemp();
+    try {
+      const accounts: Account[] = [
+        { ...account, usage: [] },
+        { ...account, id: "claude3", badge: "FS", usage: [] },
+        { ...account, id: "claude4", badge: "C4", loggedIn: false, usage: [] },
+      ];
+      let reads = 0;
+      const e = new Engine({ store, accounts: () => accounts, rediscover: () => reads++, changed: () => {} });
+      const lead = newChat(store, { role: "lead", name: "lead" });
+      e.reload();
+      const said = await e.tool(lead.id, "list_models", {});
+      expect(reads).toBe(1);
+      const lines = said.split("\n").filter((l) => l.startsWith("account"));
+      expect(lines).toEqual(["account 'claude' — Claude · CL — Ultra · Weekly 100% used (resets in 3d 0h)", "account 'claude3' — Claude · FS — Max · 5-hour 0% used, Weekly 1% used"]);
+    } finally {
+      process.env.HOME = was;
+      store.close();
+    }
+  });
+});

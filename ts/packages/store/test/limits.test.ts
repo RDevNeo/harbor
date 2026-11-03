@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { type AccountInfo, type Block, Limits, type LimitsHost, fromText, nextBlock, windowLabel } from "../src/limits.ts";
-import { mergeWindows, percentText, readingJson, readingText, type ReadingAccount, resetsIn } from "../src/usage_ctl.ts";
+import { keyLabel, mergeWindows, percentText, quotaText, readingJson, readingText, type ReadingAccount, resetsIn } from "../src/usage_ctl.ts";
 import { type Chat, Store, blankChat, now } from "../src/index.ts";
 
 test("from_text_survives_case_changing_chars", () => {
@@ -249,12 +249,52 @@ test("the read-out lists Claude accounts with when their numbers were seen", () 
   h.accountsList = [acct("claude", { usage: [{ label: "Weekly", percent: 0.5, resetsAt: null }], usageAt: h.clock - 600 }), acct("claude2", { loggedIn: false }), acct("codex", { kind: "codex" })];
   const ra = (id: string, over: Partial<ReadingAccount> = {}): ReadingAccount => ({ id, kind: "Claude", short: `Claude · ${id}`, email: `${id}@example.com`, plan: "", installed: true, loggedIn: true, ...over });
   const list = [ra("claude", { plan: "Max 20x" }), ra("claude2", { loggedIn: false }), ra("claude3", { installed: false }), ra("codex", { kind: "Codex", short: "Codex" })];
-  expect(l.ctl.readings(list).map((r) => [r.id, r.label, r.plan, r.signedIn, r.seen])).toEqual([
-    ["claude", "Claude · claude", "Max 20x", true, h.clock - 600],
-    ["claude2", "Claude · claude2", "", false, null],
-  ]);
+  // claude2 isn't signed in (a profile folder never logged in): it has no usage to show.
+  expect(l.ctl.readings(list).map((r) => [r.id, r.label, r.plan, r.signedIn, r.seen])).toEqual([["claude", "Claude · claude", "Max 20x", true, h.clock - 600]]);
   l.limitEvent(c.id, { type: "quota", windows: [["five_hour", 0.1, h.clock + 60]] });
   expect(l.ctl.readings(list)[0]?.seen).toBe(h.clock);
   // Accounts that share a badge are told apart by their email.
   expect(l.ctl.readings([ra("claude"), ra("claude2", { short: "Claude · claude" })]).map((r) => r.label)).toEqual(["claude@example.com", "claude2@example.com"]);
+});
+
+test("an Ultra account: no 5-hour window when the newer monitor read has none, weekly first", () => {
+  const at = 1_000_000;
+  const monitor = [
+    { label: "Weekly", percent: 1, resetsAt: at + 86400 },
+    { label: "Fable Weekly", percent: 0.12, resetsAt: at + 86400 },
+  ];
+  // A turn before the monitor's read still told of a 5-hour window.
+  const live: [string, number, number][] = [
+    ["five_hour", 0.3, at + 3600],
+    ["seven_day", 0.98, at + 86400],
+  ];
+  expect(mergeWindows(monitor, live, true, at).map((w) => [w.key, w.label, w.used])).toEqual([
+    ["week", "Weekly", 1],
+    ["week:fable", "Weekly · Fable", 0.12],
+  ]);
+  // A turn newer than the monitor's read is still shown in full.
+  expect(mergeWindows(monitor, live, false, at).map((w) => w.key)).toEqual(["5h", "week", "week:fable"]);
+  // Without a monitor, what turns told is all there is.
+  expect(mergeWindows([], live, true, at).map((w) => w.key)).toEqual(["5h", "week"]);
+  expect(keyLabel("Opus Weekly")).toEqual(keyLabel("seven_day_opus"));
+  expect(keyLabel("Weekly")).toEqual(["week", "Weekly"]);
+});
+
+test("list_models' line: the plan, then only the windows the account has", () => {
+  const at = 1_000_000;
+  expect(quotaText("Ultra", [{ key: "week", label: "Weekly", used: 1, resetsAt: at + 86400 * 3 + 3600 }], at)).toBe("Ultra · Weekly 100% used (resets in 3d 1h)");
+  expect(quotaText("Max", [{ key: "5h", label: "5-hour", used: 0, resetsAt: null }, { key: "week", label: "Weekly", used: 0.01, resetsAt: null }], at)).toBe("Max · 5-hour 0% used, Weekly 1% used");
+  expect(quotaText("", [{ key: "5h", label: "5-hour", used: null, resetsAt: null }], at)).toBe("5-hour no data since the reset");
+  expect(quotaText("Pro", [], at)).toBe("Pro");
+  expect(quotaText("", [], at)).toBe("");
+});
+
+test("spare quota: an account without a 5-hour window counts it as unused, a reset window too", () => {
+  const [h, l] = setup();
+  h.accountsList = [
+    acct("claude", { usage: [{ label: "Weekly", percent: 0.4, resetsAt: h.clock + 86400 }, { label: "Fable Weekly", percent: 0.7, resetsAt: h.clock + 86400 }], usageAt: h.clock }),
+    acct("claude3", { usage: [{ label: "5-hour", percent: 0.9, resetsAt: h.clock - 60 }, { label: "Weekly", percent: 0.2, resetsAt: h.clock + 86400 }], usageAt: h.clock }),
+  ];
+  expect(l.usageOf("claude")).toEqual([0.7, 0]);
+  expect(l.usageOf("claude3")).toEqual([0.2, 0]);
 });

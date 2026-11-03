@@ -23,8 +23,9 @@ export function keyLabel(name: string): [string, string] {
   const l = name.toLowerCase();
   if (["five_hour", "5-hour", "5 hour", "session"].includes(l)) return ["5h", "5-hour"];
   if (["seven_day", "weekly", "week"].includes(l)) return ["week", "Weekly"];
-  if (l.startsWith("seven_day_")) {
-    const model = name.slice("seven_day_".length);
+  // A model's own weekly limit: "seven_day_opus" from a turn, "Fable Weekly" from the monitor (the API's weekly_scoped).
+  const model = l.startsWith("seven_day_") ? name.slice("seven_day_".length) : /^\S.* weekly$/.test(l) ? name.slice(0, -" weekly".length).trim() : null;
+  if (model !== null && model !== "") {
     const m = model.slice(0, 1).toUpperCase() + model.slice(1);
     return [`week:${model.toLowerCase()}`, `Weekly · ${m}`];
   }
@@ -64,6 +65,18 @@ export function readingText(w: Win, now: number): string {
   return r === null ? used : `${used}  ·  ${r}`;
 }
 
+/** An account's plan and windows in one line, for agents (list_models): "Ultra · Weekly 81% used (resets in 2d 3h),
+ *  Weekly · Fable 12% used". Only the windows the provider has are named: no "5-hour 0%" for an Ultra account. */
+export function quotaText(plan: string, wins: readonly Win[], now: number): string {
+  const used = wins
+    .map((w) => {
+      const r = resetsIn(w.resetsAt, now);
+      return `${w.label} ${w.used === null ? "no data since the reset" : `${percentText(w.used)} used`}${r === null ? "" : ` (${r})`}`;
+    })
+    .join(", ");
+  return plan === "" ? used : used === "" ? plan : `${plan} · ${used}`;
+}
+
 /** One account as the usage read-out shows it. */
 export interface Reading {
   id: string;
@@ -99,10 +112,14 @@ export function readingJson(r: Reading, now: number): { id: string; label: strin
   };
 }
 
-/** The monitor's windows and what turns reported, the newer source winning a window both have; 5-hour first. */
+/** The monitor's windows and what turns reported, the newer source winning a window both have; 5-hour first. The
+ *  monitor lists every window the provider has, a turn only those it was told about: a window a newer monitor read
+ *  doesn't list is gone (an Ultra account's 5-hour window since 2026-10-30), and isn't shown from an older turn. */
 export function mergeWindows(monitor: readonly UsageWindow[], live: readonly Quota[], monitorNewer: boolean, now: number): Win[] {
   const fromMonitor = monitor.map((w): [string, number, number | null] => [w.label, w.percent, w.resetsAt]);
-  const fromTurns = live.map(([k, u, r]): [string, number, number | null] => [k, u, r > 0 ? r : null]);
+  const listed = new Set(fromMonitor.map(([name]) => keyLabel(name)[0]));
+  const complete = monitorNewer && listed.size > 0;
+  const fromTurns = live.filter(([k]) => !complete || listed.has(keyLabel(k)[0])).map(([k, u, r]): [string, number, number | null] => [k, u, r > 0 ? r : null]);
   const v: Win[] = [];
   for (const [name, used, resets] of monitorNewer ? [...fromTurns, ...fromMonitor] : [...fromMonitor, ...fromTurns]) {
     const [key, label] = keyLabel(name);
@@ -143,10 +160,11 @@ export class UsageCtl {
     return mergeWindows(a?.usage ?? [], this.limits.quota.get(account) ?? [], monitorNewer, this.limits.now());
   }
 
-  /** Every Claude account on this PC, for the usage read-out. */
+  /** Every Claude account on this PC, for the usage read-out: a profile that isn't signed in has no usage (Settings ›
+   *  Providers offers its sign-in). */
   readings(accounts: readonly ReadingAccount[]): Reading[] {
     return accounts
-      .filter((a) => a.kind.toLowerCase() === "claude" && a.installed)
+      .filter((a) => a.kind.toLowerCase() === "claude" && a.installed && a.loggedIn !== false)
       .map((a) => {
         const info = this.limits.host.account(a.id);
         const monitor = info && info.usage.length > 0 ? (info.usageAt ?? null) : null;

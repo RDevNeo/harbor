@@ -30,6 +30,8 @@ export interface SentBy {
 export interface EngineHost {
   store: Store;
   accounts(): readonly Account[];
+  /** Reads this PC's accounts again now (providers.discover), so a removed profile folder is gone at once. */
+  rediscover?(): void;
   /** Something about `chatId` changed (null: about several): repaint, tell phones. */
   changed(chatId: number | null): void;
   /** A chat whose home is another PC: its turns run there (net). */
@@ -285,6 +287,7 @@ export class Engine {
   /** The Claude accounts' usage windows for the read-out, the usage monitor's file read now: until then an
    *  account's `usage` is as old as the last read. */
   usageReadings(): usageCtl.Reading[] {
+    this.host.rediscover?.();
     const accounts = this.host.accounts();
     applyUsage(accounts);
     return this.limits.ctl.readings(accounts.map((a) => ({ id: a.id, kind: a.kind, short: short(a), email: a.email, plan: a.plan, installed: installed(a), loggedIn: a.loggedIn })));

@@ -14,7 +14,10 @@ import { imagesPrompt } from "./logic/usertext.ts";
 export class Data {
   readonly store: Store;
   readonly engine: Engine;
-  accounts: Account[];
+  /** The window's own accounts, when no hub shares its list. */
+  private own: readonly Account[] = [];
+  private readonly shared: (() => readonly Account[]) | undefined;
+  private readonly rediscover: () => void;
   /** Something about a chat changed (null: several): the window redraws. */
   onChange: (chatId: number | null) => void = () => {};
   /** The chat is on screen with the window focused. */
@@ -32,13 +35,16 @@ export class Data {
   constructor(store: Store, hub: Partial<EngineHost> = {}, notes = new Notes(), voiceMesh: dictate.Mesh = alone) {
     this.store = store;
     this.voiceMesh = voiceMesh;
-    this.accounts = providers.discover();
+    this.shared = hub.accounts;
+    this.rediscover = hub.rediscover ?? (() => (this.own = providers.discover()));
+    if (!this.shared) this.own = providers.discover();
     const desktop = new Desktop({ send: spawnNotifySend, prefs: loadPrefs(store), onOpen: () => this.onNotificationOpen(desktop.takeOpen()) });
     this.notifier = new Notifier({ notes, desktop });
     this.engine = new Engine({
       ...hub,
       store,
       accounts: () => this.accounts,
+      rediscover: () => this.rediscover(),
       changed: (id) => {
         this.onChange(id);
         hub.changed?.(id);
@@ -76,8 +82,13 @@ export class Data {
     return this.engine.timers;
   }
 
+  /** This PC's accounts: the hub's list when there is a hub, so the window never keeps a profile that was removed. */
+  get accounts(): readonly Account[] {
+    return this.shared ? this.shared() : this.own;
+  }
+
   reload(): void {
-    this.accounts = providers.discover();
+    this.rediscover();
     this.engine.reload();
   }
 

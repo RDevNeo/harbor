@@ -5,6 +5,26 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Claude usage follows Anthropic's 2026-10-30 plans: "Max 20x" shows as Ultra and "Max 5x" as Max
+  (also from an older usage monitor that still says the old names, and from the login's own tier
+  when there is no monitor). An account the provider reports no 5-hour window for (a verified Ultra
+  account) shows no 5-hour row anywhere: the usage read-out, Settings › Usage, the phone and
+  `list_models`, whose line now reads "Ultra · Weekly 100% used (resets in 3d 1h)" instead of
+  "5-hour 0% used, Weekly 100% used". A 5-hour window an older turn reported is dropped once a newer
+  monitor read no longer lists it. Per-model weekly limits from the monitor ("Fable Weekly") show
+  as "Weekly · Fable". Picking the account with the most quota left counts a missing or already
+  reset window as unused.
+
+### Fixed
+- A Claude profile folder that was removed (~/.claude4) stayed in the window's Claude usage, the
+  agent menus and the model picker until Harbor restarted: the window kept the list of accounts it
+  read at start. It now shares the hub's list, read again every minute and whenever usage or
+  `list_models` is asked for.
+- A Claude profile that was never signed in no longer shows as a usage entry, in the mesh's
+  "agent accounts" line or among the accounts other PCs may run a chat as; Settings › Providers and
+  the composer's account rail still offer its sign-in.
+
 ## [0.120.1] - 2026-11-03
 
 ### Fixed

@@ -642,17 +642,15 @@ export class Limits {
     return { on, ids };
   }
 
-  /** Highest utilization seen for the account (0–1), per window: weekly, 5-hour. */
+  /** Highest utilization of the account (0–1), per window: weekly, 5-hour (the shorter ones). A window the provider
+   *  doesn't have (an Ultra account's 5-hour one) or that reset since it was read counts as unused. */
   usageOf(account: string): [number, number] {
     let weekly = 0;
     let five = 0;
-    for (const [k, u] of this.quota.get(account) ?? []) {
-      if (isWeekly(k)) weekly = Math.max(weekly, u);
-      else five = Math.max(five, u);
-    }
-    for (const w of this.host.account(account)?.usage ?? []) {
-      if (w.label.toLowerCase().includes("week")) weekly = Math.max(weekly, w.percent);
-      else five = Math.max(five, w.percent);
+    for (const w of this.ctl.windows(account)) {
+      if (w.used === null) continue;
+      if (w.key === "week" || w.key.startsWith("week:")) weekly = Math.max(weekly, w.used);
+      else five = Math.max(five, w.used);
     }
     return [weekly, five];
   }

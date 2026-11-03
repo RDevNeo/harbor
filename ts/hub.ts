@@ -104,7 +104,7 @@ import { type Chat, dataDir, home, repoDir, stateDir, Store } from "./packages/s
 import { apk as updateApk, notices, type Updater } from "./packages/update/src/index.ts";
 import { type Services, startServices } from "./services.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover">;
 
 export interface HubOptions {
   version: string;
@@ -260,6 +260,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     dictate.setAccount(a ? (system, prompt, ms) => recap.askWithin(providers.binStr(a), providers.accountEnv(a), system, prompt, ms) : null);
   };
   mirrorDictation();
+  const rediscover = (): void => {
+    accounts = providers.discover();
+    mirrorDictation();
+  };
   const catalog = catalogOf(providers, () => accounts.map(catalogAccount), store);
   const portmap = new Portmap({ kv: store, net: lanPortmapNet() });
   const addrs = () => phoneAddrs(port, lanAddrs(env), portmap.publicAddr());
@@ -368,7 +372,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       meshOn: hub.mesh.on,
       localPhones: hub.localPhones().map((p) => ({ name: p.name, app: p.app })),
       versions,
-      accounts: accounts.filter((a) => a.bin !== null).map((a) => providers.short(a)),
+      accounts: accounts.filter(providers.usable).map((a) => providers.short(a)),
       hosts: peersNow(),
       elsewhere: hub.elsewhere,
     });
@@ -439,7 +443,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     route: (call) => phoneRoute(call),
     version: o.version,
     update: () => (o.updater ? asJson(o.updater.info()) : null),
-    accounts: () => accounts.filter((a) => a.bin !== null).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
+    accounts: () => accounts.filter(providers.usable).map((a) => ({ id: a.id, short: providers.short(a), kind: a.kind.toLowerCase() })),
     copied: (chat) => engine?.storeChanged(chat),
     cwd: (c) => engine?.chatCwd(c) ?? null,
   });
@@ -651,6 +655,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     return engine;
   };
   const host: HubHost = {
+    // A window's Engine shares the hub's accounts: one list, read again every minute and when usage is asked for.
+    accounts: () => accounts,
+    rediscover,
     changed: (chat) => {
       hub.touch(chat, true);
     },
@@ -692,7 +699,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     peers: () => [...hub.mesh.peers.values()].filter((p) => p.online && p.fp !== "").map((p) => ({ id: p.id, name: p.name, online: p.online, dest: dest(p) })),
     http: (p, method, path, body, waitMs) => http(p.dest, method, path, body, waitMs),
   };
-  engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, accounts: () => accounts, ...host, ...own });
+  engine = o.engine ? o.engine(host, notes, voicePeers) : new Engine({ store, ...host, ...own });
   const live = engine;
   // A captcha the chat's agent hit goes into that chat's transcript (its card, then its outcome), and the notification opens that chat.
   const stopDiscord =
@@ -889,10 +896,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     replica.reload();
     if (o.updater) for (const p of hub.mesh.peers.values()) o.updater.peerNews(p.update);
   }, 10_000);
-  const refresh = setInterval(() => {
-    accounts = providers.discover();
-    mirrorDictation();
-  }, 60_000);
+  const refresh = setInterval(rediscover, 60_000);
   return {
     store,
     hub,

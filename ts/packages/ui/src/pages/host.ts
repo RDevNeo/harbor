@@ -147,7 +147,7 @@ export class PageHost {
 
   private agents(): { id: string; label: string; current: boolean }[] {
     const cur = this.agent()?.id;
-    return this.s.data.accounts.filter((a) => a.bin !== null).map((a) => ({ id: a.id, label: providers.short(a), current: a.id === cur }));
+    return this.s.data.accounts.filter(providers.usable).map((a) => ({ id: a.id, label: providers.short(a), current: a.id === cur }));
   }
 
   private agentLabel(): string {

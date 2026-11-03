@@ -96,7 +96,8 @@ test("the usage monitor's file: read again on each call, an empty reset is unkno
     const a: p.Account = { id: "claude", kind: "Claude", name: "Claude", email: "", badge: "AB", plan: "", configDir: null, bin: null, loggedIn: true, usage: [] };
     write(0.94, 1_800_000_000);
     p.applyUsage([a]);
-    expect(a.plan).toBe("Max 20x");
+    // An older monitor still says "Max 20x": the plan is called Ultra since 2026-10-30.
+    expect(a.plan).toBe("Ultra");
     expect(a.usageAt).toBe(1_800_000_000);
     expect(a.usage).toEqual([
       { label: "5-hour", percent: 0, resetsAt: null },
@@ -105,6 +106,68 @@ test("the usage monitor's file: read again on each call, an empty reset is unkno
     write(0.95, 1_800_000_300);
     p.applyUsage([a]);
     expect([a.usage[1]?.percent, a.usageAt]).toEqual([0.95, 1_800_000_300]);
+  } finally {
+    process.env.HOME = was;
+  }
+});
+
+test("a removed profile folder is gone on the next read; one never signed in reads as signed out", () => {
+  const h = join(base, "gone-home");
+  mkdirSync(join(h, ".claude"), { recursive: true });
+  mkdirSync(join(h, ".claude3"), { recursive: true });
+  mkdirSync(join(h, ".claude4"), { recursive: true });
+  writeFileSync(join(h, ".claude3/.credentials.json"), JSON.stringify({ claudeAiOauth: { rateLimitTier: "default_claude_max_5x", subscriptionType: "max" } }));
+  writeFileSync(join(h, ".claude4/.claude.json"), JSON.stringify({ numStartups: 1 }));
+  const was = { HOME: process.env.HOME, PATH: process.env.PATH };
+  process.env.HOME = h;
+  process.env.PATH = "/nonexistent";
+  try {
+    const before = p.discover();
+    expect(before.map((a) => a.id)).toEqual(["claude", "claude3", "claude4", "codex"]);
+    const four = before.find((a) => a.id === "claude4") as p.Account;
+    expect(four).toMatchObject({ badge: "C4", loggedIn: false });
+    expect(p.usable({ ...four, bin: "/bin/claude" })).toBe(false);
+    expect(p.usable({ ...four, bin: "/bin/claude", loggedIn: null })).toBe(true);
+    expect(before.find((a) => a.id === "claude3")?.plan).toBe("Max");
+    rmSync(join(h, ".claude4"), { recursive: true });
+    expect(p.discover().map((a) => a.id)).toEqual(["claude", "claude3", "codex"]);
+  } finally {
+    process.env.HOME = was.HOME;
+    process.env.PATH = was.PATH;
+  }
+});
+
+test("plan names: Max 20x is Ultra, Max 5x is Max, from the monitor or from the login's tier", () => {
+  expect(["Max 20x", "max_20x", "default_claude_max_20x", "Max 5x", "default_claude_max_5x", "Pro", "Plus", ""].map(p.planName)).toEqual(["Ultra", "Ultra", "Ultra", "Max", "Max", "Pro", "Plus", ""]);
+  expect(p.claudePlan({ rateLimitTier: "default_claude_max_20x", subscriptionType: "max" })).toBe("Ultra");
+  expect(p.claudePlan({ rateLimitTier: "default_claude_max_5x", subscriptionType: "max" })).toBe("Max");
+  expect(p.claudePlan({ subscriptionType: "pro" })).toBe("Pro");
+  // A bare "max" could be either plan.
+  expect(p.claudePlan({ subscriptionType: "max" })).toBe("");
+  expect(p.claudePlan(undefined)).toBe("");
+});
+
+test("an Ultra account's monitor entry has no 5-hour window, and none is made up", () => {
+  const h = join(base, "ultra-home");
+  const dir = join(h, ".local/state/omarchy/agents-usage-monitor");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "usage.json"),
+    JSON.stringify({
+      providers: [
+        { id: "claude", plan: "Ultra", windows: [{ label: "Weekly", percent: 1, resetsAt: "2026-11-07T02:00:00+00:00" }, { label: "Fable Weekly", percent: 0.12, resetsAt: "2026-11-07T02:00:00+00:00" }] },
+        { id: "claude3", plan: "Max", windows: [{ label: "5-hour", percent: 0, resetsAt: "" }, { label: "Weekly", percent: 0.01, resetsAt: "2026-11-08T06:00:00+00:00" }] },
+      ],
+    }),
+  );
+  const was = process.env.HOME;
+  process.env.HOME = h;
+  try {
+    const mk = (id: string): p.Account => ({ id, kind: "Claude", name: id, email: "", badge: "AB", plan: "Ultra", configDir: null, bin: null, loggedIn: true, usage: [] });
+    const [ultra, max] = [mk("claude"), mk("claude3")];
+    p.applyUsage([ultra, max]);
+    expect([ultra.plan, ultra.usage.map((w) => w.label)]).toEqual(["Ultra", ["Weekly", "Fable Weekly"]]);
+    expect([max.plan, max.usage.map((w) => w.label)]).toEqual(["Max", ["5-hour", "Weekly"]]);
   } finally {
     process.env.HOME = was;
   }
