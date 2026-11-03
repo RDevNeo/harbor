@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Long Claude chats stay light: every message reloads the chat's whole Claude Code session, so once
+  the part Claude reloads passes 15 MB, Harbor runs Claude Code's own `/compact` on it before the
+  next turn, with the same account and model. That turn and the ones after it start from a summary
+  of the earlier conversation instead of all of it (a 52 MB session: about 450 → 215 MB of memory
+  and 1.6 → 0.5 s of CPU per message). The chat still shows every message, and a pill says what
+  happened: "Compacting the session (52 MB) before this turn", then "Session compacted (52 MB →
+  33 KB)". If the compaction fails, the pill says why and the turn goes on as before. Only chats
+  that run on this PC compact; Codex chats don't change.
+- When Claude Code compacts a conversation itself (`/compact` sent in the chat, or its automatic
+  compaction near the context limit), the chat says so too: "Claude Code compacted the conversation
+  (666k → 4k tokens)".
+
 ## [0.132.1] - 2026-11-03
 
 ### Fixed

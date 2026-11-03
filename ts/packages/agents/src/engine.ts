@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync, statSync, truncateSync, unlinkSync } 
 import { join } from "node:path";
 import { type Chat, type CopyTurn, type Item, limits, liveSince, type Mention, type Repo, type Store, type Timer, type SentVia, usageCtl, type Webhook } from "@harbor/store";
 import * as agent from "./agent.ts";
+import * as compaction from "./compaction.ts";
 import { parse as parseJson } from "./json.ts";
 import type { Event, RemoteSpec, Turn } from "./agent.ts";
 import * as detach from "./detach.ts";
@@ -685,6 +686,27 @@ export class Engine {
         tr.stderr.push(ev.text);
         if (tr.stderr.length > 40) tr.stderr.shift();
         break;
+      case "compact": {
+        // One notice per turn and side: start's becomes done's, and a turn replayed after a restart finds its own.
+        const side = ev.state === "claude" ? "claude" : "harbor";
+        let it: Extract<Item, { kind: "notice" }> | undefined;
+        for (let i = tr.items.length - 1; i >= 0; i--) {
+          const x = tr.items[i];
+          if (x?.kind === "user") break;
+          if (x?.kind === "notice" && compaction.compactNotice(x.text) === side) {
+            it = x;
+            break;
+          }
+        }
+        const text = ev.state === "start" ? compaction.compactingText(ev.before) : ev.state === "done" ? compaction.compactedText(ev) : compaction.claudeCompactedText(ev.before, ev.after);
+        const icon = ev.state === "start" ? "clock" : ev.ok ? "compact" : "alert";
+        const detail = ev.state === "start" ? "" : ev.state === "done" && !ev.ok ? "The turn goes on with the whole session." : compaction.COMPACT_DETAIL;
+        if (it) Object.assign(it, { icon, text, detail });
+        else tr.items.push({ kind: "notice", icon, text, detail });
+        tr.pendingText = null;
+        this.persist(id);
+        break;
+      }
       case "userEcho":
       case "limit":
       case "quota":
@@ -1070,7 +1092,9 @@ export class Engine {
     if (i !== null) {
       tr.items.splice(i, 1);
       for (let k = i; k < tr.items.length; ) {
-        if (tr.items[k]?.kind === "thinking") tr.items.splice(k, 1);
+        const it = tr.items[k];
+        // The session went back to before the turn: a compaction it began with is undone too.
+        if (it?.kind === "thinking" || (it?.kind === "notice" && compaction.compactNotice(it.text) === "harbor")) tr.items.splice(k, 1);
         else k++;
       }
       tr.pendingText = null;

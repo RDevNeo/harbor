@@ -2,10 +2,12 @@
 // nothing resident between turns.
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import * as compaction from "./compaction.ts";
 import * as detach from "./detach.ts";
 import { arr, at, bool, compact, f64, firstLine, i64, isNull, obj, optStr, parse, pretty, str, takeChars, u64 } from "./json.ts";
 import { dataDir, home, now, privateDir, randomHex, selfArgv, socketPath, writePrivate } from "./paths.ts";
 import { alive, killTree } from "./procfs.ts";
+import { sessionDir } from "./movechat.ts";
 import * as turnscope from "./turnscope.ts";
 import { BRIDGE_PORT, BRIDGE_TOKEN, PORT_REF, RELAY } from "./relay.ts";
 import { type Account, accountEnv, binStr, childPath, defaultEffort, kindOf, type Kind } from "./providers.ts";
@@ -29,6 +31,8 @@ export type Event =
   | { type: "exited"; ok: boolean; dir: string }
   /** Claude took in a user message written to a running turn (`--replay-user-messages`). */
   | { type: "userEcho"; text: string }
+  /** The session was compacted: by Harbor before the turn (`start`, then `done`, sizes in bytes), or by Claude Code itself (`claude`, sizes in tokens). */
+  | { type: "compact"; state: "start" | "done" | "claude"; before: number; after: number; ok: boolean; error: string }
   /** Claude's request is out (its reply started streaming): a steer written now cuts into it. */
   | { type: "querying" }
   /** The account hit a usage limit: its window, when it resets (Unix time) if known, and the CLI's sentence. */
@@ -404,6 +408,11 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
       if (model !== null) args.push("--model", model);
       if (spec.resume) args.push("--resume", spec.sessionId);
       else args.push("--session-id", spec.sessionId);
+      // A long session is compacted by the runner before this turn reloads it (compaction.ts).
+      if (spec.resume && !spec.remote) {
+        const session = join(sessionDir(overlay ?? a.configDir ?? null, spec.cwd), `${spec.sessionId}.jsonl`);
+        if (compaction.mayNeed(session)) cmd.compact = session;
+      }
       break;
     }
     case "Codex": {
@@ -716,6 +725,14 @@ export function parseClaude(v: unknown): Event[] {
         out.push({ type: "tool", id: str(at(b, "id")), name: str(at(b, "name")), summary: toolSummary(at(b, "input")), input: pretty(at(b, "input")), result: null, isError: false });
     }
     return out;
+  }
+  if (ty === compaction.COMPACT_LINE) {
+    const state = at(v, "state") === "done" ? "done" : "start";
+    return [{ type: "compact", state, before: n0(at(v, "before")), after: n0(at(v, "after")), ok: at(v, "ok") === true, error: str(at(v, "error")) }];
+  }
+  if (ty === "system" && at(v, "subtype") === "compact_boundary") {
+    const m = at(v, "compact_metadata");
+    return [{ type: "compact", state: "claude", before: n0(at(m, "pre_tokens")), after: n0(at(m, "post_tokens")), ok: true, error: "" }];
   }
   if (ty === "user" && at(v, "isReplay") === true) {
     const text = arr(at(v, "message", "content"))

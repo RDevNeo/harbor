@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { compactFirst } from "./compaction.ts";
 import { arr, at, compact, isNull, optStr, parse } from "./json.ts";
 import { lend, token, unlend } from "./oauth.ts";
 import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from "./paths.ts";
@@ -143,6 +144,8 @@ export interface Cmd {
   args: string[];
   cwd: string | null;
   env: Map<string, string | null>;
+  /** A Claude session file the runner compacts first when it has grown long (compaction.ts). */
+  compact?: string;
 }
 
 export function command(program: string): Cmd {
@@ -155,7 +158,8 @@ export function sortedEnv(c: Cmd): [string, string | null][] {
 
 /** `cmd.json`, byte for byte what the Rust app writes (serde_json's maps keep keys sorted). */
 export function cmdJson(c: Cmd, input: boolean, agentEnv: boolean): string {
-  return compact({ program: c.program, args: c.args, cwd: c.cwd, env: sortedEnv(c), input, agent_env: agentEnv });
+  const json = { program: c.program, args: c.args, cwd: c.cwd, env: sortedEnv(c), input, agent_env: agentEnv };
+  return compact(c.compact === undefined ? json : { ...json, compact: c.compact });
 }
 
 let lastStamp = 0n;
@@ -640,6 +644,17 @@ export async function run(args: readonly string[]): Promise<void> {
   const device = varOf(DEVICE);
   delete env[DEVICE];
   const resolved = program.includes("/") ? program : which_(program, env.PATH);
+  // A long Claude session is compacted before the turn loads it (not one on another device: its file is there).
+  const session = optStr(at(spec, "compact"));
+  if (!remote && session !== undefined && resolved !== null) {
+    await compactFirst(dir, session, { program: resolved, argv, cwd: cwd ?? process.cwd(), env }, (l) => {
+      try {
+        appendFileSync(join(dir, "out"), l, { mode: 0o600 });
+      } catch {
+        // a turn folder deleted under its runner
+      }
+    });
+  }
   const started = Date.now();
   let wait = timing.retryFirstMs;
   let tries = 0;
