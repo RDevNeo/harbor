@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.7] - 2026-11-03
+
 ### Changed
 - Discord: joining servers is no longer paced. Harbor used to space joins 5 minutes apart and cap
   them at 3 an hour and 6 a day; now agents join when asked. New DMs, uploads, leaving servers and
