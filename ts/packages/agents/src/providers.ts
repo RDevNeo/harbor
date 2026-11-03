@@ -67,7 +67,7 @@ export interface Account {
   kind: Kind;
   name: string;
   email: string;
-  /** Two-letter badge shown on the provider icon. */
+  /** Two-letter badge shown on the provider icon: `account-badges.json`'s, else the email's first two letters. */
   badge: string;
   plan: string;
   configDir: string | null;
@@ -111,6 +111,22 @@ export function setOff(id: string, off: boolean): void {
   if (off) now.push(id);
   mkdirSync(dataDir(), { recursive: true });
   writePrivate(offPath(), `${JSON.stringify(now.sort())}\n`);
+}
+
+/** This PC's own badges, by account email: `{"name@example.com": "FP"}` shows that account as "Claude · FP" instead
+ *  of its email's first two letters (two accounts can share those). A file next to `accounts-off.json`, for the same
+ *  reason. */
+export function badgesPath(): string {
+  return join(dataDir(), "account-badges.json");
+}
+
+/** The badge set for `email` in `account-badges.json`, if it's 1-2 letters or digits (upper-cased), else "". */
+export function customBadge(email: string): string {
+  const v = readJson(badgesPath());
+  if (email === "" || typeof v !== "object" || v === null || Array.isArray(v)) return "";
+  const want = email.toLowerCase();
+  const hit = Object.entries(v).find(([k]) => k.toLowerCase() === want)?.[1];
+  return typeof hit === "string" && /^[A-Za-z0-9]{1,2}$/.test(hit.trim()) ? hit.trim().toUpperCase() : "";
 }
 
 /** The account a chat or a default falls back to when `id` is off or gone: the first usable one of `kind` (any kind
@@ -247,7 +263,7 @@ function claudeAccount(id: string, dir: string, json: string, n: number): Accoun
     id,
     kind: "Claude",
     name,
-    badge: badgeFrom(email, `C${n}`),
+    badge: customBadge(email) || badgeFrom(email, `C${n}`),
     email,
     plan: claudePlan(login),
     configDir: n > 1 ? dir : null,
