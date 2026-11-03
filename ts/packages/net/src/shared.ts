@@ -85,6 +85,8 @@ export interface Allowed {
   fp: string;
   id: string;
   addrs: string[];
+  /** This account may use it (account.ts `pcScope`); false: it only may use this PC, so it's trusted but not followed. Absent: true. */
+  use?: boolean;
 }
 
 export function allowedKey(a: Allowed): string {
@@ -172,6 +174,12 @@ export class Shared {
   allowedFp(fp: string): Allowed | null {
     if (fp === "") return null;
     return this.workspacePeers().find((a) => a.fp === fp) ?? null;
+  }
+
+  /** A trusted PC this account also uses (`Allowed.use`): followed, listed, offered in Runs on. */
+  usableFp(fp: string): Allowed | null {
+    const a = this.allowedFp(fp);
+    return a !== null && a.use !== false ? a : null;
   }
 
   hint(fp: string, addr: string): void {

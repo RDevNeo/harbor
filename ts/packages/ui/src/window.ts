@@ -568,6 +568,13 @@ export interface AppWindow extends slint.ComponentHandle {
   voice_note: string;
   mic_tip: string;
   toast: string;
+  inv_open: boolean;
+  inv_title: string;
+  inv_body: string;
+  inv_busy: boolean;
+  inv_accept: () => void;
+  inv_decline: () => void;
+  inv_close: () => void;
   cap_open: boolean;
   cap_shown: boolean;
   cap_data: CaptchaData;

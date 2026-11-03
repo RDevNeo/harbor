@@ -11,6 +11,11 @@ import {
   b64urlDecode,
   b64urlEncode,
   directoryPcWorkspaces,
+  emptyDirectory,
+  pcScope,
+  scopeHas,
+  scopeHasDevice,
+  usablePcs,
   isHarborToken,
   verifyHarborToken,
   type AccountDir,
@@ -144,6 +149,9 @@ interface World {
   directoryStatus: number;
   pcsRefusal: unknown;
   accept: unknown;
+  acceptStatus: number;
+  /** The next directory answer is what the service had when asked, sent only once this settles (a slow answer). */
+  holdDir: Promise<void> | null;
   keys: unknown;
   challenge: string;
   proofs: boolean[];
@@ -159,6 +167,8 @@ function newWorld(): World {
     directoryStatus: 200,
     pcsRefusal: null,
     accept: { ok: true, workspaces: [], joined: null },
+    acceptStatus: 200,
+    holdDir: null,
     keys: { keys: [{ alg: "EdDSA", kid: "k1", x: pubX }, { alg: "RS256", kid: "r", x: "zzz" }] },
     challenge: "",
     proofs: [],
@@ -191,7 +201,7 @@ function clerkHandler(w: World): (c: Call) => Reply {
   };
 }
 
-function serviceHandler(w: World): (c: Call) => Reply {
+function serviceHandler(w: World): (c: Call) => Reply | Promise<Reply> {
   return (c) => {
     const key = `${c.method} ${c.path}`;
     if (key === "GET /v1/keys") return { status: 200, body: w.keys };
@@ -220,11 +230,16 @@ function serviceHandler(w: World): (c: Call) => Reply {
     }
     if (c.auth.startsWith("clerk-access")) return { status: 401, body: { error: "Harbor token only", signin: true } };
     if (key === "POST /v1/pcs") return w.pcsRefusal ? { status: 403, body: w.pcsRefusal } : { status: 200, body: { ok: true } };
-    if (key === "GET /v1/directory") return { status: w.directoryStatus, body: withPeers(w.directory) };
+    if (key === "GET /v1/directory") {
+      const r = { status: w.directoryStatus, body: withPeers(w.directory) };
+      const hold = w.holdDir;
+      w.holdDir = null;
+      return hold ? hold.then(() => r) : r;
+    }
     if (key === "GET /v1/invites") return { status: 200, body: { invites: w.invites } };
     if (key === "GET /v1/settings") return { status: 200, body: { settings: { theme: { v: "dark", at: 5 } }, at: 5 } };
     if (key === "PUT /v1/settings") return { status: 200, body: { settings: get(c.json, "set"), at: 6 } };
-    if (/^POST \/v1\/invites\/[^/]+\/(accept|decline)$/.test(key)) return { status: 200, body: w.accept };
+    if (/^POST \/v1\/invites\/[^/]+\/(accept|decline)$/.test(key)) return { status: w.acceptStatus, body: w.accept };
     if (/^POST \/v1\/workspaces\/[^/]+\/invites$/.test(key)) return get(c.json, "email") === "bad" ? { status: 400, body: { error: "That address isn't valid." } } : { status: 200, body: { ok: true } };
     if (c.method === "DELETE") return { status: 200, body: { ok: true } };
     return { status: 404, body: { error: "no such call" } };
@@ -237,7 +252,7 @@ afterEach(async () => {
   for (const c of cleanups.splice(0)) await c();
 });
 
-function fake(handler: (c: Call) => Reply, calls: Call[]): { url: string; stop: () => void } {
+function fake(handler: (c: Call) => Reply | Promise<Reply>, calls: Call[]): { url: string; stop: () => void } {
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -251,7 +266,7 @@ function fake(handler: (c: Call) => Reply, calls: Call[]): { url: string; stop: 
       }
       const call: Call = { method: req.method, path: new URL(req.url).pathname, auth: req.headers.get("authorization")?.replace(/^Bearer /, "") ?? null, text, json };
       calls.push(call);
-      const r = handler(call);
+      const r = await handler(call);
       return new Response(JSON.stringify(r.body), { status: r.status, headers: { "Content-Type": "application/json" } });
     },
   });
@@ -621,25 +636,66 @@ describe("the account loop", () => {
     await signedIn(r);
     r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r)] };
     await r.svc.tick(true);
-    expect(r.svc.meshPeers()).toEqual([{ node: "", name: "Laptop", fp: OTHER_FP, id: "ts:laptop", addrs: ["10.0.0.2:47930"] }]);
+    expect(r.svc.meshPeers()).toEqual([{ node: "", name: "Laptop", fp: OTHER_FP, id: "ts:laptop", addrs: ["10.0.0.2:47930"], use: true }]);
     expect(r.svc.knownDevice(PHONE_FP)).toBe(true);
     expect(r.svc.knownDevice(OTHER_FP)).toBe(true);
     expect(r.svc.knownDevice("ee".repeat(32))).toBe(false);
   });
 
-  test("trust is the directory's peers alone: a co-member's PC elsewhere is in, a PC it doesn't list is out", async () => {
+  test("a PC is used only from a workspace this account is in; members of this PC's workspace may use it without being used", async () => {
     const r = rig();
     await signedIn(r);
-    const far = "ef".repeat(32);
-    const peer = { fp: far, id: "ts:far", name: "Far", addrs: ["10.0.0.9:47930"], owner: "user_2", owner_name: "Pat", seen: 1, version: "9.9.9", via: ["Sam's workspace"] };
-    r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r)], peers: [peer] };
+    expect(r.svc.workspace()).toBe("org_personal");
+    const PAT = "ef".repeat(32);
+    const KIM = "12".repeat(32);
+    const STRANGER = "34".repeat(32);
+    const pc = (fp: string, id: string, name: string, owner: string, via: string[]) => ({ fp, id, name, addrs: ["10.0.0.9:47930"], owner, owner_name: name, seen: 1, version: "9.9.9", via });
+    const kimPc = pc(KIM, "ts:kim", "Kim's PC", "user_3", ["Kim's workspace"]);
+    // Pat is in Sam's workspace (Sam invited Pat): Pat's PC may use this one, but Sam isn't in Pat's workspace.
+    // Kim invited Sam into Kim's workspace: Sam uses Kim's PC. The stranger shares nothing with this PC's workspace.
+    r.world.directory = {
+      at: Date.now(),
+      workspaces: [
+        workspaceDir(r, { members: [{ id: "user_1", name: "Sam", email: "sam@example.com", role: "owner" }, { id: "user_2", name: "Pat", email: "pat@example.com", role: "member" }] }),
+        { id: "org_kim", name: "Kim's workspace", role: "member", personal: false, members: [{ id: "user_3", name: "Kim", email: "kim@example.com", role: "owner" }], pcs: [kimPc], devices: [], invites: [] },
+      ],
+      peers: [pc(OTHER_FP, "ts:laptop", "Laptop", "user_1", ["Sam's workspace"]), pc(PAT, "ts:pat", "Pat's PC", "user_2", ["Sam's workspace"]), kimPc, pc(STRANGER, "ts:far", "Far", "user_9", ["Elsewhere"])],
+    };
     await r.svc.tick(true);
-    expect(r.svc.meshPeers()).toEqual([{ node: "", name: "Far", fp: far, id: "ts:far", addrs: ["10.0.0.9:47930"] }]);
-    expect(r.svc.knownDevice(far)).toBe(true);
-    expect(cachedMeshPeers(r.kv, r.fp).map((p) => p.fp)).toEqual([far]);
+    const trusted = r.svc.meshPeers().map((a) => [a.id, a.use]);
+    expect(trusted).toEqual([
+      ["ts:laptop", true],
+      ["ts:pat", false],
+      ["ts:kim", true],
+    ]);
+    expect(cachedMeshPeers(r.kv, r.fp).map((a) => [a.id, a.use])).toEqual(trusted);
+    const s = r.svc.scope();
+    expect(s.known).toBe(true);
+    expect([...s.ids].sort()).toEqual(["ts:kim", "ts:laptop"]);
+    expect(scopeHas(s, "")).toBe(true);
+    expect(scopeHas(s, "ts:kim")).toBe(true);
+    expect(scopeHas(s, "ts:pat")).toBe(false);
+    expect(scopeHas(s, "ts:gone")).toBe(false);
+    // Runs on and Settings › Devices: an SSH device that is Pat's Harbor PC isn't offered; a plain SSH host is.
+    expect(scopeHasDevice(s, "ts:pat")).toBe(false);
+    expect(scopeHasDevice(s, "ssh:1")).toBe(true);
+    expect(scopeHasDevice(s, "ssh:2", true)).toBe(false);
+    expect(usablePcs(r.svc.directory(), r.fp).map((p) => [p.name, p.via])).toEqual([
+      ["Kim's PC", ["Kim's workspace"]],
+      ["Laptop", ["Sam's workspace"]],
+    ]);
+    // Leaving Kim's workspace: Kim's PC isn't used, nor trusted (Kim isn't in Sam's).
     r.world.directory = { at: Date.now() + 1000, workspaces: [workspaceDir(r)], peers: [] };
     await r.svc.tick(true);
-    expect(r.svc.meshPeers()).toEqual([]);
+    expect(r.svc.meshPeers().map((a) => a.id)).toEqual(["ts:laptop"]);
+    expect(scopeHas(r.svc.scope(), "ts:kim")).toBe(false);
+  });
+
+  test("without a directory nothing is filtered", () => {
+    const s = pcScope(emptyDirectory(), "");
+    expect(s.known).toBe(false);
+    expect(scopeHas(s, "ts:anything")).toBe(true);
+    expect(scopeHasDevice(s, "ts:anything", true)).toBe(true);
   });
 
   test("phones are admitted by their token, the workspace and the cached directory", async () => {
@@ -745,6 +801,37 @@ describe("the account loop", () => {
     writeFileSync(join(r.stateDir, "account.json"), JSON.stringify({ ...secrets(r), refresh: "", access_exp: 0, token_at: 1 }));
     await r.svc.tick(true);
     expect(r.svc.status().expired).toBe(true);
+  });
+
+  test("invitations are asked for every 15 s on their own; the directory every 2 minutes, or soon after a stranger knocks", async () => {
+    const r = rig();
+    let t = Date.now();
+    r.svc = r.make({ settings: undefined, clock: () => t });
+    await signedIn(r);
+    r.world.directory = { at: t, workspaces: [workspaceDir(r)] };
+    await r.svc.tick(true);
+    r.calls.length = 0;
+    t += 5_000;
+    await r.svc.tick();
+    expect(callPaths(r.calls)).toEqual([]);
+    r.world.invites = [{ id: "inv_1", ws: "org_x", ws_name: "Team", inviter_name: "Pat", email: "sam@example.com", at: 1 }];
+    t += 11_000;
+    await r.svc.tick();
+    expect(callPaths(r.calls)).toEqual(["GET /v1/invites"]);
+    expect(r.svc.invites().map((i) => i.id)).toEqual(["inv_1"]);
+    r.calls.length = 0;
+    // A PC this one doesn't trust yet knocked (it may have just joined): the directory comes now, once per 20 s.
+    r.svc.refreshSoon();
+    await r.svc.tick();
+    expect(callPaths(r.calls)).toContain("GET /v1/directory");
+    r.calls.length = 0;
+    r.svc.refreshSoon();
+    await r.svc.tick();
+    expect(callPaths(r.calls)).not.toContain("GET /v1/directory");
+    t += 120_000;
+    r.calls.length = 0;
+    await r.svc.tick();
+    expect(callPaths(r.calls)).toContain("GET /v1/directory");
   });
 
   test("the service not answering is remembered since when, and clears when it answers", async () => {
@@ -925,6 +1012,67 @@ describe("actions from Settings", () => {
     expect(r.svc.takeNotice()).toBe("You joined Team. Its PCs and chats reach you on your phone; to move this PC there, use Settings › Account.");
     await r.svc.tick();
     expect(callPaths(r.calls)).toContain("POST /v1/session");
+  });
+
+  test("an answered invitation leaves Settings and the card at once, and an older answer can't bring it back", async () => {
+    const r = await ready();
+    const inv = { id: "inv_1", ws: "org_x", ws_name: "Team", inviter_name: "Pat", email: "sam@example.com", at: 1 };
+    r.world.invites = [inv];
+    await r.svc.tick(true);
+    let heard = 0;
+    const off = r.svc.subscribe(() => heard++);
+    const team = { id: "org_x", name: "Team", role: "member", personal: false };
+    r.world.accept = { ok: true, workspaces: [...r.world.session.workspaces, team], joined: team };
+    r.world.directory = { at: Date.now() + 1, workspaces: [workspaceDir(r), { ...team, members: [], pcs: [], devices: [], invites: [] }] };
+    const p = r.svc.acceptInvite("inv_1");
+    // Before the service has answered.
+    expect(r.svc.invites()).toEqual([]);
+    expect(heard).toBeGreaterThan(0);
+    await p;
+    // The workspace filter and Move to workspace… have it.
+    expect(r.svc.workspaces().map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+    // The service still lists it for a moment (or a fetch begun before the accept answers late): it stays gone.
+    await r.svc.tick(true);
+    expect(r.svc.invites()).toEqual([]);
+    off();
+    const was = heard;
+    await r.svc.tick(true);
+    expect(heard).toBe(was);
+  });
+
+  test("a directory asked for before an accept, answering after it, doesn't undo it", async () => {
+    const r = await ready();
+    await r.svc.tick(true);
+    const team = { id: "org_x", name: "Team", role: "member", personal: false };
+    let release = () => {};
+    r.world.holdDir = new Promise<void>((done) => (release = done));
+    r.calls.length = 0;
+    const slow = r.svc.tick(true);
+    await until(() => callPaths(r.calls).includes("GET /v1/directory"), "the slow directory");
+    r.world.accept = { ok: true, workspaces: [...r.world.session.workspaces, team], joined: team };
+    r.world.directory = { at: Date.now() + 1, workspaces: [workspaceDir(r), { ...team, members: [], pcs: [], devices: [], invites: [] }] };
+    await r.svc.acceptInvite("inv_1");
+    expect(r.svc.directory().workspaces.map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+    release();
+    await slow;
+    expect(r.svc.directory().workspaces.map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+    expect(r.svc.workspaces().map((w) => w.name)).toEqual(["Sam's workspace", "Team"]);
+  });
+
+  test("a refused accept brings the invitation back and says why", async () => {
+    const r = await ready();
+    r.world.invites = [{ id: "inv_1", ws: "org_x", ws_name: "Team", inviter_name: "Pat", email: "sam@example.com", at: 1 }];
+    await r.svc.tick(true);
+    r.world.acceptStatus = 403;
+    r.world.accept = { error: "That invitation is for another address." };
+    await r.svc.acceptInvite("inv_1");
+    expect(r.svc.status().error).toBe("That invitation is for another address.");
+    expect(r.svc.invites().map((i) => i.id)).toEqual(["inv_1"]);
+    // Gone already (answered on another device): it stays gone.
+    r.world.acceptStatus = 404;
+    r.world.accept = { error: "That invitation is no longer waiting." };
+    await r.svc.acceptInvite("inv_1");
+    expect(r.svc.invites()).toEqual([]);
   });
 
   test("declining says nothing", async () => {

@@ -374,7 +374,7 @@ export function phoneRoutes(h: RouteHost): (call: Call, chat: Chat | null) => Pr
       chats: [c, ...subs].map((x) => ({ id: x.id, name: x.name, device: x.device, claude: e.account(x.account)?.kind === "Claude", running: h.phone().since(x.id) !== null })),
     });
     const hosts = [...h.hub.mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    const targets = movePcTargets({ blocker, meId: h.hub.mesh.me.id, hosts, allowedFp: (fp) => h.hub.mesh.allowedFp(fp) !== null, downOf: (id) => h.hub.mesh.down.get(id) ?? null });
+    const targets = movePcTargets({ blocker, meId: h.hub.mesh.me.id, hosts, allowedFp: (fp) => h.hub.mesh.usableFp(fp) !== null, downOf: (id) => h.hub.mesh.down.get(id) ?? null });
     let codeError: string | null = null;
     if (blocker === null && c.repoId !== null && c.device === "") {
       try {

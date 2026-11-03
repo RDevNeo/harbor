@@ -5,6 +5,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Other PCs are yours to use only through a workspace you are a member of: a PC shows in Runs on,
+  Auto, Move to PC, Settings › Workspace and the phone's PCs, and its chats and projects in the
+  sidebar, only when its owner invited you into its workspace and you accepted. Inviting someone
+  into your workspace lets them use your PCs, not you theirs (before 0.132 sharing went both ways
+  as soon as two people shared any workspace). Their PCs can still reach yours: that is how they
+  use it.
+
+### Added
+- An invitation to a workspace pops up in the top-right corner of Harbor's window ("Sam invited you
+  to Team") with Accept and Decline; on the phone, as a dialog on any screen.
+
+### Fixed
+- Invitations reach the invited PC and phone within about 15 seconds (they came with the
+  directory, every 2 minutes), and the inviter's PC takes the new member's PC as soon as it knocks.
+- An accepted or declined invitation leaves Settings › Workspace at once, and the new workspace is
+  in the workspace filter right away (Settings didn't redraw when the answer came, and an older
+  answer from the account service could bring the invitation back).
+
 ## [0.133.2] - 2026-11-03
 
 ### Fixed

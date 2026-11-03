@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { control, setHarborVersion } from "./packages/mcp/src/index.ts";
-import { directoryPcWorkspaces, preview as meshPreview } from "./packages/net/src/index.ts";
+import { directoryPcWorkspaces, preview as meshPreview, scopeHas } from "./packages/net/src/index.ts";
 import { type Chat, dataDir, malloc, single, Store } from "./packages/store/src/index.ts";
 import {
   Reloader,
@@ -149,8 +149,17 @@ export async function runApp(o: RunOptions): Promise<number> {
       closeWindow();
     };
     const tray = offline ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
+    // The window shows only this PC's chats and copies from the PCs this account uses (account.ts `pcScope`).
+    data.scope = (home: string) => scopeHas(run.account.scope(), home);
     const hub = {
       settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version },
+      account: {
+        invites: () => run.account.invites(),
+        busy: () => run.account.status().busy,
+        answer: (id: string, accept: boolean) => (accept ? run.account.acceptInvite(id) : run.account.declineInvite(id)),
+        error: () => run.account.status().error,
+        subscribe: (f: () => void) => run.account.subscribe(f),
+      },
       prs: run.prs,
       workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),
       gh: run.services.gh,

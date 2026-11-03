@@ -5,7 +5,7 @@ import { type Account, Engine, type EngineHost, providers } from "@harbor/agents
 import { media } from "@harbor/media";
 import { Desktop, loadPrefs, Notes, Notifier, spawnNotifySend } from "@harbor/net";
 import type { dictate } from "@harbor/media";
-import type { Chat, Item, Mention as StoreMention, Repo, Store, Timer } from "@harbor/store";
+import { repoDir, sidebartree, type Chat, type Item, type Mention as StoreMention, type Repo, type Store, type Timer } from "@harbor/store";
 import { type Mention, prompt as mentionsPrompt } from "./logic/mentions.ts";
 import { expands, personalDir, slashPrompt } from "./logic/slash.ts";
 import { tagsPrompt } from "./logic/tags.ts";
@@ -70,12 +70,22 @@ export class Data {
     return this.engine.host.offline === true;
   }
 
+  /** Whether chats homed on another PC show (account.ts `pcScope`: one of the PCs this account uses); null: all do. */
+  scope: ((home: string) => boolean) | null = null;
+
+  private scoped(): { chats: Chat[]; repos: Repo[] } {
+    const has = this.scope;
+    if (has === null) return { chats: this.engine.chats, repos: this.engine.repos };
+    return sidebartree.inScope(this.engine.chats, this.engine.repos, has, (r) => existsSync(repoDir(r)));
+  }
+
+  /** The chats the pages show: this PC's own and copies from the PCs this account uses. */
   get chats(): Chat[] {
-    return this.engine.chats;
+    return this.scope === null ? this.engine.chats : this.scoped().chats;
   }
 
   get repos(): Repo[] {
-    return this.engine.repos;
+    return this.scope === null ? this.engine.repos : this.scoped().repos;
   }
 
   get timers(): Timer[] {

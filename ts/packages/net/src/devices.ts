@@ -166,7 +166,7 @@ export function phoneAppNote(app: number, seen: number, served: number): [string
 export function pairedDevices(hub: Hub, versions: readonly PcVersion[], at: number = now()): PairedDevice[] {
   const meshOn = hub.mesh.on;
   const newest = newestVersion(versions);
-  const v: PairedDevice[] = pairedPcs(hub.mesh.workspacePeers(), hub.mesh.peers).map((p) => {
+  const v: PairedDevice[] = pairedPcs(hub.mesh.workspacePeers().filter((a) => a.use !== false), hub.mesh.peers).map((p) => {
     const down = meshOn && !p.online ? (hub.mesh.down.get(p.id) ?? "") : "";
     const x = versions.find((y) => y.id === p.id);
     // Its Harbor: "0.66.0 (latest)", or the version it ran when last seen.

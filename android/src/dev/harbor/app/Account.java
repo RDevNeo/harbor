@@ -424,6 +424,19 @@ final class Account {
         }
     }
 
+    private static volatile long invAt;
+
+    /** GET /v1/invites on its own, at most every 15 s (the directory comes every 2 minutes): an
+     *  invitation reaches the phone while the app is open. */
+    static void checkInvites(Context c) throws IOException {
+        if (Rig.on() || System.currentTimeMillis() - invAt < 15_000) return;
+        String tok = state(c).optString("token");
+        if (tok.isEmpty()) return;
+        invAt = System.currentTimeMillis();
+        JSONArray inv = http("GET", service() + "/v1/invites", tok, null, null).optJSONArray("invites");
+        if (inv != null) edit(c, j -> j.put("invites", inv));
+    }
+
     /** Invitations to workspaces waiting for this account: [{id, ws, ws_name, inviter_name, email, at}]. */
     static JSONArray invites(Context c) {
         JSONArray a = state(c).optJSONArray("invites");

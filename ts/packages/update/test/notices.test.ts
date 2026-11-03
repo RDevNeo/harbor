@@ -7,7 +7,6 @@ import {
   harborOffer,
   harborToast,
   hubUpdate,
-  inviteToast,
   notesUrl,
   rollbackToast,
 } from "../src/notices.ts";
@@ -56,19 +55,6 @@ test("a start that was undone is said once per version", () => {
   expect(rollbackToast(r, "2.0.0")).toBeNull();
   expect(rollbackToast(null, null)).toBeNull();
   expect(rollbackToast({ ...r, restored: "" }, null)?.body).toContain("the previous version");
-});
-
-test("a workspace invitation, until it is closed", () => {
-  const inv = { id: "i1", ws_name: "Team", inviter_name: "Sam", email: "a@example.org" };
-  const t = inviteToast([inv], [], false);
-  expect(t?.toast.title).toBe("Join Team?");
-  expect(t?.toast.body).toStartWith("Sam invited you (a@example.org). You'd share all of its PCs");
-  expect(t?.toast.primary).toEqual({ label: "Accept", enabled: true });
-  expect(inviteToast([inv], [], true)?.toast.primary?.enabled).toBe(false);
-  expect(inviteToast([inv], ["i1"], false)).toBeNull();
-  const anon = inviteToast([{ ...inv, ws_name: "", inviter_name: "" }], [], false);
-  expect(anon?.toast.title).toBe("Join a workspace?");
-  expect(anon?.toast.body).toStartWith("An invitation to a@example.org.");
 });
 
 test("dismissals are remembered in the settings store", () => {

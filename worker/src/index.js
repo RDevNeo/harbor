@@ -769,6 +769,8 @@ async function pendingFor(env, sub, verified) {
   if (!verified.length) return [];
   const ph = verified.map(() => '?').join(',');
   const { results } = await env.DB.prepare(`SELECT * FROM invites WHERE status='pending' AND email IN (${ph}) ORDER BY at`).bind(...verified).all();
+  // PCs ask every 15 s: with nothing waiting, no call to Clerk for the memberships.
+  if (results.length === 0) return [];
   const mine = new Set((await userMemberships(env, sub)).map((w) => w.id));
   const out = [];
   for (const inv of results) {

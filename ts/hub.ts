@@ -33,6 +33,8 @@ import {
   hostPort,
   hostname,
   directoryPcWorkspaces,
+  scopeHas,
+  scopeHasDevice,
   hostLabel,
   osLabel,
   remoteDir,
@@ -539,6 +541,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     id: () => id,
     app: meshApp,
     workspacePeers: () => account.meshPeers(),
+    // A PC that isn't trusted yet knocked: it may have just joined this PC's workspace (an accepted invitation).
+    stranger: () => account.refreshSoon(),
     myAddrs: meshAddrs,
     uploadsDir,
     apkCode: () => apkInfo()?.code ?? 0,
@@ -557,7 +561,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   if (shotPeers.length > 0) {
     store.set("mesh_enabled", "1");
     mesh.reread();
-    for (const p of shotPeers) hub.mesh.peers.set(p.id, p);
+    // As the mesh would: a PC this account doesn't use isn't followed, so it isn't a peer.
+    for (const p of shotPeers) if (scopeHas(account.scope(), p.id)) hub.mesh.peers.set(p.id, p);
   }
   hub.mesh.about = () => aboutOwner(store, owners);
   const remotes = new Remotes({
@@ -637,7 +642,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     mesh,
     version: o.version,
     myFp: () => id.fp,
-    devices: () => remotes.devices(loadRemote(store), remotes.tailnet()),
+    devices: () => remotes.devices(loadRemote(store), remotes.tailnet()).filter(([h]) => scopeHasDevice(account.scope(), h.id)),
+    scope: (home) => scopeHas(account.scope(), home),
     pr: prOf,
     dropChat: (c) => worktrees.drop(c),
     worktrees: {
@@ -668,7 +674,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       accounts: () => accounts,
       modelsFor: (k) => providers.staticModels(k),
       // The devices of Settings › Workspace; Tailscale's PCs and paired ones aren't offered from the phone yet.
-      devices: () => loadRemote(store).devices.map((h) => h.id),
+      devices: () => loadRemote(store).devices.map((h) => h.id).filter((d) => scopeHasDevice(account.scope(), d)),
       setFast: (on) => {
         if (engine) engine.fast = on;
       },
@@ -897,6 +903,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     home: home(),
     overlays: () => overlays({ dataDir: dataDir(env) }),
     ram: () => ramMeter.mb(),
+    scope: () => account.scope(),
   });
   mover.relocate = (chat, pc, auto) => runOn.relocate(chat, pc, auto);
   phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };

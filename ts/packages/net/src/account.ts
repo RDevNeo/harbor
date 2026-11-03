@@ -22,6 +22,12 @@ const ISSUER = "harbor-accounts";
 /** A Harbor token lasts 7 days; a new one is asked for once a day. */
 const RENEW_AFTER = 24 * 3600;
 const DIR_EVERY = 120_000;
+/** Invitations are asked for on their own, often: one reaches the invited PC within about this long. */
+const INVITES_EVERY = 15_000;
+/** A stranger's knock (a PC that may have just joined a workspace) fetches the directory again at most this often. */
+const SOON_EVERY = 20_000;
+/** An answered invitation stays hidden this long even if a fetch that began before the answer still lists it. */
+const ANSWERED_MS = 10 * 60_000;
 const PC_EVERY = 300_000;
 const SYNC_EVERY = 60_000;
 const KEYS_EVERY = 6 * 3600_000;
@@ -318,9 +324,77 @@ function tryParse<T>(text: string | null, f: (v: unknown) => T): T | null {
   }
 }
 
-/** The directory's peers other than `mine`: the only PCs this PC trusts (it shares chats with them, relays to them). */
-function peersOf(d: AccountDirectory, mine: string): Allowed[] {
-  return d.peers.filter((p) => p.fp !== "" && p.fp !== mine).map((p) => ({ node: "", name: p.name, fp: p.fp, id: p.id, addrs: [...p.addrs] }));
+/**
+ * The one rule for other PCs, everywhere (Runs on, Auto, Move to PC, the sidebar's chats and projects, the workspace
+ * filter, Settings › Devices, phones): this account uses a PC only when it is a member of the workspace that PC is in,
+ * that is, the PC's owner invited it there and it accepted. The directory lists exactly those workspaces with their PCs.
+ * It isn't symmetric: inviting someone into your workspace lets them use your PCs, not you theirs.
+ */
+export interface PcScope {
+  /** A directory was fetched (signed in): without one nothing is filtered (rigs, tests, builds without accounts). */
+  known: boolean;
+  /** Keys and mesh ids of the PCs this account may use, this PC aside. */
+  fps: ReadonlySet<string>;
+  ids: ReadonlySet<string>;
+  /** Mesh ids of every Harbor PC the directory names (usable or not): an SSH device with one of these ids is that PC. */
+  harbor: ReadonlySet<string>;
+}
+
+export function pcScope(d: AccountDirectory, mine: string): PcScope {
+  const fps = new Set<string>();
+  const ids = new Set<string>();
+  const harbor = new Set<string>();
+  for (const w of d.workspaces) {
+    for (const p of w.pcs) {
+      if (p.id !== "") harbor.add(p.id);
+      if (p.fp === "" || p.fp === mine) continue;
+      fps.add(p.fp);
+      if (p.id !== "") ids.add(p.id);
+    }
+  }
+  for (const p of d.peers) if (p.id !== "") harbor.add(p.id);
+  return { known: d.at > 0, fps, ids, harbor };
+}
+
+/** The PCs this account may use (`pcScope`), once each, with `via` naming the workspaces they're in; by name. */
+export function usablePcs(d: AccountDirectory, mine: string): AccountPc[] {
+  const out: AccountPc[] = [];
+  for (const w of d.workspaces) {
+    for (const p of w.pcs) {
+      if (p.fp === "" || p.fp === mine) continue;
+      const had = out.find((x) => x.fp === p.fp);
+      if (had) had.via = [...new Set([...(had.via ?? []), w.name])];
+      else out.push({ ...p, addrs: [...p.addrs], via: [w.name] });
+    }
+  }
+  return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** Whether chats homed on PC `id` ("": this PC) show here and whether it can be used. */
+export function scopeHas(s: PcScope, id: string): boolean {
+  return id === "" || !s.known || s.ids.has(id);
+}
+
+/** Whether a Runs on / Settings › Devices entry with this id shows: plain SSH hosts always; a Harbor PC by `scopeHas`. */
+export function scopeHasDevice(s: PcScope, id: string, peer = false): boolean {
+  return !(peer || s.harbor.has(id)) || scopeHas(s, id);
+}
+
+/**
+ * The PCs this PC trusts, as the mesh's allowed list: those this account may use (`use` true), and those whose owner is a
+ * member of this PC's workspace `ws`, so may use it (`use` false: they reach this PC, this PC doesn't follow them).
+ */
+function peersOf(d: AccountDirectory, mine: string, ws = ""): Allowed[] {
+  const s = pcScope(d, mine);
+  const members = new Set((directoryOf(d, ws)?.members ?? []).map((m) => m.id).filter((x) => x !== ""));
+  const out: Allowed[] = [];
+  const add = (p: AccountPc, use: boolean) => {
+    if (p.fp === "" || p.fp === mine || out.some((a) => a.fp === p.fp)) return;
+    out.push({ node: "", name: p.name, fp: p.fp, id: p.id, addrs: [...p.addrs], use });
+  };
+  for (const p of d.peers) if (s.fps.has(p.fp) || (p.owner !== "" && members.has(p.owner))) add(p, s.fps.has(p.fp));
+  for (const w of d.workspaces) for (const p of w.pcs) add(p, true);
+  return out;
 }
 
 /** Rigs and tests: a one-workspace directory in kv, as the account loop leaves it after a sign-in, listing these PCs
@@ -356,7 +430,7 @@ export function fakeAccount(kv: Kv, path: string, mine: string): string[] {
 /** This PC's workspace's PCs as last fetched (kv `account_dir`), for commands that run without the account loop (`harbor nc`). */
 export function cachedMeshPeers(kv: Kv, mine: string): Allowed[] {
   const dir = tryParse(kv.get("account_dir"), parseDirectory) ?? emptyDirectory();
-  return peersOf(dir, mine);
+  return peersOf(dir, mine, kv.get("account_ws") ?? "");
 }
 
 function pending(v: unknown): AccountPendingInvite[] {
@@ -495,6 +569,8 @@ export class AccountFail extends Error {
     readonly detail: string,
     /** The service's JSON answer, for a refusal. */
     readonly body: unknown = null,
+    /** The HTTP status of a refusal (0: none). */
+    readonly code = 0,
   ) {
     super(detail);
   }
@@ -503,8 +579,8 @@ export class AccountFail extends Error {
     return new AccountFail("expired", "");
   }
 
-  static refused(detail: string, body: unknown = null): AccountFail {
-    return new AccountFail("refused", detail, body);
+  static refused(detail: string, body: unknown = null, code = 0): AccountFail {
+    return new AccountFail("refused", detail, body, code);
   }
 
   static offline(detail: string): AccountFail {
@@ -640,6 +716,7 @@ const noSecrets = (): Secrets => ({ access: "", refresh: "", access_exp: 0, toke
 interface Timers {
   keys: number | null;
   dir: number | null;
+  inv: number | null;
   pc: number | null;
   pull: number | null;
   addrs: string[];
@@ -647,7 +724,7 @@ interface Timers {
   name: string;
 }
 
-const freshTimers = (keys: number | null = null): Timers => ({ keys, dir: null, pc: null, pull: null, addrs: [], name: "" });
+const freshTimers = (keys: number | null = null): Timers => ({ keys, dir: null, inv: null, pc: null, pull: null, addrs: [], name: "" });
 
 interface Session {
   account: AccountUser;
@@ -665,7 +742,15 @@ export class AccountService {
   private acct: AccountUser | null = null;
   private ws = "";
   private dir: AccountDirectory = emptyDirectory();
+  private scoped: { dir: AccountDirectory; fp: string; s: PcScope } | null = null;
+  private peersMemo: { dir: AccountDirectory; fp: string; ws: string; v: Allowed[] } | null = null;
   private pendingInvites: AccountPendingInvite[] = [];
+  /** Invitations accepted or declined here: id → when (they go from the list at once, before the service answers). */
+  private answered = new Map<string, number>();
+  /** Counts the actions that changed the account (an accept, a removal): a fetch begun before one is stale. */
+  private acted = 0;
+  private listeners = new Set<() => void>();
+  private soonAt = 0;
   private fetchedKeys: AccountKey[] = [];
   private st: AccountStatus = {
     signingIn: false,
@@ -749,6 +834,19 @@ export class AccountService {
 
   private changed(): void {
     this.o.onChange?.();
+    for (const f of [...this.listeners]) {
+      try {
+        f();
+      } catch (e) {
+        this.log(() => `a listener failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  /** Calls `f` whenever anything the desktop shows changed (Settings, the invitation toast); returns the unsubscribe. */
+  subscribe(f: () => void): () => void {
+    this.listeners.add(f);
+    return () => this.listeners.delete(f);
   }
 
   private setStatus(f: (s: AccountStatus) => void): void {
@@ -784,7 +882,10 @@ export class AccountService {
 
   /** Invitations waiting for this account. */
   invites(): AccountPendingInvite[] {
-    return this.acct ? this.pendingInvites : [];
+    if (!this.acct) return [];
+    const t = this.nowMs();
+    for (const [id, at] of this.answered) if (t - at > ANSWERED_MS) this.answered.delete(id);
+    return this.pendingInvites.filter((i) => !this.answered.has(i.id));
   }
 
   /** This PC's workspace as the directory has it. */
@@ -799,7 +900,20 @@ export class AccountService {
 
   /** The other PCs of this PC's workspace, as entries of the mesh's allowed list: they link with this one without pairing. */
   meshPeers(): Allowed[] {
-    return peersOf(this.dir, this.myFp());
+    // Asked on every mesh request: worked out again only when the directory, the key or the workspace changed.
+    const fp = this.myFp();
+    const m = this.peersMemo;
+    if (m?.dir === this.dir && m.fp === fp && m.ws === this.ws) return m.v;
+    const v = peersOf(this.dir, fp, this.ws);
+    this.peersMemo = { dir: this.dir, fp, ws: this.ws, v };
+    return v;
+  }
+
+  /** Which other PCs this account uses (`pcScope`): the one rule every list of PCs, chats and projects goes through. */
+  scope(): PcScope {
+    const fp = this.myFp();
+    if (this.scoped?.dir !== this.dir || this.scoped.fp !== fp) this.scoped = { dir: this.dir, fp, s: pcScope(this.dir, fp) };
+    return this.scoped.s;
   }
 
   /** A key this PC's workspace knows (a PC or a member's device): it may complete a TLS handshake from the internet. */
@@ -893,7 +1007,7 @@ export class AccountService {
     if (code === 401) throw AccountFail.expired();
     if (code >= 500) throw AccountFail.offline(`HTTP ${code}`);
     const e = pluck(v, "error");
-    throw AccountFail.refused(typeof e === "string" ? e : `The account service refused (${code}).`, v);
+    throw AccountFail.refused(typeof e === "string" ? e : `The account service refused (${code}).`, v, code);
   }
 
   /** What api.ts needs: the token check per request and the known keys. */
@@ -1039,7 +1153,10 @@ export class AccountService {
   }
 
   private async fetchDirectory(token: string): Promise<void> {
+    const acted = this.acted;
     const v = await this.service("GET", "/v1/directory", token);
+    // An action ended while this was on its way: what it fetched after is newer than this answer.
+    if (acted !== this.acted) return;
     let dir: AccountDirectory;
     try {
       dir = parseDirectory(v);
@@ -1067,7 +1184,9 @@ export class AccountService {
   }
 
   private async fetchInvites(token: string): Promise<void> {
+    const acted = this.acted;
     const v = await this.service("GET", "/v1/invites", token);
+    if (acted !== this.acted) return;
     const next = pending(pluck(v, "invites"));
     if (JSON.stringify(next) !== JSON.stringify(this.pendingInvites)) {
       this.pendingInvites = next;
@@ -1326,6 +1445,7 @@ export class AccountService {
     } catch (e) {
       failure = asFail(e);
     }
+    this.acted++;
     this.setStatus((s) => {
       s.busy = false;
       if (failure?.kind === "expired") s.expired = true;
@@ -1367,9 +1487,32 @@ export class AccountService {
   }
 
   private answerInvite(id: string, accept: boolean): Promise<void> {
+    // Gone from Settings and the toast at once; back only if the service refuses.
+    this.answered.set(id, this.nowMs());
+    this.changed();
     return this.runAction(async (token) => {
-      const v = await this.service("POST", `/v1/invites/${encodeURIComponent(id)}/${accept ? "accept" : "decline"}`, token);
+      let v: unknown;
+      try {
+        v = await this.service("POST", `/v1/invites/${encodeURIComponent(id)}/${accept ? "accept" : "decline"}`, token);
+      } catch (e) {
+        // Already answered (here or on another device): it stays gone.
+        if (asFail(e).code !== 404) this.answered.delete(id);
+        throw e;
+      }
       this.pendingInvites = this.pendingInvites.filter((i) => i.id !== id);
+      // The workspaces as they are now: the workspace filter and Move to workspace… have the new one at once.
+      const ws = pluck(v, "workspaces");
+      const a = this.acct;
+      if (a && Array.isArray(ws) && ws.length > 0) {
+        a.workspaces = ws.flatMap((w) => {
+          try {
+            return [parseWorkspace(w)];
+          } catch {
+            return [];
+          }
+        });
+        this.o.kv.set("account", JSON.stringify(a));
+      }
       const name = textOf(pluck(v, "joined"), "name");
       if (name !== "") {
         const note = `You joined ${name}. Its PCs and chats reach you on your phone; to move this PC there, use Settings › Account.`;
@@ -1407,6 +1550,16 @@ export class AccountService {
     this.pokeWake?.();
   }
 
+  /** A PC this one doesn't trust knocked: it may have just joined this PC's workspace (an accepted invitation), so the
+   * directory is fetched again now rather than within two minutes. At most every SOON_EVERY. */
+  refreshSoon(): void {
+    const t = this.nowMs();
+    if (!this.signedIn() || t - this.soonAt < SOON_EVERY) return;
+    this.soonAt = t;
+    this.timers.dir = null;
+    this.pokeWake?.();
+  }
+
   /** A setting changed here: it goes to the account after a short pause (a burst of changes, one call). */
   pokeSync(): void {
     this.pokeLevel = Math.max(this.pokeLevel, 1);
@@ -1423,6 +1576,14 @@ export class AccountService {
     this.fetchedKeys = this.cachedKeys();
     this.st.pick = this.acct !== null && this.ws === "" && this.acct.workspaces.length > 1;
     this.o.settings?.load();
+    // Screenshots only: invitations with no service ("Sam_Lee|Team;Ana|Lab", "_" for a space).
+    const fake = this.env("HARBOR_FAKE_INVITES");
+    if (fake !== undefined && fake !== "") {
+      this.pendingInvites = fake.split(";").map((x, i) => {
+        const [by = "", ws = ""] = x.replace(/_/g, " ").split("|");
+        return { id: `inv_fake${i}`, ws: `org_fake${i}`, ws_name: ws, inviter_name: by, email: this.acct?.email ?? "", at: Math.floor(this.nowMs() / 1000) };
+      });
+    }
   }
 
   private cachedKeys(): AccountKey[] {
@@ -1474,7 +1635,7 @@ export class AccountService {
       } catch (e) {
         this.log(() => `tick failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const why = await this.waitPoke(this.o.loopMs ?? 20_000);
+      const why = await this.waitPoke(this.o.loopMs ?? INVITES_EVERY);
       if (this.stopped) break;
       if (why === 2) this.timers = freshTimers(this.timers.keys);
       else if (why === 1) await sleep(this.o.syncPauseMs ?? 2000);
@@ -1524,13 +1685,19 @@ export class AccountService {
     const now = this.nowSec();
     if (sec.token === "" || now - sec.token_at > RENEW_AFTER || sec.token_exp - now < 2 * 86400 || this.takeRenew()) {
       try {
+        const acted = this.acted;
         const s = await this.session(await this.freshAccess(sec));
         sec.token = s.token;
         sec.token_exp = s.exp;
         sec.token_at = now;
         this.saveSecrets(sec);
-        this.setAccount(s.account, null);
-        this.pendingInvites = s.invites;
+        if (acted === this.acted) {
+          this.setAccount(s.account, null);
+          this.pendingInvites = s.invites;
+        } else {
+          // An accept or a removal ended meanwhile: this answer's workspaces may be from before it; the next turn asks again.
+          this.renew = true;
+        }
         this.setStatus((st) => {
           st.expired = false;
           st.offlineSince = 0;
@@ -1545,7 +1712,9 @@ export class AccountService {
     if (sec.token === "" || sec.token_exp <= now) return;
     const token = sec.token;
     const result = (f: AccountFail | null) => {
-      if (f === null) this.setStatus((st) => (st.offlineSince = 0));
+      if (f === null) {
+        if (this.st.offlineSince !== 0) this.setStatus((st) => (st.offlineSince = 0));
+      }
       else if (f.kind === "expired") this.renew = true;
       else if (f.kind === "offline") this.offline(now);
     };
@@ -1570,11 +1739,17 @@ export class AccountService {
     }
     if (this.due(t.dir, DIR_EVERY)) {
       t.dir = this.nowMs();
+      t.inv = this.nowMs();
       const r = await attempt(async () => {
         await this.fetchDirectory(token);
         await this.fetchInvites(token);
       });
       this.log(() => `directory: ${r ? r.text() : "ok"}`);
+      result(r);
+    } else if (this.due(t.inv, INVITES_EVERY)) {
+      t.inv = this.nowMs();
+      const r = await attempt(() => this.fetchInvites(token));
+      if (r) this.log(() => `invites: ${r.text()}`);
       result(r);
     }
     const pull = this.due(t.pull, SYNC_EVERY);

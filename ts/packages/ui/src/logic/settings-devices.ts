@@ -18,7 +18,8 @@ export interface DevicesHost {
   me(): Me;
   myFp(): string;
   versionLabel(): string;
-  /** The PCs whose owner shares a workspace with this PC's owner (the directory's peers): the only PCs it trusts. */
+  /** The PCs of the workspaces this account is a member of (account.ts `usablePcs`): the only other PCs it uses, so the only
+   * ones the page lists. */
   peers(): AccountPc[];
   /** The mesh's peers, for whether a PC answers now. */
   meshPeers(): Peer[];

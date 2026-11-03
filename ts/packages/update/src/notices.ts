@@ -12,7 +12,7 @@ export const notesUrl = (v: string): string => `https://github.com/RDevNeo/harbo
 export type Icon = "sparkles" | "users" | "bot" | "providers" | "undo";
 
 export interface Toast {
-  id: "harbor-update-toast" | "invite-toast" | "rollback-toast";
+  id: "harbor-update-toast" | "rollback-toast";
   icon: Icon;
   title: string;
   body: string;
@@ -61,29 +61,6 @@ export function rollbackToast(r: RolledBack | null, dismissed: string | null): T
     primary: null,
     secondary: "What's new",
   };
-}
-
-export interface Invite {
-  id: string;
-  ws_name: string;
-  inviter_name: string;
-  email: string;
-}
-
-export function inviteToast(invites: readonly Invite[], hidden: readonly string[], busy: boolean): { toast: Toast; invite: Invite } | null {
-  const inv = invites.find((i) => !hidden.includes(i.id));
-  if (inv === undefined) return null;
-  const by = inv.inviter_name === "" ? "" : `${inv.inviter_name} invited you`;
-  const who = by === "" ? `An invitation to ${inv.email}` : ` (${inv.email})`;
-  const toast: Toast = {
-    id: "invite-toast",
-    icon: "users",
-    title: `Join ${inv.ws_name === "" ? "a workspace" : inv.ws_name}?`,
-    body: `${by}${who}. You'd share all of its PCs and chats, on every device. Nothing here changes: this PC stays in its workspace.`,
-    primary: { label: "Accept", enabled: !busy },
-    secondary: "Decline",
-  };
-  return { toast, invite: inv };
 }
 
 export function dismiss(kv: Kv, key: string, value: string): void {

@@ -215,6 +215,22 @@ describe("the phone API's chats (api.rs App side)", () => {
     store.close();
   });
 
+  test("the phone sees the desktop's scope: no copies from PCs this account doesn't use, nor projects known only from them", () => {
+    const store = Store.openAt(join(tmp, "scope.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null, scope: (home) => home === "ts:laptop" });
+    const theirs = store.addRepo(join(tmp, "not-here-studio"));
+    const mine = store.createChat(blankChat({ title: "mine", role: "lead" }));
+    const used = store.createChat(blankChat({ title: "laptop's", role: "lead", home: "ts:laptop", homeId: 4 }));
+    const hidden = store.createChat(blankChat({ title: "theirs", role: "lead", repoId: theirs, home: "ts:other", homeId: 9 }));
+    const s = routes.state("tok:0", false) as { chats: { id: number }[]; projects: { id: number }[] };
+    expect(s.chats.map((c) => c.id).sort()).toEqual([mine.id, used.id].sort());
+    expect(s.chats.some((c) => c.id === hidden.id)).toBe(false);
+    expect(s.projects.some((p) => p.id === theirs)).toBe(false);
+    store.close();
+  });
+
   test("a_retired_agent_is_not_writable_on_the_phone", () => {
     const store = Store.openAt(join(tmp, "retired.db"));
     const hub = new Hub([], 0);

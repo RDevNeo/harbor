@@ -131,3 +131,23 @@ export function snoozeLabel(until: number, now: number, off: number): string {
 export function snoozedLabel(until: number | null, now: number, off: number): string | null {
   return until === null ? null : snoozeLabel(until, now, off);
 }
+
+/**
+ * What of `chats` and `repos` shows (the desktop's sidebar and pages, the phone's state): chats homed on a PC this account
+ * doesn't use (`has` false: account.ts `pcScope`) don't, nor do projects all of whose chats are such copies, unless the
+ * project's folder is on this PC (`here`, asked only for those).
+ */
+export function inScope<C extends { home: string; repoId: number | null }, R extends { id: number }>(
+  chats: readonly C[],
+  repos: readonly R[],
+  has: (home: string) => boolean,
+  here: (repo: R) => boolean,
+): { chats: C[]; repos: R[] } {
+  const shown = chats.filter((c) => c.home === "" || has(c.home));
+  if (shown.length === chats.length) return { chats: shown, repos: [...repos] };
+  const visible = new Set<number>();
+  for (const c of shown) if (c.repoId !== null) visible.add(c.repoId);
+  const hidden = new Set<number>();
+  for (const c of chats) if (c.repoId !== null && !visible.has(c.repoId)) hidden.add(c.repoId);
+  return { chats: shown, repos: repos.filter((r) => !hidden.has(r.id) || here(r)) };
+}

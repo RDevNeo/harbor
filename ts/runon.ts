@@ -25,7 +25,8 @@ import {
   relocateWhy,
   type RemoteHost,
   type Remotes,
-
+  type PcScope,
+  scopeHasDevice,
 } from "./packages/net/src/index.ts";
 import type { Chat, Store } from "./packages/store/src/index.ts";
 
@@ -58,6 +59,8 @@ export interface RunOnDeps {
   overlays: () => string[];
   /** This PC's free memory in MB (ram.ts RamMeter); null: not known. */
   ram?: () => number | null;
+  /** Which other PCs this account uses (account.ts `pcScope`): an SSH device that is a Harbor PC outside it isn't offered. */
+  scope?: () => PcScope;
 }
 
 /** Sparkles: the Auto row's glyph. */
@@ -76,7 +79,9 @@ export class RunOn {
   constructor(private readonly d: RunOnDeps) {}
 
   private devices(): [RemoteHost, boolean | null][] {
-    return this.d.remotes.devices(loadRemote(this.d.store), this.d.remotes.tailnetCached());
+    const all = this.d.remotes.devices(loadRemote(this.d.store), this.d.remotes.tailnetCached());
+    const s = this.d.scope?.();
+    return s === undefined ? all : all.filter(([h]) => scopeHasDevice(s, h.id));
   }
 
   private subsOf(id: number): Chat[] {

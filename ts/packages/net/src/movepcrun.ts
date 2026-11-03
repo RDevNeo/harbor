@@ -198,7 +198,7 @@ export class MovePc {
     const mesh = this.d.mesh;
     const blocker = this.blocker(chatId);
     const hosts = [...mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    const targets = movePcTargets({ blocker, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.allowedFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null });
+    const targets = movePcTargets({ blocker, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.usableFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null });
     return { blocker, targets };
   }
 

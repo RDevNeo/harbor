@@ -297,7 +297,7 @@ export class ProjectMove {
     const why = this.blocker(repo);
     const mesh = this.d.mesh;
     const hosts = [...mesh.peers.values()].sort((a, b) => Number(b.online) - Number(a.online) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    const list = movePcTargets({ blocker: why, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.allowedFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null });
+    const list = movePcTargets({ blocker: why, meId: mesh.me.id, hosts, allowedFp: (fp) => mesh.usableFp(fp) !== null, downOf: (id) => mesh.down.get(id) ?? null });
     const targets = list.map((t) => {
       const p = mesh.peer(t.id);
       if (t.why === null && p && !p.projectMoves) return { ...t, why: "it runs an older Harbor that can't take projects: update it first" };

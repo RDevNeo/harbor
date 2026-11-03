@@ -541,6 +541,14 @@ export component AppWindow inherits Window {
     in property <string> mic-tip: "Dictate (Ctrl+Shift+Space)";
     // picker.rs `toast`: a message over the bottom edge for a few seconds.
     in property <string> toast;
+    // An invitation to a workspace waiting for this account: a card in the top-right corner (notices.ts `inviteToast`).
+    in property <bool> inv-open;
+    in property <string> inv-title;
+    in property <string> inv-body;
+    in property <bool> inv-busy;
+    callback inv-accept();
+    callback inv-decline();
+    callback inv-close();
     // A Discord join waits on a captcha (`cap-open`), shown over everything (`cap-shown`) or as a pill.
     in property <bool> cap-open;
     in property <bool> cap-shown;
@@ -2110,6 +2118,74 @@ export component AppWindow inherits Window {
                 text: root.toast;
                 font-size: 14px;
                 color: Theme.fg;
+            }
+        }
+
+        if root.inv-open: PopoverFrame {
+            x: root.width - self.width - 16px;
+            // Under the title bar's buttons.
+            y: 60px;
+            width: min(380px, root.width - 32px);
+            height: inv-col.preferred-height;
+            inv-col := VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Glyph {
+                        icon: Icons.users;
+                        size: 16px;
+                        color: Theme.fg;
+                        width: 18px;
+                        vertical-alignment: top;
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: root.inv-title;
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: Theme.fg;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: root.inv-body;
+                            font-size: 13px;
+                            color: Theme.subtle;
+                            wrap: word-wrap;
+                        }
+                    }
+                    Btn {
+                        icon: Icons.x;
+                        size: icon-xs;
+                        variant: ghost-muted;
+                        tip: "Later: it stays in Settings › Workspace";
+                        clicked => {
+                            root.inv-close();
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Btn {
+                        text: "Decline";
+                        size: sm;
+                        enabled: !root.inv-busy;
+                        clicked => {
+                            root.inv-decline();
+                        }
+                    }
+                    Btn {
+                        text: "Accept";
+                        size: sm;
+                        variant: primary;
+                        enabled: !root.inv-busy;
+                        clicked => {
+                            root.inv-accept();
+                        }
+                    }
+                }
             }
         }
 

@@ -13,6 +13,7 @@ import { forkable } from "./logic/fork.ts";
 import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
 import { DraftSync } from "./logic/shareddraft.ts";
 import { updateToast } from "./logic/hubseam.ts";
+import { type Invite, inviteCard } from "./logic/invitecard.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
 import { type Page, type PageHub, PageHost } from "./pages/host.ts";
@@ -232,6 +233,36 @@ export class Shell {
     this.captcha.start();
   }
   private captcha: CaptchaPane | null = null;
+  /** The invitation the top-right card shows (null: none), and those closed with its X this run (Settings keeps them). */
+  private inviteShown: string | null = null;
+  private readonly invitesClosed: string[] = [];
+
+  /** The top-right invitation card: "Sam invited you to Team", Accept or Decline (logic/invitecard.ts). */
+  private refreshInvite(): void {
+    const acc = this.hub.account;
+    const card = acc ? inviteCard(acc.invites(), this.invitesClosed) : null;
+    this.inviteShown = card?.id ?? null;
+    // Settings › Workspace lists them itself.
+    this.win.inv_open = card !== null && this.page !== "settings";
+    this.win.inv_title = card?.title ?? "";
+    this.win.inv_body = card?.body ?? "";
+    this.win.inv_busy = acc?.busy() ?? false;
+  }
+
+  private answerInvite(accept: boolean): void {
+    const acc = this.hub.account;
+    const id = this.inviteShown;
+    if (!acc || id === null || acc.busy()) return;
+    const ws = acc.invites().find((i) => i.id === id)?.ws_name ?? "";
+    // It leaves at once (the account hides it before the service answers); back only if that fails.
+    void acc.answer(id, accept).then(() => {
+      const e = acc.error();
+      if (e !== "") this.toast(e);
+      else if (accept) this.toast(ws === "" ? "You joined the workspace" : `You joined ${ws}`);
+      this.refreshInvite();
+    });
+    this.refreshInvite();
+  }
   /** HARBOR_FAKE_CAPTCHA (screenshots): a captcha card with no Discord. */
   private readonly fakeCap = fakeCaptcha();
   private readonly chatCap: ChatCaptcha;
@@ -645,6 +676,19 @@ export class Shell {
     w.cap_wheel = (x, y, dy) => this.captcha?.wheel(x, y, dy);
     w.cap_show = (shown) => this.captcha?.show(shown);
     w.cap_cancel = () => this.captcha?.cancel();
+    w.inv_accept = () => this.answerInvite(true);
+    w.inv_decline = () => this.answerInvite(false);
+    w.inv_close = () => {
+      if (this.inviteShown !== null) this.invitesClosed.push(this.inviteShown);
+      this.refreshInvite();
+    };
+    // The account changed (an invitation came or went, the directory said who is in which workspace): the card, and
+    // the sidebar, whose chats and projects follow the PCs this account uses.
+    this.hub.account?.subscribe(() => {
+      this.refreshInvite();
+      this.changed(null);
+    });
+    this.refreshInvite();
     w.lb_close = () => this.images?.close();
     w.lb_go = (i) => this.images?.goTo(i);
     w.lb_copy_image = () => void this.copyShownImage();
@@ -865,6 +909,7 @@ export class Shell {
     if (!this.data.chat(id)) return;
     this.drafts.set(this.key(), this.win.draft);
     this.page = null;
+    this.refreshInvite();
     this.view = "chat";
     this.chatId = id;
     this.selection = null;
@@ -890,6 +935,7 @@ export class Shell {
   newDraft(repo: number | null, main = false): void {
     this.drafts.set(this.key(), this.win.draft);
     this.page = null;
+    this.refreshInvite();
     this.view = "draft";
     this.draftRepo = repo;
     this.draftMain = main && repo !== null;
@@ -3475,6 +3521,7 @@ export class Shell {
     this.win.palette_open = false;
     this.closePopup();
     this.win.view = p;
+    this.refreshInvite();
   }
 
   /** Esc or a page's own close: the chat it was opened from, else the draft (app.rs `leave_settings`, `close_prs`). */
@@ -3770,8 +3817,21 @@ export interface ShellHub extends PageHub {
   mesh?: ShellMesh;
   /** Move to workspace… (workspacemoves.ts); none without a hub. */
   moves?: ShellMoves;
+  /** The account: invitations; none without a hub. */
+  account?: ShellAccount;
   /** Where a project's folder is when it isn't on this PC (null: it's here; projectclones.ts `place`). */
   projectPlace?: (repo: number) => Place | null;
+}
+
+/** The signed-in account as the window uses it: invitations to answer (the top-right card), and when anything changed. */
+export interface ShellAccount {
+  invites(): readonly Invite[];
+  busy(): boolean;
+  /** Accepts or declines; never rejects (`error` says what went wrong). */
+  answer(id: string, accept: boolean): Promise<void>;
+  /** The last action's error ("": none). */
+  error(): string;
+  subscribe(f: () => void): () => void;
 }
 
 /** Move to workspace… as the window asks it: a menu (null: no such chat or project) and the move, answered as the phone API answers it. */

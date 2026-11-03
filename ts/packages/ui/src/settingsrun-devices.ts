@@ -1,4 +1,4 @@
-import { loadRemote, loadTokens, newTailnet, readMe, remoteDevices, renamePc, saveRemote, setHelloName, type AccountService, type Hub, type Mesh } from "@harbor/net";
+import { loadRemote, loadTokens, scopeHasDevice, usablePcs, newTailnet, readMe, remoteDevices, renamePc, saveRemote, setHelloName, type AccountService, type Hub, type Mesh } from "@harbor/net";
 import { harborVersion } from "@harbor/mcp";
 import { type Store } from "@harbor/store";
 import { homedir } from "node:os";
@@ -19,8 +19,8 @@ export function devicesHost(store: Store, refresh: () => void, myFp: () => strin
     me: () => runtime?.hub.mesh.me ?? readMe(store),
     myFp,
     versionLabel: () => runtime?.version ?? harborVersion(),
-    // The PCs whose owner shares a workspace with this PC's owner (the directory's peers): the ones it trusts.
-    peers: () => (runtime?.account.directory().peers ?? []).filter((p) => p.fp !== "" && p.fp !== myFp()),
+    // The PCs of the workspaces this account is a member of: the ones it uses (account.ts `pcScope`).
+    peers: () => (runtime ? usablePcs(runtime.account.directory(), myFp()) : []),
     meshPeers: () => [...(runtime?.hub.mesh.peers.values() ?? [])],
     rename(name) {
       const me = renamePc(store, name);
@@ -44,7 +44,11 @@ export function devicesHost(store: Store, refresh: () => void, myFp: () => strin
       });
     },
     ssh: {
-      devices: () => remoteDevices({ home: homedir(), selfExe: () => null, sshConfig: () => [], probe: () => undefined }, loadRemote(store), newTailnet()),
+      // An SSH device that is a Harbor PC this account doesn't use (not a member of its workspace) isn't listed.
+      devices: () =>
+        remoteDevices({ home: homedir(), selfExe: () => null, sshConfig: () => [], probe: () => undefined }, loadRemote(store), newTailnet()).filter(
+          ([d]) => !runtime || scopeHasDevice(runtime.account.scope(), d.id, runtime.hub.mesh.peers.has(d.id)),
+        ),
       remove(id) {
         const cfg = loadRemote(store);
         saveRemote(store, { ...cfg, devices: cfg.devices.filter((d) => d.id !== id) });

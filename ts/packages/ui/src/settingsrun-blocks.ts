@@ -23,7 +23,10 @@ export async function blockTabs(store: Store, refresh: () => void, copy: (text: 
       if (ready) refresh();
     },
   });
-  account.load();
+  if (runtime) {
+    // The running app's account: Settings redraws when it changes (an accepted invitation leaves the list).
+    runtime.account.subscribe(() => refresh());
+  } else account.load();
   ready = true;
   const myFp = () => loadOrCreate(stateDir()).fp;
   const devices = devicesHost(store, refresh, myFp, copy, runtime);

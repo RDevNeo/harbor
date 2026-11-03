@@ -119,6 +119,20 @@ describe("mesh.rs", () => {
     expect(http({ addr: "10.0.0.9:47930", fp: "" }, "GET", "/mesh/v1/hello", null, 1000)).rejects.toThrow("not sent");
   });
 
+  test("a knock from a key this PC doesn't trust asks for the directory again (it may have just joined)", () => {
+    const hub = new Hub([], 0);
+    const knocks: string[] = [];
+    const m = new Mesh({ ...meshOf(hub).d, stranger: (fp) => void knocks.push(fp) });
+    const fp = "d".repeat(64);
+    hub.mesh.workspacePeers = () => [{ node: "", fp, id: "pc:laptop", name: "laptop", addrs: [], use: false }];
+    const at = (f: string) => ({ ip: "10.0.0.8", via: { kind: "tls" as const, fp: f } });
+    // Trusted though not used: it may use this PC.
+    expect(m.who(at(fp), req())).toBe("pc:laptop");
+    expect(knocks).toEqual([]);
+    expect(m.who(at("e".repeat(64)), req())).toBeNull();
+    expect(knocks).toEqual(["e".repeat(64)]);
+  });
+
   test("a_range_goes_to_the_other_pc_and_back", async () => {
     let head = "";
     const s = createServer((c) => {
@@ -472,6 +486,32 @@ describe("two TypeScript PCs", () => {
     a.replica.touch(sub.id);
     expect(await until(() => !e.live(cs))).toBe(true);
     expect(e.teamStarted(cl)).toBeNull();
+  }, 30_000);
+
+  test("one way: a PC whose owner is only in this PC's workspace uses it, and this PC neither follows nor lists it", async () => {
+    const a = await pc("kappa");
+    const b = await pc("lambda");
+    a.store.createChat(blankChat({ title: "On kappa", role: "lead", name: "lead" }));
+    b.store.createChat(blankChat({ title: "On lambda", role: "lead", name: "lead" }));
+    // kappa's owner invited lambda's into kappa's workspace; lambda's owner never invited kappa's into theirs.
+    a.hub.mesh.workspacePeers = () => [{ node: "", name: "lambda", fp: b.id.fp, id: "pc:lambda", addrs: [`127.0.0.1:${b.port}`], use: false }];
+    b.hub.mesh.workspacePeers = () => [{ node: "", name: "kappa", fp: a.id.fp, id: "pc:kappa", addrs: [`127.0.0.1:${a.port}`], use: true }];
+    a.replica.reload();
+    b.replica.reload();
+    a.mesh.start();
+    b.mesh.start();
+    expect(a.mesh.targets()).toEqual([]);
+    expect(await until(() => b.store.chats().some((c) => c.home === "pc:kappa" && c.title === "On kappa"))).toBe(true);
+    expect(b.hub.mesh.peer("pc:kappa")?.online).toBe(true);
+    await Bun.sleep(500);
+    expect(a.store.chats().some((c) => c.home === "pc:lambda")).toBe(false);
+    expect(a.hub.mesh.peer("pc:lambda")).toBeNull();
+    // Phones of kappa's PC aren't offered lambda either.
+    expect(((a.mesh.hubs() as { hubs: { id: string }[] }).hubs).map((h) => h.id)).toEqual(["pc:kappa"]);
+    // One remembered from before (when trust went both ways) goes from every list.
+    a.hub.mesh.peers.set("pc:lambda", newPeer({ id: "pc:lambda", fp: b.id.fp }));
+    a.mesh.forgetStrangers();
+    expect(a.hub.mesh.peer("pc:lambda")).toBeNull();
   }, 30_000);
 
   test("a PC outside the workspace gets nothing, and one that leaves it is forgotten", async () => {

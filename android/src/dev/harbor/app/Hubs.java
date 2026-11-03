@@ -100,6 +100,10 @@ public class Hubs extends Base {
         startActivity(new Intent(this, Chats.class).putExtra("hub", id));
     }
 
+    /** New invitations came (Invites): their cards, unless an answer is on its way. */
+    @Override
+    void refresh() { if (!busy && !isFinishing()) render(); }
+
     private void render() {
         list.removeAllViews();
         list.addView(Ui.title(this, "Harbor", 44), Ui.margins(Ui.fill(), 4, 24, 4, 8));

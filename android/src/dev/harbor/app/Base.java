@@ -376,6 +376,7 @@ abstract class Base extends Activity {
         resumed++;
         Inbox.resumed(this);
         Gmail.sayPending(this);
+        Invites.resumed(this);
         Alive.calm(this);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
@@ -386,6 +387,7 @@ abstract class Base extends Activity {
         super.onPause();
         resumed--;
         Inbox.paused(this);
+        Invites.paused();
         // Left the app (not just another of its screens): listen a few minutes for answers.
         Ui.main.postDelayed(() -> { if (resumed <= 0 && !Hub.all(getApplicationContext()).isEmpty()) Alive.burst(getApplicationContext()); }, 2_000);
         gen++;

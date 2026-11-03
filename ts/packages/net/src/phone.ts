@@ -129,6 +129,8 @@ export interface PhoneDeps {
   /** The user-facing local time of a unix second, "11:40 AM" (team.rs `clock`). */
   clock?: (at: number) => string;
   refs?: MediaRefs;
+  /** Whether chats homed on PC `home` show (account.ts `scopeHas`); absent: all do. */
+  scope?: (home: string) => boolean;
   /** The commits a reply of `chat` names; their pills come once git has answered (then `chat` is touched). */
   commits?: (chat: Chat) => CommitLookup | null;
   /** What a PATCH of a chat's account, model, effort, access, device or fast mode is checked against. */
@@ -378,8 +380,18 @@ export class PhoneRoutes {
 
   constructor(readonly d: PhoneDeps) {}
 
+  /** The chats a phone sees: this PC's own and copies from the PCs this account uses (account.ts `pcScope`). */
   private chats(): Chat[] {
-    return this.d.store.chats();
+    const all = this.d.store.chats();
+    const has = this.d.scope;
+    return has === undefined ? all : all.filter((c) => c.home === "" || has(c.home));
+  }
+
+  /** The projects a phone sees (sidebartree.inScope): not those known only from chats of PCs outside the account's scope. */
+  private repos() {
+    const repos = this.d.store.repos();
+    const has = this.d.scope;
+    return has === undefined ? repos : sidebartree.inScope(this.d.store.chats(), repos, has, (r) => existsSync(repoDir(r))).repos;
   }
 
   private chatOf(ref: string): Chat | null {
@@ -602,7 +614,7 @@ export class PhoneRoutes {
   state(you: string, global: boolean): Json {
     const hub = this.d.hub;
     const chats = this.chats();
-    const repos = this.d.store.repos();
+    const repos = this.repos();
     const pid = (id: number) => (global ? (repos.find((r) => r.id === id)?.path ?? id) : id);
     const settledRepos = this.d.store.settledProjects();
     const place = this.d.store.placement();

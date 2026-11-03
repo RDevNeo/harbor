@@ -48,6 +48,8 @@ export interface MeshDeps {
   app: MeshApp;
   /** The workspace's PCs from the account directory (account.ts `meshPeers`). */
   workspacePeers?: () => Allowed[];
+  /** A PC this one doesn't trust knocked (it may have just joined a workspace): the directory is fetched again soon. */
+  stranger?: (fp: string) => void;
   /** This PC's addresses as "host:port" (mesh.rs `my_addrs`). */
   myAddrs: () => string[];
   /** `GET /v1/app`'s APK versionCode this PC serves (0: none). */
@@ -245,6 +247,7 @@ export class Mesh {
       shared.hint(fp, hostPort(from.ip, port));
       return peerId(a);
     }
+    this.d.stranger?.(fp);
     if (shared.seen.size < 64 || shared.seen.has(fp)) {
       const s = shared.seen.get(fp) ?? { node: "", fp, name: "", asked: 0, refuses: false };
       s.fp = fp;
@@ -490,6 +493,7 @@ export class Mesh {
     const out: Json[] = [{ id: me.id, name: me.name, host: ip, ip, port: hub.port, fp: this.myFp(), addrs, online: true, phones: true, self: true }];
     const peers: Peer[] = hub.mesh.on ? [...hub.mesh.peers.values()] : [];
     for (const a of hub.mesh.workspacePeers()) {
+      if (a.use === false) continue;
       if (!peers.some((p) => p.fp === a.fp)) peers.push(newPeer({ id: peerId(a), name: a.name, addr: a.addrs[0] ?? "", fp: a.fp, addrs: a.addrs, phones: true }));
     }
     for (const p of peers) {
@@ -503,11 +507,11 @@ export class Mesh {
     return { hubs: out };
   }
 
-  /** The peers to follow now: the PCs of this PC's workspace (its directory), plus loopback test peers. */
+  /** The peers to follow now: the PCs this account uses (in a workspace it's a member of), plus loopback test peers. */
   targets(): Target[] {
     const shared = this.d.hub.mesh;
     const mine = this.myFp();
-    const v: Target[] = shared.workspacePeers().filter((a) => a.fp !== "" && a.fp !== mine).map((a) => ({ kind: "key", fp: a.fp }));
+    const v: Target[] = shared.workspacePeers().filter((a) => a.fp !== "" && a.fp !== mine && a.use !== false).map((a) => ({ kind: "key", fp: a.fp }));
     for (const a of (this.env("HARBOR_MESH_PEERS") ?? "").split(",").map((x) => x.trim()).filter((x) => x !== "")) {
       const sa = socketAddr(a);
       const ip = sa ? parseIp(sa.ip) : null;
@@ -516,14 +520,15 @@ export class Mesh {
     return v;
   }
 
-  /** Peers kept from before that aren't this PC's workspace's PCs anymore (paired by code before 0.131, or a PC that
-   * left the workspace) go from every list: Runs on, the phone's PCs, versions. Screenshot rigs' fake peers stay. */
+  /** Peers kept from before that this account doesn't use anymore (paired by code before 0.131, a PC that left the
+   * workspace, or one whose workspace this account isn't a member of) go from every list: Runs on, Auto, the phone's
+   * PCs, versions. Screenshot rigs' fake peers stay. */
   forgetStrangers(): void {
     if (this.env("HARBOR_FAKE_PEERS") !== undefined) return;
     const shared = this.d.hub.mesh;
     let gone = false;
     for (const [k, p] of shared.peers) {
-      if (p.fp === "" || shared.allowedFp(p.fp) !== null) continue;
+      if (p.fp === "" || shared.usableFp(p.fp) !== null) continue;
       shared.peers.delete(k);
       gone = true;
     }
@@ -567,7 +572,7 @@ export class Mesh {
   private async worker(target: Target): Promise<void> {
     const shared = this.d.hub.mesh;
     let backoff = 2_000;
-    let known: string | null = target.kind === "key" ? (shared.allowedFp(target.fp) ? peerId(shared.allowedFp(target.fp) as Allowed) : null) : null;
+    let known: string | null = target.kind === "key" ? (shared.usableFp(target.fp) ? peerId(shared.usableFp(target.fp) as Allowed) : null) : null;
     while (!this.stopped) {
       if (!shared.on) {
         this.offline(known);
@@ -576,7 +581,7 @@ export class Mesh {
       }
       let dests: Dest[];
       if (target.kind === "key") {
-        if (!shared.allowedFp(target.fp)) {
+        if (!shared.usableFp(target.fp)) {
           this.offline(known);
           return;
         }
@@ -662,7 +667,7 @@ export class Mesh {
       });
       shared.peers.set(id, p);
       this.savePeers();
-      const still = () => (target.kind === "key" ? shared.allowedFp(target.fp) !== null : true);
+      const still = () => (target.kind === "key" ? shared.usableFp(target.fp) !== null : true);
       try {
         await this.sync(used, id, epoch, still);
       } catch {
