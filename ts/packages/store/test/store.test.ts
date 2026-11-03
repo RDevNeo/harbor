@@ -307,3 +307,20 @@ test("new_activity_in_a_settled_project_unsettles_it", () => {
   s.createChat(blankChat({ repoId: repo, title: "new", role: "lead" }));
   expect(s.settledProjects().has(repo)).toBe(false);
 });
+
+test("notices with an icon are read from every chat, in order, and nothing else", () => {
+  const dir = tmp();
+  const s = open(join(dir, "harbor.db"));
+  const repo = s.addRepo(dir);
+  const a = s.createChat(blankChat({ repoId: repo, title: "a" })).id;
+  const b = s.createChat(blankChat({ repoId: repo, title: "b" })).id;
+  const note = (icon: string, detail: string): Item => ({ kind: "notice", icon, text: "t", detail });
+  s.saveItems(a, [text("hi"), note("captcha", "1"), note("users", "x"), note("captcha", "2")]);
+  s.saveItems(b, [note("captcha", "3")]);
+  expect(s.noticeDetails("captcha")).toEqual([
+    [a, "1"],
+    [a, "2"],
+    [b, "3"],
+  ]);
+  expect(s.noticeDetails("nothing")).toEqual([]);
+});

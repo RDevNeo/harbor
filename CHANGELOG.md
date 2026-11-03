@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Discord: an update could lose a captcha that was waiting for you: the join didn't happen, and
+  neither the card nor `discord_status` said anything. An update now waits until the captcha ends
+  (joined, closed or given up after 10 minutes) before it replaces Discord's background host. And
+  if a captcha is lost anyway (a crash, a reboot, a host from an older version), Harbor notices
+  within about two minutes: its card in the chat ends as "Captcha expired", and `discord_status`
+  says so too, even with Discord not running. That includes cards left waiting from before.
+
 ## [0.121.1] - 2026-11-03
 
 ### Fixed

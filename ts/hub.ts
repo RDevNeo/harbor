@@ -718,16 +718,23 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // A captcha the chat's agent hit goes into that chat's transcript (its card, then its outcome), and the notification opens that chat.
   const stopDiscord =
     o.discordNotices === true && !offline
-      ? discord.watch((n) =>
-          discord.postNotice(n, {
-            chat: (id) => live.chat(id),
-            caller: () => discordCaller(live),
-            adopt: (captcha, chat) => void discord.adoptCaptcha(captcha, chat),
-            notice: (id, icon, text, detail) => live.notice(id, icon, text, detail),
-            changed: (id) => live.host.changed?.(id),
-            notify: (kind, key, title, body, chat) => live.host.notify?.(kind, key, title, body, chat),
-          }),
-        )
+      ? (() => {
+          // Captcha cards this PC's chats show as waiting: one whose captcha no host holds any more ends as expired.
+          const captchas = new discord.PendingCaptchas();
+          captchas.seed(store.noticeDetails("captcha").filter(([id]) => live.chat(id)?.home === ""));
+          const post = (n: discord.NoticeOf): void => {
+            const at = discord.postNotice(n, {
+              chat: (id) => live.chat(id),
+              caller: () => discordCaller(live),
+              adopt: (captcha, chat) => void discord.adoptCaptcha(captcha, chat),
+              notice: (id, icon, text, detail) => live.notice(id, icon, text, detail),
+              changed: (id) => live.host.changed?.(id),
+              notify: (kind, key, title, body, chat) => live.host.notify?.(kind, key, title, body, chat),
+            });
+            if (at !== undefined && n.captcha !== undefined) captchas.note(at, n.captcha);
+          };
+          return discord.watch(post, 5000, () => void captchas.check(post));
+        })()
       : () => {};
   const funnel = new Funnel(() => providers.which("tailscale") !== null, () => live.hookPort);
   const moveAccounts = (): MovePcAccount[] =>

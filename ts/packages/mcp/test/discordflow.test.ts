@@ -389,3 +389,29 @@ test("a join that lands a while after its captcha closes is reported joined, not
   await quiet();
   plan(r.root, { calls: { discord_join: { joined: true } } });
 }, 30_000);
+
+test("an update while a captcha waits leaves the host alone until the captcha ends, then the host makes way", async () => {
+  await quiet();
+  const bundle = join(r.root, "harbor-app.js");
+  writeFileSync(bundle, "the old app");
+  setup.configure({ bundle: () => bundle });
+  try {
+    expect(await h.host.tick()).toBe(false); // the host learns the bundle it runs
+    plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "9", name: "Py" } } }, captcha: { showing: true, joined: false } });
+    await call("discord_join", { invite: "py", apply: true });
+    const st = (): Record<string, unknown> => h.host.status() as Record<string, unknown>;
+    expect(st().captcha).not.toBeNull();
+    // The update lands: the person is still solving, so the host stays, captcha and all.
+    writeFileSync(bundle, "the new app, a little longer");
+    expect(await h.host.tick()).toBe(false);
+    expect(st().captcha).not.toBeNull();
+    // Solved: now it makes way.
+    plan(r.root, { captcha: { showing: false, joined: true } });
+    await until(() => st().captcha === null, 5000);
+    await quiet();
+    expect(await h.host.tick()).toBe(true);
+  } finally {
+    setup.configure({ bundle: () => undefined });
+    plan(r.root, { calls: { discord_join: { joined: true } } });
+  }
+}, 30_000);

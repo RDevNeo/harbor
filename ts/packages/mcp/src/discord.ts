@@ -6,7 +6,7 @@ import type { Readable, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import { now, writePrivate } from "@harbor/store";
 import type { Pending } from "./apps.ts";
-import { Display, expireSaved, statusOffline } from "./discordhost.ts";
+import { CAPTCHA_WAIT, Display, expireSaved, loadSaved, statusOffline, writeLastCaptcha } from "./discordhost.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, pretty, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
 
@@ -220,7 +220,11 @@ export async function replaceOldHost(): Promise<boolean> {
     return false;
   }
   if (str(get(s, "shell")) === basename(setup.shellDir())) return false;
-  if ((uint(get(s, "busy")) ?? 1) > 0 || isObj(get(s, "captcha")) || get(s, "repairing") === true) return false;
+  // Never with a captcha waiting for a person (unless it's stuck well past its time limit).
+  const c = get(s, "captcha");
+  const since = typeof get(c, "since") === "number" ? (get(c, "since") as number) : now();
+  if (isObj(c) && now() - since <= CAPTCHA_WAIT + 60) return false;
+  if (!isObj(c) && ((uint(get(s, "busy")) ?? 1) > 0 || get(s, "repairing") === true)) return false;
   await ask(sock, { op: "stop" }, 15_000).catch(() => {});
   return true;
 }
@@ -251,7 +255,70 @@ export interface NoticeSink {
   notify(kind: string, key: string, title: string, body: string, chat?: string): void;
 }
 
-export function postNotice(n: NoticeOf, to: NoticeSink): void {
+/**
+ * The captcha cards this PC's chats show as waiting, kept by the app: a card whose captcha no host
+ * holds any more (a crash, a reboot, a host from before captchas were saved) ends as "expired" in
+ * its chat, so no card waits forever. Seeded at start from the chats' own notices.
+ */
+export class PendingCaptchas {
+  private readonly pending = new Map<string, { chat: number; guild: string | null; misses: number }>();
+
+  /** From the chats' captcha notices, in order (`Store.noticeDetails("captcha")` of this PC's chats). */
+  seed(rows: [number, string][]): void {
+    for (const [chat, detail] of rows) this.note(chat, parse(detail));
+  }
+
+  /** A captcha notice that went into chat `chat`: a waiting card, or how one ended. */
+  note(chat: number, d: Json | undefined): void {
+    const id = str(get(d, "captcha"));
+    if (id === undefined) return;
+    if (str(get(d, "state")) === "pending") this.pending.set(id, { chat, guild: str(get(d, "guild")) ?? null, misses: 0 });
+    else this.pending.delete(id);
+  }
+
+  ids(): string[] {
+    return [...this.pending.keys()];
+  }
+
+  /**
+   * One look: a card neither the running host nor its saved state knows of, twice in a row (an
+   * outcome may be on its way), has its captcha marked expired. `post` puts the notice in.
+   */
+  async check(post: (n: NoticeOf) => void): Promise<void> {
+    if (this.pending.size === 0) return;
+    let live: string | undefined;
+    if (await canConnect(setup.socket())) {
+      try {
+        live = str(get(get(await ask(setup.socket(), { op: "status" }, 3000), "captcha"), "id"));
+      } catch {
+        return;
+      }
+    }
+    const saved = loadSaved().captcha?.id;
+    for (const [id, p] of [...this.pending]) {
+      if (id === live || id === saved) {
+        p.misses = 0;
+        continue;
+      }
+      if (++p.misses < 2) continue;
+      this.pending.delete(id);
+      const g = p.guild ?? "the server";
+      writeLastCaptcha({ outcome: "expired", guild: p.guild, at: now() });
+      post({
+        kind: "discord",
+        key: "discord-captcha",
+        title: "Discord: not joined",
+        body: `The captcha for ${g} was lost when Discord stopped or restarted, so it didn't join.`,
+        chat: p.chat,
+        captcha: { captcha: id, state: "expired", guild: p.guild },
+        line: `Captcha expired: didn't join ${g}`,
+      });
+    }
+  }
+}
+
+/** Returns the chat the notice went to (this PC's id), if any. */
+export function postNotice(n: NoticeOf, to: NoticeSink): number | undefined {
   let c = n.chat !== undefined ? to.chat(n.chat) : undefined;
   const id = n.captcha !== undefined && typeof n.captcha.captcha === "string" ? n.captcha.captcha : undefined;
   if (c === undefined && n.chat === undefined && id !== undefined && n.captcha?.state === "pending") {
@@ -264,13 +331,14 @@ export function postNotice(n: NoticeOf, to: NoticeSink): void {
   }
   if (c) to.notify(n.kind, n.key, n.title, n.body, c.gid);
   else to.notify(n.kind, n.key, n.title, n.body);
+  return c?.id;
 }
 
 /**
  * Posts what the host wanted the user to know as Harbor notifications: the host has no hub, so
  * this runs in the app and reads the host's file. Returns what stops it.
  */
-export function watch(notify: Notify, everyMs = 5000): () => void {
+export function watch(notify: Notify, everyMs = 5000, minute: () => void = () => {}): () => void {
   // A captcha a restart lost, with no host to say so: its chat's card becomes "expired".
   void canConnect(setup.socket()).then((up) => {
     if (!up) expireSaved();
@@ -278,32 +346,41 @@ export function watch(notify: Notify, everyMs = 5000): () => void {
   void replaceOldHost();
   let ticks = 0;
   const timer = setInterval(() => {
-    if (++ticks % 12 === 0) void replaceOldHost();
-    const path = join(setup.root(), "notices.jsonl");
-    let text: string;
-    try {
-      text = readFileSync(path, "utf8");
-    } catch {
-      return;
-    }
-    rmSync(path, { force: true });
-    for (const line of text.split("\n")) {
-      const n = parse(line);
-      if (!isObj(n)) continue;
-      const chat = uint(n.chat);
-      const captcha = get(n, "captcha");
-      notify({
-        kind: "discord",
-        key: str(n.key) ?? `discord:${JSON.stringify(n.at ?? null)}`,
-        title: str(n.title) ?? "Discord",
-        body: str(n.body) ?? "",
-        ...(chat !== undefined ? { chat } : {}),
-        ...(isObj(captcha) ? { captcha } : {}),
-        ...(typeof n.line === "string" ? { line: n.line } : {}),
-      });
+    // About once a minute, after this tick's notices: an older host, and cards nobody holds.
+    const each = ++ticks % 12 === 0;
+    readNotices(notify);
+    if (each) {
+      void replaceOldHost();
+      minute();
     }
   }, everyMs);
   return () => clearInterval(timer);
+}
+
+function readNotices(notify: Notify): void {
+  const path = join(setup.root(), "notices.jsonl");
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return;
+  }
+  rmSync(path, { force: true });
+  for (const line of text.split("\n")) {
+    const n = parse(line);
+    if (!isObj(n)) continue;
+    const chat = uint(n.chat);
+    const captcha = get(n, "captcha");
+    notify({
+      kind: "discord",
+      key: str(n.key) ?? `discord:${JSON.stringify(n.at ?? null)}`,
+      title: str(n.title) ?? "Discord",
+      body: str(n.body) ?? "",
+      ...(chat !== undefined ? { chat } : {}),
+      ...(isObj(captcha) ? { captcha } : {}),
+      ...(typeof n.line === "string" ? { line: n.line } : {}),
+    });
+  }
 }
 
 
@@ -489,6 +566,7 @@ const CAPTCHA_ENDS: Record<string, string> = {
   closed: "closed without joining",
   timeout: "nobody solved it in time, so the server wasn't joined",
   stopped: "Discord stopped before it was solved",
+  expired: "lost when Discord stopped or restarted, so the server wasn't joined",
 };
 
 /** Harbor's captcha view is turned on (off by default; see `setup.captchaView`). */

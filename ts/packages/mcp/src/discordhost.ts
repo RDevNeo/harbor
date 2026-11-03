@@ -523,11 +523,39 @@ export type LostCaptcha = { id: string; chat: number | null; guild: string | nul
 /** The chat's card for a captcha that a stop or a restart lost turns into this line. */
 export function expireNotice(c: LostCaptcha): void {
   const g = c.guild ?? "the server";
+  writeLastCaptcha({ outcome: "expired", guild: c.guild, at: now() });
   setup.notice("Discord: not joined", `The captcha for ${g} was lost when Discord stopped (a restart?), so it didn't join.`, "discord-captcha", {
     chat: c.chat,
     captcha: { captcha: c.id, state: "expired", guild: c.guild },
     line: `Captcha expired: didn't join ${g}`,
   });
+}
+
+const lastCaptchaPath = (): string => join(setup.root(), "captcha-end.json");
+
+/** How the last captcha ended, kept on disk: discord_status says it with no host running, and after an expiry no host saw. */
+export function writeLastCaptcha(e: { outcome: string; guild: string | null; at: number }): void {
+  try {
+    writePrivate(lastCaptchaPath(), JSON.stringify(e));
+  } catch {
+    // the status only misses the line
+  }
+}
+
+export function lastCaptcha(): Json {
+  const j = parse(safeRead(lastCaptchaPath()));
+  return isObj(j) && typeof j.outcome === "string" ? j : null;
+}
+
+/**
+ * Whether a host may make way for a new Harbor now. Never with a captcha waiting for a person (the
+ * update waits until it ends, joined, closed or given up), unless that captcha is stuck well past
+ * its own time limit; nor with a tool call or a repair in flight.
+ */
+export function mayRetire(phase: string, busy: number, repairing: boolean, captcha: { since: number } | null, at: number): boolean {
+  if (captcha !== null) return at - captcha.since > CAPTCHA_WAIT + 60;
+  if (repairing) return false;
+  return phase === "stopped" || phase === "frozen" || (phase === "ready" && busy === 0);
 }
 
 /** A captcha the saved state still holds, while no host runs: marks it expired and forgets it. True: there was one. */
@@ -1315,6 +1343,7 @@ export class Host {
     });
     this.save();
     this.solver = null;
+    writeLastCaptcha({ outcome, guild: c.guild, at: now() });
     this.engine.ask({ op: "captcha_end" }, 5000).catch(() => {});
     const g = c.guild ?? "the server";
     // The chat's card becomes this line: no frames are kept.
@@ -1603,12 +1632,15 @@ export class Host {
   /** Tests: a SIGSTOP counts as a freeze (the fake shell has no cgroup of its own). */
   signalsRest = false;
 
-  /** The installed bundle when this host started. */
-  private readonly bundleAt = setup.bundleStamp();
+  /** The installed bundle when this host started (or first could tell). */
+  private bundleAt = setup.bundleStamp();
 
   private bundleChanged(): boolean {
-    if (this.bundleAt === "") return false;
     const now = setup.bundleStamp();
+    if (this.bundleAt === "") {
+      this.bundleAt = now;
+      return false;
+    }
     return now !== "" && now !== this.bundleAt;
   }
 
@@ -1697,8 +1729,8 @@ export class Host {
     const gone = phase === "stopped" && !repairing && quiet > Math.min(LINGER, Math.max(this.policy.idle, 5));
     // A new Harbor came (a new executable, or just a new app bundle): only a new host runs its
     // shell and page, so this one makes way as soon as nothing is in flight. The next call starts it.
-    const updated = !repairing && (exeDeleted() || this.bundleChanged());
-    const replaced = updated && (phase === "stopped" || phase === "frozen" || (phase === "ready" && busy === 0 && this.st.captcha === null));
+    const updated = exeDeleted() || this.bundleChanged();
+    const replaced = updated && mayRetire(phase, busy, repairing, this.st.captcha, at);
     return gone || replaced;
   }
 
@@ -1800,7 +1832,7 @@ function statusJson(st: St | undefined, saved: Saved): Json {
     busy: st?.busy ?? 0,
     held: st?.held ?? "",
     captcha: st?.captcha ?? null,
-    captcha_end: st?.captchaEnd ?? null,
+    captcha_end: st?.captchaEnd ?? lastCaptcha(),
     logins_today: saved.logins.filter((t) => at - t < DAY).length,
     vencord: setup.Vencords.load().current,
     electron: setup.ELECTRON,

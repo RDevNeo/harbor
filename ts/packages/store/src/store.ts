@@ -694,6 +694,18 @@ export class Store {
     this.db.query("INSERT OR REPLACE INTO kv(k, v) VALUES(?1, ?2)").run(k, v);
   }
 
+  /** Every chat's notices with this icon, in order: (chat id, detail). Only those rows are read. */
+  noticeDetails(icon: string): [number, string][] {
+    const prefix = `{"kind":"notice","icon":${JSON.stringify(icon)}`;
+    const rows = this.db.query(`SELECT chat_id, body FROM items WHERE substr(body, 1, ?1) = ?2 ORDER BY chat_id, seq`).all(prefix.length, prefix) as Row[];
+    const out: [number, string][] = [];
+    for (const r of rows) {
+      const it = parseItem(text(r.body));
+      if (it?.kind === "notice") out.push([num(r.chat_id), it.detail]);
+    }
+    return out;
+  }
+
   /** Every chat's turn results, (chat id, item). Only result rows are parsed. */
   results(): [number, Item][] {
     const rows = this.db.query(`SELECT chat_id, body FROM items WHERE body LIKE '{"kind":"result"%'`).all() as Row[];

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { decode, fromDiscord, notes, postNotice, replaceOldHost, serve, statusText, tools } from "../src/discord.ts";
+import { decode, fromDiscord, notes, PendingCaptchas, postNotice, replaceOldHost, serve, status, statusText, tools } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
 import { type Engine, Host, expireSaved, loadSaved } from "../src/discordhost.ts";
 import { sandbox } from "./discordkit.ts";
@@ -173,12 +173,16 @@ test("after an update, a host from the old Harbor is stopped when nothing is in 
     asked.length = 0;
     answer = { busy: 1, captcha: null, shell: "shell-0123456789ab" };
     expect(await replaceOldHost()).toBe(false);
-    answer = { busy: 0, captcha: { id: "c" }, shell: "shell-0123456789ab" };
+    answer = { busy: 1, captcha: { id: "c", since: Math.floor(Date.now() / 1000) - 30 }, shell: "shell-0123456789ab" };
     expect(await replaceOldHost()).toBe(false);
+    // A captcha stuck well past its own time limit doesn't hold an update back for ever.
+    answer = { busy: 1, captcha: { id: "c", since: Math.floor(Date.now() / 1000) - 3600 }, shell: "shell-0123456789ab" };
+    expect(await replaceOldHost()).toBe(true);
+    asked.length = 0;
     // A host already running this Harbor's shell is left as it is.
     answer = { busy: 0, captcha: null, shell: basename(setup.shellDir()) };
     expect(await replaceOldHost()).toBe(false);
-    expect(asked).toEqual(["status", "status", "status"]);
+    expect(asked).toEqual(["status"]);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
     rmSync(setup.socket(), { force: true });
@@ -198,4 +202,37 @@ test("a host makes way for an updated app bundle as soon as it can", async () =>
   } finally {
     setup.configure({ bundle: () => undefined });
   }
+});
+
+test("a captcha card no host holds any more ends as expired in its chat, on the second look, and discord_status says so", async () => {
+  rmSync(setup.socket(), { force: true });
+  writeFileSync(join(setup.root(), "state.json"), JSON.stringify({ logins: [], captcha: { id: "kept", chat: 3, guild: "G" } }));
+  const p = new PendingCaptchas();
+  // From the chats: one ended, one a saved state still holds, one nobody holds.
+  p.seed([
+    [1, JSON.stringify({ captcha: "done", state: "pending", guild: "A" })],
+    [1, JSON.stringify({ captcha: "done", state: "joined", guild: "A" })],
+    [3, JSON.stringify({ captcha: "kept", state: "pending", guild: "G" })],
+    [2, JSON.stringify({ captcha: "lost", state: "pending", guild: "Python" })],
+  ]);
+  expect(p.ids().sort()).toEqual(["kept", "lost"]);
+  const posted: unknown[] = [];
+  await p.check((n) => void posted.push(n));
+  expect(posted).toEqual([]); // an outcome may still be on its way
+  await p.check((n) => void posted.push(n));
+  expect(posted).toEqual([
+    {
+      kind: "discord",
+      key: "discord-captcha",
+      title: "Discord: not joined",
+      body: "The captcha for Python was lost when Discord stopped or restarted, so it didn't join.",
+      chat: 2,
+      captcha: { captcha: "lost", state: "expired", guild: "Python" },
+      line: "Captcha expired: didn't join Python",
+    },
+  ]);
+  expect(p.ids()).toEqual(["kept"]);
+  // What discord_status and the cards read, with no host running.
+  expect(((await status()) as Record<string, unknown>).captcha_end).toMatchObject({ outcome: "expired", guild: "Python" });
+  rmSync(join(setup.root(), "state.json"), { force: true });
 });

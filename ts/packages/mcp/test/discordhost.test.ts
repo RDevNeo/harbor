@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { CALL_WAIT, DAY, FREEZE_AFTER, MAX_LOGINS, MAX_QUIT_LOGINS, Policy, QUIT_AFTER, callWait, pace, paceKind, readTest, swapIn } from "../src/discordhost.ts";
+import { CALL_WAIT, CAPTCHA_WAIT, DAY, FREEZE_AFTER, MAX_LOGINS, MAX_QUIT_LOGINS, Policy, QUIT_AFTER, callWait, mayRetire, pace, paceKind, readTest, swapIn } from "../src/discordhost.ts";
 
 const POLICY = new Policy(FREEZE_AFTER, MAX_LOGINS, QUIT_AFTER, MAX_QUIT_LOGINS);
 const many = (at: number, n: number): number[] => Array.from({ length: n }, () => at);
@@ -88,4 +88,16 @@ test("waits_get_the_time_they_ask_for: waits get the time they ask for", () => {
   expect(callWait("discord_send", { typing: true })).toBe(68_000);
   expect(callWait("discord_send", { typingMs: 1000 })).toBe(63_000);
   expect(callWait("discord_send", {})).toBe(62_000);
+});
+
+test("an update never retires a host while a captcha waits for a person, unless it's stuck past its time limit", () => {
+  const at = 1_000_000;
+  const waiting = { since: at - 60 };
+  for (const phase of ["ready", "frozen", "stopped"]) expect(mayRetire(phase, 0, false, waiting, at)).toBe(false);
+  expect(mayRetire("ready", 1, false, waiting, at)).toBe(false);
+  expect(mayRetire("ready", 1, false, { since: at - CAPTCHA_WAIT - 61 }, at)).toBe(true);
+  expect(mayRetire("ready", 0, false, null, at)).toBe(true);
+  expect(mayRetire("ready", 1, false, null, at)).toBe(false);
+  expect(mayRetire("frozen", 0, false, null, at)).toBe(true);
+  expect(mayRetire("stopped", 0, true, null, at)).toBe(false);
 });
