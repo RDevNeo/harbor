@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.128.0] - 2026-11-03
+
 ### Changed
 - Settings is shorter: no description line under any page's title, and the choices that everyone
   left on one value are now simply that value.
