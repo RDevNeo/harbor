@@ -213,3 +213,27 @@ test("an account turned off on this PC is listed but not usable, and Remove move
     if (was.XDG_DATA_HOME !== undefined) process.env.XDG_DATA_HOME = was.XDG_DATA_HOME;
   }
 });
+
+test("a badge set in account-badges.json wins over the email's letters; a bad one is ignored", () => {
+  const h = join(base, "badge-home");
+  mkdirSync(join(h, ".claude2"), { recursive: true });
+  writeFileSync(join(h, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "ab.ann@x.com" } }));
+  writeFileSync(join(h, ".claude2/.claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "ab.bob@x.com" } }));
+  const was = { HOME: process.env.HOME, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
+  process.env.HOME = h;
+  delete process.env.XDG_DATA_HOME;
+  const badges = () => p.discover().filter((a) => a.kind === "Claude").map((a) => a.badge);
+  try {
+    expect(badges()).toEqual(["AB", "AB"]);
+    mkdirSync(join(h, ".local/share/harbor"), { recursive: true });
+    writeFileSync(p.badgesPath(), JSON.stringify({ "AB.Bob@x.com": " bb " }));
+    expect(badges()).toEqual(["AB", "BB"]);
+    writeFileSync(p.badgesPath(), JSON.stringify({ "ab.bob@x.com": "B·B!" }));
+    expect(badges()).toEqual(["AB", "AB"]);
+    writeFileSync(p.badgesPath(), "not json");
+    expect(p.customBadge("ab.bob@x.com")).toBe("");
+  } finally {
+    process.env.HOME = was.HOME;
+    if (was.XDG_DATA_HOME !== undefined) process.env.XDG_DATA_HOME = was.XDG_DATA_HOME;
+  }
+});
