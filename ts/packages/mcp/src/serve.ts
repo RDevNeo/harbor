@@ -15,9 +15,9 @@ export function repairAccount(): discordsetup.ClaudeAccount | undefined {
 }
 
 /** `harbor app <name>`: serves one of Harbor's own app servers on stdio. */
-export async function serve(args: string[], build: { version?: string; shellRef?: string | undefined } = {}): Promise<number> {
+export async function serve(args: string[], build: { version?: string; shellRef?: string | undefined; bundle?: string | undefined } = {}): Promise<number> {
   const v = build.version;
-  discordsetup.configure({ version: v !== undefined ? () => v : harborVersion, shellRef: () => build.shellRef, claude: repairAccount });
+  discordsetup.configure({ version: v !== undefined ? () => v : harborVersion, shellRef: () => build.shellRef, bundle: () => build.bundle, claude: repairAccount });
   switch (args[0]) {
     case gmail.NAME:
       await gmail.run({ auth: gmail.harborAuth(), version: v ?? harborVersion() });

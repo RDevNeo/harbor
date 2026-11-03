@@ -60,7 +60,12 @@ const commands: Record<string, Command> = {
     return 0;
   },
   // The app bundle's own version and commit: the runtime may be older than the bundle.
-  app: async (args) => (await import("./packages/mcp/src/index.ts")).serve.serve(args, { version, shellRef: repoRef() }),
+  app: async (args) => {
+    // An update replaces the installed bundle: the Discord host watches it, to make way for the new one.
+    const dir = defaultConfig().dir;
+    const bundle = dir !== null && existsSync(join(dir, "harbor-app.js")) ? join(dir, "harbor-app.js") : undefined;
+    return (await import("./packages/mcp/src/index.ts")).serve.serve(args, { version, shellRef: repoRef(), bundle });
+  },
   net: async (args) => {
     const { lanPortmapNet, Portmap } = await import("./packages/net/src/index.ts");
     return new Portmap({ kv: await store(), net: lanPortmapNet() }).cli(args, { log: io.out, err: io.err });

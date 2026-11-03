@@ -327,7 +327,7 @@ await scenario("captcha", async () => {
     check(seen.solved?.length === 1, "the click reached hCaptcha's own frame as a real one", seen.solved?.length);
     check(s.captcha_end?.outcome === "joined", "the join lands once it's solved", JSON.stringify(s.captcha_end));
     check(fs.readFileSync(app + "/notices.jsonl", "utf8").includes("Discord joined"), "and the user hears it");
-    check(JSON.parse(fs.readFileSync(app + "/pace.json", "utf8")).length === 1, "the join counts toward the pace");
+    check(JSON.parse(fs.readFileSync(app + "/pace.json", "utf8")).length === 0, "joins aren't paced");
     r = await mcp.tool("discord_status");
     check(r.text.includes("solved, and the server was joined"), "discord_status tells the agent", r.text);
     r = await mcp.tool("discord_guilds");
@@ -444,10 +444,10 @@ await scenario("pacing", async () => {
     let r = await mcp.tool("discord_join", { invite: "abc", apply: true });
     check(r.text.includes('"joined": true'), "first join goes through", r.text);
     r = await mcp.tool("discord_join", { invite: "abcd", apply: true });
-    await sleep(300); // the page's report of the first join comes by beacon
-    check(r.text.includes("Paced") && seen.join.length === joins + 1, "second join right after is refused", r.text);
-    r = await mcp.tool("discord_join", { invite: "abcd" });
-    check(r.text.includes("dryRun"), "a dry run isn't paced", r.text);
+    await sleep(300); // the page's report of the joins comes by beacon
+    check(r.text.includes('"joined": true') && seen.join.length === joins + 2, "a second join right after goes too: joins aren't paced", r.text);
+    r = await mcp.tool("discord_join", { invite: "abcde" });
+    check(r.text.includes("dryRun"), "a dry run joins nothing", r.text);
     write("pace.json", [["dm", Math.floor(Date.now() / 1000) - 10]]);
     r = await mcp.tool("discord_dm_open", { userId: "100000000000000009" });
     check(r.text.includes("Paced") && seen.dm.length === dms, "a new DM right after another is refused", r.text);

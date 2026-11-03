@@ -40,6 +40,8 @@ export interface Ports {
   version(): string;
   /** The repository ref (commit or release tag) whose `discord/` goes with this build; undefined: a build from source. */
   shellRef(): string | undefined;
+  /** The installed app bundle this process runs (`harbor-app.js`); undefined: not an installed copy. */
+  bundle(): string | undefined;
   /** A Claude Code login on this PC that repair may run; none: no account to use. */
   claude(): ClaudeAccount | undefined;
 }
@@ -49,7 +51,19 @@ function defaultCommand(): string[] {
   return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
 }
 
-let ports: Ports = { selfCommand: defaultCommand, version: () => "0.0.0", shellRef: () => undefined, claude: () => undefined };
+let ports: Ports = { selfCommand: defaultCommand, version: () => "0.0.0", shellRef: () => undefined, bundle: () => undefined, claude: () => undefined };
+
+/** The installed bundle as it is now (its time and size); "" when there's none to watch. An update replaces it. */
+export function bundleStamp(): string {
+  const b = ports.bundle();
+  if (b === undefined) return "";
+  try {
+    const s = statSync(b);
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
+    return "";
+  }
+}
 
 export function configure(p: Partial<Ports>): void {
   ports = { ...ports, ...p };

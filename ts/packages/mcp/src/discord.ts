@@ -6,7 +6,7 @@ import type { Readable, Writable } from "node:stream";
 import { createInterface } from "node:readline";
 import { now, writePrivate } from "@harbor/store";
 import type { Pending } from "./apps.ts";
-import { Display, statusOffline } from "./discordhost.ts";
+import { Display, expireSaved, statusOffline } from "./discordhost.ts";
 import { type Json, type Obj, get, isObj, items, message, parse, pretty, sleep, str, uint } from "./discordjson.ts";
 import * as setup from "./discordsetup.ts";
 
@@ -205,6 +205,26 @@ export async function login(signal: AbortSignal, update: (p: Pending) => void): 
   }
 }
 
+/**
+ * A host from before this Harbor's update runs the old shell and page (a bundle-only update leaves
+ * the executable, so it doesn't notice): when nothing is in flight it's stopped, and it goes by
+ * itself; the next call starts this Harbor's. Hosts from now on also notice by themselves.
+ */
+export async function replaceOldHost(): Promise<boolean> {
+  const sock = setup.socket();
+  if (!(await canConnect(sock))) return false;
+  let s: Json;
+  try {
+    s = await ask(sock, { op: "status" }, 3000);
+  } catch {
+    return false;
+  }
+  if (str(get(s, "shell")) === basename(setup.shellDir())) return false;
+  if ((uint(get(s, "busy")) ?? 1) > 0 || isObj(get(s, "captcha")) || get(s, "repairing") === true) return false;
+  await ask(sock, { op: "stop" }, 15_000).catch(() => {});
+  return true;
+}
+
 /** The host's captcha `captcha` belongs to `chat` (found by the app, for a server that didn't say). */
 export async function adoptCaptcha(captcha: string, chat: number): Promise<void> {
   await ask(setup.socket(), { op: "captcha_chat", captcha, chat }, 5000).catch(() => {});
@@ -251,7 +271,14 @@ export function postNotice(n: NoticeOf, to: NoticeSink): void {
  * this runs in the app and reads the host's file. Returns what stops it.
  */
 export function watch(notify: Notify, everyMs = 5000): () => void {
+  // A captcha a restart lost, with no host to say so: its chat's card becomes "expired".
+  void canConnect(setup.socket()).then((up) => {
+    if (!up) expireSaved();
+  });
+  void replaceOldHost();
+  let ticks = 0;
   const timer = setInterval(() => {
+    if (++ticks % 12 === 0) void replaceOldHost();
     const path = join(setup.root(), "notices.jsonl");
     let text: string;
     try {

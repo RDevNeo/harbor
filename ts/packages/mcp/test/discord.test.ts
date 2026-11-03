@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { decode, fromDiscord, notes, postNotice, serve, statusText, tools } from "../src/discord.ts";
+import { decode, fromDiscord, notes, postNotice, replaceOldHost, serve, statusText, tools } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
 import { type Engine, Host, expireSaved, loadSaved } from "../src/discordhost.ts";
 import { sandbox } from "./discordkit.ts";
@@ -150,4 +150,52 @@ test("a captcha whose server didn't name its chat goes to the one chat waiting o
   // Not knowing which chat: no card, the overlay shows it.
   postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", captcha: { captcha: "x2", state: "pending", guild: null } }, { ...sink, caller: () => undefined });
   expect(items).toEqual([8]);
+});
+
+test("after an update, a host from the old Harbor is stopped when nothing is in flight, and a busy one is left alone", async () => {
+  const { createServer } = await import("node:net");
+  const { basename } = await import("node:path");
+  const asked: string[] = [];
+  let answer: Record<string, unknown> = {};
+  const server = createServer((c) => {
+    c.setEncoding("utf8");
+    c.on("data", (d: string) => {
+      const op = (JSON.parse(d.split("\n")[0] ?? "{}") as { op: string }).op;
+      asked.push(op);
+      c.end(`${JSON.stringify({ ok: true, result: op === "status" ? answer : {} })}\n`);
+    });
+  });
+  await new Promise<void>((r) => server.listen(setup.socket(), () => r()));
+  try {
+    answer = { busy: 0, captcha: null, shell: "shell-0123456789ab" };
+    expect(await replaceOldHost()).toBe(true);
+    expect(asked).toEqual(["status", "stop"]);
+    asked.length = 0;
+    answer = { busy: 1, captcha: null, shell: "shell-0123456789ab" };
+    expect(await replaceOldHost()).toBe(false);
+    answer = { busy: 0, captcha: { id: "c" }, shell: "shell-0123456789ab" };
+    expect(await replaceOldHost()).toBe(false);
+    // A host already running this Harbor's shell is left as it is.
+    answer = { busy: 0, captcha: null, shell: basename(setup.shellDir()) };
+    expect(await replaceOldHost()).toBe(false);
+    expect(asked).toEqual(["status", "status", "status"]);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    rmSync(setup.socket(), { force: true });
+  }
+});
+
+test("a host makes way for an updated app bundle as soon as it can", async () => {
+  const bundle = join(setup.root(), "harbor-app.js");
+  writeFileSync(bundle, "one");
+  setup.configure({ bundle: () => bundle });
+  try {
+    const stub = { alive: () => false } as unknown as Engine;
+    const host = new Host({ engine: stub, scratch: stub });
+    expect(await host.tick()).toBe(false);
+    writeFileSync(bundle, "a newer bundle");
+    expect(await host.tick()).toBe(true);
+  } finally {
+    setup.configure({ bundle: () => undefined });
+  }
 });

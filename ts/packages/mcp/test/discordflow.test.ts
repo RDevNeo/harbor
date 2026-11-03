@@ -71,14 +71,12 @@ test("files are read here and handed over as names, types and bytes", async () =
   expect(pace.map((p) => p[0])).toEqual(["upload"]);
 });
 
-test("joining is paced: the second join is refused with the reason", async () => {
-  const first = await call("discord_join", { invite: "x", apply: true });
-  expect(JSON.parse(first)).toEqual({ joined: true });
-  const second = JSON.parse(await call("discord_join", { invite: "y", apply: true })) as { paced: boolean; note: string };
-  expect(second.paced).toBe(true);
-  expect(second.note).toContain("Harbor spaces out server joins");
-  expect(ops("call").filter((o) => o.name === "discord_join").length).toBe(1);
-  expect(JSON.parse(await call("discord_join", { invite: "z" }))).toEqual({ joined: true });
+test("joining isn't paced: joins one right after another all go, and none is counted", async () => {
+  const before = ops("call").filter((o) => o.name === "discord_join").length;
+  for (const invite of ["x", "y", "z"]) expect(JSON.parse(await call("discord_join", { invite, apply: true }))).toEqual({ joined: true });
+  expect(ops("call").filter((o) => o.name === "discord_join").length).toBe(before + 3);
+  const pace = existsSync(join(r.root, "pace.json")) ? (JSON.parse(readFileSync(join(r.root, "pace.json"), "utf8")) as [string, number][]) : [];
+  expect(pace.some((p) => p[0] === "join")).toBe(false);
 });
 
 test("a screenshot comes back as an image, or goes to a file", async () => {
@@ -311,7 +309,7 @@ test("with the captcha view on (the default), a join that needs a captcha holds 
   await quiet();
   await until(() => ops("captcha_end").length === ended + 1, 5000);
   expect(readFileSync(join(r.root, "notices.jsonl"), "utf8")).toContain("Discord joined Big Server");
-  expect((JSON.parse(readFileSync(join(r.root, "pace.json"), "utf8")) as [string, number][]).map((p) => p[0])).toEqual(["join"]);
+  expect((JSON.parse(readFileSync(join(r.root, "pace.json"), "utf8")) as [string, number][]).map((p) => p[0])).toEqual([]);
   expect(await statusText()).toContain("solved, and the server was joined");
   expect(await captchaFrame()).toBeUndefined();
   await expect(h.host.handle({ op: "captcha_input", kind: "down", x: 1, y: 1 })).resolves.toMatchObject({ ok: false, error: "No captcha is waiting." });

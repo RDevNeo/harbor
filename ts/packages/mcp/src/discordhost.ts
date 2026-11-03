@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { now, writePrivate } from "@harbor/store";
 import * as repair from "./discordrepair.ts";
@@ -390,8 +390,9 @@ export function hasSwap(): boolean {
 
 
 /**
- * What Discord's spam filter watches: joining and leaving servers, new DMs, bursts of uploads,
- * floods of messages. Each limit is a count in a window and a gap between two.
+ * What Discord's spam filter watches: leaving servers, new DMs, bursts of uploads, floods of
+ * messages. Each limit is a count in a window and a gap between two. Joining servers isn't paced:
+ * the user asked for that (a join behind a captcha waits for a person anyway).
  */
 interface Limit {
   kind: string;
@@ -402,7 +403,6 @@ interface Limit {
 }
 
 const LIMITS: Limit[] = [
-  { kind: "join", label: "server joins", gap: 300, hour: 3, day: 6 },
   { kind: "leave", label: "server leaves", gap: 300, hour: 3, day: 6 },
   { kind: "dm", label: "new DMs", gap: 120, hour: 4, day: 10 },
   { kind: "upload", label: "file uploads", gap: 20, hour: 15, day: 60 },
@@ -439,8 +439,6 @@ const isGo = (p: Pace): boolean => "go" in p;
 export function paceKind(name: string, args: Json): string | undefined {
   const apply = get(args, "apply") === true;
   switch (name) {
-    case "discord_join":
-      return apply ? "join" : undefined;
     case "discord_leave":
       return apply ? "leave" : undefined;
     case "discord_send":
@@ -1187,8 +1185,7 @@ export class Host {
     }
     switch (name) {
       case "discord_join":
-        if (get(v, "joined") === true) paceNote("join");
-        else if (get(v, "captchaRequired") === true) v = this.captchaFound(v, chat);
+        if (get(v, "captchaRequired") === true) v = this.captchaFound(v, chat);
         break;
       case "discord_leave":
         if (get(v, "left") === true) paceNote("leave");
@@ -1324,7 +1321,6 @@ export class Host {
     const card = (line: string): Obj => ({ chat: c.chat, captcha: { captcha: c.id, state: outcome, guild: c.guild }, line });
     switch (outcome) {
       case "joined":
-        paceNote("join");
         setup.notice("Discord: joined", `The captcha was solved: Discord joined ${g}.`, "discord-captcha", card(`Captcha solved: joined ${g}`));
         break;
       case "closed":
@@ -1607,6 +1603,15 @@ export class Host {
   /** Tests: a SIGSTOP counts as a freeze (the fake shell has no cgroup of its own). */
   signalsRest = false;
 
+  /** The installed bundle when this host started. */
+  private readonly bundleAt = setup.bundleStamp();
+
+  private bundleChanged(): boolean {
+    if (this.bundleAt === "") return false;
+    const now = setup.bundleStamp();
+    return now !== "" && now !== this.bundleAt;
+  }
+
   /** One request from the socket. */
   async handle(req: Json): Promise<Json> {
     const op = str(get(req, "op")) ?? "";
@@ -1690,8 +1695,10 @@ export class Host {
     if ((phase === "ready" || phase === "frozen") && !this.engine.alive()) await this.stopPage();
     const quiet = at - this.touched;
     const gone = phase === "stopped" && !repairing && quiet > Math.min(LINGER, Math.max(this.policy.idle, 5));
-    // A new Harbor came: only a new host runs its shell.
-    const replaced = (phase === "stopped" || phase === "frozen") && !repairing && exeDeleted();
+    // A new Harbor came (a new executable, or just a new app bundle): only a new host runs its
+    // shell and page, so this one makes way as soon as nothing is in flight. The next call starts it.
+    const updated = !repairing && (exeDeleted() || this.bundleChanged());
+    const replaced = updated && (phase === "stopped" || phase === "frozen" || (phase === "ready" && busy === 0 && this.st.captcha === null));
     return gone || replaced;
   }
 
@@ -1797,6 +1804,8 @@ function statusJson(st: St | undefined, saved: Saved): Json {
     logins_today: saved.logins.filter((t) => at - t < DAY).length,
     vencord: setup.Vencords.load().current,
     electron: setup.ELECTRON,
+    // Which Harbor's shell this host runs: the app makes an older host give way.
+    shell: basename(setup.shellDir()),
   };
 }
 

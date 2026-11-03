@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Discord: joining servers is no longer paced. Harbor used to space joins 5 minutes apart and cap
+  them at 3 an hour and 6 a day; now agents join when asked. New DMs, uploads, leaving servers and
+  bursts of messages are still paced as before.
+
+### Fixed
+- Discord: an update didn't reach the Discord app until it was restarted by hand: its background
+  host kept running the old code and page while only the app bundle changed (most updates). The
+  host now makes way for a new Harbor as soon as no tool call, captcha or repair is in flight, and
+  Harbor retires a host from an older version the same way when it starts. The next tool call runs
+  the new one. That's why `discord_guilds` still showed `orphans` after 0.119.3.
+- Discord: a captcha lost to a restart is marked expired when Harbor starts, even before Discord is
+  used again (0.119.3 only did it when Discord next started).
+- Discord: `discord_join`'s description still told agents a captcha was for the user's own Discord
+  app; it now says Harbor shows it in the chat.
+
 ## [0.119.6] - 2026-11-03
 
 ### Fixed
