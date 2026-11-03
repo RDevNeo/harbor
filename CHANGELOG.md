@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.129.0] - 2026-11-03
+
 ### Added
 - Rename this PC: Settings › Devices › Rename, on this PC's row. Your other PCs, your phones, the
   workspace's directory and every place that names the PC (Runs on, chat headers, senders) show the
