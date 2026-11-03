@@ -302,7 +302,7 @@ jobs:
         run: |
           set -eu
           .github/boat/run.sh "${{ steps.boat.outputs.id }}" --cwd src -- bash .github/boat/browser-android.sh
-          boat exec "${{ steps.boat.outputs.id }}" -- tar -czf out.tgz -C out/android .
+          boat exec --timeout 600 "${{ steps.boat.outputs.id }}" -- tar -czf out.tgz -C out/android .
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       - name: Save the boat cache

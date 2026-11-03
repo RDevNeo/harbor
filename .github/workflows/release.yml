@@ -140,7 +140,7 @@ jobs:
       - name: Fetch the results
         run: |
           set -eu
-          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
+          boat exec --timeout 600 "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       # The oldest supported base, glibc 2.35+ (Ubuntu 22.04, Debian 12, Arch, …), as this runner.
@@ -182,7 +182,7 @@ jobs:
       - name: Fetch the results
         run: |
           set -eu
-          boat exec "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
+          boat exec --timeout 600 "${{ steps.boat.outputs.id }}" -- bash -c 'rm -f out/*.log && tar -czf out.tgz -C out .'
           boat scp "${{ steps.boat.outputs.id }}:/home/user/out.tgz" "$RUNNER_TEMP/out.tgz"
           mkdir -p out && tar -xzf "$RUNNER_TEMP/out.tgz" -C out
       - uses: actions/upload-artifact@v7
