@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { choose, isWindowLaunch, launch } from "../src/launcher.ts";
+import { choose, installedConfig, isWindowLaunch, launch } from "../src/launcher.ts";
 import { rolledBack, skipped } from "../src/install.ts";
 import { readAttempt } from "../src/startup.ts";
 import { writeMeta, type Meta } from "../src/previewmeta.ts";
@@ -157,4 +157,11 @@ test("a waiting preview is chosen only when previews are on, the slot is there a
 test("a source build runs the bundle beside the executable without watching anything", () => {
   const cfg = configFor(null, { exe: "/opt/x/harbor" });
   expect(choose(cfg)).toMatchObject({ kind: "release", path: "/opt/x/harbor-app.js" });
+});
+
+test("harbor --update and --restore-previous see the installed version, not the runtime's", () => {
+  const inst = makeInstall({ version: "1.1.0", bundle: crashingBundle("1.1.0") });
+  const cfg = { ...configFor(inst), version: "0.0.0-dev" };
+  expect(installedConfig(cfg).version).toBe("1.1.0");
+  expect(installedConfig({ ...cfg, dir: null }).version).toBe("0.0.0-dev");
 });

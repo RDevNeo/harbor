@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.133.2] - 2026-11-03
+
+### Fixed
+- `harbor --update` from a terminal knows which version is installed: it took every copy for a
+  development build, so it always reinstalled the latest release and recorded "0.0.0-dev" as the
+  version to fall back to, which a later rollback would then have named.
+
 ## [0.133.1] - 2026-11-03
 
 ### Removed

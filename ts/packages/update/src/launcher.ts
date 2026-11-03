@@ -71,6 +71,16 @@ export function useEmbedded(chosen: Chosen, embedded: AppBundle | undefined): em
   return !isFile(chosen.path) || !newer(chosen.version, embedded.meta.version);
 }
 
+/**
+ * The launcher is the runtime, which knows only its own version: the installed one is VERSION on disk.
+ * Without it `harbor --update` took this copy for 0.0.0-dev, always installed, and kept 0.0.0-dev as the
+ * previous version, so a rollback after it named that.
+ */
+export function installedConfig(base: UpdateConfig): UpdateConfig {
+  const v = base.dir === null ? "" : read(join(base.dir, "VERSION"));
+  return v === "" ? base : { ...base, version: v };
+}
+
 const watchdogSpawn = (cmd: string[]): void => {
   Bun.spawn(cmd, { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
 };
@@ -109,7 +119,7 @@ export async function launch(argv: string[], opts: LaunchOptions = {}): Promise<
       kill: (p) => process.kill(p, "SIGKILL"),
     });
   }
-  if (cmd === "--update" || cmd === "--restore-previous") return (await updateCli(base, cmd, { out, err })) ?? 2;
+  if (cmd === "--update" || cmd === "--restore-previous") return (await updateCli(installedConfig(base), cmd, { out, err })) ?? 2;
 
   const window = isWindowLaunch(argv);
   let chosen: Chosen;
