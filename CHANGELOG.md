@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.124.2] - 2026-11-03
+
 ### Fixed
 - An invitation to an address no Harbor account uses now says so under People (Settings and the
   phone), and when it differs by a typo from the address of someone already in one of your
