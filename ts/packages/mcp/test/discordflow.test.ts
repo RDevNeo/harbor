@@ -309,7 +309,7 @@ test("with the captcha view on (the default), a join that needs a captcha holds 
   await until(() => st().captcha === null, 5000);
   expect(st().captcha_end).toMatchObject({ outcome: "joined", guild: "Big Server" });
   await quiet();
-  expect(ops("captcha_end").length).toBe(ended + 1);
+  await until(() => ops("captcha_end").length === ended + 1, 5000);
   expect(readFileSync(join(r.root, "notices.jsonl"), "utf8")).toContain("Discord joined Big Server");
   expect((JSON.parse(readFileSync(join(r.root, "pace.json"), "utf8")) as [string, number][]).map((p) => p[0])).toEqual(["join"]);
   expect(await statusText()).toContain("solved, and the server was joined");
