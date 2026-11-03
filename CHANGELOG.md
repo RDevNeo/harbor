@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Harbor's windows group under the pinned Harbor icon in GNOME's dock (and other docks and
+  taskbars) instead of showing as a separate "Unknown" app: they now carry the app id `harbor`,
+  the same as harbor.desktop (Wayland app_id, X11 WM_CLASS). A `scripts/preview` window is
+  `harbor-preview`, so it stays apart from the real Harbor.
+
 ## [0.132.0] - 2026-11-03
 
 ### Changed

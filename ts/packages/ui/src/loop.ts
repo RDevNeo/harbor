@@ -4,11 +4,12 @@ import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 import * as slint from "slint-ui";
 // Its source, not its path: a compiled executable or a bundle has no fdwait.ts beside it.
 import * as fdwaitText from "./fdwait.ts" with { type: "text" };
-import native, { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed } from "slint-ui/rust-module.cjs";
+import native, { ProcessEventsResult, processEvents, setQuitOnLastWindowClosed, setXdgAppId } from "slint-ui/rust-module.cjs";
 
 type Method = (...a: unknown[]) => unknown;
 interface Binding extends Record<string, unknown> {
   ComponentInstance: { prototype: Record<"setProperty" | "setGlobalProperty" | "invoke" | "invokeGlobal", Method> };
+  ComponentDefinition?: unknown;
 }
 // The object slint-ui's own code calls through, not an import's frozen copy of it. A bundle resolves it with the
 // other imports; a require() made at run time finds nothing inside a compiled executable.
@@ -36,6 +37,40 @@ function epolls(): Set<number> {
 // Taken before any window exists: the epoll fd that appears with the first window is the backend's (winit's
 // calloop), which is readable whenever the compositor sends something or Slint asks for a redraw.
 const before = epolls();
+
+/**
+ * The Wayland app_id (and X11 WM_CLASS) of every Harbor window. It must match the desktop entry
+ * (harbor.desktop, StartupWMClass=harbor): without one, GNOME's dock shows the window as a separate
+ * "Unknown" app beside the pinned Harbor. A `scripts/preview` window gets its own id so the dock keeps
+ * it apart from the real Harbor.
+ */
+export function appId(env: NodeJS.ProcessEnv = process.env): string {
+  return env.HARBOR_PREVIEW_APP ? "harbor-preview" : "harbor";
+}
+
+/**
+ * winit reads the id when a window is created, and every entry point creates its window before it calls
+ * runLoop(): so the id is set right before the first component is created. Not at import: setting it starts
+ * Slint's backend, which a command line run (`harbor mesh status`, over ssh, with no display) must not do.
+ */
+function hookAppId(): void {
+  const proto = (napi.ComponentDefinition as { prototype: Record<"create", Method> } | undefined)?.prototype;
+  const create = proto?.create;
+  if (proto === undefined || typeof create !== "function") return;
+  let done = false;
+  proto.create = function (this: unknown, ...a: unknown[]): unknown {
+    if (!done) {
+      done = true;
+      try {
+        setXdgAppId(appId());
+      } catch (e) {
+        console.error(`harbor: couldn't set the window's app id: ${e}`);
+      }
+    }
+    return create.apply(this, a);
+  };
+}
+hookAppId();
 
 /** The fds an epoll fd watches. */
 function watched(fd: number): string[] {
