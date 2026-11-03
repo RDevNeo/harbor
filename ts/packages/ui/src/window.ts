@@ -139,6 +139,10 @@ export interface MediaRow {
   path: string;
   video: boolean;
   name: string;
+  /** A thumbnail's place among its card's thumbnails (-1: a large image or a video). */
+  slot: number;
+  /** How many thumbnails its card has. */
+  thumbs: number;
 }
 
 export interface CardData {

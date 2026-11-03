@@ -13,6 +13,8 @@ export struct MediaRow {
     path: string,
     video: bool,
     name: string,
+    slot: int,
+    thumbs: int,
 }
 
 export struct CardData {
@@ -132,6 +134,47 @@ component ToolCard {
     }
 }
 
+// A card's thumbnails, wrapped into as many rows as its width needs (phone: Images.strip keeps them in the
+// bubble too): never wider than `avail`. Large images and videos (slot -1) draw on their own.
+component ThumbGrid {
+    in property <[MediaRow]> media;
+    in property <length> avail;
+    callback open-media(string);
+    property <int> count: root.media.length > 0 ? root.media[0].thumbs : 0;
+    property <length> tw: min(132px, max(root.avail, 40px));
+    property <length> th: root.tw * 96 / 132;
+    property <int> cols: max(1, min(root.count, floor((root.avail + 8px) / (root.tw + 8px))));
+    property <int> rows: ceil(root.count / root.cols);
+    min-width: root.cols * (root.tw + 8px) - 8px;
+    preferred-width: self.min-width;
+    max-width: self.min-width;
+    min-height: root.rows * (root.th + 8px) - 8px;
+    max-height: self.min-height;
+    for m in root.media: Rectangle {
+        visible: m.slot >= 0;
+        x: mod(max(m.slot, 0), root.cols) * (root.tw + 8px);
+        y: floor(max(m.slot, 0) / root.cols) * (root.th + 8px);
+        width: m.slot >= 0 ? root.tw : 0px;
+        height: m.slot >= 0 ? root.th : 0px;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border;
+        clip: true;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: m.image;
+            image-fit: cover;
+        }
+        TipArea {
+            tip: m.path;
+            clicked => {
+                root.open-media(m.path);
+            }
+        }
+    }
+}
+
 component UserBubble {
     in property <CardData> card;
     in property <length> avail;
@@ -238,25 +281,11 @@ component UserBubble {
                     spacing: Theme.compact ? 8px : 12px;
                     if root.card.media.length > 0: HorizontalLayout {
                         alignment: start;
-                        spacing: 8px;
-                        for m in root.card.media: Rectangle {
-                            width: 132px;
-                            height: 96px;
-                            border-radius: Theme.radius-md;
-                            border-width: 1px;
-                            border-color: Theme.border;
-                            clip: true;
-                            Image {
-                                width: parent.width;
-                                height: parent.height;
-                                source: m.image;
-                                image-fit: cover;
-                            }
-                            TipArea {
-                                tip: m.path;
-                                clicked => {
-                                    root.open-media(m.path);
-                                }
+                        ThumbGrid {
+                            media: root.card.media;
+                            avail: root.w - 28px;
+                            open-media(p) => {
+                                root.open-media(p);
                             }
                         }
                     }
@@ -691,29 +720,14 @@ export component CardView inherits TouchArea {
                 }
             }
         }
-        if root.card.media.length > 0 && root.card.kind != "user": HorizontalLayout {
+        if root.card.media.length > 0 && root.card.media[0].thumbs > 0 && root.card.kind != "user": HorizontalLayout {
             alignment: LayoutAlignment.start;
             padding-left: root.card.kind == "tool" ? 30px : 0px;
-            spacing: 8px;
-            for m in root.card.media: Rectangle {
-                visible: !m.large;
-                width: m.large ? 0px : 132px;
-                height: m.large ? 0px : 96px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: Theme.border;
-                clip: true;
-                Image {
-                    width: parent.width;
-                    height: parent.height;
-                    source: m.image;
-                    image-fit: cover;
-                }
-                TipArea {
-                    tip: m.path;
-                    clicked => {
-                        root.open-media(m.path);
-                    }
+            ThumbGrid {
+                media: root.card.media;
+                avail: root.avail - (root.card.kind == "tool" ? 30px : 0px);
+                open-media(p) => {
+                    root.open-media(p);
                 }
             }
         }

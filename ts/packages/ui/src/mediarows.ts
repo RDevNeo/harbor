@@ -57,8 +57,14 @@ export class MediaRows {
       const got = large ? this.take(`l:${m.path}`, `l${cap}:${m.path}`, m.path, cap) : this.take(null, `t:${m.path}`, m.path, this.pkg.images.THUMB_PX);
       if (!got) continue;
       const [w, h] = large ? fitIn(got.dims[0], got.dims[1], this.pkg.images.inlineSize(column)) : THUMB;
-      out.push({ image: got.image, caption: m.caption, large, w, h, path: m.path, video: false, name: "" });
+      out.push({ image: got.image, caption: m.caption, large, w, h, path: m.path, video: false, name: "", slot: -1, thumbs: 0 });
     }
+    // The thumbnails' places in their grid (chat.slint `ThumbGrid`): the large ones and videos show on their own.
+    const thumbs = out.filter((m) => !m.large);
+    thumbs.forEach((m, i) => {
+      m.slot = i;
+      m.thumbs = thumbs.length;
+    });
     return out;
   }
 
@@ -111,7 +117,7 @@ export class MediaRows {
     const name = this.pkg.images.imageName(path);
     const wide = Math.min(max[0], 360);
     const [w, h] = got ? fitIn(got.dims[0], got.dims[1], max) : [wide, Math.round(wide * 0.5625)];
-    return { image: got?.image ?? noPixels, caption: "", large: true, w: Math.max(w, 160), h: Math.max(h, 90), path, video: true, name };
+    return { image: got?.image ?? noPixels, caption: "", large: true, w: Math.max(w, 160), h: Math.max(h, 90), path, video: true, name, slot: -1, thumbs: 0 };
   }
 
   /** After a build: images no card asked for since the last sweep are let go (decoded again if shown again). */
