@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.4] - 2026-11-02
+
 ### Changed
 - Discord: a captcha card in a chat is fluid. The card asks for the next frame and gets it as soon as
   the captcha changes, instead of asking on a timer: on one PC a click shows in about 60 ms instead
