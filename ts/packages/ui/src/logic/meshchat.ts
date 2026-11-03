@@ -9,6 +9,8 @@ export interface ShellMesh {
   myName?(): string;
   home(c: Chat): { name: string; online: boolean } | null;
   peer(id: string): { name: string; online: boolean } | null;
+  /** The mesh's other PCs, for chat links naming one (chatlink.ts). */
+  peers?(): { name: string; online: boolean }[];
   remote(id: number): { running: boolean; queued: number } | null;
   typers(id: number): { device: string; label: string }[];
   viewers(id: number): { device: string; kind: string; label: string }[];

@@ -5,6 +5,7 @@ import type { Item } from "../src/logic/item.ts";
 import { fitIn } from "../src/mediarows.ts";
 import { parseSteps } from "../src/script.ts";
 import { marksOf } from "../src/shell.ts";
+import { linkAt } from "../src/markdown.ts";
 
 
 const user = (text: string): Item => ({ kind: "user", text, files: ["/tmp/a.txt"], at: 1, mentions: [], sender: "", intent: "" });
@@ -140,4 +141,23 @@ test("a chat in a worktree shows its folder mark, red once gone, and its PR's st
     pr_tip: "PR #42 · Open: Add thing",
   });
   expect(marksOf("/w/harbor-old-try", true, null)).toMatchObject({ worktree: "gone", worktree_tip: "Its worktree, harbor-old-try, is gone", pr: "" });
+});
+
+test("a reply's chat links read as their chat's title (markdown links keep their text) and redraw when it changes", () => {
+  const L = (gid: string) => `harbor://chat/${gid}?pc=desk`;
+  const items: Item[] = [{ kind: "text", text: `See ${L("g1")} or [that one](${L("g2")}), <${L("g3")}>; not \`${L("g1")}\`.`, at: 2 }];
+  const titles: Record<string, string> = { [L("g1")]: "Fix [login]", [L("g2")]: "Other", [L("g3")]: "Chat not found" };
+  const open = newOpened();
+  const card = () => transcriptCards(items, false, [], open, "", 0, () => [], () => false, null, (u) => titles[u] ?? u).find((c) => c.kind === "text");
+  const a = card();
+  expect(a?.blocks[0]?.plain).toBe(`See Fix [login] or that one, Chat not found; not ${L("g1")}.`);
+  expect(a?.text).toBe(items[0]?.kind === "text" ? items[0].text : "");
+  // A click on the title reports the link as written, which the shell opens (chatlink.ts openChatLink).
+  expect(linkAt(`at:${a?.blocks[0]?.key}:5`)).toBe(L("g1"));
+  expect(linkAt(`at:${a?.blocks[0]?.key}:${Buffer.byteLength("See Fix [login] or t")}`)).toBe(L("g2"));
+  expect(card()).toBe(a as never);
+  titles[L("g1")] = "Fix sign-in";
+  expect(card()?.blocks[0]?.plain).toStartWith("See Fix sign-in or that one");
+  // Without a resolver the text stays as written.
+  expect(transcriptCards(items, false, [], newOpened(), "").find((c) => c.kind === "text")?.blocks[0]?.plain).toStartWith(`See ${L("g1")}`);
 });

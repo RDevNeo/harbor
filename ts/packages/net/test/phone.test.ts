@@ -175,6 +175,46 @@ describe("the phone API's chats (api.rs App side)", () => {
     expect(v.parts).toBeUndefined();
   });
 
+  test("chat links in a reply read as their chat's title and carry what a tap opens (chat_links)", () => {
+    const store = Store.openAt(join(tmp, "chatlinks.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.peers.set("pc:laptop", newPeer({ id: "pc:laptop", name: "laptop", online: false }));
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh: null, version: "t", myFp: () => "", engine: null });
+    const lead = store.createChat(blankChat({ title: "Fix login", role: "lead", name: "lead" }));
+    const sub = store.createChat(blankChat({ title: "Check the API", role: "sub", parent: lead.id, name: "api" }));
+    const copy = store.createChat(blankChat({ title: "Laptop's chat", home: "pc:laptop" }));
+    const where = store.createChat(blankChat({ title: "where" }));
+    const L = (gid: string, pc = "") => `harbor://chat/${gid}${pc === "" ? "" : `?pc=${pc}`}`;
+    const text = `See ${L(sub.gid, "desk")}. Or [the lead](${L(lead.gid)}), ${L(copy.gid, "laptop")}, ${L("nope", "laptop")} and ${L("gone", "desk")}; not \`${L(lead.gid)}\`.`;
+    store.saveItems(where.id, [{ kind: "text", text, at: 5 }]);
+    const items = (global: boolean) => (routes.items(where, 0, null, global) as { items: Record<string, Json>[] }).items;
+    const [v] = items(true);
+    const links = v?.chat_links as Record<string, { title: string; chat: Json; missing: string }>;
+    expect(links[L(sub.gid, "desk")]).toEqual({ title: "Fix login › api", chat: sub.gid, missing: "" });
+    expect(links[L(lead.gid)]).toEqual({ title: "Fix login", chat: lead.gid, missing: "" });
+    expect(links[L(copy.gid, "laptop")]).toEqual({ title: "Laptop's chat", chat: copy.gid, missing: "" });
+    expect(links[L("nope", "laptop")]).toEqual({ title: "laptop is offline", chat: null, missing: "laptop is offline" });
+    expect(links[L("gone", "desk")]).toEqual({ title: "Chat not found", chat: null, missing: "Chat not found" });
+    // The blocks read as the titles, each span keeping the link as written; code stays as it is.
+    const spans = ((v?.blocks as { spans: { text: string; link?: string }[] }[])[0]?.spans ?? []).filter((x) => x.link);
+    expect(spans.map((x) => [x.text, x.link])).toEqual([
+      ["Fix login › api", L(sub.gid, "desk")],
+      ["the lead", L(lead.gid)],
+      ["Laptop's chat", L(copy.gid, "laptop")],
+      ["laptop is offline", L("nope", "laptop")],
+      ["Chat not found", L("gone", "desk")],
+    ]);
+    expect(v?.markdown).toBe(text);
+    // Without X-Harbor-Ids: global, this hub's ids.
+    expect((items(false)[0]?.chat_links as Record<string, { chat: Json }>)[L(lead.gid)]?.chat).toBe(lead.id);
+    // A reply without chat links sends none.
+    store.saveItems(where.id, [{ kind: "text", text: "plain", at: 5 }]);
+    expect(items(true)[0]?.chat_links).toBeUndefined();
+    store.close();
+  });
+
   test("a_retired_agent_is_not_writable_on_the_phone", () => {
     const store = Store.openAt(join(tmp, "retired.db"));
     const hub = new Hub([], 0);

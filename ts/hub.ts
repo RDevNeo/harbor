@@ -94,6 +94,7 @@ import {
   preview,
   outgoingCtx,
   knowDevices,
+  chatLink as chatLinkOf,
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
@@ -630,7 +631,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     isForeign: (chat) => hub.mesh.foreign.has(chat),
     copyTurn: (chat) => replica.remote.get(chat) ?? null,
     hostname: () => hub.mesh.me.name,
-    chatLink: (c) => `harbor://chat/${c.gid}?pc=${encodeURIComponent(hub.mesh.me.name)}`,
+    // Names the chat's own PC (a copy's home), as chatlink.rs `App::chat_link` did.
+    chatLink: (c) => chatLinkOf(c.gid, homeName(c)),
     remoteSpec,
     hookBase: () => hookcert.publicBase() ?? funnel.base,
     offline,

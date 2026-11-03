@@ -61,4 +61,13 @@ describe("chatlink", () => {
     expect(openChatLink(world, `${SCHEME}nope`, (id) => opened.push(id))).toEqual({ error: "Chat not found" });
     expect(opened).toEqual([1]);
   });
+
+  test("a link with this PC's own chat id for a gid (as agents sometimes write) opens that chat here, never a copy's or another PC's", () => {
+    const here: ChatLinkWorld = { ...world, me: "Box", chats: [...world.chats, { id: 7, gid: "g7", title: "Bike", name: "", role: "lead", parent: null }, { id: 8, gid: "g8", title: "Copy", name: "", role: "lead", parent: null, home: "pc:desk" }] };
+    expect(chatLinkTarget(here, `${SCHEME}7?pc=box`)).toEqual({ id: 7, title: "Bike", missing: "" });
+    expect(chatLinkTarget(here, `${SCHEME}7`).id).toBe(7);
+    expect(chatLinkTarget(here, `${SCHEME}7?pc=desk`).id).toBeNull();
+    expect(chatLinkTarget(here, `${SCHEME}8?pc=box`).id).toBeNull();
+    expect(chatLinkTarget(world, `${SCHEME}7?pc=box`).missing).toBe("Chat not found");
+  });
 });

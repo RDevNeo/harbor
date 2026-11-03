@@ -58,7 +58,7 @@ export interface EngineHost {
   noteTurn?(chatId: number, sub: boolean, failed: boolean, said: string): void;
   /** The chat is on screen with the window focused. */
   visible?(chatId: number): boolean;
-  /** `harbor://chat/<id>?pc=<PC>` (net's chatlink.rs). */
+  /** `harbor://chat/<gid>?pc=<PC>` (net's chatlink.ts `chatLink`). */
   chatLink?(chat: Chat): string;
   /** Where /hooks is reachable from outside (Harbor's own HTTPS, else Tailscale Funnel), ending in /hooks; null: only this PC. */
   hookBase?(): string | null;
@@ -1476,7 +1476,7 @@ export class Engine {
   }
 
   chatLink(c: Chat): string {
-    return this.host.chatLink?.(c) ?? `harbor://chat/${c.id}`;
+    return this.host.chatLink?.(c) ?? `harbor://chat/${c.gid}`;
   }
 
   /** A webhook's local address, and its public one when /hooks is reachable from outside (team.rs `hook_url`). */

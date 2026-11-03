@@ -1,6 +1,6 @@
 import * as slint from "slint-ui";
 import { ICONS, type IconName } from "./icons.ts";
-import { actions, type Card, groupLabel, groups, project, type Viewer } from "@harbor/net";
+import { actions, type Card, CHAT_SCHEME, chatLinks, groupLabel, groups, labelChatLinks, project, type Viewer } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
@@ -200,6 +200,21 @@ export type MediaOf = (c: Card) => MediaRow[];
 
 /** Whether a captcha (by id) is known to wait no more: its card says so in one line. */
 export type CaptchaGone = (id: string) => boolean;
+/** The title a chat link (`harbor://chat/…`, as written) reads as: the chat's, or why it can't open (net's chatlink.ts `chatLinkTarget`). */
+export type LinkTitle = (url: string) => string;
+
+/** A reply's text with its bare chat links as markdown links labelled with their chat's title (chat.rs `labelled`). */
+export function labelLinks(md: string, title: LinkTitle | null): string {
+  return title === null || !md.includes(CHAT_SCHEME) ? md : labelChatLinks(md, title);
+}
+
+/** What a reply's chat links read as now, for its card's signature: a renamed chat redraws it. */
+function linkSig(text: string, title: LinkTitle | null): string {
+  if (title === null || !text.includes(CHAT_SCHEME)) return "";
+  return chatLinks(text)
+    .map(([u]) => title(u))
+    .join("|");
+}
 
 /** A Discord captcha notice (logic/captchacard.ts `captchaRoles`): the live card, its outcome line, or nothing. */
 function captchaCard(d: CardData, c: Extract<Card, { kind: "notice" }>, r: CaptchaRole, gone: CaptchaGone): CardData | null {
@@ -208,7 +223,7 @@ function captchaCard(d: CardData, c: Extract<Card, { kind: "notice" }>, r: Captc
   return { ...d, kind: "notice", icon: ICONS[r.note.state === "joined" ? "USER_CHECK" : "CIRCLE_SLASH"], text: c.text };
 }
 
-function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: MediaOf, captcha?: CaptchaRole, gone: CaptchaGone = () => false): CardData | null {
+function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: MediaOf, captcha?: CaptchaRole, gone: CaptchaGone = () => false, linkTitle: LinkTitle | null = null): CardData | null {
   const at = c.kind === "user" || c.kind === "text" ? c.at : 0;
   const d = { ...blank(seq), actions: c.kind === "user" || c.kind === "text" ? actions(c) : [], time: at > 0 ? clock(at, off) : "", media: mediaOf(c) };
   switch (c.kind) {
@@ -217,7 +232,7 @@ function cardData(c: Card, seq: number, open: Opened, off: number, mediaOf: Medi
     case "user":
       return { ...d, kind: "user", blocks: [{ kind: "p", text: userText(parts(c.text, c.mentions)), code: "", level: 0, marker: "", depth: 0, quote: 0, cols: [], rows: 0, gap: 0, after: 0, bar_top: 0, bar_bottom: 0, trim: 0, plain: "", key: "" }], text: c.text, ...senderLine(c), joined: c.joined, files: c.files.map(base), steer: c.intent !== "" };
     case "text": {
-      const md = stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path));
+      const md = labelLinks(stripDrawn(c.text, d.media.filter((m) => m.large).map((m) => m.path)), linkTitle);
       return { ...d, kind: "text", blocks: mdBlocks(md, seq), text: c.text };
     }
     case "thinking":
@@ -260,7 +275,7 @@ function signature(it: Item, open: Opened, seq: number, media: string): string {
   return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
 }
 
-export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false, viewer: Viewer | null = null): CardData[] {
+export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false, viewer: Viewer | null = null, linkTitle: LinkTitle | null = null): CardData[] {
   // A copy of another PC's chat: the sender rows are this PC's view of it (senders.ts Viewer).
   const all = project(items, lead, forks, viewer);
   const who = viewer ? `${viewer.dev}|${viewer.label}|${viewer.home.name}|${viewer.home.owner}` : "";
@@ -286,10 +301,10 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     const item = items[s.seq];
     const media = mediaOf(s.card);
     const cap = captchas.get(s.seq);
-    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") + (item.kind === "user" ? `:${who}` : "") : "";
+    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") + (item.kind === "user" ? `:${who}` : "") + (s.card.kind === "text" ? linkSig(s.card.text, linkTitle) : "") : "";
     const hit = open.memo.get(s.seq);
     const same = hit !== undefined && hit.item === item && hit.sig === sig;
-    const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media, cap, gone);
+    const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media, cap, gone, linkTitle);
     if (item) {
       open.memo.set(s.seq, same && hit.joins ? { item, sig, data: c, joins: hit.joins } : { item, sig, data: c });
       built.add(s.seq);

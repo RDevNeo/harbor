@@ -123,13 +123,19 @@ chat({ repoId: api, title: "Rate limiter", role: "sub", parent: lead.id, name: "
   say("Done: 100 requests a minute per key, `429` with `Retry-After`.", ago(8)),
   done(ago(8), 0.21),
 ]);
-chat({ repoId: api, title: "Dashboard page", role: "sub", parent: lead.id, name: "dash", updated: ago(1) }, [user("A page listing keys near their limit.", ago(54))]);
+const dash = chat({ repoId: api, title: "Dashboard page", role: "sub", parent: lead.id, name: "dash", updated: ago(1) }, [user("A page listing keys near their limit.", ago(54))]);
 seed.setMainChat(api, lead.id);
 
 const linked = chat({ repoId: web, title: "Move images to the CDN", updated: ago(90) }, [
   user("Serve product images from the CDN.", ago(100)),
   say("Done: images now load from the CDN with a 1-day cache.", ago(90)),
   done(ago(90), 0.31),
+]);
+// Chat links in a reply (chatlink.ts): a sub-agent's, a markdown link, and one this hub doesn't have.
+seed.saveItems(lead.id, [
+  ...seed.items(lead.id),
+  user("Where are the agents' chats?", ago(1)),
+  say(`The dashboard is in harbor://chat/${dash.gid}?pc=rig, and the CDN work is in [the images chat](harbor://chat/${linked.gid}?pc=rig). The old one, harbor://chat/0b5e1c2a-0000-4000-8000-000000000000?pc=rig, is gone.`, ago(1)),
 ]);
 chat({ repoId: web, title: "Fork: CDN cache headers", updated: ago(80) }, [
   notice("fork", "Forked", `harbor:chat/${linked.id}/1`),

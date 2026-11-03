@@ -130,12 +130,16 @@ export interface LinkChat {
   /** "sub" for a sub-agent. */
   role: string;
   parent: number | null;
+  /** The PC it lives on ("" for this PC's own). */
+  home?: string;
 }
 
 /** What a link is resolved against: this PC's chats and the mesh's PCs. */
 export interface ChatLinkWorld {
   chats: readonly LinkChat[];
   peers: readonly { name: string; online: boolean }[];
+  /** This PC's name: a link naming it (or no PC) with a number for an id means this PC's own chat of that id. */
+  me?: string;
 }
 
 /** A chat's title as links show it: a sub-agent's under its lead's. */
@@ -154,10 +158,12 @@ function asciiLower(s: string): string {
 export function chatLinkTarget(world: ChatLinkWorld, url: string): ChatLinkTarget {
   const p = parseChatLink(url);
   if (!p) return { id: null, title: url, missing: "Not a chat link" };
-  const c = world.chats.find((x) => x.gid === p.gid);
-  if (c) return { id: c.id, title: chatLinkTitle(world, c), missing: "" };
   const pc = urlDecode(p.pc);
   const lower = asciiLower(pc);
+  // A gid is a UUID; agents sometimes wrote this PC's own chat id instead (list_chats shows both).
+  const mine = pc === "" || (world.me !== undefined && asciiLower(world.me) === lower);
+  const c = world.chats.find((x) => x.gid === p.gid) ?? (mine && /^\d+$/.test(p.gid) ? world.chats.find((x) => String(x.id) === p.gid && (x.home ?? "") === "") : undefined);
+  if (c) return { id: c.id, title: chatLinkTitle(world, c), missing: "" };
   const off = pc !== "" && world.peers.some((x) => asciiLower(x.name) === lower && !x.online);
   const missing = off ? `${pc} is offline` : "Chat not found";
   return { id: null, title: missing, missing };

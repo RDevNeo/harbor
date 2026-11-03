@@ -47,6 +47,11 @@ export class WindowMesh {
     return p ? { name: p.name, online: p.online && this.d.hub.mesh.on } : null;
   }
 
+  peers(): { name: string; online: boolean }[] {
+    const m = this.d.hub.mesh;
+    return [...m.peers.values()].map((p) => ({ name: p.name, online: p.online && m.on }));
+  }
+
   remote(id: number): RemoteState | null {
     return this.d.replica.remote.get(id) ?? null;
   }

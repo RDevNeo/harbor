@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
-import { clearDeviceTransfers, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
+import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
@@ -1026,7 +1026,7 @@ export class Shell {
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat));
+    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat), this.linkTitle());
     if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);
@@ -3163,6 +3163,13 @@ export class Shell {
       if (hit !== null) this.openLink(hit);
       return;
     }
+    // A chat link in a reply (chatlink.ts): opens that chat here, a copy of another PC's or a
+    // sub-agent's too, never the system's harbor:// handler; a short notice says why it can't.
+    if (url.startsWith(CHAT_SCHEME)) {
+      const r = openChatLink(this.linkWorld(), url, (id) => this.openChat(id));
+      if ("error" in r) this.toast(r.error);
+      return;
+    }
     const chat = /^harbor:chat\/(.+)$/.exec(url);
     if (chat?.[1]) {
       const c = this.data.chats.find((x) => x.gid === chat[1]);
@@ -3176,6 +3183,17 @@ export class Shell {
     }
     if (url.startsWith("harbor:")) return;
     this.openExternal(url);
+  }
+
+  /** What chat links resolve against: this PC's chats (copies of other PCs' included) and the mesh's PCs. */
+  private linkWorld(): ChatLinkWorld {
+    return { chats: this.data.chats, peers: this.hub.mesh?.peers?.() ?? [], me: this.hub.mesh?.myName?.() ?? hostname() };
+  }
+
+  /** The title each chat link in a reply reads as, against the chats as they are now. */
+  private linkTitle(): (url: string) => string {
+    let world: ChatLinkWorld | null = null;
+    return (url) => chatLinkTarget((world ??= this.linkWorld()), url).title;
   }
 
   private stepSelButton(): void {

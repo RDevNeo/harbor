@@ -5,6 +5,7 @@ import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
 import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
+import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
 import { forHome, startsTurn, type Mesh } from "./mesh.ts";
 import { Once, sendKey } from "./once.ts";
 import { sameRemote } from "./meshstore.ts";
@@ -244,7 +245,10 @@ export interface CommitLookup {
   tokens(text: string): [number, number][];
 }
 
-export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null, commits: CommitLookup | null = null): Record<string, Json> {
+/** A reply's chat links as this hub resolves them (`chat_links`): link as written → `{title, chat, missing}`, `chat` already in the caller's ids. */
+export type LinkTargets = (md: string) => Record<string, { title: string; chat: Json; missing: string }>;
+
+export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], chat: string, time: (at: number) => string = clock, refs: MediaRefs | null = null, commits: CommitLookup | null = null, links: LinkTargets | null = null): Record<string, Json> {
   const all = cardMedia(s.card, find);
   const images: Json[] = all.filter((m) => !m.video).map((m) => ({ name: m.url !== null ? mediaName(m) : fileName(m.path), url: imageUrl(m.path) }));
   const large = all.filter((m) => m.shown || m.video);
@@ -272,7 +276,13 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       }
       break;
     case "text": {
-      const label = (md: string) => (refs ? refs.strip(md) : md);
+      // A chat link reads as its chat's title, as on the desktop (api.rs `chat_links`).
+      const targets = links && c.text.includes(CHAT_SCHEME) ? links(c.text) : {};
+      const titled = Object.keys(targets).length > 0;
+      const label = (md: string) => {
+        const t = refs ? refs.strip(md) : md;
+        return titled ? labelChatLinks(t, (u) => targets[u]?.title ?? u) : t;
+      };
       const ps = refs ? refs.parts(c.text) : [];
       if (ps.length > 1) {
         let n = 0;
@@ -285,6 +295,7 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
       const known = commits ? commits.ofText(c.text) : new Map<string, CommitRef>();
       if (commits) markCommits(bs, known, (t) => commits.tokens(t));
       v = { markdown: c.text, blocks: bs as Json, images, at: c.at, forkable: c.forkable };
+      if (titled) v.chat_links = targets;
       if (known.size > 0) v.commits = Object.fromEntries([...known.values()].map((x) => [x.sha, { sha: x.sha, short: x.short, subject: x.subject, author: x.author, at: x.at }]));
       break;
     }
@@ -628,7 +639,13 @@ export class PhoneRoutes {
     return { dev: phoneDev(hub.groupOf(token)), label: hub.callerLabel(token, device), home };
   }
 
-  items(c: Chat, since: number, viewer: Viewer | null = null): Json {
+  /** What chat links resolve against here: this PC's chats (copies included) and the mesh's PCs. */
+  private linkWorld(): ChatLinkWorld {
+    const m = this.d.hub.mesh;
+    return { chats: this.chats(), peers: m.on ? [...m.peers.values()].map((p) => ({ name: p.name, online: p.online })) : [], me: m.me.name === "" ? hostname() : m.me.name };
+  }
+
+  items(c: Chat, since: number, viewer: Viewer | null = null, global = false): Json {
     const hub = this.d.hub;
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
     if (this.d.engine?.opened(c.id)) hub.bump();
@@ -638,10 +655,22 @@ export class PhoneRoutes {
     const key = `${c.id}|${viewer ? `${viewer.dev}|${viewer.label}|${viewer.home.name}|${viewer.home.owner}` : ""}`;
     const revs = this.revs.get(key) ?? [];
     const look = this.d.commits?.(c) ?? null;
+    let world: ChatLinkWorld | null = null;
+    const byId = (id: number | null): Json => {
+      if (id === null) return null;
+      const x = global ? (world ??= this.linkWorld()).chats.find((y) => y.id === id) : null;
+      return global ? (x?.gid ?? null) : id;
+    };
+    const links: LinkTargets = (md) => {
+      const out: Record<string, { title: string; chat: Json; missing: string }> = {};
+      for (const [u, t] of Object.entries(chatLinkTargets((world ??= this.linkWorld()), md))) out[u] = { title: t.title, chat: byId(t.chat), missing: t.missing };
+      return out;
+    };
+    const linkSig = (text: string) => (text.includes(CHAT_SCHEME) ? JSON.stringify(links(text)) : "");
     const hashes = cards.map((s, i) => {
       const it = items[i];
       const shas = look && s.card.kind === "text" ? [...look.ofText(s.card.text).keys()].sort().join(",") : "";
-      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && `${s.card.joined}|${s.card.sender}|${s.card.who}|${s.card.via}`}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
+      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && `${s.card.joined}|${s.card.sender}|${s.card.who}|${s.card.via}`}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}|${s.card.kind === "text" ? linkSig(s.card.text) : ""}`;
       return (it ? fingerprint(it) : 0n) ^ hashStr(extra);
     });
     revs.length = Math.min(revs.length, hashes.length);
@@ -658,8 +687,8 @@ export class PhoneRoutes {
     const out = cards
       .filter((s) => (revs[s.seq]?.[1] ?? 0) > since)
       .map((s) => {
-        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null, look);
-        if (v.kind === "chat_link") v.chat = this.chats().find((x) => x.gid === v.gid)?.id ?? null;
+        const v = cardJson(s, revs[s.seq]?.[1] ?? 0, find, c.gid === "" ? String(c.id) : c.gid, this.d.clock ?? clock, this.d.refs ?? null, look, links);
+        if (v.kind === "chat_link") v.chat = byId(this.chats().find((x) => x.gid === v.gid)?.id ?? null);
         return v;
       });
     return { rev: hub.rev(), count: items.length, running: this.running(c), queued: this.queuedCount(c), typing: this.typing(c.id), draft: this.draft(c.id), status: this.status(c.id), items: out };
@@ -690,7 +719,7 @@ export class PhoneRoutes {
     if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global, who);
     if (m === "GET" && p.length === 4 && p[3] === "items") {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");
-      return ok(this.items(c, Number.isFinite(since) ? since : 0, call.from ? null : this.viewer(c, call.token, call.device)));
+      return ok(this.items(c, Number.isFinite(since) ? since : 0, call.from ? null : this.viewer(c, call.token, call.device), call.global));
     }
     if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender, device, by, who);
     if (m === "GET" && p.length === 4 && p[3] === "move_targets") return this.d.move ? ok(await this.d.move.targetsJson(c.id)) : err(404, "no such call");
