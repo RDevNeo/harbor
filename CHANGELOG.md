@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.137.0] - 2026-11-03
+
 ### Changed
 - Sharing a project with a workspace (or moving it to one) shares the project, not everyone's chats
   in it: each person sees their own chats in a shared project, and another person's chats show
