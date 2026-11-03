@@ -278,33 +278,39 @@ export async function run(args: string[], opts: RunOptions = {}): Promise<void> 
   const version = opts.version ?? harborVersion();
   for await (const line of io.lines) {
     const req = parseJson(line);
-    if (!isObject(req) || !("id" in req)) continue;
-    const id = req.id as Json;
-    const params = isObject(req.params) ? req.params : {};
-    let result: Json;
-    switch (typeof req.method === "string" ? req.method : "") {
-      case "initialize":
-        result = {
-          protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
-          capabilities: { tools: {} },
-          serverInfo: { name: "harbor", version },
-        };
-        break;
-      case "tools/list":
-        result = { tools: tools(role) };
-        break;
-      case "tools/call": {
-        const [ok, text] = await call(chat, typeof params.name === "string" ? params.name : "", params.arguments ?? null);
-        result = { content: [{ type: "text", text }], isError: !ok };
-        break;
-      }
-      case "ping":
-        result = {};
-        break;
-      default:
-        if (!io.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } }))) return;
-        continue;
-    }
-    if (!io.write(JSON.stringify({ jsonrpc: "2.0", id, result }))) return;
+    if (!isObject(req)) continue;
+    const out = await answer(req, chat, role, call, version);
+    if (out !== null && !io.write(JSON.stringify(out))) return;
   }
+}
+
+/** The team server's answer to one message (null for a notification): `harbor mcp` over stdio, and the bridge without a process. */
+export async function answer(req: JsonObject, chat: number, role: string, call: (chat: number, name: string, args: Json) => Promise<[boolean, string]>, version: string): Promise<Json | null> {
+  if (!("id" in req)) return null;
+  const id = req.id as Json;
+  const params = isObject(req.params) ? req.params : {};
+  let result: Json;
+  switch (typeof req.method === "string" ? req.method : "") {
+    case "initialize":
+      result = {
+        protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
+        capabilities: { tools: {} },
+        serverInfo: { name: "harbor", version },
+      };
+      break;
+    case "tools/list":
+      result = { tools: tools(role) };
+      break;
+    case "tools/call": {
+      const [ok, text] = await call(chat, typeof params.name === "string" ? params.name : "", params.arguments ?? null);
+      result = { content: [{ type: "text", text }], isError: !ok };
+      break;
+    }
+    case "ping":
+      result = {};
+      break;
+    default:
+      return { jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } };
+  }
+  return { jsonrpc: "2.0", id, result };
 }

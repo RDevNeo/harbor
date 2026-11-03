@@ -159,6 +159,34 @@ test("remote_turn_sends_the_login_on_stdin", async () => {
   }
 });
 
+// A local turn's stdio servers go on a bridge grant of its own (they start only when a tool is called); without any, the grant is dropped.
+test("a local turn hands its stdio servers to the bridge and keeps the grant only when it has some", async () => {
+  const was = { ...agent.integrations };
+  const revoked: string[] = [];
+  agent.integrate({
+    bridge: { ...fakeBridge, revoke: (t) => revoked.push(t) },
+    servers: {
+      ...was.servers,
+      claudeConfig: (chat, extra, _apps, lazy) => {
+        for (const [k, v] of extra) if (lazy) lazy.servers[k] = v;
+        return `${lazy?.base ?? "none"}|${chat}`;
+      },
+    },
+  });
+  try {
+    const team = { role: "lead" as const, system: "lead" };
+    let { cmd, grant } = await agent.build(spec({ team }));
+    expect((grant?.servers.harbor as { args: string[] }).args.slice(-5)).toEqual(["mcp", "--chat", "999995", "--role", "lead"]);
+    expect(after(cmd.args, "--mcp-config")).toBe(`http://127.0.0.1:4242/${grant?.token}/|999995`);
+    expect(revoked).toEqual([]);
+    ({ grant } = await agent.build(spec()));
+    expect(grant).toBeNull();
+    expect(revoked).toHaveLength(1);
+  } finally {
+    agent.integrate(was);
+  }
+});
+
 test("a remote turn without the net package says so instead of running", async () => {
   const remote: agent.RemoteSpec = { ssh: [], host: "box", name: "box", family: "posix", dir: "~", setup: [], bridge: false, commands: false, workspace: false, token: null, note: "" };
   const was = { ...agent.integrations };

@@ -335,7 +335,7 @@ done`;
   expect(Date.now() - t).toBeGreaterThanOrEqual(waits.wait - 50);
   expect(out).toContain('"id":9');
   expect(out).toContain("didn't answer");
-  [, body] = await call(p, path, '{"jsonrpc":"2.0","id":10,"method":"tools/list"}');
+  [, body] = await call(p, path, '{"jsonrpc":"2.0","id":10,"method":"other"}');
   expect((parse(body).result as { ok: boolean }).ok).toBe(true);
   expect(readFileSync(pids, "utf8").trim().split("\n")).toHaveLength(2);
   // It came back initialized, as the agent left it.

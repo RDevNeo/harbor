@@ -86,8 +86,8 @@ export interface Workspace {
 
 /** mcp.rs: the servers a turn gets. */
 export interface Servers {
-  /** Claude Code's `--mcp-config` file for a turn; returns its path. */
-  claudeConfig(chatId: number, extra: [string, unknown][], apps: boolean): string | Promise<string>;
+  /** Claude Code's `--mcp-config` file for a turn; returns its path. With `lazy`, stdio servers go on the turn's bridge grant (`servers`) and the file names their URLs (`base` + name): they start only when a tool is called. */
+  claudeConfig(chatId: number, extra: [string, unknown][], apps: boolean, lazy?: { servers: Record<string, unknown>; base: string } | null): string | Promise<string>;
   claudeServers(extra: [string, unknown] | null): Record<string, unknown> | Promise<Record<string, unknown>>;
   codexArgs(): string[] | Promise<string[]>;
   machinesName: string;
@@ -361,17 +361,17 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
         if (!spec.remote) {
           const apps = overlay === null || spec.context.signedIn;
           const extra: [string, unknown][] = harbor ? [harbor] : [];
-          // Every PC's files through the bridge (machines.rs), on a grant of its own.
+          // A grant of its own on the bridge: every PC's files (machines.rs), and the stdio servers, which then start only when a tool is called.
           const br = integrations.bridge;
-          if (!isNull(spec.context.machines) && br) {
-            const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: spec.context.machines };
-            const port = await br.grant(g);
-            if (port !== null) {
-              extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${port}/${g.token}/${sv.machinesName}` }]);
-              grant = g;
-            }
+          const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: isNull(spec.context.machines) ? null : spec.context.machines };
+          const port = br ? await br.grant(g) : null;
+          if (port !== null && g.machines !== null) extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${port}/${g.token}/${sv.machinesName}` }]);
+          const lazy = port === null ? null : { servers: g.servers, base: `http://127.0.0.1:${port}/${g.token}/` };
+          args.push("--strict-mcp-config", "--mcp-config", await sv.claudeConfig(spec.chatId, extra, apps, lazy));
+          if (port !== null) {
+            if (g.machines !== null || Object.keys(g.servers).length > 0) grant = g;
+            else br?.revoke(g.token);
           }
-          args.push("--strict-mcp-config", "--mcp-config", await sv.claudeConfig(spec.chatId, extra, apps));
         } else {
           const r = spec.remote;
           const servers: Record<string, unknown> = r.bridge ? await sv.claudeServers(harbor) : harbor ? { [harbor[0]]: harbor[1] } : {};

@@ -5,6 +5,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- MCP servers cost nothing until an agent calls one of their tools. Claude Code connects every
+  server at the start of every turn; Harbor now answers that handshake (`initialize`, the tool,
+  prompt and resource lists, the listen of the 2026 protocol) from what each server said last
+  time, starts the server only for a tool call, and stops it after a minute without calls (five
+  for a browser). A turn on this PC gets its stdio servers (Gmail, Discord, the team server and
+  your own from `~/.claude.json`) through Harbor's MCP bridge, as turns on other devices already
+  did. A waiting turn with the usual set went from about a dozen helper processes (~400 MB) to
+  none, and its first request to the model no longer waits for them to start. Gmail and Discord
+  run once for every chat that calls them (Discord once per chat), at most two servers start at
+  once and eight stay up, the idle ones go first. The team server runs inside Harbor, with no
+  process. Entries Claude Code expands itself (`${VAR}`) and Codex turns are as before; a chat
+  commanded from another PC passes only the team server through the bridge.
+
 ## [0.124.5] - 2026-11-03
 
 ### Changed

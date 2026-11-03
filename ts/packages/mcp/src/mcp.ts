@@ -27,6 +27,7 @@ import {
 } from "./apps.ts";
 import { type Json, isObject, parseObject } from "./json.ts";
 import { providers } from "@harbor/agents";
+import { urlEncode } from "@harbor/net";
 import { selfExe } from "./sys.ts";
 
 export * from "./apps.ts";
@@ -214,11 +215,33 @@ export async function claudeServers(extra?: [string, Json]): Promise<Record<stri
   return m;
 }
 
+/** A local turn's grant on the bridge: stdio servers moved there start only when a tool is called (bridge.ts, lazy.ts). */
+export interface Lazy {
+  /** The grant's servers, filled here. */
+  servers: Record<string, Json>;
+  /** `http://127.0.0.1:<port>/<token>/`: a server's URL is this and its name. */
+  base: string;
+}
+
+/**
+ * Which entries go through the bridge: stdio servers whose entry needs nothing of Claude's own (no `${VAR}` it would
+ * expand). With the apps off (a chat commanded from another PC) only Harbor's team server: the bridge starts servers
+ * with this PC's sign-ins, which such a turn must not get.
+ */
+function lazyable(v: Json, apps: boolean): boolean {
+  if (!isObject(v) || typeof v.command !== "string" || (v.type !== undefined && v.type !== "stdio")) return false;
+  if (JSON.stringify(v).includes("${")) return false;
+  if (apps) return true;
+  const env = v.env;
+  const args = Array.isArray(v.args) ? v.args : [];
+  return isObject(env) && typeof env.HARBOR_SOCK === "string" && args.includes("mcp") && args.includes("--chat");
+}
+
 /**
  * Claude Code's `--mcp-config` file for a turn (with `--strict-mcp-config`): the local servers that are
  * on, the signed-in apps and `extra` (Harbor's team server). Written 0600, since it holds tokens.
  */
-export async function claudeConfig(chatId: number, extra: [string, Json][], apps: boolean): Promise<string> {
+export async function claudeConfig(chatId: number, extra: [string, Json][], apps: boolean, lazy?: Lazy | null): Promise<string> {
   const m = await claudeServers();
   for (const [k, v] of extra) m[k] = v;
   if (!apps) {
@@ -227,6 +250,13 @@ export async function claudeConfig(chatId: number, extra: [string, Json][], apps
   // Harbor's own apps learn their chat: Discord shows a captcha its call hits in this chat.
   for (const [k, v] of Object.entries(m)) {
     if (app(k)?.mcp.kind === "harbor" && typeof v === "object" && v !== null && !Array.isArray(v)) m[k] = { ...v, env: { HARBOR_CHAT_ID: String(chatId) } };
+  }
+  if (lazy) {
+    for (const [k, v] of Object.entries(m)) {
+      if (!lazyable(v, apps)) continue;
+      lazy.servers[k] = v;
+      m[k] = { type: "http", url: `${lazy.base}${urlEncode(k)}` };
+    }
   }
   const p = join(privateDir(join(dir(), "run")), `claude-${chatId}.json`);
   try {

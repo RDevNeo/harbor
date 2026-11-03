@@ -12,6 +12,9 @@ import { grantFrom, type Grant as MachinesGrant, mcp as machinesMcp, NAME as MAC
 import { hostname } from "@harbor/net";
 import { agentProcessEnv, OUTPUT_MAX, shell, token } from "./shell.ts";
 import { harborVersion } from "./version.ts";
+import { ackFor, asked, cached, flush, idleFor, limits, remember, rememberAck, requestKey, serverKey, starts } from "./lazy.ts";
+import { answer as teamAnswer, callApp } from "./mcpshim.ts";
+import { selfExe } from "./sys.ts";
 import { call as workspaceCall, resolve, tools as workspaceTools } from "./workspace.ts";
 
 export { OUTPUT_MAX, shell, token };
@@ -107,6 +110,8 @@ interface Wait {
   id: Json;
   progress: Json;
   tool: boolean;
+  /** A `subscriptions/listen`: open for as long as the agent wants, so it doesn't keep the server from stopping. */
+  listen: boolean;
 }
 
 let procs = 0;
@@ -200,14 +205,29 @@ class Proc {
   }
 }
 
-/** A stdio server's process, the `initialize` it got (replayed if it restarts), and the last id the bridge gave a request on its way there. */
+/** A stdio server's process, the `initialize` it got (replayed if it restarts), and the last id the bridge gave a request on its way there. The process starts only for a request the cache can't answer, and stops once unused for `idle`. Harbor's own app servers are one slot for every turn that has the same entry; any other server is a turn's own. */
 class Slot {
   proc: Proc | null = null;
   init: Obj | null = null;
   next = 0;
   /** The turn ended: nothing starts here anymore. */
   closed = false;
+  /** The grants that use it. */
+  readonly users = new Set<string>();
+  /** When a request last came or ended. */
+  used = Date.now();
+  /** Who waits for the server's next start (the agents' open listens). */
+  private starting: (() => void)[] = [];
   private tail: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    readonly key: string,
+    readonly def: Obj,
+    readonly cwd: string,
+    /** Its answers in the cache. */
+    readonly ckey: string,
+    readonly idle: number,
+  ) {}
 
   /** Held only to start the server and send to it. */
   lock<T>(fn: () => Promise<T>): Promise<T> {
@@ -221,6 +241,21 @@ class Slot {
     this.proc = null;
     p?.kill();
   }
+
+  /** Resolves when a new process is up (or the slot closed). */
+  nextStart(): Promise<void> {
+    return new Promise((r) => this.starting.push(r));
+  }
+
+  started(): void {
+    for (const r of this.starting.splice(0)) r();
+  }
+
+  close(): void {
+    this.closed = true;
+    this.stop();
+    this.started();
+  }
 }
 
 interface Live {
@@ -229,20 +264,93 @@ interface Live {
 }
 
 const GRANTS = new Map<string, Live>();
+/** Every slot, by key: a grant's own (`<token>\0<name>`) or a shared one. */
+const SLOTS = new Map<string, Slot>();
 
-async function spawnServer(g: Grant, def: Obj): Promise<Proc | null> {
+/** Harbor's own app server (`harbor app <name>`): stateless, so turns with the same entry (same env: Discord's chat) share one. */
+function sharedKey(def: Obj): string | null {
+  const args = def.args;
+  if (def.command !== selfExe() || !Array.isArray(args) || args.length !== 2 || args[0] !== "app") return null;
+  return `app\0${JSON.stringify([def.command, args, def.env ?? null])}`;
+}
+
+function slotFor(live: Live, name: string, def: Obj): Slot {
+  const had = live.slots.get(name);
+  if (had && !had.closed) return had;
+  const shared = sharedKey(def);
+  const key = shared ?? `${live.grant.token}\0${name}`;
+  let s = SLOTS.get(key);
+  if (!s || s.closed) {
+    const cwd = shared !== null ? home() : live.grant.cwd;
+    s = new Slot(key, def, cwd, serverKey(def, cwd), idleFor(name, def));
+    SLOTS.set(key, s);
+  }
+  s.users.add(live.grant.token);
+  live.slots.set(name, s);
+  return s;
+}
+
+/** Harbor's team server (`harbor mcp --chat N --role R`, `HARBOR_SOCK` set): served here, without a process. */
+function teamOf(def: Obj): { chat: number; role: string; sock: string } | null {
+  const sock = isObject(def.env) ? def.env.HARBOR_SOCK : undefined;
+  const args = Array.isArray(def.args) ? def.args : [];
+  if (typeof sock !== "string" || args.length < 5) return null;
+  const [m, c, n, r, role] = args.slice(-5);
+  if (m !== "mcp" || c !== "--chat" || r !== "--role" || typeof n !== "string" || !/^\d+$/.test(n) || typeof role !== "string") return null;
+  return { chat: Number(n), role, sock };
+}
+
+function team(t: { chat: number; role: string; sock: string }, msg: Obj): Promise<Json | null> {
+  return teamAnswer(msg, t.chat, t.role, (c, n, a) => callApp(c, n, a, { path: t.sock }), harborVersion());
+}
+
+async function spawnServer(cwd: string, def: Obj): Promise<Proc | null> {
   const command = def.command;
   if (typeof command !== "string") return null;
   const args = Array.isArray(def.args) ? def.args.filter((a): a is string => typeof a === "string") : [];
   const env = await agentProcessEnv();
   if (isObject(def.env)) for (const [k, v] of Object.entries(def.env)) if (typeof v === "string") env[k] = v;
-  const child = spawn(command, args, { cwd: isDir(g.cwd) ? g.cwd : undefined, env, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(command, args, { cwd: isDir(cwd) ? cwd : undefined, env, stdio: ["pipe", "pipe", "ignore"] });
   const failed = await new Promise<Error | null>((res) => {
     child.once("spawn", () => res(null));
     child.once("error", res);
   });
   if (failed) return null;
-  return new Proc(child, g.cwd);
+  return new Proc(child, cwd);
+}
+
+const busy = (p: Proc): boolean => [...p.byId.values()].some((w) => !w.listen);
+
+/** Room for one more running server: past `limits.live`, the least recently used idle one stops. */
+function makeRoom(except: Slot): void {
+  const running = [...SLOTS.values()].filter((s) => s.proc?.alive());
+  if (running.length < limits.live) return;
+  const idle = running.filter((s) => s !== except && s.proc !== null && !busy(s.proc)).sort((a, b) => a.used - b.used)[0];
+  if (idle) void idle.lock(async () => (idle.proc && !busy(idle.proc) ? idle.stop() : undefined));
+}
+
+let reaper: ReturnType<typeof setInterval> | null = null;
+
+/** Every few seconds: servers unused for their `idle` stop, and slots no turn uses anymore go. */
+function reap(): void {
+  const t = Date.now();
+  for (const s of SLOTS.values()) {
+    const p = s.proc;
+    if (p && p.alive() && !busy(p) && t - s.used > s.idle) void s.lock(async () => (s.proc === p && !busy(p) && Date.now() - s.used > s.idle ? s.stop() : undefined));
+    if (s.users.size === 0 && !s.proc?.alive() && SLOTS.get(s.key) === s) {
+      s.closed = true;
+      SLOTS.delete(s.key);
+    }
+  }
+  if (SLOTS.size === 0 && reaper) {
+    clearInterval(reaper);
+    reaper = null;
+  }
+}
+
+function watch(): void {
+  reaper ??= setInterval(reap, Math.min(5000, Math.max(100, limits.idle / 4)));
+  reaper.unref?.();
 }
 
 function isDir(p: string): boolean {
@@ -259,7 +367,7 @@ function send(p: Proc, msg: Obj, mine: number | null): { inbox: Inbox | null } |
   let inbox: Inbox | null = null;
   if (mine !== null) {
     inbox = new Inbox();
-    p.byId.set(mine, { inbox, id: msg.id ?? null, progress: (get(msg, "params", "_meta", "progressToken") ?? null) as Json, tool: msg.method === "tools/call" });
+    p.byId.set(mine, { inbox, id: msg.id ?? null, progress: (get(msg, "params", "_meta", "progressToken") ?? null) as Json, tool: msg.method === "tools/call", listen: msg.method === "subscriptions/listen" });
     out.id = mine;
   }
   if (!p.alive() || !p.write(`${JSON.stringify(out)}\n`)) {
@@ -269,22 +377,38 @@ function send(p: Proc, msg: Obj, mine: number | null): { inbox: Inbox | null } |
   return { inbox };
 }
 
-/** A new process in the slot. One that replaces a server that died mid-turn comes back initialized, as the agent left it (its answer bounded like any request's). */
-async function restart(g: Grant, def: Obj, s: Slot, reinit: boolean): Promise<void> {
+/** A new process in the slot. One started for a request comes up initialized, as the agent left it (its answer bounded like any request's): its answer, and those to the handshake's other requests, refresh the cache. At most `limits.starts` start at once. */
+async function restart(s: Slot, reinit: boolean): Promise<Obj | null> {
   s.stop();
-  const p = await spawnServer(g, def);
-  if (p && s.closed) {
-    p.kill();
-    return;
-  }
-  s.proc = p;
-  const init = reinit ? s.init : null;
-  if (!init || !p) return;
-  s.next += 1;
-  const sent = send(p, init, s.next);
-  const first = sent?.inbox ? await within(sent.inbox.next(), waits.wait) : null;
-  const answered = first !== null && first !== "late" && "result" in first;
-  if (!answered || !send(p, { jsonrpc: "2.0", method: "notifications/initialized" }, null)) s.stop();
+  return starts.run(async () => {
+    if (s.closed) return null;
+    makeRoom(s);
+    const p = await spawnServer(s.cwd, s.def);
+    if (p && s.closed) {
+      p.kill();
+      return null;
+    }
+    s.proc = p;
+    if (p) watch();
+    const init = reinit ? s.init : null;
+    if (!init || !p) return null;
+    s.next += 1;
+    const sent = send(p, init, s.next);
+    const first = sent?.inbox ? await within(sent.inbox.next(), waits.wait) : null;
+    const answered = first !== null && first !== "late" && "result" in first;
+    if (!answered || !send(p, { jsonrpc: "2.0", method: "notifications/initialized" }, null)) {
+      s.stop();
+      return null;
+    }
+    remember(s.ckey, init, first);
+    for (const ask of asked(s.ckey)) {
+      s.next += 1;
+      const r = send(p, { ...ask, id: s.next }, s.next);
+      if (r?.inbox) void within(r.inbox.next(), waits.wait).then((a) => (a !== null && a !== "late" && !("method" in a) ? remember(s.ckey, { ...ask, id: 0 }, a) : undefined));
+    }
+    s.started();
+    return first;
+  });
 }
 
 /** The connection a request came on, while the request waits for its answer. */
@@ -320,15 +444,38 @@ class Agent {
 const rpcError = (id: Json, why: string): Obj => ({ jsonrpc: "2.0", id, error: { code: -32000, message: why } });
 
 /** One message for a stdio server, and its answer (null for a notification, or when the agent hung up meanwhile). The slot is held only to start the server and send; then the request waits on its own, for at most `waits.wait` (`waits.tool`; a `subscriptions/listen` without a limit) and only while its agent is connected. A request given up on is cancelled at the server, and a server that said nothing at all meanwhile (and runs no tool call) is taken for stuck and stopped: the next request starts it again. */
-async function stdio(g: Grant, def: Obj, slot: Slot, message: Obj, agent: Agent): Promise<Json | null> {
+async function stdio(slot: Slot, message: Obj, agent: Agent): Promise<Json | null> {
+  slot.used = Date.now();
+  try {
+    return await stdioNow(slot, message, agent);
+  } finally {
+    slot.used = Date.now();
+  }
+}
+
+async function stdioNow(slot: Slot, message: Obj, agent: Agent): Promise<Json | null> {
   const hasId = "id" in message;
   const id = (message.id ?? null) as Json;
   const msg = structuredClone(message);
+  // The handshake comes from the cache: the server sleeps until something else is asked.
+  const rk = requestKey(msg);
+  const hit = rk === null || slot.closed ? null : cached(slot.ckey, rk);
+  if (hit) {
+    if (msg.method === "initialize") slot.init = structuredClone(msg);
+    return { jsonrpc: "2.0", id, ...hit };
+  }
+  if (msg.method === "subscriptions/listen" && hasId) return listenLazily(slot, msg, agent, id);
+  // A notification for a server that isn't running has no one to tell.
+  if (!hasId && !slot.proc?.alive()) return null;
   const sent = await slot.lock(async () => {
     if (slot.closed) return null;
     if (msg.method === "initialize") slot.init = structuredClone(msg);
     for (let attempt = 0; attempt < 2; attempt++) {
-      if (!slot.proc?.alive()) await restart(g, def, slot, msg.method !== "initialize");
+      // A start sends the agent's `initialize` (or the last one it sent) itself, inside the gate on starts.
+      if (!slot.proc?.alive()) {
+        const init = await restart(slot, true);
+        if (msg.method === "initialize") return init ? { answer: init } : null;
+      }
       slot.next += 1;
       const mine = slot.next;
       const p = slot.proc;
@@ -351,6 +498,7 @@ async function stdio(g: Grant, def: Obj, slot: Slot, message: Obj, agent: Agent)
     return null;
   });
   if (!sent) return hasId ? rpcError(id, "the MCP server on the Harbor PC didn't start or exited") : null;
+  if ("answer" in sent) return { ...structuredClone(sent.answer), id };
   const { inbox, mine, proc } = sent;
   if (!hasId || !inbox) return null;
   const at = Date.now();
@@ -389,11 +537,74 @@ async function stdio(g: Grant, def: Obj, slot: Slot, message: Obj, agent: Agent)
       until = Date.now() + limit;
       continue;
     }
+    remember(slot.ckey, msg, got);
     got.id = id;
     return got;
   }
 }
 
+
+const ACK = "notifications/subscriptions/acknowledged";
+
+/** A `subscriptions/listen`, which every turn opens and keeps open: it doesn't start the server. With the server asleep the agent gets the acknowledgement it sent last time (from the cache) and the stream stays open; whenever the server runs (started for a tool call), the listen is sent to it and its events go on to the agent. When it stops (unused), the agent's stream stays open for its next start. */
+async function listenLazily(slot: Slot, msg: Obj, agent: Agent, id: Json): Promise<Json | null> {
+  const toAgent = (n: Obj): void => {
+    const out = structuredClone(n);
+    const meta = get(out, "params", "_meta");
+    if (isObject(meta) && SUBSCRIPTION in meta) meta[SUBSCRIPTION] = id;
+    agent.event(out);
+  };
+  const ack = ackFor(slot.ckey, msg);
+  let acked = false;
+  if (ack && !slot.proc?.alive()) {
+    toAgent(ack);
+    acked = true;
+  }
+  for (;;) {
+    if (agent.left) return null;
+    if (slot.closed) return rpcError(id, "the turn ended");
+    let p = slot.proc?.alive() ? slot.proc : null;
+    if (!p && !acked) {
+      // Never heard from: start it once to learn its acknowledgement.
+      await slot.lock(async () => (slot.proc?.alive() ? undefined : restart(slot, true)));
+      p = slot.proc?.alive() ? slot.proc : null;
+      if (!p) return rpcError(id, "the MCP server on the Harbor PC didn't start or exited");
+    }
+    if (!p) {
+      if ((await Promise.race([slot.nextStart(), agent.goneP])) === "gone") return null;
+      continue;
+    }
+    slot.next += 1;
+    const mine = slot.next;
+    const sent = send(p, msg, mine);
+    if (!sent?.inbox) {
+      await Promise.race([slot.nextStart(), agent.goneP]);
+      continue;
+    }
+    for (;;) {
+      const got = await Promise.race([sent.inbox.next(), agent.goneP]);
+      if (got === "gone") {
+        p.byId.delete(mine);
+        p.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: mine, reason: "the client is gone" } })}\n`);
+        return null;
+      }
+      // The server stopped: the agent keeps listening for its next start.
+      if (got === null) break;
+      if ("method" in got) {
+        if (got.method === ACK) {
+          rememberAck(slot.ckey, msg, got);
+          if (acked) continue;
+          acked = true;
+        }
+        toAgent(got);
+        if (agent.left) return null;
+        continue;
+      }
+      got.id = id;
+      return got;
+    }
+  }
+}
 
 /** Forwards the request to the server's URL with its headers (tokens) added here, and streams the answer back (JSON or an event stream). */
 async function forward(s: Socket, agent: Agent, req: Req, def: Obj): Promise<void> {
@@ -615,8 +826,6 @@ async function handle(s: Socket): Promise<void> {
   const mine = live !== undefined && (server === ORIGIN || (server === MACHINES && live.grant.machines !== null));
   if (!live || !(mine || def !== undefined)) return respond(s, 404, "text/plain", "not found");
   const grant = live.grant;
-  const slot = live.slots.get(server) ?? new Slot();
-  live.slots.set(server, slot);
   let body: Buffer;
   try {
     body = head.chunked ? await readChunked(r, MAX_BODY) : await readBody(r, head.len, MAX_BODY);
@@ -639,7 +848,10 @@ async function handle(s: Socket): Promise<void> {
   const one = async (m: unknown): Promise<Json | null> => {
     if (!isObject(m)) return null;
     if (!defObj) return server === MACHINES && grant.machines ? machinesMcp(grant.machines, grant.cwd, grant.chat_id, m) : origin(grant, m);
-    if (kind === "stdio") return stdio(grant, defObj, slot, m, agent);
+    if (kind === "stdio") {
+      const t = teamOf(defObj);
+      return t ? team(t, m) : stdio(slotFor(live, server, defObj), m, agent);
+    }
     return "id" in m ? rpcError(m.id as Json, "Harbor's bridge only carries stdio and http servers") : null;
   };
   // Events only for a single request (a batch's answers come together).
@@ -725,10 +937,12 @@ export function revoke(tokenToEnd: string): void {
   const live = GRANTS.get(tokenToEnd);
   if (!live) return;
   GRANTS.delete(tokenToEnd);
-  // Nothing waits on a request still pending (it hears that its server is gone).
+  // Nothing waits on a request still pending (it hears that its server is gone). A shared server other turns still use stays; one nobody uses stops once idle.
   for (const slot of live.slots.values()) {
-    slot.closed = true;
-    slot.stop();
+    slot.users.delete(tokenToEnd);
+    if (slot.users.size > 0 || sharedKey(slot.def) !== null) continue;
+    slot.close();
+    if (SLOTS.get(slot.key) === slot) SLOTS.delete(slot.key);
   }
 }
 
@@ -771,6 +985,9 @@ export function end(dir: string): void {
 
 export async function close(): Promise<void> {
   for (const t of [...GRANTS.keys()]) revoke(t);
+  for (const s of SLOTS.values()) s.close();
+  SLOTS.clear();
+  flush();
   for (const s of sockets) s.destroy();
   await Promise.all([...servers].map((s) => new Promise<void>((r) => s.close(() => r()))));
   servers.clear();

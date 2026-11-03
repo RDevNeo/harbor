@@ -11,7 +11,7 @@ export function wire(): void {
   setAgentEnv(mcp.agentEnvAs);
   agent.integrate({
     servers: {
-      claudeConfig: (chat, extra, apps) => mcp.claudeConfig(chat, extra as Extra, apps),
+      claudeConfig: (chat, extra, apps, lazy) => mcp.claudeConfig(chat, extra as Extra, apps, lazy as mcp.Lazy | null | undefined),
       claudeServers: (extra) => mcp.claudeServers(extra === null ? undefined : (extra as Extra[number])),
       codexArgs: () => mcp.codexArgs(),
       machinesName: machines.NAME,

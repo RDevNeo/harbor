@@ -31,6 +31,7 @@ import {
   writePrivate,
 } from "../src/mcp.ts";
 import * as mcp from "../src/mcp.ts";
+import type { Json } from "../src/json.ts";
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
 let root: string;
@@ -225,6 +226,34 @@ test("Harbor's own apps learn which chat runs them: Discord shows that chat a ca
     const m = (JSON.parse(readFileSync(p, "utf8")) as { mcpServers: Record<string, { args?: string[]; env?: Record<string, string> }> }).mcpServers;
     expect(m.discord?.args).toEqual(["app", "discord"]);
     expect(m.discord?.env).toEqual({ HARBOR_CHAT_ID: "42" });
+  } finally {
+    if (was === undefined) delete integrations.discord;
+    else integrations.discord = was;
+  }
+});
+
+test("on a bridge grant, stdio servers become its URLs and only the team server goes there for a chat from another PC", async () => {
+  const was = integrations.discord;
+  integrations.discord = { signedIn: () => true, accountName: () => "Ana", signOut: () => {}, login: async () => {} };
+  try {
+    const team: [string, Json] = ["harbor", { type: "stdio", command: "harbor", args: ["mcp", "--chat", "42", "--role", "lead"], env: { HARBOR_SOCK: "/run/h.sock" } }];
+    const own: [string, Json] = ["mine", { type: "stdio", command: "x", args: ["--chat", "${HARBOR_CHAT_ID}"] }];
+    const web: [string, Json] = ["web", { type: "http", url: "https://example.com/mcp" }];
+    const lazy = { servers: {} as Record<string, Json>, base: "http://127.0.0.1:47940/tok/" };
+    const read = async (apps: boolean, l: typeof lazy): Promise<Record<string, Json>> =>
+      (JSON.parse(readFileSync(await claudeConfig(42, [team, own, web], apps, l), "utf8")) as { mcpServers: Record<string, Json> }).mcpServers;
+    const m = await read(true, lazy);
+    expect(m.discord).toEqual({ type: "http", url: "http://127.0.0.1:47940/tok/discord" });
+    expect(m.harbor).toEqual({ type: "http", url: "http://127.0.0.1:47940/tok/harbor" });
+    expect(lazy.servers.discord).toMatchObject({ args: ["app", "discord"], env: { HARBOR_CHAT_ID: "42" } });
+    expect(lazy.servers.harbor).toEqual(team[1]);
+    // Entries Claude Code expands itself, and http ones, stay as they are.
+    expect(m.mine).toEqual(own[1]);
+    expect(m.web).toEqual(web[1]);
+    const guest = { servers: {} as Record<string, Json>, base: "http://127.0.0.1:47940/t2/" };
+    const g = await read(false, guest);
+    expect(Object.keys(guest.servers)).toEqual(["harbor"]);
+    expect(g.harbor).toEqual({ type: "http", url: "http://127.0.0.1:47940/t2/harbor" });
   } finally {
     if (was === undefined) delete integrations.discord;
     else integrations.discord = was;
