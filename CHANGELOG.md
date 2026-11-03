@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.133.1] - 2026-11-03
+
 ### Removed
 - Settings › Workspace's "Everyone here shares their PCs" card and "Take this PC out": the people
   and their devices come right under the workspace's name and your role ("Sam's workspace · Owner").
