@@ -340,6 +340,8 @@ function rig(envOver: Record<string, string | undefined> = {}): Rig {
       settings: stub,
       loopMs: 20,
       syncPauseMs: 1,
+      // The push socket has a test of its own: the others count calls exactly.
+      events: false,
       ...over,
     });
   const r: Rig = {
@@ -803,7 +805,7 @@ describe("the account loop", () => {
     expect(r.svc.status().expired).toBe(true);
   });
 
-  test("invitations are asked for every 15 s on their own; the directory every 2 minutes, or soon after a stranger knocks", async () => {
+  test("without the push socket, invitations are asked for every minute; the directory every 2 minutes, or soon after a stranger knocks", async () => {
     const r = rig();
     let t = Date.now();
     r.svc = r.make({ settings: undefined, clock: () => t });
@@ -811,11 +813,11 @@ describe("the account loop", () => {
     r.world.directory = { at: t, workspaces: [workspaceDir(r)] };
     await r.svc.tick(true);
     r.calls.length = 0;
-    t += 5_000;
+    t += 30_000;
     await r.svc.tick();
     expect(callPaths(r.calls)).toEqual([]);
     r.world.invites = [{ id: "inv_1", ws: "org_x", ws_name: "Team", inviter_name: "Pat", email: "sam@example.com", at: 1 }];
-    t += 11_000;
+    t += 31_000;
     await r.svc.tick();
     expect(callPaths(r.calls)).toEqual(["GET /v1/invites"]);
     expect(r.svc.invites().map((i) => i.id)).toEqual(["inv_1"]);
@@ -832,6 +834,64 @@ describe("the account loop", () => {
     r.calls.length = 0;
     await r.svc.tick();
     expect(callPaths(r.calls)).toContain("GET /v1/directory");
+  });
+
+  test("a push over GET /v1/events brings an invitation at once; the socket comes back after it drops", async () => {
+    const r = rig();
+    const sockets: import("bun").ServerWebSocket<{ auth: string }>[] = [];
+    const auths: string[] = [];
+    const front = Bun.serve<{ auth: string }>({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req, srv) {
+        const u = new URL(req.url);
+        if (u.pathname === "/v1/events") {
+          const auth = req.headers.get("authorization") ?? "";
+          auths.push(auth);
+          return srv.upgrade(req, { data: { auth } }) ? undefined : new Response("no", { status: 400 });
+        }
+        return fetch(`${r.service.url}${u.pathname}${u.search}`, { method: req.method, headers: req.headers, body: req.method === "GET" ? null : await req.text() });
+      },
+      websocket: {
+        open(ws) {
+          sockets.push(ws);
+          ws.send(JSON.stringify({ seq: 0, what: "hello" }));
+        },
+        message(ws, m) {
+          if (m === "ping") ws.send("pong");
+        },
+        close(ws) {
+          sockets.splice(sockets.indexOf(ws), 1);
+        },
+      },
+    });
+    cleanups.push(() => front.stop(true));
+    // A loop that would sleep a minute: only the push can make it fetch now.
+    r.svc = r.make({ events: true, loopMs: 60_000, settings: undefined }, { HARBOR_ACCOUNTS_URL: `http://127.0.0.1:${front.port}` });
+    await signedIn(r);
+    r.world.directory = { at: Date.now(), workspaces: [workspaceDir(r)] };
+    r.svc.start();
+    await until(() => r.svc.listening(), "the push socket");
+    expect(auths[0]).toStartWith("Bearer ey");
+    await Bun.sleep(100);
+    r.calls.length = 0;
+    r.world.invites = [{ id: "inv_1", ws: "org_x", ws_name: "Team", inviter_name: "Pat", email: "sam@example.com", at: 1 }];
+    const t0 = performance.now();
+    for (const ws of sockets) ws.send(JSON.stringify({ seq: 1, what: "invites" }));
+    await until(() => r.svc.invites().length === 1, "the pushed invitation");
+    expect(performance.now() - t0).toBeLessThan(1500);
+    expect(callPaths(r.calls)).toEqual(["GET /v1/invites"]);
+    // A membership change: the directory and the invitations.
+    r.calls.length = 0;
+    for (const ws of sockets) ws.send(JSON.stringify({ seq: 2, what: "directory" }));
+    await until(() => callPaths(r.calls).includes("GET /v1/directory"), "the pushed directory");
+    // Dropped: back within a second or two, and the reconnect's hello fetches what it missed.
+    for (const ws of sockets) ws.close();
+    await until(() => !r.svc.listening(), "the drop");
+    r.calls.length = 0;
+    await until(() => r.svc.listening(), "the reconnect");
+    await until(() => callPaths(r.calls).includes("GET /v1/directory"), "the fetch after reconnecting");
+    await r.svc.stop();
   });
 
   test("the service not answering is remembered since when, and clears when it answers", async () => {

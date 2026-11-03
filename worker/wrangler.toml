@@ -24,6 +24,16 @@ migrations_dir = "migrations"
 name = "RELEASES"
 class_name = "ReleaseHub"
 
+# Account events (src/accounthub.js): one object per account pushes "invites/directory changed" to its
+# PCs (hibernating WebSockets) and phones (long polls). Its class is new too: migration v2-account-hub.
+[[durable_objects.bindings]]
+name = "ACCOUNT_HUB"
+class_name = "AccountHub"
+
 [[migrations]]
 tag = "v1-release-hub"
 new_sqlite_classes = ["ReleaseHub"]
+
+[[migrations]]
+tag = "v2-account-hub"
+new_sqlite_classes = ["AccountHub"]

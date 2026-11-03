@@ -68,6 +68,46 @@ def http(method, url, body=None, token=None, form=None, raw=None):
     return r.status if hasattr(r, "status") else r.code, js, {k.title(): v for k, v in r.headers.items()}, text
 
 
+def wait_event(token, since, out):
+    """GET /v1/events?since= (a phone's long poll) in a thread: its status and body land in `out`."""
+    def run():
+        st, js, _, _ = http("GET", W + f"/v1/events?since={since}", token=token)
+        out.append((st, js))
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
+
+def event_seq(token):
+    st, js, _, _ = http("GET", W + "/v1/events", token=token)
+    return js.get("seq") if st == 200 and isinstance(js, dict) else None
+
+
+def ws_hello(token):
+    """A PC's push socket: the 101 upgrade, then the first text frame (the hello)."""
+    import http.client, socket as so
+    c = http.client.HTTPConnection("127.0.0.1", WP, timeout=20)
+    c.putrequest("GET", "/v1/events")
+    for k, v in [("Upgrade", "websocket"), ("Connection", "Upgrade"), ("Sec-WebSocket-Version", "13"),
+                 ("Sec-WebSocket-Key", base64.b64encode(os.urandom(16)).decode()), ("Authorization", "Bearer " + token)]:
+        c.putheader(k, v)
+    c.endheaders()
+    r = c.getresponse()
+    if r.status != 101:
+        return r.status, None
+    head = r.fp.read(2)
+    n = head[1] & 0x7F
+    if n == 126:
+        n = int.from_bytes(r.fp.read(2), "big")
+    body = r.fp.read(n).decode()
+    try:
+        c.sock.shutdown(so.SHUT_RDWR)
+    except OSError:
+        pass
+    c.close()
+    return 101, json.loads(body)
+
+
 def start(cmd, log, cwd):
     f = open(os.path.join(HERE, log), "w")
     p = subprocess.Popen(cmd, cwd=cwd, env=ENV, stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
@@ -377,6 +417,27 @@ def main():
     st2, js2, _, _ = http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=sam_pc)
     check("invite delete: owner ok", st2 == 200 and js2 == {"ok": True})
 
+    # pushes (GET /v1/events): an invitation made or cancelled reaches the invitee's devices at once
+    st, hello = ws_hello(alice_t)
+    check("events: a PC's socket upgrades and says hello", st == 101 and hello.get("what") == "hello" and isinstance(hello.get("seq"), int), (st, hello))
+    st, js, _, _ = http("GET", W + "/v1/events")
+    check("events: refused without a token", st == 401, js)
+    seq = event_seq(alice_t)
+    got = []
+    t = wait_event(alice_t, seq, got)
+    time.sleep(1.5)
+    check("events: a phone's poll waits while nothing changed", t.is_alive() and got == [], got)
+    st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "alice@example.com"}, token=sam_pc)
+    t.join(10)
+    check("events: an invitation is pushed to the invitee", got and got[0][0] == 200 and got[0][1]["what"] == "invites" and got[0][1]["seq"] > seq, got)
+    seq, got = got[0][1]["seq"], []
+    t = wait_event(alice_t, seq, got)
+    time.sleep(0.5)
+    http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=sam_pc)
+    t.join(10)
+    check("events: a cancelled invitation is pushed too", got and got[0][1]["what"] == "invites", got)
+    check("events: a device behind on seq hears at once", http("GET", W + f"/v1/events?since={seq - 1}", token=alice_t)[1].get("what") == "hello")
+
     pat_dev = Device("phone", "pat-phone")
     pj, _ = sess_ok("pat@example.com", pat_dev)
     check("invitee's first session joins nothing by itself, lists the invitation",
@@ -388,8 +449,13 @@ def main():
     check("GET /v1/invites: nobody else sees it", st == 200 and js["invites"] == [], js)
     st, js, _, _ = http("POST", W + f"/v1/invites/{li['invites'][0]['id']}/accept", token=alice_t)
     check("accept: someone else's invitation refused (403)", st == 403, js)
+    sam_seq, sam_got = event_seq(sam_pc), []
+    sam_t = wait_event(sam_pc, sam_seq, sam_got)
+    time.sleep(0.5)
     st, js, _, _ = http("POST", W + f"/v1/invites/{li['invites'][0]['id']}/accept", token=pj["token"])
     check("accept: joins the workspace", st == 200 and js["joined"]["id"] == sam_ws and len(js["workspaces"]) == 2, js)
+    sam_t.join(10)
+    check("events: an accepted invitation is pushed to the inviter (new member, new peers)", sam_got and sam_got[0][1]["what"] == "directory", sam_got)
     st, js2, _, _ = http("POST", W + f"/v1/invites/{li['invites'][0]['id']}/accept", token=pj["token"])
     check("accept again: 404 (no longer waiting)", st == 404, js2)
     pj = sess_ok("pat@example.com", pat_dev)[0]

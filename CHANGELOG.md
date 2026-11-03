@@ -24,8 +24,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   to Team") with Accept and Decline; on the phone, as a dialog on any screen.
 
 ### Fixed
-- Invitations reach the invited PC and phone within about 15 seconds (they came with the
-  directory, every 2 minutes), and the inviter's PC takes the new member's PC as soon as it knocks.
+- Invitations show the moment they're made (they came with the directory, every 2 minutes): the
+  account service pushes "something changed" to the account's PCs over a WebSocket that stays open
+  (a Durable Object per account, idle at no cost) and to its phones while the app is open (a long
+  poll). Accepting, declining, cancelling, removing a member and a PC joining a workspace are
+  pushed the same way, so the inviter's PCs take the new member's PCs at once. Without the push
+  (an older account service, no network) PCs check every minute.
 - An accepted or declined invitation leaves Settings › Workspace at once, and the new workspace is
   in the workspace filter right away (Settings didn't redraw when the answer came, and an older
   answer from the account service could bring the invitation back).

@@ -10,33 +10,62 @@ import java.util.Set;
 
 /** An invitation to a workspace as a dialog over whatever screen is open, as the desktop's
  *  top-right card: "Sam invited you to Team", Accept, Decline or Later (the Hubs screen keeps
- *  it). Asked for every 15 s while a screen of the app is in front. */
+ *  it). While a screen of the app is open the phone listens to the service's pushes
+ *  (GET /v1/events, a long poll): an invitation, or a change of who is in a workspace, shows
+ *  the moment it's made. */
 final class Invites {
     private Invites() { }
 
     /** Shown this run: Later doesn't bring it back until the app starts again. */
     private static final Set<String> asked = new HashSet<>();
     private static int gen;
+    /** The last change the service told (its `seq`); -1: none yet. */
+    private static volatile long since = -1;
 
     static void resumed(Activity a) {
-        tick(a, ++gen);
+        final int my = ++gen;
+        Ui.pool.execute(() -> listen(a, my));
     }
 
     static void paused() {
         gen++;
     }
 
-    private static void tick(Activity a, int my) {
-        Ui.pool.execute(() -> {
-            String before = Account.invites(a).toString();
-            try { Account.checkInvites(a); } catch (Exception ignored) { }
-            boolean changed = !before.equals(Account.invites(a).toString());
-            Ui.main.post(() -> {
-                if (my != gen || a.isFinishing()) return;
-                show(a, changed);
-                Ui.main.postDelayed(() -> { if (my == gen && !a.isFinishing()) tick(a, my); }, 15_000);
-            });
-        });
+    private static boolean live(Activity a, int my) {
+        return my == gen && !a.isFinishing();
+    }
+
+    /** Fetches once (what changed while no screen was open), then follows the pushes until the
+     *  screen goes. Errors back off from 2 s to a minute; meanwhile the minute's fallback check. */
+    private static void listen(Activity a, int my) {
+        fetch(a, my, false);
+        if (Rig.on()) return;
+        long wait = 2_000;
+        while (live(a, my)) {
+            try {
+                JSONObject r = Account.events(a, since);
+                wait = 2_000;
+                if (!r.has("seq")) continue; // nothing changed in ~20 s
+                long seq = r.optLong("seq");
+                String what = r.optString("what");
+                boolean news = !"hello".equals(what) || (since >= 0 && seq != since);
+                since = seq;
+                if (news && live(a, my)) fetch(a, my, !"invites".equals(what));
+            } catch (Exception e) {
+                try { Thread.sleep(wait); } catch (InterruptedException x) { return; }
+                wait = Math.min(wait * 2, 60_000);
+                if (live(a, my)) fetch(a, my, false);
+            }
+        }
+    }
+
+    /** The invitations (and with `dir` the directory, its PCs), then the dialog or the screen. */
+    private static void fetch(Activity a, int my, boolean dir) {
+        String before = Account.invites(a).toString();
+        try { Account.checkInvites(a, true); } catch (Exception ignored) { }
+        if (dir) try { Account.directory(a, true); } catch (Exception ignored) { }
+        boolean changed = dir || !before.equals(Account.invites(a).toString());
+        Ui.main.post(() -> { if (live(a, my)) show(a, changed); });
     }
 
     /** The title the desktop's card has (invitecard.ts `inviteCard`). */

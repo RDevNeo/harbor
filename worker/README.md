@@ -69,6 +69,22 @@ and answers all of them when a newer release is published, which it only believe
 rewrite's branch: `wrangler deploy` is the owner's step. Held requests keep the object awake: a few PCs cost seconds of duration a day;
 `MAX_WAITERS` (1000) bounds it.
 
+## Account events (Durable Object)
+
+`src/accounthub.js` is the `AccountHub` class bound as `ACCOUNT_HUB` (`wrangler.toml`, migration `v2-account-hub`). One object per
+account (`idFromName(user id)`) tells its devices that something changed, so an invitation or a new member shows at once:
+
+- `GET /v1/events` with `Upgrade: websocket` (PCs): accepted with the hibernation API, so an idle socket costs no duration; the
+  client's `"ping"` is answered `"pong"` by the runtime without waking the object. The first message is `{seq, what: "hello"}`.
+- `GET /v1/events?since=N` (phones, which have no WebSocket client): a long poll of up to 20 s (`EVENTS_WAIT_MS`) while a screen of
+  the app is open; at once when `N` is behind; 204 when nothing changed.
+- Pushes (`tell` in `src/index.js`) carry `{seq, what}` only, `what` = `invites` or `directory`: devices re-read the authenticated
+  routes. Sent on an invitation made or cancelled (to the invitee's accounts, found by verified address, and the owner), accepted
+  or declined (the account, the inviter, the workspace's members), a member removed or leaving, and a PC registered into, moved out
+  of or removed from a workspace. Re-registering every few minutes sends nothing.
+- Deploy: the migration is part of `npx wrangler deploy` (no D1 change). Clients from before it fall back to polling (PCs: invites
+  every minute while the socket is down, the directory every 2 minutes).
+
 ## Phone sign-in with Android's own account picker (optional)
 
 Until this is set up, phones sign in in the browser through Clerk. To switch the picker on:

@@ -22,8 +22,13 @@ const ISSUER = "harbor-accounts";
 /** A Harbor token lasts 7 days; a new one is asked for once a day. */
 const RENEW_AFTER = 24 * 3600;
 const DIR_EVERY = 120_000;
-/** Invitations are asked for on their own, often: one reaches the invited PC within about this long. */
-const INVITES_EVERY = 15_000;
+/** The service pushes changes (GET /v1/events, a WebSocket): invitations are asked for on their own only while it's
+ * down, this often; and once on every (re)connect. */
+const INVITES_FALLBACK = 60_000;
+/** The push socket: a keepalive this often (the service answers "pong" without waking anything), and reconnects that
+ * back off from 1 s to this. */
+const EVENTS_PING = 30_000;
+const EVENTS_BACKOFF_MAX = 60_000;
 /** A stranger's knock (a PC that may have just joined a workspace) fetches the directory again at most this often. */
 const SOON_EVERY = 20_000;
 /** An answered invitation stays hidden this long even if a fetch that began before the answer still lists it. */
@@ -700,6 +705,8 @@ export interface AccountOptions {
   loopMs?: number | undefined;
   /** The pause after a setting changed, before it goes to the account. */
   syncPauseMs?: number | undefined;
+  /** Listen to the service's pushes (GET /v1/events); false: polls alone (tests). Default true. */
+  events?: boolean | undefined;
 }
 
 interface Secrets {
@@ -751,6 +758,15 @@ export class AccountService {
   private acted = 0;
   private listeners = new Set<() => void>();
   private soonAt = 0;
+  /** The push socket (GET /v1/events): open, or being opened; null between tries. */
+  private sock: WebSocket | null = null;
+  private pushing = false;
+  private sockAt = 0;
+  private sockWait = 1000;
+  private sockSeq = -1;
+  private sockPing: ReturnType<typeof setInterval> | null = null;
+  /** A push came: the loop runs a turn now, also if it was in the middle of one when it came. */
+  private pushed = false;
   private fetchedKeys: AccountKey[] = [];
   private st: AccountStatus = {
     signingIn: false,
@@ -1423,6 +1439,7 @@ export class AccountService {
   /** Signs this PC out: Clerk's tokens go. The PC stays in its workspace and keeps serving its members with what it has cached (Option A: only a member takes it out). */
   signOut(): void {
     rmSync(this.secretsPath(), { force: true });
+    this.hangUp();
     this.setAccount(null, null);
     this.setStatus((s) => {
       s.expired = false;
@@ -1550,6 +1567,93 @@ export class AccountService {
     this.pokeWake?.();
   }
 
+  /** Whether the service's pushes reach this PC now (the socket is open). */
+  listening(): boolean {
+    return this.pushing;
+  }
+
+  /**
+   * Keeps the push socket open (GET /v1/events): the service says "invites" or "directory" changed the moment an
+   * invitation is made, answered or cancelled, or a workspace gains or loses a member or a PC, and this PC fetches it
+   * at once. On every connect it fetches both (what it missed). Reconnects back off up to EVENTS_BACKOFF_MAX.
+   */
+  private listen(token: string): void {
+    if (this.o.events === false || this.stopped || this.sock !== null) return;
+    if (this.nowMs() - this.sockAt < this.sockWait) return;
+    this.sockAt = this.nowMs();
+    const url = `${this.serviceUrl().replace(/^http/, "ws")}/v1/events`;
+    let ws: WebSocket;
+    try {
+      // Bun takes headers here (a browser can't): the token never goes in the URL.
+      // The User-Agent Bun's fetch sends: Cloudflare's bot check refuses some others (error 1010).
+      ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}`, "User-Agent": `Bun/${Bun.version}` } } as unknown as string[]);
+    } catch (e) {
+      this.log(() => `events: ${e instanceof Error ? e.message : String(e)}`);
+      this.sockWait = Math.min(this.sockWait * 2, EVENTS_BACKOFF_MAX);
+      return;
+    }
+    this.sock = ws;
+    ws.onopen = () => {
+      if (this.sock !== ws) return;
+      this.pushing = true;
+      this.sockWait = 1000;
+      this.sockPing = setInterval(() => {
+        try {
+          ws.send("ping");
+        } catch {
+          // closing: onclose follows
+        }
+      }, EVENTS_PING);
+      this.log(() => "events: listening");
+    };
+    ws.onmessage = (ev) => {
+      if (this.sock !== ws) return;
+      let m: unknown;
+      try {
+        m = JSON.parse(String(ev.data));
+      } catch {
+        return; // "pong"
+      }
+      const seq = typeof pluck(m, "seq") === "number" ? (pluck(m, "seq") as number) : -1;
+      const what = textOf(m, "what");
+      if (what === "hello") {
+        // A connect: what changed while it was away isn't known, unless nothing did since the last one.
+        if (seq !== this.sockSeq || seq < 0) this.timers.dir = null;
+      } else if (what === "invites") this.timers.inv = null;
+      else this.timers.dir = null;
+      if (seq >= 0) this.sockSeq = seq;
+      this.pushed = true;
+      this.pokeWake?.();
+    };
+    const gone = () => {
+      if (this.sock !== ws) return;
+      this.sock = null;
+      this.pushing = false;
+      if (this.sockPing !== null) clearInterval(this.sockPing);
+      this.sockPing = null;
+      this.sockWait = Math.min(this.sockWait * 2, EVENTS_BACKOFF_MAX);
+      this.sockAt = this.nowMs();
+      this.log(() => "events: closed");
+      // The next try comes on the loop's turn after the wait.
+      if (!this.stopped) setTimeout(() => this.pokeWake?.(), this.sockWait + 10);
+    };
+    ws.onclose = gone;
+    ws.onerror = gone;
+  }
+
+  private hangUp(): void {
+    const ws = this.sock;
+    this.sock = null;
+    this.pushing = false;
+    if (this.sockPing !== null) clearInterval(this.sockPing);
+    this.sockPing = null;
+    try {
+      ws?.close();
+    } catch {
+      // already closed
+    }
+  }
+
   /** A PC this one doesn't trust knocked: it may have just joined this PC's workspace (an accepted invitation), so the
    * directory is fetched again now rather than within two minutes. At most every SOON_EVERY. */
   refreshSoon(): void {
@@ -1608,6 +1712,7 @@ export class AccountService {
   /** Stops the loop; an unfinished turn finishes first. */
   async stop(): Promise<void> {
     this.stopped = true;
+    this.hangUp();
     this.pokeWake?.();
     await this.loop;
     this.loop = null;
@@ -1620,11 +1725,12 @@ export class AccountService {
         this.pokeWake = null;
         const why = this.pokeLevel;
         this.pokeLevel = 0;
+        this.pushed = false;
         resolve(why);
       };
       const timer = setTimeout(take, ms);
       this.pokeWake = take;
-      if (this.pokeLevel !== 0 || this.stopped) take();
+      if (this.pokeLevel !== 0 || this.stopped || this.pushed) take();
     });
   }
 
@@ -1635,7 +1741,7 @@ export class AccountService {
       } catch (e) {
         this.log(() => `tick failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const why = await this.waitPoke(this.o.loopMs ?? INVITES_EVERY);
+      const why = await this.waitPoke(this.o.loopMs ?? 20_000);
       if (this.stopped) break;
       if (why === 2) this.timers = freshTimers(this.timers.keys);
       else if (why === 1) await sleep(this.o.syncPauseMs ?? 2000);
@@ -1654,6 +1760,7 @@ export class AccountService {
     const ws = kv.get("account_ws") ?? "";
     if ((this.acct?.id ?? null) === (next?.id ?? null) && this.ws === ws) return;
     this.log(() => `kv changed: account ${JSON.stringify(next?.email ?? null)} ws ${JSON.stringify(ws)}`);
+    if ((this.acct?.id ?? null) !== (next?.id ?? null)) this.hangUp();
     const came = next !== null && !this.signedIn();
     this.acct = next;
     if (this.ws !== ws) this.dir = tryParse(kv.get("account_dir"), parseDirectory) ?? emptyDirectory();
@@ -1711,6 +1818,7 @@ export class AccountService {
     }
     if (sec.token === "" || sec.token_exp <= now) return;
     const token = sec.token;
+    this.listen(token);
     const result = (f: AccountFail | null) => {
       if (f === null) {
         if (this.st.offlineSince !== 0) this.setStatus((st) => (st.offlineSince = 0));
@@ -1746,7 +1854,7 @@ export class AccountService {
       });
       this.log(() => `directory: ${r ? r.text() : "ok"}`);
       result(r);
-    } else if (this.due(t.inv, INVITES_EVERY)) {
+    } else if (t.inv === null || (!this.pushing && this.due(t.inv, INVITES_FALLBACK))) {
       t.inv = this.nowMs();
       const r = await attempt(() => this.fetchInvites(token));
       if (r) this.log(() => `invites: ${r.text()}`);

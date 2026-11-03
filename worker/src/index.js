@@ -2,8 +2,10 @@
 // Worker that issues offline-verifiable Harbor tokens. Wire format: android/PROTOCOL.md.
 
 import { releasePing, releaseWait } from './release.js';
+import { events, tell } from './accounthub.js';
 
 export { ReleaseHub } from './release.js';
+export { AccountHub } from './accounthub.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -553,6 +555,19 @@ async function membershipPeers(env, p, mine) {
 
 /** `{no_account: true, near?}` when no Harbor account has this verified address; null when one
  *  does, or when Clerk can't tell right now. */
+/** The accounts whose verified address is `email` (for pushing to an invitee); [] when Clerk can't tell now. */
+async function usersWithEmail(env, email) {
+  const r = await clerk(env, 'GET', `/users?email_address=${enc2(email)}&limit=10`).catch(() => null);
+  if (!r?.ok) return [];
+  const users = Array.isArray(r.data) ? r.data : r.data?.data || [];
+  return users.filter((u) => (u.email_addresses || []).some((e) => e.email_address.toLowerCase() === email && e.verification?.status === 'verified')).map((u) => u.id);
+}
+
+/** The member ids of workspace `ws` ([] when Clerk can't say now). */
+async function memberIds(env, ws) {
+  return (await orgMembers(env, ws).catch(() => [])).map((m) => m.id).filter(Boolean);
+}
+
 async function inviteCheck(env, email, known) {
   const r = await clerk(env, 'GET', `/users?email_address=${enc2(email)}&limit=10`).catch(() => null);
   if (!r?.ok) return null;
@@ -625,6 +640,9 @@ async function putPc(req, env) {
   )
     .bind(p.dev, pid, ws, name, JSON.stringify(addrs), p.sub, p.name || '', version, now())
     .run();
+  // A PC new to its workspace (or moved to another): its people's devices trust and list it now. Re-registering
+  // (every few minutes) tells nobody.
+  if (!row || row.ws !== ws) await tell(env, [...(await memberIds(env, ws)), ...(row ? await memberIds(env, row.ws) : [])], 'directory');
   return json({ ok: true });
 }
 
@@ -636,6 +654,7 @@ async function deletePc(req, env, fp) {
     throw new HttpError(403, 'You are not a member of that PC’s workspace.');
   }
   await env.DB.prepare(`DELETE FROM pcs WHERE fp=?`).bind(fp).run();
+  await tell(env, await memberIds(env, row.ws), 'directory');
   return json({ ok: true });
 }
 
@@ -732,15 +751,18 @@ async function invite(req, env, ws) {
     .run();
   const mine = await liveWs(env, p.sub);
   const known = (await Promise.all(mine.slice(0, 20).map((x) => orgMembers(env, x.id)))).flat().map((m) => m.email.toLowerCase());
+  // The invitee's PCs and phones show it now; the owner's other devices list it in the directory.
+  await Promise.all([tell(env, await usersWithEmail(env, email), 'invites'), tell(env, [p.sub], 'directory')]);
   return json({ invite: { ...row, ...((await inviteCheck(env, email, [...new Set(known)])) || {}) } });
 }
 
 async function deleteInvite(req, env, ws, id) {
   const p = await harborAuth(req, env);
   await requireOwner(env, p.sub, ws);
-  const row = await env.DB.prepare(`SELECT id FROM invites WHERE id=? AND ws=? AND status='pending'`).bind(id, ws).first();
+  const row = await env.DB.prepare(`SELECT id,email FROM invites WHERE id=? AND ws=? AND status='pending'`).bind(id, ws).first();
   if (!row) throw new HttpError(404, 'That invitation does not exist.');
   await env.DB.prepare(`DELETE FROM invites WHERE id=?`).bind(id).run();
+  await Promise.all([tell(env, await usersWithEmail(env, row.email), 'invites'), tell(env, [p.sub], 'directory')]);
   return json({ ok: true });
 }
 
@@ -755,6 +777,7 @@ async function deleteMember(req, env, ws, user) {
   }
   const r = await clerk(env, 'DELETE', `/organizations/${enc2(ws)}/memberships/${enc2(user)}`);
   if (!r.ok && r.status !== 404) throw clerkFail(r, 'Could not remove that member.');
+  await tell(env, [user, p.sub, ...(await memberIds(env, ws))], 'directory');
   return json({ ok: true });
 }
 
@@ -814,6 +837,8 @@ async function answerInvite(req, env, id, accept) {
   }
   // Answered either way: the invitation is gone.
   await env.DB.prepare(`DELETE FROM invites WHERE id=?`).bind(id).run();
+  // This account's other devices drop it; the workspace's people (the inviter among them) see the new member's PCs.
+  await tell(env, [p.sub, inv.inviter, ...(accept ? await memberIds(env, inv.ws) : [])], 'directory');
   const workspaces = await userMemberships(env, p.sub);
   return json({ ok: true, workspaces, joined: accept ? workspaces.find((w) => w.id === inv.ws) || null : null });
 }
@@ -853,6 +878,7 @@ async function route(req, env) {
   if (m === 'POST' && path === '/v1/session/refresh') return refreshSession(req, env);
   if (m === 'GET' && path === '/v1/directory') return directory(req, env);
   if (m === 'GET' && path === '/v1/invites') return listInvites(req, env);
+  if (m === 'GET' && path === '/v1/events') return events(req, env, (await harborAuth(req, env)).sub);
   if (m === 'POST' && seg[0] === 'v1' && seg[1] === 'invites' && seg.length === 4 && (seg[3] === 'accept' || seg[3] === 'decline')) {
     return answerInvite(req, env, seg[2], seg[3] === 'accept');
   }

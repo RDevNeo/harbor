@@ -424,17 +424,26 @@ final class Account {
         }
     }
 
+    /** GET /v1/invites on its own (the directory brings it every 2 minutes); `force` or at most
+     *  once a minute: the service pushes changes (`events`), this is the fallback. */
     private static volatile long invAt;
 
-    /** GET /v1/invites on its own, at most every 15 s (the directory comes every 2 minutes): an
-     *  invitation reaches the phone while the app is open. */
-    static void checkInvites(Context c) throws IOException {
-        if (Rig.on() || System.currentTimeMillis() - invAt < 15_000) return;
+    static void checkInvites(Context c, boolean force) throws IOException {
+        if (Rig.on() || (!force && System.currentTimeMillis() - invAt < 60_000)) return;
         String tok = state(c).optString("token");
         if (tok.isEmpty()) return;
         invAt = System.currentTimeMillis();
         JSONArray inv = http("GET", service() + "/v1/invites", tok, null, null).optJSONArray("invites");
         if (inv != null) edit(c, j -> j.put("invites", inv));
+    }
+
+    /** GET /v1/events?since=: the service's push for phones (a long poll of up to ~20 s). It
+     *  answers {seq, what} at once when `since` is behind (or -1), at the next change
+     *  ("invites", "directory"), or with nothing (204: poll again). */
+    static JSONObject events(Context c, long since) throws IOException {
+        String tok = state(c).optString("token");
+        if (tok.isEmpty()) throw new IOException("not signed in");
+        return http("GET", service() + "/v1/events" + (since >= 0 ? "?since=" + since : ""), tok, null, null);
     }
 
     /** Invitations to workspaces waiting for this account: [{id, ws, ws_name, inviter_name, email, at}]. */
