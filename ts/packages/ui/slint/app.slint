@@ -93,7 +93,6 @@ export struct Crumbs {
     parent: string,
     title: string,
     branch: string,
-    changed: int,
 }
 
 component TopBar {
@@ -204,11 +203,6 @@ component TopBar {
                 color: Theme.subtle;
                 overflow: elide;
                 vertical-alignment: center;
-            }
-            if root.crumbs.branch != "" && root.crumbs.changed > 0: Badge {
-                y: 4px;
-                text: root.crumbs.changed + " changed";
-                tone: amber;
             }
             Rectangle {
                 horizontal-stretch: 1;

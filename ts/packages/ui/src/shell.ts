@@ -814,7 +814,6 @@ export class Shell {
       parent: chat?.role === "sub" ? (parent?.title ?? "Lead") : "",
       title: chat ? (chat.role === "sub" ? chat.name : chat.title) : this.draftMain ? "Main chat" : "New thread",
       branch: st?.branch ?? "",
-      changed: st?.changed ?? 0,
     };
     w.team_enabled = chat?.role === "lead";
     this.refreshTeam();

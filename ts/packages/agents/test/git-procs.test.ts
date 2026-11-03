@@ -23,7 +23,6 @@ test("status_ignores_repo_fsmonitor", async () => {
   writeFileSync(join(dir, "a"), "x");
   const s = await git.status(dir);
   expect(s).not.toBeNull();
-  expect(s?.changed).toBe(1);
   expect(existsSync(marker)).toBe(false);
 });
 

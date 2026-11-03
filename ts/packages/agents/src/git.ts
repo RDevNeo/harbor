@@ -4,7 +4,6 @@ import { home } from "./paths.ts";
 
 export interface Status {
   branch: string;
-  changed: number;
   ahead: number;
   behind: number;
   /** origin's web address. */
@@ -49,17 +48,17 @@ export async function git(dir: string, args: string[]): Promise<string | null> {
 }
 
 export async function status(dir: string): Promise<Status | null> {
-  const porcelain = await git(dir, ["status", "--porcelain=v2", "--branch"]);
+  // Only the branch lines are read: untracked files aren't listed (a big tree's walk).
+  const porcelain = await git(dir, ["status", "--porcelain=v2", "--branch", "--untracked-files=no"]);
   if (porcelain === null) return null;
-  const s: Status = { branch: "", changed: 0, ahead: 0, behind: 0, remote: null, origin: null };
+  const s: Status = { branch: "", ahead: 0, behind: 0, remote: null, origin: null };
   for (const l of porcelain.split("\n")) {
-    if (l === "") continue;
     if (l.startsWith("# branch.head ")) s.branch = l.slice(14);
     else if (l.startsWith("# branch.ab ")) {
       const [a, b] = l.slice(12).trim().split(/\s+/);
       s.ahead = count(a?.replace(/^\++/, ""));
       s.behind = count(b?.replace(/^-+/, ""));
-    } else if (!l.startsWith("#")) s.changed++;
+    }
   }
   s.origin = await origin(dir);
   s.remote = s.origin === null ? null : webUrl(s.origin);

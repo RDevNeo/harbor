@@ -5,12 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ## [0.121.3] - 2026-11-03
 
 ### Fixed
 - Desktop: a message with more images than fit across its card (four from the phone, say) drew the
   last thumbnails past the card's right edge. Thumbnails now wrap into rows inside the card, in your
   messages and in replies alike, at any window width.
+=======
+### Changed
+- No more "N changed" badge beside the branch name in the chat's top bar, nor "· N changed"
+  after the branch on the phone: the branch shows alone. Reading a project's git status no longer
+  walks its untracked files.
+>>>>>>> 2ff759e (No more "N changed" badge beside the branch, on the desktop and the phone)
 
 ## [0.121.2] - 2026-11-03
 

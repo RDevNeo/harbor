@@ -153,11 +153,10 @@ final class WorkBar {
         label(ws, wt ? Ui.I_FOLDER_GIT : Ui.I_FOLDER, !name.isEmpty() ? "Worktree · " + name : wt ? "New worktree" : "Current checkout");
         String b = r.optString("branch");
         if (chat == null && wt) b = "from " + r.optString("base");
-        int dirty = r.optInt("dirty");
         // Git busy on the PC for its own bar ("Creating worktree…").
         String pend = r.isNull("pending") ? "" : r.optString("pending");
         if (!pend.isEmpty()) { label(ws, Ui.I_LOADER, pend); Ui.main.postDelayed(this::load, 1500); }
-        label(br, Ui.I_BRANCH, b.isEmpty() ? "…" : b + (dirty > 0 && !(chat == null && wt) ? "  ·  " + dirty + " changed" : ""));
+        label(br, Ui.I_BRANCH, b.isEmpty() ? "…" : b);
     }
 
     private static void tint(LinearLayout c, int color) {

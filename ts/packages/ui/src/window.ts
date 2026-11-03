@@ -266,7 +266,6 @@ export interface Crumbs {
   parent: string;
   title: string;
   branch: string;
-  changed: number;
 }
 
 export interface AgentRow {
