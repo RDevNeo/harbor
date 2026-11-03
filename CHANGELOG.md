@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.1] - 2026-11-03
+
 ### Fixed
 - An Ultra account no longer shows a "5-hour 0%" row: an older usage monitor (and older turns)
   still report a 5-hour window for it, which Harbor showed. The Ultra plan has only weekly limits,
