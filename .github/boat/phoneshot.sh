@@ -5,7 +5,7 @@
 # both while a hub with made-up data starts (ts/rig/phonehub.ts); then plays the steps given and
 # leaves the PNGs in ~/out/shots, packed as ~/out/shots.tgz.
 #
-# Steps, one argument each: screen:<chats|chat|chat:lead|chat:<gid>|settings|new|palette|home>,
+# Steps, one argument each: screen:<chats|chat|chat:lead|chat:composer|chat:<gid>|settings|new|palette|home>,
 # tap:<x>,<y>, swipe:<x1>,<y1>,<x2>,<y2>, text:<words>, key:<BACK|ENTER|…>, wait:<seconds>,
 # shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults.
@@ -194,6 +194,7 @@ open() {
     home|chats) a+=("$pkg/.Hubs") ;;
     chat) a+=("$pkg/.Chat" --es hub rig --es chat "$(gid cards)") ;;
     chat:lead) a+=("$pkg/.Chat" --es hub rig --es chat "$(gid lead)") ;;
+    chat:composer) a+=("$pkg/.Chat" --es hub rig --es chat "$(gid composer)") ;;
     chat:*) a+=("$pkg/.Chat" --es hub rig --es chat "${what#chat:}") ;;
     settings) a+=("$pkg/.Settings" --es hub rig) ;;
     new) a+=("$pkg/.NewChat" --es hub rig) ;;

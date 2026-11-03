@@ -16,8 +16,9 @@ text. The sandbox is always deleted, also on error, Ctrl+C or kill.
 
 Screens and steps run in the order given; each --screen opens a screen and shoots it:
   --screen NAME    chats (the chat list), chat (the chat with every card kind), chat:lead (a lead
-                   with its team), chat:GID, settings, new (new chat), palette, home (the app's
-                   first screen). Several: --screen chats,chat,settings. Default: chats.
+                   with its team), chat:composer (two images in its shared draft), chat:GID,
+                   settings, new (new chat), palette, home (the app's first screen). Several:
+                   --screen chats,chat,settings. Default: chats.
   --tap X,Y        a tap, in the PNG's pixels (1080x2400)
   --swipe X1,Y1,X2,Y2
   --text WORDS     types into the focused field

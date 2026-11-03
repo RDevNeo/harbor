@@ -179,6 +179,18 @@ chat({ gid: CAPTCHA_GID, repoId: notes, title: "Join the Example Server communit
   tool("mcp__discord__discord_join", GUILD, { invite: "example" }, "Discord wants a captcha before joining: waiting for a person to solve it."),
   notice("captcha", `Discord needs a captcha to join ${GUILD}`, JSON.stringify({ captcha: "c1", state: "pending", guild: GUILD })),
 ]);
+// Two unsent images, for composer-thumbnail taps, swiping in its viewer and removing a tile.
+const COMPOSER_GID = "c4e7a1b2-0000-4000-8000-00000000c071";
+const composer = chat({ gid: COMPOSER_GID, repoId: web, title: "Compare the checkout images", updated: ago(5) }, []);
+const uploadDir = join(dataDir(), "uploads", "rig-composer");
+mkdirSync(uploadDir, { recursive: true });
+const composerFiles = [];
+for (const [name, tint] of [["before.png", "#4fb3a9"], ["after.png", "#7c6cf2"]] as const) {
+  const path = join(uploadDir, name);
+  await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="${tint}"/><text x="90" y="270" font-family="sans-serif" font-size="70" fill="white">${name.slice(0, -4)} image</text></svg>`)).png().toFile(path);
+  composerFiles.push({ id: `rig-composer/${name}`, name, path });
+}
+seed.set("shared_drafts", JSON.stringify([[composer.id, { text: "Compare [Image #1] and [Image #2]", files: composerFiles, mentions: [], by: "rig-desktop", label: "Desk", rev: 1 }]]));
 seed.close();
 
 // This tree's version: the app compares it with its own.
@@ -249,7 +261,7 @@ const front = Bun.serve({
   },
 });
 console.log(`phonehub ready ${port}`);
-console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID }));
+console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID, composer: COMPOSER_GID }));
 const stop = async () => {
   front.stop(true);
   await h.stop();

@@ -265,11 +265,13 @@ component ImageTile {
                 vertical-alignment: center;
             }
         }
-        TipArea {
-            tip: root.name;
-            clicked => {
-                root.open();
-            }
+    }
+    TipArea {
+        width: root.width;
+        height: root.height;
+        tip: root.name;
+        clicked => {
+            root.open();
         }
     }
     Rectangle {

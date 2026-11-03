@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- An image waiting in the composer opens in the image viewer wherever its tile is clicked or
+  tapped, its number and the edge around the picture included, and the viewer browses the
+  composer's images; the × on its corner still only removes it. On the phone this also holds for
+  images in a draft shared from another device.
+
 ## [0.131.0] - 2026-11-03
 
 ### Changed

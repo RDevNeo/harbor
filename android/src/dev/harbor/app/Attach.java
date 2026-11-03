@@ -239,8 +239,10 @@ final class Attach {
             }
             Images.view(a, all, at);
         };
-        iv.setOnClickListener(open);
-        u.state.setOnClickListener(open);
+        // The whole tile (including its number and the space around the picture) opens it.
+        // The remove button consumes its own tap before this container sees it.
+        f.setContentDescription("Open " + u.name);
+        f.setOnClickListener(open);
         if (u.uri != null) Images.local(a, u.uri, THUMB, iv);
         else Images.load(a, hub, u.url, iv);
         u.chip = f;
