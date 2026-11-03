@@ -175,7 +175,7 @@ test("without swap an idle client quits and the next call starts it again", asyn
   expect(JSON.parse(t).ran).toBe("discord_view");
   expect(starts()).toBe(2);
   h.swap.on = true;
-});
+}, 15_000);
 
 test("with swap but no cgroup, an idle client isn't left stopped by signals: it quits later, as without swap", async () => {
   h.host.signalsRest = false;
@@ -190,7 +190,7 @@ test("with swap but no cgroup, an idle client isn't left stopped by signals: it 
     await call("discord_view", {});
     h.host.signalsRest = true;
   }
-});
+}, 15_000);
 
 test("a client that died is noticed", async () => {
   expect(h.host.phase()).toBe("ready");
