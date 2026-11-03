@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.133.0] - 2026-11-03
+
 ### Added
 - Long Claude chats stay light: every message reloads the chat's whole Claude Code session, so once
   the part Claude reloads passes 15 MB, Harbor runs Claude Code's own `/compact` on it before the
