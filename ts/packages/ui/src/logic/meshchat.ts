@@ -1,3 +1,4 @@
+import type { Viewer } from "@harbor/net";
 import type { Chat } from "@harbor/store";
 import type { Mention } from "./mentions.ts";
 
@@ -14,6 +15,8 @@ export interface ShellMesh {
   forward(c: Chat, method: string, tail: string[], body: Record<string, unknown>, files?: readonly string[]): Promise<{ status: number; body: unknown }>;
   create(peerId: string, body: Record<string, unknown>, files: readonly string[], repo: number | null): Promise<{ status: number; body: unknown }>;
   lease(id: number, view: boolean, kind: string, on: boolean, draft: Record<string, unknown> | null): void;
+  /** This window looking at a copy (senders.ts Viewer); null for this PC's own chats. */
+  viewer?(c: Chat): Viewer | null;
 }
 
 /** What the window does when a forwarded call didn't go: its composer gets the message back. */
@@ -61,6 +64,11 @@ export class MeshChat {
   }
 
   /** The PC a chat of another PC runs on, by name (its id while unknown). */
+  /** Who this window is to a copy's sender rows: the messages this PC forwarded are its own, the home PC's show its owner. */
+  viewer(c: Chat): Viewer | null {
+    return c.home === "" ? null : (this.m.viewer?.(c) ?? null);
+  }
+
   homeName(c: Chat): string {
     return this.m.home(c)?.name ?? c.home;
   }

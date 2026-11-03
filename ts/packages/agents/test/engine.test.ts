@@ -434,6 +434,35 @@ describe("the queue (queue.rs)", () => {
     expect(queuedPrompt({ ...m, text: "hi" }, "hi", "").endsWith("not from this PC.]\n\nhi")).toBe(true);
   });
 
+  test("sent_from_goes_by_the_message_s_via_and_keeps_the_device_name", () => {
+    // A phone paired with this PC (no device id on the call) and one forwarded by another PC.
+    expect(sentFrom("Pixel 8 (Sam Rig)", "", false, "desk", "phone")).toBe("[The user sent this from the Harbor app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]\n\n");
+    expect(sentFrom("Pixel 8 (Sam Rig)", "", false, "desk", "pc")).toBe("[The user sent this from Harbor on 'Pixel 8 (Sam Rig)', another PC, not from this one.]\n\n");
+    expect(sentFrom("work-pc (Sam Rig)", "tok:1", false, "desk", "pc")).toContain("Harbor on 'work-pc (Sam Rig)', another PC");
+    // Queued: the same.
+    const m: Queued = { ...q(1, "hi"), sender: "Pixel 8 (Sam Rig)", via: "phone" };
+    expect(queuedPrompt(m, "hi", "")).toBe("[The user sent this from the Harbor app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]\n\nhi");
+  });
+
+  test("a_phone_message_tells_the_agent_it_came_from_a_phone_and_queued_ones_too", async () => {
+    const { e, store } = setup();
+    const c = newChat(store);
+    e.reload();
+    // A phone paired with this PC: its call has no device id, only its label and `via`.
+    const phone = { sender: "Pixel 8 (Sam Rig)", device: "", who: "Sam Rig", via: "phone" as const };
+    e.send(c.id, "slow", phone);
+    await until("the runner", () => e.turnOf(c.id) !== null);
+    e.send(c.id, "later", { ...phone, mode: "queue" });
+    await until("both turns", () => !e.running(c.id) && e.queue.list(c.id).length === 0 && e.transcript(c.id).items.filter((i) => i.kind === "text").length === 2);
+    const said = e.transcript(c.id).items.flatMap((i) => (i.kind === "text" ? [i.text] : []));
+    expect(said.length).toBe(2);
+    for (const t of said) {
+      expect(t).toContain("[The user sent this from the Harbor app on their phone ('Pixel 8 (Sam Rig)'), not from this PC.]");
+      expect(t).not.toContain("another PC");
+    }
+    store.close();
+  });
+
   test("queue_moves_skip_steers_and_written", () => {
     const s = new QueueState();
     const sending: Queued = { ...q(1, "sending"), written: true };

@@ -788,6 +788,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     relay: (p, q, r, w) => relayServe({ hub, myFp: () => id.fp, isPhone: (pp, rq) => { try { return api?.caller(pp, rq).level === null; } catch { return false; } } }, p, q, r, w),
     hubs: () => mesh.hubs(),
     forwardLease: (...a) => mesh.forwardLease(...a),
+    // Another PC's chat: its images and videos are that PC's files, fetched from it.
+    homeImage: (chat, path, max) => mesh.homeImage(chat, path, max),
+    homeMedia: (chat, path, range) => mesh.homeMedia(chat, path, range),
     image: (path, max) => media.imageAnswer(path, max),
     mediaCheck: (path) => {
       const c = media.check(path);

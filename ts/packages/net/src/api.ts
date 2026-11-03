@@ -56,6 +56,8 @@ export interface CallFrom {
   /** The person who wrote it and on what (PCs from 0.115; "" and null from older ones). */
   who: string;
   via: SentVia | null;
+  /** The device it was written on ("phone:<pairing>", "pc:<id>"; PCs from 0.119.2, else ""). */
+  dev: string;
 }
 
 /** Who is on the other end of a connection. */

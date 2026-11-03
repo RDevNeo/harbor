@@ -23,3 +23,17 @@ test("the first card under 'Show earlier messages' joins nothing", () => {
   const cards = transcriptCards([user(100), user(110)], false, [], open, "").filter((c) => c.kind === "user");
   expect(cards.map((c) => [c.seq, c.joined, c.tight])).toEqual([[1, false, false]]);
 });
+
+test("a copy of another PC's chat: the home PC's messages show its owner, this PC's own none", () => {
+  const viewer = { dev: "pc:work-pc", label: "work-pc (Sam Rig)", home: { name: "home-pc", owner: "Kim Rig" } };
+  const mine: Item = { ...user(200), sender: "work-pc (Sam Rig)", who: "Sam Rig", via: "pc", dev: "pc:work-pc" } as Item;
+  const open = newOpened();
+  const cards = transcriptCards([user(100), mine], false, [], open, "", 0, () => [], () => false, viewer).filter((c) => c.kind === "user");
+  expect(cards.map((c) => [c.sender, c.icon !== "", c.joined])).toEqual([
+    ["Kim Rig", true, false],
+    ["", false, false],
+  ]);
+  // The home PC's own desktop: no row for its own message.
+  const home = transcriptCards([user(100)], false, [], newOpened(), "").filter((c) => c.kind === "user");
+  expect(home.map((c) => c.sender)).toEqual([""]);
+});

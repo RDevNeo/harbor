@@ -53,3 +53,47 @@ export function sentBy(sender: string, who = "", via: SentVia | "" = ""): Sender
   }
   return { who: who !== "" ? who : person !== "" ? person : device, via };
 }
+
+/**
+ * Who looks at a chat, for the row over its user bubbles: every message shows who wrote it except
+ * the ones written on the device looking. Null: the desktop of the chat's home PC (whose own
+ * messages carry no sender).
+ */
+export interface Viewer {
+  /** Its stable device id, as its messages' `dev` says it: "phone:<pairing>" or "pc:<id>". */
+  dev: string;
+  /** Its label, as its messages' `sender` says it ("Pixel 8 (Sam)", "work-pc (Sam)"): matched for messages from before `dev`. */
+  label: string;
+  /** The chat's home PC: a message typed there shows as its owner's (its name when it has none). */
+  home: { name: string; owner: string };
+}
+
+/** What a user bubble shows for `viewer`: the sender label (empty: no row), the person and on what. */
+export interface SenderRow {
+  sender: string;
+  who: string;
+  via: SentVia | "";
+}
+
+const NONE: SenderRow = { sender: "", who: "", via: "" };
+
+/** A stable device id for a phone paired as `group` (a signed-in phone's group is its key's fingerprint, the same on every PC). */
+export const phoneDev = (group: string): string => (group === "" ? "" : `phone:${group}`);
+
+/** The row over a user message for `viewer` (see Viewer). */
+export function shownTo(it: { sender: string; who?: string | undefined; via?: SentVia | undefined; dev?: string | undefined }, viewer: Viewer | null): SenderRow {
+  if (it.sender === "") {
+    if (viewer === null) return NONE;
+    const name = viewer.home.name || "PC";
+    const owner = viewer.home.owner;
+    return { sender: owner ? `${name} (${owner})` : name, who: owner || name, via: "pc" };
+  }
+  if (viewer !== null && (it.dev ? it.dev === viewer.dev : viewer.label !== "" && it.sender === viewer.label)) return NONE;
+  return { sender: it.sender, ...sentBy(it.sender, it.who, it.via) };
+}
+
+/** The owner of a PC known here by name ("" when none is known). */
+export function pcOwner(name: string): string {
+  for (const [n, o] of known?.pcs() ?? []) if (n !== "" && n === name) return o;
+  return "";
+}

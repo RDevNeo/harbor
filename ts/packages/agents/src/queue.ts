@@ -30,9 +30,10 @@ export interface Queued {
   /** Where it was written, when not on this PC (`Item::User::sender`). */
   sender: string;
   device: string;
-  /** Who wrote it there and on what (`Item::User::who`, `via`). */
+  /** Who wrote it there, on what and on which device (`Item::User::who`, `via`, `dev`). */
   who?: string;
   via?: SentVia;
+  dev?: string;
   intent: Intent;
   note: Note;
   /** The device editing it in its composer; empty when nobody is. */
@@ -59,14 +60,15 @@ export function queuedPrompt(q: Queued, said: string, mentions: string): string 
 }
 
 export function queuedItem(q: Queued): Item {
-  return withWho({ kind: "user", text: q.text, files: [...q.files], at: now(), mentions: q.mentions, sender: q.sender, intent: q.intent }, q.who, q.via);
+  return withWho({ kind: "user", text: q.text, files: [...q.files], at: now(), mentions: q.mentions, sender: q.sender, intent: q.intent }, q.who, q.via, q.dev);
 }
 
-/** A user item with who wrote it and on what, set only when known (old items and this PC's leave them out). */
-export function withWho(it: Item, who: string | undefined, via: SentVia | undefined): Item {
+/** A user item with who wrote it, on what and on which device, set only when known (old items and this PC's leave them out). */
+export function withWho(it: Item, who: string | undefined, via: SentVia | undefined, dev?: string): Item {
   if (it.kind !== "user" || it.sender === "") return it;
   if (who) it.who = who;
   if (via) it.via = via;
+  if (dev) it.dev = dev;
   return it;
 }
 
@@ -151,6 +153,7 @@ function queuedJson(q: Queued): Record<string, unknown> {
   if (q.editing !== "") v.editing = q.editing;
   if (q.who) v.who = q.who;
   if (q.via) v.via = q.via;
+  if (q.dev) v.dev = q.dev;
   return v;
 }
 
@@ -172,6 +175,7 @@ function queuedFrom(v: unknown): Queued | null {
   };
   if (s("who") !== "") q.who = s("who");
   if (o.via === "phone" || o.via === "pc") q.via = o.via;
+  if (s("dev") !== "") q.dev = s("dev");
   return q;
 }
 

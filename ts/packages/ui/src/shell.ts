@@ -1025,7 +1025,7 @@ export class Shell {
     const status = since !== null ? `Working… ${elapsed(Math.floor((Date.now() - since) / 1000))}  ·  Esc to stop${subsRunning(subs)}` : "";
     const cwd = this.data.cwd(chat);
     const rows = this.mediaRows;
-    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined, (id) => this.chatCap.gone(id));
+    const next = transcriptCards(this.items(chat.id), chat.role === "lead", [], this.openedOf(chat.id), status, utcOffset(), rows ? (c) => rows.rows(c, cwd, 760, this.win.scale_factor) : undefined, (id) => this.chatCap.gone(id), this.meshChat.viewer(chat));
     if (this.queueEdit?.chat === chat.id && !this.engine.queued(chat.id).some((q) => q.id === this.queueEdit?.id && !q.written)) this.queueEditEnd(false);
     const running = this.engine.running(chat.id);
     const held = this.engine.queue.held.has(chat.id);

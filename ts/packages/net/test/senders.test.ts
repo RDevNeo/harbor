@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { itemJson, parseItem, type Item } from "@harbor/store";
-import { knowDevices, project, sentBy } from "../src/index.ts";
+import { knowDevices, project, sentBy, type Viewer } from "../src/index.ts";
 
 afterEach(() => knowDevices(null));
 
@@ -64,4 +64,53 @@ test("anything drawn between breaks a run; hidden cards don't", () => {
   expect(joined([a, result, msg(110)])).toEqual([false, null, true]);
   // A fork divider under the first.
   expect(joined([a, msg(110)], [[0, 7]])).toEqual([false, false]);
+});
+
+const phoneViewer: Viewer = { dev: "phone:aaaa", label: "Pixel 8 (Sam Rig)", home: { name: "home-pc", owner: "Kim Rig" } };
+const rows = (items: Item[], viewer: Viewer | null) =>
+  project(items, false, [], viewer).map((s) => (s.card.kind === "user" ? [s.card.sender, s.card.who, s.card.via, s.card.joined] : null));
+const typedHome = (at: number): Item => msg(at);
+const fromPhone = (at: number, dev = "phone:aaaa", label = "Pixel 8 (Sam Rig)", who = "Sam Rig"): Item => ({ ...msg(at, label, who, "phone"), dev }) as Item;
+
+test("a phone sees who wrote every message but its own; typed on the home PC is its owner's", () => {
+  expect(rows([typedHome(100), fromPhone(1000), fromPhone(2000, "phone:bbbb", "Galaxy (Alex Rig)", "Alex Rig")], phoneViewer)).toEqual([
+    ["home-pc (Kim Rig)", "Kim Rig", "pc", false],
+    ["", "", "", false],
+    ["Galaxy (Alex Rig)", "Alex Rig", "phone", false],
+  ]);
+  // A home PC without an owner: its name.
+  expect(rows([typedHome(100)], { ...phoneViewer, home: { name: "home-pc", owner: "" } })).toEqual([["home-pc", "home-pc", "pc", false]]);
+  // The same person on another phone isn't this one.
+  expect(rows([fromPhone(100, "phone:cccc")], phoneViewer)).toEqual([["Pixel 8 (Sam Rig)", "Sam Rig", "phone", false]]);
+});
+
+test("messages from before device ids are matched by the viewer's label", () => {
+  const old = msg(100, "Pixel 8 (Sam Rig)", "Sam Rig", "phone");
+  expect(rows([old], phoneViewer)).toEqual([["", "", "", false]]);
+  expect(rows([msg(100, "Pixel 8 (Kim Rig)", "Kim Rig", "phone")], phoneViewer)).toEqual([["Pixel 8 (Kim Rig)", "Kim Rig", "phone", false]]);
+});
+
+test("the home PC's desktop is unchanged: its own messages have no row, the others theirs", () => {
+  expect(rows([typedHome(100), fromPhone(1000)], null)).toEqual([
+    ["", "", "", false],
+    ["Pixel 8 (Sam Rig)", "Sam Rig", "phone", false],
+  ]);
+});
+
+test("another PC's desktop with a copy: what it forwarded is its own, the home PC's shows its owner", () => {
+  const desk: Viewer = { dev: "pc:work-pc", label: "work-pc (Sam Rig)", home: { name: "home-pc", owner: "Kim Rig" } };
+  const forwarded = { ...msg(1000, "work-pc (Sam Rig)", "Sam Rig", "pc"), dev: "pc:work-pc" } as Item;
+  const before = msg(2000, "work-pc (Sam Rig)", "Sam Rig", "pc");
+  expect(rows([typedHome(100), forwarded, before, fromPhone(3000)], desk)).toEqual([
+    ["home-pc (Kim Rig)", "Kim Rig", "pc", false],
+    ["", "", "", false],
+    ["", "", "", false],
+    ["Pixel 8 (Sam Rig)", "Sam Rig", "phone", false],
+  ]);
+});
+
+test("runs follow the viewer: the home PC's messages join on a phone, its own join too, a switch breaks them", () => {
+  expect(rows([typedHome(100), typedHome(110), fromPhone(120), fromPhone(130), typedHome(140)], phoneViewer).map((r) => r?.[3])).toEqual([false, true, false, true, false]);
+  // On the home desktop the same run reads the other way round.
+  expect(rows([typedHome(100), typedHome(110), fromPhone(120), fromPhone(130)], null).map((r) => r?.[3])).toEqual([false, true, false, true]);
 });

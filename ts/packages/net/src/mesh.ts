@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { hostname, networkInterfaces } from "node:os";
 import type { SentVia } from "@harbor/store";
 import { type Call, type ConnPeer, MAX_AUDIO } from "./api.ts";
-import { exchange, get, http, jsonBody } from "./client.ts";
+import { exchange, get, http, httpPart, httpRaw, jsonBody } from "./client.ts";
 import { err, header, ok, parseJson, query, readBody, segments, type Reader, type Reply, type Request } from "./http.ts";
 import type { Hub, PairedPhone } from "./hub.ts";
 import { isLoopback, parseIp, routeTo, type Ip } from "./ip.ts";
@@ -12,8 +12,8 @@ import { allowedJson, cleanAddrs, dest, downOf, label, loadAllowed, newPeer, pee
 import { codeKey, connect, DEFAULT_PORT, hostPort, newCode, normalizeCode, normalizeFp, privateIp, proof, proofOk, tailnetIp, Throttle, type Identity } from "./tls.ts";
 import { Ordered, type Json } from "./wire.ts";
 
-/** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, and the person and device kind when known. */
-export type Sender = [label: string, device: string, who?: string, via?: SentVia | ""];
+/** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, the person and device kind when known, and the stable device id (`Item` user's `dev`). */
+export type Sender = [label: string, device: string, who?: string, via?: SentVia | "", dev?: string];
 
 const POLL = 20_000;
 const CALL_WAIT = 60_000;
@@ -488,6 +488,40 @@ export class Mesh {
     return true;
   }
 
+  /** The online home PC of a copy (`chat` is this PC's id for it); null for this PC's own chats. */
+  private homeOf(chat: number): Dest | null {
+    const home = this.d.hub.mesh.homes.get(chat);
+    const p = home ? this.d.hub.mesh.peer(home[0]) : null;
+    return p?.online ? { ...dest(p), as: this.d.id() ?? undefined } : null;
+  }
+
+  /** An image of a chat that runs on another PC (`/v1/image` here for a copy): fetched from that PC,
+   * since its paths are that PC's files. Null when the chat is this PC's, or the PC is off or has no such image. */
+  async homeImage(chat: number, path: string, max: number | null): Promise<{ status: number; ctype: string; body: Uint8Array } | null> {
+    const d = this.homeOf(chat);
+    if (!d) return null;
+    try {
+      const a = await httpRaw(d, "GET", `/mesh/v1/image?path=${encodeURIComponent(path)}${max !== null ? `&max=${max}` : ""}`, null, 20_000);
+      return a.status === 200 && a.ctype.startsWith("image/") ? { status: 200, ctype: a.ctype, body: a.body } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A video of a chat that runs on another PC (`/v1/media` here for a copy), at most MEDIA_PART of it per
+   * ranged ask; a PC that doesn't do ranges answers with the whole file, which goes on as it came. */
+  async homeMedia(chat: number, path: string, range: string | null): Promise<{ status: number; ctype: string; body: Uint8Array; range?: string } | null> {
+    const d = this.homeOf(chat);
+    if (!d) return null;
+    try {
+      const a = await httpPart(d, "GET", `/mesh/v1/media?path=${encodeURIComponent(path)}`, null, range === null ? "" : partOf(range), 120_000);
+      if (!(a.status === 200 || a.status === 206) || !(a.ctype.startsWith("video/") || a.ctype.startsWith("image/"))) return null;
+      return a.range !== "" ? { status: a.status, ctype: a.ctype, body: a.body, range: a.range } : { status: a.status, ctype: a.ctype, body: a.body };
+    } catch {
+      return null;
+    }
+  }
+
   /** `GET /v1/hubs` for a phone: this PC and the others it shares chats with. */
   hubs(): Json {
     const hub = this.d.hub;
@@ -729,6 +763,7 @@ export class Mesh {
     const call: Record<string, Json> = { method, path, body: b, sender: sender[0], device: sender[1] };
     if (sender[2]) call.who = sender[2];
     if (sender[3]) call.via = sender[3];
+    if (sender[4]) call.dev = sender[4];
     if (ctx !== null) call.ctx = ctx;
     try {
       const [status, v] = await http(d, "POST", "/mesh/v1/call", jsonBody(call), CALL_WAIT);

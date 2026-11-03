@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
-import { blankChat, mention, Store, type Chat, type Mention } from "@harbor/store";
+import { blankChat, mention, Store, type Chat, type Item, type Mention } from "@harbor/store";
 import { accountDecide, isHarborToken, verifyHarborToken, type AccountKey } from "../src/account.ts";
 import { Api } from "../src/api.ts";
 import { readAnswerHead } from "../src/client.ts";
@@ -387,7 +387,10 @@ describe("the phone API's chats (api.rs App side)", () => {
       transcript: (id) => ({ items: store.items(id) }),
       send: (id, text, o) => {
         sent.push(`${o.sender ?? ""}: ${text}`);
-        store.saveItems(id, [...store.items(id), { kind: "user", text, files: [], at: 1761200000, mentions: [], sender: o.sender ?? "", intent: "" }, { kind: "text", text: `**echo** ${text}`, at: 1761200001 }]);
+        const u: Item = { kind: "user", text, files: [], at: 1761200000, mentions: [], sender: o.sender ?? "", intent: "" };
+        if (o.via) u.via = o.via;
+        if (o.dev) u.dev = o.dev;
+        store.saveItems(id, [...store.items(id), u, { kind: "text", text: `**echo** ${text}`, at: 1761200001 }]);
       },
       stop: () => {},
       queued: () => [],
@@ -471,7 +474,9 @@ describe("the phone API's chats (api.rs App side)", () => {
     const it = v as { count: number; items: { kind: string; text?: string; sender?: string; blocks?: unknown; rev: number }[] };
     expect(it.count).toBe(2);
     expect(it.items.map((x) => x.kind)).toEqual(["user", "text"]);
-    expect(it.items[0]?.sender).toBe("Pixel (Sam Rig)");
+    // Its own message: no sender row on this phone (the item knows the phone by its key).
+    expect(store.items(store.chats()[0]?.id ?? 0)[0]).toMatchObject({ sender: "Pixel (Sam Rig)", via: "phone", dev: `phone:${phoneId.fp}` });
+    expect(it.items[0]?.sender).toBe("");
     expect(it.items[1]?.blocks).toEqual([{ type: "paragraph", spans: [{ text: "echo", bold: true }, { text: " Fix the build" }] }]);
     const since = Math.max(...it.items.map((x) => x.rev));
     // The long-poll hears of the next reply; only the new cards come again.

@@ -30,6 +30,8 @@ export type Item =
       who?: string;
       /** What it was written on: the Harbor phone app or another PC (items from before 0.115: unset). */
       via?: SentVia;
+      /** The device it was written on, stable across PCs: "phone:<pairing>" or "pc:<id>" (items from before 0.119.2: unset). */
+      dev?: string;
     }
   | { kind: "text"; text: string; at: number }
   | { kind: "thinking"; text: string }
@@ -120,6 +122,7 @@ export function parseItem(body: string): Item | null {
       const it: Item = { kind: "user", text, files, at, mentions, sender, intent };
       if (typeof v.who === "string" && v.who !== "") it.who = v.who;
       if (v.via === "phone" || v.via === "pc") it.via = v.via;
+      if (typeof v.dev === "string" && v.dev !== "") it.dev = v.dev;
       return it;
     }
     case "text": {
@@ -216,6 +219,7 @@ export function itemJson(it: Item): string {
       if (it.intent) o += `,"intent":${s(it.intent)}`;
       if (it.who) o += `,"who":${s(it.who)}`;
       if (it.via) o += `,"via":${s(it.via)}`;
+      if (it.dev) o += `,"dev":${s(it.dev)}`;
       return `${o}}`;
     }
     case "text":

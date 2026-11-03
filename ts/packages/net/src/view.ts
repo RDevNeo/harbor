@@ -1,5 +1,5 @@
 import type { Item, Mention, SentVia } from "@harbor/store";
-import { sentBy } from "./senders.ts";
+import { shownTo, type Viewer } from "./senders.ts";
 
 export interface Media {
   /** A local absolute path (for an https URL: where its download is cached). */
@@ -14,7 +14,20 @@ export interface Media {
 /** One transcript item as the desktop draws it and the phone API sends it (view.rs `Card`). */
 export type Card =
   | { kind: "hidden" }
-  | { kind: "user"; text: string; files: string[]; images: string[]; mentions: Mention[]; at: number; sender: string; intent: string; who: string; via: SentVia | ""; joined: boolean }
+  | {
+      kind: "user";
+      text: string;
+      files: string[];
+      images: string[];
+      mentions: Mention[];
+      at: number;
+      /** The row over the bubble for the one looking (senders.ts `shownTo`): its label, the person and on what; all empty for the viewer's own messages. */
+      sender: string;
+      intent: string;
+      who: string;
+      via: SentVia | "";
+      joined: boolean;
+    }
   | { kind: "text"; text: string; at: number; forkable: boolean }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; label: string; summary: string; input: string; result: string | null; is_error: boolean }
@@ -123,10 +136,10 @@ export function hidden(items: readonly Item[], lead: boolean): boolean[] {
   });
 }
 
-function card(it: Item, canFork: boolean): Card {
+function card(it: Item, canFork: boolean, viewer: Viewer | null): Card {
   switch (it.kind) {
     case "user":
-      return { kind: "user", text: it.text, sender: it.sender, ...sentBy(it.sender, it.who, it.via), joined: false, intent: it.intent, files: it.files.filter((f) => !isImage(f)), images: it.files.filter(isImage), mentions: it.mentions, at: it.at };
+      return { kind: "user", text: it.text, ...shownTo(it, viewer), joined: false, intent: it.intent, files: it.files.filter((f) => !isImage(f)), images: it.files.filter(isImage), mentions: it.mentions, at: it.at };
     case "text":
       return { kind: "text", text: it.text, at: it.at, forkable: canFork };
     case "thinking":
@@ -154,13 +167,17 @@ function card(it: Item, canFork: boolean): Card {
   }
 }
 
-/** The transcript as cards; `forks` are [item index, forked chat] pairs. */
-export function project(items: readonly Item[], lead: boolean, forks: readonly [number, number][]): Shown[] {
+/**
+ * The transcript as cards; `forks` are [item index, forked chat] pairs. `viewer` is who looks
+ * (a phone, or another PC's desktop with a copy): its own messages show no sender row, and those
+ * typed on the home PC show its owner; null for the home PC's desktop.
+ */
+export function project(items: readonly Item[], lead: boolean, forks: readonly [number, number][], viewer: Viewer | null = null): Shown[] {
   const hide = hidden(items, lead);
   const fk = forkable(items);
   const out: Shown[] = items.map((it, i) => ({
     seq: i,
-    card: hide[i] ? { kind: "hidden" } : card(it, fk[i] !== null),
+    card: hide[i] ? { kind: "hidden" } : card(it, fk[i] !== null, viewer),
     forksAfter: forks.filter(([at]) => at === i).map(([, f]) => f),
     group: null,
   }));
@@ -174,8 +191,8 @@ export const JOIN_SECS = 5 * 60;
 
 /**
  * WhatsApp-style runs: a user card joins the card drawn before it (no sender row, a small gap)
- * when that one is a user card from the same person on the same kind of device (or both typed on
- * this PC), sent at most JOIN_SECS before it, with nothing drawn between (hidden cards don't count,
+ * when that one is a user card from the same person on the same kind of device as the viewer sees
+ * it (or both written on the viewer's own device: neither shows a row), sent at most JOIN_SECS before it, with nothing drawn between (hidden cards don't count,
  * a fork divider does). Decided from the card before only, so a new message never changes it.
  */
 function markJoined(cards: Shown[]): void {

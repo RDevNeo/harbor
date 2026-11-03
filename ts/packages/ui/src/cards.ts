@@ -1,6 +1,6 @@
 import * as slint from "slint-ui";
 import { ICONS, type IconName } from "./icons.ts";
-import { actions, type Card, groupLabel, groups, project } from "@harbor/net";
+import { actions, type Card, groupLabel, groups, project, type Viewer } from "@harbor/net";
 import { clock } from "./logic/team.ts";
 import type { Item } from "@harbor/store";
 import { captchaRoles, type CaptchaRole, captchaText } from "./logic/captchacard.ts";
@@ -260,8 +260,10 @@ function signature(it: Item, open: Opened, seq: number, media: string): string {
   return `${seq}:${body}:${open.cards.has(seq)}:${media}`;
 }
 
-export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false): CardData[] {
-  const all = project(items, lead, forks);
+export function transcriptCards(items: readonly Item[], lead: boolean, forks: [number, number][], open: Opened, status: string, off = 0, mediaOf: MediaOf = () => [], gone: CaptchaGone = () => false, viewer: Viewer | null = null): CardData[] {
+  // A copy of another PC's chat: the sender rows are this PC's view of it (senders.ts Viewer).
+  const all = project(items, lead, forks, viewer);
+  const who = viewer ? `${viewer.dev}|${viewer.label}|${viewer.home.name}|${viewer.home.owner}` : "";
   const captchas = captchaRoles(items);
   const runs = groups(all);
   const visible = all.filter((s) => s.card.kind !== "hidden" && (s.group === null || s.group === s.seq));
@@ -284,7 +286,7 @@ export function transcriptCards(items: readonly Item[], lead: boolean, forks: [n
     const item = items[s.seq];
     const media = mediaOf(s.card);
     const cap = captchas.get(s.seq);
-    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") : "";
+    const sig = item ? signature(item, open, s.seq, media.map((m) => m.image.width).join(",")) + (cap ? `:${cap.role}:${gone(cap.note.captcha)}` : "") + (item.kind === "user" ? `:${who}` : "") : "";
     const hit = open.memo.get(s.seq);
     const same = hit !== undefined && hit.item === item && hit.sig === sig;
     const c = same ? hit.data : cardData(s.card, s.seq, open, off, () => media, cap, gone);

@@ -5,6 +5,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Chats: who wrote a message is shown relative to the device you look on. A phone, or another PC
+  showing a chat that runs elsewhere, now labels the messages typed on the chat's PC with a PC icon
+  and that PC owner's name. Only the messages written on the device you're using have no label.
+  Runs of quick messages group the same way.
+
+### Fixed
+- Phone: an image in an agent's reply shows for a chat that runs on another PC. The phone's PC
+  now fetches it, and videos, from the PC where the file is.
+- Phone: an image or file you attach to a chat that runs on another PC no longer disappears from
+  the composer before you send it, so it reaches the agent.
+
 ## [0.119.1] - 2026-11-02
 
 ### Fixed

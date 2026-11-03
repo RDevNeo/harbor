@@ -57,6 +57,8 @@ api = new Api({
   relay: (p, req, r, w) => relayServe({ hub, myFp: () => id.fp, isPhone: () => false }, p, req, r, w),
   hubs: () => mesh.hubs(),
   forwardLease: (...a) => mesh.forwardLease(...a),
+  homeImage: (chat, path, max) => mesh.homeImage(chat, path, max),
+  homeMedia: (chat, path, range) => mesh.homeMedia(chat, path, range),
 });
 phone = new PhoneRoutes({ store, hub, replica, mesh, version: "0.0.0-ts", myFp: () => id.fp, agents: null });
 await api.listen(["127.0.0.1"]);

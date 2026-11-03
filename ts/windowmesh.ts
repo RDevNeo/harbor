@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { hostname } from "node:os";
-import { dest, err, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica } from "./packages/net/src/index.ts";
+import { dest, err, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
 import type { Chat } from "./packages/store/src/index.ts";
 
 export interface WindowMeshDeps {
@@ -65,10 +65,17 @@ export class WindowMesh {
     return all.filter((t) => t.device !== this.me());
   }
 
+  /** This window looking at a copy: its own messages carry this PC's device id (or, from before, its label). */
+  viewer(c: Chat): Viewer | null {
+    if (c.home === "") return null;
+    const p = this.d.hub.mesh.peer(c.home);
+    return { dev: this.me(), label: this.sender()[0], home: { name: p?.name ?? this.d.hub.mesh.nameOf(c.home), owner: p?.owner ?? "" } };
+  }
+
   private sender(): Sender {
     const me = this.myName();
     const owner = this.d.ownerName();
-    return [owner ? `${me} (${owner})` : me, this.me(), owner ?? "", "pc"];
+    return [owner ? `${me} (${owner})` : me, this.me(), owner ?? "", "pc", this.me()];
   }
 
   private files(paths: readonly string[]): { name: string; data: Uint8Array }[] {

@@ -15,16 +15,18 @@ import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.t
 import { dest, type Peer } from "./shared.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
+import { pcOwner, phoneDev, type Viewer } from "./senders.ts";
 
 const CLIP = 16 << 10;
 
-/** Who wrote a message elsewhere and on what (`Item` user's `who` and `via`). */
+/** Who wrote a message elsewhere, on what and on which device (`Item` user's `who`, `via` and `dev`). */
 interface Who {
   who: string;
   via: SentVia | null;
+  dev: string;
 }
 
-const NOBODY: Who = { who: "", via: null };
+const NOBODY: Who = { who: "", via: null, dev: "" };
 const now = (): number => Math.floor(Date.now() / 1000);
 const utcOffset = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -33,7 +35,7 @@ export interface PhoneEngine {
   running(id: number): boolean;
   runningSince(id: number): number | null;
   transcript(id: number): { items: Item[] };
-  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string; who?: string; via?: SentVia | undefined; from?: SentBy | null }): void;
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: "steer" | "queue"; sender?: string; device?: string; who?: string; via?: SentVia | undefined; dev?: string; from?: SentBy | null }): void;
   stop(id: number): void;
   queued(id: number): readonly { intent: string; text: string; files: string[] }[];
   takeQueue(id: number): { text: string; files: string[] }[];
@@ -336,7 +338,7 @@ export function cardJson(s: Shown, rev: number, find: (t: string) => Media[], ch
 const obj = (v: unknown): Record<string, unknown> => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 
 export class PhoneRoutes {
-  private revs = new Map<number, [bigint, number][]>();
+  private revs = new Map<string, [bigint, number][]>();
   /** A phone's send repeated with the same client id (its retry) runs once (Once). */
   private sends = new Once<Reply>();
 
@@ -389,8 +391,15 @@ export class PhoneRoutes {
 
   private draft(chat: number): Json {
     const r = this.d.replica.remote.get(chat);
-    const dr = r ? r.draft : this.d.hub.draft(chat);
-    return dr ? draftJson(dr) : null;
+    if (!r) {
+      const dr = this.d.hub.draft(chat);
+      return dr ? draftJson(dr) : null;
+    }
+    if (!r.draft) return null;
+    // Another PC's chat leaves `files` out (PROTOCOL.md "Typing"): they're that PC's uploads, never
+    // this PC's (the lease forwards none), and an empty list would take back the files a phone attached.
+    const { files: _files, ...rest } = draftJson(r.draft) as Record<string, Json>;
+    return rest;
   }
 
   /** api.rs `api_status`: the bars under the transcript; a copy's as its home PC says them. */
@@ -610,18 +619,29 @@ export class PhoneRoutes {
     };
   }
 
-  items(c: Chat, since: number): Json {
+  /** A phone looking at `c` (senders.ts Viewer): its own messages show no sender row, the home PC's its owner. */
+  viewer(c: Chat, token: string, device: string): Viewer {
+    const hub = this.d.hub;
+    const peer = c.home === "" ? null : hub.mesh.peer(c.home);
+    const me = hub.mesh.me.name;
+    const home = c.home === "" ? { name: me === "" ? hostname() : me, owner: pcOwner(me) } : { name: peer?.name ?? hub.mesh.nameOf(c.home), owner: peer?.owner ?? "" };
+    return { dev: phoneDev(hub.groupOf(token)), label: hub.callerLabel(token, device), home };
+  }
+
+  items(c: Chat, since: number, viewer: Viewer | null = null): Json {
     const hub = this.d.hub;
     const items: Item[] = this.d.engine && c.home === "" ? this.d.engine.transcript(c.id).items : this.d.store.items(c.id);
     if (this.d.engine?.opened(c.id)) hub.bump();
     const forks = c.home !== "" ? (this.d.replica.remote.get(c.id)?.forks ?? []) : (this.d.engine?.forksOf(c.id) ?? []);
-    const cards = project(items, c.role === "lead", forks);
-    const revs = this.revs.get(c.id) ?? [];
+    const cards = project(items, c.role === "lead", forks, viewer);
+    // The sender rows depend on who looks: each viewer has its own revisions of the chat's cards.
+    const key = `${c.id}|${viewer ? `${viewer.dev}|${viewer.label}|${viewer.home.name}|${viewer.home.owner}` : ""}`;
+    const revs = this.revs.get(key) ?? [];
     const look = this.d.commits?.(c) ?? null;
     const hashes = cards.map((s, i) => {
       const it = items[i];
       const shas = look && s.card.kind === "text" ? [...look.ofText(s.card.text).keys()].sort().join(",") : "";
-      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && s.card.joined}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
+      const extra = `${s.card.kind}|${s.card.kind === "text" && s.card.forkable}|${s.card.kind === "user" && `${s.card.joined}|${s.card.sender}|${s.card.who}|${s.card.via}`}|${s.forksAfter.join(",")}|${s.group ?? ""}|${shas}`;
       return (it ? fingerprint(it) : 0n) ^ hashStr(extra);
     });
     revs.length = Math.min(revs.length, hashes.length);
@@ -633,7 +653,7 @@ export class PhoneRoutes {
         else if (r[0] !== h) revs[i] = [h, rev];
       });
     }
-    this.revs.set(c.id, revs);
+    this.revs.set(key, revs);
     const find = (t: string) => this.d.find?.(t, c) ?? [];
     const out = cards
       .filter((s) => (revs[s.seq]?.[1] ?? 0) > since)
@@ -654,7 +674,7 @@ export class PhoneRoutes {
     const sender = call.from ? call.from.sender || call.from.name : this.d.hub.callerLabel(call.token, call.device);
     const device = call.from?.device ?? "";
     // Who wrote it and on what: a phone here, else as the forwarding PC says (older PCs: unknown).
-    const who: Who = call.from ? { who: call.from.who, via: call.from.via } : { who: this.d.hub.callerWho(call.token), via: "phone" };
+    const who: Who = call.from ? { who: call.from.who, via: call.from.via, dev: call.from.dev } : { who: this.d.hub.callerWho(call.token), via: "phone", dev: phoneDev(this.d.hub.groupOf(call.token)) };
     if (m === "GET" && p.length === 2 && p[1] === "state") return ok(this.state(deviceId(call.token), call.global));
     if (p[0] !== "v1" || p[1] !== "chats") return (await this.d.more?.(call, null)) ?? err(404, "no such call");
     if (m === "POST" && p.length === 2) return this.create(body, sender, call.global, by, who);
@@ -670,7 +690,7 @@ export class PhoneRoutes {
     if (c.home !== "" && forHome(m, p)) return this.forward(c, m, p, body, sender, call.global, who);
     if (m === "GET" && p.length === 4 && p[3] === "items") {
       const since = Number(call.query.find(([k]) => k === "since")?.[1] ?? "0");
-      return ok(this.items(c, Number.isFinite(since) ? since : 0));
+      return ok(this.items(c, Number.isFinite(since) ? since : 0, call.from ? null : this.viewer(c, call.token, call.device)));
     }
     if (m === "POST" && p.length === 4 && p[3] === "send") return this.send(c, body, sender, device, by, who);
     if (m === "GET" && p.length === 4 && p[3] === "move_targets") return this.d.move ? ok(await this.d.move.targetsJson(c.id)) : err(404, "no such call");
@@ -791,7 +811,7 @@ export class PhoneRoutes {
     const running = e.running(c.id);
     const mode = body.mode === "steer" ? "steer" : "queue";
     this.d.hub.clearDraft(c.id);
-    e.send(c.id, text, { files, mentions, mode, sender, device, from, who: who.who, via: who.via ?? undefined });
+    e.send(c.id, text, { files, mentions, mode, sender, device, from, who: who.who, via: who.via ?? undefined, dev: who.dev });
     const queued = e.queued(c.id).filter((q) => q.intent === "").length > before;
     this.d.replica.touch(c.id);
     return ok({ ok: true, queued, steering: running && !queued && c.home === "" });
@@ -837,7 +857,7 @@ export class PhoneRoutes {
     const repo = typeof pref === "string" ? repos.find((r) => r.path === pref) : typeof pref === "number" ? repos.find((r) => r.id === pref) : undefined;
     const { project_id: _p, files: ids, ...rest } = body;
     const ctx = this.d.ctx?.(repo?.id ?? null) ?? null;
-    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, "", who.who, who.via ?? ""], ctx);
+    const r = await this.d.mesh.forward(dest(peer), peer.name, "POST", ["v1", "chats"], { ...rest, device: "", project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null }, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev], ctx);
     return this.mapNew(peer.id, r, global);
   }
 
@@ -960,7 +980,7 @@ export class PhoneRoutes {
     const path = ["v1", "chats", String(c.homeId), ...p.slice(3)];
     const { files: ids, ...rest } = body;
     const ctx = startsTurn(method, p.slice(3)) ? (this.d.ctx?.(c.repoId) ?? null) : null;
-    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, "", who.who, who.via ?? ""], ctx);
+    let r = await this.d.mesh.forward(dest(peer), peer.name, method, path, rest, this.uploads(ids), [sender, "", who.who, who.via ?? "", who.dev], ctx);
     if (p[3] === "fork") r = await this.mapNew(c.home, r, global);
     const rb = obj(r.body);
     const ch = typeof rb.chat === "object" && rb.chat !== null && !Array.isArray(rb.chat) ? (rb.chat as Record<string, Json>) : null;

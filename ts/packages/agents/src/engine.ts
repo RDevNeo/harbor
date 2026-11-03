@@ -887,7 +887,7 @@ export class Engine {
   }
 
   /** A new turn when the chat is idle (with what waited for it), else a follow-up that steers or queues per `mode` (Queue unless said). */
-  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: Mode; sender?: string; device?: string; who?: string; via?: SentVia | undefined; from?: SentBy | null } = {}): void {
+  send(id: number, text: string, opts: { files?: string[]; mentions?: Mention[]; mode?: Mode; sender?: string; device?: string; who?: string; via?: SentVia | undefined; dev?: string; from?: SentBy | null } = {}): void {
     const files = opts.files ?? [];
     const mentions = opts.mentions ?? [];
     const sender = opts.sender ?? "";
@@ -902,6 +902,7 @@ export class Engine {
       const q: Queued = { id: this.queue.id(), text, files, mentions, written: false, sender, device, intent: "", note: "", editing: "" };
       if (sender !== "" && opts.who) q.who = opts.who;
       if (sender !== "" && opts.via) q.via = opts.via;
+      if (sender !== "" && opts.dev) q.dev = opts.dev;
       if ((opts.mode ?? "queue") === "steer" && this.steering(id) !== "no") this.steer(id, q, STEER);
       else {
         this.queue.list(id).push(q);
@@ -924,7 +925,7 @@ export class Engine {
     }
     const from = sentFrom(sender, device, back, this.host.hostname?.(), sender !== "" ? opts.via : undefined);
     const at = now();
-    tr.items.push(withWho({ kind: "user", text, files: [...files], at, mentions, sender, intent: "" }, opts.who, opts.via));
+    tr.items.push(withWho({ kind: "user", text, files: [...files], at, mentions, sender, intent: "" }, opts.who, opts.via, opts.dev));
     const quoted = `${from}${this.mentions(mentions)}`;
     // Anything queued for an idle chat goes first; a fork's context before all.
     const fork = this.takeForkPreamble(id);
