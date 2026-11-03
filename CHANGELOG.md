@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.3] - 2026-11-02
+
 ### Fixed
 - Discord: a join whose captcha was solved was reported "closed without joining" when the server
   took a moment to arrive after the captcha closed. Harbor now waits for the join's own answer (up to
