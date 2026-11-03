@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.127.0] - 2026-11-03
+
 ### Changed
 - Each turn on this PC runs in a systemd user scope of its own, under `harbor-turns.slice` (at most
   half the RAM for all turns together, throttled from 35%, lower CPU weight than the desktop). What
