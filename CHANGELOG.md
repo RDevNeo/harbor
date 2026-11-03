@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Removed
+- Settings › Usage is gone, on the desktop and the phone. What Harbor does at a limit, the caps and
+  the warnings keep the values they had; the sidebar's gauge still shows each Claude account's
+  usage, and a phone app before this version still opens its Usage page.
+- The sidebar's footer no longer says "N running" (the rows themselves show what's working).
+
 ## [0.123.0] - 2026-11-03
 
 ### Added

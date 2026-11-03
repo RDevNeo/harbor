@@ -363,7 +363,6 @@ export interface AppWindow extends slint.ComponentHandle {
   settled_count: number;
   settled_open: boolean;
   search: string;
-  running: number;
   side_empty: string;
   side_empty_desc: string;
   side_ws: boolean;

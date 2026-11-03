@@ -348,7 +348,6 @@ export component AppWindow inherits Window {
     in property <int> settled-count;
     in-out property <bool> settled-open;
     in-out property <string> search;
-    in property <int> running;
     in property <string> side-empty;
     in property <string> side-empty-desc;
     in property <bool> side-ws;
@@ -739,7 +738,6 @@ export component AppWindow inherits Window {
                     settled-count: root.settled-count;
                     settled-open <=> root.settled-open;
                     search <=> root.search;
-                    running: root.running;
                     empty-kind: root.side-empty;
                     empty-desc: root.side-empty-desc;
                     workspaces: root.side-ws;

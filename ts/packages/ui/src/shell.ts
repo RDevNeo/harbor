@@ -1224,7 +1224,6 @@ export class Shell {
     sync(this.settledRows, settledRows, sameSideRow);
     const w = this.win;
     w.settled_count = settledRows.length;
-    w.running = this.engine.liveCount();
     const names = ws.all.filter((x) => shown.includes(x.id)).map((x) => x.name);
     const q = this.query.trim();
     w.side_ws = ws.all.length > 0;

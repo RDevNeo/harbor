@@ -37,7 +37,6 @@ import settingsKeybindings from "../slint/settings-keybindings.slint" with { typ
 import settingsNotifications from "../slint/settings-notifications.slint" with { type: "file" };
 import settingsProviders from "../slint/settings-providers.slint" with { type: "file" };
 import settingsRows from "../slint/settings-rows.slint" with { type: "file" };
-import settingsUsage from "../slint/settings-usage.slint" with { type: "file" };
 import settingsVoice from "../slint/settings-voice.slint" with { type: "file" };
 import settingsWebhooks from "../slint/settings-webhooks.slint" with { type: "file" };
 import sidebar from "../slint/sidebar.slint" with { type: "file" };
@@ -72,7 +71,6 @@ export const FILES: Readonly<Record<string, string>> = {
   "settings-notifications.slint": settingsNotifications,
   "settings-providers.slint": settingsProviders,
   "settings-rows.slint": settingsRows,
-  "settings-usage.slint": settingsUsage,
   "settings-voice.slint": settingsVoice,
   "settings-webhooks.slint": settingsWebhooks,
   "settings.slint": settings,

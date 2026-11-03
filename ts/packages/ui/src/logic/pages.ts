@@ -1,7 +1,6 @@
-import { cost, type Item } from "@harbor/store";
 import { ICONS } from "../icons.ts";
 
-export type Tab = "account" | "general" | "notifications" | "appearance" | "keybindings" | "voice" | "providers" | "usage" | "integrations" | "secrets" | "devices" | "phones" | "webhooks";
+export type Tab = "account" | "general" | "notifications" | "appearance" | "keybindings" | "voice" | "providers" | "integrations" | "secrets" | "devices" | "phones" | "webhooks";
 
 interface TabInfo {
   label: string;
@@ -40,12 +39,6 @@ export const TABS: Record<Tab, TabInfo> = {
     desc: "Dictate into the composer. Speech is transcribed on this PC with whisper.cpp: private, free, offline.",
   },
   providers: { label: "Providers", icon: ICONS.BOT, keywords: "accounts claude codex cursor gemini sign in login models default", desc: "" },
-  usage: {
-    label: "Usage",
-    icon: ICONS.GAUGE,
-    keywords: "usage limits quota caps cap percent warn tokens cost weekly wait switch accounts notify history",
-    desc: "What each account has used, how much of it Harbor may use, and what threads do at a limit.",
-  },
   integrations: { label: "Integrations", icon: ICONS.PLUG, keywords: "apps mcp servers sign in tools", desc: "" },
   secrets: {
     label: "Secrets",
@@ -68,11 +61,9 @@ export const TABS: Record<Tab, TabInfo> = {
   webhooks: { label: "Webhooks", icon: ICONS.WEBHOOK, keywords: "hooks public url https certificate lets encrypt", desc: "" },
 };
 
-export const TAB_ORDER: readonly Tab[] = ["account", "general", "notifications", "appearance", "keybindings", "voice", "providers", "usage", "integrations", "secrets", "devices", "phones", "webhooks"];
+export const TAB_ORDER: readonly Tab[] = ["account", "general", "notifications", "appearance", "keybindings", "voice", "providers", "integrations", "secrets", "devices", "phones", "webhooks"];
 
-/** "limits" is the Usage page's old name. */
 export function tabFromSlug(s: string): Tab | null {
-  if (s === "limits") return "usage";
   return TAB_ORDER.find((t) => t === s) ?? null;
 }
 
@@ -80,42 +71,4 @@ export function tabFromSlug(s: string): Tab | null {
 export function searchTabs(q: string): Tab[] {
   const w = q.trim().toLowerCase();
   return TAB_ORDER.filter((t) => TABS[t].label.toLowerCase().includes(w) || TABS[t].keywords.includes(w));
-}
-
-export interface Totals {
-  byAccount: Map<string, [turns: number, input: number, output: number, cost: number]>;
-  /** Tokens per day of the last 14 (unix day). */
-  byDay: Map<number, number>;
-  days: Map<number, cost.Usage>;
-  /** By project name ("" for chats without one). */
-  byProject: Map<string, cost.Usage>;
-  byChat: Map<number, cost.Usage>;
-}
-
-/** Sums turn results; `chats` is each chat's [account, project name], the account for results saved without one (pages.rs `sum_results`). */
-export function sumResults(results: readonly [number, Item][], chats: Map<number, [string, string]>, today: number): Totals {
-  const t: Totals = { byAccount: new Map(), byDay: new Map(), days: new Map(), byProject: new Map(), byChat: new Map() };
-  const usage = <K>(m: Map<K, cost.Usage>, k: K) => {
-    let u = m.get(k);
-    if (!u) {
-      u = cost.emptyUsage();
-      m.set(k, u);
-    }
-    return u;
-  };
-  for (const [chat, it] of results) {
-    if (it.kind !== "result") continue;
-    const [acc, project] = chats.get(chat) ?? ["", ""];
-    const a = it.account === "" ? acc : it.account;
-    const e = t.byAccount.get(a) ?? [0, 0, 0, 0];
-    t.byAccount.set(a, [e[0] + 1, e[1] + it.input_tokens, e[2] + it.output_tokens, e[3] + it.cost_usd]);
-    const day = Math.floor(it.at / 86400);
-    if (it.at > 0 && today - day < 14) {
-      t.byDay.set(day, (t.byDay.get(day) ?? 0) + it.input_tokens + it.output_tokens);
-      cost.addResult(usage(t.days, day), it);
-    }
-    cost.addResult(usage(t.byProject, project), it);
-    cost.addResult(usage(t.byChat, chat), it);
-  }
-  return t;
 }

@@ -431,7 +431,7 @@ refetch everything.
 ```
 
 Hubs from 0.39 to 0.106.0 also send `usage`, the tokens and cost the chat header showed then; ignore
-it. Settings › Usage has the totals (`GET /v1/usage`).
+it. `GET /v1/usage` has the totals (for apps before 0.123, which had a Usage page).
 
 The chat **exactly as the desktop draws it**: `items` are the desktop's own cards (one
 projection, `src/view.rs`, that `chat.rs` draws and this call sends), so a phone renders them
@@ -1406,7 +1406,8 @@ screen's own pickers: `plan` sets the Permission pick to `plan`, `default` back 
 Ask the PC the screen talks to; another PC's projects aren't its own.
 ### `GET /v1/usage`
 
-Settings › Usage's breakdown (since 0.39; older PCs answer `404`): `{"projects": [row], "days":
+What the Usage page of apps before 0.123 showed (since 0.39; older PCs answer `404`; the desktop's
+Settings › Usage is gone since 0.123): `{"projects": [row], "days":
 [row], "accounts": [row], "limits": [limit]}`, each `row` `{"name", "label", "detail", "usage": {turns, input, output,
 cached, cost, label, detail}}` (as in `usage` of the items call). `projects` costliest first ("No
 project" for chats without one); `days` the last 14 that had turns, newest first ("Today",

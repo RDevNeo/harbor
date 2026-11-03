@@ -14,14 +14,12 @@ import { type IntData, type IntHost } from "../logic/settings-integrations.ts";
 import { editNotifications, notificationsSections, notifyPressed, setNotifications, type NotifyEnv, type NotifySection } from "../logic/settings-notifications.ts";
 import { keysAct, keysKey, keysView, type KeysView } from "../logic/settings-keybindings.ts";
 import { type ProvidersData } from "../logic/settings-providers.ts";
-import { type UsageData } from "../logic/settings-usage.ts";
 import { voiceChose, voiceEdited, voiceFacts, voicePressed, voiceToggled, voiceView, type VoiceView } from "../logic/settings-voice.ts";
 import { type WebhooksHost, type WhData } from "../logic/settings-webhooks.ts";
 import { type Pixels } from "../logos.ts";
 import { blockTabs } from "../settingsrun-blocks.ts";
 import { integrationsFeed } from "../settingsrun-integrations.ts";
 import { providerLogos, providersFeed, type ProvidersHost } from "../settingsrun-providers.ts";
-import { usageFeed } from "../settingsrun-usage.ts";
 import { webhooksFeed } from "../settingsrun-webhooks.ts";
 import { resolveDark } from "../theme.ts";
 import { trayActive } from "../tray.ts";
@@ -37,9 +35,6 @@ export interface SettingsView {
   appearance: AppearanceView;
   providers: ProvidersData;
   providers_act: (id: string, what: string) => void;
-  usage: UsageData;
-  usage_act: (what: string, a: string, n: number) => void;
-  usage_settled: () => void;
   integrations: IntData;
   integrations_act: (what: string, id: string, a: string, b: string) => void;
   integrations_valid: (client: string, secret: string) => boolean;
@@ -102,7 +97,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   const { store, keys, speech } = deps;
   let tab = first;
   const logos = await providerLogos();
-  const usageTab = usageFeed(store, logos);
   const integrationsTab = await integrationsFeed({ ...deps.integrations, changed: () => show(), openUrl: (u) => mcp.openUrl(u), copy: deps.copy }, deps.qr);
   const webhooksTab = webhooksFeed(store, { ...deps.webhooks, changed: () => show(), copy: deps.copy, deleteWebhook: (id) => { store.deleteWebhook(id); } }, deps.funnel, deps.hookPort);
   const providersTab = await providersFeed(store, { ...deps.providers, modelsFor: providers.staticModels }, logos);
@@ -135,7 +129,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     if (tab === "keybindings") bus.keybindings = keysView(keys);
     if (tab === "voice") bus.voice = voiceView(voiceFacts(speech, label(keys.get("voice"))));
     if (tab === "providers") bus.providers = providersTab.view(dark);
-    if (tab === "usage") bus.usage = usageTab.view(dark);
     if (tab === "integrations") bus.integrations = integrationsTab.view(dark);
     if (tab === "webhooks") bus.webhooks = webhooksTab.view();
     bus.blocks = blocks.get(tab)?.blocks() ?? [];
@@ -161,10 +154,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     voiceChose(speech, k, n);
     show();
   };
-  bus.usage_act = (what, a, n) => {
-    usageTab.act(what, a, n);
-  };
-  bus.usage_settled = () => show();
   bus.integrations_act = integrationsTab.act;
   bus.integrations_valid = integrationsTab.valid;
   bus.webhooks_act = webhooksTab.act;

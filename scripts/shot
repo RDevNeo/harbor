@@ -11,7 +11,7 @@ Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
        scripts/shot --watch [options] a new PNG on every save under ts/packages/ui (run it with start_process)
        scripts/shot --stop            ends this tree's --watch
   --view V      what's on screen (repeatable: one run each): chat (the last chat), chat:ID,
-                settings, settings:TAB (or the tab alone: usage, appearance, devices...), prs,
+                settings, settings:TAB (or the tab alone: appearance, devices...), prs,
                 issues, draft. Default: chat, or draft with --empty.
   --chat ID     the chat to show (same as --view chat:ID)
   --steps SPEC  HARBOR_POINTER steps before the shot: "x,y[,action[,secs]];..." with action
@@ -30,7 +30,7 @@ Usage: scripts/shot [options]        PNGs of the window, paths last on stdout
 It runs at nice 19 and idle disk priority on the last two cores (HARBOR_RIG_CPUS=2,3 picks others, all: any).
 Examples:
   scripts/shot                                 the last chat
-  scripts/shot --view settings:usage --empty   Settings › Usage with no personal data
+  scripts/shot --view settings:appearance --empty   Settings › Appearance with no personal data
   scripts/shot --view chat --steps "120,272,click,2.5"
 EOF
   exit 2
@@ -76,7 +76,7 @@ if [ "${1:-}" = --inner ]; then
     local entry=(harbor.ts); ready=$([ -n "$SHOT_HOOK" ] && echo "$log" || true)
     # With no data, no steps and the default size, a settings page comes 0.6 s sooner from its own runner
     # (packages/ui/src/settingsrun.ts): every tab was checked pixel for pixel against the real window.
-    if [ -n "$SHOT_RUNNER" ] && [[ $view =~ ^settings(:(account|general|notifications|appearance|keybindings|voice|providers|usage|limits|integrations|secrets|devices|phones|webhooks))?$ ]]; then
+    if [ -n "$SHOT_RUNNER" ] && [[ $view =~ ^settings(:(account|general|notifications|appearance|keybindings|voice|providers|integrations|secrets|devices|phones|webhooks))?$ ]]; then
       entry=(packages/ui/src/settingsrun.ts "${BASH_REMATCH[2]:-general}"); ready=""
     fi
     rm -rf "$h" "$T/data"; mkdir -p "$h/home" "$h/run" "$h/state" "$h/cfg" "$h/cache" "$T/data/harbor"; chmod 700 "$h/run"
