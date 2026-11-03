@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.118.0] - 2026-11-02
+
 ### Added
 - A gauge in the sidebar's footer, and "Claude usage" in the phone's + sheet, show each Claude
   account's 5-hour and weekly usage and when they reset. The numbers are read when you open them,
