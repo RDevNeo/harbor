@@ -14,6 +14,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   use it.
 
 ### Added
+- The line under the composer is back on the desktop, as on the phone: where the agent works
+  (Current checkout, New worktree for a new chat, or the chat's own worktree; "Worktree gone" in
+  red) and its branch, with the branch's pull request. The worktree and branch chips of a chat's
+  own worktree go straight to renaming it ("Switch branch…" in the form); elsewhere they open the
+  workspace menu (Move to a new worktree) and the branch picker (switch, or a new branch). The
+  title bar names a worktree's own branch, not the checkout's.
 - An invitation to a workspace pops up in the top-right corner of Harbor's window ("Sam invited you
   to Team") with Accept and Decline; on the phone, as a dialog on any screen.
 

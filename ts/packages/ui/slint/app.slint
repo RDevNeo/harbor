@@ -16,7 +16,7 @@ import { TermKey } from "terminal.slint";
 import { Spin, Ui, Btn, BtnSize, Variant, Glyph, TipLayer, TipArea, MenuItem, MenuLabel, MenuSeparator, PopoverFrame, Separator, Input, Badge, Meter } from "widgets.slint";
 import { Sidebar, SideRow } from "sidebar.slint";
 import { Transcript, CardData } from "chat.slint";
-import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip } from "composer.slint";
+import { Composer, ComposerState, MenuEntry, StripRow, FileItem, MentionChip, WorkBarData } from "composer.slint";
 import { MdBlock } from "markdown.slint";
 import { TeamPanel, AgentRow, WakeRow, HookRow, ProcItem, EarlierChat } from "team.slint";
 import { ModelPicker, RailItem, ModelRow } from "picker.slint";
@@ -542,6 +542,8 @@ export component AppWindow inherits Window {
     // picker.rs `toast`: a message over the bottom edge for a few seconds.
     in property <string> toast;
     // An invitation to a workspace waiting for this account: a card in the top-right corner (notices.ts `inviteToast`).
+    // The footer under the composer: where the agent works, its branch, its PR (logic/workbar.ts).
+    in property <WorkBarData> work-bar;
     in property <bool> inv-open;
     in property <string> inv-title;
     in property <string> inv-body;
@@ -621,6 +623,9 @@ export component AppWindow inherits Window {
     in property <string> dialog-text;
     in-out property <string> dialog-input;
     in property <bool> dialog-has-input;
+    // A left-aligned extra button ("Switch branch…"): it closes the dialog and acts ("" for none).
+    in property <string> dialog-extra;
+    callback dialog-extra-clicked();
     // undo.rs `stop_all_dialog`: small buttons, the red Stop one.
     in property <bool> dialog-stop;
     in property <string> dialog-ok;
@@ -1106,6 +1111,7 @@ export component AppWindow inherits Window {
                                     root.popup(id, x, y);
                                 }
                                 untrusted: root.untrusted;
+                                bar: root.work-bar;
                                 mentions: root.mentions;
                                 remove-mention(i) => {
                                     root.remove-mention(i);
@@ -1958,6 +1964,18 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         alignment: end;
                         spacing: 8px;
+                        if root.dialog-extra != "": Btn {
+                            text: root.dialog-extra;
+                            icon: Icons.branch;
+                            variant: ghost;
+                            size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;
+                            clicked => {
+                                root.dialog-extra-clicked();
+                            }
+                        }
+                        if root.dialog-extra != "": Rectangle {
+                            horizontal-stretch: 1;
+                        }
                         Btn {
                             text: "Cancel";
                             size: root.dialog-stop ? BtnSize.sm : BtnSize.normal;

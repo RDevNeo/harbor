@@ -187,6 +187,22 @@ export interface MenuEntry {
   section: string;
 }
 
+/** composer.slint `WorkChip` / `WorkBarData`: the footer under the composer. */
+export interface WorkChip {
+  shown: boolean;
+  icon: string;
+  text: string;
+  tone: string;
+  tip: string;
+}
+
+export interface WorkBarData {
+  shown: boolean;
+  ws: WorkChip;
+  branch: WorkChip;
+  pr: WorkChip;
+}
+
 export interface ComposerState {
   model: string;
   model_tip: string;
@@ -516,6 +532,7 @@ export interface AppWindow extends slint.ComponentHandle {
 
   draft: string;
   composer: ComposerState;
+  work_bar: WorkBarData;
   model_logo: Pixels;
   image_scratch: Pixels;
   files: slint.Model<FileItem>;
@@ -647,6 +664,9 @@ export interface AppWindow extends slint.ComponentHandle {
   dialog_text: string;
   dialog_input: string;
   dialog_has_input: boolean;
+  /** A left-aligned extra button ("Switch branch…"); "" for none. */
+  dialog_extra: string;
+  dialog_extra_clicked: () => void;
   dialog_stop: boolean;
   dialog_ok: string;
   dialog_danger: boolean;

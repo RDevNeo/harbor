@@ -179,6 +179,10 @@ export interface RunningHub {
   services: Services;
   /** Where a project's folder is when it isn't on this PC (null: it's here). */
   projectPlace(repo: number): ProjectPlace | null;
+  /** A call to this PC's own API routes, as a phone's would be answered (the window's worktree bar uses the phone's). */
+  call(method: string, path: string, query?: Record<string, string>, body?: unknown): Promise<Reply>;
+  /** A new chat's own worktree (as `POST /v1/chats` with `worktree`): made for project `repo`, then given to the chat. */
+  newWorktree: { make(repo: number, base: string, about: string): Promise<unknown>; attach(chat: number, made: unknown): void; discard(repo: number, made: unknown): void };
   stop(): Promise<void>;
 }
 
@@ -633,6 +637,17 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     services?.publish();
     return ctx;
   };
+  const newWorktree = {
+    make: async (repo: number | null, base: string, about: string) => {
+      const info = worktrees.info({ t: "draft", repo });
+      return info ? worktrees.make(info.repo, base, about) : null;
+    },
+    attach: (chat: number, made: unknown) => worktrees.attach(chat, made as worktree.Made),
+    discard: (repo: number | null, made: unknown) => {
+      const info = worktrees.info({ t: "draft", repo });
+      if (info) void worktrees.discard(info.repo, (made as worktree.Made).dir);
+    },
+  };
   const phone = new PhoneRoutes({
     ctx: ctxFor,
     projectPlace: (repo) => projectClones.place(repo),
@@ -646,17 +661,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     scope: (home) => scopeHas(account.scope(), home),
     pr: prOf,
     dropChat: (c) => worktrees.drop(c),
-    worktrees: {
-      make: async (repo, base, about) => {
-        const info = worktrees.info({ t: "draft", repo });
-        return info ? worktrees.make(info.repo, base, about) : null;
-      },
-      attach: (chat, made) => worktrees.attach(chat, made as worktree.Made),
-      discard: (repo, made) => {
-        const info = worktrees.info({ t: "draft", repo });
-        if (info) void worktrees.discard(info.repo, (made as worktree.Made).dir);
-      },
-    },
+    worktrees: newWorktree,
     openedFrom: (chat, gid, title) => eng().notice(chat, "chat", openchat.openedBy(title), `${openchat.LINK}${gid}`),
     more: phoneRoutes({ store, hub, engine: () => eng(), phone: () => phone, uploadId: (path) => phone.uploadId(path), versionsOwn, owners, profile, profileCheck: profileCheckNow, republish: () => services?.publish(), worktrees, projectClones, projects, moves, wantPr: (chat) => prs.want(chat, chatpr.SHOWN_TTL_MS) }),
     app: () => ({ version_code: apkInfo()?.code ?? 0, url: "/app.apk" }),
@@ -1088,6 +1093,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     services,
     projectPlace: (repo) => projectClones.place(repo),
+    call: (method, path, query = {}, body = null) => route({ method, path: path.split("/").filter((x) => x !== ""), query: Object.entries(query), body, token: "", device: "", global: false }),
+    newWorktree: {
+      make: (repo, base, about) => newWorktree.make(repo, base, about),
+      attach: (chat, made) => newWorktree.attach(chat, made),
+      discard: (repo, made) => newWorktree.discard(repo, made),
+    },
     stop: async () => {
       clearInterval(tick);
       hub.saveDrafts(store);

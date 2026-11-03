@@ -297,6 +297,63 @@ component ImageTile {
     }
 }
 
+// The footer under the composer (logic/workbar.ts): where the agent works, its branch and its pull request.
+export struct WorkChip {
+    shown: bool,
+    icon: string,
+    text: string,
+    // "", "red", "green", "purple" or "muted".
+    tone: string,
+    tip: string,
+}
+
+export struct WorkBarData {
+    shown: bool,
+    ws: WorkChip,
+    branch: WorkChip,
+    pr: WorkChip,
+}
+
+// A quiet chip of the footer: a glyph and one line, muted text and no box (as the phone's).
+component WorkBarChip {
+    in property <WorkChip> chip;
+    in property <length> max-text: 260px;
+    callback clicked(length, length);
+    property <color> tint: chip.tone == "red" ? Theme.red-900 : chip.tone == "green" ? Theme.green-900 : chip.tone == "purple" ? #a371f7 : Theme.subtle;
+    height: 24px;
+    preferred-width: row.preferred-width + 12px;
+    min-width: min(row.preferred-width + 12px, 80px);
+    Rectangle {
+        border-radius: 6px;
+        background: area.has-hover ? Theme.accent : transparent;
+    }
+    row := HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 5px;
+        alignment: start;
+        Glyph {
+            icon: root.chip.icon;
+            size: 13px;
+            color: root.chip.tone == "muted" ? Theme.subtle : root.tint;
+        }
+        Text {
+            text: root.chip.text;
+            font-size: 12px;
+            color: root.chip.tone == "green" || root.chip.tone == "purple" ? Theme.subtle : root.tint;
+            vertical-alignment: center;
+            overflow: elide;
+            max-width: root.max-text;
+        }
+    }
+    area := TipArea {
+        tip: root.chip.tip;
+        clicked => {
+            root.clicked(self.absolute-position.x, self.absolute-position.y);
+        }
+    }
+}
+
 export struct ComposerState {
     model: string,
     model-tip: string,
@@ -457,6 +514,7 @@ export component Composer {
     callback strip-stop-all();
     in property <bool> untrusted;
     callback trust();
+    in property <WorkBarData> bar;
     in property <[MentionChip]> mentions;
     callback remove-mention(int);
     callback note-edited(int, string);
@@ -996,6 +1054,34 @@ export component Composer {
                             }
                         }
                     }
+                }
+            }
+        }
+        if root.bar.shown: HorizontalLayout {
+            padding-left: 6px;
+            padding-right: 6px;
+            spacing: 4px;
+            height: 24px;
+            if root.bar.ws.shown: WorkBarChip {
+                chip: root.bar.ws;
+                max-text: 320px;
+                clicked(x, y) => {
+                    root.popup("ws-bar", x, y);
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if root.bar.pr.shown: WorkBarChip {
+                chip: root.bar.pr;
+                clicked(x, y) => {
+                    root.popup("pr-bar", x, y);
+                }
+            }
+            if root.bar.branch.shown: WorkBarChip {
+                chip: root.bar.branch;
+                clicked(x, y) => {
+                    root.popup("branch-bar", x, y);
                 }
             }
         }

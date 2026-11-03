@@ -14,6 +14,7 @@ import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
 import { DraftSync } from "./logic/shareddraft.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Invite, inviteCard } from "./logic/invitecard.ts";
+import { type Bar, type BarChip, branchClick, renameBranchNote, renameFolderNote, workBar, type WsInfo, type WsMarker, type WsPr, wsClick } from "./logic/workbar.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
 import { type Page, type PageHub, PageHost } from "./pages/host.ts";
@@ -53,7 +54,7 @@ import { emptyText, Favorites, type PickerState, pickerRows, railTip, type Row }
 import { runLoop } from "./loop.ts";
 import { scripted } from "./script.ts";
 import { type Mode, omarchyStamp, parseMode, resolveDark, token } from "./theme.ts";
-import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData } from "./window.ts";
+import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, type ProcItem, type ModelRow, type RailItem, type StripRow, type WakeRow, type CardData, type MdBlockData, type ComposerState, type KeyEvent, loadWindow, type MenuEntry, type SurfaceTab, type PopItem, type SideRow, type StatusData, type DeviceRow, type TransferRow, type FileRow, type FileItem, type BrowserData, type WorkChip } from "./window.ts";
 
 /** How long the reader stays at a chat's end before the earlier pages they scrolled up to are let go. */
 const TRIM_MS = 30_000;
@@ -321,6 +322,18 @@ export class Shell {
   /** The popup row under the pointer and its top in the window. */
   private popHover: { i: number; y: number } | null = null;
   private dialogAction: ((ok: boolean, input: string) => void) | null = null;
+  /** A dialog's extra button on the left ("Switch branch…"): it closes the dialog, then acts. */
+  private dialogExtra: { label: string; act: () => void } | null = null;
+  /** The footer's last answer from the PC (`GET /v1/workspace`), for the target `wsKey`. */
+  private wsInfo: WsInfo | null = null;
+  private wsKey = "";
+  private wsAt = 0;
+  private wsGen = 0;
+  /** What git does now for the footer ("Switching to main…"), until the call answers. */
+  private wsPending: { branch: boolean; what: string } | null = null;
+  private bar: Bar = { shown: false, ws: null, branch: null, pr: null, live: false };
+  /** A new chat's picks: in a new worktree (from `base`, "" for the checkout's branch) or in the checkout. */
+  private draftWt = { on: false, base: "" };
   private cardsDirty = false;
   private menus = new ComposerMenus();
   private mentions = new Map<number, Mention[]>();
@@ -750,8 +763,18 @@ export class Shell {
       const act = this.dialogAction;
       const input = w.dialog_input;
       w.dialog_id = "";
+      w.dialog_extra = "";
       this.dialogAction = null;
+      this.dialogExtra = null;
       act?.(ok, input);
+    };
+    w.dialog_extra_clicked = () => {
+      const extra = this.dialogExtra;
+      w.dialog_id = "";
+      w.dialog_extra = "";
+      this.dialogAction = null;
+      this.dialogExtra = null;
+      extra?.act();
     };
     w.global_key = (e) => this.globalKey(e);
     w.nav_key = (e) => this.navKey(e, true);
@@ -983,7 +1006,7 @@ export class Shell {
       project: repo?.name ?? "No project",
       parent: chat?.role === "sub" ? (parent?.title ?? "Lead") : "",
       title: chat ? (chat.role === "sub" ? chat.name : chat.title) : this.draftMain ? "Main chat" : "New thread",
-      branch: st?.branch ?? "",
+      branch: this.headBranch(st?.branch ?? ""),
     };
     w.team_enabled = chat?.role === "lead";
     this.refreshTeam();
@@ -1530,6 +1553,232 @@ export class Shell {
     void providerLogo(kindOfAccount(sel.account), token("fg", this.dark)).then((p) => {
       this.win.model_logo = p;
     });
+    this.refreshWorkBar();
+  }
+
+  // ---- The footer under the composer (logic/workbar.ts): where the agent works, its branch, its PR. ----
+
+  /** `GET /v1/workspace` for the open chat or the draft, as the phone's WorkBar asks it; null outside a project. */
+  private wsQuery(): Record<string, string> | null {
+    if (this.view === "chat") return { chat: String(this.chatId) };
+    if (this.draftRepo === null) return null;
+    return { project: String(this.draftRepo), worktree: this.draftWt.on ? "1" : "0", base: this.draftWt.base };
+  }
+
+  /** Draws the footer from what the PC last said, and asks again when the target changed or 10 s went by (git moves
+   * under it: a branch switched in a terminal). */
+  private refreshWorkBar(force = false): void {
+    const q = this.wsQuery();
+    const key = q === null ? "" : new URLSearchParams(q).toString();
+    if (key !== this.wsKey) {
+      this.wsKey = key;
+      this.wsInfo = null;
+      force = true;
+    }
+    if (q !== null && this.hub.call && (force || Date.now() - this.wsAt > 10_000)) {
+      this.wsAt = Date.now();
+      const my = ++this.wsGen;
+      void this.hub.call("GET", "v1/workspace", q).then(
+        (r) => {
+          if (my !== this.wsGen || key !== this.wsKey) return;
+          this.wsInfo = r.status < 300 && typeof r.body === "object" && r.body !== null ? (r.body as WsInfo) : null;
+          this.drawWorkBar();
+        },
+        () => {},
+      );
+    }
+    this.drawWorkBar();
+  }
+
+  private drawWorkBar(): void {
+    const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+    let marker: WsMarker | null = null;
+    let pr: WsPr | null = null;
+    let home = "";
+    if (c) {
+      if (c.home !== "") {
+        const r = this.shellMesh.remote(c.id);
+        if (r?.worktree) marker = { name: r.worktree, gone: false };
+        const p = chatpr.prFrom(r?.pr);
+        if (p) pr = chatpr.prJson(p) as unknown as WsPr;
+        home = this.shellMesh.home(c)?.name ?? "";
+      } else {
+        const dir = this.engine.worktreeOf(c);
+        if (dir !== null) marker = { name: basename(dir), gone: c.device === "" && !existsSync(dir) };
+        const p = this.prs.of(c);
+        if (p) pr = chatpr.prJson(p) as unknown as WsPr;
+        if (c.device !== "") home = this.hub.auto?.name?.(c.device) ?? c.device;
+      }
+    }
+    const bar = workBar(this.view === "chat" || this.draftRepo !== null ? this.wsInfo : null, { draft: this.view !== "chat", marker, pr, home, pending: this.wsPending });
+    const chip = (x: BarChip | null): WorkChip => (x === null ? { shown: false, icon: "", text: "", tone: "", tip: "" } : { shown: true, ...x });
+    this.bar = bar;
+    // The title bar names the branch the agent is on: a worktree's own, not the checkout's.
+    const crumbs = this.win.crumbs;
+    const head = this.headBranch(crumbs.branch);
+    if (head !== crumbs.branch) this.win.crumbs = { ...crumbs, branch: head };
+    this.win.work_bar = { shown: bar.shown, ws: chip(bar.ws), branch: chip(bar.branch), pr: chip(bar.pr) };
+  }
+
+  /** The open chat's branch when it works in its own worktree (the footer's answer), else `checkout`'s. */
+  private headBranch(checkout: string): string {
+    const q = this.wsQuery();
+    // The answer is another chat's until the footer asked for this one.
+    if (q === null || new URLSearchParams(q).toString() !== this.wsKey) return checkout;
+    const i = this.wsInfo;
+    return this.view === "chat" && i?.git === true && i.mode === "worktree" && (i.branch ?? "") !== "" ? (i.branch as string) : checkout;
+  }
+
+  /** A worktree or branch call to this PC; its answer, or its error as a toast. Then the footer again. */
+  private async wsAct(method: string, path: string, body: Record<string, unknown>, pending: { branch: boolean; what: string } | null): Promise<Record<string, unknown> | null> {
+    const call = this.hub.call;
+    if (!call) return null;
+    this.wsPending = pending;
+    this.drawWorkBar();
+    try {
+      const r = await call(method, path, {}, body);
+      const b = typeof r.body === "object" && r.body !== null ? (r.body as Record<string, unknown>) : {};
+      if (r.status >= 300) {
+        this.toast(typeof b.error === "string" ? b.error : `It didn't work (${r.status})`);
+        return null;
+      }
+      return b;
+    } catch (e) {
+      this.toast(e instanceof Error ? e.message : String(e));
+      return null;
+    } finally {
+      this.wsPending = null;
+      this.refreshWorkBar(true);
+      this.refreshSidebar();
+    }
+  }
+
+  private wsTarget(): Record<string, unknown> {
+    return this.view === "chat" ? { chat: this.chatId } : { project: this.draftRepo };
+  }
+
+  /** The workspace chip (WorkBar.tapWorkspace): a chat's own worktree goes straight to renaming its folder. */
+  private workspaceChip(x: number, y: number): void {
+    const info = this.wsInfo;
+    const draft = this.view !== "chat";
+    if (!this.bar.live) {
+      if (this.bar.ws) this.toast(this.bar.ws.tip);
+      return;
+    }
+    if (info === null) return;
+    const what = wsClick(info, draft);
+    if (what === "rename") {
+      const id = this.chatId;
+      const cur = info.name ?? "";
+      this.dialog("Rename worktree", renameFolderNote(info), "Rename", false, cur, (ok, name) => {
+        const n = name.trim();
+        if (!ok || n === "" || n === cur) return;
+        void this.wsAct("POST", `v1/chats/${id}/worktree/rename`, { folder: n }, { branch: false, what: `Renaming to ${n}…` }).then((r) => {
+          if (r) this.toast(typeof r.said === "string" ? r.said : `Renamed to ${String(r.name ?? n)}`);
+        });
+      });
+      return;
+    }
+    if (what !== "menu") return;
+    const rows: (PopItem & { act?: () => void })[] = [{ ...this.label("Workspace"), kind: "caption" }];
+    if (draft) {
+      rows.push(
+        this.item("Current checkout", () => ((this.draftWt = { on: false, base: "" }), this.refreshWorkBar(true)), { icon: ICONS.FOLDER, desc: "Runs in the project's own folder", checked: !this.draftWt.on }),
+        this.item("New worktree", () => ((this.draftWt = { on: true, base: this.draftWt.base }), this.refreshWorkBar(true)), { icon: ICONS.FOLDER_GIT, desc: "Its own folder and branch, so parallel agents don't collide", checked: this.draftWt.on }),
+      );
+    } else if (info.mode === "worktree") {
+      const to = info.folder_to ?? "";
+      rows.push({ ...this.item(info.name ?? "", () => {}, { icon: ICONS.FOLDER_GIT, desc: `${info.path ?? ""}${to === "" ? "" : ` · becomes ${to} once nothing works in it`}`, checked: true }), enabled: false });
+    } else {
+      const id = this.chatId;
+      const can = info.can_move === true;
+      rows.push(
+        this.item("Current checkout", () => {}, { icon: ICONS.FOLDER, desc: info.path ?? "", checked: true }),
+        this.item(
+          "Move to a new worktree",
+          () =>
+            void this.wsAct("POST", `v1/chats/${id}/worktree`, {}, { branch: false, what: "Creating worktree…" }).then((r) => {
+              if (r) this.toast(`Moved to ${String(r.name ?? "a new worktree")}`);
+            }),
+          { icon: ICONS.FOLDER_GIT, desc: can ? "From the checkout's branch; the thread goes on there" : `Can't now: ${info.move_why ?? ""}`, enabled: can },
+        ),
+      );
+    }
+    this.popup("ws-bar", x, y, rows, 340, true);
+  }
+
+  /** The branch chip (WorkBar.tapBranch): a worktree's own branch goes straight to renaming it; else the picker. */
+  private branchChip(x: number, y: number): void {
+    const info = this.wsInfo;
+    if (!this.bar.live || info === null) return;
+    const what = branchClick(info, this.view !== "chat");
+    if (what === "picker") return void this.branchPicker(x, y);
+    if (what !== "rename") return;
+    const id = this.chatId;
+    const cur = info.branch ?? "";
+    const up = info.pushed ?? "";
+    const note = `${renameBranchNote(info)}${up === "" ? "" : ` It's renamed on ${up} too: on GitHub its pull requests follow; on other remotes the new name is pushed and the old one stays.`}`;
+    this.dialog("Rename branch", note, "Rename", false, cur, (ok, name) => {
+      const n = name.trim();
+      if (!ok || n === "" || n === cur) return;
+      void this.wsAct("POST", `v1/chats/${id}/worktree/rename`, { branch: n, remote: up !== "" }, { branch: true, what: `Renaming to ${n}…` }).then((r) => {
+        if (r) this.toast(typeof r.said === "string" ? r.said : `On ${String(r.branch ?? n)}`);
+      });
+    });
+    // Switching and creating branches are a click away, as on the phone's form.
+    this.dialogExtra = { label: "Switch branch…", act: () => void this.branchPicker(x, y) };
+    this.win.dialog_extra = "Switch branch…";
+  }
+
+  /** The branches to switch to (or a new chat's new worktree's base), newest first, and a new one. */
+  private async branchPicker(x: number, y: number): Promise<void> {
+    const call = this.hub.call;
+    const q = this.wsQuery();
+    if (!call || q === null) return;
+    const forBase = this.view !== "chat" && this.draftWt.on;
+    const r = await call("GET", "v1/branches", this.view === "chat" ? { chat: q.chat ?? "", q: "" } : { project: q.project ?? "", q: "" });
+    const b = (typeof r.body === "object" && r.body !== null ? r.body : {}) as { current?: string; warning?: string | null; checkout_note?: string | null; branch_lock?: string | null; branches?: { name: string; remote: boolean; current: boolean }[]; error?: string };
+    if (r.status >= 300) return this.toast(b.error ?? "Couldn't read the branches");
+    const lock = forBase ? "" : (b.branch_lock ?? "");
+    const rows: (PopItem & { act?: () => void })[] = [{ ...this.label(forBase ? "Start the worktree from" : "Branch"), kind: "caption" }];
+    // One line each (a caption doesn't wrap): the lock, else the uncommitted changes and whose checkout it switches.
+    const dirty = (this.wsInfo?.dirty ?? 0) > 0 ? `${this.wsInfo?.dirty} uncommitted change${this.wsInfo?.dirty === 1 ? "" : "s"} come along` : "";
+    // The checkout's note, short: a menu's caption doesn't wrap and would widen the menu past its edge.
+    const notes = forBase ? [] : lock !== "" ? [lock] : [dirty, b.checkout_note ? "Switches the project's checkout, for its other threads too" : ""].filter((x) => x !== "");
+    for (const n of notes) rows.push({ ...this.label(n), kind: "caption" });
+    const current = forBase ? (this.draftWt.base === "" ? (b.current ?? "") : this.draftWt.base) : (b.current ?? "");
+    const all = b.branches ?? [];
+    // Where it is now first, then the newest others.
+    const list = [...all.filter((x) => !x.remote && x.name === current), ...(all.some((x) => !x.remote && x.name === current) || current === "" ? [] : [{ name: current, remote: false, current: true }]), ...all.filter((x) => x.remote || x.name !== current).slice(0, 10)];
+    for (const br of list) {
+      const pick = () => {
+        if (forBase) {
+          this.draftWt = { on: true, base: br.name };
+          this.refreshWorkBar(true);
+          return;
+        }
+        void this.wsAct("POST", "v1/branches", { ...this.wsTarget(), switch: br.name, remote: br.remote }, { branch: true, what: `Switching to ${br.name}…` }).then((x) => {
+          if (x) this.toast(`On ${String(x.branch ?? br.name)}`);
+        });
+      };
+      rows.push(this.item(br.name, pick, { icon: ICONS.BRANCH, checked: !br.remote && br.name === current, badge: br.remote ? "remote" : "", enabled: lock === "" }));
+    }
+    if (!forBase && lock === "") {
+      rows.push({ ...this.separator(), kind: "rule" });
+      rows.push(
+        this.item("New branch…", () =>
+          this.dialog("New branch", "From where it is now, and switch to it.", "Create", false, "", (ok, name) => {
+            const n = name.trim();
+            if (!ok || n === "") return;
+            void this.wsAct("POST", "v1/branches", { ...this.wsTarget(), create: n }, { branch: true, what: `Creating ${n}…` }).then((x) => {
+              if (x) this.toast(`On ${String(x.branch ?? n)}`);
+            });
+          }),
+          { icon: ICONS.PLUS },
+        ),
+      );
+    }
+    this.popup("branch-bar", x, y, rows, 360, true);
   }
 
   private menuContext(): MenuContext {
@@ -1922,6 +2171,40 @@ export class Shell {
         return;
       }
     }
+    // A new chat in its own worktree (the footer's "New worktree"): made first (its name may take a few seconds), then the chat.
+    const nw = this.hub.newWorktree;
+    if (this.view !== "chat" && joinsMain === null && this.draftWt.on && this.draftRepo !== null && nw) {
+      const repo = this.draftRepo;
+      const keep = { text, files, mentions };
+      clear();
+      this.wsPending = { branch: false, what: "Creating worktree…" };
+      this.drawWorkBar();
+      void nw.make(repo, this.draftWt.base, text).then(
+        (made) => {
+          this.wsPending = null;
+          const t = this.engine.newThread(repo, text, sel);
+          if (made !== null) nw.attach(t.id, made);
+          if (auto) this.hub.auto?.mark(t.gid, sel.device);
+          if (this.view !== "chat" && this.draftRepo === repo) {
+            this.view = "chat";
+            this.chatId = t.id;
+            this.data.store.set("last_chat", String(t.id));
+          }
+          this.engine.send(t.id, text, { files: keep.files, mentions: keep.mentions, mode });
+          this.refreshAll();
+        },
+        (e: unknown) => {
+          this.wsPending = null;
+          this.toast(`Couldn't make the worktree: ${e instanceof Error ? e.message : String(e)}`);
+          // The message comes back to the composer.
+          this.drafts.set(DRAFT, keep.text);
+          if (this.view !== "chat") this.win.draft = keep.text;
+          this.refreshAll();
+        },
+      );
+      this.refreshAll();
+      return;
+    }
     let id = this.view === "chat" ? this.chatId : DRAFT;
     if (id === DRAFT) {
       const joins = joinsMain;
@@ -2213,6 +2496,8 @@ export class Shell {
     }
     // A captcha card on screen takes frames again once the window is back.
     this.chatCap.wake();
+    // The footer's branch moves under it (a switch in a terminal): read again every 10 s.
+    if (this.page === null) this.refreshWorkBar();
     // devices.rs: phones' "last seen" and PCs' online state change by themselves.
     if (this.devicesShown()) this.refreshDevices();
     this.voice?.poll();
@@ -2624,6 +2909,14 @@ export class Shell {
       );
     } else if (id === "device") {
       this.runOnMenu(kind, x, y);
+    } else if (id === "ws-bar") {
+      this.workspaceChip(x, y);
+    } else if (id === "branch-bar") {
+      this.branchChip(x, y);
+    } else if (id === "pr-bar") {
+      const c = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
+      const p = c ? (c.home !== "" ? chatpr.prFrom(this.shellMesh.remote(c.id)?.pr) : this.prs.of(c)) : null;
+      if (p) this.openExternal(p.url);
     }
   }
 
@@ -3448,6 +3741,8 @@ export class Shell {
     w.dialog_danger = danger;
     w.dialog_has_input = input !== null;
     w.dialog_stop = false;
+    w.dialog_extra = "";
+    this.dialogExtra = null;
     w.dialog_input = input ?? "";
     this.dialogAction = act;
     w.dialog_id = "dialog";
@@ -3819,6 +4114,10 @@ export interface ShellHub extends PageHub {
   moves?: ShellMoves;
   /** The account: invitations; none without a hub. */
   account?: ShellAccount;
+  /** A call to this PC's own API routes (the phone's), for the footer's worktree and branch; none without a hub. */
+  call?: (method: string, path: string, query?: Record<string, string>, body?: unknown) => Promise<{ status: number; body: unknown }>;
+  /** A new chat's own worktree (`POST /v1/chats` with `worktree`); none without a hub. */
+  newWorktree?: { make(repo: number, base: string, about: string): Promise<unknown>; attach(chat: number, made: unknown): void; discard(repo: number, made: unknown): void };
   /** Where a project's folder is when it isn't on this PC (null: it's here; projectclones.ts `place`). */
   projectPlace?: (repo: number) => Place | null;
 }

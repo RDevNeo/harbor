@@ -12,7 +12,7 @@ export interface ShellMesh {
   peer(id: string): { name: string; online: boolean } | null;
   /** The mesh's other PCs, for chat links naming one (chatlink.ts). */
   peers?(): { name: string; online: boolean }[];
-  remote(id: number): { running: boolean; queued: number } | null;
+  remote(id: number): { running: boolean; queued: number; worktree?: string | null; pr?: unknown } | null;
   typers(id: number): { device: string; label: string }[];
   viewers(id: number): { device: string; kind: string; label: string }[];
   forward(c: Chat, method: string, tail: string[], body: Record<string, unknown>, files?: readonly string[]): Promise<{ status: number; body: unknown }>;

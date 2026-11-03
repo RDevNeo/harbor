@@ -153,6 +153,8 @@ export async function runApp(o: RunOptions): Promise<number> {
     data.scope = (home: string) => scopeHas(run.account.scope(), home);
     const hub = {
       settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version },
+      call: (method: string, path: string, query?: Record<string, string>, body?: unknown) => run.call(method, path, query, body),
+      newWorktree: run.newWorktree,
       account: {
         invites: () => run.account.invites(),
         busy: () => run.account.status().busy,
