@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.131.0] - 2026-11-03
+
 ### Changed
 - PCs trust each other through workspace membership: two PCs share chats (copies, Runs on, Auto,
   moving chats and projects, relaying) when their owners (the accounts that signed them in) are
