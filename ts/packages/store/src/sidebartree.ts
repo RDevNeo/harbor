@@ -36,6 +36,18 @@ export function movedTo<C extends PlacedChat>(c: C, chat: (id: number) => C | un
   return x.repoId === null ? "" : (p.repos.get(x.repoId) ?? "");
 }
 
+/** Each project's workspace as its PC says it, from the copies of its chats (`place.carried`). */
+export function carriedProjects(chats: readonly Pick<SidebarChat, "id" | "repoId" | "home">[], place: Placement): Map<number, string> {
+  const out = new Map<number, string>();
+  if (place.carried.size === 0) return out;
+  for (const c of chats) {
+    if (c.home === "" || c.repoId === null || out.has(c.repoId)) continue;
+    const w = place.carried.get(c.id) ?? "";
+    if (w !== "") out.set(c.repoId, w);
+  }
+  return out;
+}
+
 function leadOf<C extends PlacedChat>(c: C, chat: (id: number) => C | undefined): C {
   let x = c;
   for (let hop = 0; hop < 8 && x.role === "sub" && x.parent !== null; hop++) {

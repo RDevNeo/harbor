@@ -12,7 +12,8 @@ import java.util.Set;
  *  `inWorkspaces`): a chat is in the workspace Move to workspace… put it in (its `workspace`, from
  *  the hub: its own, its lead's or its project's), else in its home PC's, by the directory's PC →
  *  workspace, so a PC in none shows only under All. A project is in the workspace it was moved to,
- *  else the answering PC's; it also stays in another one while one of its unsettled chats is there.
+ *  else its PC's (the answering PC's, or the one its folder is on: `/v1/state`'s `here` and `pc`);
+ *  it also stays in another one while one of its unsettled chats is there.
  *  Plain JVM, no Android: build.sh runs WsFilterTest before packaging. */
 final class WsFilter {
     private final Set<String> ws;
@@ -61,9 +62,15 @@ final class WsFilter {
 
     boolean showsProject(String id) { return showsProject(id, ""); }
 
-    /** Project `id`, moved to workspace `moved` ("": not moved, the answering PC's). */
-    boolean showsProject(String id, String moved) {
-        return !active() || ws.contains(moved != null && !moved.isEmpty() ? moved : here) || projects.contains(id);
+    /** Project `id` of the answering PC, moved to workspace `moved` ("": not moved). */
+    boolean showsProject(String id, String moved) { return showsProjectOf(id, moved, null); }
+
+    /** Project `id`, moved to workspace `moved` ("": not moved, its PC's); `pc` is the PC its
+     *  folder is on (null: the answering PC, "": none known, so in no workspace). */
+    boolean showsProjectOf(String id, String moved, String pc) {
+        if (!active()) return true;
+        String w = projectOwner(moved, pc);
+        return (w != null && ws.contains(w)) || projects.contains(id);
     }
 
     // ---- Share with workspace…: extra workspaces it shows in, its owner unchanged ----
@@ -75,7 +82,15 @@ final class WsFilter {
     }
 
     /** A project's owner: where it was moved, else the answering PC's. */
-    String projectOwner(String moved) { return moved != null && !moved.isEmpty() ? moved : here; }
+    String projectOwner(String moved) { return projectOwner(moved, null); }
+
+    /** A project's owner: where it was moved, else the workspace of its PC `pc` (null: the
+     *  answering PC; "": none known, and so no workspace, null). */
+    String projectOwner(String moved, String pc) {
+        if (moved != null && !moved.isEmpty()) return moved;
+        if (pc == null || pc.equals(hub)) return here;
+        return pc.isEmpty() ? null : pcs.get(pc);
+    }
 
     private boolean anyShown(Collection<String> shared) {
         if (shared != null) for (String s : shared) if (ws.contains(s)) return true;
@@ -92,7 +107,12 @@ final class WsFilter {
     }
 
     boolean showsProject(String id, String moved, Collection<String> shared) {
-        return showsProject(id, moved) || (active() && anyShown(shared));
+        return showsProject(id, moved, null, shared);
+    }
+
+    /** Project `id` of PC `pc` (see `showsProjectOf`), also shown under each workspace it's shared with. */
+    boolean showsProject(String id, String moved, String pc, Collection<String> shared) {
+        return showsProjectOf(id, moved, pc) || (active() && anyShown(shared));
     }
 
     /** A row's shared mark (logic/sidebar.ts `shareMark`): "" not shared, "shared", or "here" when

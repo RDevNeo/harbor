@@ -618,6 +618,7 @@ export class PhoneRoutes {
     const pid = (id: number) => (global ? (repos.find((r) => r.id === id)?.path ?? id) : id);
     const settledRepos = this.d.store.settledProjects();
     const place = this.d.store.placement();
+    const carried = sidebartree.carriedProjects(chats, place);
     const placed = sidebartree.tree(repos.map((r) => r.id), chats, this.d.store.mainChats(), (key) => this.snoozeUntil(key) !== null, new Set(settledRepos.keys()));
     const idsOf = (list: number[]): Json[] => list.map((id) => this.idOf(chats.find((c) => c.id === id) as Chat, global));
     const tree = {
@@ -682,7 +683,12 @@ export class PhoneRoutes {
       hub_name: me.name === "" ? hostname() : me.name,
       you,
       rev: hub.rev(),
-      projects: repos.map((r) => ({ id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: place.repos.get(r.id) ?? "", shared: [...(place.shared?.repos.get(r.id) ?? [])], ...this.placeJson(r.id) })),
+      projects: repos.map((r) => {
+        const at = this.placeJson(r.id);
+        // Where it was moved: here, or (its folder on another PC) as that PC says it in its chats' copies; "": its PC's.
+        const moved = place.repos.get(r.id) ?? (at.here === true ? "" : (carried.get(r.id) ?? ""));
+        return { id: pid(r.id), name: r.name, path: r.path, settled: settledRepos.has(r.id), workspace: moved, shared: [...(place.shared?.repos.get(r.id) ?? [])], ...at };
+      }),
       chats: chats.map((c) => this.chatJson(c, global, place)),
       tree,
       accounts,

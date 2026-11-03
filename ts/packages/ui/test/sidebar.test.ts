@@ -5,6 +5,7 @@ import {
   type SidebarChat,
   type Tree,
   type Workspace,
+  carriedProjects,
   chatWorkspace,
   inWorkspaces,
   isMainOf,
@@ -17,6 +18,7 @@ import {
   sharedWith,
   parseSnooze,
   picked,
+  projectWorkspace,
   reordered,
   sidebarList,
   snoozeLabel,
@@ -248,6 +250,56 @@ test("chats_of_no_workspace_show_only_under_all", () => {
   expect(got.projects).toEqual([place(1, false, null, [2])]);
   [t, chats, pcs] = workspaceTree();
   expect(inWorkspaces(t, only("a"), "a", pcs, chats).threads.includes(4)).toBe(false);
+});
+
+/** Project 1 is this PC's; 3 (chats 7, 8) is "ts:b"'s; 4 (no chats here) is "ts:b"'s by its copies' record; 5 is a PC's in no workspace. */
+function pcProjects(): [Tree, TestChat[], Map<string, string>, (repo: number) => string | null] {
+  const settled = fromPc(8, 3, "ts:b");
+  settled.settled = true;
+  const chats = [fromPc(1, 1, ""), fromPc(7, 3, "ts:b"), settled];
+  const t = emptyTree({ projects: [place(1, false, null, [1]), place(3, false, null, [7]), place(4, false, null, []), place(5, false, null, [])], settled: [8] });
+  const at = new Map<number, string>([[3, "ts:b"], [4, "ts:b"], [5, "ts:loose"]]);
+  return [t, chats, new Map([["ts:b", "b"]]), (repo) => at.get(repo) ?? null];
+}
+
+test("another_pcs_project_is_in_its_pcs_workspace_not_this_ones", () => {
+  const [t, chats, pcs, pcOf] = pcProjects();
+  // Under this PC's workspace: its own project only, not the other PCs' (even with no chats of theirs left).
+  const a = inWorkspaces(t, only("a"), "a", pcs, chats, undefined, pcOf);
+  expect(a.projects.map((p) => [p.id, p.chats])).toEqual([[1, [1]]]);
+  expect(a.settled).toEqual([]);
+  // Under its PC's: both of that PC's projects, with their chats.
+  const b = inWorkspaces(t, only("b"), "a", pcs, chats, undefined, pcOf);
+  expect(b.projects.map((p) => [p.id, p.chats])).toEqual([[3, [7]], [4, []]]);
+  expect(b.settled).toEqual([8]);
+  // A PC in no workspace known here: only under All, like its chats.
+  expect(inWorkspaces(t, ["a", "b"], "a", pcs, chats, undefined, pcOf).projects.map((p) => p.id)).toEqual([1, 3, 4]);
+  expect(projectWorkspace(5, { chats: new Map(), carried: new Map(), repos: new Map() }, "ts:loose", "a", pcs)).toBe("");
+  // One whose PC isn't known at all is in none too.
+  expect(projectWorkspace(5, { chats: new Map(), carried: new Map(), repos: new Map() }, "", "a", pcs)).toBe("");
+});
+
+test("a_moved_project_follows_its_move_wherever_its_folder_is", () => {
+  const [t, chats, pcs, pcOf] = pcProjects();
+  // Another PC's project moved to a here, and this PC's moved to b (its chat goes with it).
+  const moved = { chats: new Map<number, string>(), carried: new Map<number, string>(), repos: new Map([[4, "a"], [1, "b"]]) };
+  expect(inWorkspaces(t, only("a"), "a", pcs, chats, moved, pcOf).projects.map((p) => p.id)).toEqual([4]);
+  expect(inWorkspaces(t, only("b"), "a", pcs, chats, moved, pcOf).projects.map((p) => [p.id, p.chats])).toEqual([[1, [1]], [3, [7]]]);
+  // Moved by its own PC: the copies of its chats carry it (`carried`), and the project row goes with them.
+  const there = { chats: new Map<number, string>(), carried: new Map([[8, "a"]]), repos: new Map<number, string>() };
+  expect(carriedProjects(chats, there)).toEqual(new Map([[3, "a"]]));
+  expect(projectWorkspace(3, there, "ts:b", "a", pcs, carriedProjects(chats, there))).toBe("a");
+  expect(inWorkspaces(t, only("a"), "a", pcs, chats, there, pcOf).projects.map((p) => p.id)).toEqual([1, 3]);
+  // This PC's own project never takes a copy's record.
+  expect(projectWorkspace(1, there, null, "a", pcs, new Map([[1, "b"]]))).toBe("a");
+});
+
+test("this_pcs_projects_stay_in_its_workspace", () => {
+  const [t, chats, pcs, pcOf] = pcProjects();
+  // Without a PC lookup every project is this PC's (as before); with it, this PC's are unchanged.
+  expect(inWorkspaces(t, only("a"), "a", pcs, chats).projects.map((p) => p.id)).toEqual([1, 3, 4, 5]);
+  expect(inWorkspaces(t, only("a"), "a", pcs, chats, undefined, pcOf).projects.map((p) => p.id)).toEqual([1]);
+  expect(projectWorkspace(1, { chats: new Map(), carried: new Map(), repos: new Map() }, null, "a", pcs)).toBe("a");
 });
 
 function none(): Map<number, number> {

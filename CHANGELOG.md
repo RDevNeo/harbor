@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- The sidebar's workspace filter no longer shows another PC's projects under your own workspace
+  (desktop and phone). A project that wasn't moved to a workspace is in the workspace of the PC its
+  folder is on, as its chats are: until now it counted as this PC's, so the project row stayed,
+  empty, after its chats were filtered out. A project whose PC is in no workspace you know shows
+  only under All; one its own PC moved to a workspace shows there; Move to workspace… and Share
+  with workspace… name the right owner for it too.
+
 ## [0.136.0] - 2026-11-03
 
 ### Changed

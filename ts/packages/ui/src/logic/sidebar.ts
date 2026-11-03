@@ -24,7 +24,7 @@ export interface Workspace {
 export type Place = sidebartree.Place;
 export type PlacedChat = sidebartree.PlacedChat;
 export type Tree = sidebartree.Tree;
-export const { isMainOf, movedTo, sharedWith, tree } = sidebartree;
+export const { carriedProjects, isMainOf, movedTo, sharedWith, tree } = sidebartree;
 
 /** What's picked of the workspace filter `stored` (ids joined by commas) among `all`: gone ids drop out, and none is All (empty). Every one isn't All: a PC in no workspace shows only under All. */
 export function picked(stored: string, all: readonly Workspace[]): string[] {
@@ -44,10 +44,19 @@ export function toggled(stored: string, id: string, all: readonly Workspace[]): 
 /**
  * What's left of `t` under the workspace filter on `ws`. A chat is where Move to workspace… put it
  * (`place`: its own, its lead's, its project's), else in its home PC's workspace (`mine` for this
- * PC's, `pcs` for the others'). A project is in the workspace it was moved to, else this PC's; it
- * also shows in another while one of its unsettled leads is there.
+ * PC's, `pcs` for the others'). A project is in the workspace it was moved to, else its PC's
+ * (`pcOf`: the PC its folder is on, see `projectWorkspace`); it also shows in another while one of
+ * its unsettled leads is there.
  */
-export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: ReadonlyMap<string, string>, chats: readonly (SidebarChat & { parent: number | null })[], place: Placement = NO_PLACEMENT): Tree {
+export function inWorkspaces(
+  t: Tree,
+  ws: readonly string[],
+  mine: string,
+  pcs: ReadonlyMap<string, string>,
+  chats: readonly (SidebarChat & { parent: number | null })[],
+  place: Placement = NO_PLACEMENT,
+  pcOf: (repo: number) => string | null = () => null,
+): Tree {
   const byId = new Map(chats.map((c) => [c.id, c]));
   const shown = (w: string) => ws.includes(w);
   // Its own workspace, or one it's shared with (Share with workspace…: its own shares, its lead's, its project's).
@@ -55,7 +64,8 @@ export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: 
   const ids = new Set(ours.map((c) => c.id));
   const repos = new Set(ours.filter((c) => !c.settled && c.role === "lead" && c.repoId !== null).map((c) => c.repoId));
   const keep = (list: number[]) => list.filter((c) => ids.has(c));
-  const own = (p: number) => shown(place.repos.get(p) ?? mine) || (place.shared?.repos.get(p) ?? []).some(shown);
+  const carried = carriedProjects(chats, place);
+  const own = (p: number) => shown(projectWorkspace(p, place, pcOf(p), mine, pcs, carried)) || (place.shared?.repos.get(p) ?? []).some(shown);
   return {
     projects: t.projects.filter((p) => own(p.id) || repos.has(p.id)).map((p) => ({ ...p, chats: keep(p.chats) })),
     threads: keep(t.threads),
@@ -63,6 +73,21 @@ export function inWorkspaces(t: Tree, ws: readonly string[], mine: string, pcs: 
     snoozed: keep(t.snoozed),
     settledProjects: t.settledProjects.filter((p) => own(p) || ours.some((c) => c.repoId === p)),
   };
+}
+
+/**
+ * The workspace project `id` shows in: where Move to workspace… put it (here, or as its PC says it
+ * in its chats' copies, `carried`), else the workspace of the PC its folder is on. `pc` is that PC:
+ * null for this one (`mine`), a mesh id for another (`pcs`), "" when none is known; another PC's
+ * project, or one whose PC is in no workspace known here, is in none ("": shown only under All).
+ */
+export function projectWorkspace(id: number, place: Placement, pc: string | null, mine: string, pcs: ReadonlyMap<string, string>, carried: ReadonlyMap<number, string> = new Map()): string {
+  const moved = place.repos.get(id) ?? "";
+  if (moved !== "") return moved;
+  if (pc === null) return mine;
+  const theirs = carried.get(id) ?? "";
+  if (theirs !== "") return theirs;
+  return pc === "" ? "" : (pcs.get(pc) ?? "");
 }
 
 /** The workspace chat `c` shows in: where it was moved, else its home PC's ("" for a PC in none). */

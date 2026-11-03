@@ -40,7 +40,7 @@ import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
 import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT, SHARE_LABEL, SHARE_NOTE } from "./logic/projectmenu.ts";
-import { chatIdle, chatWorkspace, inWorkspaces, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
+import { carriedProjects, chatIdle, chatWorkspace, inWorkspaces, projectWorkspace, type MoveItem, shareMark, sharedWith, type ShareItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { clashingNames, draftPlaceLine, type Place, placeHint, placeLine } from "./logic/projectplace.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -1267,7 +1267,9 @@ export class Shell {
     const settledRepos = d.store.settledProjects();
     const whole = tree(ids, d.chats, d.mainChats(), (k) => snoozed.has(k) && (snoozed.get(k) ?? 0) > t, new Set(settledRepos.keys()));
     const placed = d.store.placement();
-    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, placed);
+    // A project's PC: null for this one, else the one its folder is on ("" none known).
+    const pcOf = (id: number): string | null => this.placeOf(id)?.pc ?? null;
+    const tr = shown.length === 0 ? whole : inWorkspaces(whole, shown, ws.mine, ws.pcs, d.chats, placed, pcOf);
     const list = sidebarList(tr, d.chats, d.repos, this.query);
     // Share with workspace…'s mark: a chat's own shares (a project's chats show it on the project's row).
     const byId = new Map(d.chats.map((c) => [c.id, c]));
@@ -1276,9 +1278,10 @@ export class Shell {
       if (s.all.length === 0 || (kind === "thread" && s.all.every((x) => s.inherited.includes(x)))) return { shared: "", shared_tip: "" };
       return shareMark(ws.all, chatWorkspace(c, (id) => byId.get(id), placed, ws.mine, ws.pcs), s.all, shown);
     };
+    const carried = carriedProjects(d.chats, placed);
     const projectShared = (id: number): Pick<SideRow, "shared" | "shared_tip"> => {
       const s = placed.shared?.repos.get(id) ?? [];
-      return s.length === 0 ? { shared: "", shared_tip: "" } : shareMark(ws.all, this.hub.moves?.projectIn(id) ?? (placed.repos.get(id) ?? ws.mine), s, shown);
+      return s.length === 0 ? { shared: "", shared_tip: "" } : shareMark(ws.all, projectWorkspace(id, placed, pcOf(id), ws.mine, ws.pcs, carried), s, shown);
     };
     const clash = clashingNames(d.repos);
     // A project whose folder isn't here names its PC; one of two with a name, its folder.
@@ -4144,8 +4147,6 @@ export interface ShellMoves {
   projectShares(id: number): { why: string | null; line: string; items: ShareItem[] } | null;
   shareChat(id: number, ws: string, on: boolean): Promise<{ status: number; body: unknown }>;
   shareProject(id: number, ws: string, on: boolean): Promise<{ status: number; body: unknown }>;
-  /** The workspace project `id` is in (moved, else its PC's). */
-  projectIn(id: number): string;
 }
 
 /** The account's workspaces, this PC's ("" for none) and each PC the directory lists, by mesh id. */

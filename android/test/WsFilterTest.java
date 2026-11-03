@@ -108,6 +108,26 @@ public class WsFilterTest {
         same(WsFilter.line(names, "a", toB), "Owned by Sam's workspace · shared with Team", "the line");
         same(WsFilter.line(names, "b", toB), "Owned by Team · not shared", "the line, not shared");
 
+        // A project whose folder is another PC's is in that PC's workspace, not the answering PC's
+        // (logic/sidebar.ts `projectWorkspace`); one of a PC in no workspace, or of none known, only under All.
+        WsFilter deskA = new WsFilter(Arrays.asList("a"), "ts:desk", "a", pcs);
+        check(!deskA.showsProject("/theirs", "", "ts:other", null), "another PC's unmoved project leaves the answering PC's workspace");
+        check(deskA.showsProject("/mine", "", null, null), "the answering PC's own project stays");
+        check(deskA.showsProject("/mine", "", "ts:desk", null), "a project of the answering PC by its id stays");
+        check(!deskA.showsProject("/lost", "", "", null) && !deskA.showsProject("/loose", "", "ts:loose", null), "a PC in none, or none known: not under a");
+        check(deskA.showsProject("/theirs", "a", "ts:other", null), "another PC's project moved to a shows under a");
+        deskA.saw("ts:desk", "/visiting");
+        check(deskA.showsProject("/visiting", "", "ts:other", null), "another PC's project with a lead here comes along");
+        check(deskA.showsProject("/theirs", "", "ts:other", Arrays.asList("a")), "another PC's project shared with a shows");
+        WsFilter deskB = new WsFilter(Arrays.asList("b"), "ts:desk", "a", pcs);
+        check(deskB.showsProject("/theirs", "", "ts:other", null), "and it shows under its PC's workspace");
+        check(!deskB.showsProject("/mine", "", null, null), "the answering PC's own project doesn't");
+        same(deskA.projectOwner("", "ts:other"), "b", "project owner: its PC's");
+        same(deskA.projectOwner("", ""), "null", "project owner: none known");
+        same(deskA.projectOwner("c", "ts:other"), "c", "project owner: where it was moved");
+        WsFilter allPcs = new WsFilter(new ArrayList<>(), "ts:desk", "a", pcs);
+        check(allPcs.showsProject("/lost", "", "", null), "under All every project shows");
+
         // The same picks and toggles as src/sidebar.rs's tests.
         List<String> ids = Arrays.asList("a", "b", "c");
         same(WsFilter.picked("", ids), "[]", "All");

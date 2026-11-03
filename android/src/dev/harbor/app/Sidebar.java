@@ -47,6 +47,8 @@ final class Sidebar {
     private final Map<String, String> projectWs = new HashMap<>();
     /** Share with workspace…: the workspaces each project is shared with (hubs before 0.122 send none). */
     private final Map<String, List<String>> projectShared = new HashMap<>();
+    /** The PC a project's folder is on when it isn't the answering PC's ("": none known); absent: the answering PC's. */
+    private final Map<String, String> projectPc = new HashMap<>();
     /** The account's workspaces by id, as last drawn (for the shared mark's line). */
     private Map<String, String> wsNames = new HashMap<>();
 
@@ -205,6 +207,7 @@ final class Sidebar {
         Map<String, String> projects = new LinkedHashMap<>(); // in the desktop sidebar's order
         projectWs.clear();
         projectShared.clear();
+        projectPc.clear();
         JSONArray pa = st.optJSONArray("projects");
         if (pa != null) for (int i = 0; i < pa.length(); i++) {
             JSONObject p = pa.optJSONObject(i);
@@ -212,6 +215,8 @@ final class Sidebar {
                 projects.put(p.optString("id"), p.optString("name"));
                 projectWs.put(p.optString("id"), p.optString("workspace", ""));
                 projectShared.put(p.optString("id"), strings(p.optJSONArray("shared")));
+                // Where its folder is when it isn't the answering PC's (`here`, `pc`); a hub that doesn't say: the answering PC's.
+                if (!p.optBoolean("here", true)) projectPc.put(p.optString("id"), p.optString("pc", ""));
             }
         }
         if (!filter.isEmpty() && !projects.containsKey(filter)) filter = "";
@@ -340,7 +345,7 @@ final class Sidebar {
             // A project without chats yet shows too (hubs from 0.88: its header starts the main
             // chat), as the desktop's sidebar lists it; a search shows it when its name matches.
             boolean bare = g.getValue().isEmpty() && main == null;
-            if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), ""), projectShared.get(g.getKey())) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
+            if (!scope.showsProject(g.getKey(), projectWs.getOrDefault(g.getKey(), ""), projectPc.get(g.getKey()), projectShared.get(g.getKey())) || (bare && !(withMains.contains(g.getKey()) && (filter.isEmpty() || filter.equals(g.getKey()))
                     && (q.isEmpty() || projects.getOrDefault(g.getKey(), "").toLowerCase().contains(q))))) continue;
             if (!first) divider();
             first = false;
@@ -357,7 +362,7 @@ final class Sidebar {
         JSONArray sp = tree == null ? null : tree.optJSONArray("settled_projects");
         for (int i = 0; sp != null && i < sp.length(); i++) {
             String pid = sp.optString(i);
-            if (!scope.showsProject(pid, projectWs.getOrDefault(pid, ""), projectShared.get(pid)) || (!filter.isEmpty() && !filter.equals(pid))) continue;
+            if (!scope.showsProject(pid, projectWs.getOrDefault(pid, ""), projectPc.get(pid), projectShared.get(pid)) || (!filter.isEmpty() && !filter.equals(pid))) continue;
             if (!q.isEmpty() && !projects.getOrDefault(pid, "").toLowerCase().contains(q)) continue;
             settledProjects.add(pid);
         }
@@ -561,7 +566,7 @@ final class Sidebar {
         String where = key.isEmpty() ? "" : Place.hint(st, key);
         if (where.isEmpty()) h.addView(Ui.subtitle(Ui.text(a, name == null || name.isEmpty() ? "Project" : name, 13, mains ? Ui.FG : Ui.G700)), new LinearLayout.LayoutParams(0, -2, 1));
         else h.addView(titleWithPlace(name, where, Place.elsewhere(Place.project(st, key)), mains ? Ui.FG : Ui.G700), new LinearLayout.LayoutParams(0, -2, 1));
-        if (!key.isEmpty()) sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, "")), projectShared.getOrDefault(key, new ArrayList<>()));
+        if (!key.isEmpty()) sharedMark(h, -1, scope.projectOwner(projectWs.getOrDefault(key, ""), projectPc.get(key)), projectShared.getOrDefault(key, new ArrayList<>()));
         if (main != null) status(h, main, you);
         boolean busy = false;
         for (JSONObject c : cs) busy |= working(c) || Hub.queued(c) > 0;
@@ -642,7 +647,7 @@ final class Sidebar {
         LinearLayout r = Ui.listRow(a, Ui.I_FOLDER, Ui.G700, title, Ui.G700);
         r.setBackground(Ui.press(0, 0, 12));
         r.setContentDescription(title + ", settled project");
-        sharedMark(r, -1, scope.projectOwner(projectWs.getOrDefault(pid, "")), projectShared.getOrDefault(pid, new ArrayList<>()));
+        sharedMark(r, -1, scope.projectOwner(projectWs.getOrDefault(pid, ""), projectPc.get(pid)), projectShared.getOrDefault(pid, new ArrayList<>()));
         r.setOnClickListener(v -> { Chats.openProject(a, a.hub, pid); a.closeDrawer(); });
         r.setOnLongClickListener(v -> { projectMenu(pid, name, null); return true; });
         return r;
@@ -799,7 +804,7 @@ final class Sidebar {
         List<Sheet.Option> o = new ArrayList<>();
         o.add(new Sheet.Option("", "All projects", "", true));
         for (Map.Entry<String, String> p : projects.entrySet()) {
-            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""), projectShared.get(p.getKey()))) o.add(new Sheet.Option(p.getKey(), p.getValue(), Place.hint(st, p.getKey()), true));
+            if (scope.showsProject(p.getKey(), projectWs.getOrDefault(p.getKey(), ""), projectPc.get(p.getKey()), projectShared.get(p.getKey()))) o.add(new Sheet.Option(p.getKey(), p.getValue(), Place.hint(st, p.getKey()), true));
         }
         o.add(new Sheet.Option(ADD, "Add project…", "a new folder, a folder on the PC, or a clone", true));
         Sheet.pick(a, "Projects", null, o, filter, id -> {

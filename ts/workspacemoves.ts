@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { type Call, err, type Json, ok, type Reply } from "./packages/net/src/index.ts";
-import { type Chat, type Repo, repoDir, type Store } from "./packages/store/src/index.ts";
-import { chatWorkspace, type MoveItem, moveMenu, movedNotice, type ShareItem, shareMenu, sharedNotice, sharedWith, type Workspace } from "./packages/ui/src/logic/sidebar.ts";
+import { type Chat, NO_PLACEMENT, type Repo, repoDir, type Store } from "./packages/store/src/index.ts";
+import { carriedProjects, chatWorkspace, type MoveItem, moveMenu, movedNotice, projectWorkspace, type ShareItem, shareMenu, sharedNotice, sharedWith, type Workspace } from "./packages/ui/src/logic/sidebar.ts";
 
 /**
  * Move to workspace… for chats and projects (desktop and phone alike). It's placement only: which
@@ -56,13 +56,24 @@ export class WorkspaceMoves {
 
   /** The PC whose folder project `r` is: "" for this one (or none known), else the PC its copies come from. */
   projectHome(r: Repo): string {
-    if (existsSync(repoDir(r))) return "";
-    return this.h.store.chats().find((c) => c.repoId === r.id && c.home !== "")?.home ?? "";
+    return this.projectPc(r) ?? "";
+  }
+
+  /** Project `r`'s PC: null for this one, else the PC its copies come from ("" none known). */
+  private projectPc(r: Repo): string | null {
+    if (existsSync(repoDir(r))) return null;
+    return this.h.store.chats().find((c) => c.repoId === r.id && c.home !== "")?.home ?? this.h.store.projectPc(r.id);
   }
 
   private pcWs(home: string): string {
     const ws = this.h.workspaces();
     return home === "" ? ws.mine : (ws.pcs.get(home) ?? "");
+  }
+
+  /** The workspace of project `r`'s PC ("" when that PC is in none known here). */
+  private projectPcWs(r: Repo): string {
+    const pc = this.projectPc(r);
+    return pc === null ? this.h.workspaces().mine : pc === "" ? "" : this.pcWs(pc);
   }
 
   private name(home: string): string {
@@ -87,9 +98,12 @@ export class WorkspaceMoves {
 
   /** Project `r`'s Move to workspace… menu. */
   projectMenu(r: Repo): MoveChoice {
-    const home = this.projectHome(r);
-    const pcWs = this.pcWs(home);
-    return moveMenu(this.h.workspaces().all, this.h.store.placement().repos.get(r.id) ?? "", pcWs, pcWs, this.name(home));
+    const pc = this.projectPc(r);
+    const ws = this.h.workspaces();
+    const place = this.h.store.placement();
+    // Where it is without a move of its own here: its PC's move as its chats' copies carry it, else its PC's workspace.
+    const base = projectWorkspace(r.id, NO_PLACEMENT, pc, ws.mine, ws.pcs, carriedProjects(this.h.store.chats(), place));
+    return moveMenu(ws.all, place.repos.get(r.id) ?? "", base, this.projectPcWs(r), this.name(pc ?? ""));
   }
 
   private check(ws: unknown, forwarded: boolean): string | Reply {
@@ -129,7 +143,7 @@ export class WorkspaceMoves {
       if (f.status >= 300) return f;
     }
     this.h.store.setRepoWorkspace(r.id, ws);
-    const to = ws !== "" ? ws : this.pcWs(home);
+    const to = ws !== "" ? ws : forwarded ? this.h.workspaces().mine : this.projectPcWs(r);
     this.dropShare(this.h.store.placement().shared?.repos.get(r.id), to, (l) => this.h.store.setRepoShares(r.id, l));
     this.touchProject(r);
     return ok({ ok: true, workspace: ws, in: to, notice: movedNotice(this.h.workspaces().all, to) });
@@ -147,7 +161,9 @@ export class WorkspaceMoves {
 
   /** Where project `r` is now: where it was moved, else its PC's workspace. */
   projectIn(r: Repo): string {
-    return this.h.store.placement().repos.get(r.id) ?? this.pcWs(this.projectHome(r));
+    const ws = this.h.workspaces();
+    const place = this.h.store.placement();
+    return projectWorkspace(r.id, place, this.projectPc(r), ws.mine, ws.pcs, carriedProjects(this.h.store.chats(), place));
   }
 
   /** Chat `c`'s Share with workspace… checklist: its owner, its project's shares (locked), its own. */

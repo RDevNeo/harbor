@@ -179,3 +179,29 @@ test("a_project_is_shared_where_its_folder_is_and_its_chats_get_its_shares", asy
   expect(sent).toEqual([{ peer: "pc:other", method: "POST", path: ["v1", "projects", "do"], body: { project: "/nowhere/other/app", act: "share", workspace: "org_a", on: true } }]);
   expect(store.placement().shared?.repos.get(away)).toEqual(["org_a"]);
 }, SLOW);
+
+test("a_project_whose_folder_is_another_pcs_is_in_that_pcs_workspace", () => {
+  const { store, moves } = rig();
+  // Its chats' copies say which PC; with none left, the PC its copies last came from.
+  const away = store.addRepo("/nowhere/other/game");
+  store.createChat(blankChat({ repoId: away, title: "copy", role: "lead", home: "pc:other", homeId: 3 }));
+  expect(moves.projectIn(store.repos().find((x) => x.id === away)!)).toBe("org_b");
+  const bare = store.addRepo("/nowhere/other/bare");
+  store.setProjectPc(bare, "pc:other");
+  const repo = store.repos().find((x) => x.id === bare)!;
+  expect(moves.projectIn(repo)).toBe("org_b");
+  expect(moves.projectHome(repo)).toBe("pc:other");
+  // A PC in no workspace known here, or none known at all: no workspace, not this PC's.
+  store.setProjectPc(bare, "pc:loose");
+  expect(moves.projectIn(repo)).toBe("");
+  const lost = store.addRepo("/nowhere/lost");
+  expect(moves.projectIn(store.repos().find((x) => x.id === lost)!)).toBe("");
+  // Its PC's move, as a copy carries it, is where it is.
+  const c = store.createChat(blankChat({ repoId: bare, title: "copy", role: "lead", home: "pc:other", homeId: 4 }));
+  store.setCarriedWorkspace(c.id, "org_a");
+  expect(moves.projectIn(repo)).toBe("org_a");
+  expect(moves.projectMenu(repo).items.filter((i) => i.on).map((i) => [i.to, i.id])).toEqual([["org_a", ""]]);
+  // This PC's own project: this PC's workspace.
+  const here = store.addRepo(tmp);
+  expect(moves.projectIn(store.repos().find((x) => x.id === here)!)).toBe("org_a");
+}, SLOW);
