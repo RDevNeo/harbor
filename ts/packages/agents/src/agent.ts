@@ -7,6 +7,7 @@ import { arr, at, bool, compact, f64, firstLine, i64, isNull, obj, optStr, parse
 import { dataDir, home, now, privateDir, randomHex, selfArgv, socketPath, writePrivate } from "./paths.ts";
 import { alive, killTree } from "./procfs.ts";
 import * as turnscope from "./turnscope.ts";
+import { BRIDGE_PORT, BRIDGE_TOKEN, PORT_REF, RELAY } from "./relay.ts";
 import { type Account, accountEnv, binStr, childPath, defaultEffort, kindOf, type Kind } from "./providers.ts";
 
 export type Event =
@@ -62,6 +63,8 @@ export interface Bridge {
   resume(dir: string): void | Promise<void>;
   remoteConfig(g: Grant, remotePort: number): unknown;
   origin: string;
+  /** Where the bridge writes its port: a turn's runner relays to it (relay.ts), so the turn reaches a restarted Harbor. */
+  portFile?(): string;
 }
 
 /** What runs before the agent on a device: net's `RemoteSetup`, kind for kind. */
@@ -90,7 +93,8 @@ export interface Servers {
   /** Claude Code's `--mcp-config` file for a turn; returns its path. With `lazy`, stdio servers go on the turn's bridge grant (`servers`) and the file names their URLs (`base` + name): they start only when a tool is called. */
   claudeConfig(chatId: number, extra: [string, unknown][], apps: boolean, lazy?: { servers: Record<string, unknown>; base: string } | null): string | Promise<string>;
   claudeServers(extra: [string, unknown] | null): Record<string, unknown> | Promise<Record<string, unknown>>;
-  codexArgs(): string[] | Promise<string[]>;
+  /** Codex's `-c` overrides for a turn: the local servers that are on, the signed-in apps and `extra` (Harbor's team server). With `lazy`, stdio servers go on the turn's bridge grant and Codex gets their URLs (`base` + name, the token from the environment variable `tokenVar`). */
+  codexArgs(chatId: number, extra: [string, unknown][], lazy?: { servers: Record<string, unknown>; base: string; tokenVar: string } | null): string[] | Promise<string[]>;
   machinesName: string;
 }
 
@@ -115,7 +119,7 @@ const harborOnly: Servers = {
     if (extra) m[extra[0]] = extra[1];
     return m;
   },
-  codexArgs: () => [],
+  codexArgs: (_chat, extra) => extra.flatMap(([k, v]) => codexStdio(k, v)),
   machinesName: "machines",
 };
 
@@ -369,12 +373,17 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
           const br = integrations.bridge;
           const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: isNull(spec.context.machines) ? null : spec.context.machines };
           const port = br ? await br.grant(g) : null;
-          if (port !== null && g.machines !== null) extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${port}/${g.token}/${sv.machinesName}` }]);
-          const lazy = port === null ? null : { servers: g.servers, base: `http://127.0.0.1:${port}/${g.token}/` };
+          // Claude expands the variable in its config's URLs; the runner sets it (to its relay's port, relay.ts).
+          const via = port === null ? "" : relayed(cmd, br, port);
+          if (port !== null && g.machines !== null) extra.push([sv.machinesName, { type: "http", url: `http://127.0.0.1:${via}/${g.token}/${sv.machinesName}` }]);
+          const lazy = port === null ? null : { servers: g.servers, base: `http://127.0.0.1:${via}/${g.token}/` };
           args.push("--strict-mcp-config", "--mcp-config", await sv.claudeConfig(spec.chatId, extra, apps, lazy));
           if (port !== null) {
             if (g.machines !== null || Object.keys(g.servers).length > 0) grant = g;
-            else br?.revoke(g.token);
+            else {
+              br?.revoke(g.token);
+              unrelay(cmd);
+            }
           }
         } else {
           const r = spec.remote;
@@ -407,12 +416,21 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
       if (model !== null) args.push("-m", model);
       if (effort !== null) args.push("-c", `model_reasoning_effort="${effort}"`);
       if (spec.fast) args.push("-c", 'service_tier="priority"');
-      args.push(...(await sv.codexArgs()));
-      if (spec.team) {
-        const [exe, targs] = teamServer(spec.team, spec.chatId);
-        args.push("-c", `mcp_servers.harbor.command=${rustDebug(exe)}`);
-        args.push("-c", `mcp_servers.harbor.args=[${targs.map(rustDebug).join(",")}]`);
-        args.push("-c", `mcp_servers.harbor.env={HARBOR_SOCK=${rustDebug(socketPath())}}`);
+      // Like a local Claude turn: the stdio servers go on a grant of the turn's own and start only when a tool is called. Codex's config is on its command line, so the URLs carry no token: it comes from the environment.
+      const extra: [string, unknown][] = spec.team ? [["harbor", teamMcpEntry(spec.team, spec.chatId)]] : [];
+      const br = integrations.bridge;
+      const g: Grant = { token: randomHex(18), chat_id: spec.chatId, cwd: spec.cwd, servers: {}, commands: false, workspace: [], machines: null };
+      const port = br ? await br.grant(g) : null;
+      const lazy = port === null ? null : { servers: g.servers, base: `http://127.0.0.1:${relayed(cmd, br, port)}/`, tokenVar: BRIDGE_TOKEN };
+      args.push(...(await sv.codexArgs(spec.chatId, extra, lazy)));
+      if (port !== null) {
+        if (Object.keys(g.servers).length > 0) {
+          grant = g;
+          cmd.env.set(BRIDGE_TOKEN, g.token);
+        } else {
+          br?.revoke(g.token);
+          unrelay(cmd);
+        }
       }
       for (const img of images) args.push("-i", img);
       if (spec.resume) args.push(spec.sessionId);
@@ -446,7 +464,7 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
     lines = `${launch.input}${lines}`;
     if (lines !== "") stdin = `${lines}${stdin ?? ""}`;
     const ssh = detach.command("ssh");
-    ssh.args.push(...r.ssh, "-o", "ExitOnForwardFailure=yes", "-R", `127.0.0.1:${remotePort}:127.0.0.1:${port}`, r.host, launch.command);
+    ssh.args.push(...r.ssh, "-o", "ExitOnForwardFailure=yes", "-R", `127.0.0.1:${remotePort}:127.0.0.1:${relayed(ssh, br, port)}`, r.host, launch.command);
     ssh.cwd = isDir(spec.cwd) ? spec.cwd : home();
     ssh.env.set("PATH", childPath());
     // For the runner's error if the device can't be reached (it isn't passed on to ssh).
@@ -454,6 +472,30 @@ export async function build(given: TurnSpec): Promise<{ cmd: detach.Cmd; stdin: 
     return { cmd: ssh, stdin, grant };
   }
   return { cmd, stdin, grant };
+}
+
+/** The port a turn's MCP URLs name: with the bridge's port file known, `${HARBOR_BRIDGE_PORT}`, which the runner fills in with its relay's port (relay.ts); else the bridge's port itself. */
+function relayed(cmd: detach.Cmd, br: Bridge | null, port: number): string {
+  const file = br?.portFile?.();
+  if (file === undefined) return String(port);
+  cmd.env.set(BRIDGE_PORT, String(port));
+  cmd.env.set(RELAY, file);
+  return PORT_REF;
+}
+
+function unrelay(cmd: detach.Cmd): void {
+  cmd.env.delete(BRIDGE_PORT);
+  cmd.env.delete(RELAY);
+}
+
+/** A stdio server as Codex's `-c` overrides (Rust's `{:?}` strings, which Codex reads as TOML). */
+function codexStdio(name: string, def: unknown): string[] {
+  const command = optStr(at(def, "command"));
+  if (command === undefined) return [];
+  const out = ["-c", `mcp_servers.${name}.command=${rustDebug(command)}`, "-c", `mcp_servers.${name}.args=[${arr(at(def, "args")).filter((a): a is string => typeof a === "string").map(rustDebug).join(",")}]`];
+  const env = obj(at(def, "env"));
+  if (env) out.push("-c", `mcp_servers.${name}.env={${Object.entries(env).filter((e): e is [string, string] => typeof e[1] === "string").map(([k, v]) => `${k}=${rustDebug(v)}`).join(",")}}`);
+  return out;
 }
 
 /** remote.rs's placeholder for the MCP config the device's script reads from stdin. */

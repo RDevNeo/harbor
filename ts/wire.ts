@@ -13,7 +13,7 @@ export function wire(): void {
     servers: {
       claudeConfig: (chat, extra, apps, lazy) => mcp.claudeConfig(chat, extra as Extra, apps, lazy as mcp.Lazy | null | undefined),
       claudeServers: (extra) => mcp.claudeServers(extra === null ? undefined : (extra as Extra[number])),
-      codexArgs: () => mcp.codexArgs(),
+      codexArgs: (chat, extra, lazy) => mcp.codexArgs(chat, extra as Extra, lazy as mcp.CodexLazy | null | undefined),
       machinesName: machines.NAME,
     },
     bridge: {
@@ -22,6 +22,7 @@ export function wire(): void {
       resume: (dir) => bridge.resume(dir),
       remoteConfig: (g, port) => bridge.remoteConfig(asGrant(g), port),
       origin: bridge.ORIGIN,
+      portFile: bridge.portFile,
     },
     workspace: { forAccess: workspace.forAccess, replaced: workspace.REPLACED, note: workspace.note },
     remote: { launch: (family, dir, setup, argv) => remoteLaunch(family === "windows" ? "windows" : "posix", dir, setup, argv) },

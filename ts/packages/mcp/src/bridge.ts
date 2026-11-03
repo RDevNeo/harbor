@@ -5,7 +5,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { HEAD_WAIT, HttpError, header, Reader, readBody, readChunked, readHead, urlEncode, type Request } from "@harbor/net";
-import { home, writePrivate } from "@harbor/store";
+import { dataDir, home, privateDir, writePrivate } from "@harbor/store";
 import { argStr, argUint } from "./args.ts";
 import { isObject, type Json } from "./json.ts";
 import { grantFrom, type Grant as MachinesGrant, mcp as machinesMcp, NAME as MACHINES } from "./machines.ts";
@@ -267,11 +267,24 @@ const GRANTS = new Map<string, Live>();
 /** Every slot, by key: a grant's own (`<token>\0<name>`) or a shared one. */
 const SLOTS = new Map<string, Slot>();
 
-/** Harbor's own app server (`harbor app <name>`): stateless, so turns with the same entry (same env: Discord's chat) share one. */
-function sharedKey(def: Obj): string | null {
-  const args = def.args;
-  if (def.command !== selfExe() || !Array.isArray(args) || args.length !== 2 || args[0] !== "app") return null;
-  return `app\0${JSON.stringify([def.command, args, def.env ?? null])}`;
+/**
+ * Servers safe to share between turns and chats, beside Harbor's own apps: what one instance of them does doesn't
+ * depend on who asks. The Roblox Studio MCP server already makes every instance but the first a proxy to the one
+ * that holds its port (where the Studio plugin connects), so one shared instance is what the turns had anyway.
+ * Browsers (Playwright and the like) hold a session per chat and stay a turn's own.
+ */
+export const SHARE_SAFE: readonly RegExp[] = [/robloxstudio-mcp|rbx-studio-mcp/i];
+
+/** Whose server it is: one slot for every turn with the same command line and environment (Harbor's apps: Discord's chat is in its env), or null for a turn's own. */
+export function sharedKey(def: Obj): string | null {
+  const command = typeof def.command === "string" ? def.command : null;
+  const args = Array.isArray(def.args) ? def.args : [];
+  if (command === null) return null;
+  const env = isObject(def.env) && Object.keys(def.env).length > 0 ? def.env : null;
+  const id = JSON.stringify([command, args, env]);
+  if (command === selfExe() && args.length === 2 && args[0] === "app") return `app\0${id}`;
+  const line = [command, ...args.filter((a): a is string => typeof a === "string")].join(" ");
+  return SHARE_SAFE.some((r) => r.test(line)) ? `shared\0${id}` : null;
 }
 
 function slotFor(live: Live, name: string, def: Obj): Slot {
@@ -802,6 +815,23 @@ function respond(s: Socket, code: number, ctype: string, body: string | Uint8Arr
   s.end(Buffer.concat([Buffer.from(head), data]), () => s.destroy());
 }
 
+/** When this Harbor began serving: turns it picks up after a restart get their grants back a moment later. */
+let servingSince = 0;
+
+/** Shortly after a restart, a request for a grant not served (yet) waits a little: its turn may still be being picked up. */
+async function resuming(t: string): Promise<Live | undefined> {
+  const until = Math.min(Date.now() + resumeWait.ms, servingSince + resumeWait.window);
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 100));
+    const live = GRANTS.get(t);
+    if (live) return live;
+  }
+  return undefined;
+}
+
+/** Tests shorten them: how long such a request waits, and for how long after the start it may. */
+export const resumeWait = { ms: 10_000, window: 60_000 };
+
 async function handle(s: Socket): Promise<void> {
   s.on("error", () => {});
   const agent = new Agent(s);
@@ -816,12 +846,12 @@ async function handle(s: Socket): Promise<void> {
     return e instanceof HttpError ? respond(s, e.status, "text/plain", "bad request") : void s.destroy();
   }
   clearTimeout(headTimer);
-  // The path comes decoded: "<token>/<server name>".
+  // The path comes decoded: "<token>/<server name>", or just the name with the token as a bearer (Codex: its config is on a command line, the token in its environment).
   const path = head.path.replace(/^\/+|\/+$/g, "");
+  const bearer = /^Bearer\s+(\S+)$/i.exec(header(head, "authorization") ?? "")?.[1];
   const slashAt = path.indexOf("/");
-  const tokenPart = slashAt < 0 ? path : path.slice(0, slashAt);
-  const server = slashAt < 0 ? "" : path.slice(slashAt + 1);
-  const live = GRANTS.get(tokenPart);
+  const [tokenPart, server] = bearer !== undefined ? [bearer, path] : [slashAt < 0 ? path : path.slice(0, slashAt), slashAt < 0 ? "" : path.slice(slashAt + 1)];
+  const live = GRANTS.get(tokenPart) ?? (await resuming(tokenPart));
   const def = live && Object.hasOwn(live.grant.servers, server) ? (live.grant.servers[server] as Json) : undefined;
   const mine = live !== undefined && (server === ORIGIN || (server === MACHINES && live.grant.machines !== null));
   if (!live || !(mine || def !== undefined)) return respond(s, 404, "text/plain", "not found");
@@ -900,15 +930,34 @@ export function listen(port: number): Promise<number | null> {
 
 let found: Promise<number | null> | null = null;
 
+/** How long a start waits for `PORT` to come free (the Harbor it replaces may still be exiting) before taking the next one. Tests shorten it. */
+export const portWait = { ms: 1500 };
+
 export function port(): Promise<number | null> {
   found ??= (async () => {
-    for (let p = PORT; p < PORT + 10; p++) {
-      const bound = await listen(p);
-      if (bound !== null) return bound;
+    let bound: number | null = null;
+    for (const until = Date.now() + portWait.ms; bound === null; ) {
+      bound = await listen(PORT);
+      if (bound !== null || Date.now() >= until) break;
+      await new Promise((r) => setTimeout(r, 200));
     }
-    return null;
+    for (let p = PORT + 1; bound === null && p < PORT + 10; p++) bound = await listen(p);
+    if (bound !== null) {
+      servingSince = Date.now();
+      try {
+        writePrivate(portFile(), String(bound));
+      } catch {
+        // turns then reach the bridge only on the port they were started with
+      }
+    }
+    return bound;
   })();
   return found;
+}
+
+/** Where the bridge's port is written once it serves: a turn's runner reads it for each connection it passes on (relay.ts), so turns reach a Harbor that came back on another port. */
+export function portFile(): string {
+  return join(privateDir(join(dataDir(), "apps")), "bridge-port");
 }
 
 /** The bridge port a turn's ssh forwards to (its `-R …:127.0.0.1:<port>` in cmd.json). */

@@ -5,7 +5,11 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PORT } from "@harbor/net";
-import { type Grant, PORT, SUBSCRIPTION, close, enc, end, forwardedPort, grant, port, remoteConfig, resume, revoke, save, serving, setSlash, token, waits } from "../src/bridge.ts";
+import { type Grant, PORT, SUBSCRIPTION, close, enc, end, forwardedPort, grant, port, portWait, remoteConfig, resume, resumeWait, revoke, save, serving, setSlash, token, waits } from "../src/bridge.ts";
+
+// Unknown tokens are refused at once, and a taken port is passed over at once (a real Harbor may hold it).
+resumeWait.window = 0;
+portWait.ms = 0;
 import type { Json } from "../src/json.ts";
 import { forAccess } from "../src/workspace.ts";
 

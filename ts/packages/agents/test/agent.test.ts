@@ -187,6 +187,59 @@ test("a local turn hands its stdio servers to the bridge and keeps the grant onl
   }
 });
 
+// With the bridge's port file known, the URLs name the runner's relay (relay.ts) and the runner is told where to relay to.
+test("a local turn's MCP URLs go through the runner's relay when the bridge has a port file", async () => {
+  const was = { ...agent.integrations };
+  agent.integrate({
+    bridge: { ...fakeBridge, portFile: () => "/run/bridge-port" },
+    servers: {
+      ...was.servers,
+      claudeConfig: (chat, extra, _apps, lazy) => {
+        for (const [k, v] of extra) if (lazy) lazy.servers[k] = v;
+        return `${lazy?.base ?? "none"}|${chat}`;
+      },
+    },
+  });
+  try {
+    const { cmd, grant } = await agent.build(spec({ team: { role: "lead", system: "lead" } }));
+    expect(after(cmd.args, "--mcp-config")).toBe(`http://127.0.0.1:\${HARBOR_BRIDGE_PORT}/${grant?.token}/|999995`);
+    expect(cmd.env.get("HARBOR_BRIDGE_PORT")).toBe("4242");
+    expect(cmd.env.get("HARBOR_BRIDGE_RELAY")).toBe("/run/bridge-port");
+    // No servers for the bridge: no relay either.
+    const plain = await agent.build(spec());
+    expect(plain.grant).toBeNull();
+    expect(plain.cmd.env.has("HARBOR_BRIDGE_RELAY")).toBe(false);
+  } finally {
+    agent.integrate(was);
+  }
+});
+
+test("a Codex turn hands its stdio servers to the bridge, with the token in its environment only", async () => {
+  const was = { ...agent.integrations };
+  let seen: { servers: Record<string, unknown>; base: string; tokenVar: string } | null | undefined;
+  agent.integrate({
+    bridge: { ...fakeBridge, portFile: () => "/run/bridge-port" },
+    servers: {
+      ...was.servers,
+      codexArgs: (_chat, extra, lazy) => {
+        seen = lazy;
+        for (const [k, v] of extra) if (lazy) lazy.servers[k] = v;
+        return ["-c", `mcp_servers={harbor={url="${lazy?.base}harbor",bearer_token_env_var="${lazy?.tokenVar}"}}`];
+      },
+    },
+  });
+  try {
+    const { cmd, grant } = await agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), team: { role: "sub", system: "sys" } }));
+    expect(seen?.base).toBe("http://127.0.0.1:${HARBOR_BRIDGE_PORT}/");
+    expect((grant?.servers.harbor as { args: string[] }).args.slice(-5)).toEqual(["mcp", "--chat", "999995", "--role", "sub"]);
+    expect(cmd.env.get("HARBOR_BRIDGE_TOKEN")).toBe(grant?.token ?? "?");
+    expect(cmd.args.some((a) => a.includes(grant?.token ?? "?"))).toBe(false);
+    expect(cmd.args.some((a) => a.startsWith("mcp_servers.harbor."))).toBe(false);
+  } finally {
+    agent.integrate(was);
+  }
+});
+
 test("a remote turn without the net package says so instead of running", async () => {
   const remote: agent.RemoteSpec = { ssh: [], host: "box", name: "box", family: "posix", dir: "~", setup: [], bridge: false, commands: false, workspace: false, token: null, note: "" };
   const was = { ...agent.integrations };
@@ -234,12 +287,16 @@ describe("command lines per provider", () => {
   });
 
   test("Codex", async () => {
-    const v = (await agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), access: "edits", effort: "high", fast: true, resume: true, files: ["/a.png", "/b.txt"], team: { role: "sub", system: "sys" } }))).cmd.args;
+    const built = await agent.build(spec({ account: claude({ kind: "Codex", id: "codex" }), access: "edits", effort: "high", fast: true, resume: true, files: ["/a.png", "/b.txt"], team: { role: "sub", system: "sys" } }));
+    const v = built.cmd.args;
     expect(v.slice(0, 4)).toEqual(["exec", "resume", "--json", "--skip-git-repo-check"]);
     expect(v).toContain('sandbox_mode="workspace-write"');
     expect(v).toContain('model_reasoning_effort="high"');
     expect(v).toContain('service_tier="priority"');
-    expect(v.some((a) => a.startsWith("mcp_servers.harbor.args=[") && a.includes('"mcp","--chat","999995","--role","sub"'))).toBe(true);
+    // The team server: on the turn's bridge grant when a bridge is wired in, else on Codex's command line (dotted, or in the one `mcp_servers={…}`).
+    const team = '"mcp","--chat","999995","--role","sub"';
+    const onGrant = JSON.stringify(built.grant?.servers.harbor ?? null).includes(team);
+    expect(onGrant || v.some((a) => a.startsWith("mcp_servers") && a.includes(team))).toBe(true);
     expect(after(v, "-i")).toBe("/a.png");
     // Resumed: no team text in the message, the session id before it.
     expect(v.slice(-2)).toEqual(["abc", "hi\n\nAttached files:\n- /b.txt"]);

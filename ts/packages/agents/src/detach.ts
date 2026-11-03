@@ -23,6 +23,7 @@ import { dataDir, home, now, privateDir, selfArgv, stateDir, writePrivate } from
 import { alive, cmdline, myUid, ownerOf, parentOf, pids, procStart, startedAt } from "./procfs.ts";
 import { bin, KINDS, which } from "./providers.ts";
 import * as turnscope from "./turnscope.ts";
+import { setUp as relaySetUp } from "./relay.ts";
 
 /** Polling, where a folder can't be watched (one deleted under its runner). */
 export const POLL_MS = 60;
@@ -580,7 +581,7 @@ export async function run(args: readonly string[]): Promise<void> {
   }
   const spec = parse(text) ?? null;
   const program = optStr(at(spec, "program")) ?? "";
-  const argv = arr(at(spec, "args")).filter((a): a is string => typeof a === "string");
+  let argv = arr(at(spec, "args")).filter((a): a is string => typeof a === "string");
   const cwd = optStr(at(spec, "cwd"));
   const env: Record<string, string | undefined> = { ...process.env };
   const pairs = arr(at(spec, "env"));
@@ -628,6 +629,8 @@ export async function run(args: readonly string[]): Promise<void> {
       else env[k] = v;
     }
   }
+  // The agent's way to the MCP bridge, kept open across a Harbor restart (relay.ts).
+  ({ argv } = await relaySetUp(env, argv));
   const giveBack = (): void => {
     if (lent !== null && !overlayInUse(lent, process.pid)) unlend(lent);
     lent = null;

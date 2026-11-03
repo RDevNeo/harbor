@@ -106,8 +106,11 @@ function stamp(command: string, env: Obj): string {
 /** Names a server: its command line, environment and folder, the program's size and time (a new build lists anew) and, for Harbor's own servers, Harbor's version (they come from its bundle, which updates without the program). */
 export function serverKey(def: Obj, cwd: string): string {
   const command = typeof def.command === "string" ? def.command : "";
-  const env = isObject(def.env) ? def.env : {};
-  const parts = [command, def.args ?? [], env, cwd, stamp(command, env), command === selfExe() ? harborVersion() : ""];
+  const env = isObject(def.env) ? { ...def.env } : {};
+  const own = command === selfExe();
+  // Harbor's own apps list the same tools in every chat: one entry, not one per chat.
+  if (own) delete env.HARBOR_CHAT_ID;
+  const parts = [command, def.args ?? [], env, cwd, stamp(command, env), own ? harborVersion() : ""];
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 32);
 }
 

@@ -165,8 +165,85 @@ test("agents get the local servers from the user's config and the signed-in apps
   resetLocalsCache();
   expect((await claudeServers())["Roblox Studio"]).toBeUndefined();
   const args = await codexArgs();
-  expect(args).toContain('mcp_servers.context7.url="https://mcp.context7.com/mcp"');
-  expect(args).toContain('mcp_servers.context7.env_http_headers={CONTEXT7_API_KEY="HARBOR_TOKEN_CONTEXT7"}');
+  expect(args).toHaveLength(2);
+  expect(args[1]).toContain('context7={url="https://mcp.context7.com/mcp",env_http_headers={CONTEXT7_API_KEY="HARBOR_TOKEN_CONTEXT7"},enabled=true}');
+});
+
+/** The one `mcp_servers={…}` override, read back as TOML. */
+function overrides(args: string[]): Record<string, Record<string, unknown>> {
+  expect(args.filter((a) => a.startsWith("mcp_servers"))).toHaveLength(1);
+  const a = args[args.indexOf("-c") + 1] ?? "";
+  return (Bun.TOML.parse(a) as { mcp_servers: Record<string, Record<string, unknown>> }).mcp_servers;
+}
+
+test("Codex: servers that are off go off in one override (a key with a space too), the rest stays as the user has it", async () => {
+  mkdirSync(join(root, ".codex"));
+  writeFileSync(join(root, ".codex", "config.toml"), '[mcp_servers."Roblox Studio"]\ncommand = "rbx"\n\n[mcp_servers.node_repl]\ncommand = "repl"\n\n[mcp_servers.Omarchy]\ncommand = "hypr"\n');
+  mcp.toggleOff("robloxstudio");
+  const m = overrides(await codexArgs());
+  expect(m).toEqual({ "Roblox Studio": { enabled: false }, node_repl: { enabled: false } });
+});
+
+test("Codex: with a grant, stdio servers are the bridge's and Codex gets their URLs, the token from its environment", async () => {
+  mkdirSync(join(root, ".codex"));
+  writeFileSync(
+    join(root, ".codex", "config.toml"),
+    [
+      'model = "x"',
+      '[mcp_servers."Roblox Studio"]',
+      'command = "/bin/rbx"',
+      "args = []",
+      "[mcp_servers.Omarchy]",
+      'command = "/bin/hypr"',
+      "startup_timeout_sec = 20",
+      "[mcp_servers.Omarchy.tools.desktop]",
+      'approval_mode = "approve"',
+      "[mcp_servers.Omarchy.env]",
+      'A = "1"',
+      // Its own folder: the bridge can't run it so; Codex keeps starting it.
+      "[mcp_servers.blender]",
+      'command = "/bin/blend"',
+      'cwd = "/tmp"',
+      // The lowercase twin is taken: no free name.
+      "[mcp_servers.playwright]",
+      'command = "npx"',
+      "[mcp_servers.Playwright]",
+      "enabled = false",
+      'command = "npx"',
+      "[mcp_servers.convex]",
+      'command = "npx"',
+      "",
+    ].join("\n"),
+  );
+  const lazy: mcp.CodexLazy = { servers: {}, base: "http://127.0.0.1:${HARBOR_BRIDGE_PORT}/", tokenVar: "HARBOR_BRIDGE_TOKEN" };
+  const team: Json = { type: "stdio", command: "/bin/harbor", args: ["mcp", "--chat", "7", "--role", "lead"], env: { HARBOR_SOCK: "/run/h.sock" } };
+  const m = overrides(await codexArgs(7, [["harbor", team]], lazy));
+  const at = (name: string): Record<string, unknown> => ({ url: `http://127.0.0.1:\${HARBOR_BRIDGE_PORT}/${name}`, bearer_token_env_var: "HARBOR_BRIDGE_TOKEN", enabled: true });
+  expect(m["Roblox Studio"]).toEqual({ enabled: false });
+  expect(m.Roblox_Studio).toEqual(at("Roblox_Studio"));
+  expect(m.Omarchy).toEqual({ enabled: false });
+  expect(m.omarchy).toEqual({ ...at("omarchy"), startup_timeout_sec: 20, tools: { desktop: { approval_mode: "approve" } } });
+  expect(m.harbor).toEqual(at("harbor"));
+  expect(m.blender).toBeUndefined();
+  expect(m.playwright).toBeUndefined();
+  expect(m.convex).toEqual({ enabled: false });
+  expect(lazy.servers).toEqual({
+    Roblox_Studio: { type: "stdio", command: "/bin/rbx", args: [] },
+    omarchy: { type: "stdio", command: "/bin/hypr", args: [], env: { A: "1" } },
+    harbor: team,
+  });
+  // Nothing secret on the command line.
+  expect(JSON.stringify(m)).not.toContain("h.sock");
+});
+
+test("Codex: an app whose name the user's own stdio entry has stays a stdio entry", async () => {
+  mkdirSync(join(root, ".codex"));
+  writeFileSync(join(root, ".codex", "config.toml"), '[mcp_servers.harbor]\ncommand = "/bin/other"\n');
+  const lazy: mcp.CodexLazy = { servers: {}, base: "http://127.0.0.1:9/", tokenVar: "T" };
+  const team: Json = { type: "stdio", command: "/bin/harbor", args: ["mcp"], env: { HARBOR_SOCK: "/run/h.sock" } };
+  const m = overrides(await codexArgs(7, [["harbor", team]], lazy));
+  expect(m.harbor).toEqual({ command: "/bin/harbor", args: ["mcp"], env: { HARBOR_SOCK: "/run/h.sock" }, enabled: true });
+  expect(lazy.servers).toEqual({});
 });
 
 test("a Google code is exchanged and saved as an account", async () => {

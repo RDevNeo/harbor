@@ -5,6 +5,24 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Codex turns get the same lazy MCP servers as Claude's: Harbor's bridge answers their handshakes and
+  starts a server only when a tool is called, and stops it when unused. A waiting Codex turn with
+  Harbor's usual set no longer runs any MCP server process (was 7, about 400 MB). The bridge's token
+  reaches Codex in its environment, never on its command line. Your own servers in Codex's
+  `config.toml` keep their settings (tool approvals, timeouts), and a server whose name has a space
+  (`Roblox Studio`) now works in Codex turns at all; a few names differ in case for Codex (`omarchy`).
+- The Roblox Studio MCP server is one process for every turn and chat that has the same entry,
+  instead of one per turn that calls it: it already passed every call on to one main instance.
+  Other servers (browsers among them) stay a turn's own.
+- A tool call made while Harbor restarts (an update) waits for it to come back instead of failing,
+  also when the new Harbor serves on another port: each turn reaches Harbor's MCP bridge through
+  its own runner, which waits and finds the new port.
+
+### Fixed
+- A Codex turn no longer fails to start when an MCP server whose name has a space is turned off in
+  Harbor.
+
 ## [0.129.0] - 2026-11-03
 
 ### Added

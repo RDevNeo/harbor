@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Grant, close, grant, revoke, token } from "../src/bridge.ts";
+import { type Grant, close, grant, portFile, resumeWait, revoke, token } from "../src/bridge.ts";
 import type { Json } from "../src/json.ts";
 import { limits, resetCache } from "../src/lazy.ts";
 import { tools } from "../src/mcpshim.ts";
@@ -60,7 +60,7 @@ afterEach(() => {
 const server = (env: Record<string, string> = {}): Json => ({ type: "stdio", command: process.execPath, args: [fake], env: { FAKE_LOG: log, ...env } });
 const base = (over: Partial<Grant> = {}): Grant => ({ token: token(), chat_id: 1, cwd: tmpdir(), servers: {}, commands: false, workspace: [], machines: null, ...over });
 
-async function rpc(p: number, path: string, msg: Json): Promise<{ [k: string]: Json } | null> {
+async function rpc(p: number, path: string, msg: Json, headers = ""): Promise<{ [k: string]: Json } | null> {
   const body = JSON.stringify(msg);
   const out = await new Promise<string>((resolve) => {
     let data = "";
@@ -69,7 +69,7 @@ async function rpc(p: number, path: string, msg: Json): Promise<{ [k: string]: J
     s.on("data", (d: string) => (data += d));
     s.on("error", () => resolve(data));
     s.on("close", () => resolve(data));
-    s.write(`POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+    s.write(`POST ${path} HTTP/1.1\r\nHost: x\r\n${headers}Content-Type: application/json\r\nAccept: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
   });
   const text = out.split("\r\n\r\n").slice(1).join("\r\n\r\n");
   return text === "" ? null : (JSON.parse(text) as { [k: string]: Json });
@@ -263,4 +263,64 @@ test("an open listen doesn't start the server or keep it up, and hears its event
   expect(lb.data()).toContain('"notifications/tools/list_changed","params":{"_meta":{"io.modelcontextprotocol/subscriptionId":"L2"}}');
   lb.leave();
   revoke(b.token);
+}, 30_000);
+
+// Codex's entries: the server's name in the path, the token as a bearer from its environment.
+test("a grant is reached with its token as a bearer, and a wrong one is refused", async () => {
+  resumeWait.window = 0;
+  const g = base({ servers: { fake: server() } });
+  const p = (await grant(g)) as number;
+  expect(Number(readFileSync(portFile(), "utf8"))).toBe(p);
+  const call = { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "hello" } };
+  expect(JSON.stringify((await rpc(p, "/fake", call, `Authorization: Bearer ${g.token}\r\n`))?.result)).toContain("pid ");
+  // A 404 (its body isn't JSON).
+  await expect(rpc(p, "/fake", call, "Authorization: Bearer nope\r\n")).rejects.toThrow();
+  await expect(rpc(p, "/fake", call)).rejects.toThrow();
+  revoke(g.token);
+}, 30_000);
+
+// Shortly after a restart a turn's request may come before Harbor has picked the turn up again.
+test("a request for a grant served a moment later waits for it", async () => {
+  resumeWait.window = 60_000;
+  resumeWait.ms = 3000;
+  const g = base({ servers: { fake: server() } });
+  const other = base();
+  const p = (await grant(other)) as number;
+  const asked = rpc(p, `/${g.token}/fake`, { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "hello" } });
+  await sleep(300);
+  await grant(g);
+  expect(JSON.stringify((await asked)?.result)).toContain("pid ");
+  revoke(g.token);
+  revoke(other.token);
+}, 30_000);
+
+test("a share-safe server (Roblox Studio's) is one process for every turn with the same entry; others stay a turn's own", async () => {
+  limits.idle = 500;
+  const rbx = join(work, "robloxstudio-mcp-ws");
+  writeFileSync(rbx, `#!/bin/sh\nexec '${process.execPath}' '${fake}'\n`);
+  chmodSync(rbx, 0o755);
+  const roblox: Json = { type: "stdio", command: rbx, args: [], env: { FAKE_LOG: log } };
+  // Codex's entry has no type and the same command line: the same server.
+  const codexRoblox: Json = { command: rbx, args: [], env: { FAKE_LOG: log } };
+  const a = base({ chat_id: 1, servers: { "Roblox Studio": roblox, own: server({ N: "1" }) } });
+  const b = base({ chat_id: 2, cwd: work, servers: { Roblox_Studio: codexRoblox, own: server({ N: "1" }) } });
+  const p = (await grant(a)) as number;
+  await grant(b);
+  const ask = (g: Grant, name: string, id: number): Promise<{ [k: string]: Json } | null> => rpc(p, `/${g.token}/${encodeURIComponent(name)}`, { jsonrpc: "2.0", id, method: "tools/call", params: { name: "hello" } });
+  const ra = await ask(a, "Roblox Studio", 1);
+  const rb = await ask(b, "Roblox_Studio", 2);
+  expect(JSON.stringify(ra?.result)).toBe(JSON.stringify(rb?.result));
+  expect(startsSeen()).toHaveLength(1);
+  // Not on the list: each turn's own.
+  const [oa, ob] = await Promise.all([ask(a, "own", 3), ask(b, "own", 4)]);
+  expect(JSON.stringify(oa?.result)).not.toBe(JSON.stringify(ob?.result));
+  expect(startsSeen()).toHaveLength(3);
+  const shared = Number(startsSeen()[0]?.split(" ")[1]);
+  // One turn ends: the shared one stays for the other.
+  revoke(a.token);
+  await sleep(100);
+  expect(alive(shared)).toBe(true);
+  expect(JSON.stringify((await ask(b, "Roblox_Studio", 5))?.result)).toBe(JSON.stringify(ra?.result));
+  revoke(b.token);
+  await until("the shared server stops once unused", () => !alive(shared));
 }, 30_000);
