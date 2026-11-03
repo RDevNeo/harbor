@@ -49,6 +49,10 @@ export interface ProjectsHost {
   uploadPath?: (id: string) => string | null;
   /** Move to workspace… (workspacemoves.ts). */
   moves?: WorkspaceMoves;
+  /** `POST /v1/projects/move`: Move to PC… of project `repo` (projectmoverun.ts `api`). */
+  move?: (repo: number, body: Record<string, unknown>, sender: string) => Promise<Reply>;
+  /** What project `repo`'s move to another PC does now (null: none runs). */
+  moving?: (repo: number) => string | null;
 }
 
 const STEPS: readonly Step[] = ["sources", "new", "local", "url", "github"];
@@ -76,9 +80,10 @@ const MENU_ICONS = new Map<string, string>([
   [ICONS.ARCHIVE, "archive"],
   [ICONS.UNARCHIVE, "unarchive"],
   [ICONS.USERS, "users"],
+  [ICONS.MONITOR, "monitor"],
 ]);
 
-const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "move_workspace", "remove"];
+const PROJECT_ACTS: readonly ProjectAct[] = ["terminal", "prs", "issues", "remote", "rename_main", "settle_main", "refresh_icon", "choose_icon", "website_icon", "settle_project", "unsettle_project", "move_workspace", "move_pc", "remove"];
 const now = (): number => Math.floor(Date.now() / 1000);
 const zone = (at: number): number => -new Date(at * 1000).getTimezoneOffset() * 60;
 
@@ -134,11 +139,18 @@ export class ProjectsApi {
     const p = call.path;
     if (p[0] !== "v1" || p[1] !== "projects" || call.method !== "POST" || p.length > 3) return null;
     const sub = p[2] ?? "";
-    if (!["", "rows", "job", "menu", "do"].includes(sub)) return null;
+    if (!["", "rows", "job", "menu", "do", "move"].includes(sub)) return null;
     const b = obj(call.body);
     const pc = str(b.pc);
     if (pc !== "" && pc !== this.h.me().id) return this.onPeer(pc, sub, b, call);
     if (sub === "rows") return ok(this.rows(b));
+    if (sub === "move") {
+      // A project by its id or folder, or (asked on from another PC) by one of its chats.
+      const r = b.chat !== undefined ? this.repoOfChat(b.chat) : this.repoOf(b.project);
+      if (r === null) return err(404, "that project isn't on this PC any more");
+      if (!this.h.move) return err(409, "projects can't move from here");
+      return this.h.move(r.id, b, this.h.sender(call));
+    }
     if (sub === "menu" || sub === "do") {
       const r = this.repoOf(b.project);
       if (r === null) return err(404, "that project isn't on this PC any more");
@@ -328,6 +340,14 @@ export class ProjectsApi {
     return repos.find((r) => r.path === v) ?? repos.find((r) => repoDir(r) === v) ?? null;
   }
 
+  /** The project of a chat, by its id here or its gid. */
+  private repoOfChat(v: unknown): Repo | null {
+    const chats = this.h.store.chats();
+    const c = typeof v === "number" ? chats.find((x) => x.id === v) : typeof v === "string" ? (/^\d+$/.test(v) ? chats.find((x) => x.id === Number(v)) : chats.find((x) => x.gid === v)) : undefined;
+    if (!c || c.repoId === null || c.home !== "") return null;
+    return this.h.store.repos().find((r) => r.id === c.repoId) ?? null;
+  }
+
   /** A project's page on the web, from its stored origin (null without one). */
   private remoteOf(r: Repo): string | null {
     const o = r.remote !== "" ? r.remote : (this.h.origin ?? gitOrigin)(repoDir(r));
@@ -345,7 +365,7 @@ export class ProjectsApi {
     const until = this.snoozeOf(`r${r.id}`);
     const settled = this.h.store.settledProjects().has(r.id);
     const moves = this.h.moves?.projectMenu(r) ?? null;
-    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false, settled, ...(moves ? { moveWhy: moves.why } : {}) }).map((it): Json => {
+    const items = projectMenu({ remote, main: main !== null, customIcon: this.h.customIcon?.(r.id) ?? false, settled, ...(moves ? { moveWhy: moves.why } : {}), moving: this.h.moving?.(r.id) ?? null }).map((it): Json => {
       const off = it.act === "terminal" || it.off === true;
       return {
         act: it.act,
@@ -447,8 +467,8 @@ export class ProjectsApi {
     const rb = obj(r.body);
     if (r.status === 503) return err(503, `${peer.name} is off or unreachable`);
     if (r.status === 404 && sub !== "job" && ["no such call", "unknown call", "not found"].includes(str(rb.error)))
-      return err(409, `${peer.name} runs an older Harbor that can't ${sub === "menu" || sub === "do" ? "change its projects" : "add projects"} from a phone: update it there first`);
-    if (r.status !== 200 || typeof rb.path !== "string" || rb.path === "" || sub === "rows" || sub === "menu" || sub === "do") return r;
+      return err(409, `${peer.name} runs an older Harbor that can't ${sub === "menu" || sub === "do" || sub === "move" ? "change its projects" : "add projects"} from a phone: update it there first`);
+    if (r.status !== 200 || typeof rb.path !== "string" || rb.path === "" || sub === "rows" || sub === "menu" || sub === "do" || sub === "move") return r;
     // A project there: listed here as well, by the folder it has there.
     const repos = this.h.store.repos();
     const remote = str(rb.remote);

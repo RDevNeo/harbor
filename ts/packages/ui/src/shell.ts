@@ -34,7 +34,7 @@ import { Terminal } from "./terminal.ts";
 import { ICONS, type IconName } from "./icons.ts";
 import { ago, tilde } from "./logic/app.ts";
 import { EscHold, usageRows } from "./logic/usagepop.ts";
-import { projectMenu, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
+import { projectMenu, projectMoveTitle, type ProjectAct, REMOVE_PROJECT } from "./logic/projectmenu.ts";
 import { chatIdle, inWorkspaces, type MoveItem, parseSnooze, picked, type Status, ownStatus, projectIdle, projectInitial, sidebarList, sidebarOrder, snoozedLabel, snoozePresets, snoozePreview, reordered, stepRow, toggled, tree, type Workspace } from "./logic/sidebar.ts";
 import { chatTitles, defuse, dropFile, erase, eraseSpans, imageCount, imagesFollow, shiftImages, withPicked, writeImage } from "./logic/usertext.ts";
 import { kindOfAccount, type Pixels, providerLogo } from "./logos.ts";
@@ -2579,11 +2579,12 @@ export class Shell {
       settle_project: () => this.settleProject(id, true),
       unsettle_project: () => this.settleProject(id, false),
       move_workspace: () => this.wsMoveMenu("project", id, x, y),
+      move_pc: () => void this.projectMovePc(id, x, y),
       remove: () => this.removeRepoDialog(id),
     };
     const ws = this.hub.moves?.projectMenu(id) ?? null;
     const items: (PopItem & { act?: () => void })[] = [];
-    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}) })) {
+    for (const it of projectMenu({ remote, main: main !== null, customIcon: custom, settled, ...(ws ? { moveWhy: ws.why } : {}), moving: this.hub.projectMoving?.(id) ?? null })) {
       if (it.sep) items.push(this.separator());
       const extra: Partial<PopItem> = {};
       if (it.icon !== "") extra.icon = it.icon;
@@ -2593,6 +2594,83 @@ export class Shell {
       items.push(native(it.label, acts[it.act], extra));
     }
     this.popup("project-row", x, y, items, 260, false, true);
+  }
+
+  /** A project's Move to PC… (projectmoverun.ts through `hub.projectMove`): its state if one runs, else the PCs, the confirmation, then the move with its progress in the toast. */
+  private async projectMovePc(id: number, x: number, y: number): Promise<void> {
+    const call = this.hub.projectMove;
+    if (!call) return;
+    const name = this.data.repo(id)?.name ?? "Project";
+    const ask = async (body: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const r = await call(id, body);
+      const b = typeof r.body === "object" && r.body !== null && !Array.isArray(r.body) ? (r.body as Record<string, unknown>) : {};
+      if (r.status >= 300) throw new Error(typeof b.error === "string" ? b.error : "it didn't work");
+      return b;
+    };
+    const fail = (e: unknown) => this.dialog(`Couldn't move ${name}`, e instanceof Error ? e.message : String(e), "OK", false, null, () => {});
+    try {
+      const st = await ask({ step: "status" });
+      if (st.state === "running") {
+        this.dialog(`Moving ${name} to ${String(st.to_name)}`, `${String(st.stage)}\n\nIt goes on by itself; this menu says how far it is.`, "OK", false, null, () => {});
+        return;
+      }
+      const t = await ask({ step: "targets" });
+      const targets = (Array.isArray(t.targets) ? t.targets : []) as { id: string; name: string; why: string | null }[];
+      if (targets.length === 0 || (typeof t.why === "string" && t.why !== "")) {
+        fail(new Error(typeof t.why === "string" && t.why !== "" ? t.why : "No other PCs: pair one in Settings › Devices"));
+        return;
+      }
+      const go = (pc: string) => () =>
+        void (async () => {
+          try {
+            this.toast(`Reading ${name}…`);
+            const plan = await ask({ step: "plan", to: pc });
+            this.dialog(String(plan.title), String(plan.text), String(plan.ok ?? "Move"), false, null, (yes) => {
+              if (!yes) return;
+              void ask({ step: "start", to: pc }).then(
+                (r) => {
+                  this.toast(`Moving ${name} to ${String(r.to)}…`);
+                  // Asked of the PC the move runs on: the project may leave this PC's list meanwhile.
+                  const where = typeof r.ask === "object" && r.ask !== null ? (r.ask as Record<string, unknown>) : {};
+                  this.followProjectMove(id, name, (b) => ask({ ...b, ...where }));
+                },
+                fail,
+              );
+            });
+          } catch (e) {
+            fail(e);
+          }
+        })();
+      const items = targets.map((pc) => this.item(pc.name, go(pc.id), { icon: ICONS.MONITOR, desc: pc.why ?? "Goes there with its chats", enabled: pc.why === null }));
+      setTimeout(() => this.popup("move-pc", x, y, items, 260), 0);
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  /** The move's progress in the toast while it runs, then its result. */
+  private followProjectMove(id: number, name: string, ask: (b: Record<string, unknown>) => Promise<Record<string, unknown>>): void {
+    let misses = 0;
+    const tick = () =>
+      void ask({ step: "status" }).then(
+        (st) => {
+          misses = 0;
+          const to = String(st.to_name ?? "");
+          if (st.state === "running") {
+            this.toast(`${name} → ${to}: ${String(st.stage)}`);
+            setTimeout(tick, 1500);
+            return;
+          }
+          if (st.state === "none") return;
+          this.data.reload();
+          this.refreshAll();
+          this.dialog(projectMoveTitle(String(st.state), name, to), String(st.result ?? ""), "OK", false, null, () => {});
+        },
+        () => {
+          if (++misses < 20) setTimeout(tick, 3000);
+        },
+      );
+    setTimeout(tick, 1000);
   }
 
   /** The window's icon of project `repo` again (a phone changed it). */
@@ -3290,6 +3368,10 @@ export interface ShellHub extends PageHub {
   deviceHost: (d: PairedDevice) => { shell: string[]; ssh: string[] } | null;
   moveTargets: (chatId: number) => { why: string | null; targets: { id: string; name: string; why: string | null }[] };
   movePc: (chatId: number, peerId: string) => Promise<string>;
+  /** A project's Move to PC… (`POST /v1/projects/move`'s body and reply); absent without a hub. */
+  projectMove?: (repo: number, body: Record<string, unknown>) => Promise<{ status: number; body: unknown }>;
+  /** What a project's move does now (null: none runs). */
+  projectMoving?: (repo: number) => string | null;
   /** Harbor's own video player (update.rs `video_lib`, `video_auto`); without it the system's libmpv. */
   player?: import("@harbor/media").video.PlayerSource;
   /** Chats homed on other PCs and the leases (mesh.rs); none without a hub. */

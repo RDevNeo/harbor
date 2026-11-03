@@ -16,8 +16,8 @@ import java.io.InputStream;
 
 /** A project's sheet: what the desktop's project row offers, in its order and words. The row's
  *  own buttons first (New chat in this project, Snooze), then its right-click menu (Open
- *  terminal, Pull requests, Issues, Open remote, Rename/Settle main chat, the icon, Remove from
- *  Harbor). The hub lists them (`POST /v1/projects/menu`, logic/projectmenu.ts, the desktop's own
+ *  terminal, Pull requests, Issues, Open remote, Rename/Settle main chat, the icon, Move to PC…,
+ *  Remove from Harbor). The hub lists them (`POST /v1/projects/menu`, logic/projectmenu.ts, the desktop's own
  *  list) and runs what happens on the PC (`POST /v1/projects/do`). */
 final class ProjectMenu {
     private ProjectMenu() {}
@@ -54,6 +54,7 @@ final class ProjectMenu {
             case "archive": return Ui.I_ARCHIVE;
             case "unarchive": return Ui.I_ARCHIVE;
             case "users": return Ui.I_USERS;
+            case "monitor": return Ui.I_MONITOR;
             default: return null;
         }
     }
@@ -139,6 +140,9 @@ final class ProjectMenu {
             case "move_workspace":
                 Chats.moveWorkspace(a, m.optJSONObject("workspaces"), m.optString("name", "Project"),
                         ws -> hub.call("POST", "/v1/projects/do", new JSONObject().put("project", pid).put("act", "workspace").put("workspace", ws)), after);
+                break;
+            case "move_pc":
+                ProjectMove.show(a, hub, pid, m.optString("name", "Project"), after);
                 break;
             case "remove":
                 Ui.dialog(a).setTitle("Remove project?")

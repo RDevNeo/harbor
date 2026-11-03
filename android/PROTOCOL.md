@@ -1101,6 +1101,31 @@ project is gone.
   of theirs is in `tree.settled`), and `projects[].settled` says it too. The drawer shows them
   under Settled above the settled chats: a tap opens the project, a long press its sheet.
 
+### Move a project to another PC (0.121): `POST /v1/projects/move`
+
+The project menu's Move to PC… (`act` `move_pc`, `icon` monitor; its `desc` says what a running
+move does). Takes `{pc?, project | chat, step, to?}` (`project` as for `menu`; `chat`: one of the
+project's chats, by id or gid, which is how a PC asks the project's own PC on). The PC the phone
+talks to asks the project's own PC on when the project is another PC's (its chats are copies of
+that PC's, or it moved there).
+
+- `step: "targets"` → `{why, name, targets: [{id, name, why}]}` as `move_targets` of a chat.
+- `step: "plan", to` → `{title, text, ok, mode, dest, destLabel, again}`: the confirmation (where
+  it goes there, what's copied: also hidden files like .env, what stays here). `mode`: `clone`
+  (git with a remote: the target clones it and gets the commits and files only here), `copy` (the
+  whole folder as a stream), `existing` (the target has the project: its checkout isn't touched,
+  work from here comes as branches `moved-from-<pc>/…`). `409 {error}` says why not.
+- `step: "start", to` → `202 {ok, to}` (the PC's name); the move runs on the project's PC.
+- `step: "status"` → `{state: none|running|done|partial|failed, name, to, to_name, stage,
+  percent (0-100 or null), result (the full outcome once it ended), moved: [titles],
+  stayed: [{title, why}]}`.
+
+The folder comes first (`/mesh/v1/project/*` between the PCs, in pieces of 8 MB, into a hidden
+folder beside where it goes), then each chat with the chat handoff, then the project's settings
+(name, icon, main chat, settled, snooze). The project's folder stays on the source PC's disk; its
+chats there become copies of the target's. A chat that didn't move stays with why; moving again
+takes the rest (the folder isn't copied twice).
+
 ### `POST /v1/transcribe?lang=<auto|en|pt>` (0.38)
 
 Dictation from the app's mic. Since 0.55 the phone records itself (no Android `SpeechRecognizer`),

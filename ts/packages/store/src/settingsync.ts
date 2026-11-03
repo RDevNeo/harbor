@@ -72,6 +72,7 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["ctx_memory", D],
   ["ctx_guests", D],
   ["move_pc", D],
+  ["project_moves_open", D],
   ["sidebar_open", D],
   ["video_volume", D],
   ["ui_zoom", D],
@@ -103,6 +104,12 @@ export const KEYS: readonly (readonly [string, Class])[] = [
   ["account_sync", D],
   ["account_sync_backup", D],
   ["worktree:", D],
+  // A project's Move to PC… (projectmove*.ts): where it went, how its move went, where one came from.
+  ["project_moved:", D],
+  ["move_project:", D],
+  ["moved_in:", D],
+  // The chats a project's settle settled (store.ts settleProject), by this PC's ids.
+  ["project_settled:", D],
   ["worktree_move:", D],
   ["worktree_named:", D],
   ["worktree_note:", D],

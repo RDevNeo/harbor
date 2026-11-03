@@ -36,6 +36,7 @@ import {
   type MoveAccount,
   type MoveCandidate,
   type MoveChat,
+  type MoveCode,
   type MoveHandoff,
   type MoveOutcome,
   type MoveSendDeps,
@@ -44,7 +45,7 @@ import {
   type OwnedChat,
 } from "./movepc.ts";
 import type { Spawner } from "./proc.ts";
-import { dest, type Shared } from "./shared.ts";
+import { dest, type Peer, type Shared } from "./shared.ts";
 import { arr, obj, str, type Json } from "./wire.ts";
 
 /** Between a held message and the next, as Harbor joins what waited. */
@@ -166,16 +167,20 @@ export class MovePc {
     this.local.save(this.d.store);
   }
 
-  movingTo(chatId: number): string | null {
-    if (this.local.moving.size === 0 && this.local.relocating.size === 0) return null;
+  /** The PC a chat is being handed to; `ownProject`: not counting its project's move (that move's own handoffs). */
+  movingTo(chatId: number, ownProject = false): string | null {
+    if (this.local.moving.size === 0 && this.local.relocating.size === 0 && this.local.projects.size === 0) return null;
     const c = this.chat(chatId);
     if (!c) return null;
     const lead = c.role === "sub" ? (c.parent === null ? undefined : this.chat(c.parent)) : c;
-    return lead ? this.local.movingTo(lead.gid, lead.id) : null;
+    if (!lead) return null;
+    const to = this.local.movingTo(lead.gid, lead.id);
+    if (to !== null || ownProject || lead.home !== "" || lead.repoId === null) return to;
+    return this.local.projects.get(lead.repoId)?.[1] ?? null;
   }
 
   /** Why this PC's chat can't move to any PC now (null: it may, the PCs say the rest). Cheap: no git. */
-  blocker(chatId: number): string | null {
+  blocker(chatId: number, ownProject = false): string | null {
     const c = this.chat(chatId);
     if (!c) return null;
     const team = c.role === "sub" ? [c] : [c, ...this.subs(chatId)];
@@ -183,7 +188,7 @@ export class MovePc {
       foreignHome: c.home !== "" ? this.d.mesh.nameOf(c.home) : null,
       isSub: c.role === "sub",
       meshOn: this.d.mesh.on,
-      movingTo: this.movingTo(chatId),
+      movingTo: this.movingTo(chatId, ownProject),
       chats: team.map((x) => ({ id: x.id, name: x.name, device: x.device, claude: this.account(x.account)?.claude ?? false, running: this.d.engine.running(x.id) })),
     });
   }
@@ -284,6 +289,22 @@ export class MovePc {
     // Nothing is awaited from here to the moment the move is recorded: a second call sees it.
     const again = this.blocker(chatId);
     if (again !== null) throw new Error(again);
+    const handoff = this.handoffOf(c, peer, t.name, code, worktree !== null && code.worktree ? [worktree, code.branch, code.remote] : null, null);
+    this.local.moving.set(c.gid, [pc, t.name]);
+    this.local.sending.add(c.gid);
+    this.save();
+    engine.changed(chatId);
+    const [gid, name] = [c.gid, t.name];
+    sendHandoff(handoff, this.d.send).then(
+      (outcome) => this.done(chatId, gid, pc, name, outcome),
+      (e: unknown) => this.done(chatId, gid, pc, name, { kind: "unknown", why: text(e) }),
+    );
+    return name;
+  }
+
+  /** What's sent for chat `c` (and its sub-agents); `project`: a project move's, whose folder is at `at` there already. */
+  private handoffOf(c: Chat, peer: Peer, peerName: string, code: MoveCode, push: [string, string, string] | null, project: { at: string; branch: string | null } | null): MoveHandoff {
+    const engine = this.d.engine;
     const chats = [c, ...this.subs(c.id)];
     for (const x of chats) if (!this.account(x.account)) throw new Error("an account of the chat is gone");
     const sessions = moveSessions(
@@ -310,28 +331,55 @@ export class MovePc {
     const check = moveCheckBody({
       gid: c.gid,
       email: this.account(c.account)?.email ?? "",
-      project: repo ? { name: repo.name, folder: basename(repo.path), remote: code.remote } : null,
+      project: repo ? { name: repo.name, folder: basename(repo.path), remote: code.remote, ...(project ? { at: project.at } : {}) } : null,
       from: this.d.mesh.me.name,
       code,
     });
-    const handoff: MoveHandoff = {
-      dest: dest(peer),
-      peer: t.name,
-      check,
-      payload: movePayload(list),
-      sessions,
-      push: worktree !== null && code.worktree ? [worktree, code.branch, code.remote] : null,
-    };
-    this.local.moving.set(c.gid, [pc, t.name]);
+    // A project move's worktree branch came with the project's commits: it's there already.
+    if (project && project.branch !== null && code.worktree) check.worktree = { branch: project.branch, remote: code.remote, here: true };
+    return { dest: dest(peer), peer: peerName, check, payload: movePayload(list), sessions, push };
+  }
+
+  /**
+   * One lead (and its sub-agents) of a project being moved to `pc`, whose folder is at `at` there
+   * now; `branches` maps this PC's branches to their names there. Resolves when it's settled:
+   * the chat is a copy of the target's then, or still this PC's (with why).
+   */
+  async handoffForProject(chatId: number, pc: string, at: string, branches: Record<string, string>): Promise<MoveOutcome> {
+    const c = this.chat(chatId);
+    if (!c || c.home !== "") return { kind: "refused", why: "it isn't this PC's chat" };
+    const peer = this.d.mesh.peer(pc);
+    if (!peer?.online) return { kind: "refused", why: `${peer?.name ?? "the PC"} is off or out of reach` };
+    const name = peer.name;
+    const blocked = this.blocker(chatId, true);
+    if (blocked !== null) return { kind: "refused", why: blocked };
+    const engine = this.d.engine;
+    const worktree = engine.worktreeOf(c);
+    const repo = engine.repo(c.repoId);
+    let code: MoveCode = { ...NO_MOVE_CODE, remote: repo?.remote ?? "" };
+    if (worktree !== null) {
+      try {
+        code = await codeState({ home: this.d.home, ...(this.d.run ? { run: this.d.run } : {}) }, worktree, true);
+      } catch (e) {
+        return { kind: "refused", why: text(e) };
+      }
+    }
+    const again = this.blocker(chatId, true);
+    if (again !== null) return { kind: "refused", why: again };
+    let handoff: MoveHandoff;
+    try {
+      handoff = this.handoffOf(c, peer, name, code, null, { at, branch: worktree === null ? null : (branches[code.branch] ?? null) });
+    } catch (e) {
+      return { kind: "refused", why: text(e) };
+    }
+    if (worktree !== null && handoff.check.worktree === undefined) return { kind: "refused", why: `its worktree's branch ${code.branch} didn't come along` };
+    this.local.moving.set(c.gid, [pc, name]);
     this.local.sending.add(c.gid);
     this.save();
     engine.changed(chatId);
-    const [gid, name] = [c.gid, t.name];
-    sendHandoff(handoff, this.d.send).then(
-      (outcome) => this.done(chatId, gid, pc, name, outcome),
-      (e: unknown) => this.done(chatId, gid, pc, name, { kind: "unknown", why: text(e) }),
-    );
-    return name;
+    const outcome = await sendHandoff(handoff, this.d.send).catch((e: unknown): MoveOutcome => ({ kind: "unknown", why: text(e) }));
+    this.done(chatId, c.gid, pc, name, outcome, true);
+    return outcome;
   }
 
   /** A copy: its home PC hands it over. */
@@ -346,7 +394,7 @@ export class MovePc {
     return str(obj(r.body).to) ?? pc;
   }
 
-  private done(chatId: number, gid: string, pc: string, name: string, outcome: MoveOutcome): void {
+  private done(chatId: number, gid: string, pc: string, name: string, outcome: MoveOutcome, quiet = false): void {
     this.local.sending.delete(gid);
     // Settled meanwhile by the target's chat list.
     if (!this.local.moving.has(gid)) return;
@@ -357,7 +405,7 @@ export class MovePc {
       this.save();
     }
     if (said.notice !== null) this.d.engine.notice(chatId, "alert", said.notice);
-    if (said.toast !== null) this.onToast(said.toast);
+    if (said.toast !== null && !quiet) this.onToast(said.toast);
     if (outcome.kind === "refused") this.resume(chatId);
     else if (outcome.kind === "unknown") this.d.engine.changed(chatId);
   }
@@ -506,6 +554,7 @@ export class MovePc {
         const r = d.store.repos().find((x) => x.id === id);
         return r ? { name: r.name, dir: repoDir(r) } : null;
       },
+      repoAt: (dir) => d.store.repos().find((x) => repoDir(x) === dir)?.id ?? null,
       isCheckout: async (dir) => (await gitHead(dir, d.run)) !== null,
       owned: (gid) => this.owned(gid),
       chatOf: (gid): OwnedChat | null => {

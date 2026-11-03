@@ -36,6 +36,8 @@ export interface Peer {
   owner_suggested: boolean;
   update: unknown;
   moves: boolean;
+  /** It takes whole projects (Move to PC… of a project, `project_moves` in hello). */
+  projectMoves: boolean;
 }
 
 export function newPeer(p: Partial<Peer> & { id: string }): Peer {
@@ -56,6 +58,7 @@ export function newPeer(p: Partial<Peer> & { id: string }): Peer {
     owner_suggested: false,
     update: null,
     moves: false,
+    projectMoves: false,
     ...p,
   };
 }

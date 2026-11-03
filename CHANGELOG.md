@@ -5,6 +5,26 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Move to PC… for whole projects, on the desktop (the project row's menu) and the phone (the
+  project sheet). Pick another PC of yours; Harbor says first where the project will go there,
+  what it copies (everything in the folder, also hidden files like `.env`) and what stays. Then
+  its folder goes over: a git project with a remote is cloned there, and the commits, branches
+  and files that are only on this PC (uncommitted, untracked and ignored ones) come along; any
+  other folder is copied whole as a stream, in pieces, so big folders and slow links work and a
+  broken link says how far it got. A PC that already has the project uses its own copy without
+  touching its files, and the work from here arrives there as `moved-from-<PC>/…` branches. Then
+  every chat of the project moves with the chat handoff (leads, sub-agents, settled ones, the
+  main chat, chats with their own worktree), and its name, icon, settled state and snooze follow.
+  The folder stays on this PC's disk (Harbor says where, to delete it yourself); the project's
+  chats here become copies of the other PC's and don't run in the old folder any more. Progress
+  shows in the toast on the desktop and in a sheet on the phone, and the result says what moved
+  and what didn't (a chat that couldn't move stays here with why; moving again takes the rest).
+  A phone or another PC asking about a project that is a third PC's gets that PC's answer.
+
+### Fixed
+- Move to PC… of a chat said "its's Claude session isn't on this PC" when the session was missing.
+
 ## [0.120.3] - 2026-11-03
 
 ### Fixed

@@ -202,7 +202,7 @@ test("a_phone_opens_a_projects_menu_and_removes_it", async () => {
   const [st, menu] = await json("POST", "/v1/projects/menu", { project: pid });
   expect(st).toBe(200);
   expect(menu).toMatchObject({ id: pid, name: "menued", main: { id: c.id, title: "The main one" }, remote: null, github: null });
-  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Settle project", "Remove from Harbor"]);
+  expect((menu.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Rename main chat", "Settle main chat", "Refresh icon", "Choose icon…", "Move to workspace…", "Settle project", "Move to PC…", "Remove from Harbor"]);
   // Not signed in: greyed with why, and nothing to pick.
   expect((menu.items as { act: string }[]).find((i) => i.act === "move_workspace")).toMatchObject({ enabled: false, desc: expect.stringMatching(/Sign in/) });
   expect(menu.workspaces).toEqual({ why: expect.stringMatching(/Sign in/), items: [] });

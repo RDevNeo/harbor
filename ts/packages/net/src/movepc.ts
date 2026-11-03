@@ -53,6 +53,8 @@ export class MovepcLocal {
   relocating = new Map<number, string>();
   /** Messages sent to a chat while it was being handed over: they follow it, or are sent here if it stays. */
   held = new Map<number, HeldMessage[]>();
+  /** Projects moving to another PC as a whole (projectmoverun.ts): repo -> [peer id, peer name]. Their chats take no turns meanwhile. */
+  projects = new Map<number, [string, string]>();
 
   load(kv: Kv): void {
     this.moving = new Map();
@@ -393,15 +395,17 @@ export interface WorktreeEnv {
   run?: Spawner;
 }
 
-/** Checks out the pushed branch in a new worktree of `repo` (the target). Returns its folder. */
-export async function fetchWorktree(env: WorktreeEnv, repo: string, branch: string, remote: string): Promise<string> {
+/** Checks out the pushed branch in a new worktree of `repo` (the target); `here`: the branch is in `repo` already (a project move's). Returns its folder. */
+export async function fetchWorktree(env: WorktreeEnv, repo: string, branch: string, remote: string, here = false): Promise<string> {
   const run = env.run ?? outputWithin;
   const name = await remoteNamed(repo, remote, run);
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-  try {
-    await gitText(repo, ["fetch", name, branch], NET_TIMEOUT, run);
-  } catch (e) {
-    throw new Error(`couldn't fetch ${branch}: ${msg(e)}`);
+  if (!here) {
+    try {
+      await gitText(repo, ["fetch", name, branch], NET_TIMEOUT, run);
+    } catch (e) {
+      throw new Error(`couldn't fetch ${branch}: ${msg(e)}`);
+    }
   }
   const base = repo.replace(/\/+$/, "").split("/").pop();
   const project = [...(base ?? "") === "" ? "project" : (base ?? "")].map((c) => (/^[A-Za-z0-9._-]$/.test(c) ? c : "-")).join("");
@@ -415,10 +419,13 @@ export async function fetchWorktree(env: WorktreeEnv, repo: string, branch: stri
     if (existsSync(dir)) continue;
     const upstream = `${name}/${branch}`;
     try {
-      try {
-        await gitText(repo, ["worktree", "add", "--track", "-b", branch, dir, upstream], NET_TIMEOUT, run);
-      } catch {
-        await gitText(repo, ["worktree", "add", dir, branch], NET_TIMEOUT, run);
+      if (here) await gitText(repo, ["worktree", "add", dir, branch], NET_TIMEOUT, run);
+      else {
+        try {
+          await gitText(repo, ["worktree", "add", "--track", "-b", branch, dir, upstream], NET_TIMEOUT, run);
+        } catch {
+          await gitText(repo, ["worktree", "add", dir, branch], NET_TIMEOUT, run);
+        }
       }
       return dir;
     } catch (e) {
@@ -598,7 +605,8 @@ export function movePayload(chats: MoveChat[]): Uint8Array {
 export interface MoveCheckInput {
   gid: string;
   email: string;
-  project: { name: string; folder: string; remote: string } | null;
+  /** `at`: a project move's, the project's folder on the target. */
+  project: { name: string; folder: string; remote: string; at?: string } | null;
   from: string;
   code: { branch: string; sha: string; worktree: boolean; remote: string };
 }
@@ -736,6 +744,8 @@ export interface MoveTargetApp {
   defaultAccount(): string;
   candidates(): MoveCandidate[] | Promise<MoveCandidate[]>;
   repo(id: number): { name: string; dir: string } | null;
+  /** The project whose folder is `dir` (a project move's). */
+  repoAt?(dir: string): number | null;
   isCheckout(dir: string): Promise<boolean>;
   /** This PC's own chat with the gid, and its sub-agents: gid -> id. */
   owned(gid: string): Map<string, number> | null;
@@ -760,7 +770,10 @@ export async function movePlan(app: MoveTargetApp, body: unknown): Promise<{ rep
   const p = b.project;
   if (p === null || p === undefined) return { repo: null, account };
   const s = (k: string) => str(obj(p)[k]) ?? "";
-  const repo = matchProject(await app.candidates(), s("remote"), s("folder"), s("name"));
+  const at = s("at");
+  // A project move's chats go to the folder the move put the project in.
+  const repo = at !== "" ? (app.repoAt?.(at) ?? null) : matchProject(await app.candidates(), s("remote"), s("folder"), s("name"));
+  if (repo === null && at !== "") throw new Error(`${me} has no project at ${tildeOf(app.home, at)}`);
   if (repo === null) {
     // A folder without Git has nothing to clone, only its files to copy.
     if (s("remote") === "") throw new Error(`${me} has no project named ${s("name")}: copy its folder there and add it to Harbor first`);
@@ -849,12 +862,13 @@ export async function moveAdopt(app: MoveTargetApp, device: string, body: unknow
   const config = app.accounts().find((a) => a.id === plan.account)?.configDir ?? null;
   const repoPath = plan.repo === null ? null : (app.repo(plan.repo)?.dir ?? null);
   const wtSpec = isObject(b.worktree) ? [str(obj(b.worktree).branch) ?? "", str(obj(b.worktree).remote) ?? ""] : null;
+  const wtHere = isObject(b.worktree) && obj(b.worktree).here === true;
   app.adopting.add(gid);
   let wt: string | null = null;
   let failure: string | null = null;
   try {
     const branch = wtSpec?.[0];
-    if (branch !== undefined && branch !== "" && repoPath !== null) wt = await fetchWorktree(app.worktree, repoPath, branch, wtSpec?.[1] ?? "");
+    if (branch !== undefined && branch !== "" && repoPath !== null) wt = await fetchWorktree(app.worktree, repoPath, branch, wtSpec?.[1] ?? "", wtHere);
     const cwd = wt ?? repoPath ?? app.home;
     const dir = sessionDir(app.home, config, cwd);
     for (const [sid, files] of sessions) {
@@ -937,7 +951,7 @@ export function moveSessions(
     if (!c.started || c.session_id === "") continue;
     if (!validSid(c.session_id)) throw new Error(`${c.name}'s session id looks wrong`);
     const files = sessionFiles(env, c.configDir, c.session_id);
-    if (files === null) throw new Error(`${c.id === leadId ? "its" : c.name}'s Claude session isn't on this PC`);
+    if (files === null) throw new Error(`${c.id === leadId ? "its" : `${c.name}'s`} Claude session isn't on this PC`);
     if (files.length > MOVE_MAX_FILES) throw new Error(`${c.name}'s session has too many files to send`);
     out.push([c.session_id, files]);
   }

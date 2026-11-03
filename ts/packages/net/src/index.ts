@@ -30,3 +30,6 @@ export * from "./markdown.ts";
 export * from "./phone.ts";
 export * from "./netcli.ts";
 export * as preview from "./preview.ts";
+export * from "./foldercopy.ts";
+export * from "./projectmove.ts";
+export * from "./projectmoverun.ts";

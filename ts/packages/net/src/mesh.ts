@@ -11,6 +11,8 @@ import { kvJson, now, type Kv } from "./kv.ts";
 import { allowedJson, cleanAddrs, dest, downOf, label, loadAllowed, newPeer, peerId, socketAddr, type Allowed, type Dest, type Me, type Node, type Peer } from "./shared.ts";
 import { codeKey, connect, DEFAULT_PORT, hostPort, newCode, normalizeCode, normalizeFp, privateIp, proof, proofOk, tailnetIp, Throttle, type Identity } from "./tls.ts";
 import { Ordered, type Json } from "./wire.ts";
+import { PIECE_BYTES } from "./foldercopy.ts";
+import { PROJECT_MOVES_VERSION } from "./projectmove.ts";
 
 /** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, the person and device kind when known, and the stable device id (`Item` user's `dev`). */
 export type Sender = [label: string, device: string, who?: string, via?: SentVia | "", dev?: string];
@@ -59,6 +61,11 @@ export interface MeshDeps {
   /** `POST /mesh/v1/deliver`: what Devices › Send on that PC sent, taken by this one (`receiveDelivery`). */
   deliver?: (from: string, kind: string, name: string, len: number, read: (len: number, max: number) => Promise<Buffer>) => Promise<Reply>;
   notes?: { last(): number; ownSince(since: number): [Json[], number] };
+  /** `/mesh/v1/project/*`: a whole project moving here (projectmove.ts); `piece` reads its own body. */
+  project?: {
+    route(peer: string, sub: string, body: unknown): Promise<Reply>;
+    piece(peer: string, move: string, stream: number, seq: number, data: Buffer): Promise<Reply>;
+  };
   env?: Record<string, string | undefined>;
   wake?: () => void;
 }
@@ -308,6 +315,7 @@ export class Mesh {
         owner_suggested: x.owner_suggested,
         update: x.update,
         moves: MOVES_VERSION,
+        project_moves: this.d.project ? PROJECT_MOVES_VERSION : 0,
       });
     }
     if (is("GET", "mesh", "v1", "events")) {
@@ -351,6 +359,23 @@ export class Mesh {
         .map((p: PairedPhone) => ({ group: p.group, name: p.name, seen: p.seen, app: p.app, alive: p.alive, platform: p.platform }));
       const a = shared.about();
       return ok({ phones, apk: this.d.apkCode?.() ?? 0, owner: a.owner ?? null, github: a.github ?? null, owner_suggested: a.owner_suggested ?? null });
+    }
+    if (req.method === "POST" && segs.length === 4 && segs[0] === "mesh" && segs[1] === "v1" && segs[2] === "project" && this.d.project) {
+      const sub = segs[3] ?? "";
+      if (sub === "piece") {
+        const num = (k: string) => {
+          const v = query(req, k) ?? "";
+          return /^\d{1,9}$/.test(v) ? Number(v) : -1;
+        };
+        let data: Buffer;
+        try {
+          data = await readBody(r, req.len, PIECE_BYTES + (1 << 20));
+        } catch {
+          return err(413, "a piece too large");
+        }
+        return this.d.project.piece(peer, query(req, "move") ?? "", num("stream"), num("seq"), data);
+      }
+      return this.d.project.route(peer, sub, await this.json(r, req));
     }
     if (is("POST", "mesh", "v1", "upload")) {
       return this.d.upload(r, { ...req, query: [["name", query(req, "name") ?? "file"]] });
@@ -694,6 +719,7 @@ export class Mesh {
       p.owner_suggested = hello.owner_suggested === true;
       p.update = hello.update ?? null;
       p.moves = typeof hello.moves === "number" && hello.moves >= MOVES_VERSION;
+      p.projectMoves = typeof hello.project_moves === "number" && hello.project_moves >= PROJECT_MOVES_VERSION;
       p.accounts = (Array.isArray(hello.accounts) ? hello.accounts : []).map((x) => {
         const o = obj(x);
         const s = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : "");

@@ -357,6 +357,11 @@ export class Store {
     this.db.query("UPDATE repos SET remote=?2 WHERE id=?1").run(id, remote);
   }
 
+  /** The project's name in the sidebar (its folder's name when added). */
+  setRepoName(id: number, name: string): void {
+    this.db.query("UPDATE repos SET name=?2 WHERE id=?1").run(id, name);
+  }
+
   /** This PC's folder for a shared project (null: back to its own `path`). */
   setRepoLocal(id: number, local: string | null): void {
     this.db.query("UPDATE repos SET local=?2 WHERE id=?1").run(id, local ?? "");

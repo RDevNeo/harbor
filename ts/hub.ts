@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { phoneRoutes } from "./phoneroutes.ts";
 import { RunOn } from "./runon.ts";
@@ -71,6 +71,12 @@ import {
   overlays,
   Mesh,
   MovePc,
+  ProjectMove,
+  ProjectReceiver,
+  iconFile,
+  manifestOf,
+  movedProject,
+  scanFolder,
   noteJson,
   Notes,
   Notifier,
@@ -146,6 +152,7 @@ export interface RunningHub {
   phone: PhoneRoutes;
   engine: Engine;
   move: MovePc;
+  projectMove: ProjectMove;
   runOn: RunOn;
   windowMesh: WindowMesh;
   funnel: Funnel;
@@ -352,6 +359,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     },
     uploadPath: (id) => resolveUpload(uploadsDir, id),
     settled: (repo, on) => windowProjects?.settled(repo, on),
+    move: (repo, body, sender) => (projectMove ? projectMove.api(repo, body, sender) : Promise.resolve(err(409, "projects can't move from here"))),
+    moving: (repo) => {
+      const st = projectMove?.statusOf(repo);
+      return st?.state === "running" ? `Moving to ${st.toName}: ${st.stage}` : null;
+    },
   });
   let windowProjects: { icon: (repo: number, refresh: boolean) => void; removed: (repo: number) => void; settled: (repo: number, on: boolean) => void } | null = null;
   let busyIn: (dir: string) => string | null = () => null;
@@ -450,6 +462,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const uploadsDir = join(dataDir(env), "uploads");
   let api: Api | null = null;
   let move: MovePc | null = null;
+  let projectMove: ProjectMove | null = null;
   const meshApp: MeshApp = {
     helloExtra: () => replica.helloExtra(),
     chats: (since, full) => replica.chats(since, full),
@@ -677,8 +690,9 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     adopt: (id, from) => meshTurns.adopt(id, from),
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
     hold: (chat, text, files, mentions) => move?.hold(chat, text, files, mentions) ?? false,
-    missingFolder: (c) => projectClones.missingFolder(c),
-    holdForClone: (c, prompt, files) => projectClones.holdForClone(c, prompt, files),
+    // A chat of a project that moved to another PC doesn't run in the folder it left here.
+    missingFolder: (c) => projectMove?.movedLine(c) ?? projectClones.missingFolder(c),
+    holdForClone: (c, prompt, files) => (projectMove?.movedLine(c) ?? null) === null && projectClones.holdForClone(c, prompt, files),
   };
   // A window's Engine adds its own notifications; one the hub makes notifies through the hub.
   const own: Partial<EngineHost> = {
@@ -742,6 +756,86 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   mover.load();
   move = mover;
+  const moveScratch = join(dataDir(env), "move-scratch");
+  const projectsChanged = () => {
+    live.reload();
+    hub.touch(null, true);
+  };
+  const pm = new ProjectMove({
+    store,
+    movepc: mover,
+    mesh: hub.mesh,
+    forward: (...a) => mesh.forward(...a),
+    home: home(),
+    scratch: moveScratch,
+    running: (id) => live.running(id),
+    icon: (repo) => (existsSync(favicon.customPath(repo)) ? ProjectMove.iconBytes(favicon.customPath(repo)) : null),
+    touch: projectsChanged,
+  });
+  pm.load();
+  projectMove = pm;
+  const receiver = new ProjectReceiver({
+    meName: () => hub.mesh.me.name,
+    home: home(),
+    kv: store,
+    scratch: moveScratch,
+    repos: () => store.repos().map((r) => ({ id: r.id, name: r.name, dir: repoDir(r), remote: r.remote, left: movedProject(store, r.id, repoDir(r)) !== null })),
+    manifest: (dir) => manifestOf(scanFolder(dir)),
+    // What stood for the project here before: its copies' entry, or (it came back) the one it left.
+    dropStale: (path, keep, peer) => {
+      const chats = store.chats();
+      for (const r of store.repos()) {
+        if (repoDir(r) === keep || chats.some((c) => c.repoId === r.id)) continue;
+        const left = movedProject(store, r.id, repoDir(r));
+        const back = left !== null && left.pc === peer && left.dir === path;
+        if (!back && (r.path !== path || existsSync(repoDir(r)))) continue;
+        store.removeRepo(r.id);
+        store.set(`project_moved:${r.id}`, "");
+        windowProjects?.removed(r.id);
+      }
+      projectsChanged();
+    },
+    addProject: (dir, name, remote) => {
+      const known = store.repos().find((r) => repoDir(r) === dir);
+      const id = known ? known.id : store.addRepo(dir);
+      if (remote !== "") store.setRepoRemote(id, remote);
+      if (name !== "") store.setRepoName(id, name);
+      store.set(`project_moved:${id}`, "");
+      projectsChanged();
+      windowProjects?.icon(id, true);
+      return id;
+    },
+    settle: (repo, st) => {
+      if (st.name !== "") store.setRepoName(repo, st.name);
+      const byGid = (g: string) => store.chats().find((c) => c.gid === g && c.home === "");
+      const main = st.main === "" ? undefined : byGid(st.main);
+      if (main && main.repoId === repo) store.setMainChat(repo, main.id);
+      if (st.settled > 0) {
+        store.settleProject(repo, true, st.settled);
+        store.set(`project_settled:${repo}`, JSON.stringify(st.settledChats.flatMap((g) => byGid(g)?.id ?? [])));
+        windowProjects?.settled(repo, true);
+      }
+      if (st.snooze * 1000 > Date.now()) {
+        let all: Record<string, unknown> = {};
+        try {
+          all = JSON.parse(store.get("snoozed") ?? "{}") as Record<string, unknown>;
+        } catch {
+          // none
+        }
+        all[`r${repo}`] = st.snooze;
+        store.set("snoozed", JSON.stringify(all));
+      }
+      const icon = iconFile(moveScratch, st.icon);
+      if (icon !== null) {
+        if (favicon.setCustom(repo, icon)) windowProjects?.icon(repo, false);
+        rmSync(icon, { force: true });
+      }
+      projectsChanged();
+      return null;
+    },
+  });
+  receiver.load();
+  mesh.d.project = { route: (peer, sub, body) => receiver.route(peer, sub, body), piece: (peer, m, st, seq, data) => receiver.piece(peer, m, st, seq, data) };
   const runOn = new RunOn({
     store,
     engine: live,
@@ -905,6 +999,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     phone,
     engine: live,
     move: mover,
+    projectMove: pm,
     runOn,
     windowMesh,
     setBusyIn: (f) => {

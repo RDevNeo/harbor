@@ -197,6 +197,7 @@ test("the_phones_project_sheet_lists_what_the_desktops_project_menu_does", async
     ["Choose icon…", "", false, true],
     ["Use website icon", "", false, true],
     ["Settle project", "archive", true, true],
+    ["Move to PC…", "monitor", false, true],
     ["Remove from Harbor", "", false, true],
   ]);
   expect(items[0]?.desc).toBe("It opens in Harbor's window on desk");
@@ -212,7 +213,7 @@ test("a_chat_less_project_without_a_remote_still_has_its_menu", async () => {
   const { api: a } = api();
   const m = body(await a.route(call("v1/projects/menu", { project: dir })));
   expect(m.main).toBeNull();
-  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Settle project", "Remove from Harbor"]);
+  expect((m.items as { label: string }[]).map((i) => i.label)).toEqual(["Open terminal", "Refresh icon", "Choose icon…", "Settle project", "Move to PC…", "Remove from Harbor"]);
 });
 
 test("the_project_sheets_acts_run_on_the_pc", async () => {
