@@ -5,6 +5,26 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Rename this PC: Settings › Devices › Rename, on this PC's row. Your other PCs, your phones, the
+  workspace's directory and every place that names the PC (Runs on, chat headers, senders) show the
+  new name as soon as they next hear from it; its id and keys stay the same, so pairing, chats'
+  home PC and phone sign-ins carry on. An empty name goes back to the default.
+- The speech model downloads by itself in the background when this PC doesn't have it (half a
+  minute after Harbor starts, again after a failure with a growing pause up to an hour, never with
+  less than 2 GB free), so the first dictation needn't wait. A failure of that background download
+  isn't shown; a dictation waiting for it still hears why. While it comes, Settings › Voice says so
+  under Microphone, and the composer says "Getting the speech model…" as before.
+
+### Changed
+- Settings › Voice has no Parakeet model row anymore: just the Microphone (pick and Test) and the
+  dictionary.
+- Settings › Workspace comes right below General.
+
+### Fixed
+- A Settings form that opens filled in (Devices' rename, a pairing address kept after a failed try)
+  can be saved without editing it first.
+
 ## [0.128.0] - 2026-11-03
 
 ### Changed

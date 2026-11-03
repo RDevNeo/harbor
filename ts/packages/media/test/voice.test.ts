@@ -323,3 +323,37 @@ test("microphone enumeration hides monitor sources and uses stable source names"
   ]);
   expect(voice.pipewireInputs([{ info: { props: { "media.class": "Audio/Source", "node.name": "mic", "node.description": "Microphone" } } }, { info: { props: { "media.class": "Audio/Sink", "node.name": "speaker" } } }])).toEqual([{ id: "mic", label: "Microphone" }]);
 });
+
+test("the Parakeet model comes in the background: never on a full disk, its failures stay quiet, a waiting dictation hears them", async () => {
+  const asked: string[] = [];
+  let open!: () => void;
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  voice.setFetcher(async (url) => {
+    asked.push(url);
+    await gate;
+    return new Response("no", { status: 404 });
+  });
+  const full = voice.keepParakeet({ firstMs: 0, free: () => 0 });
+  await Bun.sleep(30);
+  full();
+  expect(asked).toEqual([]);
+  const stop = voice.keepParakeet({ firstMs: 0, free: () => 10 * 1024 ** 3 });
+  try {
+    await until(() => asked.length > 0);
+    expect(asked[0]).toContain("huggingface.co");
+    expect(voice.downloading()?.[0]).toBe("parakeet");
+    open();
+    await voice.downloadSettled();
+    await Bun.sleep(10);
+    expect(voice.takeDownloadError()).toBeNull();
+  } finally {
+    stop();
+  }
+  // A dictation waiting for the model makes the download under way a loud one: its failure is told.
+  voice.startDownload("parakeet", [{ url: "https://example.test/p", dst: join(box.data, "p.bin"), size: 3, sha256: "" }], true);
+  voice.startDownload("parakeet");
+  await voice.downloadSettled();
+  expect(voice.takeDownloadError()?.[0]).toBe("parakeet");
+});

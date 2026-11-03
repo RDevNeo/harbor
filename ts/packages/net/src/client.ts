@@ -11,6 +11,11 @@ const MAX_ANSWER = 64 << 20;
 let hello: { id: string; name: string } = { id: "", name: "" };
 let me: Identity | null = null;
 
+/** This PC was renamed: its requests to peers carry the new name (the id and key stay). */
+export function setHelloName(name: string): void {
+  hello = { ...hello, name };
+}
+
 /** Who this PC says it is on its requests to peers, and the key it shows. */
 export function setHello(id: string, name: string, identity: Identity | null): void {
   hello = { id, name };

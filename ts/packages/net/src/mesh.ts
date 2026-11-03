@@ -97,7 +97,23 @@ export function readMe(kv: Kv, env: Record<string, string | undefined> = process
       kv.set("mesh_id", id);
     }
   }
-  return { id, name: env.HARBOR_MESH_NAME ?? label(id) };
+  return { id, name: env.HARBOR_MESH_NAME ?? (cleanPcName(kv.get(PC_NAME_KEY) ?? "") || label(id)) };
+}
+
+/** Kv: the name this PC's owner gave it (Settings › Devices). Only shown: the id (`mesh_id`) and the keys stay. */
+export const PC_NAME_KEY = "mesh_name";
+export const PC_NAME_MAX = 40;
+
+/** A typed PC name as kept: no control characters, spaces collapsed, at most PC_NAME_MAX characters. */
+export function cleanPcName(name: string): string {
+  return [...name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()].slice(0, PC_NAME_MAX).join("").trim();
+}
+
+/** Renames this PC; "" goes back to the default (its id's name). Returns the name it now has. Peers and phones read it
+ * from `me` (hello, discovery, the phone API, the workspace directory), so the caller puts the result into hub.mesh.me. */
+export function renamePc(kv: Kv, name: string, env: Record<string, string | undefined> = process.env): Me {
+  kv.set(PC_NAME_KEY, cleanPcName(name));
+  return readMe(kv, env);
 }
 
 export interface PairCode {

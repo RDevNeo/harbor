@@ -592,9 +592,11 @@ interface Timers {
   pc: number | null;
   pull: number | null;
   addrs: string[];
+  /** The name this PC was last registered under: a rename registers again at once. */
+  name: string;
 }
 
-const freshTimers = (keys: number | null = null): Timers => ({ keys, dir: null, pc: null, pull: null, addrs: [] });
+const freshTimers = (keys: number | null = null): Timers => ({ keys, dir: null, pc: null, pull: null, addrs: [], name: "" });
 
 interface Session {
   account: AccountUser;
@@ -1523,9 +1525,11 @@ export class AccountService {
     };
     const ws = this.ws;
     const addrs = this.o.addrs();
-    if (ws !== "" && (this.due(t.pc, PC_EVERY) || addrs.join("\n") !== t.addrs.join("\n"))) {
+    const name = this.o.me().name;
+    if (ws !== "" && (this.due(t.pc, PC_EVERY) || addrs.join("\n") !== t.addrs.join("\n") || name !== t.name)) {
       t.pc = this.nowMs();
       t.addrs = addrs;
+      t.name = name;
       const r = await attempt(() => this.register(token, ws));
       this.log(() => `register: ${r ? r.text() : "ok"}`);
       result(r);

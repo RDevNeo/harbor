@@ -20,10 +20,10 @@ export const TABS: Record<Tab, TabInfo> = {
   providers: { label: "Providers", icon: ICONS.BOT, keywords: "accounts claude codex cursor gemini sign in login models default" },
   integrations: { label: "Integrations", icon: ICONS.PLUG, keywords: "apps mcp servers sign in tools" },
   secrets: { label: "Secrets", icon: ICONS.LOCK, keywords: "keys api keys tokens passwords environment variables env credentials" },
-  devices: { label: "Devices", icon: ICONS.MONITOR, keywords: "remote machines pcs phones android mobile pair code share run agents elsewhere" },
+  devices: { label: "Devices", icon: ICONS.MONITOR, keywords: "remote machines pcs phones android mobile pair code share run agents elsewhere rename name" },
 };
 
-export const TAB_ORDER: readonly Tab[] = ["account", "general", "notifications", "appearance", "keybindings", "voice", "providers", "integrations", "secrets", "devices"];
+export const TAB_ORDER: readonly Tab[] = ["general", "account", "notifications", "appearance", "keybindings", "voice", "providers", "integrations", "secrets", "devices"];
 
 /** Pages that were folded into others: their old slugs still open where the content went. */
 const MOVED: Record<string, Tab> = { phones: "devices", webhooks: "general" };

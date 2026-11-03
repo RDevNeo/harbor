@@ -99,31 +99,21 @@ const row = (r: Partial<VoiceRow> & Pick<VoiceRow, "kind" | "title">): VoiceRow 
 const button = (key: string, label: string, enabled = true): VoiceButton => ({ key, label, enabled });
 
 /** voice.rs `voice_tab` and `voice_dictionary`. */
+/** The speech model downloads by itself (voice.keepParakeet): while it does, the microphone row says so. */
+function modelNote(f: VoiceFacts): string {
+  if (f.download === null || f.download[0] !== "parakeet") return "";
+  const [, done, total] = f.download;
+  return `Getting the speech model (${voice.megabytes(done)} of ${voice.megabytes(total)})\u{2026} Dictation works once it's here.`;
+}
+
 export function voiceView(f: VoiceFacts): VoiceView {
-  const bar = (model: string): Pick<VoiceRow, "progress" | "progress_text"> | null => {
-    if (f.download === null || f.download[0] !== model) return null;
-    const [, done, total] = f.download;
-    return { progress: total > 0 ? Math.min(1, done / total) : 0, progress_text: `${voice.megabytes(done)} of ${voice.megabytes(total)}` };
-  };
   const devices = f.inputs ?? [{ id: "", label: "System default" }];
   const onPc = [row({ kind: "microphone", key: `${KEY}input`, title: "Microphone",
-    desc: f.recorder === null ? "Install pw-record (PipeWire) or parecord (PulseAudio) to record." : f.micStatus || "Choose an input and test its level.",
+    desc: f.recorder === null ? "Install pw-record (PipeWire) or parecord (PulseAudio) to record." : f.micStatus || modelNote(f) || "Choose an input and test its level.",
     options: devices.map((d) => d.label), selected: Math.max(0, devices.findIndex((d) => d.id === (f.input ?? ""))),
     buttons: [button(`${KEY}test`, f.micTesting ? "Testing…" : "Test", f.recorder !== null && !f.micTesting)],
     on: f.micTesting ?? false, progress: f.micLevel ?? 0,
   })];
-
-  const pkBar = bar("parakeet");
-  const pkButtons = pkBar !== null ? [] : f.parakeet.installed ? [button(`${KEY}parakeet:remove`, "Remove")] : [button(`${KEY}parakeet:download`, "Download", f.download === null)];
-  const parakeetRows: VoiceRow[] = [
-    row({
-      kind: "buttons",
-      title: `Parakeet${f.parakeet.loaded ? "  \u{b7}  in memory" : ""}`,
-      desc: `Parakeet TDT 0.6B v3, int8 \u{b7} ${voice.megabytes(f.parakeet.bytes)}${f.parakeet.installed ? "" : " \u{b7} downloads by itself on the first dictation"}`,
-      buttons: pkButtons,
-      ...pkBar,
-    }),
-  ];
 
   const words = f.dict.map((e, i) => row({ kind: "buttons", title: e.term, desc: e.sounds.length === 0 ? "" : `Sounds like: ${e.sounds.join(", ")}`, buttons: [button(`${KEY}dict:edit:${i}`, "Edit"), button(`${KEY}dict:remove:${i}`, "Remove")] }));
   words.push(
@@ -141,7 +131,6 @@ export function voiceView(f: VoiceFacts): VoiceView {
   return {
     sections: [
       { title: "On this PC", before: 0, rows: onPc, note: "" },
-      { title: "Parakeet model", before: 11, rows: parakeetRows, note: "" },
       { title: "Dictionary", before: 11, rows: words, note: "" },
     ],
     footer: `The mic in the composer (or ${f.shortcut}) starts and stops dictation; the text goes in at the cursor, to edit before you send. Each recording is transcribed on the PC of your mesh with the most free memory (this one on a near tie). Phones send their recordings here the same way.`,

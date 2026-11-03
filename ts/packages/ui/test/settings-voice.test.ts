@@ -63,22 +63,16 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("voice offers Download, Remove or a progress bar for the Parakeet model", () => {
-  const key = (f: VoiceFacts) => rowOf(f, "Parakeet model", "Parakeet")?.buttons.map((b) => [b.key, b.label, b.enabled]);
-  expect(key(facts())).toEqual([["voice:parakeet:download", "Download", true]]);
-  expect(rowOf(facts(), "Parakeet model", "Parakeet")?.desc).toBe("Parakeet TDT 0.6B v3, int8 \u{b7} 671 MB \u{b7} downloads by itself on the first dictation");
-  const here = facts({ parakeet: { installed: true, loaded: true, bytes: 671_000_000 } });
-  expect(key(here)).toEqual([["voice:parakeet:remove", "Remove", true]]);
-  expect(rowOf(here, "Parakeet model", "Parakeet")).toMatchObject({ title: "Parakeet  \u{b7}  in memory", desc: "Parakeet TDT 0.6B v3, int8 \u{b7} 671 MB" });
-  const busy = rowOf(facts({ download: ["parakeet", 335_000_000, 671_000_000] }), "Parakeet model", "Parakeet");
-  expect(busy).toMatchObject({ buttons: [], progress_text: "335 MB of 671 MB" });
-  expect(busy?.progress).toBeCloseTo(0.4993, 3);
+test("the speech model downloads by itself: no model row, and the microphone row says while it comes", () => {
+  expect(voiceView(facts()).sections.flatMap((s) => s.rows).some((r) => r.title.startsWith("Parakeet"))).toBe(false);
+  const mic = voiceView(facts({ download: ["parakeet", 335_000_000, 671_000_000] })).sections[0]?.rows[0];
+  expect(mic?.desc).toBe("Getting the speech model (335 MB of 671 MB)\u{2026} Dictation works once it's here.");
+  expect(voiceView(facts({ download: ["parakeet", 1, 2], micStatus: "Microphone is working." })).sections[0]?.rows[0]?.desc).toBe("Microphone is working.");
 });
-
 
 test("voice dictionary lists the words, then the form to add or edit one", () => {
   const f = facts({ dict: [{ term: "SpokPay", sounds: ["spoke pay", "spock pay"] }, { term: "Harbor", sounds: [] }] });
-  const rows = voiceView(f).sections[2]?.rows ?? [];
+  const rows = voiceView(f).sections[1]?.rows ?? [];
   expect(rows.map((r) => [r.title, r.desc])).toEqual([
     ["SpokPay", "Sounds like: spoke pay, spock pay"],
     ["Harbor", ""],
@@ -86,7 +80,7 @@ test("voice dictionary lists the words, then the form to add or edit one", () =>
   ]);
   expect(rows[0]?.buttons.map((b) => b.key)).toEqual(["voice:dict:edit:0", "voice:dict:remove:0"]);
   expect(rows[2]).toMatchObject({ kind: "add", buttons: [{ key: "voice:dict:save", label: "Add", enabled: false }] });
-  const editing = voiceView({ ...f, editing: true, term: "Harbor", sounds: "harbour" }).sections[2]?.rows[2];
+  const editing = voiceView({ ...f, editing: true, term: "Harbor", sounds: "harbour" }).sections[1]?.rows[2];
   expect(editing).toMatchObject({ title: "Edit the word", term: "Harbor", sounds: "harbour", buttons: [{ label: "Save", enabled: true }] });
 });
 
@@ -133,9 +127,9 @@ test("voice dictionary: a blank word is not added, and unknown keys are left alo
   expect(voiceEdited(ctl, "quiet_from", "x")).toBe(false);
 });
 
-test("Voice shows only microphone, Parakeet and dictionary", () => {
+test("Voice shows only the microphone and the dictionary", () => {
   const view = voiceView(facts({ inputs: [{ id: "", label: "System default" }, { id: "usb", label: "USB microphone" }], input: "usb" }));
-  expect(view.sections.map((s) => s.title)).toEqual(["On this PC", "Parakeet model", "Dictionary"]);
+  expect(view.sections.map((s) => s.title)).toEqual(["On this PC", "Dictionary"]);
   expect(view.sections[0]?.rows[0]).toMatchObject({ kind: "microphone", options: ["System default", "USB microphone"], selected: 1 });
   ctl.inputs = [{ id: "", label: "System default" }, { id: "usb", label: "USB microphone" }];
   expect(voiceChose(ctl, "voice:input", 1)).toBe(true);

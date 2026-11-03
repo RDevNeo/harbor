@@ -1013,6 +1013,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
   const disc = offline || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
   const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => true) : () => {};
+  // The speech model comes by itself, so the first dictation (here, or from a phone or PC that picks this one) needn't wait.
+  const stopSpeech = env.HARBOR_LISTEN === undefined && !offline ? voice.keepParakeet() : () => {};
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   if (signIn) account.start();
   const tick = setInterval(() => {
@@ -1086,6 +1088,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       mesh.stop();
       disc?.stop();
       stopMap();
+      stopSpeech();
       if (signIn) await account.stop();
       api?.close();
     },

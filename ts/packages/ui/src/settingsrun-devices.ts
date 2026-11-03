@@ -1,4 +1,4 @@
-import { allowedJson, allowedKey, hostPort, lanAddrs, loadAllowed, loadCode, loadRemote, loadTokens, newTailnet, normalizeFp, readMe, remoteDevices, saveRemote, short as keyShort, showCode, type AccountService, type Hub, type Mesh } from "@harbor/net";
+import { renamePc, setHelloName, allowedJson, allowedKey, hostPort, lanAddrs, loadAllowed, loadCode, loadRemote, loadTokens, newTailnet, normalizeFp, readMe, remoteDevices, saveRemote, short as keyShort, showCode, type AccountService, type Hub, type Mesh } from "@harbor/net";
 import { harborVersion } from "@harbor/mcp";
 import { type Store } from "@harbor/store";
 import { homedir } from "node:os";
@@ -29,6 +29,16 @@ export function devicesHost(store: Store, refresh: () => void, myFp: () => strin
       allowed: () => loadAllowed(store),
       seen: () => runtime?.hub.mesh.seen ?? new Map(),
       addrs: () => lanAddrs().map((a) => hostPort(a, port())),
+      rename(name) {
+        const me = renamePc(store, name);
+        if (runtime) {
+          // Peers read it in their next hello, phones in their next poll, the workspace's directory on the next register.
+          runtime.hub.mesh.me = { ...runtime.hub.mesh.me, name: me.name };
+          setHelloName(me.name);
+          runtime.account.poke();
+        }
+        refresh();
+      },
       copy,
       allow(key, name, allow) {
         const change = (all: ReturnType<typeof loadAllowed>) => {

@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { dataDir, newUuid } from "@harbor/store";
@@ -487,6 +487,8 @@ interface Download {
   total: number;
   done: number;
   result: { error: string | null } | null;
+  /** Started by keepParakeet, not by someone waiting: its failure isn't told (it's tried again later). */
+  quiet: boolean;
 }
 
 let current: Download | null = null;
@@ -502,10 +504,14 @@ export function whisperParts(name: string): Part[] {
 }
 
 /** Starts downloading model `name` ("parakeet", or a Whisper model), unless a download is already under way. `parts` replaces the model's own files. */
-export function startDownload(name: string, parts?: Part[]): void {
-  if (current && current.result === null) return;
+export function startDownload(name: string, parts?: Part[], quiet = false): void {
+  if (current && current.result === null) {
+    // Someone is waiting for it now: a failure of the download under way is told after all.
+    if (!quiet) current.quiet = false;
+    return;
+  }
   const all = parts ?? (name === "parakeet" ? parakeet.parts() : whisperParts(name));
-  const d: Download = { name, total: all.reduce((n, p) => n + p.size, 0), done: 0, result: null };
+  const d: Download = { name, total: all.reduce((n, p) => n + p.size, 0), done: 0, result: null, quiet };
   current = d;
   running = (async () => {
     try {
@@ -544,7 +550,52 @@ export function takeDownloadError(): [string, string] | null {
   const d = current;
   if (!d?.result?.error) return null;
   current = null;
-  return [d.name, d.result.error];
+  return d.quiet ? null : [d.name, d.result.error];
+}
+
+const MIN_FREE_BYTES = 2 * 1024 ** 3;
+
+function freeBytes(path: string): number {
+  try {
+    mkdirSync(path, { recursive: true });
+    const s = statfsSync(path);
+    return s.bavail * s.bsize;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/** Gets the Parakeet model in the background when this PC lacks it, so dictation works the first time: a first try
+ * `firstMs` after the start, then again after each failure (2, 4, 8… minutes, at most an hour), and an hourly look
+ * once it's there (its files may be deleted). Never with less than 2 GB free. Returns the stop function. */
+export function keepParakeet(o: { firstMs?: number; free?: (path: string) => number } = {}): () => void {
+  let stopped = false;
+  let fails = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const free = o.free ?? freeBytes;
+  const later = (ms: number) => {
+    if (!stopped) timer = setTimeout(() => void round(), ms);
+  };
+  const round = async (): Promise<void> => {
+    if (stopped) return;
+    if (parakeet.installed()) return later(3600_000);
+    if (free(dataDir()) < MIN_FREE_BYTES) return later(3600_000);
+    if (downloading() === null) startDownload("parakeet", undefined, true);
+    await downloadSettled();
+    if (parakeet.installed()) {
+      fails = 0;
+      return later(3600_000);
+    }
+    // A failed quiet try leaves nothing to tell; someone else's (Whisper's) download was in the way: look again soon.
+    if (current?.result?.error && current.quiet) current = null;
+    fails++;
+    later(Math.min(60_000 * 2 ** Math.min(fails, 6), 3600_000));
+  };
+  later(o.firstMs ?? 30_000);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
 }
 
 function partName(dst: string): string {

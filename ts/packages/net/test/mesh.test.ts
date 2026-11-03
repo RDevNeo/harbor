@@ -10,7 +10,7 @@ import { http, httpPart, setHello } from "../src/client.ts";
 import { err, type Request } from "../src/http.ts";
 import { Hub } from "../src/hub.ts";
 import { MemKv } from "../src/kv.ts";
-import { forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, parseWhois, partOf, showCode, startsTurn, statusNode } from "../src/mesh.ts";
+import { cleanPcName, forHome, ipsAndPort, MEDIA_PART, Mesh, parseMe, readMe, renamePc, parseWhois, partOf, showCode, startsTurn, statusNode } from "../src/mesh.ts";
 import { StoreReplica, type StoreReplicaOptions, sameRemote } from "../src/meshstore.ts";
 import { relayServe } from "../src/relay.ts";
 import { admit, allowedKey, cleanAddrs, downOf, label, loadAllowed, peerId, type Allowed, type Node } from "../src/shared.ts";
@@ -62,6 +62,16 @@ describe("mesh.rs", () => {
     const bare = new MemKv();
     expect(readMe(bare, {}, () => ({})).id).toMatch(/^pc:./);
     expect(readMe(new MemKv(), { HARBOR_MESH_ID: "ts:x", HARBOR_MESH_NAME: "Ex" }, () => tailnet)).toEqual({ id: "ts:x", name: "Ex" });
+  });
+
+  test("a renamed pc keeps its id: only the name it shows changes, and an empty name goes back to the default", () => {
+    const kv = new MemKv({ mesh_id: "pc:desk-7" });
+    expect(renamePc(kv, "  Studio\tPC \n")).toEqual({ id: "pc:desk-7", name: "Studio PC" });
+    expect(kv.get("mesh_id")).toBe("pc:desk-7");
+    expect(readMe(kv, {}, () => ({}))).toEqual({ id: "pc:desk-7", name: "Studio PC" });
+    expect(readMe(kv, { HARBOR_MESH_NAME: "Rig" }, () => ({})).name).toBe("Rig");
+    expect(renamePc(kv, "   ")).toEqual({ id: "pc:desk-7", name: "desk-7" });
+    expect([...cleanPcName("x".repeat(80))]).toHaveLength(40);
   });
 
   test("identity_from_tailscale", () => {

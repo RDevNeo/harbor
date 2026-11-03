@@ -514,6 +514,10 @@ component FormBlock inherits VerticalLayout {
     callback submitted(string, string, string, string) -> string;
     property <[string]> vals: ["", "", ""];
     property <string> err;
+    // A field that comes filled in (the rename form's current name) counts as typed: Save works without an edit.
+    init => {
+        root.vals = [root.b.fields[0].text, root.b.fields[1].text, root.b.fields[2].text];
+    }
     property <bool> two: root.b.fields[0].row == 1 || root.b.fields[1].row == 1 || root.b.fields[2].row == 1;
     property <bool> ready: (root.b.fields.length < 1 || root.vals[0].character-count >= root.b.fields[0].min)
         && (root.b.fields.length < 2 || root.vals[1].character-count >= root.b.fields[1].min)

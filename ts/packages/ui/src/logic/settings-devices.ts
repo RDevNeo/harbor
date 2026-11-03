@@ -11,6 +11,8 @@ export interface MeshHost {
   allowed(): Allowed[];
   seen(): ReadonlyMap<string, Seen>;
   allow(key: string, name: string, allow: boolean): void;
+  /** Gives this PC another name ("": back to the default); its id and key stay. */
+  rename(name: string): void;
   addrs(): string[];
   copy(text: string): void;
 }
@@ -37,15 +39,22 @@ export interface DevicesHost {
   };
 }
 
-export interface DevicesState { pairAddr: string }
-export const newDevicesState = (): DevicesState => ({ pairAddr: "" });
+export interface DevicesState {
+  pairAddr: string;
+  /** The rename form is open under the list. */
+  renaming: boolean;
+}
+export const newDevicesState = (): DevicesState => ({ pairAddr: "", renaming: false });
 
-function deviceRows(h: DevicesHost): BlockRow[] {
+function deviceRows(h: DevicesHost, st: DevicesState): BlockRow[] {
   const m = h.mesh;
   const lines = [row(`${m.me().name} (this PC)`, {
     icon: ICONS.MONITOR,
     desc: `Harbor ${m.versionLabel()} · key ${keyShort(m.myFp())}`,
-    buttons: [btn("copy_key", "", { icon: ICONS.COPY, variant: "muted", tip: "Copy this PC's full key" })],
+    buttons: [
+      btn("rename", "Rename", { enabled: !st.renaming, tip: "The name your other PCs and phones show for this PC" }),
+      btn("copy_key", "", { icon: ICONS.COPY, variant: "muted", tip: "Copy this PC's full key" }),
+    ],
   })];
   const peers = m.peers();
   const keys = new Map<string, string>();
@@ -82,7 +91,16 @@ export function devicesBlocks(h: DevicesHost, st: DevicesState): Block[] {
   } else first = row("Show a code", { desc: "Show a one-time code to enter on your other PC.", buttons: [btn("pair_show", "Show a code", { variant: "primary" })] });
   const result = h.pair.result();
   return [
-    title("Your devices", 11), list(deviceRows(h), ""),
+    title("Your devices", 11), list(deviceRows(h, st), ""),
+    ...(st.renaming
+      ? [form("rename", [field("name", "This PC's name", { text: h.mesh.me().name, min: 1 })], btn("rename_save", "Save", { variant: "primary" }), {
+          before: 8,
+          frame: "header",
+          title: "Rename this PC",
+          desc: "Your other PCs, your phones and your workspace show this name. Its key and id stay the same.",
+          cancel: btn("rename_cancel", "Cancel"),
+        })]
+      : []),
     title("Pair a device"), list([first], ""),
     form("pair", [field("addr", "Its address (e.g. 10.0.0.12)", { min: 1, text: st.pairAddr }), field("code", "Code", { mono: true, width: 160, min: 10 })], btn("pair", h.pair.busy() ? "Pairing…" : "Pair", { variant: "primary", enabled: !h.pair.busy() }), { before: 16, frame: "header", title: "Enter a code", desc: "The address and code shown on your other PC." }),
     ...(result ? [copy(result.ok ? result.text : `Not paired: ${result.text}`, 13, { before: 8 })] : []),
@@ -95,6 +113,8 @@ export function devicesTab(h: DevicesHost): BlockTab {
     blocks: () => devicesBlocks(h, st),
     pressed(key) {
       if (key === "copy_key") h.mesh.copy(h.mesh.myFp());
+      else if (key === "rename") st.renaming = true;
+      else if (key === "rename_cancel") st.renaming = false;
       else if (key === "pair_show") h.pair.show();
       else if (key === "pair_cancel") h.pair.cancel();
       else if (key.startsWith("remove:")) h.mesh.allow(key.slice(7), "", false);
@@ -104,6 +124,11 @@ export function devicesTab(h: DevicesHost): BlockTab {
     toggled() {},
     edited() {},
     submitted(key, values) {
+      if (key === "rename") {
+        h.mesh.rename(values[0] ?? "");
+        st.renaming = false;
+        return "";
+      }
       if (key === "pair") {
         st.pairAddr = (values[0] ?? "").trim();
         h.pair.join(st.pairAddr, values[1] ?? "");
