@@ -49,6 +49,27 @@ const server = http.createServer((req, res) => {
         const anim = u.searchParams.has("anim") ? "animation:m 1s linear infinite" : "";
         return res.end(`<!doctype html><style>body{margin:0;background:#fff;font:12px sans-serif}#g{display:grid;grid-template-columns:repeat(3,100px);gap:0}#g div{height:60px;background:#8ab}#g div.on{background:#e74}#bar{height:20px;width:20px;background:#333;${anim}}@keyframes m{from{margin-left:0}to{margin-left:280px}}</style><div id="g">${"<div></div>".repeat(9)}</div><div id="bar"></div><script>for(const d of document.querySelectorAll("#g div"))d.addEventListener("click",e=>{if(e.isTrusted)d.classList.toggle("on")});</script>`);
     }
+    if (u.pathname === "/hcaptcha.com/checkbox") {
+        res.setHeader("content-type", "text/html");
+        return res.end(`<!doctype html><body style="margin:0;background:#f9f9f9;font:14px sans-serif"><label style="display:flex;align-items:center;gap:12px;padding:20px"><span id="c" style="width:24px;height:24px;border:2px solid #555;display:inline-block"></span>I am human</label><script>document.body.addEventListener("click",e=>{if(e.isTrusted)parent.postMessage("open","*")})</script>`);
+    }
+    // A challenge with fine detail (1 px stripes, 9 px text) and a drag: the letter must reach the box.
+    if (u.pathname === "/hcaptcha.com/drag") {
+        res.setHeader("content-type", "text/html");
+        return res.end(`<!doctype html><body style="margin:0;background:#fff;font:11px sans-serif;user-select:none">
+<div style="background:#1b8a99;color:#fff;padding:10px 12px">Drag the letter to the place where it fits</div>
+<div style="position:relative;height:420px;background:repeating-linear-gradient(90deg,#334 0 1px,#dde 1px 3px)">
+<div style="position:absolute;left:8px;top:6px;font:9px sans-serif;background:#fff">fine print 0123456789 abcdefghij</div>
+<div id="t" style="position:absolute;left:250px;top:150px;width:70px;height:70px;border:2px dashed #c33"></div>
+<div id="a" style="position:absolute;left:40px;top:300px;width:60px;height:60px;background:#c33;color:#fff;font:bold 40px sans-serif;text-align:center;line-height:60px">A</div>
+</div><div style="display:flex;justify-content:space-between;padding:10px 12px"><span>EN</span><span style="background:#555;color:#fff;padding:4px 18px">Skip</span></div>
+<script>
+const a=document.getElementById("a"),t=document.getElementById("t");let drag=null;
+a.addEventListener("mousedown",e=>{if(!e.isTrusted)return;drag={x:e.clientX-a.offsetLeft,y:e.clientY-a.offsetTop};});
+addEventListener("mousemove",e=>{if(!drag||!e.isTrusted||!(e.buttons&1))return;a.style.left=(e.clientX-drag.x)+"px";a.style.top=(e.clientY-drag.y)+"px";});
+addEventListener("mouseup",e=>{if(!drag||!e.isTrusted)return;drag=null;const r=a.getBoundingClientRect(),q=t.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;navigator.sendBeacon("/rig/dropped",JSON.stringify({cx,cy}));if(cx>q.left&&cx<q.right&&cy>q.top&&cy<q.bottom)parent.postMessage("solved","*");});
+</script>`);
+    }
     if (u.pathname === "/hcaptcha.com/challenge") {
         res.setHeader("content-type", "text/html");
         return res.end(`<!doctype html><body style="margin:0;background:#fff"><button style="width:300px;height:200px" onclick="if (event.isTrusted) { navigator.sendBeacon('/rig/solved', '{}'); parent.postMessage('solved', '*'); }">I am human</button>`);
@@ -437,6 +458,38 @@ await scenario("captcha-perf", async () => {
     delete env.HARBOR_CHAT_ID;
 });
 
+// hCaptcha's real flow: a checkbox, then a bigger challenge with fine detail and a drag. The card's
+// frame must follow it whole and sharp, and a press-move-release must reach it as a drag.
+await scenario("captcha-drag", async () => {
+    account();
+    env.HARBOR_CHAT_ID = "5";
+    const m = new Mcp();
+    await m.rpc("initialize", {});
+    await m.tool("discord_join", { invite: "captchadrag1", apply: true });
+    const cc = async (body) => (await hostOp({ op: "chat_captcha", chat: 5, body }))?.result;
+    let f = await cc({ action: "frame", max: 1280, after: 0 });
+    check(f?.body?.rect?.width === 300 && f.body.rect.height === 74, "the checkbox first", JSON.stringify(f?.body?.rect));
+    const box = f.body.rect;
+    for (const kind of ["down", "up"]) await cc({ action: "input", kind, x: box.x + 30, y: box.y + 37, who: "pc:a", label: "Desk" });
+    await until(async () => { f = await cc({ action: "frame", max: 1280, after: f.body.seq ?? 0, wait: 500 }); return f?.body?.rect?.width === 400; }, 10000, "the challenge to show");
+    const r = f.body.rect;
+    check(r.height === 580 && f.body.crop.x <= r.x && f.body.crop.y <= r.y && f.body.crop.x + f.body.crop.width >= r.x + r.width && f.body.crop.y + f.body.crop.height >= r.y + r.height, "the frame follows the challenge, all of it", JSON.stringify({ rect: r, crop: f.body.crop }));
+    // A frame with data: wait for one of the challenge.
+    while (!f.body.data) f = await cc({ action: "frame", max: 1280, after: 0, wait: 500 });
+    check(f.body.width >= f.body.crop.width * 1.9, "drawn at twice the page's pixels, for sharp text", `${f.body.width} for ${f.body.crop.width}`);
+    fs.writeFileSync(os.homedir() + "/.cache/hdiscord/challenge.jpg", Buffer.from(f.body.data, "base64"));
+    // Drag the letter (page px: the frame's left/top + its place inside) into the box.
+    const ax = r.x + 70, ay = r.y + 37 + 330, tx = r.x + 285, ty = r.y + 37 + 185;
+    await cc({ action: "input", kind: "move", x: ax, y: ay, who: "pc:a", label: "Desk" });
+    await cc({ action: "input", kind: "down", x: ax, y: ay, who: "pc:a", label: "Desk" });
+    for (let i = 1; i <= 12; i++) await cc({ action: "input", kind: "move", x: Math.round(ax + (tx - ax) * i / 12), y: Math.round(ay + (ty - ay) * i / 12), who: "pc:a", label: "Desk" });
+    await cc({ action: "input", kind: "up", x: tx, y: ty, who: "pc:a", label: "Desk" });
+    await until(async () => (await status()).captcha === null, 15000, "the captcha to end");
+    check((await status()).captcha_end?.outcome === "joined", "the drag reached the challenge and solved it", JSON.stringify(seen.dropped?.at(-1)));
+    m.close();
+    delete env.HARBOR_CHAT_ID;
+});
+
 await scenario("pacing", async () => {
     account();
     write("pace.json", []);
@@ -695,7 +748,8 @@ function hostOp(req) {
             const s = net.connect(app + "/h.sock");
             let b = "";
             s.on("data", d => b += d);
-            s.on("end", () => res(JSON.parse(b)));
+            // A host that closed without answering (it's stopping): no answer, not a crash.
+            s.on("end", () => { try { res(JSON.parse(b)); } catch { res(null); } });
             s.on("error", () => res(null));
             s.write(JSON.stringify(req) + "\n");
         });

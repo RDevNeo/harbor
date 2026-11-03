@@ -3196,12 +3196,12 @@ function captchaShowing() {
 /** Where the captcha is on the page (its checkbox and challenge together): the only place
  * Harbor lets a person's clicks through to. */
 function captchaRect() {
-    const rs = captchaFrames().map(f => f.getBoundingClientRect());
-    if (!rs.length) return null;
-    const x = Math.max(0, Math.floor(Math.min(...rs.map(r => r.left))));
-    const y = Math.max(0, Math.floor(Math.min(...rs.map(r => r.top))));
-    const right = Math.min(innerWidth, Math.ceil(Math.max(...rs.map(r => r.right))));
-    const bottom = Math.min(innerHeight, Math.ceil(Math.max(...rs.map(r => r.bottom))));
+    // The checkbox first; once the challenge opens (a bigger frame of its own), the challenge.
+    const rs = captchaFrames().map(f => f.getBoundingClientRect()).sort((a, b) => b.width * b.height - a.width * a.height);
+    const r = rs[0];
+    if (!r) return null;
+    const x = Math.max(0, Math.floor(r.left)), y = Math.max(0, Math.floor(r.top));
+    const right = Math.min(innerWidth, Math.ceil(r.right)), bottom = Math.min(innerHeight, Math.ceil(r.bottom));
     return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
 }
 

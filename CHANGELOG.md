@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Discord: a captcha's challenge (the bigger frame hCaptcha opens after its checkbox, such as "drag
+  the letter to the place where it fits") was squeezed into the checkbox's shape, which combed its
+  picture and cut it off. The card now follows the challenge itself and takes each frame's shape,
+  fitted to the card and kept on screen whole (scaled down, never stretched), on the desktop and
+  the phone. Captchas are drawn at twice the page's resolution, so their small text stays sharp.
+- Discord: dragging in a captcha works: a press, moves and a release go through as a drag, and a
+  drag past the captcha's edge stays on its edge instead of being dropped.
+
 ## [0.120.2] - 2026-11-03
 
 ### Changed

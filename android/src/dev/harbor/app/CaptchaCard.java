@@ -88,8 +88,9 @@ final class CaptchaCard {
         sub = Ui.text(a, DiscordKit.cardIntro(guild), 13, Ui.G700);
         full.addView(sub, Ui.margins(Ui.fill(), 0, 4, 0, 10));
         FrameLayout box = new FrameLayout(a);
-        frame = new Frame(a);
+        frame = new Frame(a, a.getResources().getDisplayMetrics().heightPixels);
         frame.setOnTouchListener((v, e) -> touch(e));
+        frame.reshaped = this::reveal;
         box.addView(frame, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL));
         box.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> { if (r - l > 0) maxW = r - l; });
         loading = Ui.text(a, "Loading the captcha…", 13, Ui.G700);
@@ -193,13 +194,20 @@ final class CaptchaCard {
         o.inMutable = true;
         o.inBitmap = free.poll();
         try {
-            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o);
+            return mip(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o));
         } catch (IllegalArgumentException e) {
             o.inBitmap = null; // too small for this frame
-            try { return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o); } catch (Exception x) { return null; }
+            try { return mip(BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o)); } catch (Exception x) { return null; }
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Mipmaps: drawn smaller than it is (a tall challenge on a short screen), 1 px stripes stay
+     *  smooth instead of combing. */
+    private static Bitmap mip(Bitmap b) {
+        if (b != null) b.setHasMipMap(true);
+        return b;
     }
 
     /** Hands an answer to the UI thread; one not drawn yet is replaced (its bitmap kept when the
@@ -332,7 +340,9 @@ final class CaptchaCard {
 
     private boolean touch(MotionEvent e) {
         if (frame.crop == null || frame.getWidth() <= 0) return true;
-        int[] p = DiscordKit.cropToPage(e.getX(), e.getY(), frame.getWidth(), frame.getHeight(), frame.crop);
+        // From where the bitmap is drawn (the whole view once laid out) to the page's pixels.
+        int[] at = frame.drawn();
+        int[] p = DiscordKit.cropToPage(e.getX() - at[0], e.getY() - at[1], at[2], at[3], frame.crop);
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 if (DiscordKit.inside(p[0], p[1], frame.rect)) {
@@ -343,14 +353,16 @@ final class CaptchaCard {
                 }
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if (pressed) move(clamp(p));
+                // A drag (the challenge's "drag the letter"): every move while pressed, off the
+                // captcha too; the PC keeps the button held and clamps them to its edge.
+                if (pressed) move(p);
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
-                // A press always ends, even off the captcha: at its edge, where the PC takes it.
+                // A press always ends, even off the captcha (the PC clamps it to its edge).
                 if (pressed) {
                     pressed = false;
-                    send("up", clamp(p));
+                    send("up", p);
                 }
                 return true;
             default:
@@ -358,10 +370,16 @@ final class CaptchaCard {
         }
     }
 
-    private int[] clamp(int[] p) {
-        int[] r = frame.rect;
-        if (r == null || r[2] <= 0 || r[3] <= 0) return p;
-        return new int[] { Math.max(r[0], Math.min(r[0] + r[2] - 1, p[0])), Math.max(r[1], Math.min(r[1] + r[3] - 1, p[1])) };
+    /** The frame appeared or changed shape (the checkbox, then the challenge): once laid out, the
+     *  transcript scrolls just enough to show the whole card (its top when it's taller than the
+     *  screen), unless a finger is on it. */
+    private void reveal() {
+        view.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override public void onGlobalLayout() {
+                view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                if (!pressed && attached) view.requestRectangleOnScreen(new Rect(0, 0, view.getWidth(), view.getHeight()), false);
+            }
+        });
     }
 
     private void send(String kind, int[] p) {
@@ -391,22 +409,29 @@ final class CaptchaCard {
 
     // ---- the frame ----
 
-    /** The frame (an image of the page's `crop`) as wide as the card, its shape kept; outside
-     *  the captcha 35% black. Swipes on it stay its own (no drawer). */
+    /** The frame (an image of the page's `crop`), in each frame's own shape: as wide as the card,
+     *  never taller than the transcript leaves room for beside the card's title and Don't join
+     *  (narrower then), never stretched. Outside the captcha 35% black. Swipes
+     *  on it stay its own (no drawer). */
     static final class Frame extends View {
         int iw, ih;
         int[] crop, rect;
         Bitmap bmp;
+        private final int screenH;
+        /** Runs when a new shape is laid out. */
+        Runnable reshaped;
         private final Paint img = new Paint(Paint.FILTER_BITMAP_FLAG);
         private final Paint dim = new Paint();
         private final Rect dst = new Rect();
 
-        Frame(Context c) {
+        Frame(Context c, int screenH) {
             super(c);
+            this.screenH = screenH;
             dim.setColor(0x59000000);
         }
 
-        /** A frame: laid out again only for the first bitmap or a new shape, else only drawn. */
+        /** A frame: laid out again for the first bitmap or a new shape (the checkbox, then the
+         *  challenge), else only drawn. */
         void set(int w, int h, int[] cr, int[] r, Bitmap b) {
             boolean resize = DiscordKit.reshapes(iw, ih, w, h) || (bmp == null && b != null);
             iw = w;
@@ -414,8 +439,50 @@ final class CaptchaCard {
             crop = cr;
             rect = r;
             if (b != null) bmp = b;
-            if (resize) requestLayout();
+            if (resize) {
+                requestLayout();
+                if (reshaped != null) reshaped.run();
+            }
             invalidate();
+        }
+
+        /** How tall it may be: the scrolling transcript it's in, less the card around it. */
+        private int cap() {
+            View sv = scroller();
+            return DiscordKit.capHeight(screenH, sv == null ? 0 : sv.getHeight(), Ui.dp(CHROME_DP), Ui.dp(160));
+        }
+
+        private View scroller() {
+            for (android.view.ViewParent p = getParent(); p != null; p = p.getParent())
+                if (p instanceof android.widget.ScrollView) return (View) p;
+            return null;
+        }
+
+        /** The transcript grew or shrank (its first layout, the keyboard): measured again. */
+        private final View.OnLayoutChangeListener resized = (v, l, t, r, b, ol, ot, or, ob) -> {
+            if (b - t != ob - ot) post(this::requestLayout);
+        };
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            View sv = scroller();
+            if (sv != null) sv.addOnLayoutChangeListener(resized);
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            View sv = scroller();
+            if (sv != null) sv.removeOnLayoutChangeListener(resized);
+            super.onDetachedFromWindow();
+        }
+
+        /** The card's title, its line, Don't join and the gaps between, in dp. */
+        static final int CHROME_DP = 190;
+
+        /** Where the bitmap is drawn: {left, top, width, height} in the view. */
+        int[] drawn() {
+            return bmp == null ? new int[] { 0, 0, getWidth(), getHeight() } : DiscordKit.inset(getWidth(), getHeight(), bmp.getWidth(), bmp.getHeight());
         }
 
         @Override
@@ -427,23 +494,24 @@ final class CaptchaCard {
         protected void onMeasure(int ws, int hs) {
             int maxW = MeasureSpec.getSize(ws);
             if (bmp == null || iw <= 0 || ih <= 0) { setMeasuredDimension(maxW, 0); return; }
-            int[] f = DiscordKit.fit(maxW, 0, iw, ih);
+            int[] f = DiscordKit.fit(maxW, cap(), iw, ih);
             setMeasuredDimension(f[0], f[1]);
         }
 
         @Override
         protected void onDraw(Canvas c) {
             if (bmp == null) return;
-            int w = getWidth(), h = getHeight();
-            dst.set(0, 0, w, h);
+            int[] at = drawn();
+            dst.set(at[0], at[1], at[0] + at[2], at[1] + at[3]);
             c.drawBitmap(bmp, null, dst, img);
-            float[] v = DiscordKit.pageToView(rect, crop, w, h);
-            if (v == null) { c.drawRect(0, 0, w, h, dim); return; }
-            float l = Math.max(0, v[0]), t = Math.max(0, v[1]), r = Math.min(w, v[2]), b = Math.min(h, v[3]);
-            c.drawRect(0, 0, w, t, dim);
-            c.drawRect(0, b, w, h, dim);
-            c.drawRect(0, t, l, b, dim);
-            c.drawRect(r, t, w, b, dim);
+            float[] v = DiscordKit.pageToView(rect, crop, at[2], at[3]);
+            float L = dst.left, T = dst.top, R = dst.right, B = dst.bottom;
+            if (v == null) { c.drawRect(L, T, R, B, dim); return; }
+            float l = Math.max(L, L + v[0]), t = Math.max(T, T + v[1]), r = Math.min(R, L + v[2]), b = Math.min(B, T + v[3]);
+            c.drawRect(L, T, R, t, dim);
+            c.drawRect(L, b, R, B, dim);
+            c.drawRect(L, t, l, b, dim);
+            c.drawRect(r, t, R, b, dim);
         }
     }
 }

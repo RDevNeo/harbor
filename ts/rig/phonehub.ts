@@ -2,6 +2,9 @@
 // sandbox): `bun rig/phonehub.ts DIR PORT TOKEN` seeds DIR (projects, chats with every kind of
 // card, a lead with its team) and serves the phone API on 127.0.0.1:PORT, taking TOKEN, until
 // killed. Prints "phonehub ready <port>" and a JSON line of the chats' gids once it listens.
+// A Discord captcha waits in one chat (gid CAPTCHA_GID, `--screen chat:<it>`) at hCaptcha's
+// challenge stage: a made-up picture drawn here, answered by this file in front of the hub (the
+// hub itself runs on PORT+1; everything else goes through to it as it is).
 // Nothing here is anyone's real data, and it never reaches the network: no mesh, discovery,
 // account, updates or webhooks, and no agent turn starts (none is asked for).
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -64,7 +67,9 @@ const done = (at: number, cost = 0.42): Item => ({ kind: "result", cost_usd: cos
 const notice = (icon: string, text: string, detail = ""): Item => ({ kind: "notice", icon, text, detail });
 
 const seed = Store.open(dataDir());
-seed.set("api_port", String(port));
+// The hub behind this file's own listener on PORT (the captcha's frames are answered there).
+const inner = port + 1;
+seed.set("api_port", String(inner));
 seed.set("api_enabled", "1");
 seed.set("api_tokens", JSON.stringify([{ token, name: "Rig phone", created: t0, group: "", fp: "" }]));
 seed.set("onboarded", "1");
@@ -161,14 +166,87 @@ chat({ repoId: null, title: "What's a good name for a cat?", updated: ago(60 * 5
   done(ago(60 * 50), 0.01),
 ]);
 chat({ repoId: web, title: "Old: try the new font", settled: true, updated: ago(60 * 24 * 6) }, [user("Try the new font on the landing page.", ago(60 * 24 * 6))]);
+// An agent's Discord join waiting on a captcha (the phone's captcha card).
+const CAPTCHA_GID = "c4e7a1b2-0000-4000-8000-00000000ca71";
+const GUILD = "Example Server";
+chat({ gid: CAPTCHA_GID, repoId: notes, title: "Join the Example Server community", updated: ago(0) }, [
+  user(`Join ${GUILD} on Discord and say hi in #introductions.`, ago(3)),
+  tool("mcp__discord__discord_join", GUILD, { invite: "example" }, "Discord wants a captcha before joining: waiting for a person to solve it."),
+  notice("captcha", `Discord needs a captcha to join ${GUILD}`, JSON.stringify({ captcha: "c1", state: "pending", guild: GUILD })),
+]);
 seed.close();
 
 // This tree's version: the app compares it with its own.
 const version = (JSON.parse(await Bun.file(join(import.meta.dirname, "../package.json")).text()) as { version: string }).version;
 const h = await startHub({ version, hookPort: false });
-console.log(`phonehub ready ${h.hub.port}`);
-console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid }));
+
+// The captcha's picture: the challenge stage as hCaptcha shows it, at 2x the page (448 x 628 page
+// px; the captcha 24 px in from its edges). Made up here: a header with small text, 1 px stripes,
+// the letter's tile to drag, the dashed place it fits, Skip.
+const CW = 896, CH = 1256;
+const stripes = Array.from({ length: (CH - 400) / 2 }, (_, i) => `<rect x="48" y="${330 + i * 2}" width="${CW - 96}" height="1" fill="#e4e8ec"/>`).join("");
+const challenge = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${CW}" height="${CH}">
+  <rect width="${CW}" height="${CH}" fill="#f4f3ef"/>
+  <rect x="48" y="48" width="${CW - 96}" height="${CH - 96}" rx="8" fill="#ffffff" stroke="#d5d9dd" stroke-width="2"/>
+  <rect x="48" y="48" width="${CW - 96}" height="240" rx="8" fill="#0f8a83"/>
+  <rect x="48" y="200" width="${CW - 96}" height="88" fill="#0f8a83"/>
+  <text x="84" y="128" font-family="sans-serif" font-size="30" fill="#ffffff">Drag the letter to the place</text>
+  <text x="84" y="170" font-family="sans-serif" font-size="30" fill="#ffffff">where it fits</text>
+  <text x="84" y="240" font-family="sans-serif" font-size="22" fill="#cdeeea">Please try again if the picture is unclear.</text>
+  ${stripes}
+  <rect x="140" y="470" width="200" height="200" rx="18" fill="#d63a3a"/>
+  <text x="240" y="618" font-family="sans-serif" font-size="150" font-weight="bold" fill="#ffffff" text-anchor="middle">A</text>
+  <rect x="520" y="780" width="210" height="210" rx="18" fill="none" stroke="#3a4651" stroke-width="5" stroke-dasharray="18 12"/>
+  <rect x="48" y="${CH - 176}" width="${CW - 96}" height="2" fill="#d5d9dd"/>
+  <rect x="${CW - 290}" y="${CH - 150}" width="200" height="74" rx="10" fill="#0f8a83"/>
+  <text x="${CW - 190}" y="${CH - 101}" font-family="sans-serif" font-size="30" fill="#ffffff" text-anchor="middle">Skip</text>
+</svg>`)).jpeg({ quality: 88 }).toBuffer();
+const frames = new Map<number, { data: string; width: number; height: number }>();
+const frameAt = async (max: number) => {
+  const w = Math.max(1, Math.min(CW, Math.round(max) || CW));
+  let f = frames.get(w);
+  if (f === undefined) {
+    const b = w === CW ? challenge : await sharp(challenge).resize(w).jpeg({ quality: 88 }).toBuffer();
+    f = { data: b.toString("base64"), width: w, height: Math.round((CH * w) / CW) };
+    frames.set(w, f);
+  }
+  return f;
+};
+const captcha = async (b: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  if (b.action === "input") return { taken: true, solver: null };
+  if (b.action !== "frame") return {};
+  const f = await frameAt(typeof b.max === "number" ? b.max : CW);
+  const head = { captcha: "c1", guild: GUILD, seq: 1, width: f.width, height: f.height, crop: { x: 0, y: 0, width: CW / 2, height: CH / 2 }, rect: { x: 24, y: 24, width: CW / 2 - 48, height: CH / 2 - 48 }, solver: null };
+  // Nothing repaints here: a call after frame 1 waits as the PC's would, then says so.
+  if (typeof b.after === "number" && b.after >= 1) {
+    await Bun.sleep(Math.min(typeof b.wait === "number" ? b.wait : 0, 2000));
+    return { ...head, same: true };
+  }
+  return { ...head, data: f.data };
+};
+
+// In front of the hub: the captcha's calls answered here, the rest passed through as they are.
+const front = Bun.serve({
+  hostname: "127.0.0.1",
+  port,
+  idleTimeout: 120,
+  async fetch(req) {
+    const u = new URL(req.url);
+    if (req.method === "POST" && u.pathname === `/v1/chats/${CAPTCHA_GID}/captcha`) {
+      if (req.headers.get("authorization") !== `Bearer ${token}`) return Response.json({ error: "Sign in again." }, { status: 401 });
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json(await captcha(body));
+    }
+    const body = req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
+    const headers = new Headers(req.headers);
+    headers.delete("host");
+    return fetch(`http://127.0.0.1:${inner}${u.pathname}${u.search}`, { method: req.method, headers, body, redirect: "manual", decompress: false } as RequestInit);
+  },
+});
+console.log(`phonehub ready ${port}`);
+console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid, captcha: CAPTCHA_GID }));
 const stop = async () => {
+  front.stop(true);
   await h.stop();
   process.exit(0);
 };

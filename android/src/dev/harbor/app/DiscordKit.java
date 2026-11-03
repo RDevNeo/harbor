@@ -94,6 +94,29 @@ final class DiscordKit {
         return Math.abs((long) w * wasH - (long) h * wasW) * 100 > (long) wasW * wasH; // more than 1%
     }
 
+    /** Where a bitmap of bw × bh is drawn in a view of vw × vh: centred, its shape kept, as
+     *  large as fits ({left, top, width, height}). The view takes each frame's shape, so this is
+     *  the whole view but for the moment between a new shape's first frame and its layout. */
+    static int[] inset(int vw, int vh, int bw, int bh) {
+        if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) return new int[] { 0, 0, Math.max(0, vw), Math.max(0, vh) };
+        int[] f = fit(vw, vh, bw, bh);
+        return new int[] { (vw - f[0]) / 2, (vh - f[1]) / 2, f[0], f[1] };
+    }
+
+    /** The tallest the chat card's frame may be on a screen sh pixels tall: room is left for the
+     *  card's title and Don't join, so the whole challenge stays in view. */
+    static int capHeight(int sh) {
+        return Math.max(1, sh * 60 / 100);
+    }
+
+    /** The same within the transcript actually shown (vh pixels tall, 0: not laid out yet): the
+     *  card's title, its line and Don't join (`chrome` pixels) fit beside the frame, never
+     *  shorter than `least`. */
+    static int capHeight(int sh, int vh, int chrome, int least) {
+        int c = capHeight(sh);
+        return vh > 0 ? Math.max(least, Math.min(c, vh - chrome)) : c;
+    }
+
     /** The chat card's line under its title (the desktop's). */
     static String cardIntro(String guild) {
         return "To join " + (guild == null || guild.isEmpty() ? "a server" : guild) + ". Only the captcha takes your taps; Harbor never answers it for you.";

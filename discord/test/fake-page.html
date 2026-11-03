@@ -81,7 +81,7 @@
                 const id = "30000000000000000" + inviteKey.length;
                 report("join", { inviteKey });
                 // As on Discord: the join waits for a captcha a person solves, in hCaptcha's own frame.
-                if (inviteKey.startsWith("captcha")) await captcha(inviteKey.startsWith("captchagridanim") ? "grid?anim=1" : inviteKey.startsWith("captchagrid") ? "grid" : "challenge");
+                if (inviteKey.startsWith("captcha")) await (inviteKey.startsWith("captchadrag") ? dragCaptcha() : captcha(inviteKey.startsWith("captchagridanim") ? "grid?anim=1" : inviteKey.startsWith("captchagrid") ? "grid" : "challenge"));
                 memberOf[id] = { id, name: "Joined " + inviteKey };
             },
         },
@@ -102,6 +102,31 @@
     };
     stores.Reactions.a = async (c, m, e) => { void '"MESSAGE_REACTION_ADD"'; report("react", { c, m, e }); };
     stores.Reactions.b = async () => { void '"MESSAGE_REACTION_REMOVE"'; };
+    // As hCaptcha does it: a small checkbox frame, whose click opens a bigger challenge frame
+    // beside it (here: drag a letter to its place), both from hCaptcha's site.
+    function dragCaptcha() {
+        return new Promise((resolve, reject) => {
+            const site = rig.replace("127.0.0.1", "localhost") + "/hcaptcha.com/";
+            const box = document.createElement("iframe");
+            box.src = site + "checkbox";
+            box.style.cssText = "position:fixed;left:120px;top:300px;width:300px;height:74px;border:0";
+            document.body.append(box);
+            let challenge = null;
+            const done = ok => { box.remove(); challenge?.remove(); removeEventListener("message", heard); removeEventListener("keydown", esc); ok ? resolve() : reject(new Error("captcha closed")); };
+            const heard = e => {
+                if (e.data === "open" && !challenge) {
+                    challenge = document.createElement("iframe");
+                    challenge.src = site + "drag";
+                    challenge.style.cssText = "position:fixed;left:440px;top:60px;width:400px;height:580px;border:0";
+                    document.body.append(challenge);
+                }
+                if (e.data === "solved") done(true);
+            };
+            const esc = e => { if (e.key === "Escape") done(false); };
+            addEventListener("message", heard);
+            addEventListener("keydown", esc);
+        });
+    }
     function captcha(kind) {
         return new Promise((resolve, reject) => {
             const f = document.createElement("iframe");

@@ -87,6 +87,37 @@ public class DiscordKitTest {
         same(DiscordKit.reshapes(720, 540, 720, 600), true, "a new shape: laid out");
         same(DiscordKit.reshapes(720, 540, 0, 0), false, "no size: nothing");
 
+        // The card's frame takes each frame's shape: the checkbox (wide), then the challenge
+        // (tall, 2x device pixels), fitted to the card's width and capped at 60% of the screen.
+        int cap = DiscordKit.capHeight(2400);
+        same(cap, 1440, "60% of a 2400 px screen");
+        f = DiscordKit.fit(996, cap, 600, 148);
+        same(f[0] + "x" + f[1], "996x246", "the checkbox: the card's width");
+        f = DiscordKit.fit(996, cap, 896, 1256);
+        same(f[0] + "x" + f[1], "996x1396", "the challenge: the card's width, under the cap");
+        f = DiscordKit.fit(996, DiscordKit.capHeight(1600), 896, 1256);
+        same(f[0] + "x" + f[1], "685x960", "a short screen: as tall as the cap, narrower");
+        // Within the transcript shown (1500 px tall on that phone, the card's chrome 500 px).
+        same(DiscordKit.capHeight(2400, 1500, 500, 420), 1000, "the transcript's room, less the card");
+        same(DiscordKit.capHeight(2400, 0, 500, 420), 1440, "not laid out yet: 60% of the screen");
+        same(DiscordKit.capHeight(2400, 3000, 500, 420), 1440, "a tall transcript: still 60%");
+        same(DiscordKit.capHeight(2400, 700, 500, 420), 420, "the keyboard up: never below the least");
+        f = DiscordKit.fit(996, DiscordKit.capHeight(2400, 1500, 500, 420), 896, 1256);
+        same(f[0] + "x" + f[1], "713x1000", "the challenge, all of it in view");
+        // Drawn in the view: the whole view once laid out, else centred with its shape kept.
+        int[] in = DiscordKit.inset(996, 1396, 896, 1256);
+        same(in[0] + "," + in[1] + "," + in[2] + "," + in[3], "0,0,996,1396", "laid out: the whole view");
+        in = DiscordKit.inset(996, 246, 896, 1256);
+        same(in[0] + "," + in[1] + "," + in[2] + "," + in[3], "410,0,175,246", "a new shape before its layout: not stretched");
+        // A tap on the fitted challenge, back in page pixels (the crop is the page's 448x628).
+        int[] cc = { 0, 0, 448, 628 };
+        p = DiscordKit.cropToPage(498, 698, 996, 1396, cc);
+        same(p[0] + "," + p[1], "224,314", "the challenge's middle");
+        p = DiscordKit.cropToPage(342 - 0, 480 - 0, 685, 960, cc);
+        same(p[0] + "," + p[1], "224,314", "the same point on a short screen");
+        p = DiscordKit.cropToPage(1100, -40, 996, 1396, cc);
+        same(p[0] + "," + p[1], "495,-18", "a drag past the edge goes as it is (the PC clamps)");
+
         // The lines, as the desktop says them.
         same(DiscordKit.intro("Cats"), "To join Cats, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro");
         same(DiscordKit.intro(""), "To join a server, Discord wants a person to solve this. Only the captcha takes your taps; Harbor never answers it for you.", "intro without a name");

@@ -258,7 +258,7 @@ test("404: the card's captcha waits no more, and the next ask is 2 s later", asy
   r.answer(same(0));
 });
 
-test("a frame that comes while one decodes takes the place of the one waiting; the slot keeps the first aspect", async () => {
+test("a frame that comes while one decodes takes the place of the one waiting; the slot takes each frame's shape", async () => {
   const r = rig([ok({ data: b64("A") }), ok({ seq: 2, data: b64("BB"), width: 400, height: 200 }), ok({ seq: 3, data: b64("CCC"), width: 400, height: 200 })], { holdDecode: true });
   r.cap.cards(7, ["a"]);
   r.cap.seen("a", true);
@@ -271,7 +271,8 @@ test("a frame that comes while one decodes takes the place of the one waiting; t
   await flush();
   expect(r.decoded).toEqual(["A", "CCC"]);
   expect(r.images.map((p) => p.width)).toEqual([1, 3]);
-  expect(r.shown.at(-1)).toMatchObject({ width: 400, height: 300 });
+  // The checkbox's shape first, then the challenge's (here 400 by 200): never the old shape stretched.
+  expect(r.shown.at(-1)).toMatchObject({ width: 400, height: 200 });
   r.cap.stop();
   r.answer(same(3));
 });

@@ -202,7 +202,9 @@ export component CaptchaCard {
     callback pointer(string, float, float);
     callback cancel();
     property <bool> mine: root.data.id == root.id && root.id != "";
-    property <length> frame-w: min(root.avail - 26px, 460px);
+    // As wide as the card allows, but never taller than 480px: a tall challenge (drag the letter
+    // to its place) stays on screen whole, scaled down, never stretched.
+    property <length> frame-w: root.mine && root.data.has-frame && root.data.height > 0 ? min(root.avail - 26px, 460px, 480px * root.data.width / root.data.height) : min(root.avail - 26px, 460px);
     changed on-screen => {
         root.seen(root.on-screen, root.frame-w / 1px);
     }

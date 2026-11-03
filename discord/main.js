@@ -13,6 +13,8 @@ const cfg = JSON.parse(process.env.HARBOR_DISCORD || "{}");
 delete process.env.HARBOR_DISCORD;
 const WIDTH = 1280, HEIGHT = 720;
 const IDLE_FPS = 1, BUSY_FPS = 15;
+/** Device pixels per page pixel of the signed-in page. */
+const SCALE = 2;
 /** The QR socket gave up: no new code this long after it closed. */
 const QR_STALE_MS = 20_000;
 
@@ -84,7 +86,9 @@ function open(offscreen) {
             contextIsolation: true,
             nodeIntegration: false,
             backgroundThrottling: false,
-            offscreen,
+            // The signed-in page draws at twice its size, so a captcha's small text stays sharp in
+            // a card on a phone (layout and coordinates don't change; only the pixels double).
+            offscreen: offscreen && cfg.mode === "run" ? { deviceScaleFactor: SCALE } : offscreen,
             spellcheck: false,
             // Never a debugger on this session: opening DevTools makes Discord hide the token.
             devTools: false,
@@ -203,7 +207,10 @@ const meets = (a, b) => !!a && !!b && a.x < b.x + b.width && b.x < a.x + a.width
 function painted(dirty, image) {
     if (!solving) return;
     live.image = image;
-    if (!meets(dirty, cropOf(solveRect)) && live.seq > 0) return;
+    // The changed area comes in the paint's device pixels; the captcha is in page pixels.
+    const k = image.getSize().width / WIDTH || 1;
+    const changed = dirty && { x: dirty.x / k, y: dirty.y / k, width: dirty.width / k, height: dirty.height / k };
+    if (!meets(changed, cropOf(solveRect)) && live.seq > 0) return;
     live.seq++;
     for (const w of live.wake.splice(0)) w();
 }
@@ -211,13 +218,15 @@ function painted(dirty, image) {
 function liveFrame(crop, max) {
     const key = `${live.seq}:${max}:${crop.x},${crop.y},${crop.width},${crop.height}`;
     if (live.encoded?.key === key) return live.encoded.frame;
-    let img = live.image.crop(crop);
+    // The paint is in device pixels; the crop is in page pixels.
+    const k = live.image.getSize().width / WIDTH;
+    let img = live.image.crop({ x: Math.round(crop.x * k), y: Math.round(crop.y * k), width: Math.round(crop.width * k), height: Math.round(crop.height * k) });
     let { width, height } = img.getSize();
     if (max > 0 && width > max) {
-        img = img.resize({ width: max, quality: "good" });
+        img = img.resize({ width: max, quality: "best" });
         ({ width, height } = img.getSize());
     }
-    const frame = { width, height, data: img.toJPEG(70).toString("base64") };
+    const frame = { width, height, data: img.toJPEG(88).toString("base64") };
     live.encoded = { key, frame };
     return frame;
 }
@@ -263,25 +272,32 @@ const captchaOps = {
         let img = await win.webContents.capturePage(crop, { stayHidden: true });
         let { width, height } = img.getSize();
         if (width < 1 || height < 1) throw new Error("capturePage returned an empty image");
-        const max = Number(m?.max) > 0 ? Math.floor(Number(m.max)) : 0;
+        // The whole page comes back in page pixels: the overlay maps its clicks with them.
+        const max = Number(m?.max) > 0 ? Math.floor(Number(m.max)) : crop ? 0 : WIDTH;
         if (max > 0 && width > max) {
-            img = img.resize({ width: max, quality: "good" });
+            img = img.resize({ width: max, quality: "best" });
             ({ width, height } = img.getSize());
         }
-        return { ...s, width, height, crop: crop ?? { x: 0, y: 0, width: WIDTH, height: HEIGHT }, mimeType: "image/jpeg", data: img.toJPEG(crop ? 75 : 80).toString("base64") };
+        return { ...s, width, height, crop: crop ?? { x: 0, y: 0, width: WIDTH, height: HEIGHT }, mimeType: "image/jpeg", data: img.toJPEG(crop ? 88 : 80).toString("base64") };
     }),
     captcha_input: viewOnly(async m => {
         const x = Math.round(Number(m.x)), y = Math.round(Number(m.y));
         if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("no position");
         // The captcha moves (its challenge opens beside the checkbox): a look that's old is looked again.
         if (Date.now() - solveAt > 1000) await captchaLook();
-        const releasing = m.kind === "up" && pressed;
-        if (!releasing && !inside(solveRect, x, y)) return { taken: false };
+        // A drag (a letter to its place, a slider) holds the button while it moves, and may run
+        // past the captcha's edge: it's kept on the edge rather than dropped.
+        let px = x, py = y;
+        if (pressed && solveRect && (m.kind === "move" || m.kind === "up")) {
+            px = Math.min(Math.max(x, solveRect.x), solveRect.x + solveRect.width - 1);
+            py = Math.min(Math.max(y, solveRect.y), solveRect.y + solveRect.height - 1);
+        } else if (!inside(solveRect, x, y)) return { taken: false };
         const wc = win.webContents;
+        const held = pressed ? { button: "left", modifiers: ["leftButtonDown"] } : {};
         switch (m.kind) {
-            case "move": wc.sendInputEvent({ type: "mouseMove", x, y }); break;
-            case "down": pressed = true; wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 }); break;
-            case "up": pressed = false; wc.sendInputEvent({ type: "mouseUp", x, y, button: "left", clickCount: 1 }); break;
+            case "move": wc.sendInputEvent({ type: "mouseMove", x: px, y: py, ...held }); break;
+            case "down": pressed = true; wc.sendInputEvent({ type: "mouseDown", x: px, y: py, button: "left", clickCount: 1 }); break;
+            case "up": pressed = false; wc.sendInputEvent({ type: "mouseUp", x: px, y: py, button: "left", clickCount: 1 }); break;
             case "wheel": wc.sendInputEvent({ type: "mouseWheel", x, y, deltaX: 0, deltaY: -Math.round(Number(m.dy) || 0), canScroll: true }); break;
             default: throw new Error("no such input: " + m.kind);
         }

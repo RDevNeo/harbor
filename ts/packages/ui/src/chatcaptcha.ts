@@ -274,9 +274,10 @@ export class ChatCaptcha {
         }
         this.crop = f.crop;
         this.d.image(image);
-        // The slot keeps the first frame's aspect: later frames only swap the image.
-        const first = !this.data.has_frame;
-        this.set({ ...this.data, has_frame: true, width: first ? f.width : this.data.width, height: first ? f.height : this.data.height });
+        // The slot takes each frame's shape (the checkbox, then the bigger challenge): drawn at its
+        // own aspect, fitted to the card's width, never stretched. Frames of the same shape only
+        // swap the image.
+        if (!this.data.has_frame || this.data.width !== f.width || this.data.height !== f.height) this.set({ ...this.data, has_frame: true, width: f.width, height: f.height });
         this.meta(f);
       }
     } finally {
