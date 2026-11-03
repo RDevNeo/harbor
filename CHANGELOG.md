@@ -5,6 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.3] - 2026-11-03
+
+### Fixed
+- Desktop: a message with more images than fit across its card (four from the phone, say) drew the
+  last thumbnails past the card's right edge. Thumbnails now wrap into rows inside the card, in your
+  messages and in replies alike, at any window width.
+
 ## [0.121.2] - 2026-11-03
 
 ### Fixed
