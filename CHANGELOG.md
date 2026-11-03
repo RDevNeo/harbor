@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.135.0] - 2026-11-03
+
 ### Changed
 - Harbor's window takes ~90 MB less memory from the start (on a 1400x900 window: 466 → 371 MB
   resident, glibc heap 204 → 109 MB). Harbor now ships its own build of Slint's native module
