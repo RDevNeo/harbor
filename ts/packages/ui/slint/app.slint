@@ -489,6 +489,7 @@ export component AppWindow inherits Window {
     // instead of each copying the pixels (`MediaRows`).
     in-out property <image> image-scratch;
     in property <[FileItem]> files;
+    in property <int> file-tiles;
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
     out property <int> cursor: composer-el.cursor;
@@ -1055,6 +1056,7 @@ export component AppWindow inherits Window {
                                 mic-tip: root.mic-tip;
                                 logo: root.model-logo;
                                 files: root.files;
+                                file-tiles: root.file-tiles;
                                 menu: root.menu;
                                 menu-selected: root.menu-selected;
                                 open-popup: root.pop-id;

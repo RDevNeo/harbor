@@ -218,6 +218,8 @@ export struct FileItem {
     thumb: image,
     // Its number among the message's images: `[Image #N]` in the text.
     number: int,
+    // Its place among the tiles, or among the chips.
+    slot: int,
 }
 
 // An attached image above the text (the phone's Attach `tile`): the picture cropped square and rounded,
@@ -413,6 +415,8 @@ export component Composer {
     in property <image> logo;
     in property <length> max-h: 280px;
     in property <[FileItem]> files;
+    // How many of `files` are tiles.
+    in property <int> file-tiles;
     in property <[MenuEntry]> menu;
     in property <int> menu-selected;
     in property <string> open-popup;
@@ -685,35 +689,51 @@ export component Composer {
                         }
                     }
                 }
-                if root.files.length > 0: HorizontalLayout {
-                    padding-bottom: 6px;
-                    spacing: 8px;
-                    alignment: start;
-                    // Chips sit on the tiles' bottom line.
-                    for f[i] in root.files: Rectangle {
-                        width: f.tile ? 70px : chip.width;
-                        min-height: f.tile ? 70px : 26px;
-                        if f.tile: ImageTile {
-                            x: 0;
-                            y: 0;
-                            thumb: f.thumb;
-                            name: f.name;
-                            number: f.number;
-                            remove => {
-                                root.remove-file(i);
+                // The pictures first, in rows of 70 px tiles; then the other files, in rows of equal cells where
+                // a long name elides. Rows wrap at the composer's width, so nothing runs past its edge.
+                if root.files.length > 0: Rectangle {
+                    property <length> gap: 8px;
+                    property <int> tiles: root.file-tiles;
+                    property <int> chip-count: root.files.length - root.file-tiles;
+                    property <int> tile-cols: max(1, floor((self.width + gap) / (70px + gap)));
+                    property <int> chip-cols: max(1, floor((self.width + gap) / (200px + gap)));
+                    property <length> chip-w: min(200px, self.width);
+                    property <length> tiles-h: tiles == 0 ? 0 : ceil(tiles / tile-cols) * (70px + gap) - gap;
+                    property <length> chips-top: tiles-h + (tiles > 0 && chip-count > 0 ? gap : 0px);
+                    property <length> content-h: chips-top + (chip-count == 0 ? 0px : ceil(chip-count / chip-cols) * (26px + gap) - gap);
+                    height: min(content-h, root.max-h) + 6px;
+                    Flickable {
+                        width: parent.width;
+                        height: parent.height - 6px;
+                        content-width: self.width;
+                        content-height: parent.content-h;
+                        for f[i] in root.files: Rectangle {
+                            x: f.tile ? mod(f.slot, tile-cols) * (70px + gap) : mod(f.slot, chip-cols) * (chip-w + gap);
+                            y: f.tile ? floor(f.slot / tile-cols) * (70px + gap) : chips-top + floor(f.slot / chip-cols) * (26px + gap);
+                            width: f.tile ? 70px : chip-w;
+                            height: f.tile ? 70px : 26px;
+                            if f.tile: ImageTile {
+                                x: 0;
+                                y: 0;
+                                thumb: f.thumb;
+                                name: f.name;
+                                number: f.number;
+                                remove => {
+                                    root.remove-file(i);
+                                }
+                                open => {
+                                    root.open-file(i);
+                                }
                             }
-                            open => {
-                                root.open-file(i);
-                            }
-                        }
-                        chip := FileChip {
-                            x: 0;
-                            y: parent.height - 26px;
-                            visible: !f.tile;
-                            name: f.name;
-                            image: f.image;
-                            remove => {
-                                root.remove-file(i);
+                            if !f.tile: FileChip {
+                                x: 0;
+                                y: 0;
+                                limit: chip-w;
+                                name: f.name;
+                                image: f.image;
+                                remove => {
+                                    root.remove-file(i);
+                                }
                             }
                         }
                     }

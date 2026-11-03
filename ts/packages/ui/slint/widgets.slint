@@ -732,9 +732,11 @@ export component KbdCombo {
 export component FileChip {
     in property <string> name;
     in property <bool> image;
+    // The widest it may be: a longer name elides.
+    in property <length> limit: 100000px;
     callback remove;
     height: 26px;
-    width: label.preferred-width + 52px;
+    width: min(label.preferred-width + 52px, root.limit);
     Rectangle {
         background: Theme.gray-100;
         border-width: 1px;
@@ -750,7 +752,9 @@ export component FileChip {
     }
     label := Text {
         x: 24px;
+        width: root.width - 52px;
         text: root.name;
+        overflow: elide;
         font-size: 12.5px;
         color: Theme.fg;
         vertical-alignment: center;

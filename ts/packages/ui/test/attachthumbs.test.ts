@@ -18,10 +18,10 @@ test("images become numbered tiles showing their picture once decoded, other fil
   );
   const files = ["/d/pastes/pasted-1.png", "/d/notes.txt", "/d/shot.JPG"];
   const first = t.items(files);
-  expect(first.map((f) => [f.name, f.image, f.tile, f.number])).toEqual([
-    ["pasted-1.png", true, true, 1],
-    ["notes.txt", false, false, 0],
-    ["shot.JPG", true, true, 2],
+  expect(first.map((f) => [f.name, f.image, f.tile, f.number, f.slot])).toEqual([
+    ["pasted-1.png", true, true, 1, 0],
+    ["notes.txt", false, false, 0, 0],
+    ["shot.JPG", true, true, 2, 1],
   ]);
   expect(first[0]?.thumb).toBe(noPixels);
   await tick();
@@ -30,6 +30,10 @@ test("images become numbered tiles showing their picture once decoded, other fil
   expect(second[0]?.thumb.width).toBe(8);
   expect(sameFile(first[0]!, second[0]!)).toBe(false);
   expect(sameFile(second[0]!, t.items(files)[0]!)).toBe(true);
+  // Removing an earlier tile moves the surviving one, even though its pixels haven't changed.
+  const moved = t.items(files.slice(1))[1]!;
+  expect(moved.slot).toBe(0);
+  expect(sameFile(second[2]!, { ...second[2]!, slot: moved.slot })).toBe(false);
   // Each picture is decoded once, small.
   expect(asked).toEqual([
     ["/d/pastes/pasted-1.png", AttachThumbs.CAP],
@@ -46,9 +50,12 @@ test("an image that can't be decoded falls back to its chip; one no draft holds 
     },
     () => {},
   );
-  t.items(["/d/broken.png"]);
+  const files = ["/d/notes.txt", "/d/broken.png", "/d/more.txt"];
+  expect(t.items(files).map((f) => [f.tile, f.slot])).toEqual([[false, 0], [true, 0], [false, 1]]);
   await tick();
-  expect(t.items(["/d/broken.png"])[0]).toMatchObject({ image: true, tile: false, number: 1 });
+  const fallback = t.items(files);
+  expect(fallback[1]).toMatchObject({ image: true, tile: false, number: 1 });
+  expect(fallback.map((f) => f.slot)).toEqual([0, 1, 2]);
   t.keep([[]]);
   t.items(["/d/broken.png"]);
   expect(calls).toBe(2);

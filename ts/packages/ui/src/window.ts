@@ -256,6 +256,8 @@ export interface FileItem {
   tile: boolean;
   thumb: Pixels;
   number: number;
+  /** Its place among the tiles, or among the chips. */
+  slot: number;
 }
 
 export interface FileRow {
@@ -517,6 +519,8 @@ export interface AppWindow extends slint.ComponentHandle {
   model_logo: Pixels;
   image_scratch: Pixels;
   files: slint.Model<FileItem>;
+  /** How many of `files` are tiles. */
+  file_tiles: number;
   menu: slint.Model<MenuEntry>;
   menu_selected: number;
   readonly cursor: number;

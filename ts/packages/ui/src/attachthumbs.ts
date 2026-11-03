@@ -3,7 +3,7 @@ import { isImage } from "./logic/images.ts";
 import { type FileItem, noPixels } from "./window.ts";
 
 /** The composer's attachments as `FileItem`s: an image is a tile showing its picture, anything else (or an image
- * that can't be decoded) a chip. Each picture is decoded once, small (`CAP` px on its long side: a 64 px tile on
+ * that can't be decoded) a chip. Each picture is decoded once, small (`CAP` px on its long side: a 64 px picture on
  * a scaled or zoomed screen), and handed to the window as its own image, so redraws share it. */
 export class AttachThumbs {
   static readonly CAP = 256;
@@ -20,12 +20,15 @@ export class AttachThumbs {
 
   items(files: readonly string[]): FileItem[] {
     let n = 0;
+    let tiles = 0;
+    let chips = 0;
     return files.map((p) => {
       const name = p.slice(p.lastIndexOf("/") + 1);
-      if (!isImage(p)) return { name, image: false, tile: false, thumb: noPixels, number: 0 };
+      if (!isImage(p)) return { name, image: false, tile: false, thumb: noPixels, number: 0, slot: chips++ };
       n++;
       const t = this.thumb(p);
-      return { name, image: true, tile: t !== false, thumb: t || noPixels, number: n };
+      const tile = t !== false;
+      return { name, image: true, tile, thumb: t || noPixels, number: n, slot: tile ? tiles++ : chips++ };
     });
   }
 
@@ -61,5 +64,5 @@ export class AttachThumbs {
 
 /** Rows are the same when the model needn't change: a picture that arrived makes a new row. */
 export function sameFile(a: FileItem, b: FileItem): boolean {
-  return a.name === b.name && a.image === b.image && a.tile === b.tile && a.number === b.number && a.thumb === b.thumb;
+  return a.name === b.name && a.image === b.image && a.tile === b.tile && a.number === b.number && a.slot === b.slot && a.thumb === b.thumb;
 }

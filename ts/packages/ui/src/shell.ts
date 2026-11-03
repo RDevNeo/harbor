@@ -167,7 +167,7 @@ export class Shell {
   /** The attached images' pictures over the composer's text. */
   private readonly attachThumbs = new AttachThumbs(
     (p, cap) => (this.media ? this.media.images.decode(p, null, cap).then((r) => r.image) : null),
-    () => sync(this.files, this.fileItems(), sameFile),
+    () => this.syncFiles(),
     (p) => this.nativeImage(p),
   );
   private menu = new slint.ArrayModel<MenuEntry>([]);
@@ -223,7 +223,7 @@ export class Shell {
     this.voice.load();
     this.refreshVoice();
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId), (p) => this.nativeImage(p));
-    sync(this.files, this.fileItems(), sameFile);
+    this.syncFiles();
     // A Discord join that waits on a captcha comes up over the window for the person to solve.
     this.captcha = new CaptchaPane(this.win, async (b) => (await pkg.images.decodeBytes(b, 1280)).image);
     this.captcha.start();
@@ -896,7 +896,14 @@ export class Shell {
   refreshAll(): void {
     this.refreshSidebar();
     this.refreshView();
-    sync(this.files, this.fileItems(), sameFile);
+    this.syncFiles();
+  }
+
+  private syncFiles(): void {
+    const items = this.fileItems();
+    sync(this.files, items, sameFile);
+    const tiles = items.filter((f) => f.tile).length;
+    if (this.win.file_tiles !== tiles) this.win.file_tiles = tiles;
   }
 
   private fileItems(): FileItem[] {
@@ -1789,7 +1796,7 @@ export class Shell {
   }
 
   private refreshFiles(): void {
-    sync(this.files, this.fileItems(), sameFile);
+    this.syncFiles();
     this.refreshComposer();
   }
 
