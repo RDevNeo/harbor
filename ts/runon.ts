@@ -1,5 +1,8 @@
 import type { Account, agent, Engine } from "./packages/agents/src/index.ts";
 import {
+  AUTO_DEVICE,
+  type AutoCandidate,
+  autoKey,
   configLines,
   glyph,
   hostLabel,
@@ -7,8 +10,10 @@ import {
   newHost,
   type MovePc,
   type Peer,
+  pickAuto,
   placeName,
   placeOf,
+  ramText,
   relocateBlocker,
   relocateCheck,
   relocatedText,
@@ -51,7 +56,12 @@ export interface RunOnDeps {
   home: string;
   /** The profiles of chats commanded from other PCs, where a session may have been written. */
   overlays: () => string[];
+  /** This PC's free memory in MB (ram.ts RamMeter); null: not known. */
+  ram?: () => number | null;
 }
+
+/** Sparkles: the Auto row's glyph. */
+const AUTO_GLYPH = "\u{e412}";
 
 /** "Runs on": the composer's device menu and relocate.rs's move of a started chat between this PC, its devices and other PCs. */
 export class RunOn {
@@ -91,7 +101,8 @@ export class RunOn {
     return relocateWhy({ started: c.started, device: c.device, to, blocker: () => this.blocker(chatId), place: placeOf(to, this.d.hosts(), this.devices()), meshOn: this.d.meshOn() });
   }
 
-  /** The menu's rows: this PC, the devices (hidden ones only while picked), then PCs running Harbor that aren't devices. */
+  /** The menu's rows: this PC, the devices (hidden ones only while picked), then PCs running Harbor that aren't devices.
+   * A row is its icon and name; only Auto's says more (where it would go), and a row that can't be picked says why. */
   rows(chatId: number | null, current: string, kind: string): RunOnRow[] {
     const c = chatId === null ? undefined : this.d.engine.chat(chatId);
     const started = c?.started === true;
@@ -102,19 +113,66 @@ export class RunOn {
     const hubs = this.d.hosts();
     const out: RunOnRow[] = [];
     const hereWhy = why("");
-    out.push({ id: "", name: "This PC", glyph: "", desc: hereWhy ?? this.d.me().hostname, online: null, current: current === "", enabled: (!locked || current === "") && hereWhy === null });
+    out.push({ id: "", name: "This PC", glyph: "", desc: hereWhy ?? "", online: null, current: current === "", enabled: (!locked || current === "") && hereWhy === null });
+    // Auto, second (a pick that's gone falls back to the first, this PC), only for a chat not made yet (the draft):
+    // it's decided at its first message.
+    if (chatId === null) {
+      const best = this.autoPick(kind);
+      const desc = best === null ? "No PC can take it now" : `Most free memory now: ${best.id === "" ? "This PC" : best.name}${best.ram === null ? "" : ` · ${ramText(best.ram)}`}`;
+      out.push({ id: AUTO_DEVICE, name: "Auto", glyph: AUTO_GLYPH, desc, online: null, current: current === AUTO_DEVICE, enabled: best !== null });
+    }
     for (const [h, online] of devs) {
       const no = why(h.id);
       const hub = hubs.find((p) => p.id === h.id);
-      const desc = !claude ? "Claude Code only" : no !== null ? no : hub ? (hub.online ? (started ? "Harbor · the chat moves there" : "Harbor · starts the chat there") : "Harbor · off") : `${online === true ? "Online · " : online === false ? "Offline · " : ""}${h.host}`;
+      const desc = !claude ? "Claude Code only" : no !== null ? no : hub !== undefined && !hub.online ? "Harbor · off" : "";
       out.push({ id: h.id, name: hostLabel(h), glyph: glyph(h), desc, online, current: h.id === current, enabled: claude && (!locked || h.id === current) && no === null && (hub === undefined || hub.online) });
     }
     for (const p of hubs.filter((x) => !devs.some(([h]) => h.id === x.id))) {
       const no = why(p.id);
-      const desc = no !== null ? no : !p.online ? "Harbor · off" : started ? "Harbor · the chat moves there" : "Harbor · starts the chat there";
+      const desc = no !== null ? no : !p.online ? "Harbor · off" : "";
       out.push({ id: p.id, name: p.name, glyph: glyph(newHost({ os: "linux" })), desc, online: p.online, current: p.id === current, enabled: claude && !locked && p.online && no === null });
     }
     return out;
+  }
+
+  /** The PCs Auto picks among: this PC and the other PCs running Harbor that can take a new chat now (on, sharing, with a Claude account).
+   * SSH devices aren't: there's no free-memory figure for them. Only Claude chats go to other PCs. */
+  autoCandidates(kind: string): AutoCandidate[] {
+    const me = this.d.me();
+    const out: AutoCandidate[] = [{ id: "", name: me.name === "" ? me.hostname : me.name, ram: this.d.ram?.() ?? null }];
+    if (kind !== "Claude" || !this.d.meshOn()) return out;
+    for (const p of this.d.hosts()) {
+      if (!p.online || !p.accounts.some((a) => a[2] === "claude")) continue;
+      out.push({ id: p.id, name: p.name === "" ? p.id : p.name, ram: p.ram });
+    }
+    return out;
+  }
+
+  /** Where Auto puts a new chat now: the PC with the most free memory (ram.ts `pickAuto`). */
+  autoPick(kind: string): AutoCandidate | null {
+    return pickAuto(this.autoCandidates(kind));
+  }
+
+  /** A device field as the chat gets it: "auto" becomes the PC picked now ("" when none can be: this PC). */
+  resolve(device: string, kind: string): { device: string; auto: boolean } {
+    if (device !== AUTO_DEVICE) return { device, auto: false };
+    return { device: this.autoPick(kind)?.id ?? "", auto: true };
+  }
+
+  /** Remembers that Auto put the chat `gid` on `place` ("" this PC, else a PC's id). */
+  markAuto(gid: string, place: string): void {
+    if (gid !== "") this.d.store.set(autoKey(gid), place);
+  }
+
+  /** "Auto → <PC>" for a chat Auto placed, while it's still there; null otherwise (`here`: this PC's own name for itself). */
+  autoLabel(c: Chat, here = "This PC"): string | null {
+    const placed = c.gid === "" ? null : this.d.store.get(autoKey(c.gid));
+    if (placed === null || placed === undefined) return null;
+    const at = c.home !== "" ? c.home : c.device;
+    if (placed !== at) return null;
+    if (at === "") return `Auto \u{2192} ${here}`;
+    const p = this.d.hosts().find((x) => x.id === at);
+    return `Auto \u{2192} ${p?.name || at}`;
   }
 
   private devOf(chat: Chat, h: RemoteHost): RelocateDev {

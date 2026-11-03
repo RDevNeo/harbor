@@ -13,6 +13,8 @@ import { clipboard, dictate, dictwords, favicon, media, parakeet, voice } from "
 import { discord, Funnel, hookcert, machines, mcp } from "./packages/mcp/src/index.ts";
 import {
   AccountService,
+  fakePeers,
+  RamMeter,
   deviceSshArgs,
   type DeviceSendEnv,
   gatherVersions,
@@ -509,8 +511,12 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         return null;
     }
   };
+  // Free memory, sampled here and told to peers (the composer's Auto pick of where a chat runs).
+  const ramMeter = new RamMeter();
+  ramMeter.start();
   const mesh = new Mesh({
     hub,
+    ram: () => ramMeter.mb(),
     transcribe: async (wav, lang) => {
       const [status, body] = await dictate.servePeer(voicePeers, wav, lang);
       return { status, body: body as Json };
@@ -537,6 +543,13 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     env,
   });
   mesh.reread();
+  // Screenshots only (ram.ts fakePeers, a rig's own data): PCs that are on, with their free memory, in every PC list.
+  const shotPeers = fakePeers(env.HARBOR_FAKE_PEERS);
+  if (shotPeers.length > 0) {
+    store.set("mesh_enabled", "1");
+    mesh.reread();
+    for (const p of shotPeers) hub.mesh.peers.set(p.id, p);
+  }
   hub.mesh.about = () => aboutOwner(store, owners);
   const remotes = new Remotes({
     home: home(),
@@ -864,9 +877,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     dataDir: dataDir(env),
     home: home(),
     overlays: () => overlays({ dataDir: dataDir(env) }),
+    ram: () => ramMeter.mb(),
   });
   mover.relocate = (chat, pc) => runOn.relocate(chat, pc);
   phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };
+  phone.d.auto = { pick: (kind) => runOn.autoPick(kind), resolve: (device, kind) => runOn.resolve(device, kind), mark: (gid, place) => runOn.markAuto(gid, place), label: (c, here) => runOn.autoLabel(c, here) };
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc) => mover.movePc(chat, pc) };
   phone.d.engine = {
     running: (id) => live.running(id),

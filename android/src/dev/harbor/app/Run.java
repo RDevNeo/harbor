@@ -72,7 +72,19 @@ final class Run {
     JSONArray models() { return Chat.byKind(st, "models", kind()); }
     JSONArray efforts() { return Chat.byKind(st, "efforts", kind()); }
     JSONArray accesses() { return Chat.byKind(st, "access", kind()); }
-    JSONArray devices() { JSONArray d = st.optJSONArray("devices"); return d == null ? new JSONArray() : d; }
+    /** The places a chat can run. "Auto" (the PC with the most free memory, decided at the first
+     *  message) is only for a chat not made yet. */
+    JSONArray devices() {
+        JSONArray d = st.optJSONArray("devices");
+        if (d == null) return new JSONArray();
+        if (chat == null) return d;
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < d.length(); i++) {
+            JSONObject o = d.optJSONObject(i);
+            if (o == null || !o.optBoolean("auto")) out.put(d.opt(i));
+        }
+        return out;
+    }
 
     /** Whether field can change now. A new chat: everything its provider has. */
     boolean can(String f) {
@@ -130,7 +142,17 @@ final class Run {
         return d == null ? "" : d.optString(kind(), "");
     }
     String accessLabel() { return Hub.labelOf(accesses(), access); }
-    String deviceLabel() { return Hub.labelOf(devices(), device); }
+    /** The composer's device: "Auto → <PC>" where Auto would put it now, or where it put this chat. */
+    String deviceLabel() {
+        String placed = chat == null || chat.isNull("auto_label") ? "" : chat.optString("auto_label", "");
+        if (!placed.isEmpty()) return placed;
+        JSONArray d = devices();
+        for (int i = 0; i < d.length(); i++) {
+            JSONObject o = d.optJSONObject(i);
+            if (o != null && o.optBoolean("auto") && device.equals(o.optString("id"))) return o.optString("pick_label", o.optString("label"));
+        }
+        return Hub.labelOf(d, device);
+    }
 
     String projectLabel() {
         if (project.isEmpty()) return "No project";
@@ -268,11 +290,13 @@ final class Run {
             boolean ok = true;
             if (e instanceof JSONObject) {
                 JSONObject j = (JSONObject) e;
-                sub = j.optString("desc", "");
+                // A row is its name; only Auto's says more (where it would go), and one that can't be
+                // picked says why.
+                sub = j.optBoolean("auto") ? j.optString("desc", "") : "";
                 boolean off = j.has("online") && !j.isNull("online") && !j.optBoolean("online");
                 // Another PC running Harbor: the chat starts there, so it has to be on.
-                if (j.optBoolean("hub")) { sub = off ? "Harbor · off" : started ? "Harbor · the chat moves there" : "Harbor · the chat runs there"; ok = !off; }
-                else if (off) sub = sub.isEmpty() ? "offline" : sub + " · offline";
+                if (j.optBoolean("hub") && off) { sub = "Harbor · off"; ok = false; }
+                if (j.has("enabled") && !j.optBoolean("enabled", true)) ok = false;
             }
             String why = no == null ? "" : no.optString(Hub.optId(e), "");
             if (!why.isEmpty()) { sub = why; ok = false; }

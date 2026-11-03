@@ -224,6 +224,8 @@ export struct ComposerState {
     access: string,
     access-icon: string,
     device: string,
+    // The device chip's glyph; "" is the house.
+    device-icon: string,
     action: string,
     action-tip: string,
     hint: string,
@@ -763,7 +765,7 @@ export component Composer {
                         Trigger {
                             x: access.x + access.width + chips.sep + 2 * chips.gap;
                             y: 2px;
-                            icon: Icons.house;
+                            icon: root.state.device-icon == "" ? Icons.house : root.state.device-icon;
                             label: chips.show-d ? root.state.device : "";
                             label-max: chips.ld + chips.gd - 4px;
                             tip: chips.show-d && chips.gd >= chips.pd + 4px - chips.ld ? "" : root.state.device;

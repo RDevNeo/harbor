@@ -324,7 +324,7 @@ interface Pc {
   heard: (number | null)[];
 }
 
-async function pc(name: string, live?: StoreReplicaOptions["live"]): Promise<Pc> {
+async function pc(name: string, live?: StoreReplicaOptions["live"], ram?: number): Promise<Pc> {
   const id = generateIdentity();
   const store = Store.openAt(join(tmp, `${name}.db`));
   const hub = new Hub([], 0);
@@ -341,6 +341,7 @@ async function pc(name: string, live?: StoreReplicaOptions["live"]): Promise<Pc>
     myAddrs: () => [],
     uploadsDir: join(tmp, name),
     upload: async (r, q) => (api ? api.upload(r, q) : err(503, "")),
+    ...(ram === undefined ? {} : { ram: () => ram }),
   });
   hub.mesh.on = true;
   api = new Api({
@@ -377,7 +378,7 @@ async function until(f: () => boolean, ms = 15_000): Promise<boolean> {
 
 describe("two TypeScript PCs", () => {
   test("pair with a code, then each holds a copy of the other's chat, and edits follow", async () => {
-    const a = await pc("alpha");
+    const a = await pc("alpha", undefined, 5120);
     const b = await pc("beta");
     const item = (t: string): Item => ({ kind: "text", text: t, at: 1 });
     const own = a.store.createChat(blankChat({ title: "On alpha", role: "lead", name: "lead" }));
@@ -399,6 +400,10 @@ describe("two TypeScript PCs", () => {
     const copy = b.store.chats().find((c) => c.home === "pc:alpha");
     expect([copy?.title, copy?.gid, copy?.homeId]).toEqual(["On alpha", own.gid, own.id]);
     expect(b.hub.mesh.peer("pc:alpha")?.online).toBe(true);
+    // Its free memory came with its chats list (the composer's Auto); beta says none.
+    expect(b.hub.mesh.peer("pc:alpha")?.ram).toBe(5120);
+    expect(await until(() => a.hub.mesh.peer("pc:beta")?.online === true)).toBe(true);
+    expect(a.hub.mesh.peer("pc:beta")?.ram).toBeNull();
     // A new reply on alpha reaches the copy through the long-poll.
     a.store.saveItems(own.id, [item("one"), item("two")]);
     a.replica.touch(own.id);

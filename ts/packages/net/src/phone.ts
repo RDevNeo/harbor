@@ -14,6 +14,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { hostLabel, hostname, ICONS, isFound, type RemoteHost } from "./remote.ts";
 import { dest, type Peer } from "./shared.ts";
+import { AUTO_DEVICE, ramText } from "./ram.ts";
 import { F64, hashStr, type Json } from "./wire.ts";
 import { actions, cardMedia, project, type Media, type Shown } from "./view.ts";
 import { pcOwner, phoneDev, type Viewer } from "./senders.ts";
@@ -158,6 +159,19 @@ export interface PhoneDeps {
   };
   /** A chat is about to be deleted: its worktree goes too. */
   dropChat?: (chat: Chat) => void;
+  /** The "Auto" pick of where a new chat runs (runon.ts): the PC with the most free memory. */
+  auto?: PhoneAuto;
+}
+
+/** runon.ts's Auto for the phone's calls. */
+export interface PhoneAuto {
+  /** Where Auto would put a new chat of `kind` now ("" this PC); null: nowhere. */
+  pick(kind: string): { id: string; name: string; ram: number | null } | null;
+  /** "auto" as the PC picked now; other values as they are. */
+  resolve(device: string, kind: string): { device: string; auto: boolean };
+  mark(gid: string, place: string): void;
+  /** "Auto → <PC>" while the chat is where Auto put it (`here`: this PC's name). */
+  label(c: Chat, here: string): string | null;
 }
 
 export interface RunSettings {
@@ -457,6 +471,8 @@ export class PhoneRoutes {
       project_id: project === null ? null : global ? project.path : project.id,
       title: c.title,
       device: c.device,
+      // "Auto → <PC>" while the chat is where Auto put it; null otherwise.
+      auto_label: this.d.auto?.label(c, hub.mesh.me.name === "" ? hostname() : hub.mesh.me.name) ?? null,
       account: c.account,
       model: c.model,
       effort: c.effort,
@@ -601,7 +617,23 @@ export class PhoneRoutes {
     const updates = this.d.updates?.() ?? { hub_update: null };
     const me = hub.mesh.me;
     const peers = hub.mesh.on ? [...hub.mesh.peers.values()].sort((x, y) => Number(y.online) - Number(x.online) || Buffer.compare(Buffer.from(x.name), Buffer.from(y.name))) : [];
-    const devices: Record<string, Json>[] = [{ id: "", label: me.name === "" ? hostname() : me.name, icon: "monitor", online: true }];
+    const here = me.name === "" ? hostname() : me.name;
+    const devices: Record<string, Json>[] = [{ id: "", label: here, icon: "monitor", online: true }];
+    if (this.d.auto) {
+      // Second, so a phone whose pick is gone still falls back to this PC (the first).
+      const best = this.d.auto.pick("Claude");
+      const name = best === null ? "" : best.id === "" ? here : best.name;
+      devices.push({
+        id: AUTO_DEVICE,
+        label: "Auto",
+        pick_label: best === null ? "Auto" : `Auto \u{2192} ${name}`,
+        icon: "sparkles",
+        online: true,
+        auto: true,
+        enabled: best !== null,
+        desc: best === null ? "No PC can take it now" : `Most free memory now: ${name}${best.ram === null ? "" : ` \u{b7} ${ramText(best.ram)}`}`,
+      });
+    }
     for (const [h, online] of this.d.devices?.() ?? []) if (!h.hidden) devices.push({ id: h.id, label: hostLabel(h), icon: deviceIcon(h), online });
     for (const x of peers) {
       const d = devices.find((y) => y.id === x.id);
@@ -936,6 +968,25 @@ export class PhoneRoutes {
 
   /** api.rs `api_create_in`. */
   private async create(body: Record<string, unknown>, sender: string, global: boolean, from: SentBy | null = null, who: Who = NOBODY): Promise<Reply> {
+    // "Auto": the PC with the most free memory now, decided once here; the chat stays there. `auto_placed`: another PC's
+    // Auto sent it here, so this PC remembers it too.
+    let auto = body.auto_placed === true;
+    if (body.device === AUTO_DEVICE) {
+      const r = this.d.auto?.resolve(AUTO_DEVICE, "Claude") ?? { device: "", auto: true };
+      body = { ...body, device: r.device, auto_placed: true };
+      auto = true;
+    }
+    // A first message to a project's main chat may join the one there is: that chat isn't Auto's.
+    const had = auto && body.main === true ? new Set(this.d.store.chats().map((c) => c.gid)) : null;
+    const r = await this.createAt(body, sender, global, from, who);
+    if (auto && r.status < 300) {
+      const gid = obj(r.body).gid;
+      if (typeof gid === "string" && gid !== "" && !had?.has(gid)) this.d.auto?.mark(gid, typeof body.device === "string" ? body.device : "");
+    }
+    return r;
+  }
+
+  private async createAt(body: Record<string, unknown>, sender: string, global: boolean, from: SentBy | null, who: Who): Promise<Reply> {
     const peer = this.d.hub.mesh.on && typeof body.device === "string" ? this.d.hub.mesh.peer(body.device) : null;
     if (peer !== null) return this.createOnPeer(peer, body, sender, global, who);
     const found = this.createRepo(body);

@@ -196,6 +196,8 @@ export interface ComposerState {
   access: string;
   access_icon: string;
   device: string;
+  /** The device chip's glyph; "" is the house. */
+  device_icon: string;
   action: "send" | "stop" | "steer" | "queue" | "update" | "resume";
   action_tip: string;
   hint: string;

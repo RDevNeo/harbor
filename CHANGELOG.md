@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- "Auto" in the composer's Runs on menu, on the desktop and the phone: a new chat starts on the
+  PC with the most free memory (MemAvailable, averaged over the last 10 minutes), among the PCs
+  that can take it now. It's decided once, at the first message, and the chat stays there. The
+  composer shows where it goes ("Auto → laptop") before and after. Each PC tells its peers its
+  free memory with the chat lists they already poll.
+
+### Changed
+- The Runs on menu (desktop) and the Device picker (phone) show each place by its name only; a
+  row that can't be picked still says why.
+
 ## [0.122.0] - 2026-11-03
 
 ### Added

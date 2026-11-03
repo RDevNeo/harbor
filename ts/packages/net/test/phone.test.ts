@@ -618,3 +618,55 @@ test("a default saved on a provider Harbor dropped reads as Claude's defaults", 
   kv.set("default_account", "codex");
   expect(composerDefaults(store, [], "medium")).toMatchObject({ account: "codex", model: "auto", effort: "minimal" });
 });
+
+describe("phone: Runs on › Auto", () => {
+  test("the state lists Auto second; a new chat on Auto goes where it says, once, and says so after", async () => {
+    const store = Store.openAt(join(tmp, "auto.db"));
+    const hub = new Hub([], 0);
+    hub.mesh.on = true;
+    hub.mesh.me = { id: "pc:desk", name: "desk" };
+    hub.mesh.peers.set("pc:a", newPeer({ id: "pc:a", name: "laptop", online: true, addr: "127.0.0.1:1", accounts: [["claude", "Claude", "claude"]] }));
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const forwarded: Record<string, unknown>[] = [];
+    mesh.forward = async (_d, _name, _method, _path, body) => {
+      forwarded.push(body);
+      return { status: 200, body: { id: 9, gid: "g-there" } };
+    };
+    let best: { id: string; name: string; ram: number | null } | null = { id: "pc:a", name: "laptop", ram: 12_595 };
+    const marks = new Map<string, string>();
+    const auto = {
+      pick: () => best,
+      resolve: (device: string) => (device === "auto" ? { device: best?.id ?? "", auto: true } : { device, auto: false }),
+      mark: (gid: string, place: string) => void marks.set(gid, place),
+      label: (c: Chat, here: string) => (marks.has(c.gid) ? `Auto → ${marks.get(c.gid) === "" ? here : "laptop"}` : null),
+    };
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, auto });
+    const call = (method: string, path: string, body: unknown = null) => routes.route({ method, path: path.split("/"), query: [], body, token: "", device: "Pixel", global: true });
+    const devices = () => ((routes.state("", true) as { devices: Record<string, Json>[] }).devices);
+    expect(devices().map((d) => d.id)).toEqual(["", "auto", "pc:a"]);
+    expect(devices()[1]).toMatchObject({ label: "Auto", pick_label: "Auto → laptop", auto: true, enabled: true, desc: "Most free memory now: laptop · 12.3 GB free" });
+    // Auto picked the laptop: the chat starts there, told it was Auto's.
+    const r = await call("POST", "v1/chats", { device: "auto", account: "claude", text: "hi" });
+    expect(r.status).toBe(200);
+    expect(forwarded[0]).toMatchObject({ device: "", auto_placed: true, text: "hi" });
+    expect(marks.get("g-there")).toBe("pc:a");
+    // Then this PC: made here on "", remembered as Auto's, and its chat says so.
+    best = { id: "", name: "desk", ram: 20_000 };
+    const h = await call("POST", "v1/chats", { device: "auto", account: "claude", text: "" });
+    const gid = (h.body as { gid: string }).gid;
+    const made = store.chats().find((c) => c.gid === gid);
+    expect(made?.device).toBe("");
+    expect(marks.get(gid)).toBe("");
+    expect((routes.chatJson(made as Chat, true) as { auto_label: Json }).auto_label).toBe("Auto → desk");
+    // Another PC's Auto sent one here: this PC remembers it too. A chat picked by hand isn't Auto's.
+    const sent = await call("POST", "v1/chats", { device: "", auto_placed: true, account: "claude", text: "" });
+    expect(marks.get((sent.body as { gid: string }).gid)).toBe("");
+    const plain = await call("POST", "v1/chats", { device: "", account: "claude", text: "" });
+    expect(marks.has((plain.body as { gid: string }).gid)).toBe(false);
+    // Nowhere to go: greyed.
+    best = null;
+    expect(devices()[1]).toMatchObject({ pick_label: "Auto", enabled: false, desc: "No PC can take it now" });
+    store.close();
+  });
+});

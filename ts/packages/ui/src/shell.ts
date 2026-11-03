@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, providers, recap, Work } from "@harbor/agents";
 import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
-import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
+import { AUTO_DEVICE, CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
 import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionFromJson, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
@@ -1364,6 +1364,7 @@ export class Shell {
     const draftEmpty = this.win.draft.trim() === "";
     const editing = this.queueEdit !== null && this.queueEdit.chat === this.key();
     const resume = this.view === "chat" && draftEmpty && this.resumable(this.chatId);
+    const device = this.deviceLabel(kind);
     const state: ComposerState = {
       model: this.modelLabel(kind, sel.model),
       model_tip: acc ? providers.short(acc) : kind,
@@ -1372,7 +1373,8 @@ export class Shell {
       effort: providers.effortLabel(kind, sel.effort) + (providers.hasFast(kind) && this.data.store.get("fast_mode") === "1" ? " · Fast" : ""),
       access: providers.accessLabel(kind, sel.access),
       access_icon: sel.access === "full" ? ICONS.LOCK_OPEN : sel.access === "plan" ? ICONS.EYE : ICONS.LOCK,
-      device: this.deviceLabel(kind),
+      device,
+      device_icon: device.startsWith("Auto") ? ICONS.SPARKLES : "",
       action: editing ? "update" : running && draftEmpty ? "stop" : steer ? "steer" : running ? "queue" : resume ? "resume" : "send",
       action_tip: editing
         ? "Update queued message (Enter)"
@@ -1762,12 +1764,24 @@ export class Shell {
       return;
     }
     const joinsMain = this.view !== "chat" && this.draftMain && this.draftRepo !== null ? this.data.mainChat(this.draftRepo) : null;
-    // A project whose folder is on another PC starts its chat there (draftTarget).
-    const startOn = this.view !== "chat" && joinsMain === null ? (this.draftTarget() ?? this.sel.device) : "";
+    // A project whose folder is on another PC starts its chat there (draftTarget), unless a device or Auto is picked.
+    // "Auto": the PC with the most free memory, decided once now; the chat stays there (the draft keeps Auto for the next one).
+    let sel = this.sel;
+    let startOn = this.view !== "chat" && joinsMain === null ? (this.draftTarget() ?? sel.device) : "";
+    let auto = false;
+    if (startOn === AUTO_DEVICE) {
+      const kind = this.account(sel.account)?.kind ?? kindOfAccount(sel.account);
+      startOn = this.hub.auto?.resolve(AUTO_DEVICE, kind).device ?? "";
+      sel = { ...sel, device: startOn };
+      auto = true;
+    }
     if (startOn !== "") {
       const repo = this.draftRepo === null ? undefined : this.data.repo(this.draftRepo);
-      const body = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: this.sel.account, model: this.sel.model, effort: this.sel.effort, access: this.sel.access, text };
-      if (this.meshChat.create(startOn, body, files, this.draftRepo, DRAFT, { text, mentions })) {
+      const body: Record<string, unknown> = { project: repo ? { name: repo.name, path: repo.path, remote: repo.remote } : null, account: sel.account, model: sel.model, effort: sel.effort, access: sel.access, text };
+      if (auto) body.auto_placed = true;
+      const place = startOn;
+      const made = auto ? (gid: string) => this.hub.auto?.mark(gid, place) : undefined;
+      if (this.meshChat.create(place, body, files, this.draftRepo, DRAFT, { text, mentions }, made)) {
         clear();
         this.refreshAll();
         return;
@@ -1776,7 +1790,11 @@ export class Shell {
     let id = this.view === "chat" ? this.chatId : DRAFT;
     if (id === DRAFT) {
       const joins = joinsMain;
-      id = joins ?? this.engine.newThread(this.draftRepo, text, this.sel).id;
+      if (joins === null) {
+        const made = this.engine.newThread(this.draftRepo, text, sel);
+        if (auto) this.hub.auto?.mark(made.gid, sel.device);
+        id = made.id;
+      } else id = joins;
       if (this.draftMain && this.draftRepo !== null && joins === null) this.data.store.setMainChat(this.draftRepo, id);
       this.view = "chat";
       this.chatId = id;
@@ -2590,8 +2608,15 @@ export class Shell {
     const [chat, current] = this.deviceOf();
     // Another PC's chat: its device is that PC's ("" is that PC itself, not this one).
     const open = chat === null ? undefined : this.data.chat(chat);
+    const placed = open === undefined ? null : (this.hub.auto?.label(open) ?? null);
+    if (placed !== null) return placed;
     if (this.meshChat.foreign(open)) return this.meshChat.homeName(open);
     if (current === "") return "This PC";
+    if (current === AUTO_DEVICE) {
+      // Where it would go now; decided at the first message.
+      const best = this.hub.auto?.pick(kind) ?? null;
+      return best === null ? "Auto" : `Auto \u{2192} ${best.id === "" ? "This PC" : best.name}`;
+    }
     return this.hub.runOnRows(chat, current, kind).find((r) => r.id === current)?.name ?? "Missing device";
   }
 
@@ -2602,7 +2627,8 @@ export class Shell {
     if (this.meshChat.foreign(open)) {
       // Another PC's chat runs there: that PC is the place, not this one's list.
       const home = this.meshChat.homeName(open);
-      this.popup("device", x, y, [{ ...this.label("Runs on"), kind: "caption" }, this.item(home, () => {}, { icon: ICONS.HOUSE, desc: "This chat's PC: it runs there", checked: true })], 300, true);
+      const auto = this.hub.auto?.label(open) ?? null;
+      this.popup("device", x, y, [{ ...this.label("Runs on"), kind: "caption" }, this.item(home, () => {}, { icon: ICONS.HOUSE, desc: auto !== null ? "Auto put it there (most free memory): it runs there" : "This chat's PC: it runs there", checked: true })], 300, true);
       return;
     }
     const started = chat !== null && this.data.chat(chat)?.started === true;
@@ -2622,9 +2648,10 @@ export class Shell {
         this.refreshComposer();
       } else this.setSel({ device: id });
     };
-    const rows = this.hub.runOnRows(chat, current, kind).map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));
+    const runRows = this.hub.runOnRows(chat, current, kind);
+    const rows = runRows.map((r) => this.item(r.name, pick(r.id), { icon: r.id === "" ? ICONS.HOUSE : r.glyph, desc: r.desc, checked: r.current, enabled: r.enabled }));
     const items: (PopItem & { act?: () => void })[] = [{ ...this.label("Runs on"), kind: "caption" }, ...rows];
-    if (rows.length === 1) items.push(this.label("No other PCs yet: pair one in Settings › Devices, or add one by SSH."));
+    if (runRows.filter((r) => r.id !== AUTO_DEVICE).length === 1) items.push(this.label("No other PCs yet: pair one in Settings › Devices, or add one by SSH."));
     items.push(this.separator(), this.item("Manage devices…", () => void this.pages.openSettings("devices"), { icon: ICONS.SETTINGS }));
     this.popup("device", x, y, items, 300, true);
   }
@@ -3613,6 +3640,13 @@ export interface ShellHub extends PageHub {
   /** The composer's "Runs on" menu for a chat (null: the draft) whose device is `current`. */
   runOnRows: (chatId: number | null, current: string, kind: string) => { id: string; name: string; glyph: string; desc: string; online: boolean | null; current: boolean; enabled: boolean }[];
   relocate: (chatId: number, to: string) => Promise<string>;
+  /** The composer's "Auto" pick of where a new chat runs (runon.ts): resolved at the first message, remembered, shown as "Auto → <PC>". */
+  auto?: {
+    pick: (kind: string) => { id: string; name: string; ram: number | null } | null;
+    resolve: (device: string, kind: string) => { device: string; auto: boolean };
+    mark: (gid: string, place: string) => void;
+    label: (chat: Chat) => string | null;
+  };
   prs: chatpr.ChatPrs;
   workspaces: () => Workspaces;
   devices: () => { list: PairedDevice[]; served: number };

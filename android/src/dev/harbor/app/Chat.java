@@ -285,6 +285,9 @@ public class Chat extends Base implements Images.Gallery {
         // A chat that runs on another PC of the mesh: that PC's name.
         String home = c.optString("home_name", "");
         if (st != null && !c.optString("home", "").isEmpty() && !c.optString("home").equals(st.optString("hub_id"))) dev = home;
+        // A chat Auto placed: "Auto → <PC>" while it's still there.
+        String placed = c.isNull("auto_label") ? "" : c.optString("auto_label", "");
+        if (!placed.isEmpty()) dev = placed;
         String line = dev.isEmpty() ? acc : dev + " · " + acc;
         sub(line, Ui.G700);
         boolean ro = c.has("writable") && !c.optBoolean("writable", true);

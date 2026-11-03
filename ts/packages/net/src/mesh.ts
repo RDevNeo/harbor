@@ -13,6 +13,7 @@ import { codeKey, connect, DEFAULT_PORT, hostPort, newCode, normalizeCode, norma
 import { Ordered, type Json } from "./wire.ts";
 import { PIECE_BYTES } from "./foldercopy.ts";
 import { PROJECT_MOVES_VERSION } from "./projectmove.ts";
+import { ramOf } from "./ram.ts";
 
 /** Who a forwarded call is from: its label ("Pixel 8 (Sam)"), the device id, the person and device kind when known, and the stable device id (`Item` user's `dev`). */
 export type Sender = [label: string, device: string, who?: string, via?: SentVia | "", dev?: string];
@@ -53,6 +54,8 @@ export interface MeshDeps {
   myAddrs: () => string[];
   /** `GET /v1/app`'s APK versionCode this PC serves (0: none). */
   apkCode?: () => number;
+  /** This PC's free memory in MB (ram.ts RamMeter), told to peers in hello and each chats list; null: not known. */
+  ram?: () => number | null;
   uploadsDir: string;
   /** api.ts's upload, for `/mesh/v1/upload`. */
   upload: (r: Reader, req: Request) => Promise<Reply>;
@@ -316,6 +319,7 @@ export class Mesh {
         update: x.update,
         moves: MOVES_VERSION,
         project_moves: this.d.project ? PROJECT_MOVES_VERSION : 0,
+        ram: this.d.ram?.() ?? null,
       });
     }
     if (is("GET", "mesh", "v1", "events")) {
@@ -338,7 +342,7 @@ export class Mesh {
       const rev = hub.rev();
       const { chats, update } = await this.d.app.chats(since, full);
       const gone = full ? [] : shared.gone.filter(([g]) => g > since).map(([, id]) => id);
-      return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update });
+      return ok({ epoch: hub.epoch, rev, full, chats, gone, phones: hub.enabled, update, ram: this.d.ram?.() ?? null });
     }
     if (req.method === "GET" && segs.length === 5 && segs[0] === "mesh" && segs[1] === "v1" && segs[2] === "chats" && segs[4] === "items") {
       const c = segs[3] ?? "";
@@ -720,6 +724,7 @@ export class Mesh {
       p.update = hello.update ?? null;
       p.moves = typeof hello.moves === "number" && hello.moves >= MOVES_VERSION;
       p.projectMoves = typeof hello.project_moves === "number" && hello.project_moves >= PROJECT_MOVES_VERSION;
+      p.ram = ramOf(hello.ram);
       p.accounts = (Array.isArray(hello.accounts) ? hello.accounts : []).map((x) => {
         const o = obj(x);
         const s = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : "");
@@ -757,6 +762,8 @@ export class Mesh {
           changed = true;
         }
         if (changed) this.savePeers();
+        // Its free memory, for the composer's Auto pick: fresh on every list, not saved.
+        if ("ram" in chats) p.ram = ramOf(chats.ram);
       }
       const wants = await this.d.app.applyChats(id, epoch, chats);
       for (const [hid, isince] of wants) {

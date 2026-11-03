@@ -38,6 +38,8 @@ export interface Peer {
   moves: boolean;
   /** It takes whole projects (Move to PC… of a project, `project_moves` in hello). */
   projectMoves: boolean;
+  /** Its free memory in MB, averaged over 10 minutes (`ram` in hello and its chats list); null: not said (older Harbor). Not saved. */
+  ram: number | null;
 }
 
 export function newPeer(p: Partial<Peer> & { id: string }): Peer {
@@ -59,6 +61,7 @@ export function newPeer(p: Partial<Peer> & { id: string }): Peer {
     update: null,
     moves: false,
     projectMoves: false,
+    ram: null,
     ...p,
   };
 }

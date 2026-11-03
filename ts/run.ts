@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview } from "./packages/net/src/index.ts";
-import { dataDir, single, Store } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, single, Store } from "./packages/store/src/index.ts";
 import {
   Reloader,
   advertised,
@@ -150,6 +150,12 @@ export async function runApp(o: RunOptions): Promise<number> {
       funnel: run.funnel,
       runOnRows: (chatId: number | null, current: string, kind: string) => run.runOn.rows(chatId, current, kind),
       relocate: (chatId: number, to: string) => run.runOn.relocate(chatId, to),
+      auto: {
+        pick: (kind: string) => run.runOn.autoPick(kind),
+        resolve: (device: string, kind: string) => run.runOn.resolve(device, kind),
+        mark: (gid: string, place: string) => run.runOn.markAuto(gid, place),
+        label: (chat: Chat) => run.runOn.autoLabel(chat),
+      },
       hookPort: () => run.engine.hookPort,
       devices: run.devices,
       deviceEnv: run.deviceEnv,

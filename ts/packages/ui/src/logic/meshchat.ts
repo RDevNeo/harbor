@@ -153,7 +153,7 @@ export class MeshChat {
   }
 
   /** mesh.rs `mesh_create`: the draft's first message starts the chat on PC `peer`; its copy here opens once it arrives. */
-  create(peer: string, body: Record<string, unknown>, files: readonly string[], repo: number | null, draft: number, restore: { text: string; mentions: Mention[] }): boolean {
+  create(peer: string, body: Record<string, unknown>, files: readonly string[], repo: number | null, draft: number, restore: { text: string; mentions: Mention[] }, made?: (gid: string) => void): boolean {
     const p = this.m.peer(peer);
     if (p === null) return false;
     if (!p.online) {
@@ -163,9 +163,13 @@ export class MeshChat {
     }
     void this.m.create(peer, body, files, repo).then(
       (r) => {
-        const id = typeof r.body === "object" && r.body !== null ? (r.body as { id?: unknown }).id : undefined;
+        const b = typeof r.body === "object" && r.body !== null ? (r.body as { id?: unknown; gid?: unknown }) : {};
+        const id = b.id;
         if (r.status >= 300) this.done(draft, "start the chat", r, restore);
-        else if (typeof id === "number") this.h.opened?.(id);
+        else {
+          if (typeof b.gid === "string" && b.gid !== "") made?.(b.gid);
+          if (typeof id === "number") this.h.opened?.(id);
+        }
       },
       (e: unknown) => this.done(draft, "start the chat", { status: 503, body: { error: e instanceof Error ? e.message : String(e) } }, restore),
     );
