@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.124.1] - 2026-11-03
+
 ### Added
 - Auto in a chat that has already started, on the desktop and the phone: the Runs on menu (the
   phone's Device picker) has Auto there too. Picking it moves the chat right then to the PC with the
