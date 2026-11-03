@@ -6,7 +6,7 @@ Usage: scripts/boat/phoneshot [options]
 
 Screenshots of the phone app (android/) from this working tree (tracked files with their
 uncommitted changes, plus new files git does not ignore), taken on a fresh `large` boat.dev
-sandbox from the snapshot `harbor-build` (.github/boat/phoneshot.sh): a test APK (android/build.sh
+sandbox (.github/boat/phoneshot.sh): a test APK (android/build.sh
 with HARBOR_RIG_PORT, see android/src/dev/harbor/app/Rig.java) on an Android 14 emulator (KVM,
 headless, a 1080x2400 phone at 420 dpi), connected to a hub with made-up data (ts/rig/phonehub.ts:
 projects, a chat with every kind of card, a lead with its team; never anyone's real chats).
@@ -26,54 +26,91 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
   --shot NAME      a shot of what is on the screen now (after it stops changing)
 Options:
   --dark           the phone's dark theme
+  --from NAME      the snapshot to start from. Default: harbor-phone (the emulator, its system image
+                   and a booted phone already in it) when it exists, else harbor-build (they install
+                   first, minutes)
+  --save-snapshot  make harbor-phone anew from harbor-build: a whole run (its shots must pass), then
+                   the sandbox is saved under that name. After a release changed the build images,
+                   or when the emulator should be newer. Default shots: chats,chat,settings
+  --rm-snapshot    remove harbor-phone (runs then start from harbor-build)
   -q, --quiet      only progress and the summary; the full output stays in /tmp/<sandbox name>.log
   -h, --help       this help
 
 Example: scripts/boat/phoneshot --screen chat --swipe 540,1800,540,600 --shot chat-end
-Takes 3 to 10 minutes: the emulator and its system image install first (1.5 to 10 of them), the
-rest is about 2. PHONESHOT_IMAGE / PHONESHOT_GPU try another system image / -gpu mode. Prerequisites:
-as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
+Time: 3 to 7 minutes from harbor-phone (most of it waits for the restored sandbox's disk to load),
+5 to 12 from harbor-build (the emulator and its system image install first). PHONESHOT_IMAGE /
+PHONESHOT_GPU try another system image / -gpu mode (installed on the spot). Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
 EOF2
 }
-steps=() quiet="" dark=""
+steps=() quiet="" dark="" from="" save="" drop=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
     --tap|--swipe|--text|--key|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
+    --from) from=$2; shift ;;
+    --save-snapshot) save=1 ;;
+    --rm-snapshot) drop=1 ;;
     -q|--quiet) quiet=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
 done
-[ ${#steps[@]} -gt 0 ] || steps=(screen:chats)
+phone=harbor-phone
+[ -z "$save" ] || [ -z "$from$drop" ] || { echo "--save-snapshot makes $phone from harbor-build: no --from or --rm-snapshot with it" >&2; exit 2; }
+[ ${#steps[@]} -gt 0 ] || { [ -n "$save" ] && steps=(screen:chats screen:chat screen:settings); } || steps=(screen:chats)
 dest=$HOME/.cache/harbor-shots/phone-$(date +%Y%m%d-%H%M%S)
 . "$(dirname "$0")/lib.sh"
 
-pngs=""
+named_snapshot() { "$boat" snapshots --json | jq -e --arg n "$1" '.named[]? | select(.name == $n)' 2>/dev/null; }
+if [ -n "$drop" ]; then
+  named_snapshot "$phone" >/dev/null || { say "there is no $phone"; exit 0; }
+  "$boat" snapshot rm "$phone" --json >/dev/null
+  say "removed $phone: runs start from harbor-build"
+  exit 0
+fi
+if [ -n "$save" ]; then snapshot=harbor-build
+elif [ -n "$from" ]; then snapshot=$from
+elif named_snapshot "$phone" >/dev/null; then snapshot=$phone
+else snapshot=harbor-build; say "no $phone snapshot: from harbor-build, the emulator installs first (scripts/boat/phoneshot --save-snapshot makes $phone)"
+fi
+
+pngs="" saved=""
 summary() {
   [ -f "$log" ] || return 0
   [ -z "$quiet" ] || sed 's/\x1b\[[0-9;]*[mK]//g' "$log" | grep -E -A40 '^THE APP|^error:|: error: |FAILED' | head -120
   echo
   say "summary"
-  grep -E '^<== |^shot |^booted ' "$log" | sed 's/^<== //; s/^/  /'
+  echo "  from the snapshot $snapshot: sandbox up at ${t_ready:-?}s, tree copied at ${t_up:-?}s, phone done at ${t_run:-?}s, shots here at ${t_back:-?}s"
+  grep -E '^<== |^shot |^booted |^kept: |^home: |^note: |^disk loaded|^cpu: ' "$log" | sed 's/^<== //; s/^/  /'
+  [ -z "$saved" ] || echo "  $saved"
   [ ! -d "$dest/logs" ] || echo "  logs (hub, emulator, logcat, screen dumps): $dest/logs"
 }
 last_words() { [ -z "$pngs" ] || echo "$pngs"; }
 
-sandbox
-upload
+at() { echo "$(( $(date +%s) - started ))"; }
+sandbox; t_ready=$(at)
+upload; t_up=$(at)
 set +e
-remote DARK="$dark" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" -- bash .github/boat/phoneshot.sh "${steps[@]}"
+remote DARK="$dark" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" \
+  SAVE="$save" -- bash .github/boat/phoneshot.sh "${steps[@]}"
 code=$?
 set -e
+t_run=$(at)
 # The shots taken, also when a later step failed, and the logs (hub, emulator, logcat).
 mkdir -p "$dest"
-if "$boat" scp "$id:/home/user/out/shots.tgz" "$work/shots.tgz" >/dev/null 2>&1; then
+if "$boat" scp "$id:/home/user/out/shots.tgz" "$work/shots.tgz" > "$work/scp.log" 2>&1 || { sed 's/^/  scp: /' "$work/scp.log" >&2; false; }; then
   tar -xzf "$work/shots.tgz" -C "$dest"
   mv "$dest"/shots/*.png "$dest"/ 2>/dev/null || true
   rmdir "$dest/shots" 2>/dev/null || true
   pngs=$(find "$dest" -maxdepth 1 -name '*.png' | sort)
+fi
+t_back=$(at)
+if [ -n "$save" ] && [ "$code" = 0 ]; then
+  "$boat" exec "$id" -- bash -c 'rm -rf src src.tgz out' >/dev/null
+  say "saving the sandbox as $phone"
+  "$boat" snapshot "$id" "$phone" --json >/dev/null
+  saved="saved $phone (its newest layer: $(named_snapshot "$phone" | jq -r '.sizeBytes / 1e9 * 10 | round / 10') GB)"
 fi
 exit "$code"

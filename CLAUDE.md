@@ -72,7 +72,9 @@ the browser engine, the video player and releases build on boat).
     the executable back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
     give it the longest timeout, or run it in the background.
   - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
-  - `scripts/boat/phoneshot`: screenshots of the phone app on an emulator (`.github/boat/phoneshot.sh`).
+  - `scripts/boat/phoneshot`: screenshots of the phone app on an emulator (`.github/boat/phoneshot.sh`),
+    from the snapshot `harbor-phone` (emulator installed, phone booted once); `--save-snapshot`
+    remakes it from harbor-build, `--rm-snapshot` drops it.
   - `scripts/boat/snapshot`: what a saved snapshot's ~/cache really holds (`--from NAME`), and
     the release's build and save steps on a copy of it (`--build --save NAME`, `--rm NAME`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings
@@ -99,7 +101,7 @@ the browser engine, the video player and releases build on boat).
     doesn't fail it.
   - `.github/workflows/prune.yml`: by hand, drops other engines' caches from `harbor-browser`.
 - Sandboxes are `large`, start from the saved snapshots (`harbor-build`, `harbor-browser`,
-  `harbor-browser-aarch64`, `harbor-browser-android`) and are deleted when the job ends.
+  `harbor-browser-aarch64`, `harbor-browser-android`, `harbor-phone`) and are deleted when the job ends.
 - A sandbox's disk loads on first touch, one file at a time: reading ahead in parallel made a run
   30 times slower. `harbor-build` keeps the build images as folders so nothing waits for docker
   (`.github/boat/warm.sh`, `run_in` in `.github/boat/lib.sh`).
