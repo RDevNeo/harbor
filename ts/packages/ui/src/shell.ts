@@ -2661,8 +2661,9 @@ export class Shell {
     const open = chat === null ? undefined : this.data.chat(chat);
     if (this.meshChat.foreign(open)) {
       // Another PC's chat runs there: that PC is the place, not this one's list.
-      const home = this.meshChat.homeName(open);
       const auto = this.hub.auto?.label(open) ?? null;
+      // Auto's chat: its PC by the name the composer's "Auto → <PC>" gives it.
+      const home = auto !== null && open !== undefined ? (this.hub.auto?.name?.(open.home) ?? this.meshChat.homeName(open)) : this.meshChat.homeName(open);
       this.popup("device", x, y, [{ ...this.label("Runs on"), kind: "caption" }, this.item(home, () => {}, { icon: ICONS.HOUSE, desc: auto !== null ? "Auto put it there (most free memory): it runs there" : "This chat's PC: it runs there", checked: true })], 300, true);
       return;
     }
@@ -2670,7 +2671,17 @@ export class Shell {
     const pick = (id: string) => () => {
       if (id === current) return;
       const place = chat === null ? this.draftPlace() : null;
-      if (started && chat !== null) {
+      if (started && chat !== null && id === AUTO_DEVICE) {
+        // Auto: the PC with the most free memory now; the chat moves there as a pick of that PC moves it.
+        const moving = this.hub.auto?.relocate?.(chat, kind) ?? Promise.reject(new Error("this Harbor can't do that"));
+        void moving.then(
+          (r) => {
+            this.toast(r.moved ? `Moving to ${r.name}…` : `Already on ${r.name}, the PC with the most free memory`);
+            this.refreshComposer();
+          },
+          (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
+        );
+      } else if (started && chat !== null) {
         void this.hub.relocate(chat, id).then(
           (name) => this.toast(`Moving to ${name}…`),
           (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
@@ -3681,6 +3692,10 @@ export interface ShellHub extends PageHub {
     resolve: (device: string, kind: string) => { device: string; auto: boolean };
     mark: (gid: string, place: string) => void;
     label: (chat: Chat) => string | null;
+    /** Auto picked in a started chat: it moves now to the PC with the most free memory (nothing moves when it's there). */
+    relocate?: (chatId: number, kind: string) => Promise<{ name: string; moved: boolean }>;
+    /** A PC's name as the Runs on menu's rows show it (runon.ts `nameOf`). */
+    name?: (id: string) => string;
   };
   prs: chatpr.ChatPrs;
   workspaces: () => Workspaces;

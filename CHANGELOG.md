@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Added
+- Auto in a chat that has already started, on the desktop and the phone: the Runs on menu (the
+  phone's Device picker) has Auto there too. Picking it moves the chat right then to the PC with the
+  most free memory, the same move as picking that PC by hand; when the chat is on that PC already,
+  nothing moves. The composer then says "Auto → <PC>" while the chat stays there. When that PC
+  can't take the chat now (it's working, say), the row is greyed with the reason.
+
+### Fixed
+- Auto names each PC as the Runs on menu does: a PC added in Settings › Devices goes by the name you
+  gave it there, not the name its Harbor gives itself. That's in Auto's "Most free memory now" line,
+  the composer's "Auto → <PC>", the phone's Device row and chat header, and the "Moving to <PC>"
+  notices of a started chat's move.
+
 ## [0.124.0] - 2026-11-03
 
 ### Added

@@ -77,5 +77,7 @@ describe("screenshot peers (HARBOR_FAKE_PEERS)", () => {
       ["pc:fake-laptop", "laptop", true, 12595, "claude"],
       ["pc:fake-box", "box", true, 4096, "claude"],
     ]);
+    // Standing in for a PC the data knows, by its id.
+    expect(fakePeers("ts:laptop=laptop:2970").map((p) => [p.id, p.name, p.ram])).toEqual([["ts:laptop", "laptop", 2970]]);
   });
 });

@@ -72,12 +72,13 @@ final class Run {
     JSONArray models() { return Chat.byKind(st, "models", kind()); }
     JSONArray efforts() { return Chat.byKind(st, "efforts", kind()); }
     JSONArray accesses() { return Chat.byKind(st, "access", kind()); }
-    /** The places a chat can run. "Auto" (the PC with the most free memory, decided at the first
-     *  message) is only for a chat not made yet. */
+    /** The places a chat can run. "Auto" (the PC with the most free memory) is for a chat not made
+     *  yet (decided at its first message) and for a started one whose hub moves it there at the pick
+     *  (auto_moves), as a pick of that PC would. */
     JSONArray devices() {
         JSONArray d = st.optJSONArray("devices");
         if (d == null) return new JSONArray();
-        if (chat == null) return d;
+        if (chat == null || chat.optBoolean("auto_moves")) return d;
         JSONArray out = new JSONArray();
         for (int i = 0; i < d.length(); i++) {
             JSONObject o = d.optJSONObject(i);

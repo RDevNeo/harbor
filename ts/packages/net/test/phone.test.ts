@@ -669,4 +669,45 @@ describe("phone: Runs on › Auto", () => {
     expect(devices()[1]).toMatchObject({ pick_label: "Auto", enabled: false, desc: "No PC can take it now" });
     store.close();
   });
+
+  test("Auto in a started chat moves it at the pick, through runon's move; a reason greys it", async () => {
+    const store = Store.openAt(join(tmp, "auto-started.db"));
+    const hub = new Hub([], 0);
+    const replica = new StoreReplica({ store, hub, version: "t" });
+    const moved: [number, string][] = [];
+    let why: string | null = null;
+    const auto = {
+      pick: () => ({ id: "pc:a", name: "Sam-Laptop", ram: 9000 }),
+      resolve: (device: string) => ({ device, auto: false }),
+      mark: () => {},
+      label: () => null,
+      why: () => why,
+      relocate: async (chatId: number, kind: string) => {
+        moved.push([chatId, kind]);
+        return { to: "pc:a", name: "Sam-Laptop", moved: true };
+      },
+    };
+    const mesh = new Mesh({ hub, kv: new MemKv(), id: () => generateIdentity(), app: replica, myAddrs: () => [], uploadsDir: tmp, upload: async () => err(404, "") });
+    const routes = new PhoneRoutes({ store, hub, replica, mesh, version: "t", myFp: () => "", engine: null, auto });
+    const c = store.createChat(blankChat({ title: "t", role: "lead", account: "claude", started: true, gid: "g-started" }));
+    const fresh = store.createChat(blankChat({ title: "n", role: "lead", account: "claude", gid: "g-new" }));
+    const json = (x: Chat) => routes.chatJson(x, true) as { auto_moves: Json; device_why: Record<string, Json> | null };
+    // Its picker has Auto (auto_moves); a chat not started has nothing to move.
+    expect(json(c).auto_moves).toBe(true);
+    expect(json(fresh).auto_moves).toBe(false);
+    expect(json(c).device_why).toEqual({});
+    const call = (body: unknown) => routes.route({ method: "PATCH", path: ["v1", "chats", String(c.id)], query: [], body, token: "", device: "Pixel", global: true });
+    const r = await call({ device: "auto" });
+    expect(r.status).toBe(200);
+    expect(moved).toEqual([[c.id, "Claude"]]);
+    // The chat's own device isn't set to "auto": the move sets it.
+    expect(store.chat(c.id)?.device).toBe("");
+    // Its best PC can't take it now: the picker greys Auto with the reason, and a pick is refused.
+    why = "it is running: move it once its turn ends";
+    expect(json(c).device_why).toEqual({ auto: why });
+    const no = await call({ device: "auto" });
+    expect(no.status).toBe(409);
+    expect(moved.length).toBe(1);
+    store.close();
+  });
 });

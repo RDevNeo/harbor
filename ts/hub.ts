@@ -882,7 +882,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   });
   mover.relocate = (chat, pc) => runOn.relocate(chat, pc);
   phone.d.relocate = { why: (chat, to) => runOn.why(chat, to), relocate: (chat, to) => runOn.relocate(chat, to) };
-  phone.d.auto = { pick: (kind) => runOn.autoPick(kind), resolve: (device, kind) => runOn.resolve(device, kind), mark: (gid, place) => runOn.markAuto(gid, place), label: (c, here) => runOn.autoLabel(c, here) };
+  phone.d.auto = { pick: (kind) => runOn.autoPick(kind), resolve: (device, kind) => runOn.resolve(device, kind), mark: (gid, place) => runOn.markAuto(gid, place), label: (c, here) => runOn.autoLabel(c, here), relocate: (chatId, kind) => runOn.relocateAuto(chatId, kind), why: (chatId, kind) => runOn.autoWhy(chatId, kind) };
   phone.d.move = { targetsJson: (chat) => mover.targetsJson(chat), movePc: (chat, pc) => mover.movePc(chat, pc) };
   phone.d.engine = {
     running: (id) => live.running(id),

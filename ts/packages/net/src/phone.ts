@@ -172,6 +172,10 @@ export interface PhoneAuto {
   mark(gid: string, place: string): void;
   /** "Auto → <PC>" while the chat is where Auto put it (`here`: this PC's name). */
   label(c: Chat, here: string): string | null;
+  /** Auto picked in a started chat: it moves now to the PC with the most free memory, as a pick of that PC would. */
+  relocate?(chatId: number, kind: string): Promise<{ to: string; name: string; moved: boolean }>;
+  /** Why Auto can't move that started chat now; null: it can. */
+  why?(chatId: number, kind: string): string | null;
 }
 
 export interface RunSettings {
@@ -577,9 +581,20 @@ export class PhoneRoutes {
       switchable: { account: allowed.some((a) => a !== c.account), model: true, effort: efforts.length > 0, access: access.length > 1, device: kind === "Claude" && (!c.started || blocker === null), fast },
       allowed_accounts: allowed,
       switch_reason: why,
-      device_why: !c.started || c.home !== "" ? null : (cat?.deviceWhy?.(c) ?? {}),
+      device_why: !c.started || c.home !== "" ? null : this.deviceWhy(c, kind),
+      // Its Device picker has Auto: a started Claude chat of this PC moves to the PC with the most free memory.
+      auto_moves: c.started && c.home === "" && kind === "Claude" && this.d.auto?.relocate !== undefined,
       moving_to: cat?.movingTo?.(c) ?? null,
     };
+  }
+
+  /** A started chat's `device_why` (by device id), with Auto's ("auto") when its best PC can't take the chat now. */
+  private deviceWhy(c: Chat, kind: string): Record<string, Json> {
+    const base = this.d.catalog?.deviceWhy?.(c) ?? {};
+    const m: Record<string, Json> = typeof base === "object" && base !== null && !Array.isArray(base) ? { ...(base as Record<string, Json>) } : {};
+    const w = kind === "Claude" ? (this.d.auto?.why?.(c.id, kind) ?? null) : null;
+    if (w !== null) m[AUTO_DEVICE] = w;
+    return m;
   }
 
   state(you: string, global: boolean): Json {
@@ -790,7 +805,16 @@ export class PhoneRoutes {
       if (title === "") return err(400, "empty title");
       let n: Chat = c;
       let fast: boolean | null = null;
-      const moving = c.started && typeof body.device === "string" && body.device !== c.device ? body.device : null;
+      // Auto in a started chat: the PC with the most free memory now, moved to as a pick of it would be (nothing moves
+      // when the chat is there already).
+      const auto = c.started && body.device === AUTO_DEVICE;
+      if (auto) {
+        if (!this.d.auto?.relocate) return err(409, "can't move it there: this Harbor can't do that");
+        const w = this.d.auto.why?.(c.id, this.kindOf(c)) ?? null;
+        if (w !== null) return err(409, `can't move it there: ${w}`);
+        delete body.device;
+      }
+      const moving = !auto && c.started && typeof body.device === "string" && body.device !== c.device ? body.device : null;
       if (moving !== null) {
         const w = this.d.relocate ? this.d.relocate.why(c.id, moving) : "this Harbor can't move a started chat";
         if (w !== null) return err(409, `can't move it there: ${w}`);
@@ -818,9 +842,10 @@ export class PhoneRoutes {
         this.d.replica.touch(c.id);
       }
       if (fast !== null) rs?.setFast(fast);
-      if (moving !== null) {
+      if (moving !== null || auto) {
         try {
-          await this.d.relocate?.relocate(c.id, moving);
+          if (auto) await this.d.auto?.relocate?.(c.id, this.kindOf(c));
+          else if (moving !== null) await this.d.relocate?.relocate(c.id, moving);
         } catch (e) {
           return err(409, e instanceof Error ? e.message : String(e));
         }

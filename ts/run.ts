@@ -155,6 +155,8 @@ export async function runApp(o: RunOptions): Promise<number> {
         resolve: (device: string, kind: string) => run.runOn.resolve(device, kind),
         mark: (gid: string, place: string) => run.runOn.markAuto(gid, place),
         label: (chat: Chat) => run.runOn.autoLabel(chat),
+        relocate: (chatId: number, kind: string) => run.runOn.relocateAuto(chatId, kind),
+        name: (id: string) => run.runOn.nameOf(id),
       },
       hookPort: () => run.engine.hookPort,
       devices: run.devices,

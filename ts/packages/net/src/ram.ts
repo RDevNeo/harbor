@@ -95,13 +95,14 @@ export function ramText(mb: number): string {
 /** kv key of a chat Auto placed: its value is the place it landed on ("" this PC, else the PC's id). */
 export const autoKey = (gid: string): string => `auto_pc:${gid}`;
 
-/** HARBOR_FAKE_PEERS=name:MB,… (screenshots only, `scripts/shot --env`): PCs that are on, with a Claude account and that much free
- * memory, in the Runs on menu and Auto's pick. Nothing else knows of them; unset, there are none. */
+/** HARBOR_FAKE_PEERS=[id=]name:MB,… (screenshots only, `scripts/shot --env`): PCs that are on, with a Claude account and that much free
+ * memory, in the Runs on menu and Auto's pick. `id=` stands in for a PC the data already knows (a device of Settings › Devices
+ * with its own name). Nothing else knows of them; unset, there are none. */
 export function fakePeers(spec: string | undefined): Peer[] {
   const out: Peer[] = [];
   for (const part of (spec ?? "").split(",")) {
-    const m = /^([A-Za-z0-9 ._-]+):(\d+)$/.exec(part.trim());
-    if (m) out.push(newPeer({ id: `pc:fake-${m[1]}`, name: m[1] ?? "", online: true, moves: true, accounts: [["claude", "Claude", "claude"]], ram: Number(m[2]) }));
+    const m = /^(?:([a-z]+:[A-Za-z0-9._-]+)=)?([A-Za-z0-9 ._-]+):(\d+)$/.exec(part.trim());
+    if (m) out.push(newPeer({ id: m[1] ?? `pc:fake-${m[2]}`, name: m[2] ?? "", online: true, moves: true, accounts: [["claude", "Claude", "claude"]], ram: Number(m[3]) }));
   }
   return out;
 }

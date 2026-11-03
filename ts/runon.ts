@@ -63,6 +63,12 @@ export interface RunOnDeps {
 /** Sparkles: the Auto row's glyph. */
 const AUTO_GLYPH = "\u{e412}";
 
+/** The Auto row's second line: where it would go now (`best` named as the menu names it). */
+function autoDesc(best: AutoCandidate | null): string {
+  if (best === null) return "No PC can take it now";
+  return `Most free memory now: ${best.id === "" ? "This PC" : best.name}${best.ram === null ? "" : ` · ${ramText(best.ram)}`}`;
+}
+
 /** "Runs on": the composer's device menu and relocate.rs's move of a started chat between this PC, its devices and other PCs. */
 export class RunOn {
   onToast: (text: string) => void = () => {};
@@ -114,12 +120,15 @@ export class RunOn {
     const out: RunOnRow[] = [];
     const hereWhy = why("");
     out.push({ id: "", name: "This PC", glyph: "", desc: hereWhy ?? "", online: null, current: current === "", enabled: (!locked || current === "") && hereWhy === null });
-    // Auto, second (a pick that's gone falls back to the first, this PC), only for a chat not made yet (the draft):
-    // it's decided at its first message.
+    // Auto, second (a pick that's gone falls back to the first, this PC). A new chat's is decided at its first message;
+    // a started chat's at the pick: it moves to that PC as a pick of it would (nothing moves when it's there already).
     if (chatId === null) {
       const best = this.autoPick(kind);
-      const desc = best === null ? "No PC can take it now" : `Most free memory now: ${best.id === "" ? "This PC" : best.name}${best.ram === null ? "" : ` · ${ramText(best.ram)}`}`;
-      out.push({ id: AUTO_DEVICE, name: "Auto", glyph: AUTO_GLYPH, desc, online: null, current: current === AUTO_DEVICE, enabled: best !== null });
+      out.push({ id: AUTO_DEVICE, name: "Auto", glyph: AUTO_GLYPH, desc: autoDesc(best), online: null, current: current === AUTO_DEVICE, enabled: best !== null });
+    } else if (started && !locked && claude) {
+      const best = this.autoPick(kind);
+      const no = best === null || best.id === current ? null : why(best.id);
+      out.push({ id: AUTO_DEVICE, name: "Auto", glyph: AUTO_GLYPH, desc: no ?? autoDesc(best), online: null, current: false, enabled: best !== null && no === null });
     }
     for (const [h, online] of devs) {
       const no = why(h.id);
@@ -148,9 +157,54 @@ export class RunOn {
     return out;
   }
 
-  /** Where Auto puts a new chat now: the PC with the most free memory (ram.ts `pickAuto`). */
+  /** Where Auto puts a chat now: the PC with the most free memory (ram.ts `pickAuto`), named as the menu's rows name it
+   * (`nameOf`). Ties still go by the name each PC gives itself, so every PC picks the same. */
   autoPick(kind: string): AutoCandidate | null {
-    return pickAuto(this.autoCandidates(kind));
+    const best = pickAuto(this.autoCandidates(kind));
+    return best === null || best.id === "" ? best : { ...best, name: this.nameOf(best.id) };
+  }
+
+  /** A place's name as the Runs on menu's rows show it: a device's own name (Settings › Devices) before the name its
+   * Harbor gives itself; `here` for this PC (""). */
+  nameOf(id: string, here = "This PC"): string {
+    if (id === "") return here;
+    const dev = this.devices().find(([h]) => h.id === id && !h.hidden);
+    if (dev) return hostLabel(dev[0]);
+    const p = this.d.hosts().find((x) => x.id === id);
+    return p === undefined || p.name === "" ? id : p.name;
+  }
+
+  /** Why Auto can't move started chat `chatId` now (the reason its best PC can't take it); null: it can. */
+  autoWhy(chatId: number, kind: string): string | null {
+    const c = this.d.engine.chat(chatId);
+    if (!c) return "no such chat";
+    const best = this.autoPick(kind);
+    if (best === null) return "No PC can take it now";
+    return best.id === c.device ? null : this.why(chatId, best.id);
+  }
+
+  /** Runs on › Auto in a started chat: it moves now to the PC with the most free memory, exactly as a pick of that PC
+   * moves it (`relocate`); when it's on that PC already, nothing moves. Remembered like a new chat's Auto, so the
+   * composer says "Auto → <PC>" while it stays there. */
+  async relocateAuto(chatId: number, kind: string): Promise<{ to: string; name: string; moved: boolean }> {
+    const c = this.d.engine.chat(chatId);
+    if (!c) throw new Error("no such chat");
+    const best = this.autoPick(kind);
+    if (best === null) throw new Error("No PC can take it now");
+    const name = best.id === "" ? this.nameOf("", this.hereName()) : best.name;
+    if (best.id === c.device) {
+      this.markAuto(c.gid, best.id);
+      this.d.engine.changed(chatId);
+      return { to: best.id, name, moved: false };
+    }
+    await this.relocate(chatId, best.id);
+    this.markAuto(c.gid, best.id);
+    return { to: best.id, name, moved: true };
+  }
+
+  private hereName(): string {
+    const me = this.d.me();
+    return me.name === "" ? me.hostname : me.name;
   }
 
   /** A device field as the chat gets it: "auto" becomes the PC picked now ("" when none can be: this PC). */
@@ -170,9 +224,7 @@ export class RunOn {
     if (placed === null || placed === undefined) return null;
     const at = c.home !== "" ? c.home : c.device;
     if (placed !== at) return null;
-    if (at === "") return `Auto \u{2192} ${here}`;
-    const p = this.d.hosts().find((x) => x.id === at);
-    return `Auto \u{2192} ${p?.name || at}`;
+    return `Auto \u{2192} ${this.nameOf(at, here)}`;
   }
 
   private devOf(chat: Chat, h: RemoteHost): RelocateDev {
@@ -206,7 +258,9 @@ export class RunOn {
     );
     const check = relocateCheck({ source, target, hasRepo: lead.repoId !== null, sourceDev: from, cwd });
     const me = this.d.me();
-    const [srcName, dstName] = [placeName(source, me), placeName(target, me)];
+    // Another PC by the name its row has in the menu (a device's own name before the one its Harbor gives itself).
+    const nameIn = (p: RelocatePlace, id: string) => (p.kind === "hub" ? this.nameOf(id) : placeName(p, me));
+    const [srcName, dstName] = [nameIn(source, lead.device), nameIn(target, to)];
     this.d.mover.local.relocating.set(chatId, dstName);
     this.d.engine.changed(chatId);
     const ids = chats.map((c) => c.id);
