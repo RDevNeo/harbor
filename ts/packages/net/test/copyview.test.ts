@@ -127,6 +127,14 @@ describe("a phone on a copy of another PC's chat", () => {
     homeStore.close();
   });
 
+  test("a draft the home PC cleared (a message went out) empties the phone's attachments too", async () => {
+    const pc = copyPc("cleared");
+    pc.replica.remote.set(pc.copy.id, { running: false, sinceMs: null, queued: 0, status: null, forks: [], typing: [], viewing: [], draft: { ...homeDraft([]), text: "", by: "", label: "", rev: 12 }, worktree: null, pr: null, cwd: null });
+    const items = (await pc.phone("GET", ["items"], null, [["since", "0"]])).body as { draft: Record<string, unknown> };
+    expect(items.draft).toMatchObject({ text: "", rev: 12, files: [] });
+    pc.store.close();
+  });
+
   test("this PC's own chats keep the draft's files", async () => {
     const pc = copyPc("own");
     const own = pc.store.createChat(blankChat({ title: "mine" }));

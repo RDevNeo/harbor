@@ -1,0 +1,104 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { draftFileOf, Hub, type Mesh, type PhoneRoutes, type RemoteState, type SharedDraft, type StoreReplica } from "../packages/net/src/index.ts";
+import type { Chat } from "../packages/store/src/index.ts";
+import { WindowMesh } from "../windowmesh.ts";
+
+const tmp = mkdtempSync(join(tmpdir(), "harbor-windowmesh-"));
+afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+const chat = (id: number, home = ""): Chat => ({ id, home, homeId: home === "" ? 0 : 70 + id, repoId: null }) as unknown as Chat;
+
+/** A window's mesh side over a real hub: chat 1 is this PC's, chat 2 a copy of another PC's. */
+function rig(name: string) {
+  const dir = join(tmp, name);
+  const uploads = join(dir, "uploads");
+  mkdirSync(uploads, { recursive: true });
+  const hub = new Hub([], 0);
+  const remote = new Map<number, RemoteState>();
+  const leases: unknown[] = [];
+  const mesh = { forwardLease: (...a: unknown[]) => leases.push(a) } as unknown as Mesh;
+  const chats = new Map([
+    [1, chat(1)],
+    [2, chat(2, "pc:home")],
+  ]);
+  const w = new WindowMesh({
+    hub,
+    mesh,
+    replica: { remote } as unknown as StoreReplica,
+    phone: {} as PhoneRoutes,
+    chat: (id) => chats.get(id),
+    ctx: () => null,
+    ownerName: () => null,
+    env: { HARBOR_MESH_ID: "desk" },
+    uploadsDir: uploads,
+  });
+  return { dir, uploads, hub, remote, leases, w };
+}
+
+describe("the window's shared draft", () => {
+  test("a desktop send empties the draft the phone sees (it kept the sent text before)", () => {
+    const r = rig("send");
+    r.w.lease(1, false, "pc", true, { text: "ship it", mentions: [] });
+    expect(r.hub.draft(1)).toMatchObject({ text: "ship it", by: "pc:desk" });
+    const typed = (r.hub.draft(1) as SharedDraft).rev;
+    r.w.sent(1);
+    const d = r.hub.draft(1) as SharedDraft;
+    expect([d.text, d.by, d.rev > typed]).toEqual(["", "", true]);
+    expect(r.hub.typing(1)).toEqual([]);
+    expect(r.w.draft(1)).toEqual({ text: "", files: [], mentions: [], by: "", rev: d.rev });
+    // A copy's draft is cleared by its home PC when the message gets there, not here.
+    r.w.sent(2);
+    expect(r.hub.draft(2)).toBeNull();
+  });
+
+  test("files attached in the window reach the phone, and the phone's reach the window", () => {
+    const r = rig("files");
+    const pic = join(r.dir, "pic.png");
+    writeFileSync(pic, "png!");
+    r.w.lease(1, false, "pc", true, { text: "see [Image 1]", mentions: [], files: [pic] });
+    const d = r.hub.draft(1) as SharedDraft;
+    expect(d.files).toHaveLength(1);
+    const f = d.files[0]!;
+    expect(f.id.startsWith("1/")).toBe(true);
+    // Hard-linked into the uploads folder: the phone shows and sends it by its upload id.
+    expect(statSync(f.path).ino).toBe(statSync(pic).ino);
+    expect(readFileSync(f.path, "utf8")).toBe("png!");
+    // The window gets its own path back, not the link's.
+    expect(r.w.draft(1)?.files).toEqual([pic]);
+    // Reported again: the same link, no second one.
+    r.w.lease(1, false, "pc", true, { text: "see [Image 1] now", mentions: [], files: [pic] });
+    expect((r.hub.draft(1) as SharedDraft).files.map((x) => x.id)).toEqual([f.id]);
+
+    // The phone attaches an image of its own (an upload on the hub) and writes on.
+    mkdirSync(join(r.uploads, "1"), { recursive: true });
+    writeFileSync(join(r.uploads, "1", "5-cam.jpg"), "jpg!");
+    r.hub.report(1, "tok:1", "phone", "Galaxy", true, { text: "see [Image 1] [Image 2]", files: [f.id, "1/5-cam.jpg"], mentions: [] }, (id) => draftFileOf(r.uploads, id));
+    expect(r.w.draft(1)).toMatchObject({ text: "see [Image 1] [Image 2]", files: [pic, join(r.uploads, "1", "5-cam.jpg")], by: "tok:1" });
+  });
+
+  test("a copy's draft gives text and mentions; its files only when a message took them", () => {
+    const r = rig("copy");
+    const base = { running: false, sinceMs: null, queued: 0, status: null, forks: [], typing: [], viewing: [], worktree: null, pr: null, cwd: null } as unknown as RemoteState;
+    const home: SharedDraft = { text: "from the phone", files: [{ id: "9/1-a.png", name: "1-a.png", path: "/home-pc/uploads/9/1-a.png" }], mentions: [{ item: 1 }], by: "tok:9", label: "Galaxy", rev: 50, quiet: null, held: false };
+    r.remote.set(2, { ...base, draft: home });
+    expect(r.w.draft(2)).toEqual({ text: "from the phone", files: null, mentions: [{ item: 1 }], by: "tok:9", rev: 50 });
+    r.remote.set(2, { ...base, draft: { ...home, text: "", files: [], mentions: [], by: "", label: "", rev: 51 } });
+    expect(r.w.draft(2)).toEqual({ text: "", files: [], mentions: [], by: "", rev: 51 });
+    // The window's lease for a copy goes to the home PC (files stay here: they're forwarded with the message).
+    r.w.lease(2, false, "pc", true, { text: "hi", mentions: [], files: ["/x.png"] });
+    expect(r.leases).toHaveLength(1);
+  });
+
+  test("watch calls back with the chats whose draft moved", async () => {
+    const r = rig("watch");
+    const got: number[][] = [];
+    r.w.watch((c) => got.push(c));
+    await Bun.sleep(5);
+    r.hub.report(1, "tok:1", "phone", "Galaxy", true, { text: "hello", files: [], mentions: [] }, () => null);
+    for (let i = 0; i < 50 && got.length === 0; i++) await Bun.sleep(10);
+    expect(got.flat()).toContain(1);
+  });
+});

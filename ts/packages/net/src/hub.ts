@@ -18,6 +18,7 @@ export const DRAFT_HOLD = 1_000;
 export const INBOX_TTL = 24 * 3600 * 1000;
 export const APP_INBOX = 17000;
 const PHONES_SEEN = "phones_seen";
+const DRAFTS_KEY = "shared_drafts";
 
 /** A phone's handle here (kv `api_tokens`, serde field order and skips as api.rs's Token). */
 export interface Token {
@@ -247,6 +248,7 @@ export class Hub {
   private typingMap = new Map<number, Typer[]>();
   private viewingMap = new Map<number, Typer[]>();
   private drafts = new Map<number, SharedDraft>();
+  private draftsDirty = false;
   private waiters = new Set<() => void>();
 
   constructor(tokens: Token[], port: number, private clock: () => number = () => performance.now()) {
@@ -418,6 +420,7 @@ export class Hub {
       changed = true;
     } else d.held = true;
     this.drafts.set(chat, d);
+    this.draftsDirty = true;
     if (changed) {
       this.mark(chat);
       this.notify();
@@ -446,19 +449,14 @@ export class Hub {
     return changed;
   }
 
-  /** A message went out of `chat`: its draft empties everywhere and its typers stop. */
+  /** A message went out of `chat`: its draft empties everywhere and its typers stop. The empty draft always gets a
+   * new rev, even when this hub knew no draft (it restarted, or the composer was never reported): every device's
+   * composer may still hold the message, and only a newer rev makes it give way. */
   clearDraft(chat: number): void {
-    const typers = this.typingMap.delete(chat);
-    const d = this.drafts.get(chat);
-    if (!d || draftEmpty(d)) {
-      if (typers) {
-        this.mark(chat);
-        this.notify();
-      }
-      return;
-    }
+    this.typingMap.delete(chat);
     this.rev_ += 1;
     this.drafts.set(chat, { ...emptyDraft(), rev: this.rev_ });
+    this.draftsDirty = true;
     this.mark(chat);
     this.notify();
   }
@@ -469,6 +467,28 @@ export class Hub {
 
   draftRevs(): [number, number][] {
     return [...this.drafts].map(([c, d]) => [c, d.rev]);
+  }
+
+  /** The drafts as kv `shared_drafts` keeps them for the next run, when they changed since the last save. */
+  saveDrafts(kv: Kv): void {
+    if (!this.draftsDirty) return;
+    this.draftsDirty = false;
+    kv.set(DRAFTS_KEY, JSON.stringify([...this.drafts].map(([c, d]) => [c, { text: d.text, files: d.files, mentions: d.mentions, by: d.by, label: d.label, rev: d.rev }])));
+  }
+
+  /** The drafts of the last run: a restart doesn't forget a cleared draft (whose rev makes the devices empty their
+   * composers) nor one a device wrote. Revs go on from the newest kept, so they stay newer than what devices saw. */
+  loadDrafts(kv: Kv, exists: (path: string) => boolean = existsSync): void {
+    const v = kvJson<unknown>(kv, DRAFTS_KEY, []);
+    for (const e of Array.isArray(v) ? v : []) {
+      if (!Array.isArray(e) || typeof e[0] !== "number" || !Number.isInteger(e[0])) continue;
+      const d = draftFromJson(e[1]);
+      if (!d) continue;
+      d.files = d.files.filter((f) => f.path !== "" && exists(f.path));
+      this.drafts.set(e[0], d);
+      if (d.rev >= this.rev_) this.rev_ = d.rev + 1;
+    }
+    this.state = this.rev_;
   }
 
   /** The soonest a lease runs out, ms on the hub's clock (prunes first). */

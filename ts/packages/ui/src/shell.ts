@@ -7,10 +7,11 @@ import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor
 import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
-import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
+import { add as addMention, chipHead, chipSnippet, chipTip, excerptOf, isChat, type Mention, mentionAgent, mentionFromJson, mentionOf, noteHint, SelectionButton } from "./logic/mentions.ts";
 import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
+import { DraftSync } from "./logic/shareddraft.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Item as PaletteItem, paletteItems } from "./logic/palette.ts";
 import { busOf } from "./pages/bus.ts";
@@ -278,6 +279,11 @@ export class Shell {
   private cardsDirty = false;
   private menus = new ComposerMenus();
   private mentions = new Map<number, Mention[]>();
+  /** The chat's mesh side (this PC's hub, or another PC's for a copy). */
+  private readonly shellMesh: ShellMesh;
+  /** The shared draft (PROTOCOL.md "Typing"): one composer per chat on every device. */
+  private readonly draftSync: DraftSync;
+  private readonly draftTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private attached = new Map<number, string[]>();
   /** queue.rs `Edit`: the queued message in the composer, and the draft set aside meanwhile. */
   private queueEdit: { chat: number; id: number; original: string; aside: Draft } | null = null;
@@ -290,6 +296,12 @@ export class Shell {
     this.prs = hub.prs;
     this.workspaces = hub.workspaces;
     this.hub = hub;
+    const shellMesh = hub.mesh ?? solo;
+    this.shellMesh = shellMesh;
+    this.draftSync = new DraftSync(() => shellMesh.me());
+    shellMesh.watch?.((chats) => {
+      for (const c of chats) this.syncDraft(c);
+    });
     this.meshChat = new MeshChat(hub.mesh ?? solo, {
       restore: (chat, text, mentions, append) => this.restoreSend(chat, text, mentions, append),
       changed: () => this.refreshAll(),
@@ -594,7 +606,7 @@ export class Shell {
       const before = this.drafts.get(this.key()) ?? "";
       this.drafts.set(this.key(), t);
       if (this.followImages(before, t)) return;
-      if (this.view === "chat") this.meshChat.typed(this.chatId, t.trim() !== "" || (this.mentions.get(this.chatId) ?? []).length > 0, { text: t, mentions: this.mentions.get(this.chatId) ?? [] });
+      this.shareDraft();
       setTimeout(() => this.refreshMenu(), 0);
     };
     w.key = (e) => this.composerKey(e);
@@ -804,6 +816,8 @@ export class Shell {
     this.engine.failed.delete(id);
     this.data.store.set("last_chat", String(id));
     this.win.draft = this.drafts.get(id) ?? "";
+    this.syncDraft(id);
+    this.draftSync.shown(id, { text: this.win.draft, mentions: this.mentions.get(id) ?? [], files: this.attached.get(id) ?? [] });
     this.closePopup();
     this.refreshAll();
     // A long chat's first layout takes a few frames: its end is sought until then.
@@ -1321,6 +1335,7 @@ export class Shell {
   }
 
   private refreshComposer(): void {
+    this.shareDraft();
     this.refreshMentions();
     const repo = this.currentRepo();
     this.win.untrusted = repo !== undefined && !this.engine.trusted(repo.id);
@@ -1425,6 +1440,7 @@ export class Shell {
     } else if (p.kind === "command") {
       this.harborCommand(p.command);
     }
+    this.shareDraft();
   }
 
   private harborCommand(c: HarborCommand): void {
@@ -1676,7 +1692,6 @@ export class Shell {
     this.win.draft = text;
     this.drafts.set(key, text);
     this.win.set_cursor(Buffer.byteLength(text.slice(0, cursor)));
-    if (this.view === "chat") this.meshChat.typed(this.chatId, text.trim() !== "" || (this.mentions.get(this.chatId) ?? []).length > 0, { text, mentions: this.mentions.get(this.chatId) ?? [] });
     this.refreshComposer();
     setTimeout(() => this.refreshMenu(), 0);
   }
@@ -1723,6 +1738,8 @@ export class Shell {
     };
     const open = this.view === "chat" ? this.data.chat(this.chatId) : undefined;
     if (this.meshChat.foreign(open)) {
+      // Its home PC empties the draft everywhere once the message is there; this composer now.
+      this.draftSync.sent(open.id, null);
       clear();
       this.meshChat.typed(open.id, false, null);
       this.meshChat.send(open, text, files, mentions, mode);
@@ -1750,11 +1767,15 @@ export class Shell {
       this.chatId = id;
       this.data.store.set("last_chat", String(id));
     }
+    if (from !== DRAFT) this.draftSync.sent(from, 0);
     this.mentions.delete(from);
     this.pickedTokens.delete(from);
     this.drafts.delete(from);
     this.attached.delete(from);
     this.win.draft = "";
+    // The message went out: the chat's draft empties on every device (and its typers stop, so it isn't queued for them).
+    this.shellMesh.sent?.(id);
+    this.draftSync.sent(id, this.shellMesh.draft?.(id)?.rev ?? 0);
     this.refreshFiles();
     this.engine.send(id, text, { files, mentions, mode });
     this.refreshAll();
@@ -1792,6 +1813,54 @@ export class Shell {
     this.attached.delete(chat);
     this.mentions.delete(chat);
     return d;
+  }
+
+  /** What the open chat's composer holds goes to its other devices, when it changed here (PROTOCOL.md "Typing"). */
+  private shareDraft(): void {
+    if (this.view !== "chat" || this.queueEdit?.chat === this.chatId) return;
+    const chat = this.chatId;
+    const held = { text: this.win.draft, mentions: this.mentions.get(chat) ?? [], files: this.attached.get(chat) ?? [] };
+    if (!this.draftSync.changed(chat, held)) return;
+    const on = held.text.trim() !== "" || held.mentions.length > 0 || held.files.length > 0;
+    this.meshChat.typed(chat, on, { text: held.text, mentions: held.mentions, files: [...held.files] });
+  }
+
+  /** The chat's shared draft into its composer, when it's newer and written on another device (api.rs `should_apply`). */
+  private syncDraft(chat: number): void {
+    if (chat === DRAFT || !this.shellMesh.draft) return;
+    // Editing a queued message: the draft waits aside, and comes in once the edit ends.
+    if (this.queueEdit?.chat === chat) return this.retryDraft(chat, 1000);
+    const d = this.shellMesh.draft(chat);
+    const r = this.draftSync.decide(chat, d);
+    if (r === "skip" || d === null) return;
+    if (r !== "now") return this.retryDraft(chat, r);
+    const mentions = d.mentions.map(mentionFromJson).filter((m): m is Mention => m !== null);
+    const files = d.files ?? this.attached.get(chat) ?? [];
+    this.draftSync.took(chat, d, { text: d.text, mentions, files });
+    this.drafts.set(chat, d.text);
+    if (mentions.length > 0) this.mentions.set(chat, mentions);
+    else this.mentions.delete(chat);
+    if (files.length > 0) this.attached.set(chat, [...files]);
+    else this.attached.delete(chat);
+    this.pickedTokens.delete(chat);
+    if (this.key() !== chat) return;
+    const old = this.win.draft;
+    const at = charAt(old, this.win.cursor);
+    const end = [...d.text].length;
+    this.win.draft = d.text;
+    this.win.set_cursor(byteAt(d.text, at >= [...old].length ? end : Math.min(at, end)));
+    this.refreshFiles();
+  }
+
+  private retryDraft(chat: number, ms: number): void {
+    if (this.draftTimers.has(chat)) return;
+    this.draftTimers.set(
+      chat,
+      setTimeout(() => {
+        this.draftTimers.delete(chat);
+        this.syncDraft(chat);
+      }, ms),
+    );
   }
 
   /** undo.rs `restore_draft`: `d` goes in ahead of what the composer holds; the images there move up a number. */
@@ -1897,6 +1966,7 @@ export class Shell {
 
   /** mesh.rs `Msg::Done`: a message that didn't go comes back into its composer. */
   private restoreSend(chat: number, text: string, mentions: Mention[], append: boolean): void {
+    this.draftSync.unsent(chat);
     const cur = this.key() === chat ? this.win.draft : (this.drafts.get(chat) ?? "");
     const next = append ? cur + text : cur.trim() === "" && text !== "" ? text : cur;
     this.drafts.set(chat, next);
@@ -1969,6 +2039,10 @@ export class Shell {
 
   tick(): void {
     this.tickMesh();
+    if (this.view === "chat") {
+      this.syncDraft(this.chatId);
+      this.shareDraft();
+    }
     // A captcha card on screen takes frames again once the window is back.
     this.chatCap.wake();
     // devices.rs: phones' "last seen" and PCs' online state change by themselves.

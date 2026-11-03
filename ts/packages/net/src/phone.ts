@@ -3,7 +3,7 @@ import type { providers, SentBy } from "@harbor/agents";
 import { blankChat, itemHash, liveSince, mention, parseAccess, repoDir, sidebartree, usertext, type Chat, type Item, type Mention, type Placement, type SentVia, type Store } from "@harbor/store";
 import type { Call } from "./api.ts";
 import { err, ok, urlEncode, type Reply } from "./http.ts";
-import { deviceId, draftJson, resolveUpload, type Hub } from "./hub.ts";
+import { deviceId, draftEmpty, draftJson, resolveUpload, type Hub } from "./hub.ts";
 import { blocks, markCommits, type CommitRef } from "./markdown.ts";
 import { CHAT_SCHEME, type ChatLinkWorld, chatLinkTargets, labelChatLinks } from "./chatlink.ts";
 import { forHome, startsTurn, type Mesh } from "./mesh.ts";
@@ -411,8 +411,9 @@ export class PhoneRoutes {
     if (!r.draft) return null;
     // Another PC's chat leaves `files` out (PROTOCOL.md "Typing"): they're that PC's uploads, never
     // this PC's (the lease forwards none), and an empty list would take back the files a phone attached.
+    // A cleared draft (a message went out: nobody wrote it) empties them too: they went with the message.
     const { files: _files, ...rest } = draftJson(r.draft) as Record<string, Json>;
-    return rest;
+    return r.draft.by === "" && draftEmpty(r.draft) ? { ...rest, files: [] } : rest;
   }
 
   /** api.rs `api_status`: the bars under the transcript; a copy's as its home PC says them. */

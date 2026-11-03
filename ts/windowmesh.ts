@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { linkSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { basename, join } from "node:path";
 import { hostname } from "node:os";
-import { dest, err, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
+import { dest, draftEmpty, draftFileOf, err, POLL, resolveUpload, safeName, type Hub, type Json, type Mesh, type PhoneRoutes, type RemoteState, type Reply, type Sender, startsTurn, type StoreReplica, type Viewer } from "./packages/net/src/index.ts";
 import type { Chat } from "./packages/store/src/index.ts";
 
 export interface WindowMeshDeps {
@@ -14,6 +14,17 @@ export interface WindowMeshDeps {
   ctx: (repo: number | null) => Json;
   ownerName: () => string | null;
   env?: Record<string, string | undefined>;
+  /** The hub's uploads folder: the window's attached files go there (hard-linked) so the chat's other devices get them. */
+  uploadsDir?: string;
+}
+
+/** A chat's shared composer draft as the window takes it (`files`: paths here; null: keep the window's own). */
+export interface WindowDraft {
+  text: string;
+  files: string[] | null;
+  mentions: unknown[];
+  by: string;
+  rev: number;
 }
 
 /** api.rs `local_device`. */
@@ -26,7 +37,78 @@ export function localDevice(env: Record<string, string | undefined> = process.en
 export class WindowMesh {
   private readonly leases = new Map<string, { on: boolean; kind: string; draft: string; at: number }>();
 
+  /** Files attached in the window, by path: their upload id (the same file under the uploads folder). */
+  private readonly shared = new Map<string, string>();
+
   constructor(private readonly d: WindowMeshDeps) {}
+
+  /** The upload id of a file attached in the window to `chat`: hard-linked into the uploads folder (Rust's way), or
+   * symlinked where it can't be (another file system); null when neither goes. */
+  private uploadOf(chat: number, path: string): string | null {
+    const dir = this.d.uploadsDir;
+    if (!dir) return null;
+    if (path.startsWith(`${dir}/`)) {
+      const rel = path.slice(dir.length + 1);
+      if (resolveUpload(dir, rel) !== null) return rel;
+    }
+    const known = this.shared.get(path);
+    if (known !== undefined && resolveUpload(dir, known) !== null) return known;
+    try {
+      const sub = join(dir, String(chat));
+      mkdirSync(sub, { recursive: true });
+      const id = `${chat}/${Date.now()}-${safeName(basename(path))}`;
+      try {
+        linkSync(path, join(dir, id));
+      } catch {
+        symlinkSync(path, join(dir, id));
+      }
+      this.shared.set(path, id);
+      return id;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The window's path for an upload: the file it attached when it's one of those. */
+  private pathOf(upload: string): string {
+    for (const [p, id] of this.shared) if (id === upload) return p;
+    const dir = this.d.uploadsDir;
+    return (dir ? resolveUpload(dir, upload) : null) ?? "";
+  }
+
+  /** The chat's shared draft (PROTOCOL.md "Typing"): this PC's hub's for its own chats, the home PC's for a copy. A copy's
+   * files are the home PC's uploads, so they stay out (null) unless a message took them (a cleared draft). */
+  draft(id: number): WindowDraft | null {
+    const c = this.d.chat(id);
+    if (!c) return null;
+    if (c.home !== "") {
+      const r = this.remote(id)?.draft ?? null;
+      if (!r) return null;
+      return { text: r.text, files: r.by === "" && draftEmpty(r) ? [] : null, mentions: r.mentions, by: r.by, rev: r.rev };
+    }
+    const d = this.d.hub.draft(id);
+    if (!d) return null;
+    return { text: d.text, files: d.files.map((f) => this.pathOf(f.id)).filter((p) => p !== ""), mentions: d.mentions, by: d.by, rev: d.rev };
+  }
+
+  /** A message went out of the window's composer: the chat's draft empties on every device (a copy's home PC does it when the message gets there). */
+  sent(id: number): void {
+    const c = this.d.chat(id);
+    if (c && c.home === "") this.d.hub.clearDraft(id);
+  }
+
+  /** Calls `changed` with the chats whose state moved (drafts among them), for as long as the window lives. */
+  watch(changed: (chats: number[]) => void): void {
+    const hub = this.d.hub;
+    void (async () => {
+      let since = hub.rev();
+      for (;;) {
+        const [rev, chats] = await hub.wait(since, POLL);
+        since = rev;
+        if (chats.length > 0) changed(chats);
+      }
+    })();
+  }
 
   me(): string {
     return localDevice(this.d.env);
@@ -125,7 +207,13 @@ export class WindowMesh {
     const label = this.myName();
     if (c.home === "") {
       if (view) this.d.hub.setViewing(id, me, label, kind !== "away", on);
-      else this.d.hub.report(id, me, kind, label, on, draft, () => null);
+      else {
+        // The window's files go as upload ids: the phones and PCs that open the chat get them too.
+        const files = draft && Array.isArray(draft.files) ? draft.files.filter((f): f is string => typeof f === "string").map((p) => this.uploadOf(id, p)).filter((x): x is string => x !== null) : null;
+        const dir = this.d.uploadsDir ?? "";
+        const d = draft && files !== null ? { ...draft, files } : draft;
+        this.d.hub.report(id, me, kind, label, on, d, (u) => (dir === "" ? null : draftFileOf(dir, u)));
+      }
       return;
     }
     const key = `${id}:${view}`;

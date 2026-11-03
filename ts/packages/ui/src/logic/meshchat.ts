@@ -1,6 +1,7 @@
 import type { Viewer } from "@harbor/net";
 import type { Chat } from "@harbor/store";
 import type { Mention } from "./mentions.ts";
+import type { DraftIn } from "./shareddraft.ts";
 
 /** The hub's side of a chat homed on another PC (mesh.rs forwarding and leases), as the window uses it. */
 export interface ShellMesh {
@@ -19,6 +20,12 @@ export interface ShellMesh {
   lease(id: number, view: boolean, kind: string, on: boolean, draft: Record<string, unknown> | null): void;
   /** This window looking at a copy (senders.ts Viewer); null for this PC's own chats. */
   viewer?(c: Chat): Viewer | null;
+  /** The chat's shared composer draft (windowmesh.ts `draft`). */
+  draft?(id: number): DraftIn | null;
+  /** A message went out of the window's composer: the chat's draft empties everywhere. */
+  sent?(id: number): void;
+  /** Calls back with the chats whose state moved, for as long as the window lives. */
+  watch?(changed: (chats: number[]) => void): void;
 }
 
 /** What the window does when a forwarded call didn't go: its composer gets the message back. */

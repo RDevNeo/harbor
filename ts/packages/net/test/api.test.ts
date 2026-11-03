@@ -354,6 +354,57 @@ describe("hub (api.rs)", () => {
     expect(draftFromJson(null)).toBeNull();
   });
 
+  test("a message out clears the draft on every device, even one this hub never had", () => {
+    const c = clock();
+    const hub = new Hub([], 0, c.now);
+    // The desktop typed, the phone took its draft in; then the desktop sent the message.
+    hub.report(4, "pc:desk", "pc", "desk", true, { text: "ship it", mentions: [] }, () => null);
+    const typed = hub.draft(4) as SharedDraft;
+    expect(shouldApply(typed, "tok:1", null, c.t)).toBe("now");
+    hub.clearDraft(4);
+    const cleared = hub.draft(4) as SharedDraft;
+    expect([cleared.text, cleared.by, cleared.rev > typed.rev]).toEqual(["", "", true]);
+    // The phone (which still shows "ship it") applies the newer, empty draft.
+    expect(shouldApply(cleared, "tok:1", null, c.t)).toBe("now");
+    // A chat whose draft the hub doesn't know (never reported, or the hub restarted): the clear still gets a rev,
+    // so a phone that kept the text of a message sent elsewhere empties its composer when it opens the chat.
+    expect(hub.draft(5)).toBeNull();
+    const before = hub.rev();
+    hub.clearDraft(5);
+    expect(hub.draft(5)).toMatchObject({ text: "", by: "" });
+    expect((hub.draft(5) as SharedDraft).rev).toBeGreaterThan(before);
+    // Clearing an already empty draft again moves the rev on too (a second message, a phone that saw neither).
+    const r5 = (hub.draft(5) as SharedDraft).rev;
+    hub.clearDraft(5);
+    expect((hub.draft(5) as SharedDraft).rev).toBeGreaterThan(r5);
+  });
+
+  test("shared drafts outlive a hub restart, and revs go on from them", () => {
+    const kv = new MemKv();
+    const up = join(tmp, "uploads-restart");
+    mkdirSync(join(up, "4"), { recursive: true });
+    writeFileSync(join(up, "4", "1-a.png"), "x");
+    const a = new Hub([], 0);
+    a.saveDrafts(kv);
+    expect(kv.get("shared_drafts")).toBeNull();
+    a.setDraft(3, "tok:1", "Galaxy", "half written", [draftFileOf(up, "4/1-a.png")!, { id: "4/gone.png", name: "gone.png", path: join(up, "4", "gone.png") }], [{ item: 2 }]);
+    a.clearDraft(4);
+    a.saveDrafts(kv);
+    const sentRev = (a.draft(4) as SharedDraft).rev;
+    // A clock that ran behind: the next run still numbers newer than what the devices saw.
+    const stored = JSON.parse(kv.get("shared_drafts") ?? "[]") as [number, { rev: number }][];
+    for (const e of stored) e[1].rev += 10_000_000;
+    kv.set("shared_drafts", JSON.stringify(stored));
+    const b = new Hub([], 0);
+    b.loadDrafts(kv);
+    expect(b.draft(3)).toMatchObject({ text: "half written", by: "tok:1", mentions: [{ item: 2 }] });
+    expect(b.draft(3)?.files.map((f) => f.id)).toEqual(["4/1-a.png"]);
+    expect(b.draft(4)).toMatchObject({ text: "", by: "", rev: sentRev + 10_000_000 });
+    expect(b.rev()).toBeGreaterThan(sentRev + 10_000_000);
+    b.setDraft(3, "pc:desk", "desk", "finished", null, null);
+    expect((b.draft(3) as SharedDraft).rev).toBeGreaterThan(sentRev + 10_000_000);
+  });
+
   test("draft_merge_rules", () => {
     const at = 10_000;
     const d: SharedDraft = { text: "x", files: [], mentions: [], by: "tok:1", label: "", rev: 3, quiet: null, held: false };

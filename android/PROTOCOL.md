@@ -839,6 +839,8 @@ files, mentioned messages) shows up in everyone's composer as if they had typed 
   ends the lease; the draft stays.
 - A message sent in the chat (from any device, or the desktop) empties the draft everywhere
   and ends every typing lease in it (the message doesn't wait for "one sender at a time" then).
+  The empty draft always gets a newer `rev` (0.121.1), also when the hub knew no draft for the
+  chat, so a device that still shows the message's text (or opens the chat later) empties it.
 - A report with only `text` (0.56–0.63 clients) changes the draft's text and keeps its files
   and mentions; `typing: false` from such a client leaves the draft alone. Clients before 0.56
   don't touch it.
@@ -846,12 +848,17 @@ files, mentioned messages) shows up in everyone's composer as if they had typed 
   path}], mentions, by, label, rev}`, or `null` when nobody wrote one since the hub started. `by`
   is the device that wrote it (`""` after a send), `rev` grows with every change. `path` is the
   file on the hub, for `/v1/image?path=…&chat=…`. Another PC's chat leaves `files` out (they're
-  that PC's uploads): keep your own files there.
+  that PC's uploads): keep your own files there; a draft emptied by a send (`by` `""`) carries
+  `files: []` there too (0.121.1): the files went with the message. The desktop's own attached
+  files are hard-linked (or symlinked) into the uploads folder, so they're upload ids like a
+  phone's (0.121.1).
 - Applying it: take a draft whose `rev` is newer than the last one you saw, unless `by` is you
   (`you`), and unless your composer was edited in the last second (try again after that second;
   the newer report wins at the hub: last writer wins). Keep the cursor where it was (at the end
-  if it was there). The draft stays after its writer's lease runs out (it's just a draft then;
-  the hub keeps drafts in memory until it restarts).
+  if it was there). The draft stays after its writer's lease runs out (it's just a draft then).
+  The hub keeps drafts across restarts (kv `shared_drafts`, 0.121.1; before, in memory only),
+  and its revs go on from the newest kept. A client keeps on the device only what it wrote
+  itself: a draft that came from elsewhere is the hub's to give back.
 - A new draft wakes the long-polls (the chat is in `changed_chats`) at most every 400 ms per
   chat; heartbeats with the same draft don't.
 

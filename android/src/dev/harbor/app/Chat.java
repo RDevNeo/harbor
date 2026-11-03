@@ -42,6 +42,7 @@ public class Chat extends Base implements Images.Gallery {
     private final Runnable draftPing = this::pingDraft;
     private long editedAt;          // the composer's last edit here
     private long appliedRev;        // the newest shared draft applied (or written) here
+    private boolean ownDraft = true; // the composer holds what was written here (kept on the phone), not a shared draft that came in
     private boolean applying;       // a shared draft going in: not an edit
     private JSONObject pendingDraft; // one that waits for the composer's edit to settle
     private final Runnable retryDraft = () -> applyDraft(pendingDraft);
@@ -153,6 +154,7 @@ public class Chat extends Base implements Images.Gallery {
         comp.edit.onSelection = () -> { slash.update(); tags.update(); };
         comp.edit.backOpen = () -> slash.open() || tags.open();
         comp.edit.onBack = () -> { if (!slash.back()) tags.back(); };
+        // What this phone wrote last time; the chat's shared draft takes over when the hub has a newer one (applyDraft).
         composer.setText(drafts(this).getString(draftKey(hub, chatId), ""));
         echoKey = draftKey(hub, chatId);
         echo = echoOf(hub, chatId, echoKey);
@@ -208,7 +210,9 @@ public class Chat extends Base implements Images.Gallery {
         if (composer == null || gone) return;
         typing(false, false);
         String d = composer.getText().toString();
-        if (d.trim().isEmpty()) drafts(this).edit().remove(draftKey(hub, chatId)).apply();
+        // A draft that came from another device isn't kept here: the hub holds it, and a message sent from there
+        // must not come back from this phone's copy (the hub's newer, empty draft is what opens next time).
+        if (d.trim().isEmpty() || !ownDraft) drafts(this).edit().remove(draftKey(hub, chatId)).apply();
         else drafts(this).edit().putString(draftKey(hub, chatId), d).apply();
     }
 
@@ -1060,6 +1064,7 @@ public class Chat extends Base implements Images.Gallery {
         // Editing a queued message isn't writing a draft: nothing goes to the other devices.
         if (editId != 0) return;
         editedAt = System.currentTimeMillis();
+        ownDraft = true;
         Ui.main.removeCallbacks(draftPing);
         if (emptyDraft()) { typing(false, true); return; }
         long wait = typedAt + 400 - System.currentTimeMillis();
@@ -1110,6 +1115,8 @@ public class Chat extends Base implements Images.Gallery {
         String by = d.optString("by");
         if (!by.isEmpty() && by.equals(you())) { appliedRev = rev; return; }
         long wait = editedAt + 1000 - System.currentTimeMillis();
+        // Editing a queued message: the composer holds that message; the draft comes in once the edit ends.
+        if (editId != 0) wait = Math.max(wait, 1000);
         if (wait > 0) {
             pendingDraft = d;
             Ui.main.removeCallbacks(retryDraft);
@@ -1117,6 +1124,7 @@ public class Chat extends Base implements Images.Gallery {
             return;
         }
         appliedRev = rev;
+        ownDraft = false;
         applying = true;
         try {
             String text = d.optString("text");

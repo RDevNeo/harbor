@@ -253,6 +253,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   // Whoever settles or unsettles a chat or a project (the window, a phone, the project menu's
   // API, new activity waking a settled project), other PCs and phones hear of each chat at once.
   const stopSettled = store.onSettled((chat) => hub.touch(chat, true));
+  hub.loadDrafts(store);
   setHello(me.id, me.name, id);
   const notes = new Notes();
   const notifier = new Notifier({ notes });
@@ -667,6 +668,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     chat: (id) => (engine ? engine.chat(id) : store.chat(id)),
     ownerName: () => account.ownerName(),
     ctx: ctxFor,
+    uploadsDir,
   });
   // The hooks below run once the engine exists.
   const eng = (): Engine => {
@@ -1000,6 +1002,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       saveTokens(store, hub.tokens);
     }
     hub.rememberPhones(store);
+    hub.saveDrafts(store);
     replica.reload();
     if (o.updater) for (const p of hub.mesh.peers.values()) o.updater.peerNews(p.update);
   }, 10_000);
@@ -1044,6 +1047,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     projectPlace: (repo) => projectClones.place(repo),
     stop: async () => {
       clearInterval(tick);
+      hub.saveDrafts(store);
       if (engineTimer) clearTimeout(engineTimer);
       for (const [id, r] of live.turns) {
         live.persist(id);
