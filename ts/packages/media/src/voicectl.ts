@@ -6,15 +6,6 @@ import * as parakeet from "./parakeet.ts";
 import * as voice from "./voice.ts";
 import { Fail, Recording } from "./voice.ts";
 
-/** "Keep speech model loaded" choices: (minutes, label). */
-export const KEEPS: readonly (readonly [number, string])[] = [
-  [0, "Off"],
-  [1, "1 min"],
-  [5, "5 min"],
-  [15, "15 min"],
-  [60, "1 h"],
-];
-
 const ACCOUNT_EVERY_MS = 10_000;
 
 export interface Host {
@@ -40,6 +31,10 @@ export class VoiceCtl {
   dictEdit: number | null = null;
   dictTerm = "";
   dictSounds = "";
+  inputs: voice.InputDevice[] = [{ id: "", label: "System default" }];
+  micTesting = false;
+  micLevel = 0;
+  micStatus = "";
   private pending: { key: number; samples: Int16Array } | null = null;
   private accountAt = 0;
 
@@ -47,10 +42,9 @@ export class VoiceCtl {
 
   load(): void {
     const { store } = this.host;
-    voice.setConfig(store.get("voice_lang2") ?? "", store.get("voice_model") ?? "");
-    const k = store.get("voice_keep_min");
-    const keep = k !== null && /^\d+$/.test(k) ? Number(k) : 5;
-    dictate.set({ engine: store.get("voice_engine") ?? "", cleanup: store.get("voice_cleanup") !== "0", keepMin: keep });
+    voice.setConfig("auto", store.get("voice_model") ?? "");
+    voice.setInputDevice(store.get("voice_input") ?? "");
+    dictate.set({ engine: "parakeet", cleanup: true, keepMin: 1 });
     let dict: dictwords.Entry[] = [];
     const raw = store.get("voice_dict");
     if (raw !== null) {
@@ -60,29 +54,56 @@ export class VoiceCtl {
         // an unreadable dictionary is an empty one
       }
     }
-    dictate.setWords({ commands: store.get("voice_commands") !== "0", dict });
+    dictate.setWords({ commands: true, dict });
   }
 
   setWords(words: { commands?: boolean; dict?: dictwords.Entry[] }): void {
     const { store } = this.host;
-    if (words.commands !== undefined) store.set("voice_commands", words.commands ? "1" : "0");
     if (words.dict !== undefined) store.set("voice_dict", JSON.stringify(dictwords.toJson(words.dict)));
     this.load();
   }
 
   set(pick: { lang?: string; model?: string }): void {
     const { store } = this.host;
-    if (pick.lang !== undefined) store.set("voice_lang2", pick.lang);
     if (pick.model !== undefined) store.set("voice_model", pick.model);
     this.load();
   }
 
   setMore(pick: { engine?: string; cleanup?: boolean; keepMin?: number }): void {
-    const { store } = this.host;
-    if (pick.engine !== undefined) store.set("voice_engine", pick.engine);
-    if (pick.cleanup !== undefined) store.set("voice_cleanup", pick.cleanup ? "1" : "0");
-    if (pick.keepMin !== undefined) store.set("voice_keep_min", String(pick.keepMin));
     this.load();
+  }
+
+  async refreshInputs(): Promise<void> {
+    this.inputs = await voice.inputDevices();
+    const id = voice.currentInputDevice();
+    if (id && !this.inputs.some((d) => d.id === id)) this.inputs.push({ id, label: "Saved microphone (unavailable)" });
+  }
+
+  selectInput(index: number): void {
+    const device = this.inputs[index];
+    if (!device || this.micTesting) return;
+    this.host.store.set("voice_input", device.id);
+    voice.setInputDevice(device.id);
+    this.micStatus = "";
+  }
+
+  /** Tests the selected input for three seconds without downloading a model or entering a composer. */
+  async testMicrophone(changed: () => void): Promise<void> {
+    if (this.micTesting || this.recording || this.busy) return;
+    this.micTesting = true; this.micLevel = 0; this.micStatus = "Speak for 3 seconds…";
+    changed();
+    let rec: Recording | null = null;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let peak = 0;
+    try {
+      rec = Recording.start(() => { peak = Math.max(peak, rec?.level() ?? 0); });
+      timer = setInterval(() => { this.micLevel = Math.min(1, (rec?.level() ?? 0) * 8); changed(); }, 100);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const samples = await rec.stop(); rec = null;
+      this.micLevel = Math.min(1, peak * 8);
+      this.micStatus = samples.length === 0 ? "Could not record from this microphone." : peak < 0.001 ? "No sound detected. Check the microphone and input volume." : "Microphone is working.";
+    } catch (e) { this.micStatus = e instanceof Error ? e.message : String(e); }
+    finally { clearInterval(timer); rec?.cancel(); this.micTesting = false; changed(); }
   }
 
   recordingFor(key: number): { level: number; elapsedMs: number } | null {
@@ -115,7 +136,7 @@ export class VoiceCtl {
       this.transcribe(cur.key, samples);
       return;
     }
-    if (this.busy) return;
+    if (this.busy || this.micTesting) return;
     const why = voice.cantRecord();
     if (why) {
       this.host.toast(why);
@@ -173,9 +194,6 @@ export class VoiceCtl {
     }
     const dirty = dictate.takeDirty();
     if (dirty) {
-      store.set("voice_cleanup", dirty.cleanup ? "1" : "0");
-      store.set("voice_keep_min", String(dirty.keepMin));
-      store.set("voice_commands", dirty.commands ? "1" : "0");
       store.set("voice_dict", JSON.stringify(dictwords.toJson(dirty.dict)));
     }
     const failed = voice.takeDownloadError();

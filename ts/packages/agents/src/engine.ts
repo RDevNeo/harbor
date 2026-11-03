@@ -872,9 +872,9 @@ export class Engine {
     return true;
   }
 
-  /** Settings → General, "Continue threads after restarts" (on by default). */
+  /** A thread that was working when the computer restarted picks up where it stopped (always). */
   resumeOnRestart(): boolean {
-    return this.store.get("resume_on_restart") !== "0";
+    return true;
   }
 
   resumes(id: number): boolean {
@@ -1165,13 +1165,9 @@ export class Engine {
     return p;
   }
 
-  /** Kv `follow_up`: what Enter does while the agent works (Steer unless set to Queue). */
+  /** What Enter does while the agent works: always Steer (Ctrl+Enter queues one message). */
   followDefault(): Mode {
-    return this.store.get("follow_up") === "queue" ? "queue" : "steer";
-  }
-
-  setFollowDefault(m: Mode): void {
-    this.store.set("follow_up", m);
+    return "steer";
   }
 
   steering(id: number): agent.Steering {

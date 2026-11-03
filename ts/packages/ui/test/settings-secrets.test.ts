@@ -25,9 +25,9 @@ describe("secretsui.rs secrets_tab", () => {
     expect(b.map((x) => x.kind)).toEqual(["title", "form", "title", "list", "copy", "copy"]);
     expect(b[0]?.title).toBe("Add a secret");
     expect(b[1]?.fields.map((f) => [f.hint, f.mono, f.password, f.row])).toEqual([
-      ["Name, like BOAT_API_KEY", true, false, 0],
+      ["Name", true, false, 0],
       ["Value", false, true, 0],
-      ["What it's for (optional, agents see it)", false, false, 1],
+      ["What it's for", false, false, 0],
     ]);
     expect(b[1]?.submit.label).toBe("Save");
     expect(b[3]?.empty).toBe("None yet. Add one above, or an agent asks for one when it needs it.");

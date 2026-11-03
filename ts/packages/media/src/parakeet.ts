@@ -334,13 +334,13 @@ let isLoaded = false;
 let reaper: ReturnType<typeof setInterval> | null = null;
 let active = 0;
 let chain: Promise<unknown> = Promise.resolve();
-let keepMinutes = 5;
+let keepMinutes = 1;
 let workerCmd: string[] | null = null;
 let callTimeoutMs = CALL_TIMEOUT_MS;
 
 /** Minutes the model stays loaded after its last use (0: freed right after each use). */
 export function setKeepMin(m: number): void {
-  keepMinutes = m;
+  keepMinutes = 1;
 }
 
 export function keepMin(): number {
@@ -478,7 +478,7 @@ export async function reap(now: number = Date.now()): Promise<boolean> {
     reaper = null;
     return false;
   }
-  if (now - w.last < Math.max(keepMin() * 60, 120) * 1000) return false;
+  if (now - w.last < keepMin() * 60 * 1000) return false;
   await stop(w);
   return true;
 }

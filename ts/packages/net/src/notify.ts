@@ -159,10 +159,10 @@ export function loadPrefs(kv: Kv): Prefs {
     }
     return {
       kinds,
-      quiet: o.quiet === true,
+      quiet: d.quiet,
       quiet_from: typeof o.quiet_from === "string" ? o.quiet_from : d.quiet_from,
       quiet_to: typeof o.quiet_to === "string" ? o.quiet_to : d.quiet_to,
-      away_only: o.away_only === true,
+      away_only: d.away_only,
     };
   } catch {
     return defaultPrefs();

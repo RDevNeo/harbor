@@ -95,11 +95,7 @@ export function accountBlocks(host: AccountHost): Block[] {
   const here: AccountDir | undefined = dir.workspaces.find((w) => w.id === ws);
   const name = here?.name ?? me.workspaces.find((w) => w.id === ws)?.name ?? "";
   const owner = here?.role === "owner";
-  const others = me.workspaces.filter((w) => w.id !== ws);
   const lines: BlockRow[] = [row(name, { desc: "Everyone in this workspace controls all of its PCs and sees all of their chats, from their own PCs and phones.", badges: [roleBadge(owner)] })];
-  if (others.length > 0) {
-    lines.push(row("Move this PC", { desc: "To another workspace you're in. Its chats then belong to that workspace's people.", buttons: others.map((o) => btn(`move:${o.id}`, o.name, { enabled: !st.busy })).reverse() }));
-  }
   lines.push(row("Take this PC out", { desc: "It leaves the workspace: its people's phones and PCs stop reaching it.", buttons: [btn("leave_pc", "Take out", { variant: "destructive", enabled: !st.busy })] }));
   out.push(rows(lines));
   if (!here) {

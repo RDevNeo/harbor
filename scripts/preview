@@ -92,7 +92,7 @@ if [ $mode = --inner ]; then
   cd "$ts"
   env -i HOME="$rig/home" XDG_DATA_HOME="$rig/data" XDG_STATE_HOME="$rig/state.d" XDG_CONFIG_HOME="$rig/cfg" XDG_CACHE_HOME="$rig/cache" \
     XDG_RUNTIME_DIR="$rig/run" WAYLAND_DISPLAY="$PREVIEW_WAYLAND" TMPDIR="$rig/tmp" HARBOR_SOCK="$rig/run/harbor.sock" HARBOR_OFFLINE=1 \
-    HARBOR_LISTEN=127.0.0.1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_WINDOW_TITLE="${title:0:140}" HARBOR_PREVIEW_APP="$rig" \
+    HARBOR_LISTEN=127.0.0.1 HARBOR_TEST_NO_SIGNIN=1 HARBOR_NO_TRAY=1 HARBOR_NO_BACKGROUND=1 HARBOR_WINDOW_TITLE="${title:0:140}" HARBOR_PREVIEW_APP="$rig" \
     ${view:+HARBOR_VIEW="$view"} ${PREVIEW_TOKEN:+HL_EXEC_RULE_TOKEN="$PREVIEW_TOKEN"} ${XCURSOR_THEME:+XCURSOR_THEME="$XCURSOR_THEME"} \
     ${XCURSOR_SIZE:+XCURSOR_SIZE="$XCURSOR_SIZE"} DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent PATH="$rig/bin:/usr/bin:/bin" \
     TZ="$tz" LANG="${LANG:-C.UTF-8}" BUN_RUNTIME_TRANSPILER_CACHE_PATH="$rig_base/.bun" "$bun" harbor.ts &
@@ -125,10 +125,6 @@ if [ $mode = --supervise ]; then
   for c in notify-send xdg-open gio; do printf '#!/bin/sh\nexit 0\n' > "$rig/bin/$c"; chmod 755 "$rig/bin/$c"; done
   if [ -n "$db" ] && [ -f "$db" ]; then
     cp --reflink=auto "$db" "$rig/data/harbor/harbor.db"
-    # Closing the window ends the preview instead of keeping it running in the background.
-    (cd "$ts" && "$bun" -e 'import { Database } from "bun:sqlite";
-new Database(process.argv.at(-1)).run("INSERT OR REPLACE INTO kv (k, v) VALUES (?1, ?2)", ["bg_keep", "0"]);' "$rig/data/harbor/harbor.db") ||
-      say "couldn't turn off background mode in the copy"
   fi
   first=$notify pids=""
   launch() {

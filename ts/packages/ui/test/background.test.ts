@@ -164,20 +164,10 @@ test("autostart reports a path it cannot write", () => {
   expect(() => setAutostart(true, { exe: "/opt/h", managed: false })).toThrow(join(tmp, "blocker", "autostart/harbor.desktop"));
 });
 
-test("keep running is on by default, read once, and saved", () => {
+test("keep running ignores the retired bg_keep preference", () => {
   const { bg, kv } = setup();
-  expect(bg.keepRunning()).toBe(true);
   kv.set("bg_keep", "0");
   expect(bg.keepRunning()).toBe(true);
-  bg.setKeepRunning(false);
-  expect(kv.get("bg_keep")).toBe("0");
-  expect(bg.keepRunning()).toBe(false);
-  bg.setKeepRunning(true);
-  expect(kv.get("bg_keep")).toBe("1");
-  expect(setup().bg.keepRunning()).toBe(true);
-  const off = setup();
-  off.kv.set("bg_keep", "0");
-  expect(off.bg.keepRunning()).toBe(false);
 });
 
 test("the hidden loop ticks on a heartbeat, on repaints no closer than the gap, and returns on quit", async () => {

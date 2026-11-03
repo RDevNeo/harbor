@@ -132,12 +132,12 @@ describe("settings and cleanup", () => {
     expect(dictate.engine()).toBe("parakeet");
     expect(dictate.takeDirty()).toBeNull();
     dictate.set({ engine: "whisper", cleanup: false, keepMin: 99_999 });
-    expect(dictate.engine()).toBe("whisper");
-    expect(dictate.cleanupOn()).toBe(false);
-    expect(parakeet.keepMin()).toBe(24 * 60);
+    expect(dictate.engine()).toBe("parakeet");
+    expect(dictate.cleanupOn()).toBe(true);
+    expect(parakeet.keepMin()).toBe(1);
     expect(dictate.takeDirty()).toBeNull();
     dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Harbor" }]) }, true);
-    expect(dictate.takeDirty()).toEqual({ cleanup: false, keepMin: 24 * 60, commands: false, dict: [{ term: "Harbor", sounds: [] }] });
+    expect(dictate.takeDirty()).toEqual({ cleanup: true, keepMin: 1, commands: true, dict: [{ term: "Harbor", sounds: [] }] });
     expect(dictate.takeDirty()).toBeNull();
     dictate.set({ cleanup: true }, true);
     expect(dictate.takeDirty()?.cleanup).toBe(true);
@@ -155,7 +155,7 @@ describe("settings and cleanup", () => {
       model_mb: 671,
       mem_available_mb: 3210,
       cleanup: true,
-      keep_loaded_min: 5,
+      keep_loaded_min: 1,
       host: "desk",
       commands: true,
       dictionary: [{ term: "Harbor", sounds: ["harbour"] }],

@@ -264,7 +264,7 @@ test("Whisper models are known by name and found when all their files are there"
   expect(voice.installed("small")).toBe(true);
   expect(voice.currentModel()).toBe("small");
   voice.setConfig("pt", "tiny");
-  expect(voice.config()).toEqual(["pt", "tiny"]);
+  expect(voice.config()).toEqual(["auto", "tiny"]);
   expect(voice.currentModel()).toBe("small");
   voice.setConfig("", "");
   expect(voice.config()).toEqual(["auto", ""]);
@@ -312,4 +312,14 @@ test("labels and sizes read well", () => {
   expect(voice.capital("")).toBe("");
   expect(voice.capital("élan")).toBe("Élan");
   expect(voice.megabytes(160_609_290)).toBe("160 MB");
+});
+
+test("microphone enumeration hides monitor sources and uses stable source names", () => {
+  expect(voice.pulseInputs([{ name: "speaker.monitor", description: "Output" }, { name: "usb-mic", description: "USB microphone", monitor_of_sink: 4294967295 }])).toEqual([{ id: "usb-mic", label: "USB microphone" }]);
+  // pactl's JSON as newer versions write it: monitor_source names the sink of a monitor, "" otherwise.
+  expect(voice.pulseInputs([{ name: "out-mon", description: "Monitor", monitor_source: "out" }, { name: "mic", description: "Built-in", monitor_source: "" }, { name: "cam", monitor_of_sink: "n/a" }, { name: "loop", monitor_of_sink: "speakers" }])).toEqual([
+    { id: "mic", label: "Built-in" },
+    { id: "cam", label: "cam" },
+  ]);
+  expect(voice.pipewireInputs([{ info: { props: { "media.class": "Audio/Source", "node.name": "mic", "node.description": "Microphone" } } }, { info: { props: { "media.class": "Audio/Sink", "node.name": "speaker" } } }])).toEqual([{ id: "mic", label: "Microphone" }]);
 });

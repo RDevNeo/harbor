@@ -1,143 +1,81 @@
-import { homedir } from "node:os";
-import { basename } from "node:path";
-import {
-  agoShort,
-  allowedJson,
-  allowedKey,
-  confirmOwner,
-  githubOf,
-  hostPort,
-  lanAddrs,
-  lanPortmapNet,
-  loadAllowed,
-  loadCode,
-  loadProfileDetected,
-  loadRemote,
-  newHost,
-  newTailnet,
-  normalizeFp,
-  Portmap,
-  ownerConfirmed,
-  ownerOf,
-  profileFullName,
-  profileNodeEnv,
-  readMe,
-  remoteDevices,
-  saveRemote,
-  showCode,
-  type Kv,
-  type OwnerSources,
-  type RemoteCtx,
-  type RemoteProbe,
-} from "@harbor/net";
-import { machines } from "@harbor/mcp";
+import { allowedJson, allowedKey, hostPort, lanAddrs, loadAllowed, loadCode, loadRemote, loadTokens, newTailnet, normalizeFp, readMe, remoteDevices, saveRemote, short as keyShort, showCode, type AccountService, type Hub, type Mesh } from "@harbor/net";
+import { harborVersion } from "@harbor/mcp";
 import { type Store } from "@harbor/store";
+import { homedir } from "node:os";
+import { ICONS } from "./icons.ts";
+import { btn, row } from "./logic/settings-blocks.ts";
 import { type DevicesHost } from "./logic/settings-devices.ts";
 
-/** The Devices tab over this PC's store alone: no mesh is running, so there are no peers, nothing is paired and the buttons that reach out do nothing. */
-export function devicesHost(store: Store, refresh: () => void, myFp: () => string): DevicesHost {
-  const kv: Kv = store;
-  const env = profileNodeEnv();
-  const owners: OwnerSources = { accountOwnerName: () => null, signedIn: () => (store.get("account") ?? "") !== "", fullName: () => profileFullName(env), githubUser: () => null };
-  const ctx: RemoteCtx = { home: homedir(), selfExe: () => null, sshConfig: () => [], probe: (): RemoteProbe | undefined => undefined };
-  const port = () => {
-    const t = store.get("api_port") ?? "";
-    return /^\d+$/.test(t) ? Number(t) : 47930;
-  };
-  const now = () => Math.floor(Date.now() / 1000);
-  const portmap = new Portmap({ kv, net: lanPortmapNet() });
+/** The running app supplies its existing services; isolated screenshot runners use the store alone. */
+export interface SettingsRuntime {
+  account: AccountService;
+  hub: Hub;
+  mesh: Mesh;
+  /** This Harbor's own version (the mesh advertises an older one to old peers). */
+  version: string;
+}
+
+export function devicesHost(store: Store, refresh: () => void, myFp: () => string, copy: (text: string) => void, runtime?: SettingsRuntime): DevicesHost {
+  const port = () => runtime?.hub.port ?? Number(store.get("api_port") ?? "47930");
+  let busy = false;
+  let result: { ok: boolean; text: string } | null = null;
   return {
-    kv,
-    now,
+    kv: store,
+    now: () => Math.floor(Date.now() / 1000),
     mesh: {
-      on: () => store.get("mesh_enabled") === "1",
-      setOn: (on) => store.set("mesh_enabled", on ? "1" : "0"),
-      me: () => readMe(store),
-      myFp,
-      versionLabel: () => "0.108.0 (ts)",
-      ownVersion: () => "0.108.0",
-      ownLatest: () => "",
-      peers: () => [],
+      me: () => runtime?.hub.mesh.me ?? readMe(store), myFp,
+      versionLabel: () => runtime?.version ?? harborVersion(),
+      peers: () => [...(runtime?.hub.mesh.peers.values() ?? [])],
       allowed: () => loadAllowed(store),
-      seen: () => new Map(),
-      lan: () => [],
-      chatsCopied: () => 0,
-      phonesOn: () => store.get("api_enabled") === "1",
-      setPhonesOn: (on) => store.set("api_enabled", on ? "1" : "0"),
-      port,
-      firewallBlocks: () => false,
-      openFirewall: () => {},
+      seen: () => runtime?.hub.mesh.seen ?? new Map(),
       addrs: () => lanAddrs().map((a) => hostPort(a, port())),
+      copy,
       allow(key, name, allow) {
-        const list = loadAllowed(store).filter((a) => allowedKey(a) !== key && a.node !== key);
-        if (allow) {
-          const fp = normalizeFp(key);
-          list.push(fp !== null ? { node: "", name, fp, id: "", addrs: [] } : { node: key, name, fp: "", id: "", addrs: [] });
-        }
-        store.set("mesh_allowed", allowedJson(list));
+        const change = (all: ReturnType<typeof loadAllowed>) => {
+          const keep = all.filter((a) => allowedKey(a) !== key && a.node !== key);
+          if (allow) keep.push({ node: normalizeFp(key) ? "" : key, fp: normalizeFp(key) ?? "", name, id: "", addrs: [] });
+          all.splice(0, all.length, ...keep);
+        };
+        if (runtime) runtime.mesh.updateAllowed(change);
+        else { const all = loadAllowed(store); change(all); store.set("mesh_allowed", allowedJson(all)); }
         refresh();
       },
-      shareLevel: (id) => machines.levelFor(store, id),
-      setShareLevel: (id, l) => machines.setLevel(store, id, l),
-      updatePeers: () => {},
-      autoUpdatePeers: () => {},
-      enablePhonesOn: () => {},
-      copy: () => {},
     },
     pair: {
       shown: () => loadCode(store),
-      show: () => {
-        showCode(store);
-        return null;
+      show: () => { showCode(store); return null; },
+      cancel: () => store.set("mesh_pair", ""), busy: () => busy, result: () => result,
+      join(addr, code) {
+        if (!runtime || busy) return;
+        busy = true; result = null;
+        void runtime.mesh.pairJoin(addr, code).then(
+          (pc) => { result = { ok: true, text: `Paired with ${pc.name || addr}.` }; },
+          (e: unknown) => { result = { ok: false, text: e instanceof Error ? e.message : String(e) }; },
+        ).finally(() => { busy = false; refresh(); });
       },
-      cancel: () => store.set("mesh_pair", ""),
-      busy: () => false,
-      join: () => {},
-      result: () => null,
     },
-    outside: { kv, port, summary: (p) => portmap.summary(p), firewallBlocksInternet: () => false, openInternetFix: () => {} },
-    people: {
-      shownOwner: () => ownerOf(kv, owners),
-      shownGithub: () => githubOf(kv, owners),
-      check: () => {
-        const d = loadProfileDetected(kv);
-        return ownerConfirmed(kv, owners) || d === null || ownerOf(kv, owners) === "" ? null : { why: d.me.why };
-      },
-      detectedStatus: () => {
-        const d = loadProfileDetected(kv);
-        return d === null ? "Not run yet." : `Last run ${agoShort(d.at, now())} (${d.by === "rules" ? "rules only: no Claude account to ask" : d.by}).`;
-      },
-      detecting: () => false,
-      pcs: () => [],
-      confirm: () => confirmOwner(kv, owners),
-      detect: () => {},
-      changed: () => {},
+    phones: () => {
+      const acc = runtime?.account;
+      const tokens = runtime?.hub.tokens ?? loadTokens(store);
+      const me = acc?.account();
+      const owner = me?.workspaces.some((w) => w.id === acc?.workspace() && w.role === "owner");
+      return tokens.filter((t) => t.account !== "").map((t) => row(t.name || "Phone", {
+        icon: ICONS.SMARTPHONE,
+        desc: `${t.account_name ? `Signed in as ${t.account_name}` : "Signed in"} · key ${keyShort(t.fp)}`,
+        buttons: owner || me?.id === t.account ? [btn(`signout:${t.fp}`, "Sign out", { variant: "destructive" })] : [],
+      }));
+    },
+    signOut(fp) {
+      if (!runtime) return;
+      void runtime.account.removeDevice(fp).then(() => {
+        runtime.hub.tokens = runtime.hub.tokens.filter((t) => t.fp !== fp);
+        runtime.hub.tokensDirty = true;
+        refresh();
+      });
     },
     ssh: {
-      config: () => loadRemote(kv),
-      save: (c) => saveRemote(kv, c),
-      devices: () => remoteDevices(ctx, loadRemote(kv), newTailnet()),
-      probe: () => null,
-      login: (h) => {
-        const c = loadRemote(kv);
-        const user = h.user !== "" ? h.user : c.user;
-        return user === "" ? null : [user, false];
-      },
-      sshPort: (h) => (h.port !== 0 ? h.port : loadRemote(kv).port),
-      offers: () => [],
-      homeName: () => basename(homedir()),
-      test: () => {},
-      add(name, host, user, p) {
-        const c = loadRemote(kv);
-        let n = 1;
-        while (c.devices.some((d) => d.id === `ssh:${n}`)) n++;
-        const id = `ssh:${n}`;
-        saveRemote(kv, { ...c, devices: [...c.devices, newHost({ id, name, host, user, port: p, bridge: true })] });
-        return id;
-      },
-      removeIcon: () => {},
-      pickImage: () => {},
-      terminal: () => {},
+      devices: () => remoteDevices({ home: homedir(), selfExe: () => null, sshConfig: () => [], probe: () => undefined }, loadRemote(store), newTailnet()),
+      remove(id) { const cfg = loadRemote(store); saveRemote(store, { ...cfg, devices: cfg.devices.filter((d) => d.id !== id) }); },
     },
   };
 }

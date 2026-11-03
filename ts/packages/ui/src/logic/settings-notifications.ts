@@ -38,27 +38,7 @@ const row = (r: Partial<NotifyRow> & Pick<NotifyRow, "kind" | "key" | "title" | 
 /** notify.rs `notifications_tab`: what the desktop shows, when, and the phones' test. */
 export function notificationsSections(kv: Kv): NotifySection[] {
   const p = loadPrefs(kv);
-  const when: NotifyRow[] = [
-    row({ kind: "toggle", key: "away_only", title: "Only when I'm away from this PC", desc: "Harbor's window is hidden, or nobody used it for 2 minutes. Without this, whenever the window isn't in front.", on: p.away_only }),
-    row({ kind: "toggle", key: "quiet", title: "Quiet hours", desc: "No desktop notifications in this time (phones have their own).", on: p.quiet }),
-  ];
-  if (p.quiet) when.push(row({ kind: "range", key: "quiet_range", title: "From \u{2013} to", desc: "24-hour time, e.g. 22:00 to 07:00.", from: p.quiet_from, to: p.quiet_to }));
-  return [
-    { title: "Notify me when", rows: NOTE_KINDS.map(([kind, title]) => row({ kind: "toggle", key: `kind:${kind}`, title, desc: DESC[kind] ?? DESC_PC, on: prefsOn(p, kind) })) },
-    { title: "When", rows: when },
-    {
-      title: "Phones",
-      rows: [
-        row({
-          kind: "button",
-          key: "notify_test",
-          title: "Harbor for Android",
-          desc: "Paired phones get the same notifications, even with the app closed, and choose their own in the app's Settings \u{203a} Notifications (with Reply and Open). Phones only see what this PC and the others of your mesh noticed.",
-          label: "Send a test",
-        }),
-      ],
-    },
-  ];
+  return [{ title: "Notify me when", rows: NOTE_KINDS.map(([kind, title]) => row({ kind: "toggle", key: `kind:${kind}`, title, desc: DESC[kind] ?? DESC_PC, on: prefsOn(p, kind) })) }];
 }
 
 /** Rust writes every kind as shown along with the change; the shell reloads `loadPrefs(kv)` into the desktop after. */
@@ -77,26 +57,13 @@ export function setNotifications(kv: Kv, key: string, value: boolean): boolean {
     save(kv, (p) => {
       p.kinds[kind] = value;
     });
-  } else if (key === "away_only") {
-    save(kv, (p) => {
-      p.away_only = value;
-    });
-  } else if (key === "quiet") {
-    save(kv, (p) => {
-      p.quiet = value;
-    });
   } else return false;
   return true;
 }
 
 /** The quiet hours' two times, kept as typed (an invalid time just means no quiet hours, as in Rust). */
 export function editNotifications(kv: Kv, key: string, text: string): boolean {
-  if (key !== "quiet_from" && key !== "quiet_to") return false;
-  save(kv, (p) => {
-    if (key === "quiet_from") p.quiet_from = text;
-    else p.quiet_to = text;
-  });
-  return true;
+  return false;
 }
 
 export function notifyPressed(key: string, env: NotifyEnv): boolean {

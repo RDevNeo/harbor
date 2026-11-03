@@ -30,7 +30,7 @@ export function secretsBlocks(host: SecretsHost, replacing: string | null): Bloc
   const at = host.now();
   const out: Block[] = [
     title("Add a secret", 11),
-    form("add", [field("name", "Name, like BOAT_API_KEY", { mono: true, min: 1 }), field("value", "Value", { password: true, min: 1 }), field("description", "What it's for (optional, agents see it)", { row: 1 })], btn("save", "Save", { variant: "primary" })),
+    form("add", [field("name", "Name", { mono: true, min: 1 }), field("value", "Value", { password: true, min: 1 }), field("description", "What it's for")], btn("save", "Save", { variant: "primary" })),
   ];
   const grants = secrets.loadGrants(host.store).filter((g) => g.until > at);
   if (grants.length > 0) {

@@ -1,5 +1,10 @@
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
+
+/** Closing the window leaves Harbor running, unless HARBOR_NO_BACKGROUND is set (a preview rig: closing it ends it). */
+export function keepsRunning(env: Record<string, string | undefined> = process.env): boolean {
+  return env.HARBOR_NO_BACKGROUND === undefined;
+}
 
 /** Starts Harbor without a window (autostart): `harbor --background`. */
 export const BACKGROUND_FLAG = "--background";
@@ -50,7 +55,6 @@ export class Background {
   private isHidden = false;
   private showAsked = false;
   private quitAsked = false;
-  private keep: boolean | null = null;
   private inbox: number[] = [];
   private nudge: (() => void) | null = null;
   private readonly minGap: number;
@@ -153,15 +157,9 @@ export class Background {
     return delay ?? null;
   }
 
-  /** "Keep running in the background when the window is closed" (kv `bg_keep`, on by default, read once). */
+  /** Harbor keeps running in the background when the window is closed: always, except in a preview rig (HARBOR_NO_BACKGROUND). */
   keepRunning(): boolean {
-    this.keep ??= this.kv.get("bg_keep") !== "0";
-    return this.keep;
-  }
-
-  setKeepRunning(on: boolean): void {
-    this.kv.set("bg_keep", on ? "1" : "0");
-    this.keep = on;
+    return keepsRunning();
   }
 
   /** The window just closed and Harbor stays: say so once, as a desktop notification (there is no window left for a toast). */
@@ -227,6 +225,29 @@ export function autostart(): boolean {
     return s.includes(BACKGROUND_FLAG) && !s.split("\n").some((l) => l.trim() === "Hidden=true");
   } catch {
     return false;
+  }
+}
+
+/** The installed launcher (~/.local/bin/harbor), which follows updates; null when Harbor isn't installed. */
+export function installedLauncher(): string | null {
+  const bin = join(process.env.HOME ?? "", ".local/bin/harbor");
+  return existsSync(bin) ? bin : null;
+}
+
+/** Kv: start at login was turned on by default once (or chosen in Settings since), so it is never forced again. */
+export const AUTOSTART_DEFAULT_KEY = "autostart_default";
+
+/** "Start Harbor when I log in" is on by default: the first time an installed Harbor runs this, it writes the entry, unless it is there already. */
+export function autostartByDefault(kv: BackgroundKv, managed: boolean): void {
+  if (!managed || kv.get(AUTOSTART_DEFAULT_KEY) === "1") return;
+  const bin = installedLauncher();
+  if (bin === null) return;
+  kv.set(AUTOSTART_DEFAULT_KEY, "1");
+  if (autostart()) return;
+  try {
+    setAutostart(true, { exe: bin, managed: false });
+  } catch {
+    // a read-only config folder: it stays off, Settings › General can still try
   }
 }
 

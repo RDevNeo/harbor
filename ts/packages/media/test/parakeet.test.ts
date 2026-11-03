@@ -168,7 +168,7 @@ describe.skipIf(!model)("the speech engine", () => {
     await parakeet.transcribe(wavFile(src, "en"));
     const pid = parakeet.workerPid() as number;
     expect(parakeet.loaded()).toBe(true);
-    expect(await parakeet.reap(Date.now() + 60_000)).toBe(false);
+    expect(await parakeet.reap(Date.now() + 30_000)).toBe(false);
     expect(await parakeet.reap(Date.now() + 5 * 60_000 + 1000)).toBe(true);
     expect(parakeet.loaded()).toBe(false);
     expect(pidAlive(pid)).toBe(false);
@@ -177,8 +177,8 @@ describe.skipIf(!model)("the speech engine", () => {
     await parakeet.transcribe(wavFile(src, "en"));
     parakeet.setKeepMin(1);
     await parakeet.transcribe(wavFile(src, "en"));
-    expect(await parakeet.reap(Date.now() + 90_000)).toBe(false);
-    expect(await parakeet.reap(Date.now() + 121_000)).toBe(true);
+    expect(await parakeet.reap(Date.now() + 30_000)).toBe(false);
+    expect(await parakeet.reap(Date.now() + 61_000)).toBe(true);
   }, 120_000);
 
   test("removing the model frees it and deletes its files", async () => {

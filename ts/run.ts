@@ -16,6 +16,7 @@ import {
 } from "./packages/update/src/index.ts";
 import type * as slint from "slint-ui";
 import { isOffline, startHub } from "./hub.ts";
+import { autostartByDefault, keepsRunning } from "./packages/ui/src/background.ts";
 import { wire } from "./wire.ts";
 
 export interface RunOptions {
@@ -122,6 +123,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   // back to do it all again.
   if (cfg.dir !== null && bundle !== undefined && !cfg.preview) watchFiles([join(cfg.dir, "VERSION")], () => void reloader?.now());
   if (!offline) updater.start();
+  autostartByDefault(store, updater.managed() && !cfg.preview && !offline);
 
   const restore = offline ? null : takeSnapshot(run.store);
   if (!o.window && restore) snapshot = () => restore;
@@ -148,6 +150,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     };
     const tray = offline ? null : trayStart({ onOpen: () => single.raise(), onQuit: quit });
     const hub = {
+      settings: { account: run.account, hub: run.hub, mesh: run.mesh, version: o.version },
       prs: run.prs,
       workspaces: () => ({ all: run.account.workspaces(), mine: run.account.workspace(), pcs: directoryPcWorkspaces(run.account.directory()) }),
       gh: run.services.gh,
@@ -218,7 +221,7 @@ export async function runApp(o: RunOptions): Promise<number> {
     };
     await ui.runShell(data, hub, { restore, shown: (w) => (void confirmStart(cfg), o.shown?.(w, quit)), snapshotWith: (f) => (snapshot = f), quit, closer: (f) => (closeWindow = f), toaster: (t) => { run.move.onToast = t; run.runOn.onToast = t; run.projectMove.onToast = t; }, busyIn: (f) => run.setBusyIn(f), projects: (p) => run.setWindowProjects(p) });
     tray?.stop();
-    if (!quitting && run.store.get("bg_keep") !== "0") {
+    if (!quitting && keepsRunning()) {
       const note = ui.stillRunning(run.store, tray !== null);
       if (note) Bun.spawnSync(["notify-send", "-a", "Harbor", ...note], { stdio: ["ignore", "ignore", "ignore"] });
       hidden = true;

@@ -508,14 +508,8 @@ export component IntegrationsTab {
     pure callback valid(string, string) -> bool;
     VerticalLayout {
         alignment: start;
-        Text {
-            text: "Agents Harbor starts get the MCP servers below, plus only the apps you sign in to here. Your own sign-ins (gh, git, Claude Code, Convex) aren't shared with them.";
-            font-size: 14px;
-            color: Theme.subtle;
-            wrap: word-wrap;
-        }
         VerticalLayout {
-            padding-top: 19px;
+            padding-top: 9px;
             padding-bottom: 14px;
             Text {
                 height: 24px;
@@ -527,32 +521,17 @@ export component IntegrationsTab {
                 vertical-alignment: center;
             }
         }
-        for row in root.data.rows: HorizontalLayout {
-            padding-bottom: 8px;
+        HorizontalLayout {
             spacing: 8px;
-            VerticalLayout {
+            for column in [0, 1]: VerticalLayout {
                 width: (root.width - 8px) / 2;
                 alignment: start;
-                AppCard {
-                    app: row.left;
-                    act(w, i, a, b) => {
-                        root.act(w, i, a, b);
-                    }
-                    valid(c, s) => {
-                        return root.valid(c, s);
-                    }
-                }
-            }
-            VerticalLayout {
-                width: (root.width - 8px) / 2;
-                alignment: start;
-                if row.has-right: AppCard {
-                    app: row.right;
-                    act(w, i, a, b) => {
-                        root.act(w, i, a, b);
-                    }
-                    valid(c, s) => {
-                        return root.valid(c, s);
+                spacing: 8px;
+                for row in root.data.rows: VerticalLayout {
+                    if column == 0 || row.has-right: AppCard {
+                        app: column == 0 ? row.left : row.right;
+                        act(w, i, a, b) => { root.act(w, i, a, b); }
+                        valid(c, s) => { return root.valid(c, s); }
                     }
                 }
             }

@@ -44,35 +44,35 @@ describe("settings", () => {
     const r = rig();
     r.ctl.load();
     expect(voice.config()).toEqual(["auto", ""]);
-    expect(parakeet.keepMin()).toBe(5);
+    expect(parakeet.keepMin()).toBe(1);
     expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn(), dictate.dictionary()]).toEqual(["parakeet", true, true, []]);
     const stored = { voice_lang2: "pt", voice_model: "tiny", voice_keep_min: "15", voice_engine: "whisper", voice_cleanup: "0", voice_commands: "0", voice_dict: '[{"term":"Harbor","sounds":["harbour"]}]' };
     for (const [k, v] of Object.entries(stored)) r.kv.set(k, v);
     r.ctl.load();
-    expect(voice.config()).toEqual(["pt", "tiny"]);
-    expect(parakeet.keepMin()).toBe(15);
-    expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn()]).toEqual(["whisper", false, false]);
+    expect(voice.config()).toEqual(["auto", "tiny"]);
+    expect(parakeet.keepMin()).toBe(1);
+    expect([dictate.engine(), dictate.cleanupOn(), dictate.commandsOn()]).toEqual(["parakeet", true, true]);
     expect(dictate.dictionary()).toEqual([{ term: "Harbor", sounds: ["harbour"] }]);
     r.kv.set("voice_keep_min", "soon");
     r.kv.set("voice_dict", "{not json");
     r.ctl.load();
-    expect(parakeet.keepMin()).toBe(5);
+    expect(parakeet.keepMin()).toBe(1);
     expect(dictate.dictionary()).toEqual([]);
   });
 
   test("the settings screen's choices are stored and applied", () => {
     const r = rig();
     r.ctl.set({ lang: "en", model: "base" });
-    expect(voice.config()).toEqual(["en", "base"]);
-    expect([r.kv.get("voice_lang2"), r.kv.get("voice_model")]).toEqual(["en", "base"]);
+    expect(voice.config()).toEqual(["auto", "base"]);
+    expect([r.kv.get("voice_lang2"), r.kv.get("voice_model")]).toEqual([undefined, "base"]);
     r.ctl.setMore({ engine: "whisper", cleanup: false, keepMin: 60 });
-    expect([r.kv.get("voice_engine"), r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min")]).toEqual(["whisper", "0", "60"]);
-    expect([dictate.engine(), dictate.cleanupOn(), parakeet.keepMin()]).toEqual(["whisper", false, 60]);
+    expect([r.kv.get("voice_engine"), r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min")]).toEqual([undefined, undefined, undefined]);
+    expect([dictate.engine(), dictate.cleanupOn(), parakeet.keepMin()]).toEqual(["parakeet", true, 1]);
     r.ctl.setWords({ commands: false, dict: [{ term: "Harbor", sounds: [] }] });
-    expect([r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual(["0", '[{"term":"Harbor","sounds":[]}]']);
-    expect([dictate.commandsOn(), dictate.dictionary()]).toEqual([false, [{ term: "Harbor", sounds: [] }]]);
+    expect([r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual([undefined, '[{"term":"Harbor","sounds":[]}]']);
+    expect([dictate.commandsOn(), dictate.dictionary()]).toEqual([true, [{ term: "Harbor", sounds: [] }]]);
     r.ctl.setMore({ cleanup: true });
-    expect(r.kv.get("voice_cleanup")).toBe("1");
+    expect(r.kv.get("voice_cleanup")).toBeUndefined();
   });
 
   test("dictionary entries are added, edited and removed through the form", () => {
@@ -114,7 +114,7 @@ describe("settings", () => {
     dictate.set({ cleanup: false, keepMin: 15 }, true);
     dictate.setWords({ commands: false, dict: dictwords.parse([{ term: "Harbor" }]) }, true);
     r.ctl.poll();
-    expect([r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min"), r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual(["0", "15", "0", '[{"term":"Harbor","sounds":[]}]']);
+    expect([r.kv.get("voice_cleanup"), r.kv.get("voice_keep_min"), r.kv.get("voice_commands"), r.kv.get("voice_dict")]).toEqual([undefined, undefined, undefined, '[{"term":"Harbor","sounds":[]}]']);
     r.kv.clear();
     r.ctl.poll();
     expect(r.kv.size).toBe(0);

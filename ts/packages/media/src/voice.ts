@@ -55,7 +55,7 @@ let cfgLang = "";
 let cfgModel = "";
 
 export function setConfig(lang: string, model: string): void {
-  cfgLang = lang;
+  cfgLang = "auto";
   cfgModel = model;
 }
 
@@ -128,11 +128,58 @@ export function engine(): Engine {
   return { kind: "builtin" };
 }
 
-export function recorder(): { bin: string; args: string[] } | null {
+export interface InputDevice { id: string; label: string }
+let inputDevice = "";
+export function setInputDevice(id: string): void { inputDevice = id; }
+export function currentInputDevice(): string { return inputDevice; }
+
+/** Pulse source names also identify PipeWire nodes when pipewire-pulse is used. */
+export function pulseInputs(value: unknown): InputDevice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((v) => {
+    if (!v || typeof v !== "object") return [];
+    const p = v as Record<string, unknown>;
+    // A sink's monitor (what the speakers play) is no microphone: pactl names it *.monitor and gives it
+    // monitor_source (its sink) or monitor_of_sink, depending on the version ("n/a" / 4294967295: none).
+    const ofSink = p.monitor_of_sink;
+    const monitor = (typeof p.monitor_source === "string" && p.monitor_source !== "") || (typeof ofSink === "number" && ofSink !== 4294967295) || (typeof ofSink === "string" && ofSink !== "" && ofSink !== "n/a");
+    if (typeof p.name !== "string" || p.name.endsWith(".monitor") || monitor) return [];
+    return [{ id: p.name, label: typeof p.description === "string" ? p.description : p.name }];
+  });
+}
+
+export function pipewireInputs(value: unknown): InputDevice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((v) => {
+    const p = v?.info?.props;
+    return p?.["media.class"] === "Audio/Source" && typeof p["node.name"] === "string"
+      ? [{ id: p["node.name"], label: p["node.description"] || p["node.nick"] || p["node.name"] }] : [];
+  });
+}
+
+/** Enumerates on opening Voice; no audio server or permission is needed to use system default. */
+export async function inputDevices(): Promise<InputDevice[]> {
+  const defaults = [{ id: "", label: "System default" }];
+  for (const [bin, args, parse] of [["pactl", ["--format=json", "list", "sources"], pulseInputs], ["pw-dump", [], pipewireInputs]] as const) {
+    const path = onPath([bin]);
+    if (!path) continue;
+    try {
+      const child = Bun.spawn([path, ...args], { stdout: "pipe", stderr: "ignore" });
+      const timer = setTimeout(() => child.kill(), 2000);
+      try {
+        const text = await new Response(child.stdout).text();
+        if (await child.exited === 0) { const devices = parse(JSON.parse(text)); if (devices.length) return [...defaults, ...devices]; }
+      } finally { clearTimeout(timer); }
+    } catch { /* Try the other audio server; default remains usable. */ }
+  }
+  return defaults;
+}
+
+export function recorder(device = inputDevice): { bin: string; args: string[] } | null {
   const pw = onPath(["pw-record"]);
-  if (pw) return { bin: pw, args: ["--raw", "--rate", "16000", "--channels", "1", "--format", "s16", "--media-category", "Capture", "--media-role", "Communication", "-"] };
+  if (pw) return { bin: pw, args: [...(device ? ["--target", device] : []), "--raw", "--rate", "16000", "--channels", "1", "--format", "s16", "--media-category", "Capture", "--media-role", "Communication", "-"] };
   const pa = onPath(["parecord"]);
-  return pa ? { bin: pa, args: ["--raw", "--rate=16000", "--channels=1", "--format=s16le", "--latency-msec=100"] } : null;
+  return pa ? { bin: pa, args: [...(device ? [`--device=${device}`] : []), "--raw", "--rate=16000", "--channels=1", "--format=s16le", "--latency-msec=100"] } : null;
 }
 
 export function cantRecord(): string | null {

@@ -230,7 +230,7 @@ export class Mesh {
 
   /** kv `mesh_enabled` and `mesh_allowed` again (they may change from a terminal). */
   reread(): void {
-    this.d.hub.mesh.on = this.d.kv.get("mesh_enabled") === "1";
+    this.d.hub.mesh.on = true;
     this.d.hub.mesh.allowed = loadAllowed(this.d.kv);
   }
 

@@ -75,11 +75,11 @@ test("first_sign_in_keeps_this_pcs_settings", () => {
 
 test("replaced_values_are_backed_up", () => {
   const s = open();
-  s.setQuiet("voice_lang2", "pt");
-  ss.apply(s, { voice_lang2: { v: "en", at: Number.MAX_SAFE_INTEGER - 1 } });
-  expect(s.get("voice_lang2")).toBe("en");
+  s.setQuiet("voice_model", "small");
+  ss.apply(s, { voice_model: { v: "tiny", at: Number.MAX_SAFE_INTEGER - 1 } });
+  expect(s.get("voice_model")).toBe("tiny");
   const b = JSON.parse(s.get("account_sync_backup") ?? "{}") as Record<string, string>;
-  expect(b.voice_lang2).toBe("pt");
+  expect(b.voice_model).toBe("small");
 });
 
 test("newest_wins", () => {

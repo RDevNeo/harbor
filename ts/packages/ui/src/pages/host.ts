@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { git, providers, type Account, type Work } from "@harbor/agents";
 import { type voiceCtl } from "@harbor/media";
 import { Desktop, hostname, spawnNotifySend, testNote } from "@harbor/net";
-import { control, discord, type Funnel, hookcert, type ghapi, prs as ghprs } from "@harbor/mcp";
+import { control, discord, type ghapi, prs as ghprs } from "@harbor/mcp";
 import { type Chat } from "@harbor/store";
 import { type Data } from "../data.ts";
 import { fixOnPeer, localDevice } from "../logic/hubseam.ts";
@@ -28,12 +28,11 @@ export type Page = "settings" | "prs" | "issues";
 
 /** What the window asks of the hub running in the same process. */
 export interface PageHub {
+  settings?: import("../settingsrun-devices.ts").SettingsRuntime;
   /** The GitHub API the phone and the other PCs of the mesh use: its Issues list is the merged one. */
   gh: ghapi.GhApi;
   /** Looks for a release now and gives the updater's status line once it has an answer. */
   checkUpdates: () => Promise<string>;
-  funnel: Funnel;
-  hookPort: () => number;
 }
 
 /** What the pages ask of the main window around them. */
@@ -84,21 +83,17 @@ export class PageHost {
     const store = this.s.data.store;
     if (this.settings === null) {
       const s = this.s;
-      void this.s.hub().funnel.check().then(() => this.settings).then((h) => h?.show()).catch(() => {});
       this.settings = loadQr().then((qr) => mountSettings(
         busOf<SettingsView>(s.win, "SettingsBus"),
         {
           store,
-          quit: () => s.quit(),
+          runtime: s.hub().settings,
           keys: s.keys,
           speech: s.dictation() ?? settingsSpeech(store),
           theme: { dark: () => s.dark(), set: (dark, compact) => s.theme(dark, compact) },
           back: () => s.leave(),
           providers: { login: (id) => this.login(id), addClaudeAccount: () => this.addClaudeAccount(), changed: () => this.s.data.rediscoverAccounts() },
           integrations: { discordWindow: () => void discord.window().catch(() => {}) },
-          webhooks: { terminal: (title, script) => s.terminal(title, homedir(), ["bash", "-lc", script]), checkFunnel: () => this.s.hub().funnel.check(), disableFunnel: () => this.s.hub().funnel.forget(), kick: () => hookcert.kick() },
-          funnel: () => this.s.hub().funnel,
-          hookPort: () => this.s.hub().hookPort(),
           qr,
           notify: { sendTest: () => void new Desktop({ send: spawnNotifySend }).testPopup(testNote()) },
           copy: (text) => s.win.copy_text(text),

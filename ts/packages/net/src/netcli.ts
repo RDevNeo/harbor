@@ -51,8 +51,8 @@ export async function meshCli(args: string[], d: MeshCliDeps): Promise<number> {
     case "on":
     case "off":
       if (args.length !== 1) break;
-      kv.set("mesh_enabled", args[0] === "on" ? "1" : "0");
-      io.out(`sharing chats with your other PCs: ${args[0]}`);
+      // Sharing is always on now; "off" is kept so old scripts get an answer instead of a usage error.
+      io.out(args[0] === "on" ? "sharing chats with your other PCs: on" : "sharing chats with your other PCs is always on");
       return 0;
     case "pair": {
       if (args.length !== 1) break;
@@ -154,7 +154,7 @@ export async function meshCli(args: string[], d: MeshCliDeps): Promise<number> {
       if (args.length > 1) break;
       io.out(`this PC: ${who.name} (${who.id})`);
       io.out(`key:     ${me}`);
-      io.out(`sharing: ${kv.get("mesh_enabled") === "1" ? "on" : "off"}`);
+      io.out("sharing: on");
       const here = addrs().map((a) => hostPort(a, port));
       io.out(`listens: ${here.length === 0 ? "(no network)" : here.join("  ")}`);
       if (firewallBlocks(port)) io.out(`firewall: ufw drops port ${port} from the network; to let your devices in:\n  ${firewallFix(port)}`);

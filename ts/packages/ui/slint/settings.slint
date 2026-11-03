@@ -13,7 +13,6 @@ import { Block, BlocksTab } from "settings-blocks.slint";
 import { NotificationsTab, NotifySection } from "settings-notifications.slint";
 import { ProvidersData, ProvidersTab } from "settings-providers.slint";
 import { IntegrationsTab, IntData } from "settings-integrations.slint";
-import { WebhooksTab, WhData } from "settings-webhooks.slint";
 import { AppearanceTab, AppearanceView } from "settings-appearance.slint";
 
 export struct SettingsTab {
@@ -164,7 +163,6 @@ export global SettingsBus {
     in property <[SettingsTab]> tabs;
     in property <string> tab;
     in property <string> tab-label;
-    in property <string> desc;
     in property <[SettingSection]> sections;
     in property <bool> nav-open: true;
     in property <[Block]> blocks;
@@ -181,8 +179,6 @@ export global SettingsBus {
     callback providers-act(string, string);
     in property <IntData> integrations;
     callback integrations-act(string, string, string, string);
-    in property <WhData> webhooks;
-    callback webhooks-act(string, string);
     pure callback integrations-valid(string, string) -> bool;
     callback notify-edited(string, string);
     callback keys-act(string, string);
@@ -202,7 +198,6 @@ export component SettingsPage inherits Rectangle {
     in property <[SettingsTab]> tabs <=> SettingsBus.tabs;
     in property <string> tab <=> SettingsBus.tab;
     in property <string> tab-label <=> SettingsBus.tab-label;
-    in property <string> desc <=> SettingsBus.desc;
     in property <[SettingSection]> sections <=> SettingsBus.sections;
     in property <bool> nav-open <=> SettingsBus.nav-open;
     in property <[Block]> blocks <=> SettingsBus.blocks;
@@ -219,8 +214,6 @@ export component SettingsPage inherits Rectangle {
     callback providers-act <=> SettingsBus.providers-act;
     in property <IntData> integrations <=> SettingsBus.integrations;
     callback integrations-act <=> SettingsBus.integrations-act;
-    in property <WhData> webhooks <=> SettingsBus.webhooks;
-    callback webhooks-act <=> SettingsBus.webhooks-act;
     pure callback integrations-valid <=> SettingsBus.integrations-valid;
     callback notify-edited <=> SettingsBus.notify-edited;
     callback keys-act <=> SettingsBus.keys-act;
@@ -332,32 +325,22 @@ export component SettingsPage inherits Rectangle {
                         letter-spacing: -0.96px;
                         color: Theme.fg;
                     }
-                    if root.desc != "": VerticalLayout {
-                        padding-top: 10px;
-                        Text {
-                            text: root.desc;
-                            font-size: 14px;
-                            color: Theme.subtle;
-                            wrap: word-wrap;
-                        }
-                    }
                     Rectangle {
                         height: 28px;
                     }
                     if root.tab == "voice": VoiceTab { view: root.voice; toggled(k, v) => { root.toggled(k, v); } chose(k, n) => { root.chose(k, n); } pressed(k) => { root.pressed(k); } edited(k, t) => { root.voice-edited(k, t); } }
                     if root.tab == "keybindings": KeybindingsTab { view: root.keybindings; act(w, a) => { root.keys-act(w, a); } key(k, c, s, a) => { root.keys-key(k, c, s, a); } }
-                    if root.tab == "account" || root.tab == "secrets" || root.tab == "devices" || root.tab == "phones": BlocksTab { blocks: root.blocks; pressed(k) => { root.blocks-pressed(k); } toggled(k, v) => { root.blocks-toggled(k, v); } edited(k, t) => { root.blocks-edited(k, t); } submitted(k, a, b, c) => { return root.blocks-submitted(k, a, b, c); } }
+                    if root.tab == "account" || root.tab == "secrets" || root.tab == "devices": BlocksTab { blocks: root.blocks; pressed(k) => { root.blocks-pressed(k); } toggled(k, v) => { root.blocks-toggled(k, v); } edited(k, t) => { root.blocks-edited(k, t); } submitted(k, a, b, c) => { return root.blocks-submitted(k, a, b, c); } }
                     if root.tab == "notifications": NotificationsTab { sections: root.notifications; toggled(k, v) => { root.toggled(k, v); } edited(k, t) => { root.notify-edited(k, t); } pressed(k) => { root.pressed(k); } }
                     if root.tab == "providers": ProvidersTab { data: root.providers; act(i, w) => { root.providers-act(i, w); } }
                     if root.tab == "integrations": IntegrationsTab { data: root.integrations; act(w, i, a, b) => { root.integrations-act(w, i, a, b); } valid(c, k) => { return root.integrations-valid(c, k); } }
-                    if root.tab == "webhooks": WebhooksTab { data: root.webhooks; act(w, a) => { root.webhooks-act(w, a); } }
                     if root.tab == "appearance": AppearanceTab { view: root.appearance; mode-picked(n) => { root.chose("theme", n); } density-picked(n) => { root.chose("density", n); } }
                     for s[i] in root.sections: VerticalLayout {
                         if i > 0: Rectangle {
                             height: 12px;
                         }
                         if s.title != "": VerticalLayout {
-                            padding-top: 17px;
+                            padding-top: i == 0 ? 11px : 17px;
                             padding-bottom: 15px;
                             Text {
                                 text: s.title;

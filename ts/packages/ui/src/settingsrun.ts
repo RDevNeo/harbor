@@ -2,7 +2,8 @@ import { join } from "node:path";
 import * as slint from "slint-ui";
 import { dataDir, Store } from "@harbor/store";
 import { voice } from "@harbor/media";
-import { control } from "@harbor/mcp";
+import { setHarborVersion } from "@harbor/mcp";
+import pkg from "../../../package.json" with { type: "json" };
 import { Desktop, spawnNotifySend, testNote } from "@harbor/net";
 import { uiDir } from "./assets.ts";
 import { Keys } from "./logic/keys.ts";
@@ -17,6 +18,7 @@ interface SettingsWindow extends slint.ComponentHandle {
   compact: boolean;
 }
 
+setHarborVersion(pkg.version);
 const store = Store.open(dataDir());
 const ui = slint.loadFile(join(await uiDir(), "settings.slint"), { style: "fluent" });
 const ctor = Reflect.get(ui, "SettingsWindow");
@@ -28,13 +30,11 @@ win.dark = process.env.HTS_LIGHT === undefined;
 // The rig doesn't reach Hugging Face: a model download fails at once, here.
 voice.setFetcher(() => Promise.reject(new Error("no network in the settings runner")));
 const notify: NotifyEnv = { sendTest: () => void new Desktop({ send: spawnNotifySend }).testPopup(testNote()) };
-// The rig has no terminal, updater, clipboard, Discord window, Funnel or login to draw a code for: those buttons do nothing here.
+// The rig has no terminal, updater, clipboard, Discord window or login to draw a code for: those buttons do nothing here.
 await mountSettings(
   bus,
   {
     store,
-    quit: () => process.exit(0),
-    hookPort: () => control.HOOK_PORT,
     keys: Keys.load(store),
     speech: settingsSpeech(store),
     theme: {
@@ -47,8 +47,6 @@ await mountSettings(
     back: () => {},
     providers: { login: () => {}, addClaudeAccount: () => {} },
     integrations: { discordWindow: () => {} },
-    webhooks: { terminal: () => {}, checkFunnel: () => Promise.resolve(), disableFunnel: () => {}, kick: () => {} },
-    funnel: () => ({ base: null, stale: null }),
     qr: () => ({ width: 1, height: 1, data: new Uint8Array(4) }),
     notify,
     copy: () => {},

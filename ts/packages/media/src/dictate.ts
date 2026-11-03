@@ -28,15 +28,15 @@ const settings: Settings = { engine: "", cleanup: true, commands: true, dict: []
 let account: Ask | null = null;
 
 export function engine(): "parakeet" | "whisper" {
-  return settings.engine === "whisper" ? "whisper" : "parakeet";
+  return "parakeet";
 }
 
 export function cleanupOn(): boolean {
-  return settings.cleanup;
+  return true;
 }
 
 export function commandsOn(): boolean {
-  return settings.commands;
+  return true;
 }
 
 export function dictionary(): Entry[] {
@@ -45,15 +45,12 @@ export function dictionary(): Entry[] {
 
 /** Changes the commands setting and the dictionary; `api`: from a phone (the UI then saves them). */
 export function setWords(words: { commands?: boolean; dict?: Entry[] }, api = false): void {
-  if (words.commands !== undefined) settings.commands = words.commands;
   if (words.dict !== undefined) settings.dict = words.dict;
   settings.dirty ||= api;
 }
 
 /** Changes the settings; `api`: from a phone (the UI then saves them). */
 export function set(change: { engine?: string; cleanup?: boolean; keepMin?: number }, api = false): void {
-  if (change.engine !== undefined) settings.engine = change.engine;
-  if (change.cleanup !== undefined) settings.cleanup = change.cleanup;
   if (change.keepMin !== undefined) parakeet.setKeepMin(Math.min(change.keepMin, 24 * 60));
   settings.dirty ||= api;
 }

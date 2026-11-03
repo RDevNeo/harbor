@@ -248,25 +248,6 @@ describe("webhooks over HTTPS", () => {
       l.hooks.stop();
     }
   });
-
-  test("off, the port is closed without a word", async () => {
-    const l = listener();
-    const port = await up(l);
-    try {
-      l.kv.set("hooks_public", "0");
-      l.hooks.kick();
-      await l.hooks.settled();
-      await Bun.sleep(20);
-      const r = await post(port, "/hooks/tok123").then(
-        (x) => x.status,
-        () => "closed",
-      );
-      expect(r).toBe("closed");
-      expect(l.hooks.status()).toEqual({ name: "", base: null, route: "", error: "", expires: 0, busy: false });
-    } finally {
-      l.hooks.stop();
-    }
-  });
 });
 
 

@@ -394,7 +394,7 @@ function lazyBody(read: () => Promise<Buffer>): ReadableStream<Uint8Array> {
 
 
 export interface Options {
-  /** Settings: `hooks_public` ("1": on) and `hooks_name`. */
+  /** Settings: `hooks_name` (a name typed by hand; otherwise the public address's). */
   kv: Kv;
   /** The webhooks that are live (their tokens). */
   tokens: Tokens;
@@ -512,12 +512,10 @@ export class Hooks {
     this.ticking = (async () => {
       do {
         this.again = false;
-        this.on = this.o.kv.get("hooks_public") === "1";
-        if (this.on) {
-          // The port is only opened once it's wanted.
-          await this.listen();
-          await this.round();
-        } else this.st = blankStatus();
+        // Public webhooks are always on (Settings no longer has a switch for them).
+        this.on = true;
+        await this.listen();
+        if (!this.stopped) await this.round();
         this.o.wake();
       } while (this.again && !this.stopped);
       this.ticking = null;

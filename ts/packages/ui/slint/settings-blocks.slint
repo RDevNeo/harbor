@@ -490,6 +490,8 @@ component FormButtons inherits HorizontalLayout {
     callback pressed(string);
     padding-left: root.gap;
     spacing: 8px;
+    horizontal-stretch: 0;
+    alignment: start;
     BBtn {
         b: root.b.submit;
         enabled: root.ready && root.b.submit.enabled;
@@ -521,9 +523,16 @@ component FormBlock inherits VerticalLayout {
             root.err = root.submitted(root.b.key, root.vals[0], root.vals[1], root.vals[2]);
         }
     }
+    // A field without a width takes the free space of its line; without one, the line packs to the left.
+    property <bool> grows: (root.b.fields.length > 0 && root.b.fields[0].row == 0 && root.b.fields[0].width == 0)
+        || (root.b.fields.length > 1 && root.b.fields[1].row == 0 && root.b.fields[1].width == 0)
+        || (root.b.fields.length > 2 && root.b.fields[2].row == 0 && root.b.fields[2].width == 0);
+    property <bool> grows-two: (root.b.fields.length > 0 && root.b.fields[0].row == 1 && root.b.fields[0].width == 0)
+        || (root.b.fields.length > 1 && root.b.fields[1].row == 1 && root.b.fields[1].width == 0)
+        || (root.b.fields.length > 2 && root.b.fields[2].row == 1 && root.b.fields[2].width == 0);
     spacing: 12px;
     HorizontalLayout {
-        alignment: start;
+        alignment: root.grows ? LayoutAlignment.stretch : LayoutAlignment.start;
         for f[i] in root.b.fields: HorizontalLayout {
             horizontal-stretch: f.row == 0 && f.width == 0 ? 1 : 0;
             max-width: f.row == 0 && f.width > 0 ? f.width + (i > 0 ? 4px : 0px) + (i + 1 < root.b.fields.length && root.b.fields[i + 1].row == 0 ? 4px : 0px) : 100000px;
@@ -543,20 +552,24 @@ component FormBlock inherits VerticalLayout {
                 }
             }
         }
-        if !root.two: FormButtons {
-            b: root.b;
-            gap: 8px;
-            ready: root.ready;
-            go => {
-                root.go();
-            }
-            pressed(k) => {
-                root.pressed(k);
+        if !root.two: VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            FormButtons {
+                b: root.b;
+                gap: 8px;
+                ready: root.ready;
+                go => {
+                    root.go();
+                }
+                pressed(k) => {
+                    root.pressed(k);
+                }
             }
         }
     }
     if root.two: HorizontalLayout {
-        alignment: start;
+        alignment: root.grows-two ? LayoutAlignment.stretch : LayoutAlignment.start;
         for f[i] in root.b.fields: HorizontalLayout {
             horizontal-stretch: f.row == 1 && f.width == 0 ? 1 : 0;
             max-width: f.row == 1 && f.width > 0 ? f.width + (i > 0 && root.b.fields[i - 1].row == 1 ? 4px : 0px) + (i + 1 < root.b.fields.length && root.b.fields[i + 1].row == 1 ? 4px : 0px) : 100000px;
@@ -576,15 +589,19 @@ component FormBlock inherits VerticalLayout {
                 }
             }
         }
-        FormButtons {
-            b: root.b;
-            gap: 12px;
-            ready: root.ready;
-            go => {
-                root.go();
-            }
-            pressed(k) => {
-                root.pressed(k);
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            FormButtons {
+                b: root.b;
+                gap: 12px;
+                ready: root.ready;
+                go => {
+                    root.go();
+                }
+                pressed(k) => {
+                    root.pressed(k);
+                }
             }
         }
     }
@@ -759,8 +776,7 @@ component BlockView inherits VerticalLayout {
             if root.b.title != "": Separator { }
             VerticalLayout {
                 alignment: start;
-                padding: root.b.title != "" ? 0px : 16px;
-                padding-left: root.b.title != "" ? 12px : 16px;
+                padding: 16px;
                 FormBlock {
                     b: root.b;
                     pressed(k) => {

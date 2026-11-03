@@ -5,6 +5,37 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Settings is shorter: no description line under any page's title, and the choices that everyone
+  left on one value are now simply that value.
+  - General: Enter while the agent works always steers (Ctrl+Enter still queues one message),
+    threads always continue after a restart, prompt suggestions are always on, and Harbor always
+    keeps running when its window is closed (the tray icon still has Quit). Fast mode stays in the
+    composer's reasoning menu; Order projects stays in the sidebar's menu. Start Harbor when I log
+    in is on by default for installed copies that never turned it on. Updates are always automatic:
+    the Updates card is just "Harbor <version>".
+  - Voice: Parakeet only (no engine switch or Whisper models), the spoken language is always
+    detected, and dictation is always cleaned up, understands voice commands and keeps the model
+    loaded for 1 minute.
+  - Notifications: only what to notify about (no Only when away, no quiet hours, no phone test).
+  - Account is now Workspace, without Move this PC.
+  - Webhooks and Phones are no longer pages: webhooks are always reachable, phone access is always
+    on, and the router's port is opened automatically as before, without the "From outside your
+    network" details. Signed-in phones (with Sign out) are listed under Devices.
+  - Devices has only your devices (this PC, your other PCs, your phones) and pairing. Sharing chats
+    with your other PCs is always on; the SSH defaults and Add a device by SSH are gone (devices
+    added that way keep working).
+
+### Added
+- Settings › Voice › Microphone: pick the input dictation records from (PipeWire/PulseAudio
+  sources), and Test it: 3 seconds with a level meter and whether any sound came through.
+
+### Fixed
+- Settings forms keep their fields on one line at full width: Secrets' Name, Value, What it's for
+  and Save, and Devices' Enter a code (address, code and Pair inside the card's padding).
+- Settings › Integrations: a tall app card (Gmail with its accounts) no longer leaves a hole beside
+  it and pushes the next one down; the apps flow in two independent columns.
+
 ## [0.127.0] - 2026-11-03
 
 ### Changed
@@ -26,7 +57,6 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 - The agents package's tests no longer leave fake Claude processes behind spinning at full CPU when
   a test run ends or dies: the fakes exit with their input or their parent, and each suite kills
   what it started.
-
 
 ## [0.126.0] - 2026-11-03
 

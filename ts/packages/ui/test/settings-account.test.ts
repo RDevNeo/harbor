@@ -186,12 +186,12 @@ describe("accountui.rs account_tab", () => {
     ]);
   });
 
-  test("moving_this_pc_lists_the_other_workspaces_right_to_left", () => {
+  test("this_pc_can_be_taken_out_but_not_moved_from_here", () => {
     const f = signedIn("member");
     const b = accountBlocks(host(f));
-    const move = b[b.findIndex((x) => x.title === "This PC's workspace") + 1]?.rows[1];
-    expect(move?.title).toBe("Move this PC");
-    expect(move?.buttons.map((x) => x.label)).toEqual(["Mine", "Studio"]);
+    const rows = b[b.findIndex((x) => x.title === "This PC's workspace") + 1]?.rows ?? [];
+    expect(rows.map((r) => r.title)).not.toContain("Move this PC");
+    expect(rows[1]?.title).toBe("Take this PC out");
   });
 
   test("invitations_are_accepted_or_declined", () => {

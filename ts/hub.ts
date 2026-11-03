@@ -198,8 +198,7 @@ async function updateRoute(u: Updater | null, call: Call, store: Store): Promise
   if (what === "auto") {
     const on = typeof call.body === "object" && call.body !== null ? (call.body as { on?: unknown }).on : undefined;
     if (typeof on !== "boolean") return err(400, 'send {"on": true} or false');
-    store.set("auto_update", on ? "1" : "0");
-    return ok({ ok: true, auto: on });
+    return ok({ ok: true, auto: true });
   }
   if (what !== "update" && what !== "check") return null;
   if (u === null || !u.managed()) return err(409, "this Harbor was built from source, so it doesn't update itself");
@@ -251,7 +250,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   const port = /^\d+$/.test(portText) ? Number(portText) : 47930;
   const hub = new Hub(loadTokens(store), port);
   hub.mesh.me = me;
-  hub.enabled = store.get("api_enabled") === "1";
+  hub.enabled = true;
   hub.loadRemembered(store);
   // Whoever settles or unsettles a chat or a project (the window, a phone, the project menu's
   // API, new activity waking a settled project), other PCs and phones hear of each chat at once.
@@ -1013,11 +1012,11 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
   }
   // HARBOR_NO_DISCOVERY: a test hub neither hears nor answers the PCs on the network.
   const disc = offline || env.HARBOR_NO_DISCOVERY !== undefined ? null : await discoverStart({ shared: hub.mesh, me: () => ({ id: hub.mesh.me.id, name: hub.mesh.me.name, fp: id.fp, port, version: o.version, on: hub.mesh.on }) });
-  const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => store.get("net_map") !== "0") : () => {};
+  const stopMap = env.HARBOR_LISTEN === undefined && !offline ? portmap.start(port, () => true) : () => {};
   const signIn = env.HARBOR_TEST_NO_SIGNIN === undefined && !offline && existsSync(join(state, "account.json"));
   if (signIn) account.start();
   const tick = setInterval(() => {
-    hub.enabled = store.get("api_enabled") === "1";
+    hub.enabled = true;
     const a = addrs();
     if (JSON.stringify(a) !== JSON.stringify(hub.net.addrs)) {
       hub.net = { ...hub.net, addrs: a };

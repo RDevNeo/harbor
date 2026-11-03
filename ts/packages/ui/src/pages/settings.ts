@@ -2,9 +2,9 @@ import { basename } from "node:path";
 import { homedir } from "node:os";
 import { type Store } from "@harbor/store";
 import { voiceCtl } from "@harbor/media";
-import { mcp } from "@harbor/mcp";
+import { harborVersion, mcp } from "@harbor/mcp";
 import { providers } from "@harbor/agents";
-import { autostart, setAutostart } from "../background.ts";
+import { AUTOSTART_DEFAULT_KEY, autostart, installedLauncher, setAutostart } from "../background.ts";
 import { type Keys, label } from "../logic/keys.ts";
 import { tabFromSlug, TABS, type Tab } from "../logic/pages.ts";
 import { generalSections, navTabs, setGeneral, type SettingSection } from "../logic/settings.ts";
@@ -15,21 +15,18 @@ import { editNotifications, notificationsSections, notifyPressed, setNotificatio
 import { keysAct, keysKey, keysView, type KeysView } from "../logic/settings-keybindings.ts";
 import { type ProvidersData } from "../logic/settings-providers.ts";
 import { voiceChose, voiceEdited, voiceFacts, voicePressed, voiceToggled, voiceView, type VoiceView } from "../logic/settings-voice.ts";
-import { type WebhooksHost, type WhData } from "../logic/settings-webhooks.ts";
 import { type Pixels } from "../logos.ts";
+import { type SettingsRuntime } from "../settingsrun-devices.ts";
 import { blockTabs } from "../settingsrun-blocks.ts";
 import { integrationsFeed } from "../settingsrun-integrations.ts";
 import { providerLogos, providersFeed, type ProvidersHost } from "../settingsrun-providers.ts";
-import { webhooksFeed } from "../settingsrun-webhooks.ts";
 import { resolveDark } from "../theme.ts";
-import { trayActive } from "../tray.ts";
 
 /** The properties and callbacks of slint/settings.slint's `SettingsBus`, as TypeScript sees them. */
 export interface SettingsView {
   tabs: { slug: string; label: string; icon: string }[];
   tab: string;
   tab_label: string;
-  desc: string;
   sections: SettingSection[];
   nav_open: boolean;
   appearance: AppearanceView;
@@ -38,8 +35,6 @@ export interface SettingsView {
   integrations: IntData;
   integrations_act: (what: string, id: string, a: string, b: string) => void;
   integrations_valid: (client: string, secret: string) => boolean;
-  webhooks: WhData;
-  webhooks_act: (what: string, a: string) => void;
   notifications: NotifySection[];
   notify_edited: (k: string, t: string) => void;
   keybindings: KeysView;
@@ -64,18 +59,14 @@ export interface SettingsView {
 
 /** What the page needs from the window around it; the buttons that need a terminal, a clipboard or a browser go through here. */
 export interface SettingsDeps {
-  /** The port the webhook listener bound. */
-  hookPort: () => number;
   store: Store;
-  quit: () => void;
+  runtime?: SettingsRuntime | undefined;
   keys: Keys;
   speech: voiceCtl.VoiceCtl;
   theme: { dark: () => boolean; set: (dark: boolean, compact: boolean) => void };
   back: () => void;
   providers: Omit<ProvidersHost, "modelsFor">;
   integrations: Omit<IntHost, "changed" | "openUrl" | "copy">;
-  webhooks: Omit<WebhooksHost, "changed" | "copy" | "deleteWebhook">;
-  funnel: () => { base: string | null; stale: number | null };
   qr: (url: string) => Pixels;
   notify: NotifyEnv;
   copy: (text: string) => void;
@@ -98,15 +89,11 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   let tab = first;
   const logos = await providerLogos();
   const integrationsTab = await integrationsFeed({ ...deps.integrations, changed: () => show(), openUrl: (u) => mcp.openUrl(u), copy: deps.copy }, deps.qr);
-  const webhooksTab = webhooksFeed(store, { ...deps.webhooks, changed: () => show(), copy: deps.copy, deleteWebhook: (id) => { store.deleteWebhook(id); } }, deps.funnel, deps.hookPort);
   const providersTab = await providersFeed(store, { ...deps.providers, modelsFor: providers.staticModels }, logos);
-  const blocks = await blockTabs(store, () => show(), (t) => {
-    tab = t;
-    show();
-  });
+  const blocks = await blockTabs(store, () => show(), deps.copy, deps.runtime);
 
   function sections(t: Tab): SettingSection[] {
-    if (t === "general") return generalSections(store, { trayActive: trayActive(), autostart: autostart(), version: "0.108.0 (ts)", updateStatus: "Built from source: updates come from your checkout, not from GitHub.", managed: false });
+    if (t === "general") return generalSections(store, { autostart: autostart(), version: deps.runtime?.version ?? harborVersion() });
     return [];
   }
 
@@ -123,26 +110,33 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     bus.tabs = navTabs("");
     bus.tab = tab;
     bus.tab_label = TABS[tab].label;
-    bus.desc = TABS[tab].desc;
     bus.sections = sections(tab);
     if (tab === "notifications") bus.notifications = notificationsSections(store);
     if (tab === "keybindings") bus.keybindings = keysView(keys);
     if (tab === "voice") bus.voice = voiceView(voiceFacts(speech, label(keys.get("voice"))));
     if (tab === "providers") bus.providers = providersTab.view(dark);
     if (tab === "integrations") bus.integrations = integrationsTab.view(dark);
-    if (tab === "webhooks") bus.webhooks = webhooksTab.view();
     bus.blocks = blocks.get(tab)?.blocks() ?? [];
   }
 
+  const refreshInputs = () => void speech.refreshInputs().then(() => show());
   bus.pick = (s) => {
     tab = tabFromSlug(s) ?? tab;
+    if (tab === "voice") refreshInputs();
     show();
   };
   bus.searched = (q) => {
     bus.tabs = navTabs(q);
   };
   bus.toggled = (k, v) => {
-    if (k === "autostart") setAutostart(v, { exe: basename(process.execPath) === "bun" ? null : process.execPath, managed: false });
+    if (k === "autostart") {
+      try {
+        setAutostart(v, { exe: installedLauncher() ?? (basename(process.execPath) === "bun" ? null : process.execPath), managed: false });
+        store.set(AUTOSTART_DEFAULT_KEY, "1");
+      } catch {
+        // the entry couldn't be written: the toggle shows what is there
+      }
+    }
     setGeneral(store, k, v);
     setNotifications(store, k, v);
     voiceToggled(speech, k, v);
@@ -156,7 +150,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
   };
   bus.integrations_act = integrationsTab.act;
   bus.integrations_valid = integrationsTab.valid;
-  bus.webhooks_act = webhooksTab.act;
   bus.providers_act = (id, what) => {
     providersTab.act(id, what);
     show();
@@ -192,7 +185,7 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     return err;
   };
   bus.pressed = (k) => {
-    if (k === "quit") deps.quit();
+    if (k === "voice:test") { void speech.testMicrophone(() => show()); return; }
     notifyPressed(k, deps.notify);
     void voicePressed(speech, k).then(() => show());
   };
@@ -204,5 +197,6 @@ export async function mountSettings(bus: SettingsView, deps: SettingsDeps, first
     bus.nav_open = true;
   };
   show();
-  return { show };
+  if (first === "voice") refreshInputs();
+  return { show: (next) => { show(next); if (next === "voice") refreshInputs(); } };
 }

@@ -1,5 +1,63 @@
 import { Theme } from "theme.slint";
-import { Btn, Card, Input, Separator, SettingRow, Tabs, Toggle } from "widgets.slint";
+import { Icons } from "icons.slint";
+import { Btn, Card, Glyph, Input, MenuItem, PopoverFrame, Separator, SettingRow, Tabs, Toggle } from "widgets.slint";
+
+// A field like Input that opens the list of its options under it (the microphone picker).
+component Picker {
+    in property <[string]> options;
+    in property <int> selected;
+    in property <bool> enabled: true;
+    callback picked(int);
+    height: 36px;
+    min-width: 120px;
+    Rectangle {
+        background: Theme.bg100;
+        border-width: 1px;
+        border-color: area.has-hover && root.enabled ? Theme.gray-1000 : Theme.border;
+        border-radius: Theme.radius-md;
+    }
+    Text {
+        x: 12px;
+        width: parent.width - 44px;
+        text: root.options[root.selected];
+        font-size: 14px;
+        color: root.enabled ? Theme.fg : Theme.subtle;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Glyph {
+        x: parent.width - 28px;
+        width: 16px;
+        height: parent.height;
+        icon: Icons.down;
+        size: 14px;
+        color: Theme.subtle;
+    }
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            list.show();
+        }
+    }
+    list := PopupWindow {
+        x: 0px;
+        y: root.height + 4px;
+        width: root.width;
+        PopoverFrame {
+            VerticalLayout {
+                padding: 4px;
+                for o[i] in root.options: MenuItem {
+                    label: o;
+                    checked: i == root.selected;
+                    clicked => {
+                        root.picked(i);
+                    }
+                }
+            }
+        }
+    }
+}
 
 export struct VoiceButton {
     key: string,
@@ -165,7 +223,59 @@ export component VoiceTab inherits VerticalLayout {
                             root.pressed(k);
                         }
                     }
-                    if r.kind != "add": SettingRow {
+                    if r.kind == "microphone": VerticalLayout {
+                        padding: 16px;
+                        spacing: 10px;
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: r.title;
+                                font-size: 14px;
+                                font-weight: 500;
+                                color: Theme.fg;
+                                vertical-alignment: center;
+                            }
+                            Picker {
+                                horizontal-stretch: 1;
+                                options: r.options;
+                                selected: r.selected;
+                                enabled: !r.on;
+                                picked(n) => {
+                                    root.chose(r.key, n);
+                                }
+                            }
+                            for b in r.buttons: VerticalLayout {
+                                alignment: center;
+                                Btn {
+                                    text: b.label;
+                                    size: sm;
+                                    enabled: b.enabled;
+                                    clicked => {
+                                        root.pressed(b.key);
+                                    }
+                                }
+                            }
+                        }
+                        // The level while testing and the peak after it.
+                        if r.on || r.progress > 0: Rectangle {
+                            height: 6px;
+                            background: Theme.gray-200;
+                            border-radius: 3px;
+                            Rectangle {
+                                x: 0px;
+                                width: parent.width * r.progress;
+                                background: Theme.green-700;
+                                border-radius: 3px;
+                            }
+                        }
+                        Text {
+                            text: r.desc;
+                            font-size: 14px;
+                            color: Theme.subtle;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if r.kind != "add" && r.kind != "microphone": SettingRow {
                         title: r.title;
                         desc: r.desc;
                         if r.kind == "status": Text {

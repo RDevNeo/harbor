@@ -141,7 +141,8 @@ export async function startServices(o: ServicesOptions): Promise<Services> {
   const hostPortImpl = hostPort(o, work, slugs, src);
   const gh = ghwire.createGhApi({ shared: o.hub.mesh, mesh: o.mesh, host: hostPortImpl, blocks: (md) => blocks(md), deviceId });
   const link = connect.connect({ engine: o.engine, ...(env.HARBOR_SOCK ? { socket: env.HARBOR_SOCK } : {}), ...(o.hookPort === undefined ? {} : { hooks: o.hookPort }) });
-  const hooks = o.hookPort === false ? null : hookcert.start({ kv: o.store, tokens: { has: (t) => o.engine.webhooks.some((w) => w.token === t) }, send: (h) => void connect.deliverHook(o.engine, h), wake: () => undefined });
+  // Public webhooks ask the router for port 443 like the phone port's mapping, so a test or rig hub (HARBOR_LISTEN) leaves them out too.
+  const hooks = o.hookPort === false || env.HARBOR_LISTEN !== undefined ? null : hookcert.start({ kv: o.store, tokens: { has: (t) => o.engine.webhooks.some((w) => w.token === t) }, send: (h) => void connect.deliverHook(o.engine, h), wake: () => undefined });
   return {
     gh,
     routePhone: (call) => (call.path[0] === "v1" && (call.path[1] === "prs" || call.path[1] === "issues") ? asReply(gh.handle(call)) : null),

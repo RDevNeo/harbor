@@ -300,12 +300,9 @@ export class Recaps {
 
   constructor(private readonly host: RecapHost) {}
 
-  private on(key: string): boolean {
-    return this.host.store.get(key) !== "0";
-  }
-
+  /** Prompt suggestions are always on. */
   suggestEnabled(): boolean {
-    return this.on("suggest_enabled");
+    return true;
   }
 
   private entry(chat: number): Entry {

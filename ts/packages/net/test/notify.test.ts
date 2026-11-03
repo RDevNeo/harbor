@@ -166,7 +166,7 @@ describe("notify", () => {
     const p = { ...defaultPrefs(), kinds: { agent: true, ci: false }, quiet: true, away_only: true };
     savePrefs(kv, p);
     expect(kv.get("notify")).toBe('{"kinds":{"agent":true,"ci":false},"quiet":true,"quiet_from":"22:00","quiet_to":"07:00","away_only":true}');
-    expect(loadPrefs(kv)).toEqual(p);
+    expect(loadPrefs(kv)).toEqual({ ...p, quiet: false, away_only: false });
     kv.set("notify", "{bad");
     expect(loadPrefs(kv)).toEqual(defaultPrefs());
     expect(prefsOn(p, "agent")).toBe(true);
