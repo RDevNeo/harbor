@@ -5,6 +5,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.121.6] - 2026-11-03
+
+### Fixed
+- The shared draft between the desktop and the phone works again. A message sent from any
+  device empties the chat's composer on every device, open now or opened later (the phone no
+  longer keeps the text of a message sent on the PC, and the PC empties when the phone sends).
+- What the phone writes, mentions and attaches shows up in the desktop's composer, and the
+  images attached on the desktop show up on the phone. Drafts are kept across a hub restart.
+
 ## [0.121.5] - 2026-11-03
 
 ### Changed
