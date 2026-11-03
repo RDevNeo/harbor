@@ -1,0 +1,8 @@
+# What Harbor's Slint addon is built from (build.sh): name, version, file name, SHA-256, address.
+# slint-ui is the npm package (it carries the addon's crate: Cargo.toml, build.rs, rust/); the
+# slint-interpreter crate is replaced by a patched copy (keep-compiler-state.patch); of i-slint-core,
+# the addon's build.rs reads only platform.rs, where Slint's repository has it. Every other crate
+# comes from crates.io at the versions Cargo.lock (resolved by `build.sh lock`) pins.
+slint-ui 1.18.1 slint-ui-1.18.1.tgz f067990a8a06072e50589cdc35cbdbb20fab337e18a7b91a0addf3e720754a8f https://registry.npmjs.org/slint-ui/-/slint-ui-1.18.1.tgz
+slint-interpreter 1.18.1 slint-interpreter-1.18.1.crate 645cf39fcf871b5b49f7319973e8dee7af03ee51c5a2c8e1e7466d72acc8b217 https://static.crates.io/crates/slint-interpreter/slint-interpreter-1.18.1.crate
+i-slint-core 1.18.1 i-slint-core-1.18.1.crate ed2ea15059d70bc31b1a8b1eb4c34f2c5df04cb7e53f36179b43c0261231d646 https://static.crates.io/crates/i-slint-core/i-slint-core-1.18.1.crate

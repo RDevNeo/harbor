@@ -5,6 +5,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Harbor's window takes ~90 MB less memory from the start (on a 1400x900 window: 466 → 371 MB
+  resident, glibc heap 204 → 109 MB). Harbor now ships its own build of Slint's native module
+  (`slint/`: slint-ui 1.18.1 with one patch to slint-interpreter): a compiled UI keeps only what it
+  runs, not the compiler's state that only Slint's live preview and language server read, and that
+  freed memory goes back to the system right after the UI compiles. Nothing looks or behaves
+  differently; `SLINT_KEEP_COMPILER_STATE=1` brings Slint's own behaviour back. Releases publish the
+  patch and the module's complete source (`harbor-slint-source.tar.gz`; Slint is used under its
+  Royalty-free License, notices in `licenses/slint/`, badge in the README), and
+  `scripts/boat/slint` builds it on boat.dev for x86_64 and aarch64.
+
 ## [0.134.0] - 2026-11-03
 
 ### Changed

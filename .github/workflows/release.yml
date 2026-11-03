@@ -5,7 +5,7 @@
 #
 # Harbor is TypeScript on Bun (ts/); build.sh compiles it into one executable per architecture.
 #
-# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), install.sh,
+# Assets: harbor-{x86_64,aarch64}-linux.tar.gz (harbor + desktop entry, icons, licences, install.sh), harbor-video-{x86_64,aarch64}-linux.tar.gz (the video player) with harbor-video-source.tar.gz (its sources, which its licence asks for), harbor-browser-{x86_64,aarch64}-linux.tar.gz (the built-in browser's Servo engine; aarch64 when its build succeeded), harbor-slint-{x86_64,aarch64}-linux.tar.gz (Harbor's Slint addon, built into harbor; kept for the next release to reuse) with harbor-slint-source.tar.gz (its sources, which its licence asks for), install.sh,
 # harbor-android.apk (the phone app), what an installed Harbor updates from (harbor-app.json, the
 # manifest; harbor-app.js, the app bundle; harbor-runtime-{x86_64,aarch64} when the runtime changed),
 # SHA256SUMS, and a minisign .minisig for each. Harbor's updater checks those signatures with the
@@ -115,7 +115,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
-    needs: plan
+    needs: [plan, slint]
     outputs:
       sandbox: ${{ steps.boat.outputs.id }}
     steps:
@@ -125,6 +125,10 @@ jobs:
         with:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
+      - uses: ./.github/actions/slint-addon
+        with:
+          found: ${{ needs.slint.outputs.found }}
+          sandbox: ${{ steps.boat.outputs.id }}
       - name: Build (on boat)
         # Harbor's Google OAuth clients: the Desktop one for the Gmail app's one-click sign-in and the
         # Web one phones get Gmail codes for, baked into the app (scripts/build.ts); the Web client id
@@ -162,7 +166,7 @@ jobs:
   # aarch64 on a sandbox of its own, from the same snapshot, which it doesn't save: Bun builds it
   # under qemu (build.sh), which would slow x86_64's build beside it.
   build-aarch64:
-    needs: plan
+    needs: [plan, slint]
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -172,6 +176,10 @@ jobs:
         with:
           key: ${{ secrets.BOAT_API_KEY }}
           from: harbor-build
+      - uses: ./.github/actions/slint-addon
+        with:
+          found: ${{ needs.slint.outputs.found }}
+          sandbox: ${{ steps.boat.outputs.id }}
       - name: Build (on boat)
         env:
           HARBOR_GOOGLE_WEB_CLIENT_ID: ${{ secrets.HARBOR_GOOGLE_WEB_CLIENT_ID }}
@@ -236,10 +244,17 @@ jobs:
     with:
       build: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
+  # Harbor's Slint addon, rebuilt only when slint/ changed (slint.yml); the builds wait for it.
+  slint:
+    uses: ./.github/workflows/slint.yml
+    secrets: inherit
+    with:
+      build: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
   # Only what needs the secrets or GitHub's OIDC, and plain file copies: signing the APK, the
   # archives and their checksum lists, and the attestations.
   package:
-    needs: [plan, build, build-aarch64, browser, video]
+    needs: [plan, build, build-aarch64, browser, video, slint]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -338,6 +353,8 @@ jobs:
             cp assets/fonts/LUCIDE-LICENSE.txt "$d/licenses/Lucide-ISC.txt"
             cp assets/logos/LOBE-ICONS-LICENSE.txt assets/logos/SIMPLE-ICONS-LICENSE.md "$d/licenses/"
             cp packaging/speech-NOTICE.txt "$d/licenses/speech-NOTICE.txt"
+            # Harbor's Slint addon is built into harbor: Slint's licences and where its source is.
+            [ "${{ needs.slint.outputs.found }}" != "true" ] || { mkdir -p "$d/licenses/slint" && cp -r art/harbor-slint/licenses/. "$d/licenses/slint/"; }
             [ ! -f art/harbor-extra/lic/third-party-harbor.txt ] || cp art/harbor-extra/lic/third-party-harbor.txt "$d/licenses/third-party-harbor.txt"
           done
 
@@ -383,6 +400,21 @@ jobs:
           else
             echo "::warning::no video player in this package"
           fi
+          # Harbor's Slint addon per arch, for the next release to reuse (slint.yml), and its sources
+          # beside it, as its licence asks.
+          if [ "${{ needs.slint.outputs.found }}" = "true" ]; then
+            for arch in x86_64 aarch64; do
+              n=x64; [ "$arch" = x86_64 ] || n=arm64
+              v=pkg/harbor-slint-$arch-linux
+              mkdir -p "$v"
+              install -m644 "art/harbor-slint/$arch/slint-ui.linux-$n-gnu.node" "$v/slint-ui.linux-$n-gnu.node"
+              cp art/harbor-slint/slint.id "$v/slint.id"
+              cp -r art/harbor-slint/licenses "$v/licenses"
+            done
+            cp art/harbor-slint/harbor-slint-source.tar.gz dist/
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::a release needs Harbor's Slint addon"; exit 1
+          fi
           # A checksum list inside each archive: install.sh run from an extracted folder checks it offline.
           for x in pkg/*/; do
             (cd "$x" && find . -type f ! -name 'SHA256SUMS*' | sed 's|^\./||' | sort | xargs sha256sum > SHA256SUMS)
@@ -415,6 +447,7 @@ jobs:
           for arch in x86_64 aarch64; do
             [ ! -d pkg/harbor-browser-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-browser-$arch-linux.tar.gz harbor-browser-$arch-linux
             [ ! -d pkg/harbor-video-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-video-$arch-linux.tar.gz harbor-video-$arch-linux
+            [ ! -d pkg/harbor-slint-$arch-linux ] || tar -C pkg -I "$z" -cf dist/harbor-slint-$arch-linux.tar.gz harbor-slint-$arch-linux
           done
           cp packaging/install.sh dist/install.sh
           cp art/harbor-android/harbor-android.apk dist/harbor-android.apk

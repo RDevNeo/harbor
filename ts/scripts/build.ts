@@ -24,6 +24,14 @@ function nativeFiles(): Record<string, string> {
   add(`@img+sharp-libvips-linux-${arch}@*/node_modules/@img/sharp-libvips-linux-${arch}/lib/libvips-cpp.so.*`, (f) => `sharp/@img/sharp-libvips-linux-${arch}/lib/${base(f)}`);
   add(`sherpa-onnx-linux-${arch}@*/node_modules/sherpa-onnx-linux-${arch}/*.{node,so}`, (f) => `sherpa/${base(f)}`);
   add(`@slint-ui+slint-ui-binary-linux-${arch}-gnu@*/node_modules/@slint-ui/slint-ui-binary-linux-${arch}-gnu/*.node`, (f) => `slint/${base(f)}`);
+  // Harbor's own build of it (slint/: the compiler's state isn't kept), when the release brings one.
+  const own = process.env.HARBOR_SLINT_ADDON;
+  if (own) {
+    const key = `slint/slint-ui.linux-${arch}-gnu.node`;
+    if (!(key in out) || !Bun.file(own).size) throw new Error(`HARBOR_SLINT_ADDON: ${own} is not this architecture's Slint addon`);
+    out[key] = own;
+    console.log(`Slint addon: ${own}`);
+  }
   if (!["sharp/@img/sharp-linux", "sherpa/", "slint/"].every((p) => Object.keys(out).some((k) => k.startsWith(p)))) {
     throw new Error("sharp's, sherpa's or Slint's native files for this architecture are not installed (bun install)");
   }

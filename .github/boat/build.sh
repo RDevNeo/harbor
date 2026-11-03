@@ -22,9 +22,12 @@ google=(-e HARBOR_GOOGLE_CLIENT_ID -e HARBOR_GOOGLE_CLIENT_SECRET -e HARBOR_GOOG
 
 # Builds the three files from a tree at /src (bun on PATH), into /out/harbor-$ARCH.
 # --frozen-lockfile: what bun.lock says, as the tests ran it.
+# Harbor's own Slint addon when the release brought one (slint.yml, at slint/out/<arch>): build.ts
+# builds it in instead of the one from npm.
 build_ts='
   cd /src/ts
   bun install --frozen-lockfile
+  for a in /src/slint/out/$ARCH/slint-ui.linux-*-gnu.node; do [ ! -f "$a" ] || export HARBOR_SLINT_ADDON=$a; done
   o=/out/harbor-$ARCH
   mkdir -p "$o"
   bun scripts/build.ts single "$o/harbor" --version "$V" --sha "$SHA"
@@ -32,6 +35,8 @@ build_ts='
   [ "$ARCH" != x86_64 ] || bun scripts/build.ts app "$o/harbor-app.js" --version "$V" --min-runtime "$MIN" --sha "$SHA"
   "$o/harbor" --version
   [ "$("$o/harbor-runtime-$ARCH" runtime-version)" = "$V" ]
+  [ -z "${HARBOR_SLINT_ADDON:-}" ] || { grep -qa SLINT_KEEP_COMPILER_STATE "$o/harbor" && grep -qa SLINT_KEEP_COMPILER_STATE "$o/harbor-runtime-$ARCH"; } \
+    || { echo "the executables lack Harbor Slint addon (slint/)"; exit 1; }
   [ ! -f "$o/harbor-app.js" ] || [ "$("$o/harbor-runtime-$ARCH" smoke-bundle "$o/harbor-app.js")" = "harbor $V" ]'
 
 x86_64() {

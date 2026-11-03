@@ -1,0 +1,57 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF2'
+Usage: scripts/boat/slint [--out DIR] [--quiet] [lock|x86_64|aarch64|source ...]
+
+Builds Harbor's Slint addon from this working tree (slint/build.sh: slint-ui 1.18.1's native module
+with keep-compiler-state.patch) on a fresh `large` boat.dev sandbox from the snapshot `harbor-build`,
+in its own image (.github/boat/slint.sh). With no target: x86_64, aarch64 and the source archive, as
+slint.yml does for a release. `lock` resolves slint/Cargo.lock (copy it from --out into slint/ and
+commit it); put it first to build with it in the same run. Output streams here; exits non-zero when
+it fails. The sandbox is always deleted, also on error, Ctrl+C or kill (see scripts/boat/check --help).
+
+To try the addon on this PC: HARBOR_SLINT_ADDON=DIR/x86_64/slint-ui.linux-x64-gnu.node
+bun ts/scripts/build.ts single OUT builds the release executable with it.
+
+Options:
+  --out DIR    copy what was built to DIR
+  -q, --quiet  print only progress and the summary; the full output stays in /tmp/<sandbox name>.log
+  -h, --help   this help
+
+Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
+EOF2
+}
+out="" quiet="" targets=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) out=$2; shift ;;
+    -q|--quiet) quiet=1 ;;
+    -h|--help) usage; exit 0 ;;
+    lock|x86_64|aarch64|source) targets+=("$1") ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+. "$(dirname "$0")/lib.sh"
+
+summary() {
+  [ -f "$log" ] || return 0
+  echo
+  say "summary"
+  grep -E '^<== |^== .* done|^needs glibc|NEEDED|^rustc |Slint crates|error(\[|:)' "$log" | sed 's/^<== //; s/^/  /' | head -40 || true
+}
+
+sandbox
+upload
+rc=0
+remote -- bash .github/boat/slint.sh ${targets[@]+"${targets[@]}"} || rc=$?
+# Also after a failure: what was built (a resolved Cargo.lock) is worth keeping.
+if [ -n "$out" ]; then
+  mkdir -p "$out"
+  "$boat" exec "$id" -- bash -c "mkdir -p out/slint && tar -czf out.tgz -C out/slint ."
+  "$boat" scp "$id:/home/user/out.tgz" "$out/slint-out.tgz" >/dev/null
+  tar -xzf "$out/slint-out.tgz" -C "$out"
+  rm -f "$out/slint-out.tgz"
+fi
+exit "$rc"

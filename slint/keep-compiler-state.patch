@@ -1,0 +1,72 @@
+--- a/component.rs
++++ b/component.rs
+@@ -314,6 +314,15 @@
+     }
+ }
+ 
++/// Harbor: whether compiled definitions keep the compiler's state (the
++/// TypeLoader after the passes, a copy from before them, the object tree and
++/// the LLR's debug info). Only highlight, live preview and the LSP read it,
++/// and it is most of a large UI's memory. `SLINT_KEEP_COMPILER_STATE=1`
++/// keeps it, as upstream always does.
++pub fn keep_compiler_state() -> bool {
++    std::env::var_os("SLINT_KEEP_COMPILER_STATE").is_some_and(|v| v == "1")
++}
++
+ /// Lower a compiled `Document` to a `CompilationUnit` and wrap each public
+ /// component in a `ComponentDefinitionInner`.
+ pub fn build_from_document(
+@@ -330,7 +339,11 @@
+     let unit = Rc::new(unit);
+     // `lower_to_item_tree` builds `public_components` from `exported_roots()`
+     // in iteration order, so the indices line up.
+-    type_loaders.originals = document.exported_roots().collect();
++    // Harbor: without a retained TypeLoader nothing reads these, and they keep
++    // the whole object tree alive.
++    if type_loaders.type_loader.is_some() || keep_compiler_state() {
++        type_loaders.originals = document.exported_roots().collect();
++    }
+     (0..unit.public_components.len())
+         .map(|public_index| ComponentDefinitionInner {
+             compilation_unit: unit.clone(),
+@@ -432,9 +445,11 @@
+     }
+     // Populate the LLR debug-info side table so highlight/live-preview can
+     // map source-level elements back to runtime items.
+-    config.debug_info = true;
++    // Harbor: only when the compiler's state is kept (SLINT_KEEP_COMPILER_STATE=1).
++    let keep = keep_compiler_state();
++    config.debug_info = keep;
+     let diag = i_slint_compiler::diagnostics::BuildDiagnostics::default();
+-    let (path, mut diag, loader, raw_loader) =
++    let (path, mut diag, loader, raw_loader) = if keep {
+         i_slint_compiler::load_root_file_with_raw_type_loader(
+             &path,
+             &path,
+@@ -442,7 +457,13 @@
+             diag,
+             config.clone(),
+         )
+-        .await;
++        .await
++    } else {
++        let (path, diag, loader) =
++            i_slint_compiler::load_root_file(&path, &path, source_code, diag, config.clone())
++                .await;
++        (path, diag, loader, None)
++    };
+     #[cfg(feature = "internal")]
+     let watch_paths = loader.all_files_to_watch().into_iter().collect();
+     let error_result = |diagnostics| BuildResult {
+@@ -461,8 +482,10 @@
+         };
+     }
+     let type_loader = std::rc::Rc::new(loader);
++    // Harbor: the definitions keep only the LLR they run, unless asked; the
++    // TypeLoader is dropped at the end of this function.
+     let type_loaders = TypeLoaders {
+-        type_loader: Some(type_loader.clone()),
++        type_loader: keep.then(|| type_loader.clone()),
+         raw_type_loader: raw_loader.map(std::rc::Rc::new),
+         originals: Default::default(),
+     };

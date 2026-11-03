@@ -1,0 +1,32 @@
+# Puts Harbor's Slint addon (slint.yml's artifact harbor-slint) into a build sandbox at
+# ~/src/slint/out, where .github/boat/build.sh finds it. A tag must have it; a run by hand without
+# one builds with upstream's addon from npm.
+name: Slint addon
+inputs:
+  found:
+    description: slint.yml's output `found`
+    required: true
+  sandbox:
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v8
+      if: inputs.found == 'true'
+      with:
+        name: harbor-slint
+        path: ${{ runner.temp }}/harbor-slint
+    - name: Copy it to the sandbox
+      shell: bash
+      env:
+        FOUND: ${{ inputs.found }}
+        ID: ${{ inputs.sandbox }}
+      run: |
+        set -eu
+        if [ "$FOUND" != true ]; then
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then echo "::error::a release needs Harbor's Slint addon"; exit 1; fi
+          echo "::warning::no Harbor Slint addon: this run builds with upstream's"; exit 0
+        fi
+        tar -czf "$RUNNER_TEMP/slint.tgz" -C "$RUNNER_TEMP/harbor-slint" .
+        "$HOME/.local/bin/boat" scp "$RUNNER_TEMP/slint.tgz" "$ID:/home/user/slint.tgz"
+        "$HOME/.local/bin/boat" exec "$ID" -- bash -c 'mkdir -p src/slint/out && tar -xzf slint.tgz -C src/slint/out && rm slint.tgz && ls -la src/slint/out/*/'

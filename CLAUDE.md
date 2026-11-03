@@ -3,7 +3,8 @@
 Harbor is TypeScript on Bun, with a Slint window (`ts/`; Bun's version is pinned in
 `ts/package.json`). The Rust app was retired after 0.109.0; its sources are in git history only.
 The phone app is Java (`android/`); the built-in browser's engine is Servo, a Rust crate of its own
-(`browser/`); the video player is libmpv (`video/`).
+(`browser/`); the video player is libmpv (`video/`); Slint's native module is Harbor's own build of
+slint-ui's, patched so a compiled UI doesn't keep the compiler's state (`slint/`).
 
 ## TypeScript checks run on the PC
 
@@ -96,6 +97,12 @@ the browser engine, the video player and releases build on boat).
     the NDK (browser.yml).
   - `.github/boat/video.sh`: Harbor's video player, libmpv and FFmpeg as one library for x86_64 and
     aarch64 (video/build.sh, video.yml). `scripts/boat/video` runs it on the working tree.
+  - `.github/boat/slint.sh`: Harbor's Slint addon, slint-ui's native module with
+    `slint/keep-compiler-state.patch`, for x86_64 and aarch64 (slint/build.sh, slint.yml; the release
+    builds it into the executables through `HARBOR_SLINT_ADDON`). `scripts/boat/slint` runs it on the
+    working tree (`lock` resolves slint/Cargo.lock). Its id is the tree hash of `slint/`: after a
+    change, run slint.yml by hand on main before tagging. `bun install`'s addon (dev runs, shots,
+    previews) is still upstream's, which keeps ~100 MB more.
   - `.github/boat/smoke.sh`: the install tests on clean distro images (smoke.yml).
   - `.github/boat/run.sh`: runs a command on a sandbox and follows it; a lost connection to boat
     doesn't fail it.

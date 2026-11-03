@@ -20,6 +20,7 @@ test("the runtime lane runs only when its inputs change", () => {
   const same = { before: pkg(), after: pkg() };
   expect(lane({ changed: ["video/build.sh"], packageJson: same }).lane).toBe("runtime");
   expect(lane({ changed: ["packaging/install.sh"], packageJson: same }).lane).toBe("runtime");
+  expect(lane({ changed: ["slint/keep-compiler-state.patch"], packageJson: same }).lane).toBe("runtime");
   expect(lane({ changed: ["ts/runtime.ts"], packageJson: same }).lane).toBe("runtime");
   expect(lane({ changed: ["ts/packages/update/src/launcher.ts"], packageJson: same }).lane).toBe("runtime");
   expect(lane({ changed: ["ts/packages/update/src/notices.ts", "ts/packages/update/src/lane.ts"], packageJson: same }).lane).toBe("bundle");

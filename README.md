@@ -185,8 +185,15 @@ page by name too (`general|appearance|keybindings|providers|limits|integrations|
 - **Discord shell** (`discord/`): GPL-3.0-or-later, see [discord/LICENSE](discord/LICENSE). A separate
   program, not part of the Harbor binary: Harbor downloads it on first use and talks to it over
   stdin and stdout. Harbor stays MIT.
-- **Slint** (the window toolkit), triple-licensed (GPLv3, royalty-free or commercial): see
-  [slint.dev](https://slint.dev). **Bun** (the runtime, in the executable): MIT. The other npm packages
+- **Slint** (the window toolkit), triple-licensed (GPLv3, royalty-free or commercial): Harbor uses it
+  under the [Slint Royalty-free License](https://slint.dev/terms-and-conditions), with the attribution
+  below. Harbor builds Slint's native module itself, with one small patch (`slint/`: a compiled UI
+  doesn't keep the compiler's state); every release publishes that patch and the module's complete
+  source as `harbor-slint-source.tar.gz`, and its licence notices are in `licenses/slint/`.
+
+  [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/v1.18.1/logo/MadeWithSlint-logo-dark.svg)](https://slint.dev)
+
+  **Bun** (the runtime, in the executable): MIT. The other npm packages
   the executable carries, with their licences: `licenses/third-party-harbor.txt` in the release archive.
 - **Browser helper** (`browser/`): MIT, see [browser/LICENSE](browser/LICENSE). It links
   [Servo](https://servo.org), which is MPL-2.0.

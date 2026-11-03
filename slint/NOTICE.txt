@@ -1,0 +1,22 @@
+Harbor's window toolkit is Slint (https://slint.dev), through the native module of its npm package
+slint-ui. Slint is offered under GPL-3.0-only, the Slint Royalty-free License 2.0 or a commercial
+licence (LICENSE.md and the texts here). Harbor uses it under the Slint Royalty-free License, which
+allows distributing Slint, modified or unmodified, as part of an application, with attribution
+(Harbor's README carries the "Made with Slint" badge where its releases are downloaded) and its
+licence notices kept (these files). Harbor itself stays MIT (Harbor-MIT.txt).
+
+Harbor ships a modified copy of that module:
+
+  slint-ui            1.18.1   the npm package and its native module, unchanged
+  slint-interpreter   1.18.1   one change, keep-compiler-state.patch: a compiled UI keeps only what
+                               it runs, not the compiler's state (its TypeLoader, a copy of it from
+                               before the passes, the object tree, debug info), which only Slint's
+                               live preview and language server read. Setting
+                               SLINT_KEEP_COMPILER_STATE=1 brings upstream's behaviour back.
+
+The module is built into Harbor's executables (harbor, harbor-runtime-*). Its complete source is in
+harbor-slint-source.tar.gz, published with every Harbor release, so anyone may also take it under
+the GPL: both files above, the patch, every Slint crate it is built with, Cargo.lock (the other
+crates, permissively licensed, at the versions it pins on crates.io) and the script that builds it
+(recipe/build.sh). You may change them, build your own module and build Harbor from source with it
+(ts/scripts/build.ts takes it from HARBOR_SLINT_ADDON).

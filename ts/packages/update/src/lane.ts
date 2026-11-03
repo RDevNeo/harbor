@@ -26,7 +26,8 @@ export const RUNTIME_SOURCES: readonly string[] = [
   ].map((n) => `ts/packages/update/src/${n}.ts`),
 ];
 
-export const RUNTIME_FOLDERS: readonly string[] = ["video/", "packaging/"];
+// slint/: Harbor's Slint addon, built into the runtime.
+export const RUNTIME_FOLDERS: readonly string[] = ["video/", "packaging/", "slint/"];
 
 const RUNTIME_DEPENDENCIES = ["slint-ui", "sherpa-onnx-node", "sharp"] as const;
 

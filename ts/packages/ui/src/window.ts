@@ -3,6 +3,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { join } from "node:path";
 import * as slint from "slint-ui";
+import { malloc } from "@harbor/store";
 import type { TermKey } from "./logic/terminal.ts";
 import type { TermFrame } from "./terminal.ts";
 import { uiDir } from "./assets.ts";
@@ -719,6 +720,9 @@ function slintEnv(): void {
 export async function loadWindow(): Promise<AppWindow> {
   slintEnv();
   const ui = slint.loadFile(join(await uiDir(), "app.slint"), { style: "fluent" });
+  // Harbor's Slint addon (slint/) frees the compiler's state as the compile ends, ~100 MB in the
+  // middle of glibc's heap: given back now, not at the first periodic trim minutes later.
+  malloc.trim();
   const ctor = Reflect.get(ui, "AppWindow");
   if (!isCtor(ctor)) throw new Error("app.slint has no AppWindow");
   const win = new ctor();
