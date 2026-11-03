@@ -335,7 +335,8 @@ export const FREEZE_AFTER = 120;
 
 /**
  * Without swap: frozen RAM stays around 320 MB, so an idle client quits. Each start is a login,
- * hence the longer wait and the lower limit.
+ * hence the longer wait and the lower limit. With swap, a client frozen this long quits too
+ * (`Policy.quitsFrozen`).
  */
 export const QUIT_AFTER = 30 * 60;
 export const MAX_QUIT_LOGINS = 8;
@@ -367,6 +368,14 @@ export class Policy {
   rest(at: number, lastUse: number, busy: number, logins: number[], swap: boolean): Rest | undefined {
     const [idle, limit, rest]: [number, number, Rest] = swap ? [this.idle, this.maxLogins, "freeze"] : [this.quitIdle, this.maxQuitLogins, "quit"];
     return busy === 0 && at - lastUse >= idle && logins.filter((t) => at - t < DAY).length < limit ? rest : undefined;
+  }
+
+  /**
+   * With swap, a client frozen for `quitIdle` quits too: frozen, it still holds its memory in swap
+   * (zram is RAM) until the next update. Within the day's logins only, as the next call logs in again.
+   */
+  quitsFrozen(at: number, frozenAt: number, busy: number, logins: number[]): boolean {
+    return busy === 0 && frozenAt > 0 && at - frozenAt >= this.quitIdle && logins.filter((t) => at - t < DAY).length < this.maxLogins;
   }
 }
 
@@ -1715,6 +1724,10 @@ export class Host {
     const { phase, lastUse: last, busy, repairing, signinAt } = this.st;
     const wait = this.resting() ? this.policy.idle : this.policy.quitIdle;
     if (phase === "ready" && !repairing && busy === 0 && at - last >= wait) await this.idle(at, last);
+    if (phase === "frozen" && !repairing && this.policy.quitsFrozen(at, this.st.frozenAt, busy, this.st.saved.logins)) {
+      this.st.reclaiming.stopped = true;
+      await this.stopPage();
+    }
     if (phase === "signin" && at - signinAt > SIGNIN_WAIT) await this.cancel();
     // Frozen children keep the pipe open, so a dead client doesn't look like one by itself.
     if ((phase === "ready" || phase === "frozen") && !this.engine.alive()) await this.stopPage();

@@ -22,6 +22,7 @@ const FILES = {
   "sharp/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.7": "libvips",
   "sherpa/sherpa-onnx.node": "sherpa",
   "sherpa/libonnxruntime.so": "onnx",
+  "slint/slint-ui.linux-x64-gnu.node": "slint",
 };
 
 test("the files are written side by side, once, under a folder named by what they are", () => {
@@ -57,6 +58,7 @@ test("a folder that was not finished is not trusted", () => {
 test("each addon is found by its place in the list, and a runtime without it says so", () => {
   expect(addonPath(FILES, "sharp")).toBe("sharp/@img/sharp-linux-x64/lib/sharp-linux-x64-0.35.5.node");
   expect(addonPath(FILES, "sherpa")).toBe("sherpa/sherpa-onnx.node");
+  expect(addonPath(FILES, "slint")).toBe("slint/slint-ui.linux-x64-gnu.node");
   expect(addonPath({}, "sharp")).toBeNull();
   expect(() => loadAddon({}, "sherpa", tmp())).toThrow("this runtime carries no sherpa");
 });

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { control, setHarborVersion } from "./packages/mcp/src/index.ts";
 import { directoryPcWorkspaces, preview as meshPreview } from "./packages/net/src/index.ts";
-import { type Chat, dataDir, single, Store } from "./packages/store/src/index.ts";
+import { type Chat, dataDir, malloc, single, Store } from "./packages/store/src/index.ts";
 import {
   Reloader,
   advertised,
@@ -27,10 +27,13 @@ export interface RunOptions {
 
 export async function runApp(o: RunOptions): Promise<number> {
   const cfg = defaultConfig();
+  // Before the native libraries start work on Bun's threads: each would get an arena of its own.
+  malloc.capArenas();
   if (!(await single.acquire())) {
     if (o.window) await single.focusRunning();
     return 0;
   }
+  const stopTrims = malloc.trimEvery();
   setHarborVersion(o.version);
   wire();
 
@@ -98,6 +101,7 @@ export async function runApp(o: RunOptions): Promise<number> {
   const stopAll = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    stopTrims();
     sock?.stop();
     await run.stop();
   };

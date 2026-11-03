@@ -3,7 +3,7 @@ import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import * as slint from "slint-ui";
 import { type Account, chatpr, git, type Kind, memory, providers, recap, Work } from "@harbor/agents";
-import { type Chat, dataDir, type Item, now, parseAccess, runDir } from "@harbor/store";
+import { type Chat, dataDir, type Item, malloc, now, parseAccess, runDir } from "@harbor/store";
 import { AUTO_DEVICE, CHAT_SCHEME, type ChatLinkWorld, chatLinkTarget, clearDeviceTransfers, openChatLink, deviceCanSend, deviceDetails, deviceDownloadsDir, deviceHumanSize, deviceIsImage, type DeviceSendEnv, type DeviceSendKind, deviceSend, type DeviceTransfer, FileBrowser, isPhoneDevice, type PairedDevice, sendMenuNote, transferStatus } from "@harbor/net";
 import { EARLIER, earlier, forget, newOpened, type Opened, PAGE, queueCards, sameBlock, subsRunning, toggle as toggleCard, transcriptCards, trim, withQueue } from "./cards.ts";
 import { byteAt, charAt, ComposerMenus, type MenuContext, pressOf, transcriptKey } from "./composer.ts";
@@ -58,9 +58,12 @@ import { type AgentRow, type AppWindow, blankStatus, noPixels, type HookRow, typ
 const TRIM_MS = 30_000;
 
 /** After cards and images were let go: the engine's collector runs rarely when little else allocates, so their
- * memory would stay until then. */
+ * memory would stay until then. The native memory they held goes back to the system too (glibc keeps it). */
 function collectSoon(): void {
-  setTimeout(() => Bun.gc(true), 200);
+  setTimeout(() => {
+    Bun.gc(true);
+    malloc.trim();
+  }, 200);
 }
 
 /** What the composer's Resume button sends. */

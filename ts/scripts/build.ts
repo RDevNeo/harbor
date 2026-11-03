@@ -23,8 +23,9 @@ function nativeFiles(): Record<string, string> {
   add(`@img+sharp-linux-${arch}@*/node_modules/@img/sharp-linux-${arch}/lib/*.node`, (f) => `sharp/@img/sharp-linux-${arch}/lib/${base(f)}`);
   add(`@img+sharp-libvips-linux-${arch}@*/node_modules/@img/sharp-libvips-linux-${arch}/lib/libvips-cpp.so.*`, (f) => `sharp/@img/sharp-libvips-linux-${arch}/lib/${base(f)}`);
   add(`sherpa-onnx-linux-${arch}@*/node_modules/sherpa-onnx-linux-${arch}/*.{node,so}`, (f) => `sherpa/${base(f)}`);
-  if (!Object.keys(out).some((k) => k.startsWith("sharp/@img/sharp-linux")) || !Object.keys(out).some((k) => k.startsWith("sherpa/"))) {
-    throw new Error("sharp's or sherpa's native files for this architecture are not installed (bun install)");
+  add(`@slint-ui+slint-ui-binary-linux-${arch}-gnu@*/node_modules/@slint-ui/slint-ui-binary-linux-${arch}-gnu/*.node`, (f) => `slint/${base(f)}`);
+  if (!["sharp/@img/sharp-linux", "sherpa/", "slint/"].every((p) => Object.keys(out).some((k) => k.startsWith(p)))) {
+    throw new Error("sharp's, sherpa's or Slint's native files for this architecture are not installed (bun install)");
   }
   return out;
 }
@@ -58,6 +59,16 @@ const addonsFromRuntime: BunPlugin = {
       contents: `module.exports = globalThis.__harbor.addon(${JSON.stringify(a.path)});`,
       loader: "js",
     }));
+  },
+};
+
+// Slint's addon, written to disk with the others (native.ts): left to Bun, a compiled executable
+// writes it to /tmp, often a tmpfs, where its 36 MB are RAM whose pages can only go to swap.
+const slintAddon: BunPlugin = {
+  name: "slint-addon-on-disk",
+  setup(build) {
+    build.onResolve({ filter: /^@slint-ui\/slint-ui-binary-linux-(x64|arm64)-gnu$/ }, () => ({ path: "slint", namespace: "slint-addon" }));
+    build.onLoad({ filter: /.*/, namespace: "slint-addon" }, () => ({ contents: `module.exports = globalThis.__harbor.addon("slint");`, loader: "js" }));
   },
 };
 
@@ -126,7 +137,7 @@ const r =
     : kind === "single"
       ? await Bun.build({
           entrypoints: [new URL("../single.ts", import.meta.url).pathname],
-          plugins: [noExtraBinaries, nativeAddons, embedAssets, addonsFromRuntime],
+          plugins: [noExtraBinaries, slintAddon, nativeAddons, embedAssets, addonsFromRuntime],
           compile: { outfile },
           minify: !rest.includes("--debug"),
           sourcemap: "none",
@@ -134,7 +145,7 @@ const r =
         })
       : await Bun.build({
           entrypoints: [new URL("../runtime.ts", import.meta.url).pathname],
-          plugins: [noExtraBinaries, nativeAddons],
+          plugins: [noExtraBinaries, slintAddon, nativeAddons],
           compile: { outfile },
           minify: !rest.includes("--debug"),
           sourcemap: "none",

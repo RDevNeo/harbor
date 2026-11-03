@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- Harbor uses less memory the longer it runs. Its native libraries (the window, images, the
+  database) no longer get a new memory pool for each thread that works for them, and the memory
+  they free goes back to the system every 5 minutes and after a chat's earlier pages are let go,
+  instead of staying with Harbor until it restarts. Linux with glibc only.
+- The window's native library is written to `~/.cache/harbor/native-*` beside sharp and the speech
+  engine, not to `/tmp`: where `/tmp` is in RAM, its 36 MB took RAM and could only go to swap.
+- With swap, an idle Discord client that has been frozen for 30 minutes now quits instead of
+  holding its memory until Harbor's next update. It still freezes after 2 idle minutes, and the
+  day's login limit still applies: the next Discord call starts it again.
+- The database writes with `synchronous=NORMAL` (it already uses WAL): fewer disk syncs. A power cut
+  can lose the last moments of changes, never the database.
+
 ## [0.124.4] - 2026-11-03
 
 ### Changed

@@ -8,6 +8,7 @@ export * as limits from "./limits.ts";
 export * as secrets from "./secrets.ts";
 export * as settingsync from "./settingsync.ts";
 export * as single from "./single.ts";
+export * as malloc from "./malloc.ts";
 export * as usageCtl from "./usage_ctl.ts";
 export * as chartext from "./chartext.ts";
 export * as imagefile from "./imagefile.ts";

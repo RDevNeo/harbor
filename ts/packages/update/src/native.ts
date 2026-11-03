@@ -35,10 +35,16 @@ export function extractNative(files: NativeFiles, base: string): string {
   return dir;
 }
 
-export type Addon = "sharp" | "sherpa";
+export type Addon = "sharp" | "sherpa" | "slint";
+
+const ADDONS: Record<Addon, RegExp> = {
+  sharp: /^sharp\/@img\/sharp-linux[^/]*\/lib\/[^/]+\.node$/,
+  sherpa: /^sherpa\/sherpa-onnx\.node$/,
+  slint: /^slint\/slint-ui\.linux-[^/]+\.node$/,
+};
 
 export function addonPath(files: NativeFiles, addon: Addon): string | null {
-  const want = addon === "sharp" ? /^sharp\/@img\/sharp-linux[^/]*\/lib\/[^/]+\.node$/ : /^sherpa\/sherpa-onnx\.node$/;
+  const want = ADDONS[addon];
   return Object.keys(files).find((n) => want.test(n)) ?? null;
 }
 

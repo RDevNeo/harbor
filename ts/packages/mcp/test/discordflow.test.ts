@@ -190,6 +190,20 @@ test("with swap but no cgroup, an idle client isn't left stopped by signals: it 
   }
 }, 15_000);
 
+test("with swap, a client frozen for the quit wait quits too, and the next call starts it again", async () => {
+  await quiet();
+  await h.host.tick();
+  expect(h.host.phase()).toBe("frozen");
+  // The kit's quit wait is 0: the next look ends it.
+  await h.host.tick();
+  expect(h.host.phase()).toBe("stopped");
+  expect(ops("quit").length).toBeGreaterThan(0);
+  const before = starts();
+  const t = await call("discord_view", {});
+  expect(JSON.parse(t).ran).toBe("discord_view");
+  expect(starts()).toBe(before + 1);
+}, 15_000);
+
 test("a client that died is noticed", async () => {
   expect(h.host.phase()).toBe("ready");
   plan(r.root, {});

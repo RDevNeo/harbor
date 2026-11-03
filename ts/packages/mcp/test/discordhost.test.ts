@@ -27,6 +27,18 @@ test("without_swap_it_quits_later_and_never_freezes: without swap it quits later
   expect(p.rest(now, now - 9999, 0, many(now - DAY - 1, MAX_QUIT_LOGINS), false)).toBe("quit");
 });
 
+test("with_swap_a_frozen_client_quits_after_quit_idle_within_the_days_logins: with swap a frozen client quits after QUIT_AFTER, within the day's logins", () => {
+  const p = POLICY;
+  const now = 1_000_000;
+  expect(p.quitsFrozen(now, now - QUIT_AFTER + 1, 0, [])).toBe(false);
+  expect(p.quitsFrozen(now, now - QUIT_AFTER, 0, [])).toBe(true);
+  expect(p.quitsFrozen(now, 0, 0, [])).toBe(false);
+  expect(p.quitsFrozen(now, now - 9999, 1, [])).toBe(false);
+  expect(p.quitsFrozen(now, now - 9999, 0, many(now - 10, MAX_LOGINS - 1))).toBe(true);
+  expect(p.quitsFrozen(now, now - 9999, 0, many(now - 10, MAX_LOGINS))).toBe(false);
+  expect(p.quitsFrozen(now, now - 9999, 0, many(now - DAY - 1, MAX_LOGINS))).toBe(true);
+});
+
 test("reads_swap_from_meminfo: reads swap from meminfo", () => {
   expect(swapIn("MemTotal:  8000 kB\nSwapTotal:  11500 kB\nSwapFree:  1 kB\n")).toBe(true);
   expect(swapIn("MemTotal:  8000 kB\nSwapTotal:  0 kB\nSwapFree:  0 kB\n")).toBe(false);
