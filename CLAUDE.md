@@ -43,8 +43,12 @@ ends with a screenshot of each screen it touches, before you report done:
   call, so it's your last step). `scripts/preview back` returns it to the release.
 - Shots and previews run at nice 19 and idle disk priority on the last two cores
   (`HARBOR_RIG_CPUS=2,3` picks others): the PC stays the user's.
-- Phone UI (`android/`) isn't covered yet: the APK comes from `scripts/boat/android --out DIR`;
-  say the change is unseen rather than describing it as shown.
+- Phone UI (`android/`): `scripts/boat/phoneshot --screen chats,chat,settings` builds a test APK
+  from the working tree and shoots it on an Android emulator on boat.dev (nothing runs here),
+  against a hub of made-up chats with every card kind (`ts/rig/phonehub.ts`), and prints the PNG
+  paths last (under `~/.cache/harbor-shots/phone-*/`, 1080x2400). `--tap X,Y`, `--swipe`, `--text`,
+  `--key BACK`, `--shot NAME` step through the app, `--dark`, `--help`. Minutes, not seconds: start
+  it with Harbor's start_process, and shoot every screen you need in one run.
 
 ## Compute runs on boat.dev
 
@@ -68,6 +72,7 @@ the browser engine, the video player and releases build on boat).
     the executable back, `--no-release` skips the build, `-q` keeps the output short. Takes minutes:
     give it the longest timeout, or run it in the background.
   - `scripts/boat/android`: the APK and the Android unit tests from the working tree (`--out DIR`).
+  - `scripts/boat/phoneshot`: screenshots of the phone app on an emulator (`.github/boat/phoneshot.sh`).
   - `scripts/boat/snapshot`: what a saved snapshot's ~/cache really holds (`--from NAME`), and
     the release's build and save steps on a copy of it (`--build --save NAME`, `--rm NAME`).
   - `.github/actions/boat`: starts a sandbox from a saved snapshot, runs a script there, brings

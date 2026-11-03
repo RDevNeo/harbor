@@ -1,4 +1,4 @@
-# Sourced by scripts/boat/check and scripts/boat/android, on the caller's PC.
+# Sourced by scripts/boat/check, android, phoneshot…, on the caller's PC.
 set -euo pipefail
 root=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 export BOAT_NO_UPDATE=1
@@ -49,6 +49,8 @@ finish() {
   if type summary >/dev/null 2>&1; then summary >&2; fi
   if [ -n "${quiet:-}" ] && [ -s "$log" ]; then cp "$log" "/tmp/$name.log"; say "full output: /tmp/$name.log"; fi
   say "$( [ "$code" = 0 ] && echo passed || echo "FAILED (exit $code)" ) in $(( $(date +%s) - started ))s"
+  # What the caller prints last, after everything (phoneshot: the PNGs' paths).
+  if type last_words >/dev/null 2>&1; then last_words; fi
   rm -rf "$work"
   exit "$code"
 }

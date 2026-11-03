@@ -127,6 +127,11 @@ ACCOUNTS_URL=${HARBOR_ACCOUNTS_URL:-https://harbor-accounts.rdevneo.workers.dev}
 # (Credential Manager); empty, the browser through Clerk. Fill it once the Google Cloud clients exist.
 GOOGLE_WEB_CLIENT=${HARBOR_GOOGLE_WEB_CLIENT_ID-}
 case "$GOOGLE_WEB_CLIENT" in *[\\\"]*) echo "bad Google client id" >&2; exit 1 ;; esac
+# A screenshot build (scripts/boat/phoneshot, Rig.java): signed in to nobody, it knows one PC, a hub
+# on 127.0.0.1:$HARBOR_RIG_PORT (adb reverse) taking the token $HARBOR_RIG_TOKEN. Unset: off.
+RIG_PORT=${HARBOR_RIG_PORT:-0} RIG_TOKEN=${HARBOR_RIG_TOKEN-}
+case "$RIG_PORT" in *[!0-9]*|"") echo "bad HARBOR_RIG_PORT" >&2; exit 1 ;; esac
+case "$RIG_TOKEN" in *[\\\"]*) echo "bad HARBOR_RIG_TOKEN" >&2; exit 1 ;; esac
 for v in "$CLERK_URL" "$CLERK_CLIENT" "$ACCOUNTS_URL"; do
   case "$v" in *[\\\"]*|"") echo "bad accounts setting: $v" >&2; exit 1 ;; esac
 done
@@ -140,6 +145,8 @@ final class Config {
     static final String CLERK_CLIENT_ID = "$CLERK_CLIENT";
     static final String ACCOUNTS_URL = "${ACCOUNTS_URL%/}";
     static final String GOOGLE_WEB_CLIENT_ID = "$GOOGLE_WEB_CLIENT";
+    static final int RIG_PORT = $((10#$RIG_PORT));
+    static final String RIG_TOKEN = "$RIG_TOKEN";
 }
 JAVA
 cp -r "$HERE/res" "$W/res"

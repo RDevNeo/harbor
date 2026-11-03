@@ -264,6 +264,7 @@ final class Hub {
 
     private static synchronized String load(Context c) {
         if (plain != null) return plain;
+        if (Rig.on()) return plain = Rig.hubs();
         SharedPreferences p = prefs(c);
         String enc = p.getString("hubs.enc", null), old = p.getString("hubs", null);
         if (enc != null) {
@@ -422,7 +423,8 @@ final class Hub {
         String pin = e == null ? fp : e.fp;
         int p = e == null ? port : e.port;
         // Only ever pinned: a PC without a key in the directory isn't reached.
-        if (pin == null || pin.isEmpty()) throw new IOException("This PC has no key in your workspace's directory.");
+        // (A screenshot build's hub is plain HTTP on loopback: Rig.)
+        if ((pin == null || pin.isEmpty()) && !Rig.on()) throw new IOException("This PC has no key in your workspace's directory.");
         List<String> all = candidates(v, e);
         final boolean[] noV6 = { false };
         Object[] got;

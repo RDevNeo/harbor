@@ -1,0 +1,165 @@
+// A hub with made-up data for the phone app's screenshots (scripts/boat/phoneshot, on a boat.dev
+// sandbox): `bun rig/phonehub.ts DIR PORT TOKEN` seeds DIR (projects, chats with every kind of
+// card, a lead with its team) and serves the phone API on 127.0.0.1:PORT, taking TOKEN, until
+// killed. Prints "phonehub ready <port>" and a JSON line of the chats' gids once it listens.
+// Nothing here is anyone's real data, and it never reaches the network: no mesh, discovery,
+// account, updates or webhooks, and no agent turn starts (none is asked for).
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import sharp from "sharp";
+
+const [dir, portArg, token] = process.argv.slice(2);
+if (dir === undefined || portArg === undefined || token === undefined) {
+  console.error("usage: bun rig/phonehub.ts DIR PORT TOKEN");
+  process.exit(2);
+}
+const port = Number(portArg);
+Object.assign(process.env, {
+  HOME: join(dir, "home"),
+  XDG_DATA_HOME: join(dir, "data"),
+  XDG_STATE_HOME: join(dir, "state"),
+  XDG_CACHE_HOME: join(dir, "cache"),
+  XDG_CONFIG_HOME: join(dir, "config"),
+  XDG_RUNTIME_DIR: join(dir, "run"),
+  HARBOR_SOCK: join(dir, "run", "harbor.sock"),
+  HARBOR_LISTEN: "127.0.0.1",
+  HARBOR_NO_DISCOVERY: "1",
+  HARBOR_TEST_NO_SIGNIN: "1",
+  // The PC's name as the phone shows it: a made-up one, not the machine's.
+  HARBOR_MESH_ID: "pc:rig-pc",
+  HARBOR_MESH_NAME: "rig-pc",
+});
+for (const d of ["home", "run", "state", "data", "cache", "config"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
+
+// Imported after the environment is set: the store reads its folders when loaded.
+const { blankChat, dataDir, Store } = await import("../packages/store/src/index.ts");
+type Item = import("../packages/store/src/index.ts").Item;
+const { startHub } = await import("../hub.ts");
+
+const home = join(dir, "home");
+const project = (name: string, origin: string | null): string => {
+  const p = join(home, "code", name);
+  mkdirSync(p, { recursive: true });
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-C", p, ...a], { stdout: "ignore", stderr: "ignore" });
+  git("init", "-q", "-b", "main");
+  if (origin !== null) git("remote", "add", "origin", origin);
+  writeFileSync(join(p, "README.md"), `# ${name}\n`);
+  git("add", "-A");
+  git("-c", "user.name=Sam Rivera", "-c", "user.email=sam@example.com", "commit", "-qm", "First commit");
+  return p;
+};
+
+// A picture for the image cards: a small made-up chart.
+const shot = join(home, "Pictures", "checkout-before-after.png");
+mkdirSync(join(home, "Pictures"), { recursive: true });
+const bars = [42, 66, 51, 88, 73, 95].map((h, i) => `<rect x="${40 + i * 90}" y="${300 - h * 2.5}" width="60" height="${h * 2.5}" rx="8" fill="${i % 2 ? "#7c6cf2" : "#4fb3a9"}"/>`).join("");
+await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="340"><rect width="600" height="340" fill="#f6f4ef"/>${bars}<text x="40" y="330" font-family="sans-serif" font-size="18" fill="#555">Checkout conversion, last 6 weeks</text></svg>`)).png().toFile(shot);
+
+const t0 = Math.floor(Date.now() / 1000);
+const ago = (m: number) => t0 - m * 60;
+const user = (text: string, at: number, files: string[] = []): Item => ({ kind: "user", text, files, at, mentions: [], sender: "", intent: "" });
+const say = (text: string, at: number): Item => ({ kind: "text", text, at });
+const tool = (name: string, summary: string, input: unknown, result: string | null, is_error = false): Item => ({ kind: "tool", id: `t${Math.random().toString(36).slice(2, 10)}`, name, summary, input: JSON.stringify(input), result, is_error });
+const done = (at: number, cost = 0.42): Item => ({ kind: "result", cost_usd: cost, duration_ms: 48_200, turns: 6, input_tokens: 41_200, output_tokens: 1_830, cached: 36_000, at, account: "claude", model: "claude-opus-5-5" });
+const notice = (icon: string, text: string, detail = ""): Item => ({ kind: "notice", icon, text, detail });
+
+const seed = Store.open(dataDir());
+seed.set("api_port", String(port));
+seed.set("api_enabled", "1");
+seed.set("api_tokens", JSON.stringify([{ token, name: "Rig phone", created: t0, group: "", fp: "" }]));
+seed.set("onboarded", "1");
+
+const web = seed.addRepo(project("acme-web", "https://github.com/example/acme-web.git"));
+const api = seed.addRepo(project("acme-api", "https://github.com/example/acme-api.git"));
+const notes = seed.addRepo(project("field-notes", null));
+
+const chat = (over: Partial<import("../packages/store/src/index.ts").Chat>, items: Item[]) => {
+  const c = seed.createChat(blankChat({ model: "claude-opus-5-5", effort: "medium", started: true, sessionId: crypto.randomUUID(), ...over }));
+  seed.saveItems(c.id, items);
+  c.updated = over.updated ?? t0;
+  seed.saveChat(c);
+  return c;
+};
+
+// The chat with every card kind (a plain chat shows its tool calls; a lead hides them).
+const cards = chat({ repoId: web, title: "Speed up the checkout page", updated: ago(3) }, [
+  user("The checkout page takes 4 s to show the total. Can you find out why and fix it? Here's the funnel from last week:", ago(40), [shot, join(home, "code", "acme-web", "README.md")]),
+  { kind: "thinking", text: "The total waits on three requests in a row; they could run together." },
+  tool("Read", "src/checkout/Total.tsx", { file_path: "src/checkout/Total.tsx" }, "export function Total() {\n  const cart = useCart();\n  const tax = useTax(cart);\n  const ship = useShipping(cart, tax);\n  …"),
+  tool("Bash", "npm run bench -- checkout", { command: "npm run bench -- checkout" }, "checkout: first total 4.1 s (3 requests in series)"),
+  tool("Edit", "src/checkout/Total.tsx", { file_path: "src/checkout/Total.tsx", old_string: "const tax = useTax(cart);", new_string: "const [tax, ship] = useParallel(cart);" }, "The file has been updated."),
+  tool("Bash", "npm test -- checkout", { command: "npm test -- checkout" }, "FAIL src/checkout/Total.test.tsx\n  ✕ shows the total once shipping is known", true),
+  say(
+    "The total waited on **three requests in a row**: the cart, then tax, then shipping. They don't depend on each other, so they now run together.\n\n" +
+      "| Step | Before | After |\n|---|---|---|\n| First total | 4.1 s | 1.3 s |\n| Requests | 3 in series | 3 at once |\n\n" +
+      "```ts\nconst [tax, ship] = await Promise.all([taxFor(cart), shippingFor(cart)]);\n```\n\n" +
+      "One test still expected the old order; I updated it. Next:\n\n1. Cache the tax table for an hour\n2. Show a placeholder while shipping loads",
+    ago(30),
+  ),
+  done(ago(30)),
+  user("Nice. Ship it behind the `fast_total` flag.", ago(12)),
+  tool("Bash", "git commit -am 'Checkout: tax and shipping in parallel'", { command: "git commit -am 'Checkout: tax and shipping in parallel'" }, "[main 4f2a9c1] Checkout: tax and shipping in parallel"),
+  say("Committed as `4f2a9c1` and put behind `fast_total` (off by default).", ago(10)),
+  done(ago(10), 0.18),
+  notice("process", "dev server", "http://127.0.0.1:5173"),
+  notice("clock", "Wakes up at 9:00 to check the error rate"),
+  { kind: "message", from: "reviewer", to: "this chat", text: "Looks good; one nit on the flag name." },
+  { kind: "error", text: "The usage limit was reached; the next turn starts at 14:00." },
+]);
+
+// A lead with its team (its own transcript shows the user's words and its answers).
+const lead = chat({ repoId: api, title: "Rate limits for the public API", role: "lead", name: "lead", updated: ago(1) }, [
+  user("Add per-key rate limits to the public API, with a dashboard page showing who hits them.", ago(55)),
+  tool("mcp__harbor__spawn_agent", "", { name: "limits", title: "Rate limiter", task: "Token bucket per API key." }, "Spawned 'limits'."),
+  tool("mcp__harbor__spawn_agent", "", { name: "dash", title: "Dashboard page", task: "A page listing keys near their limit." }, "Spawned 'dash'."),
+  say("Two agents are on it: **limits** writes the token bucket, **dash** the dashboard page. I'll check both before merging.", ago(54)),
+  done(ago(54), 0.07),
+  notice("report", "limits reported", "**Done**: token bucket per key, 100 requests a minute, 429 with `Retry-After`."),
+  say("The limiter is in and tested. The dashboard is still being built.", ago(2)),
+  done(ago(2), 0.05),
+]);
+chat({ repoId: api, title: "Rate limiter", role: "sub", parent: lead.id, name: "limits", updated: ago(8) }, [
+  user("Token bucket per API key.", ago(54)),
+  say("Done: 100 requests a minute per key, `429` with `Retry-After`.", ago(8)),
+  done(ago(8), 0.21),
+]);
+chat({ repoId: api, title: "Dashboard page", role: "sub", parent: lead.id, name: "dash", updated: ago(1) }, [user("A page listing keys near their limit.", ago(54))]);
+seed.setMainChat(api, lead.id);
+
+const linked = chat({ repoId: web, title: "Move images to the CDN", updated: ago(90) }, [
+  user("Serve product images from the CDN.", ago(100)),
+  say("Done: images now load from the CDN with a 1-day cache.", ago(90)),
+  done(ago(90), 0.31),
+]);
+chat({ repoId: web, title: "Fork: CDN cache headers", updated: ago(80) }, [
+  notice("fork", "Forked", `harbor:chat/${linked.id}/1`),
+  notice("chat", "Move images to the CDN", `harbor:gid/${linked.gid}`),
+  user("Use a week-long cache for images that have a hash in their name.", ago(82)),
+  say("Hashed names now get `Cache-Control: max-age=604800, immutable`.", ago(80)),
+  done(ago(80), 0.09),
+]);
+chat({ repoId: notes, title: "Summarize the interview notes", updated: ago(60 * 26) }, [
+  user("Summarize the five interviews in notes/ by theme.", ago(60 * 27)),
+  say("## Themes\n\n- **Onboarding** is the top complaint (4 of 5).\n- **Pricing** is clear to everyone.\n- **Export** is missing for two of them.", ago(60 * 26)),
+  done(ago(60 * 26), 0.12),
+]);
+chat({ repoId: null, title: "What's a good name for a cat?", updated: ago(60 * 50) }, [
+  user("What's a good name for a grey cat?", ago(60 * 50)),
+  say("Ash, Pebble, Smoke or Earl Grey.", ago(60 * 50)),
+  done(ago(60 * 50), 0.01),
+]);
+chat({ repoId: web, title: "Old: try the new font", settled: true, updated: ago(60 * 24 * 6) }, [user("Try the new font on the landing page.", ago(60 * 24 * 6))]);
+seed.close();
+
+// This tree's version: the app compares it with its own.
+const version = (JSON.parse(await Bun.file(join(import.meta.dirname, "../package.json")).text()) as { version: string }).version;
+const h = await startHub({ version, hookPort: false });
+console.log(`phonehub ready ${h.hub.port}`);
+console.log(JSON.stringify({ cards: cards.gid, lead: lead.gid, linked: linked.gid }));
+const stop = async () => {
+  await h.stop();
+  process.exit(0);
+};
+process.once("SIGTERM", stop);
+process.once("SIGINT", stop);
+await new Promise(() => {});

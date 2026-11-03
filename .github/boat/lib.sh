@@ -154,22 +154,32 @@ toolchain() {
     rustc --version' bash "$@"
 }
 
-# apk_unsigned <image> <path under /out>: android/build.sh, unsigned, with the SDK in ~/cache. Its
-# unit tests (android/test) run as part of it.
-apk_unsigned() {
+# android_sdk <image> [sdkmanager packages…]: the SDK in ~/cache/android/sdk with what android/build.sh
+# needs (platform and build-tools 34), plus the packages given (phoneshot.sh: the emulator).
+android_sdk() {
+  local img="$1"; shift
   mkdir -p "$cache/android"
-  # HARBOR_GOOGLE_WEB_CLIENT_ID passes through when set (the release's repository variable): the
-  # phone's Google account picker; unset, android/build.sh builds with it off.
-  run_in "$1" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps -e HARBOR_GOOGLE_WEB_CLIENT_ID \
-    -e UNSIGNED=1 -e OUT="$2" -- bash -euo pipefail -c '
+  run_in "$img" -- bash -euo pipefail -c '
     sdk=/c/android/sdk sm=/c/android/sdk/cmdline-tools/latest/bin/sdkmanager
     if [ ! -x "$sm" ]; then
       curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/clt.zip
       mkdir -p "$sdk/cmdline-tools" /tmp/clt && unzip -q /tmp/clt.zip -d /tmp/clt && mv /tmp/clt/cmdline-tools "$sdk/cmdline-tools/latest"
     fi
-    if [ ! -x "$sdk/build-tools/34.0.0/aapt2" ] || [ ! -f "$sdk/platforms/android-34/android.jar" ]; then
-      yes | "$sm" --sdk_root="$sdk" --licenses >/dev/null || true
-      "$sm" --sdk_root="$sdk" --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
-    fi
-    ANDROID_HOME=$sdk android/build.sh'
+    want=()
+    [ -x "$sdk/build-tools/34.0.0/aapt2" ] || want+=("build-tools;34.0.0")
+    [ -f "$sdk/platforms/android-34/android.jar" ] || want+=("platforms;android-34")
+    for p in "$@"; do [ -f "$sdk/${p//;//}/package.xml" ] || want+=("$p"); done
+    [ ${#want[@]} = 0 ] && exit 0
+    yes | "$sm" --sdk_root="$sdk" --licenses >/dev/null || true
+    "$sm" --sdk_root="$sdk" --install "${want[@]}" >/dev/null' bash "$@"
+}
+
+# apk_unsigned <image> <path under /out>: android/build.sh, unsigned, with the SDK in ~/cache. Its
+# unit tests (android/test) run as part of it.
+apk_unsigned() {
+  android_sdk "$1"
+  # HARBOR_GOOGLE_WEB_CLIENT_ID passes through when set (the release's repository variable): the
+  # phone's Google account picker; unset, android/build.sh builds with it off.
+  run_in "$1" -e ANDROID_BUILD=/c/android -e HARBOR_ANDROID_DEPS=/c/android/deps -e HARBOR_GOOGLE_WEB_CLIENT_ID \
+    -e UNSIGNED=1 -e OUT="$2" -- bash -euo pipefail -c 'ANDROID_HOME=/c/android/sdk android/build.sh'
 }

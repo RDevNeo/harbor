@@ -1,0 +1,79 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+  cat <<'EOF2'
+Usage: scripts/boat/phoneshot [options]
+
+Screenshots of the phone app (android/) from this working tree (tracked files with their
+uncommitted changes, plus new files git does not ignore), taken on a fresh `large` boat.dev
+sandbox from the snapshot `harbor-build` (.github/boat/phoneshot.sh): a test APK (android/build.sh
+with HARBOR_RIG_PORT, see android/src/dev/harbor/app/Rig.java) on an Android 14 emulator (KVM,
+headless, a 1080x2400 phone at 420 dpi), connected to a hub with made-up data (ts/rig/phonehub.ts:
+projects, a chat with every kind of card, a lead with its team; never anyone's real chats).
+Nothing runs on this PC but this script. The PNGs come back to ~/.cache/harbor-shots/phone-<time>/
+and their paths are printed last. Fails loudly when the app crashed, wasn't in front or showed no
+text. The sandbox is always deleted, also on error, Ctrl+C or kill.
+
+Screens and steps run in the order given; each --screen opens a screen and shoots it:
+  --screen NAME    chats (the chat list), chat (the chat with every card kind), chat:lead (a lead
+                   with its team), chat:GID, settings, new (new chat), palette, home (the app's
+                   first screen). Several: --screen chats,chat,settings. Default: chats.
+  --tap X,Y        a tap, in the PNG's pixels (1080x2400)
+  --swipe X1,Y1,X2,Y2
+  --text WORDS     types into the focused field
+  --key NAME       an Android key: BACK, ENTER, DEL, TAB…
+  --wait SECONDS
+  --shot NAME      a shot of what is on the screen now (after it stops changing)
+Options:
+  --dark           the phone's dark theme
+  -q, --quiet      only progress and the summary; the full output stays in /tmp/<sandbox name>.log
+  -h, --help       this help
+
+Example: scripts/boat/phoneshot --screen chat --swipe 540,1800,540,600 --shot chat-end
+Takes 3 to 10 minutes: the emulator and its system image install first (1.5 to 10 of them), the
+rest is about 2. PHONESHOT_IMAGE / PHONESHOT_GPU try another system image / -gpu mode. Prerequisites:
+as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
+EOF2
+}
+steps=() quiet="" dark=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
+    --tap|--swipe|--text|--key|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
+    --dark) dark=1 ;;
+    -q|--quiet) quiet=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+[ ${#steps[@]} -gt 0 ] || steps=(screen:chats)
+dest=$HOME/.cache/harbor-shots/phone-$(date +%Y%m%d-%H%M%S)
+. "$(dirname "$0")/lib.sh"
+
+pngs=""
+summary() {
+  [ -f "$log" ] || return 0
+  [ -z "$quiet" ] || sed 's/\x1b\[[0-9;]*[mK]//g' "$log" | grep -E -A40 '^THE APP|^error:|: error: |FAILED' | head -120
+  echo
+  say "summary"
+  grep -E '^<== |^shot |^booted ' "$log" | sed 's/^<== //; s/^/  /'
+  [ ! -d "$dest/logs" ] || echo "  logs (hub, emulator, logcat, screen dumps): $dest/logs"
+}
+last_words() { [ -z "$pngs" ] || echo "$pngs"; }
+
+sandbox
+upload
+set +e
+remote DARK="$dark" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" -- bash .github/boat/phoneshot.sh "${steps[@]}"
+code=$?
+set -e
+# The shots taken, also when a later step failed, and the logs (hub, emulator, logcat).
+mkdir -p "$dest"
+if "$boat" scp "$id:/home/user/out/shots.tgz" "$work/shots.tgz" >/dev/null 2>&1; then
+  tar -xzf "$work/shots.tgz" -C "$dest"
+  mv "$dest"/shots/*.png "$dest"/ 2>/dev/null || true
+  rmdir "$dest/shots" 2>/dev/null || true
+  pngs=$(find "$dest" -maxdepth 1 -name '*.png' | sort)
+fi
+exit "$code"

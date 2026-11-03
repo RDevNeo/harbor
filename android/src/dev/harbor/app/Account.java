@@ -71,6 +71,7 @@ final class Account {
 
     static synchronized JSONObject state(Context c) {
         if (cur != null) return cur;
+        if (Rig.on()) return cur = Rig.account();
         String enc = prefs(c).getString("state", null);
         String plain = enc == null ? null : Hub.unseal(enc);
         try { cur = plain == null ? new JSONObject() : new JSONObject(plain); } catch (JSONException e) { cur = new JSONObject(); }
@@ -372,6 +373,7 @@ final class Account {
     /** A new Harbor token (and the directory), when due or forced. Expired: Clerk ended the
      *  session; the old token works on the PCs until it runs out. */
     static synchronized void renew(Context c, boolean force) throws IOException {
+        if (Rig.on()) return;
         JSONObject s = state(c);
         if (s.optString("id").isEmpty()) return;
         long now = System.currentTimeMillis();
@@ -399,6 +401,7 @@ final class Account {
 
     /** GET /v1/directory (at most every 2 minutes unless forced) → the hubs. */
     static void directory(Context c, boolean force) throws IOException {
+        if (Rig.on()) return;
         if (!force && System.currentTimeMillis() - dirAt < 120_000) return;
         String tok = state(c).optString("token");
         if (tok.isEmpty()) return;
