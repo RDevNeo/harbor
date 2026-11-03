@@ -578,6 +578,15 @@ export interface AppWindow extends slint.ComponentHandle {
   pop_spacing: number;
   pop_pick: (id: string, i: number) => void;
   pop_close: () => void;
+  /** A native popup row under the pointer (`y`: its top in the window). */
+  pop_hover: (i: number, y: number) => void;
+  /** The open cascading submenu: the parent row it belongs to (-1: none), that row's top, its rows and content width. */
+  sub_row: number;
+  sub_row_y: number;
+  sub_items: slint.Model<PopItem>;
+  sub_w: number;
+  sub_enter: () => void;
+  sub_pick: (i: number) => void;
   pop_input: string;
   pop_input_note: string;
   pop_input_ok: boolean;

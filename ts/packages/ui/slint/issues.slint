@@ -1165,7 +1165,8 @@ export component IssuesPage inherits Rectangle {
         }
         if root.menu-open && root.menu.sub.open: MenuSurface {
             x: root.sub-x;
-            y: root.menu-y + root.menu.sub.top - 6px;
+            // Shifted up so it stays inside the page.
+            y: max(0px, min(root.menu-y + root.menu.sub.top - 6px, root.height - self.height - 4px));
             inner: root.menu.sub.width;
             head: root.menu.sub.head;
             list: root.menu.sub.list;

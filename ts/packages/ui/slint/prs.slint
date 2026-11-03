@@ -1081,7 +1081,8 @@ export component PrsPage inherits Rectangle {
         property <length> main-x: min(root.anchor-x, root.width - (root.menu-w + 10px) - 2px) + 5px;
         property <length> right: main-x + root.menu-w;
         x: right + 10px + root.sub-w + 14px > root.width ? main-x - 10px - (root.sub-w + 14px) : right + 10px;
-        y: root.anchor-y + 5px + root.sub-row-y - 6px;
+        // Shifted up so it stays inside the page.
+        y: max(0px, min(root.anchor-y + 5px + root.sub-row-y - 6px, root.height - self.height - 4px));
         width: root.sub-w + 10px;
         height: root.sub-h + 10px;
         MenuBody {

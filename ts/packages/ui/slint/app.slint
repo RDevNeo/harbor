@@ -552,6 +552,14 @@ export component AppWindow inherits Window {
     in property <length> pop-spacing: 8px;
     callback pop-pick(string, int);
     callback pop-close();
+    // A native popup row's cascading submenu (shell.ts `openSub`): beside the parent row `sub-row` (-1: none), its top at `sub-row-y`.
+    callback pop-hover(int, length);
+    in property <int> sub-row: -1;
+    in property <length> sub-row-y;
+    in property <[PopItem]> sub-items;
+    in property <length> sub-w: 240px;
+    callback sub-enter();
+    callback sub-pick(int);
     in-out property <string> pop-input;
     in property <string> pop-input-note;
     in property <bool> pop-input-ok;
@@ -1664,7 +1672,7 @@ export component AppWindow inherits Window {
                                     y: 0;
                                     height: 32px;
                                     border-radius: 4px;
-                                    background: native-area.has-hover && it.enabled ? Theme.accent : transparent;
+                                    background: (native-area.has-hover || root.sub-row == i) && it.enabled ? Theme.accent : transparent;
                                     if it.icon != "": Glyph {
                                         x: 9px;
                                         width: 14px;
@@ -1691,6 +1699,11 @@ export component AppWindow inherits Window {
                                     }
                                     native-area := TipArea {
                                         tip: it.desc;
+                                        changed has-hover => {
+                                            if self.has-hover {
+                                                root.pop-hover(i, self.absolute-position.y);
+                                            }
+                                        }
                                         clicked => {
                                             if it.enabled {
                                                 root.pop-pick(root.pop-id, i);
@@ -1707,6 +1720,59 @@ export component AppWindow inherits Window {
                                 enabled: it.enabled;
                                 clicked => {
                                     root.pop-pick(root.pop-id, i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // A cascading submenu: right of the menu with its top on the hovered row, flipped left at the window's edge, shifted up at its bottom.
+            if root.sub-row >= 0: PopoverFrame {
+                width: root.sub-w + 10px;
+                height: min(sub-list.preferred-height + 10px, root.height);
+                x: pop.x + pop.width + 2px + self.width <= root.width - 4px ? pop.x + pop.width + 2px : max(4px, pop.x - self.width - 2px);
+                y: max(0px, min(root.sub-row-y - 5px, root.height - self.height - 4px));
+                // Holds the rows, so it sees the pointer over them too (the grace delay ends on entering).
+                TouchArea {
+                    changed has-hover => {
+                        if self.has-hover {
+                            root.sub-enter();
+                        }
+                    }
+                    Flickable {
+                        x: 5px;
+                        y: 5px;
+                        width: parent.width - 10px;
+                        height: parent.height - 10px;
+                        sub-list := VerticalLayout {
+                            alignment: start;
+                            spacing: 8px;
+                            for it[i] in root.sub-items: VerticalLayout {
+                                if it.kind == "label": MenuLabel {
+                                    text: it.label;
+                                }
+                                if it.kind == "caption": Text {
+                                    height: 16px;
+                                    x: 7px;
+                                    text: it.label;
+                                    font-size: 12px;
+                                    color: Theme.subtle;
+                                    vertical-alignment: center;
+                                }
+                                if it.kind == "separator": Rectangle {
+                                    height: 1px;
+                                    background: Theme.border;
+                                }
+                                if it.kind == "item": MenuItem {
+                                    icon: it.icon;
+                                    label: it.label;
+                                    desc: it.desc;
+                                    checked: it.checked;
+                                    enabled: it.enabled;
+                                    clicked => {
+                                        root.sub-pick(i);
+                                    }
                                 }
                             }
                         }

@@ -105,6 +105,15 @@ function glyph(name: IconName | null): string {
   return name === null ? "" : ICONS[name];
 }
 
+/** A popup row: `act` runs when it's picked; `sub`, if set, builds the submenu it opens beside itself instead. */
+type PopRow = PopItem & { act?: () => void; sub?: () => SubMenu | null };
+/** A cascading submenu's rows and content width. */
+interface SubMenu {
+  items: PopRow[];
+  width: number;
+}
+/** How long the pointer may cross other rows on its way into an open submenu before that submenu switches or closes. */
+const SUB_GRACE = 300;
 type Marks = Pick<SideRow, "worktree" | "worktree_tip" | "pr" | "pr_tip">;
 
 /** sidebar.rs: a chat in its own worktree gets its folder mark, then its branch's PR state. */
@@ -258,6 +267,13 @@ export class Shell {
   private termQueued = false;
   private stripFold = new Map<number, boolean>();
   private popActions: (() => void)[] = [];
+  /** Per row of the open popup: its cascading submenu, if it has one. */
+  private popSubs: ((() => SubMenu | null) | null)[] = [];
+  private subActions: (() => void)[] = [];
+  private subItems = new slint.ArrayModel<PopItem>([]);
+  private subTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The popup row under the pointer and its top in the window. */
+  private popHover: { i: number; y: number } | null = null;
   private dialogAction: ((ok: boolean, input: string) => void) | null = null;
   private cardsDirty = false;
   private menus = new ComposerMenus();
@@ -325,6 +341,7 @@ export class Shell {
     win.files = this.files;
     win.menu = this.menu;
     win.pop_items = this.popItems;
+    win.sub_items = this.subItems;
     win.picker_rail = this.railItems;
     win.strip_rows = this.stripRows;
     win.mentions = this.mentionChips;
@@ -600,11 +617,28 @@ export class Shell {
     };
     w.popup = (id, x, y) => this.composerPopup(id, x, y);
     w.pop_pick = (_id, i) => {
+      if (this.popSubs[i]) {
+        if (this.subTimer !== null) clearTimeout(this.subTimer);
+        this.subTimer = null;
+        if (w.sub_row !== i) this.openSub(i, this.popHover?.i === i ? this.popHover.y : w.pop_y);
+        return;
+      }
       const act = this.popActions[i];
       this.closePopup();
       act?.();
     };
     w.pop_close = () => this.closePopup();
+    w.pop_hover = (i, y) => this.hoverPop(i, y);
+    w.sub_enter = () => {
+      if (this.subTimer !== null) clearTimeout(this.subTimer);
+      this.subTimer = null;
+      this.popHover = null;
+    };
+    w.sub_pick = (i) => {
+      const act = this.subActions[i];
+      this.closePopup();
+      act?.();
+    };
     w.dialog_done = (_id, ok) => {
       const act = this.dialogAction;
       const input = w.dialog_input;
@@ -2234,12 +2268,14 @@ export class Shell {
   }
 
 
-  private popup(id: string, x: number, y: number, items: (PopItem & { act?: () => void })[], width = 240, above = false, native = false): void {
+  private popup(id: string, x: number, y: number, items: PopRow[], width = 240, above = false, native = false): void {
     const w = this.win;
+    this.closeSub();
     this.popActions = items.map((i) => i.act ?? (() => {}));
+    this.popSubs = items.map((i) => i.sub ?? null);
     sync(
       this.popItems,
-      items.map(({ act: _a, ...rest }) => rest),
+      items.map(({ act: _a, sub: _s, ...rest }) => rest),
     );
     w.pop_x = x;
     w.pop_y = y;
@@ -2251,7 +2287,48 @@ export class Shell {
   }
 
   private closePopup(): void {
+    this.closeSub();
     this.win.pop_id = "";
+  }
+
+  /** A cascading submenu (a parent row with `sub`) opens beside its row: right away on hover or click, and when the pointer goes to another row, only after `SUB_GRACE` without reaching the open submenu, so a diagonal move into it doesn't close it. */
+  private hoverPop(i: number, y: number): void {
+    this.popHover = { i, y };
+    if (this.subTimer !== null) clearTimeout(this.subTimer);
+    this.subTimer = null;
+    if (i === this.win.sub_row) return;
+    if (this.win.sub_row < 0) {
+      this.openSub(i, y);
+      return;
+    }
+    this.subTimer = setTimeout(() => {
+      this.subTimer = null;
+      if (this.popHover?.i === i) this.openSub(i, y);
+    }, SUB_GRACE);
+  }
+
+  private openSub(i: number, y: number): void {
+    const menu = this.popSubs[i]?.() ?? null;
+    if (menu === null) {
+      this.win.sub_row = -1;
+      return;
+    }
+    const w = this.win;
+    this.subActions = menu.items.map((it) => it.act ?? (() => {}));
+    sync(
+      this.subItems,
+      menu.items.map(({ act: _a, sub: _s, ...rest }) => rest),
+    );
+    w.sub_w = menu.width;
+    w.sub_row_y = y;
+    w.sub_row = i;
+  }
+
+  private closeSub(): void {
+    if (this.subTimer !== null) clearTimeout(this.subTimer);
+    this.subTimer = null;
+    this.popHover = null;
+    this.win.sub_row = -1;
   }
 
   private item(label: string, act: () => void, extra: Partial<PopItem> = {}): PopItem & { act: () => void } {
@@ -2507,7 +2584,7 @@ export class Shell {
     const c = this.data.chat(id);
     if (!c) return;
     const native = (label: string, act: () => void, extra: Partial<PopItem> = {}) => ({ ...this.item(label, act, extra), kind: "native" as const });
-    const items: (PopItem & { act?: () => void })[] = [native("Rename", () => this.renameDialog(id)), native(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled))];
+    const items: PopRow[] = [native("Rename", () => this.renameDialog(id)), native(c.settled ? "Unsettle" : "Settle", () => this.setSettled(id, !c.settled))];
     if (c.role === "lead" && c.repoId !== null && this.data.repo(c.repoId)) {
       items.push(native("Make main chat", () => this.makeMain(id), { desc: "The project's row opens this chat, and what you write on the project's page goes here" }));
     }
@@ -2518,13 +2595,13 @@ export class Shell {
       } catch (e) {
         why = e instanceof Error ? e.message : String(e);
       }
-      items.push(why === "" ? native("Move to project…", () => this.moveMenu(id, x, y), { badge: "submenu" }) : native("Move to project…", () => {}, { enabled: false, desc: why }));
+      items.push(why === "" ? { ...native("Move to project…", () => {}, { badge: "submenu" }), sub: () => this.moveMenu(id) } : native("Move to project…", () => {}, { enabled: false, desc: why }));
       // movepc.rs `move_pc_menu`: greyed out with why when the chat can't go to any PC.
       const mv = this.hub.moveTargets(id);
       const off = mv.targets.length === 0 ? (mv.why ?? "No other PCs: pair one in Settings › Devices") : mv.why;
-      items.push(off === null ? native("Move to PC…", () => this.movePcMenu(id, x, y), { badge: "submenu" }) : native("Move to PC…", () => {}, { enabled: false, desc: off }));
+      items.push(off === null ? { ...native("Move to PC…", () => {}, { badge: "submenu" }), sub: () => this.movePcMenu(id) } : native("Move to PC…", () => {}, { enabled: false, desc: off }));
       const ws = this.hub.moves?.chatMenu(id) ?? null;
-      if (ws !== null) items.push(ws.why === null ? native("Move to workspace…", () => this.wsMoveMenu("chat", id, x, y), { badge: "submenu" }) : native("Move to workspace…", () => {}, { enabled: false, desc: ws.why }));
+      if (ws !== null) items.push(ws.why === null ? { ...native("Move to workspace…", () => {}, { badge: "submenu" }), sub: () => this.wsMoveMenu("chat", id) } : native("Move to workspace…", () => {}, { enabled: false, desc: ws.why }));
     }
     items.push(native("Delete", () => this.deleteDialog(id)));
     this.popup("chat", x, y, items, 240, false, true);
@@ -2544,21 +2621,21 @@ export class Shell {
   }
 
   /** The PCs of the mesh the chat can move to; one that can't take it says why. */
-  private movePcMenu(id: number, x: number, y: number): void {
+  private movePcMenu(id: number): SubMenu {
     const go = (pc: string) => () =>
       void this.hub.movePc(id, pc).then(
         (n) => this.toast(`Moving to ${n}…`),
         (e: unknown) => this.toast(`Couldn't move this chat: ${e instanceof Error ? e.message : String(e)}`),
       );
     const items = this.hub.moveTargets(id).targets.map((t) => this.item(t.name, go(t.id), { icon: ICONS.MONITOR, desc: t.why ?? "Goes on there", enabled: t.why === null }));
-    setTimeout(() => this.popup("move-pc", x, y, items, 240), 0);
+    return { items, width: 240 };
   }
 
   /** Move to workspace…: the account's workspaces, the one it's in ticked, then back to its PC's. */
-  private wsMoveMenu(kind: "chat" | "project", id: number, x: number, y: number): void {
+  private wsMoveMenu(kind: "chat" | "project", id: number): SubMenu | null {
     const m = this.hub.moves;
     const menu = m ? (kind === "chat" ? m.chatMenu(id) : m.projectMenu(id)) : null;
-    if (!m || menu === null || menu.why !== null) return;
+    if (!m || menu === null || menu.why !== null) return null;
     const go = (ws: string) => () =>
       void (kind === "chat" ? m.moveChat(id, ws) : m.moveProject(id, ws)).then(
         (r) => {
@@ -2574,13 +2651,13 @@ export class Shell {
       if (it.back) items.push(this.separator());
       items.push(this.item(it.label, it.on ? () => {} : go(it.id), { icon: it.back ? ICONS.HOUSE : ICONS.USERS, desc: it.hint, checked: it.on }));
     }
-    setTimeout(() => this.popup("move-ws", x, y, items, 260), 0);
+    return { items, width: 260 };
   }
 
   /** sidebar.rs `move_menu`: the chat and its sub-agents to another project, or none. */
-  private moveMenu(id: number, x: number, y: number): void {
+  private moveMenu(id: number): SubMenu | null {
     const c = this.data.chat(id);
-    if (!c) return;
+    if (!c) return null;
     const move = (repo: number | null) => () => {
       try {
         this.engine.moveChat(id, repo);
@@ -2593,7 +2670,7 @@ export class Shell {
     const items: (PopItem & { act?: () => void })[] = [this.item("No project", move(null), { icon: ICONS.MESSAGE, desc: "Home folder", checked: c.repoId === null })];
     if (this.data.repos.length > 0) items.push(this.separator());
     for (const r of this.data.repos) items.push(this.item(r.name, move(r.id), { icon: ICONS.FOLDER, desc: tilde(r.local ?? r.path, homedir()), checked: c.repoId === r.id }));
-    setTimeout(() => this.popup("move", x, y, items, 280), 0);
+    return { items, width: 280 };
   }
 
   private projectTerminal(id: number): void {
@@ -2628,12 +2705,12 @@ export class Shell {
       },
       settle_project: () => this.settleProject(id, true),
       unsettle_project: () => this.settleProject(id, false),
-      move_workspace: () => this.wsMoveMenu("project", id, x, y),
+      move_workspace: () => {},
       move_pc: () => void this.projectMovePc(id, x, y),
       remove: () => this.removeRepoDialog(id),
     };
     const ws = this.hub.moves?.projectMenu(id) ?? null;
-    const items: (PopItem & { act?: () => void })[] = [];
+    const items: PopRow[] = [];
     // A project whose folder is on another PC says which, over its options.
     const place = this.placeOf(id);
     const r = this.data.repo(id);
@@ -2645,7 +2722,7 @@ export class Shell {
       if (it.desc !== "") extra.desc = it.desc;
       if (it.off === true) extra.enabled = false;
       if (it.act === "move_workspace") extra.badge = it.off === true ? "" : "submenu";
-      items.push(native(it.label, acts[it.act], extra));
+      items.push(it.act === "move_workspace" && it.off !== true ? { ...native(it.label, acts[it.act], extra), sub: () => this.wsMoveMenu("project", id) } : native(it.label, acts[it.act], extra));
     }
     this.popup("project-row", x, y, items, 260, false, true);
   }
