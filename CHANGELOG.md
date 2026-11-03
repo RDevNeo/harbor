@@ -5,11 +5,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.134.0] - 2026-11-03
+
 ### Changed
 - Other PCs are yours to use only through a workspace you are a member of: a PC shows in Runs on,
   Auto, Move to PC, Settings › Workspace and the phone's PCs, and its chats and projects in the
   sidebar, only when its owner invited you into its workspace and you accepted. Inviting someone
-  into your workspace lets them use your PCs, not you theirs (before 0.132 sharing went both ways
+  into your workspace lets them use your PCs, not you theirs (until now sharing went both ways
   as soon as two people shared any workspace). Their PCs can still reach yours: that is how they
   use it.
 
