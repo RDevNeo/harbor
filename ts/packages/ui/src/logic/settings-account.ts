@@ -1,4 +1,4 @@
-import { agoShort, short as keyShort, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
+import { agoShort, inviteNote, short as keyShort, type AccountDir, type AccountDirectory, type AccountPendingInvite, type AccountStatus, type AccountUser } from "@harbor/net";
 import { ICONS } from "../icons.ts";
 import { badge, btn, copy, field, form, gap, list, row, rows, status, title, type Block, type BlockRow, type BlockTab } from "./settings-blocks.ts";
 
@@ -129,7 +129,7 @@ export function accountBlocks(host: AccountHost): Block[] {
         { before: 12 },
       ),
     );
-    here.invites.forEach((inv, i) => out.push(status(badge(""), `Invited ${inv.email} · ${ago(inv.at)}`, { before: i === 0 ? 14 : 8, buttons: [btn(`cancel_invite:${inv.id}`, "", { icon: ICONS.X, variant: "muted", tip: "Cancel the invitation", enabled: !st.busy })] })));
+    here.invites.forEach((inv, i) => out.push(status(badge(""), `Invited ${inv.email} · ${ago(inv.at)}${inviteNote(inv)}`, { before: i === 0 ? 14 : 8, buttons: [btn(`cancel_invite:${inv.id}`, "", { icon: ICONS.X, variant: "muted", tip: "Cancel the invitation", enabled: !st.busy })] })));
   }
 
   out.push(title("PCs"));

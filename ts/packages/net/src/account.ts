@@ -65,6 +65,10 @@ export interface AccountInvite {
   id: string;
   email: string;
   at: number;
+  /** No Harbor account has this verified address: nobody can accept it as it is. */
+  no_account: boolean;
+  /** The address of someone already in one of your workspaces that differs by a typo, or "". */
+  near: string;
 }
 
 /** An invitation waiting for this account (`GET /v1/invites`): only Accept joins. */
@@ -243,9 +247,15 @@ function parsePc(v: unknown): AccountPc {
   };
 }
 
+/** What to add after "Invited <email>" when the invitation can't reach anyone as it is. */
+export function inviteNote(i: AccountInvite): string {
+  if (!i.no_account) return "";
+  return i.near === "" ? " · no Harbor account uses this address yet" : ` · no Harbor account uses this address: did you mean ${i.near}?`;
+}
+
 function parseInvite(v: unknown): AccountInvite {
   const o = need(v);
-  return { id: str(o, "id", true), email: str(o, "email", true), at: int(o, "at") };
+  return { id: str(o, "id", true), email: str(o, "email", true), at: int(o, "at"), no_account: bool(o, "no_account"), near: str(o, "near") };
 }
 
 function parsePending(v: unknown): AccountPendingInvite {

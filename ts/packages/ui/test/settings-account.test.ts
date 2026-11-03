@@ -81,7 +81,7 @@ const dirOf = (role: "owner" | "member"): AccountDir => ({
     { fp: OTHER, id: "pc:b", name: "laptop", addrs: [], owner: "", owner_name: "", seen: NOW - 7200, version: "" },
   ],
   devices: [],
-  invites: [{ id: "i1", email: "mia@example.com", at: NOW - 3600 }],
+  invites: [{ id: "i1", email: "mia@example.com", at: NOW - 3600, no_account: false, near: "" }],
 });
 
 function signedIn(role: "owner" | "member"): Fake {
@@ -162,6 +162,18 @@ describe("accountui.rs account_tab", () => {
     expect(form?.submit.label).toBe("Invite");
     expect(b.find((x) => x.text.startsWith("Invited mia@example.com"))?.text).toBe("Invited mia@example.com · 1h ago");
     expect(buttonKeys(b)).toContain("cancel_invite:i1");
+  });
+
+  test("invites_nobody_can_accept_say_so", () => {
+    const f = signedIn("owner");
+    const inv = f.dir.workspaces[0]!.invites;
+    inv[0] = { ...inv[0]!, email: "lee@example.com", no_account: true, near: "leo@example.com" };
+    inv.push({ id: "i2", email: "zed@example.com", at: NOW - 60, no_account: true, near: "" });
+    const texts = accountBlocks(host(f)).map((x) => x.text).filter((t) => t.startsWith("Invited "));
+    expect(texts).toEqual([
+      "Invited lee@example.com · 1h ago · no Harbor account uses this address: did you mean leo@example.com?",
+      "Invited zed@example.com · 1m ago · no Harbor account uses this address yet",
+    ]);
   });
 
   test("personal_workspaces_have_no_leave", () => {

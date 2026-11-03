@@ -359,6 +359,18 @@ def main():
     check("invite: existing member refused (409)", st == 409, js)
     _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
     check("directory: owner sees the pending invite", [i["email"] for i in d["workspaces"][0]["invites"]] == ["pat@example.com"], d)
+    check("directory: invite to an address with an account is not marked", "no_account" not in d["workspaces"][0]["invites"][0], d)
+    st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "nobody@example.org"}, token=sam_pc)
+    check("invite: an address no account uses is marked, no near match",
+          st == 200 and js["invite"].get("no_account") is True and "near" not in js["invite"], js)
+    http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=sam_pc)
+    st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "sam@example.co"}, token=sam_pc)
+    check("invite: a typo of a known person's address suggests theirs",
+          st == 200 and js["invite"].get("no_account") is True and js["invite"].get("near") == "sam@example.com", js)
+    _, d, _, _ = http("GET", W + "/v1/directory", token=sam_pc)
+    typo = [i for i in d["workspaces"][0]["invites"] if i["email"] == "sam@example.co"]
+    check("directory: the typo invite carries the near address", typo and typo[0].get("near") == "sam@example.com", d)
+    http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=sam_pc)
     st, js, _, _ = http("POST", W + f"/v1/workspaces/{sam_ws}/invites", {"email": "gone@example.com"}, token=sam_pc)
     st2, js2, _, _ = http("DELETE", W + f"/v1/workspaces/{sam_ws}/invites/{js['invite']['id']}", token=alice_t)
     check("invite delete: non-owner refused", st2 == 403)

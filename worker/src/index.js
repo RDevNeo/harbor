@@ -511,7 +511,60 @@ async function directory(req, env) {
       };
     }),
   );
+  // An invitation only reaches an account whose verified email is exactly its address: say so
+  // when none is, with the address of someone the owner already shares a workspace with that
+  // differs by a typo.
+  const known = [...new Set(workspaces.flatMap((w) => w.members.map((m) => m.email.toLowerCase())).filter(Boolean))];
+  await Promise.all(
+    workspaces.flatMap((w) =>
+      w.invites.map(async (i) => {
+        const why = await inviteCheck(env, i.email, known);
+        if (why) Object.assign(i, why);
+      }),
+    ),
+  );
   return json({ at: Date.now(), workspaces });
+}
+
+/** `{no_account: true, near?}` when no Harbor account has this verified address; null when one
+ *  does, or when Clerk can't tell right now. */
+async function inviteCheck(env, email, known) {
+  const r = await clerk(env, 'GET', `/users?email_address=${enc2(email)}&limit=10`).catch(() => null);
+  if (!r?.ok) return null;
+  const users = Array.isArray(r.data) ? r.data : r.data?.data || [];
+  const has = users.some((u) => (u.email_addresses || []).some((e) => e.email_address.toLowerCase() === email && e.verification?.status === 'verified'));
+  if (has) return null;
+  const near = nearEmail(email, known);
+  return near ? { no_account: true, near } : { no_account: true };
+}
+
+/** The address in `known` closest to `email` (at most two typed characters apart), or ''. */
+function nearEmail(email, known) {
+  let best = '';
+  let bestD = 3;
+  for (const k of known) {
+    if (k === email) continue;
+    const d = editDistance(email, k, bestD);
+    if (d < bestD) [best, bestD] = [k, d];
+  }
+  return best;
+}
+
+/** Levenshtein distance, giving up (returning `cap`) once it reaches `cap`. */
+function editDistance(a, b, cap) {
+  if (Math.abs(a.length - b.length) >= cap) return cap;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let low = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < low) low = cur[j];
+    }
+    if (low >= cap) return cap;
+    prev = cur;
+  }
+  return Math.min(prev[b.length], cap);
 }
 
 async function putPc(req, env) {
@@ -652,7 +705,9 @@ async function invite(req, env, ws) {
   await env.DB.prepare(`INSERT INTO invites (id,ws,email,inviter,status,at,ws_name,inviter_name) VALUES (?,?,?,?,'pending',?,?,?)`)
     .bind(row.id, ws, email, p.sub, row.at, w.name || '', p.name || '')
     .run();
-  return json({ invite: row });
+  const mine = await liveWs(env, p.sub);
+  const known = (await Promise.all(mine.slice(0, 20).map((x) => orgMembers(env, x.id)))).flat().map((m) => m.email.toLowerCase());
+  return json({ invite: { ...row, ...((await inviteCheck(env, email, [...new Set(known)])) || {}) } });
 }
 
 async function deleteInvite(req, env, ws, id) {

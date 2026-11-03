@@ -136,6 +136,9 @@ phone): then `403`/`401`. A PC in no workspace, or in another one, takes nobody 
    (`invites` only for owners). PCs cache it (kv `account_dir`) and link with the workspace's
    other PCs without pairing (mesh.rs); phones turn each workspace into a hub entry whose PCs
    are its endpoints.
+   Pending invitations may include `no_account: true` when no account has that verified address,
+   and `near` with a suggested address of someone already in the owner's workspaces. An absent
+   flag also covers an unavailable account lookup; invitations remain valid for future sign-ins.
 
 Also on the service (all with the Harbor token): `DELETE /v1/pcs/{fp}` (a member takes a PC
 out), `DELETE /v1/devices/{fp}` (sign a device out: its own account, or an owner of a workspace

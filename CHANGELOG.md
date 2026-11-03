@@ -5,6 +5,12 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- An invitation to an address no Harbor account uses now says so under People (Settings and the
+  phone), and when it differs by a typo from the address of someone already in one of your
+  workspaces, it asks "did you mean …?". Such an invitation waits forever otherwise: it only
+  reaches the Google account with exactly that address.
+
 ## [0.124.1] - 2026-11-03
 
 ### Added

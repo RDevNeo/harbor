@@ -262,7 +262,11 @@ public class Settings extends Base {
             JSONObject x = inv.optJSONObject(i);
             if (x == null) continue;
             acctCard.addView(Ui.gap(this));
-            LinearLayout r = Ui.cardRow(this, null, x.optString("email"), "Invited · tap to cancel", Ui.G700, v -> cancelInvite(ws, x.optString("id"), x.optString("email")));
+            // Same note as the desktop (account.ts inviteNote): nobody can accept it as it is.
+            String note = !x.optBoolean("no_account") ? "" : x.optString("near").isEmpty()
+                    ? " · no Harbor account uses this address yet"
+                    : " · no Harbor account uses this address: did you mean " + x.optString("near") + "?";
+            LinearLayout r = Ui.cardRow(this, null, x.optString("email"), "Invited" + note + " · tap to cancel", Ui.G700, v -> cancelInvite(ws, x.optString("id"), x.optString("email")));
             acctCard.addView(r, Ui.fill());
         }
         if (owner) {
