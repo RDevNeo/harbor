@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.2] - 2026-11-02
+
 ### Changed
 - Chats: who wrote a message is shown relative to the device you look on. A phone, or another PC
   showing a chat that runs elsewhere, now labels the messages typed on the chat's PC with a PC icon
