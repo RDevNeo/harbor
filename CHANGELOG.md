@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.130.0] - 2026-11-03
+
 ### Changed
 - Codex turns get the same lazy MCP servers as Claude's: Harbor's bridge answers their handshakes and
   starts a server only when a tool is called, and stops it when unused. A waiting Codex turn with
