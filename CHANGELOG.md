@@ -5,6 +5,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.5] - 2026-11-02
+
+### Fixed
+- Chat links (`harbor://chat/…`) in agents' replies work again, on the desktop and the phone: a bare
+  link or a markdown link to one reads as the chat's title (or the link's text) and a click or tap
+  opens that chat, a sub-agent's or a copy of another PC's chat too. A chat this PC doesn't have
+  says "Chat not found" (or that its PC is offline). Links name the chat's own PC again.
+
 ## [0.119.4] - 2026-11-02
 
 ### Changed
