@@ -5,6 +5,8 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+## [0.119.0] - 2026-11-02
+
 ### Added
 - Discord: a captcha now shows inside the chat whose agent hit it, as a card you can solve from
   anywhere that chat is open: the desktop of the PC running Discord, the desktop of any other PC of
