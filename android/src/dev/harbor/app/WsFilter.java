@@ -25,11 +25,11 @@ final class WsFilter {
     }
 
     /** What's picked of `stored` (ids joined by commas) among `all`, the workspaces there are:
-     *  ids that are gone drop out, and none or every one of them is All (empty). */
+     *  ids that are gone drop out, none is All (empty), every one isn't. */
     static List<String> picked(String stored, Collection<String> all) {
         List<String> on = new ArrayList<>(all);
         on.retainAll(Arrays.asList(stored.split(",")));
-        return on.size() == all.size() ? new ArrayList<>() : on;
+        return on;
     }
 
     /** `stored` with workspace `id` turned on or off (All turns it on alone). */

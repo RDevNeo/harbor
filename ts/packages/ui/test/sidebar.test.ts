@@ -69,7 +69,7 @@ test("several_workspaces_show_what_each_of_them_has", () => {
   expect(got.projects).toEqual([place(1, false, null, [2])]);
 });
 
-test("the_picked_workspaces_drop_what_is_gone_and_never_end_up_empty", () => {
+test("the_picked_workspaces_drop_what_is_gone", () => {
   const all = workspaces(["a", "b", "c"]);
   expect(picked("", all)).toEqual([]);
   expect(picked("a", all)).toEqual(["a"]);
@@ -78,10 +78,10 @@ test("the_picked_workspaces_drop_what_is_gone_and_never_end_up_empty", () => {
   expect(picked("a,left", all)).toEqual(["a"]);
   // None left: All.
   expect(picked("left,gone", all)).toEqual([]);
-  // Every one is All.
-  expect(picked("a,b,c", all)).toEqual([]);
-  // The only one left is every one.
-  expect(picked("a,left", workspaces(["a"]))).toEqual([]);
+  // Every one isn't All.
+  expect(picked("a,b,c", all)).toEqual(["a", "b", "c"]);
+  // The only one left stays picked.
+  expect(picked("a,left", workspaces(["a"]))).toEqual(["a"]);
   // Signed out.
   expect(picked("a", [])).toEqual([]);
 });
@@ -92,16 +92,17 @@ test("toggling_a_workspace_follows_the_checklist", () => {
   expect(toggled("", "b", all)).toBe("b");
   // One more.
   expect(toggled("b", "a", all)).toBe("a,b");
-  // Checking every one is All.
-  expect(toggled("a,b", "c", all)).toBe("");
+  // Checking every one stays every one.
+  expect(toggled("a,b", "c", all)).toBe("a,b,c");
   // Unchecking one.
   expect(toggled("a,b", "a", all)).toBe("b");
   // Unchecking the last goes back to All.
   expect(toggled("b", "b", all)).toBe("");
   // Ids that are gone don't stay.
   expect(toggled("a,left", "b", all)).toBe("a,b");
-  // A single workspace is All.
-  expect(toggled("", "a", workspaces(["a"]))).toBe("");
+  // An account's only workspace can be picked, and unpicked back to All.
+  expect(toggled("", "a", workspaces(["a"]))).toBe("a");
+  expect(toggled("a", "a", workspaces(["a"]))).toBe("");
 });
 
 test("a_workspace_shows_its_pcs_chats_and_projects", () => {

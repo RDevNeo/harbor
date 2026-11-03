@@ -25,11 +25,10 @@ export type Place = sidebartree.Place;
 export type Tree = sidebartree.Tree;
 export const { isMainOf, tree } = sidebartree;
 
-/** What's picked of the workspace filter `stored` (ids joined by commas) among `all`: gone ids drop out, and none or every one is All (empty). */
+/** What's picked of the workspace filter `stored` (ids joined by commas) among `all`: gone ids drop out, and none is All (empty). Every one isn't All: a PC in no workspace shows only under All. */
 export function picked(stored: string, all: readonly Workspace[]): string[] {
   const want = stored.split(",");
-  const on = all.filter((w) => want.includes(w.id)).map((w) => w.id);
-  return on.length === all.length ? [] : on;
+  return all.filter((w) => want.includes(w.id)).map((w) => w.id);
 }
 
 /** The workspace filter `stored` with workspace `id` turned on or off. */

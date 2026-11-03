@@ -73,16 +73,17 @@ public class WsFilterTest {
         same(WsFilter.picked("c,a", ids), "[a, c]", "in the directory's order");
         same(WsFilter.picked("a,left", ids), "[a]", "an id that's gone drops out");
         same(WsFilter.picked("left,gone", ids), "[]", "none left: All");
-        same(WsFilter.picked("a,b,c", ids), "[]", "every one is All");
-        same(WsFilter.picked("a,left", Arrays.asList("a")), "[]", "the only one left is every one");
+        same(WsFilter.picked("a,b,c", ids), "[a, b, c]", "every one isn't All");
+        same(WsFilter.picked("a,left", Arrays.asList("a")), "[a]", "the only one left stays picked");
         same(WsFilter.picked("a", new ArrayList<>()), "[]", "signed out");
         same(WsFilter.toggled("", "b", ids), "b", "from All, only the one checked");
         same(WsFilter.toggled("b", "a", ids), "a,b", "one more");
-        same(WsFilter.toggled("a,b", "c", ids), "", "checking every one is All");
+        same(WsFilter.toggled("a,b", "c", ids), "a,b,c", "checking every one stays every one");
         same(WsFilter.toggled("a,b", "a", ids), "b", "unchecking one");
         same(WsFilter.toggled("b", "b", ids), "", "unchecking the last goes back to All");
         same(WsFilter.toggled("a,left", "b", ids), "a,b", "ids that are gone don't stay");
-        same(WsFilter.toggled("", "a", Arrays.asList("a")), "", "a single workspace is All");
+        same(WsFilter.toggled("", "a", Arrays.asList("a")), "a", "an account's only workspace can be picked");
+        same(WsFilter.toggled("a", "a", Arrays.asList("a")), "", "and unpicked back to All");
 
         if (failed > 0) { System.err.println(failed + " failed"); System.exit(1); }
         System.out.println("WsFilterTest ok");
