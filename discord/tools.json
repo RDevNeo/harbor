@@ -759,7 +759,7 @@
  },
  {
   "name": "discord_guilds",
-  "description": "Read the left-sidebar guild layout — folders and top-level guilds in display order. Each entry is either `{kind:\"guild\", guildId, name}` or `{kind:\"folder\", id, name, color, expanded, guildIds, guilds:[{id,name}]}`. `color` is a 24-bit RGB integer (Discord renders it as the folder swatch). Pipe the returned `sidebar` array straight into `discord_organize` after mutating it — every guildId must appear exactly once across all entries.",
+  "description": "Read the left-sidebar guild layout — folders and top-level guilds in display order. Each entry is either `{kind:\"guild\", guildId, name}` or `{kind:\"folder\", id, name, color, expanded, guildIds, guilds:[{id,name}]}`. `color` is a 24-bit RGB integer (Discord renders it as the folder swatch). Pipe the returned `sidebar` array straight into `discord_organize` after mutating it — every guildId must appear exactly once across all entries. Servers joined since Discord last saved the layout come first, marked `newlyJoined`, as Discord's own sidebar shows them; pass them back to `discord_organize` like any other.",
   "inputSchema": {
    "type": "object",
    "properties": {}

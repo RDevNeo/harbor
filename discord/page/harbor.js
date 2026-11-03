@@ -2227,16 +2227,18 @@ function bridgeListGuilds() {
         };
     });
 
-    // Cover any guilds the user is in but not listed (defensive — shouldn't happen)
+    // A server joined since the layout setting was last saved isn't in it yet: Discord's own
+    // sidebar shows those at the top, and so does this list (so organize gets every guild back).
     const referenced = new Set();
     for (const f of folders) for (const id of (f.guildIds ?? [])) referenced.add(id);
-    const orphans = Object.keys(allGuildsMap).filter(id => !referenced.has(id));
+    const unplaced = Object.keys(allGuildsMap).filter(id => !referenced.has(id))
+        .map(id => ({ kind: "guild", guildId: id, name: allGuildsMap[id]?.name ?? null, newlyJoined: true }));
+    const all = [...unplaced, ...sidebar];
 
     return {
         totalGuilds: Object.keys(allGuildsMap).length,
-        entries: sidebar.length,
-        sidebar,
-        orphans: orphans.length ? orphans.map(id => ({ id, name: allGuildsMap[id]?.name })) : undefined,
+        entries: all.length,
+        sidebar: all,
     };
 }
 
@@ -3207,7 +3209,8 @@ function captchaRect() {
 function captchaState() {
     const p = window.$harborCaptcha ?? null;
     const rect = captchaRect();
-    const joined = !!p && (p.guildId ? !!need("GuildStore")?.getGuild?.(p.guildId) : p.done);
+    // The join's own answer, or the server in the store (which can come a little after the captcha closes).
+    const joined = !!p && (p.done || (!!p.guildId && !!need("GuildStore")?.getGuild?.(p.guildId)));
     return {
         showing: !!rect,
         rect,

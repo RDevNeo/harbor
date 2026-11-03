@@ -18,7 +18,7 @@ type Plan = {
   /** Tools whose call fails, with the page's error. */
   throws?: Record<string, string>;
   /** A captcha on the page: whether it shows, and whether the join it held has landed. */
-  captcha?: { showing: boolean; joined: boolean };
+  captcha?: { showing: boolean; joined: boolean; error?: string };
 };
 
 const cfg = JSON.parse(process.env.HARBOR_DISCORD ?? "{}") as { mode: string; data: string; page: string; vencord: string; url: string | null };
@@ -61,7 +61,7 @@ const ops: Record<string, (m: Record<string, unknown>) => unknown> = {
   logout: () => null,
   rect: () => ({ x: 0, y: 0, width: 10, height: 10 }),
   capture: () => ({ data: Buffer.from("png-bytes").toString("base64"), mimeType: "image/png", width: 10, height: 10, bytes: 9 }),
-  captcha: () => ({ showing: plan().captcha?.showing ?? false, rect: plan().captcha?.showing ? { x: 400, y: 200, width: 300, height: 200 } : null, pending: { joined: plan().captcha?.joined ?? false } }),
+  captcha: () => ({ showing: plan().captcha?.showing ?? false, rect: plan().captcha?.showing ? { x: 400, y: 200, width: 300, height: 200 } : null, pending: { joined: plan().captcha?.joined ?? false, error: plan().captcha?.error ?? null } }),
   captcha_frame: (m) =>
     m.crop === true
       ? { showing: plan().captcha?.showing ?? false, rect: { x: 400, y: 200, width: 300, height: 200 }, crop: { x: 376, y: 176, width: 348, height: 248 }, width: Math.min(348, Number(m.max) || 348), height: 248, mimeType: "image/jpeg", data: Buffer.from("crop").toString("base64") }

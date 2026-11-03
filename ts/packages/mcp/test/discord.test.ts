@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { decode, fromDiscord, notes, postNotice, serve, statusText, tools } from "../src/discord.ts";
 import * as setup from "../src/discordsetup.ts";
+import { type Engine, Host, expireSaved, loadSaved } from "../src/discordhost.ts";
 import { sandbox } from "./discordkit.ts";
 
 let box: ReturnType<typeof sandbox>;
@@ -113,4 +114,40 @@ test("a captcha's notices go into its chat as the card and its outcome, and the 
   postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", chat: 9, captcha: { captcha: "cd", state: "pending", guild: null } }, sink);
   expect(items.length).toBe(1);
   expect(told[1]).toEqual(["discord", "discord-captcha", "t", "b"]);
+});
+
+test("a captcha a restart lost becomes expired in its chat, from a new host or, with none, from the app", () => {
+  const notices = (): Record<string, unknown>[] => (existsSync(join(setup.root(), "notices.jsonl")) ? readFileSync(join(setup.root(), "notices.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : []);
+  rmSync(join(setup.root(), "notices.jsonl"), { force: true });
+  const state = join(setup.root(), "state.json");
+  writeFileSync(state, JSON.stringify({ logins: [], captcha: { id: "c1", chat: 4, guild: "G" } }));
+  expect(expireSaved()).toBe(true);
+  expect(notices()[0]).toMatchObject({ chat: 4, key: "discord-captcha", captcha: { captcha: "c1", state: "expired", guild: "G" }, line: "Captcha expired: didn't join G" });
+  expect(loadSaved().captcha).toBeNull();
+  expect(expireSaved()).toBe(false);
+  // A new host does the same at its start.
+  writeFileSync(state, JSON.stringify({ logins: [], captcha: { id: "c2", chat: null, guild: null } }));
+  const stub = {} as Engine;
+  void new Host({ engine: stub, scratch: stub });
+  expect(notices()[1]).toMatchObject({ captcha: { captcha: "c2", state: "expired" }, line: "Captcha expired: didn't join the server" });
+  expect(loadSaved().captcha).toBeNull();
+});
+
+test("a captcha whose server didn't name its chat goes to the one chat waiting on a join, and the host is told", () => {
+  const items: number[] = [];
+  const adopted: [string, number][] = [];
+  const sink = {
+    chat: () => undefined,
+    caller: () => ({ id: 8, gid: "pc:8" }),
+    adopt: (c: string, chat: number) => void adopted.push([c, chat]),
+    notice: (id: number) => void items.push(id),
+    changed: () => {},
+    notify: () => {},
+  };
+  postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", captcha: { captcha: "x1", state: "pending", guild: null } }, sink);
+  expect(items).toEqual([8]);
+  expect(adopted).toEqual([["x1", 8]]);
+  // Not knowing which chat: no card, the overlay shows it.
+  postNotice({ kind: "discord", key: "discord-captcha", title: "t", body: "b", captcha: { captcha: "x2", state: "pending", guild: null } }, { ...sink, caller: () => undefined });
+  expect(items).toEqual([8]);
 });

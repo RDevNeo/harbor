@@ -207,6 +207,21 @@ function downloadsDir(): string {
   return join(home, "Downloads");
 }
 
+/** The one chat whose running turn waits on a Discord join (its call has no result yet): where a captcha from a server that didn't name its chat belongs. Two or none: unknown. */
+export function discordCaller(e: Pick<Engine, "turns" | "transcript" | "chat">): Chat | undefined {
+  const waiting: number[] = [];
+  for (const id of e.turns.keys()) {
+    const items = e.transcript(id).items;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it?.kind !== "tool") continue;
+      if (it.result === null && /discord_join$/.test(it.name)) waiting.push(id);
+      break;
+    }
+  }
+  return waiting.length === 1 ? e.chat(waiting[0] as number) : undefined;
+}
+
 /** Harbor without its window (Rust's `--background`): the phone API, the mesh, discovery, port mapping and the account loop. */
 export async function startHub(o: HubOptions): Promise<RunningHub> {
   const env = o.env ?? process.env;
@@ -657,6 +672,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       ? discord.watch((n) =>
           discord.postNotice(n, {
             chat: (id) => live.chat(id),
+            caller: () => discordCaller(live),
+            adopt: (captcha, chat) => void discord.adoptCaptcha(captcha, chat),
             notice: (id, icon, text, detail) => live.notice(id, icon, text, detail),
             changed: (id) => live.host.changed?.(id),
             notify: (kind, key, title, body, chat) => live.host.notify?.(kind, key, title, body, chat),

@@ -322,7 +322,7 @@ test("with the captcha view on (the default), a join that needs a captcha holds 
   await call("discord_join", { invite: "o", apply: true });
   await captchaCancel();
   expect(ops("captcha_cancel").length).toBe(1);
-  plan(r.root, { captcha: { showing: false, joined: false } });
+  plan(r.root, { captcha: { showing: false, joined: false, error: "captcha closed" } });
   await until(() => st().captcha === null, 8000);
   expect(st().captcha_end).toMatchObject({ outcome: "closed" });
   expect(readFileSync(join(r.root, "pace.json"), "utf8")).toBe("[]");
@@ -362,6 +362,25 @@ test("a captcha in a chat: its card's frames, one solver at a time, and the chat
   const end = notices().at(-1);
   expect(end).toMatchObject({ chat: 42, captcha: { captcha: c.id, state: "joined" }, line: "Captcha solved: joined Devs" });
   expect(await chatCaptcha(42, { action: "frame" })).toMatchObject({ status: 404 });
+  await quiet();
+  plan(r.root, { calls: { discord_join: { joined: true } } });
+}, 30_000);
+
+test("a join that lands a while after its captcha closes is reported joined, not closed", async () => {
+  await quiet();
+  writeFileSync(join(r.root, "pace.json"), "[]");
+  plan(r.root, { calls: { discord_join: { joined: false, captchaRequired: true, guild: { id: "8", name: "Late" } } }, captcha: { showing: true, joined: false } });
+  await call("discord_join", { invite: "late", apply: true });
+  const st = (): Record<string, unknown> => h.host.status() as Record<string, unknown>;
+  expect(st().captcha).not.toBeNull();
+  // The captcha is gone, the join hasn't answered yet: not "closed" a few seconds later.
+  plan(r.root, { captcha: { showing: false, joined: false } });
+  await Bun.sleep(4500);
+  expect(st().captcha).not.toBeNull();
+  // Then the server arrives.
+  plan(r.root, { captcha: { showing: false, joined: true } });
+  await until(() => st().captcha === null, 5000);
+  expect(st().captcha_end).toMatchObject({ outcome: "joined", guild: "Late" });
   await quiet();
   plan(r.root, { calls: { discord_join: { joined: true } } });
 }, 30_000);

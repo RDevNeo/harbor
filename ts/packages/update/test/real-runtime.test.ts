@@ -143,7 +143,9 @@ async function discordTools(env: Record<string, string>): Promise<{ tools: { nam
   let out = "";
   const reader = p.stdout.getReader();
   const until = Date.now() + 60_000;
-  while (!out.includes('"id":2') && Date.now() < until) {
+  // The whole line: a long tool list comes in several reads.
+  const answered = (): boolean => out.split("\n").slice(0, -1).some((l) => l.includes('"id":2'));
+  while (!answered() && Date.now() < until) {
     const { value, done } = await reader.read();
     if (done) break;
     out += new TextDecoder().decode(value);

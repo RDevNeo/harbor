@@ -5,6 +5,19 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Fixed
+- Discord: a join whose captcha was solved was reported "closed without joining" when the server
+  took a moment to arrive after the captcha closed. Harbor now waits for the join's own answer (up to
+  30 s) and checks membership before saying how it went.
+- Discord: a server joined since Discord last saved the sidebar's layout was listed apart, as an
+  orphan; `discord_guilds` now lists it first (`newlyJoined`), as Discord's own sidebar shows it, so
+  a layout passed back to `discord_organize` keeps it.
+- Discord: a captcha lost to a restart now ends as "Captcha expired" in its chat, instead of a card
+  that stays live.
+- Discord: a chat whose agent started its Discord connection before Harbor passed chats along (an
+  older version, still running after an update) gets the captcha card too, when it's the one chat
+  waiting on a join; otherwise the full-window view shows it, as before.
+
 ## [0.119.2] - 2026-11-02
 
 ### Changed

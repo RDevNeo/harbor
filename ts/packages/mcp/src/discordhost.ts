@@ -32,7 +32,10 @@ const SIGNIN_WAIT = 15 * 60;
 export const CAPTCHA_WAIT = 10 * 60;
 /** How often the host looks at a captcha, and how many looks without one end it. */
 const CAPTCHA_LOOK_MS = 1000;
+/** Gone this many looks, with the join refused, it was closed. */
 const CAPTCHA_GONE_LOOKS = 3;
+/** Gone with no answer from the join: it may still land (the server comes after the captcha closes); this long (looks) before calling it closed. */
+export const CAPTCHA_SETTLE_LOOKS = 30;
 
 
 /** How the page runs. `scratch` is repair's throwaway logged-out page. */
@@ -513,6 +516,40 @@ export interface Saved {
   tested: number;
   /** Discord's build at the last test. */
   build: string;
+  /** A captcha waiting when this was saved: one a stop or a restart lost becomes "expired" in its chat. */
+  captcha: LostCaptcha | null;
+}
+
+export type LostCaptcha = { id: string; chat: number | null; guild: string | null };
+
+/** The chat's card for a captcha that a stop or a restart lost turns into this line. */
+export function expireNotice(c: LostCaptcha): void {
+  const g = c.guild ?? "the server";
+  setup.notice("Discord: not joined", `The captcha for ${g} was lost when Discord stopped (a restart?), so it didn't join.`, "discord-captcha", {
+    chat: c.chat,
+    captcha: { captcha: c.id, state: "expired", guild: c.guild },
+    line: `Captcha expired: didn't join ${g}`,
+  });
+}
+
+/** A captcha the saved state still holds, while no host runs: marks it expired and forgets it. True: there was one. */
+export function expireSaved(): boolean {
+  const j = parse(safeRead(savedPath()));
+  if (!isObj(j) || !isObj(get(j, "captcha"))) return false;
+  const lost = readLost(get(j, "captcha"));
+  try {
+    writePrivate(savedPath(), JSON.stringify({ ...j, captcha: null }, null, 2));
+  } catch {
+    return false;
+  }
+  if (lost !== null) expireNotice(lost);
+  return lost !== null;
+}
+
+function readLost(v: Json | undefined): LostCaptcha | null {
+  const id = str(get(v, "id"));
+  if (id === undefined) return null;
+  return { id, chat: uint(get(v, "chat")) ?? null, guild: str(get(v, "guild")) ?? null };
 }
 
 const savedPath = (): string => join(setup.root(), "state.json");
@@ -535,6 +572,7 @@ export function loadSaved(): Saved {
     failing: strings(get(j, "failing")),
     tested: num("tested"),
     build: str(get(j, "build")) ?? "",
+    captcha: readLost(get(j, "captcha")),
   };
 }
 
@@ -689,6 +727,13 @@ export class Host {
     this.scratch = o.scratch;
     this.policy = o.policy ?? Policy.fromEnv();
     this.swap = o.swap ?? hasSwap;
+    // A new host has no captcha: one the last one left waiting is over.
+    const lost = this.st.saved.captcha;
+    if (lost !== null) {
+      this.st.saved.captcha = null;
+      this.save();
+      expireNotice(lost);
+    }
   }
 
   private set(f: (st: St) => void): void {
@@ -1223,7 +1268,9 @@ export class Host {
       st.captcha = c;
       st.captchaEnd = null;
       st.busy += 1;
+      st.saved.captcha = { id: c.id, chat: c.chat, guild: c.guild };
     });
+    this.save();
     const where = chat !== null ? "Solve it in the chat, on any of your PCs or your phone" : "Solve it in Harbor, on this PC or your phone";
     setup.notice("Discord needs a captcha", `To join ${c.guild ?? "a server"}, Discord wants a person to solve a captcha. ${where}; it's given up in ${CAPTCHA_WAIT / 60} minutes.`, "discord-captcha", {
       chat,
@@ -1244,9 +1291,15 @@ export class Host {
       } catch {
         return this.captchaEnd(c, "stopped");
       }
-      if (get(get(s, "pending"), "joined") === true) return this.captchaEnd(c, "joined");
+      const p = get(s, "pending");
+      if (get(p, "joined") === true) return this.captchaEnd(c, "joined");
       if (get(s, "showing") === true) gone = 0;
-      else if (++gone >= CAPTCHA_GONE_LOOKS) return this.captchaEnd(c, "closed");
+      else {
+        gone += 1;
+        // Closed for sure only when the join said no; else the server may still arrive.
+        const refused = typeof get(p, "error") === "string";
+        if ((refused && gone >= CAPTCHA_GONE_LOOKS) || gone >= CAPTCHA_SETTLE_LOOKS) return this.captchaEnd(c, "closed");
+      }
       if (now() - c.since > CAPTCHA_WAIT) {
         await this.engine.ask({ op: "captcha_cancel" }, 5000).catch(() => {});
         return this.captchaEnd(c, "timeout");
@@ -1258,10 +1311,12 @@ export class Host {
     if (this.st.captcha !== c) return;
     this.set((st) => {
       st.captcha = null;
+      st.saved.captcha = null;
       st.captchaEnd = { outcome, guild: c.guild, at: now() };
       st.busy -= 1;
       st.lastUse = now();
     });
+    this.save();
     this.solver = null;
     this.engine.ask({ op: "captcha_end" }, 5000).catch(() => {});
     const g = c.guild ?? "the server";
@@ -1570,6 +1625,20 @@ export class Host {
         case "chat_captcha":
           r = await this.chatCaptcha(uint(get(req, "chat")) ?? -1, get(req, "body") ?? {});
           break;
+        case "captcha_chat": {
+          // The app found the chat of a captcha whose call didn't name one: its card shows there now.
+          const c = this.st.captcha;
+          const chat = uint(get(req, "chat"));
+          if (c !== null && c.chat === null && c.id === str(get(req, "captcha")) && chat !== undefined) {
+            this.set((st) => {
+              if (st.captcha !== null) st.captcha = { ...st.captcha, chat };
+              st.saved.captcha = { id: c.id, chat, guild: c.guild };
+            });
+            this.save();
+          }
+          r = {};
+          break;
+        }
         case "signin":
           if (get(req, "accept") !== true) throw new Error("Sign-in needs the warning accepted first.");
           this.signin(Display.from(get(req, "display")));

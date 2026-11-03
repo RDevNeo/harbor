@@ -205,6 +205,11 @@ export async function login(signal: AbortSignal, update: (p: Pending) => void): 
   }
 }
 
+/** The host's captcha `captcha` belongs to `chat` (found by the app, for a server that didn't say). */
+export async function adoptCaptcha(captcha: string, chat: number): Promise<void> {
+  await ask(setup.socket(), { op: "captcha_chat", captcha, chat }, 5000).catch(() => {});
+}
+
 /** Signs out: Discord's session ends and the profile goes. */
 export function signOut(): void {
   request({ op: "signout" }, SHORT).catch(() => {});
@@ -217,13 +222,22 @@ export type NoticeOf = Parameters<Notify>[0];
 /** What the app does with one of the host's notices (`watch`): a captcha's card or outcome goes into its chat, and the notification opens that chat. */
 export interface NoticeSink {
   chat(id: number): { id: number; gid: string } | undefined;
+  /** The one chat whose running turn waits on a Discord join right now, if just one does: a server started before chats were passed along doesn't say. */
+  caller?(): { id: number; gid: string } | undefined;
+  /** Tells the host which chat a captcha it couldn't place belongs to. */
+  adopt?(captcha: string, chat: number): void;
   notice(id: number, icon: string, text: string, detail: string): void;
   changed(id: number): void;
   notify(kind: string, key: string, title: string, body: string, chat?: string): void;
 }
 
 export function postNotice(n: NoticeOf, to: NoticeSink): void {
-  const c = n.chat !== undefined ? to.chat(n.chat) : undefined;
+  let c = n.chat !== undefined ? to.chat(n.chat) : undefined;
+  const id = n.captcha !== undefined && typeof n.captcha.captcha === "string" ? n.captcha.captcha : undefined;
+  if (c === undefined && n.chat === undefined && id !== undefined && n.captcha?.state === "pending") {
+    c = to.caller?.();
+    if (c !== undefined) to.adopt?.(id, c.id);
+  }
   if (c && n.captcha !== undefined) {
     to.notice(c.id, "captcha", n.line ?? n.title, JSON.stringify(n.captcha));
     to.changed(c.id);

@@ -324,6 +324,9 @@ await scenario("captcha", async () => {
     check(JSON.parse(fs.readFileSync(app + "/pace.json", "utf8")).length === 1, "the join counts toward the pace");
     r = await mcp.tool("discord_status");
     check(r.text.includes("solved, and the server was joined"), "discord_status tells the agent", r.text);
+    r = await mcp.tool("discord_guilds");
+    const g = JSON.parse(r.text);
+    check(g.sidebar.some(e => e.newlyJoined && e.name === "Joined captcha1") && g.sidebar[0].newlyJoined && g.orphans === undefined, "the new server is listed first, as Discord's sidebar shows it", r.text);
     // Don't join: Discord's dialog closes and nothing is joined.
     write("pace.json", "[]");
     r = await mcp.tool("discord_join", { invite: "captcha22", apply: true });

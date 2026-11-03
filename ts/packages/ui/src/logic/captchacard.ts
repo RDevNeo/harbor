@@ -3,11 +3,11 @@ import type { Item } from "@harbor/store";
 /** A Discord captcha notice's detail: which captcha, and where it stands. */
 export interface CaptchaNote {
   captcha: string;
-  state: "pending" | "joined" | "closed" | "timeout" | "stopped";
+  state: "pending" | "joined" | "closed" | "timeout" | "stopped" | "expired";
   guild: string | null;
 }
 
-const STATES = new Set(["pending", "joined", "closed", "timeout", "stopped"]);
+const STATES = new Set(["pending", "joined", "closed", "timeout", "stopped", "expired"]);
 
 /** The JSON a `captcha` notice carries in its detail; null: not one. */
 export function captchaNote(detail: string): CaptchaNote | null {
